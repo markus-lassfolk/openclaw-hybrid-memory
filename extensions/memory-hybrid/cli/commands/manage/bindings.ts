@@ -7,16 +7,16 @@ import type { ManageContext } from "../../context.js";
  * Includes `merge` as an alias for `mergeResults` and `ctx` for sparse `ctx.*` access.
  */
 export type ManageBindings = ManageContext & {
-  ctx: ManageContext;
-  merge: typeof mergeResults;
-  BACKFILL_DECAY_MARKER: string;
+	ctx: ManageContext;
+	merge: typeof mergeResults;
+	BACKFILL_DECAY_MARKER: string;
 };
 
 export function buildManageBindings(ctx: ManageContext): ManageBindings {
-  return {
-    ...ctx,
-    ctx,
-    merge: ctx.mergeResults,
-    BACKFILL_DECAY_MARKER: ".backfill-decay-done",
-  };
+	return {
+		...ctx,
+		ctx,
+		merge: ctx.mergeResults,
+		BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+	};
 }

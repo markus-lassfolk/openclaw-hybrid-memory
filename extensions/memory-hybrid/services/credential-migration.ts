@@ -10,29 +10,33 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags } from "../utils/tags.js";
-import { VAULT_POINTER_PREFIX, tryParseCredentialForVault } from "./auto-capture.js";
+import {
+	VAULT_POINTER_PREFIX,
+	tryParseCredentialForVault,
+} from "./auto-capture.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrated";
+export const CREDENTIAL_REDACTION_MIGRATION_FLAG =
+	".credential-redaction-migrated";
 
 export interface MigrateCredentialsOptions {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  embeddings: EmbeddingProvider;
-  credentialsDb: CredentialsDB;
-  aliasDb?: import("./retrieval-aliases.js").AliasDB | null;
-  migrationFlagPath: string;
-  markDone: boolean;
-  /** Injectable file-write function (defaults to fs.writeFileSync). Used in tests to avoid touching the filesystem. */
-  writeFn?: (path: string, data: string, encoding: BufferEncoding) => void;
+	factsDb: FactsDB;
+	vectorDb: VectorDB;
+	embeddings: EmbeddingProvider;
+	credentialsDb: CredentialsDB;
+	aliasDb?: import("./retrieval-aliases.js").AliasDB | null;
+	migrationFlagPath: string;
+	markDone: boolean;
+	/** Injectable file-write function (defaults to fs.writeFileSync). Used in tests to avoid touching the filesystem. */
+	writeFn?: (path: string, data: string, encoding: BufferEncoding) => void;
 }
 
 interface MigrateCredentialsResult {
-  migrated: number;
-  skipped: number;
-  errors: string[];
+	migrated: number;
+	skipped: number;
+	errors: string[];
 }
 
 /**
@@ -40,134 +44,145 @@ interface MigrateCredentialsResult {
  * Idempotent: facts that are already pointers (value starts with vault:) are skipped.
  * Returns { migrated, skipped, errors }. If markDone is true and there are no errors, writes a flag file so init only runs once.
  */
-export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions): Promise<MigrateCredentialsResult> {
-  const {
-    factsDb,
-    vectorDb,
-    embeddings,
-    credentialsDb,
-    aliasDb,
-    migrationFlagPath,
-    markDone,
-    writeFn = writeFileSync,
-  } = opts;
-  let migrated = 0;
-  let skipped = 0;
-  const errors: string[] = [];
+export async function migrateCredentialsToVault(
+	opts: MigrateCredentialsOptions,
+): Promise<MigrateCredentialsResult> {
+	const {
+		factsDb,
+		vectorDb,
+		embeddings,
+		credentialsDb,
+		aliasDb,
+		migrationFlagPath,
+		markDone,
+		writeFn = writeFileSync,
+	} = opts;
+	let migrated = 0;
+	let skipped = 0;
+	const errors: string[] = [];
 
-  const results = factsDb.lookup("Credentials");
-  const toMigrate = results.filter(
-    (r) =>
-      !r.entry.text.includes("stored in secure vault") &&
-      (r.entry.value == null || (typeof r.entry.value === "string" && !r.entry.value.startsWith(VAULT_POINTER_PREFIX))),
-  );
+	const results = factsDb.lookup("Credentials");
+	const toMigrate = results.filter(
+		(r) =>
+			!r.entry.text.includes("stored in secure vault") &&
+			(r.entry.value == null ||
+				(typeof r.entry.value === "string" &&
+					!r.entry.value.startsWith(VAULT_POINTER_PREFIX))),
+	);
 
-  for (const { entry } of toMigrate) {
-    const parsed = tryParseCredentialForVault(entry.text, entry.entity, entry.key, entry.value);
-    if (!parsed) {
-      skipped++;
-      continue;
-    }
-    try {
-      credentialsDb.store({
-        service: parsed.service,
-        type: parsed.type,
-        value: parsed.secretValue,
-        url: parsed.url,
-        notes: parsed.notes,
-      });
-      const stored = credentialsDb.get(parsed.service, parsed.type);
-      if (!stored || stored.value !== parsed.secretValue) {
-        throw new Error(`vault verification failed for ${parsed.service}:${parsed.type}`);
-      }
-      factsDb.delete(entry.id);
-      aliasDb?.deleteByFactId(entry.id);
-      try {
-        await vectorDb.delete(entry.id);
-      } catch (err) {
-        if (err instanceof Error && !err.message.includes("not found")) {
-          capturePluginError(err, {
-            operation: "migrate-vector-delete",
-            subsystem: "credentials",
-          });
-        }
-        // LanceDB row might not exist
-      }
-      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
-      const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-      const pointerEntry = factsDb.store({
-        text: pointerText,
-        category: "technical" as MemoryCategory,
-        importance: BATCH_STORE_IMPORTANCE,
-        entity: "Credentials",
-        key: parsed.service,
-        value: pointerValue,
-        source: "conversation",
-        decayClass: "permanent",
-        tags: ["auth", ...extractTags(pointerText, "Credentials")],
-      });
-      let vector: number[] | null = null;
-      try {
-        vector = await embeddings.embed(pointerText);
-      } catch (e) {
-        if (!shouldSuppressEmbeddingError(e)) {
-          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-            subsystem: "embeddings",
-            operation: "embed-migration-pointer",
-            phase: "initialization",
-          });
-        }
-        errors.push(`embedding pointer for ${parsed.service}: ${String(e)}`);
-      }
-      if (vector !== null) {
-        try {
-          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
-          if (!(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({
-              text: pointerText,
-              vector,
-              importance: BATCH_STORE_IMPORTANCE,
-              category: "technical",
-              id: pointerEntry.id,
-            });
-          }
-        } catch (e) {
-          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-            subsystem: "vector",
-            operation: "store-migration-pointer",
-            phase: "initialization",
-            backend: "lancedb",
-          });
-          errors.push(`vector store for ${parsed.service}: ${String(e)}`);
-        }
-      }
-      migrated++;
-    } catch (e) {
-      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-        subsystem: "credentials",
-        operation: "migrate-fact-to-vault",
-        phase: "initialization",
-        backend: "sqlite",
-      });
-      errors.push(`${parsed.service}: ${String(e)}`);
-    }
-  }
+	for (const { entry } of toMigrate) {
+		const parsed = tryParseCredentialForVault(
+			entry.text,
+			entry.entity,
+			entry.key,
+			entry.value,
+		);
+		if (!parsed) {
+			skipped++;
+			continue;
+		}
+		try {
+			credentialsDb.store({
+				service: parsed.service,
+				type: parsed.type,
+				value: parsed.secretValue,
+				url: parsed.url,
+				notes: parsed.notes,
+			});
+			const stored = credentialsDb.get(parsed.service, parsed.type);
+			if (!stored || stored.value !== parsed.secretValue) {
+				throw new Error(
+					`vault verification failed for ${parsed.service}:${parsed.type}`,
+				);
+			}
+			factsDb.delete(entry.id);
+			aliasDb?.deleteByFactId(entry.id);
+			try {
+				await vectorDb.delete(entry.id);
+			} catch (err) {
+				if (err instanceof Error && !err.message.includes("not found")) {
+					capturePluginError(err, {
+						operation: "migrate-vector-delete",
+						subsystem: "credentials",
+					});
+				}
+				// LanceDB row might not exist
+			}
+			const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
+			const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
+			const pointerEntry = factsDb.store({
+				text: pointerText,
+				category: "technical" as MemoryCategory,
+				importance: BATCH_STORE_IMPORTANCE,
+				entity: "Credentials",
+				key: parsed.service,
+				value: pointerValue,
+				source: "conversation",
+				decayClass: "permanent",
+				tags: ["auth", ...extractTags(pointerText, "Credentials")],
+			});
+			let vector: number[] | null = null;
+			try {
+				vector = await embeddings.embed(pointerText);
+			} catch (e) {
+				if (!shouldSuppressEmbeddingError(e)) {
+					capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+						subsystem: "embeddings",
+						operation: "embed-migration-pointer",
+						phase: "initialization",
+					});
+				}
+				errors.push(`embedding pointer for ${parsed.service}: ${String(e)}`);
+			}
+			if (vector !== null) {
+				try {
+					factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
+					if (!(await vectorDb.hasDuplicate(vector))) {
+						await vectorDb.store({
+							text: pointerText,
+							vector,
+							importance: BATCH_STORE_IMPORTANCE,
+							category: "technical",
+							id: pointerEntry.id,
+						});
+					}
+				} catch (e) {
+					capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+						subsystem: "vector",
+						operation: "store-migration-pointer",
+						phase: "initialization",
+						backend: "lancedb",
+					});
+					errors.push(`vector store for ${parsed.service}: ${String(e)}`);
+				}
+			}
+			migrated++;
+		} catch (e) {
+			capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+				subsystem: "credentials",
+				operation: "migrate-fact-to-vault",
+				phase: "initialization",
+				backend: "sqlite",
+			});
+			errors.push(`${parsed.service}: ${String(e)}`);
+		}
+	}
 
-  // Only write the flag when markDone is true AND there were no errors — a partial migration
-  // must not be marked complete. Trade-off: a persistent vault error will cause migration to
-  // re-run on every startup, but the idempotency filter (vault: prefix / "stored in secure
-  // vault" text check) prevents double-migration; the cost is a single DB lookup per boot.
-  if (markDone && errors.length === 0) {
-    try {
-      writeFn(migrationFlagPath, "1", "utf8");
-    } catch (e) {
-      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-        subsystem: "credentials",
-        operation: "migrate-write-flag",
-        phase: "initialization",
-      });
-      errors.push(`write migration flag: ${String(e)}`);
-    }
-  }
-  return { migrated, skipped, errors };
+	// Only write the flag when markDone is true AND there were no errors — a partial migration
+	// must not be marked complete. Trade-off: a persistent vault error will cause migration to
+	// re-run on every startup, but the idempotency filter (vault: prefix / "stored in secure
+	// vault" text check) prevents double-migration; the cost is a single DB lookup per boot.
+	if (markDone && errors.length === 0) {
+		try {
+			writeFn(migrationFlagPath, "1", "utf8");
+		} catch (e) {
+			capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+				subsystem: "credentials",
+				operation: "migrate-write-flag",
+				phase: "initialization",
+			});
+			errors.push(`write migration flag: ${String(e)}`);
+		}
+	}
+	return { migrated, skipped, errors };
 }

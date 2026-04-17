@@ -22,18 +22,18 @@
 
 /** Logger interface matching api.logger from ClawdbotPluginApi */
 export interface PluginLoggerApi {
-  info: (msg: string) => void;
-  warn: (msg: string) => void;
-  error: (msg: string) => void;
-  debug?: (msg: string) => void;
+	info: (msg: string) => void;
+	warn: (msg: string) => void;
+	error: (msg: string) => void;
+	debug?: (msg: string) => void;
 }
 
 /** Silent no-op logger used before initPluginLogger is called. */
 const noopLogger: Required<PluginLoggerApi> = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
+	info: () => {},
+	warn: () => {},
+	error: () => {},
+	debug: () => {},
 };
 
 /**
@@ -42,10 +42,10 @@ const noopLogger: Required<PluginLoggerApi> = {
  * without going through register()). Ensures diagnostic warnings are always visible.
  */
 const consoleLogger: Required<PluginLoggerApi> = {
-  info: (msg: string) => console.info(msg),
-  warn: (msg: string) => console.warn(msg),
-  error: (msg: string) => console.error(msg),
-  debug: (msg: string) => console.debug(msg),
+	info: (msg: string) => console.info(msg),
+	warn: (msg: string) => console.warn(msg),
+	error: (msg: string) => console.error(msg),
+	debug: (msg: string) => console.debug(msg),
 };
 
 /**
@@ -62,12 +62,12 @@ let activeLogger: Required<PluginLoggerApi> = consoleLogger;
  * @param apiLogger - The logger from ClawdbotPluginApi
  */
 export function initPluginLogger(apiLogger: PluginLoggerApi): void {
-  activeLogger = {
-    info: (msg: string) => apiLogger.info(msg),
-    warn: (msg: string) => apiLogger.warn(msg),
-    error: (msg: string) => apiLogger.error(msg),
-    debug: (msg: string) => apiLogger.debug?.(msg),
-  };
+	activeLogger = {
+		info: (msg: string) => apiLogger.info(msg),
+		warn: (msg: string) => apiLogger.warn(msg),
+		error: (msg: string) => apiLogger.error(msg),
+		debug: (msg: string) => apiLogger.debug?.(msg),
+	};
 }
 
 /**
@@ -77,7 +77,7 @@ export function initPluginLogger(apiLogger: PluginLoggerApi): void {
  * In production, the logger defaults to consoleLogger for CLI paths.
  */
 export function resetPluginLogger(): void {
-  activeLogger = noopLogger;
+	activeLogger = noopLogger;
 }
 
 /**
@@ -85,7 +85,7 @@ export function resetPluginLogger(): void {
  * Used in unit tests to restore the default state after resetPluginLogger.
  */
 export function restoreDefaultLogger(): void {
-  activeLogger = consoleLogger;
+	activeLogger = consoleLogger;
 }
 
 /**
@@ -95,16 +95,16 @@ export function restoreDefaultLogger(): void {
  * Routed through `api.logger` which respects OpenClaw verbosity settings.
  */
 export const pluginLogger = {
-  info(msg: string): void {
-    activeLogger.info(msg);
-  },
-  warn(msg: string): void {
-    activeLogger.warn(msg);
-  },
-  error(msg: string): void {
-    activeLogger.error(msg);
-  },
-  debug(msg: string): void {
-    activeLogger.debug(msg);
-  },
+	info(msg: string): void {
+		activeLogger.info(msg);
+	},
+	warn(msg: string): void {
+		activeLogger.warn(msg);
+	},
+	error(msg: string): void {
+		activeLogger.error(msg);
+	},
+	debug(msg: string): void {
+		activeLogger.debug(msg);
+	},
 };

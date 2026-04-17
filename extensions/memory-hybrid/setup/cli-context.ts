@@ -11,22 +11,34 @@ import { dirname, isAbsolute, join } from "node:path";
 import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
-import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
+import {
+	runBackup as runBackupFn,
+	runBackupVerify as runBackupVerifyFn,
+} from "../cli/backup.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
-import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
+import {
+	type HybridMemCliContext,
+	registerHybridMemCli,
+} from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
 import {
-  getCronModelConfig,
-  getDefaultCronModel,
-  getMemoryCategories,
-  resolveReflectionModelAndFallbacks,
+	getCronModelConfig,
+	getDefaultCronModel,
+	getMemoryCategories,
+	resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runConsolidate } from "../services/consolidation.js";
-import { type VerificationCycleResult, runVerificationCycle } from "../services/continuous-verifier.js";
-import { type DreamCycleResult, runDreamCycle } from "../services/dream-cycle.js";
+import {
+	type VerificationCycleResult,
+	runVerificationCycle,
+} from "../services/continuous-verifier.js";
+import {
+	type DreamCycleResult,
+	runDreamCycle,
+} from "../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { runExport } from "../services/export-memory.js";
@@ -34,7 +46,11 @@ import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { mergeResults } from "../services/merge-results.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
-import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
+import {
+	runReflection,
+	runReflectionMeta,
+	runReflectionRules,
+} from "../services/reflection.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
@@ -148,9 +164,10 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
  * Subcommands are registered when the full plugin `register()` runs or when the lazy CLI fires.
  */
 export const HYBRID_MEM_CLI_ROOT_DESCRIPTOR = {
-  name: "hybrid-mem",
-  description: "Hybrid memory (SQLite + LanceDB): maintenance, verify, search, diagnostics, and ingestion",
-  hasSubcommands: true,
+	name: "hybrid-mem",
+	description:
+		"Hybrid memory (SQLite + LanceDB): maintenance, verify, search, diagnostics, and ingestion",
+	hasSubcommands: true,
 };
 
 /**
@@ -158,298 +175,379 @@ export const HYBRID_MEM_CLI_ROOT_DESCRIPTOR = {
  * collect CLI metadata without activating the full plugin (issue #1111).
  */
 export function registerHybridMemCliMetadataOnly(api: ClawdbotPluginApi): void {
-  api.registerCli(
-    () => {
-      // Full Commander wiring runs on full registration or when a lazy placeholder loads this plugin.
-    },
-    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
-  );
+	api.registerCli(
+		() => {
+			// Full Commander wiring runs on full registration or when a lazy placeholder loads this plugin.
+		},
+		{ descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
+	);
 }
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
 interface CliContextServices {
-  runFindDuplicates: (opts: {
-    threshold: number;
-    includeStructured: boolean;
-    limit: number;
-  }) => Promise<FindDuplicatesResult>;
-  runConsolidate: (opts: {
-    threshold: number;
-    includeStructured: boolean;
-    dryRun: boolean;
-    limit: number;
-    model: string;
-  }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
-    factsAnalyzed: number;
-    patternsExtracted: number;
-    patternsStored: number;
-    window: number;
-  }>;
-  runReflectionRules: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number }>;
-  runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
-    reclassified: number;
-    total: number;
-    breakdown?: Record<string, number>;
-  }>;
-  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
-  runBuildLanguageKeywords: (opts: {
-    model?: string;
-    dryRun?: boolean;
-  }) => Promise<
-    { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
-  >;
-  runEntityEnrichment: (opts: {
-    limit: number;
-    dryRun: boolean;
-    model?: string;
-    verbose?: boolean;
-  }) => Promise<{
-    pending: number;
-    processed: number;
-    factsEnriched: number;
-    skipped?: boolean;
-    pendingFactIds?: string[];
-    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
-  }>;
-  runExport: (opts: {
-    outputPath: string;
-    excludeCredentials?: boolean;
-    includeCredentials?: boolean;
-    sources?: string[];
-    mode?: "replace" | "additive";
-  }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
-  runDreamCycle: () => Promise<DreamCycleResult>;
-  runContinuousVerification: () => Promise<VerificationCycleResult>;
-  runResolveContradictions: () => Promise<{
-    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
-    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
-  }>;
-  getMemoryCategories: () => string[];
-  mergeResults: HybridMemCliContext["mergeResults"];
-  parseSourceDate: (v: string | number | null | undefined) => number | null;
-  versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
+	runFindDuplicates: (opts: {
+		threshold: number;
+		includeStructured: boolean;
+		limit: number;
+	}) => Promise<FindDuplicatesResult>;
+	runConsolidate: (opts: {
+		threshold: number;
+		includeStructured: boolean;
+		dryRun: boolean;
+		limit: number;
+		model: string;
+	}) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
+	runReflection: (opts: {
+		window: number;
+		dryRun: boolean;
+		model: string;
+		verbose?: boolean;
+	}) => Promise<{
+		factsAnalyzed: number;
+		patternsExtracted: number;
+		patternsStored: number;
+		window: number;
+	}>;
+	runReflectionRules: (opts: {
+		dryRun: boolean;
+		model: string;
+		verbose?: boolean;
+	}) => Promise<{ rulesExtracted: number; rulesStored: number }>;
+	runReflectionMeta: (opts: {
+		dryRun: boolean;
+		model: string;
+		verbose?: boolean;
+	}) => Promise<{ metaExtracted: number; metaStored: number }>;
+	runClassify: (opts: {
+		dryRun: boolean;
+		limit: number;
+		model?: string;
+	}) => Promise<{
+		reclassified: number;
+		total: number;
+		breakdown?: Record<string, number>;
+	}>;
+	runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+	runBuildLanguageKeywords: (opts: {
+		model?: string;
+		dryRun?: boolean;
+	}) => Promise<
+		| { ok: true; path: string; topLanguages: string[]; languagesAdded: number }
+		| { ok: false; error: string }
+	>;
+	runEntityEnrichment: (opts: {
+		limit: number;
+		dryRun: boolean;
+		model?: string;
+		verbose?: boolean;
+	}) => Promise<{
+		pending: number;
+		processed: number;
+		factsEnriched: number;
+		skipped?: boolean;
+		pendingFactIds?: string[];
+		enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
+	}>;
+	runExport: (opts: {
+		outputPath: string;
+		excludeCredentials?: boolean;
+		includeCredentials?: boolean;
+		sources?: string[];
+		mode?: "replace" | "additive";
+	}) => Promise<{
+		factsExported: number;
+		proceduresExported: number;
+		filesWritten: number;
+		outputPath: string;
+	}>;
+	runDreamCycle: () => Promise<DreamCycleResult>;
+	runContinuousVerification: () => Promise<VerificationCycleResult>;
+	runResolveContradictions: () => Promise<{
+		autoResolved: Array<{
+			contradictionId: string;
+			factIdNew: string;
+			factIdOld: string;
+		}>;
+		ambiguous: Array<{
+			contradictionId: string;
+			factIdNew: string;
+			factIdOld: string;
+		}>;
+	}>;
+	getMemoryCategories: () => string[];
+	mergeResults: HybridMemCliContext["mergeResults"];
+	parseSourceDate: (v: string | number | null | undefined) => number | null;
+	versionInfo: {
+		pluginVersion: string;
+		memoryManagerVersion: string;
+		schemaVersion: number;
+	};
 }
 
 /** Context passed from plugin register() to wire CLI without pulling all service imports into index. */
 export interface HybridMemCliRegistrationContext {
-  factsDb: HandlerContext["factsDb"];
-  vectorDb: HandlerContext["vectorDb"];
-  embeddings: HandlerContext["embeddings"];
-  openai: HandlerContext["openai"];
-  cfg: HandlerContext["cfg"];
-  credentialsDb: HandlerContext["credentialsDb"];
-  aliasDb: HandlerContext["aliasDb"];
-  wal: HandlerContext["wal"];
-  proposalsDb: HandlerContext["proposalsDb"];
-  identityReflectionStore: HandlerContext["identityReflectionStore"];
-  personaStateStore: HandlerContext["personaStateStore"];
-  verificationStore?: import("../services/verification-store.js").VerificationStore | null;
-  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
-  resolvedSqlitePath: string;
-  resolvedLancePath: string;
-  pluginId: string;
-  detectCategory: HandlerContext["detectCategory"];
-  /** Optional event log for episodic consolidation in dream cycle. */
-  eventLog?: import("../backends/event-log.js").EventLog | null;
-  /** LLM cost tracker (Issue #270). */
-  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
-  /** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
-  eventBus?: import("../backends/event-bus.js").EventBus | null;
-  /** Audit log (Issue #790). */
-  auditStore?: import("../backends/audit-store.js").AuditStore | null;
-  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+	factsDb: HandlerContext["factsDb"];
+	vectorDb: HandlerContext["vectorDb"];
+	embeddings: HandlerContext["embeddings"];
+	openai: HandlerContext["openai"];
+	cfg: HandlerContext["cfg"];
+	credentialsDb: HandlerContext["credentialsDb"];
+	aliasDb: HandlerContext["aliasDb"];
+	wal: HandlerContext["wal"];
+	proposalsDb: HandlerContext["proposalsDb"];
+	identityReflectionStore: HandlerContext["identityReflectionStore"];
+	personaStateStore: HandlerContext["personaStateStore"];
+	verificationStore?:
+		| import("../services/verification-store.js").VerificationStore
+		| null;
+	provenanceService?:
+		| import("../services/provenance.js").ProvenanceService
+		| null;
+	resolvedSqlitePath: string;
+	resolvedLancePath: string;
+	pluginId: string;
+	detectCategory: HandlerContext["detectCategory"];
+	/** Optional event log for episodic consolidation in dream cycle. */
+	eventLog?: import("../backends/event-log.js").EventLog | null;
+	/** LLM cost tracker (Issue #270). */
+	costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+	/** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
+	eventBus?: import("../backends/event-bus.js").EventBus | null;
+	/** Audit log (Issue #790). */
+	auditStore?: import("../backends/audit-store.js").AuditStore | null;
+	agentHealthStore?:
+		| import("../backends/agent-health-store.js").AgentHealthStore
+		| null;
 }
 
-function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
-  const {
-    factsDb,
-    vectorDb,
-    embeddings,
-    openai,
-    cfg,
-    resolvedSqlitePath,
-    aliasDb,
-    verificationStore,
-    provenanceService,
-    wal,
-  } = ctx;
-  const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-  const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
-  return {
-    runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
-    runConsolidate: async (opts) => {
-      // Skip if OpenAI provider is configured but API key is missing
-      if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
-        return { clustersFound: 0, merged: 0, deleted: 0 };
-      }
-      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
-    },
-    runReflection: async (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      const result = await runReflection(
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        {
-          defaultWindow: cfg.reflection.defaultWindow,
-          minObservations: cfg.reflection.minObservations,
-          enabled: cfg.reflection.enabled,
-        },
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
-        logSink,
-        provenanceService,
-      );
-      // Record savings: each pattern stored encodes knowledge that saves future manual analysis
-      if (result.patternsStored > 0 && !opts.dryRun && ctx.costTracker) {
-        ctx.costTracker.recordSavings({
-          feature: "reflection",
-          action: "pattern extracted and stored",
-          countAvoided: result.patternsStored,
-          estimatedSavingUsd: result.patternsStored * 0.0005,
-          note: `${result.factsAnalyzed} facts analyzed → ${result.patternsStored} patterns stored`,
-        });
-      }
-      return result;
-    },
-    runReflectionRules: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflectionRules(
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
-        logSink,
-        provenanceService,
-      );
-    },
-    runReflectionMeta: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      return runReflectionMeta(
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
-        logSink,
-        provenanceService,
-      );
-    },
-    runClassify: async (opts) => {
-      const result = await runClassifyForCli(
-        factsDb,
-        openai,
-        cfg.autoClassify,
-        {
-          ...opts,
-          model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel,
-        },
-        discoveredPath,
-        logSink,
-        undefined,
-      );
-      // Record savings: batching avoids N individual LLM calls
-      if (result.reclassified > 0 && !opts.dryRun && ctx.costTracker) {
-        const batchSize = cfg.autoClassify.batchSize ?? 20;
-        const batchesUsed = Math.ceil(result.reclassified / batchSize);
-        const callsAvoided = Math.max(0, result.reclassified - batchesUsed);
-        if (callsAvoided > 0) {
-          ctx.costTracker.recordSavings({
-            feature: "auto-classify",
-            action: "batch-classified facts",
-            countAvoided: callsAvoided,
-            estimatedSavingUsd: callsAvoided * 0.0001,
-            note: `${result.reclassified} facts in ${batchesUsed} batch(es) vs ${result.reclassified} individual calls`,
-          });
-        }
-      }
-      return result;
-    },
-    runCompaction: () =>
-      Promise.resolve(
-        factsDb.runCompaction({
-          inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
-          hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
-          hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
-        }),
-      ),
-    runBuildLanguageKeywords: (opts) =>
-      runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
-        model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "default").defaultModel,
-        dryRun: opts.dryRun,
-      }),
-    runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
-    runExport: (opts) =>
-      Promise.resolve(
-        runExport(factsDb, opts, {
-          pluginVersion: versionInfo.pluginVersion,
-          schemaVersion: versionInfo.schemaVersion,
-        }),
-      ),
-    runDreamCycle: async () => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
-      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "dream_cycle_consolidation");
-      return runDreamCycle(
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        ctx.eventLog ?? null,
-        {
-          enabled: cfg.nightlyCycle.enabled,
-          schedule: cfg.nightlyCycle.schedule,
-          reflectWindowDays: cfg.nightlyCycle.reflectWindowDays,
-          pruneMode: cfg.nightlyCycle.pruneMode,
-          model: dreamModel,
-          fallbackModels: fallbackModels ?? [],
-          consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
-          eventLogArchivalDays: cfg.eventLog.archivalDays,
-          eventLogArchivePath: cfg.eventLog.archivePath,
-          maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
-          logRetentionDays: cfg.nightlyCycle.logRetentionDays,
-          vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
-        },
-        logSink,
-        provenanceService,
-      );
-    },
-    runContinuousVerification: async () => {
-      if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
-        return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
-      }
-      return runVerificationCycle(verificationStore, factsDb, openai, {
-        cycleDays: cfg.verification.cycleDays,
-        verificationModel: cfg.verification.verificationModel,
-      });
-    },
-    runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
-    getMemoryCategories: () => [...getMemoryCategories()],
-    mergeResults,
-    parseSourceDate,
-    versionInfo,
-  };
+function buildCliContextServices(
+	ctx: HybridMemCliRegistrationContext,
+	api: ClawdbotPluginApi,
+): CliContextServices {
+	const {
+		factsDb,
+		vectorDb,
+		embeddings,
+		openai,
+		cfg,
+		resolvedSqlitePath,
+		aliasDb,
+		verificationStore,
+		provenanceService,
+		wal,
+	} = ctx;
+	const discoveredPath = join(
+		dirname(resolvedSqlitePath),
+		".discovered-categories.json",
+	);
+	const logSink = {
+		info: (m: string) => pluginLogger.info(m),
+		warn: (m: string) => pluginLogger.warn(m),
+	};
+	return {
+		runFindDuplicates: (opts) =>
+			runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
+		runConsolidate: async (opts) => {
+			// Skip if OpenAI provider is configured but API key is missing
+			if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
+				return { clustersFound: 0, merged: 0, deleted: 0 };
+			}
+			await runPreConsolidationFlush(
+				{ wal, factsDb, vectorDb, embeddings },
+				api.logger,
+				"cli_consolidation",
+			);
+			return runConsolidate(
+				factsDb,
+				vectorDb,
+				embeddings,
+				openai,
+				opts,
+				api.logger,
+				aliasDb,
+				provenanceService,
+			);
+		},
+		runReflection: async (opts) => {
+			const { defaultModel, fallbackModels } =
+				resolveReflectionModelAndFallbacks(cfg, "default");
+			const result = await runReflection(
+				factsDb,
+				vectorDb,
+				embeddings,
+				openai,
+				{
+					defaultWindow: cfg.reflection.defaultWindow,
+					minObservations: cfg.reflection.minObservations,
+					enabled: cfg.reflection.enabled,
+				},
+				{ ...opts, model: opts.model ?? defaultModel, fallbackModels },
+				logSink,
+				provenanceService,
+			);
+			// Record savings: each pattern stored encodes knowledge that saves future manual analysis
+			if (result.patternsStored > 0 && !opts.dryRun && ctx.costTracker) {
+				ctx.costTracker.recordSavings({
+					feature: "reflection",
+					action: "pattern extracted and stored",
+					countAvoided: result.patternsStored,
+					estimatedSavingUsd: result.patternsStored * 0.0005,
+					note: `${result.factsAnalyzed} facts analyzed → ${result.patternsStored} patterns stored`,
+				});
+			}
+			return result;
+		},
+		runReflectionRules: (opts) => {
+			const { defaultModel, fallbackModels } =
+				resolveReflectionModelAndFallbacks(cfg, "default");
+			return runReflectionRules(
+				factsDb,
+				vectorDb,
+				embeddings,
+				openai,
+				{ ...opts, model: opts.model ?? defaultModel, fallbackModels },
+				logSink,
+				provenanceService,
+			);
+		},
+		runReflectionMeta: (opts) => {
+			const { defaultModel, fallbackModels } =
+				resolveReflectionModelAndFallbacks(cfg, "default");
+			return runReflectionMeta(
+				factsDb,
+				vectorDb,
+				embeddings,
+				openai,
+				{ ...opts, model: opts.model ?? defaultModel, fallbackModels },
+				logSink,
+				provenanceService,
+			);
+		},
+		runClassify: async (opts) => {
+			const result = await runClassifyForCli(
+				factsDb,
+				openai,
+				cfg.autoClassify,
+				{
+					...opts,
+					model:
+						opts.model ??
+						cfg.autoClassify.model ??
+						resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel,
+				},
+				discoveredPath,
+				logSink,
+				undefined,
+			);
+			// Record savings: batching avoids N individual LLM calls
+			if (result.reclassified > 0 && !opts.dryRun && ctx.costTracker) {
+				const batchSize = cfg.autoClassify.batchSize ?? 20;
+				const batchesUsed = Math.ceil(result.reclassified / batchSize);
+				const callsAvoided = Math.max(0, result.reclassified - batchesUsed);
+				if (callsAvoided > 0) {
+					ctx.costTracker.recordSavings({
+						feature: "auto-classify",
+						action: "batch-classified facts",
+						countAvoided: callsAvoided,
+						estimatedSavingUsd: callsAvoided * 0.0001,
+						note: `${result.reclassified} facts in ${batchesUsed} batch(es) vs ${result.reclassified} individual calls`,
+					});
+				}
+			}
+			return result;
+		},
+		runCompaction: () =>
+			Promise.resolve(
+				factsDb.runCompaction({
+					inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+					hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+					hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+				}),
+			),
+		runBuildLanguageKeywords: (opts) =>
+			runBuildLanguageKeywords(
+				factsDb.getFactsForConsolidation(300),
+				openai,
+				dirname(resolvedSqlitePath),
+				{
+					model:
+						opts.model ??
+						cfg.autoClassify.model ??
+						resolveReflectionModelAndFallbacks(cfg, "default").defaultModel,
+					dryRun: opts.dryRun,
+				},
+			),
+		runEntityEnrichment: (opts) =>
+			runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
+		runExport: (opts) =>
+			Promise.resolve(
+				runExport(factsDb, opts, {
+					pluginVersion: versionInfo.pluginVersion,
+					schemaVersion: versionInfo.schemaVersion,
+				}),
+			),
+		runDreamCycle: async () => {
+			const { defaultModel, fallbackModels } =
+				resolveReflectionModelAndFallbacks(cfg, "default");
+			const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
+			await runPreConsolidationFlush(
+				{ wal, factsDb, vectorDb, embeddings },
+				api.logger,
+				"dream_cycle_consolidation",
+			);
+			return runDreamCycle(
+				factsDb,
+				vectorDb,
+				embeddings,
+				openai,
+				ctx.eventLog ?? null,
+				{
+					enabled: cfg.nightlyCycle.enabled,
+					schedule: cfg.nightlyCycle.schedule,
+					reflectWindowDays: cfg.nightlyCycle.reflectWindowDays,
+					pruneMode: cfg.nightlyCycle.pruneMode,
+					model: dreamModel,
+					fallbackModels: fallbackModels ?? [],
+					consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
+					eventLogArchivalDays: cfg.eventLog.archivalDays,
+					eventLogArchivePath: cfg.eventLog.archivePath,
+					maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+					logRetentionDays: cfg.nightlyCycle.logRetentionDays,
+					vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
+				},
+				logSink,
+				provenanceService,
+			);
+		},
+		runContinuousVerification: async () => {
+			if (
+				!verificationStore ||
+				!cfg.verification.enabled ||
+				!cfg.verification.continuousVerification
+			) {
+				return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
+			}
+			return runVerificationCycle(verificationStore, factsDb, openai, {
+				cycleDays: cfg.verification.cycleDays,
+				verificationModel: cfg.verification.verificationModel,
+			});
+		},
+		runResolveContradictions: () =>
+			Promise.resolve(factsDb.resolveContradictions()),
+		getMemoryCategories: () => [...getMemoryCategories()],
+		mergeResults,
+		parseSourceDate,
+		versionInfo,
+	};
 }
 
 export type RegisterHybridMemCliWithApiOptions = {
-  /**
-   * Called after a `hybrid-mem` subcommand action completes (Commander `postAction` on the
-   * `hybrid-mem` command). Used to close LanceDB/SQLite and dispose timers so one-shot CLI
-   * processes can exit (Issue #1039).
-   */
-  onHybridMemCliComplete?: () => void | Promise<void>;
+	/**
+	 * Called after a `hybrid-mem` subcommand action completes (Commander `postAction` on the
+	 * `hybrid-mem` command). Used to close LanceDB/SQLite and dispose timers so one-shot CLI
+	 * processes can exit (Issue #1039).
+	 */
+	onHybridMemCliComplete?: () => void | Promise<void>;
 };
 
 /**
@@ -457,325 +555,403 @@ export type RegisterHybridMemCliWithApiOptions = {
  * Builds handler context and services inside setup so index stays a thin orchestrator.
  */
 export function registerHybridMemCliWithApi(
-  api: ClawdbotPluginApi,
-  ctx: HybridMemCliRegistrationContext,
-  options?: RegisterHybridMemCliWithApiOptions,
+	api: ClawdbotPluginApi,
+	ctx: HybridMemCliRegistrationContext,
+	options?: RegisterHybridMemCliWithApiOptions,
 ): void {
-  const handlerCtx: HandlerContext = {
-    ...ctx,
-    logger: api.logger,
-    api,
-  };
-  const services = buildCliContextServices(ctx, api);
-  api.registerCli(
-    ({ program }: { program: Command }) => {
-      try {
-        const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
-        registerCliWithHelp(program, cliCtx, options);
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "registration",
-          operation: "register-cli:callback",
-        });
-        throw err;
-      }
-    },
-    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
-  );
+	const handlerCtx: HandlerContext = {
+		...ctx,
+		logger: api.logger,
+		api,
+	};
+	const services = buildCliContextServices(ctx, api);
+	api.registerCli(
+		({ program }: { program: Command }) => {
+			try {
+				const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
+				registerCliWithHelp(program, cliCtx, options);
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						subsystem: "registration",
+						operation: "register-cli:callback",
+					},
+				);
+				throw err;
+			}
+		},
+		{ descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
+	);
 }
 
-function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliContext["richStatsExtras"]> {
-  const { credentialsDb, proposalsDb, wal, factsDb, resolvedSqlitePath, resolvedLancePath } = ctx;
-  const memoryDir = dirname(resolvedSqlitePath);
-  return {
-    getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
-    getProposalsPending: () => (proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0),
-    getProposalsAvailable: () => !!proposalsDb,
-    getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
-    getLastRunTimestamps: () => {
-      const out: { distill?: string; reflect?: string; compact?: string } = {};
-      for (const [key, file] of [
-        ["distill", ".distill_last_run"],
-        ["reflect", ".reflect_last_run"],
-        ["compact", ".compact_last_run"],
-      ] as const) {
-        const path = join(memoryDir, file);
-        if (existsSync(path)) {
-          try {
-            const line = readFileSync(path, "utf-8").split("\n")[0]?.trim() ?? "";
-            if (line) out[key] = line;
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "read-goal-file",
-              severity: "info",
-              subsystem: "cli",
-            });
-            /* ignore */
-          }
-        }
-      }
-      return out;
-    },
-    getStorageSizes: async () => {
-      let sqliteBytes: number | undefined;
-      let lanceBytes: number | undefined;
-      async function dirSizeAsync(p: string): Promise<number> {
-        try {
-          const { execFile } = await import("node:child_process");
-          return await new Promise<number>((resolve) => {
-            execFile("du", ["-sk", p], (error, stdout) => {
-              if (error) {
-                try {
-                  const st = statSync(p);
-                  resolve(st.isDirectory() ? 0 : st.size);
-                } catch (err) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    operation: "stat-check",
-                    severity: "info",
-                    subsystem: "cli",
-                  });
-                  resolve(0);
-                }
-                return;
-              }
-              const match = /^(\d+)/.exec(stdout.trim());
-              resolve(match ? Number.parseInt(match[1], 10) * 1024 : 0);
-            });
-          });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "dir-size",
-            severity: "info",
-            subsystem: "cli",
-          });
-          return 0;
-        }
-      }
-      try {
-        const est = factsDb.estimateStorageBytes();
-        sqliteBytes = est.sqliteBytes + est.walBytes + est.shmBytes;
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "facts-storage-estimate",
-          severity: "info",
-          subsystem: "cli",
-        });
-        try {
-          if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
-        } catch (statErr) {
-          capturePluginError(statErr instanceof Error ? statErr : new Error(String(statErr)), {
-            operation: "stat-check",
-            severity: "info",
-            subsystem: "cli",
-          });
-          /* ignore */
-        }
-      }
-      try {
-        if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "dir-size",
-          severity: "info",
-          subsystem: "cli",
-        });
-        /* ignore */
-      }
-      return { sqliteBytes, lanceBytes };
-    },
-  };
+function buildRichStatsExtras(
+	ctx: HandlerContext,
+): NonNullable<HybridMemCliContext["richStatsExtras"]> {
+	const {
+		credentialsDb,
+		proposalsDb,
+		wal,
+		factsDb,
+		resolvedSqlitePath,
+		resolvedLancePath,
+	} = ctx;
+	const memoryDir = dirname(resolvedSqlitePath);
+	return {
+		getCredentialsCount: () =>
+			credentialsDb ? credentialsDb.list().length : 0,
+		getProposalsPending: () =>
+			proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0,
+		getProposalsAvailable: () => !!proposalsDb,
+		getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
+		getLastRunTimestamps: () => {
+			const out: { distill?: string; reflect?: string; compact?: string } = {};
+			for (const [key, file] of [
+				["distill", ".distill_last_run"],
+				["reflect", ".reflect_last_run"],
+				["compact", ".compact_last_run"],
+			] as const) {
+				const path = join(memoryDir, file);
+				if (existsSync(path)) {
+					try {
+						const line =
+							readFileSync(path, "utf-8").split("\n")[0]?.trim() ?? "";
+						if (line) out[key] = line;
+					} catch (err) {
+						capturePluginError(
+							err instanceof Error ? err : new Error(String(err)),
+							{
+								operation: "read-goal-file",
+								severity: "info",
+								subsystem: "cli",
+							},
+						);
+						/* ignore */
+					}
+				}
+			}
+			return out;
+		},
+		getStorageSizes: async () => {
+			let sqliteBytes: number | undefined;
+			let lanceBytes: number | undefined;
+			async function dirSizeAsync(p: string): Promise<number> {
+				try {
+					const { execFile } = await import("node:child_process");
+					return await new Promise<number>((resolve) => {
+						execFile("du", ["-sk", p], (error, stdout) => {
+							if (error) {
+								try {
+									const st = statSync(p);
+									resolve(st.isDirectory() ? 0 : st.size);
+								} catch (err) {
+									capturePluginError(
+										err instanceof Error ? err : new Error(String(err)),
+										{
+											operation: "stat-check",
+											severity: "info",
+											subsystem: "cli",
+										},
+									);
+									resolve(0);
+								}
+								return;
+							}
+							const match = /^(\d+)/.exec(stdout.trim());
+							resolve(match ? Number.parseInt(match[1], 10) * 1024 : 0);
+						});
+					});
+				} catch (err) {
+					capturePluginError(
+						err instanceof Error ? err : new Error(String(err)),
+						{
+							operation: "dir-size",
+							severity: "info",
+							subsystem: "cli",
+						},
+					);
+					return 0;
+				}
+			}
+			try {
+				const est = factsDb.estimateStorageBytes();
+				sqliteBytes = est.sqliteBytes + est.walBytes + est.shmBytes;
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "facts-storage-estimate",
+						severity: "info",
+						subsystem: "cli",
+					},
+				);
+				try {
+					if (existsSync(resolvedSqlitePath))
+						sqliteBytes = statSync(resolvedSqlitePath).size;
+				} catch (statErr) {
+					capturePluginError(
+						statErr instanceof Error ? statErr : new Error(String(statErr)),
+						{
+							operation: "stat-check",
+							severity: "info",
+							subsystem: "cli",
+						},
+					);
+					/* ignore */
+				}
+			}
+			try {
+				if (existsSync(resolvedLancePath))
+					lanceBytes = await dirSizeAsync(resolvedLancePath);
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "dir-size",
+						severity: "info",
+						subsystem: "cli",
+					},
+				);
+				/* ignore */
+			}
+			return { sqliteBytes, lanceBytes };
+		},
+	};
 }
 
 function buildListCommands(
-  ctx: HandlerContext,
-  api: ClawdbotPluginApi,
+	ctx: HandlerContext,
+	api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
-  const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
-  const workspaceRoot = () => getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-  const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
+	const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
+	const workspaceRoot = () =>
+		getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+	const reportDir = (workspace?: string) =>
+		join(workspace ?? workspaceRoot(), "memory", "reports");
 
-  function parseReportProposedSections(content: string): string[] {
-    const lines = content.split("\n");
-    const items: string[] = [];
-    let inSection = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith("## Suggested TOOLS.md rules") || trimmed === "## Proposed (review before applying)") {
-        inSection = true;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        inSection = false;
-        continue;
-      }
-      if (inSection && trimmed.startsWith("- ") && trimmed.length > 2) items.push(trimmed.slice(2).trim());
-    }
-    return items;
-  }
+	function parseReportProposedSections(content: string): string[] {
+		const lines = content.split("\n");
+		const items: string[] = [];
+		let inSection = false;
+		for (let i = 0; i < lines.length; i++) {
+			const trimmed = lines[i].trim();
+			if (
+				trimmed.startsWith("## Suggested TOOLS.md rules") ||
+				trimmed === "## Proposed (review before applying)"
+			) {
+				inSection = true;
+				continue;
+			}
+			if (trimmed.startsWith("## ")) {
+				inSection = false;
+				continue;
+			}
+			if (inSection && trimmed.startsWith("- ") && trimmed.length > 2)
+				items.push(trimmed.slice(2).trim());
+		}
+		return items;
+	}
 
-  function parseReportRulesForApply(content: string): { toolsRules: string[]; agentsRules: string[] } {
-    const toolsRules: string[] = [];
-    const agentsRules: string[] = [];
-    const lines = content.split("\n");
-    let inSuggested = false;
-    let inProposed = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith("## Suggested TOOLS.md rules")) {
-        inSuggested = true;
-        inProposed = false;
-        continue;
-      }
-      if (trimmed === "## Proposed (review before applying)") {
-        inSuggested = false;
-        inProposed = true;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        inSuggested = false;
-        inProposed = false;
-        continue;
-      }
-      if (trimmed.startsWith("- ") && trimmed.length > 2) {
-        const text = trimmed.slice(2).trim();
-        if (inSuggested) {
-          toolsRules.push(text);
-        } else if (inProposed) {
-          if (text.startsWith("[AGENTS_RULE]") || text.startsWith("[SKILL_UPDATE]")) {
-            agentsRules.push(text.replace(/^\[(AGENTS_RULE|SKILL_UPDATE)\]\s*/i, "").trim());
-          } else {
-            toolsRules.push(text.replace(/^\[TOOLS_RULE\]\s*/i, "").trim());
-          }
-        }
-      }
-    }
-    return { toolsRules, agentsRules };
-  }
+	function parseReportRulesForApply(content: string): {
+		toolsRules: string[];
+		agentsRules: string[];
+	} {
+		const toolsRules: string[] = [];
+		const agentsRules: string[] = [];
+		const lines = content.split("\n");
+		let inSuggested = false;
+		let inProposed = false;
+		for (let i = 0; i < lines.length; i++) {
+			const trimmed = lines[i].trim();
+			if (trimmed.startsWith("## Suggested TOOLS.md rules")) {
+				inSuggested = true;
+				inProposed = false;
+				continue;
+			}
+			if (trimmed === "## Proposed (review before applying)") {
+				inSuggested = false;
+				inProposed = true;
+				continue;
+			}
+			if (trimmed.startsWith("## ")) {
+				inSuggested = false;
+				inProposed = false;
+				continue;
+			}
+			if (trimmed.startsWith("- ") && trimmed.length > 2) {
+				const text = trimmed.slice(2).trim();
+				if (inSuggested) {
+					toolsRules.push(text);
+				} else if (inProposed) {
+					if (
+						text.startsWith("[AGENTS_RULE]") ||
+						text.startsWith("[SKILL_UPDATE]")
+					) {
+						agentsRules.push(
+							text.replace(/^\[(AGENTS_RULE|SKILL_UPDATE)\]\s*/i, "").trim(),
+						);
+					} else {
+						toolsRules.push(text.replace(/^\[TOOLS_RULE\]\s*/i, "").trim());
+					}
+				}
+			}
+		}
+		return { toolsRules, agentsRules };
+	}
 
-  function getLatestCorrectionReport(workspace?: string): { path: string; content: string } | null {
-    const dir = reportDir(workspace);
-    if (!existsSync(dir)) return null;
-    const files = readdirSync(dir)
-      .filter((f) => f.startsWith("self-correction-") && f.endsWith(".md"))
-      .sort()
-      .reverse();
-    if (files.length === 0) return null;
-    const path = join(dir, files[0]);
-    try {
-      const content = readFileSync(path, "utf-8");
-      return { path, content };
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "read-report-file",
-        severity: "info",
-        subsystem: "cli",
-      });
-      return null;
-    }
-  }
+	function getLatestCorrectionReport(
+		workspace?: string,
+	): { path: string; content: string } | null {
+		const dir = reportDir(workspace);
+		if (!existsSync(dir)) return null;
+		const files = readdirSync(dir)
+			.filter((f) => f.startsWith("self-correction-") && f.endsWith(".md"))
+			.sort()
+			.reverse();
+		if (files.length === 0) return null;
+		const path = join(dir, files[0]);
+		try {
+			const content = readFileSync(path, "utf-8");
+			return { path, content };
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "read-report-file",
+				severity: "info",
+				subsystem: "cli",
+			});
+			return null;
+		}
+	}
 
-  return {
-    listProposals: async (opts: { status?: string }) => {
-      if (!proposalsDb) return [];
-      const list = proposalsDb.list({ status: opts.status });
-      return list.map((p) => ({
-        id: p.id,
-        title: p.title,
-        targetFile: p.targetFile,
-        status: p.status,
-        confidence: p.confidence,
-        createdAt: p.createdAt,
-      }));
-    },
-    proposalApprove: async (id: string) => {
-      if (!proposalsDb) return { ok: false, error: "Proposals not available" };
-      const p = proposalsDb.get(id);
-      if (!p) return { ok: false, error: `Proposal ${id} not found` };
-      if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
-      proposalsDb.updateStatus(id, "approved");
-      const applyResult = await applyApprovedProposal({ proposalsDb, cfg, resolvedSqlitePath, api }, id);
-      if (!applyResult.ok) {
-        proposalsDb.updateStatus(id, "pending");
-        return { ok: false, error: applyResult.error };
-      }
-      return { ok: true };
-    },
-    proposalReject: async (id: string, reason?: string) => {
-      if (!proposalsDb) return { ok: false, error: "Proposals not available" };
-      const p = proposalsDb.get(id);
-      if (!p) return { ok: false, error: `Proposal ${id} not found` };
-      if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
-      proposalsDb.updateStatus(id, "rejected", undefined, reason);
-      return { ok: true };
-    },
-    listCorrections: async (opts: { workspace?: string }) => {
-      const report = getLatestCorrectionReport(opts.workspace);
-      if (!report) return { reportPath: null, items: [] };
-      const items = parseReportProposedSections(report.content);
-      return { reportPath: report.path, items };
-    },
-    correctionsApproveAll: async (opts: { workspace?: string }) => {
-      const report = getLatestCorrectionReport(opts.workspace);
-      if (!report) return { applied: 0, error: "No self-correction report found" };
-      const { toolsRules, agentsRules } = parseReportRulesForApply(report.content);
-      const totalRules = toolsRules.length + agentsRules.length;
-      if (totalRules === 0)
-        return { applied: 0, error: "No suggested TOOLS or AGENTS rules in report (run self-correction-run first)" };
-      const root = opts.workspace ?? workspaceRoot();
-      const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
-      const section =
-        typeof scCfg === "object" && scCfg && "toolsSection" in scCfg
-          ? (scCfg.toolsSection as string)
-          : "Self-correction rules";
-      let applied = 0;
-      if (toolsRules.length > 0) {
-        const toolsPath = join(root, "TOOLS.md");
-        if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
-        const { inserted } = insertRulesUnderSection(toolsPath, section, toolsRules);
-        applied += inserted;
-      }
-      if (agentsRules.length > 0) {
-        const agentsPath = join(root, "AGENTS.md");
-        const { inserted } = insertRulesUnderSection(agentsPath, section, agentsRules, "# AGENTS");
-        applied += inserted;
-      }
-      return { applied };
-    },
-    showItem: async (id: string) => {
-      const fact = factsDb.getById(id);
-      if (fact) return { type: "fact" as const, data: fact };
-      if (proposalsDb) {
-        const p = proposalsDb.get(id);
-        if (p) return { type: "proposal" as const, data: p };
-      }
-      return null;
-    },
-  };
+	return {
+		listProposals: async (opts: { status?: string }) => {
+			if (!proposalsDb) return [];
+			const list = proposalsDb.list({ status: opts.status });
+			return list.map((p) => ({
+				id: p.id,
+				title: p.title,
+				targetFile: p.targetFile,
+				status: p.status,
+				confidence: p.confidence,
+				createdAt: p.createdAt,
+			}));
+		},
+		proposalApprove: async (id: string) => {
+			if (!proposalsDb) return { ok: false, error: "Proposals not available" };
+			const p = proposalsDb.get(id);
+			if (!p) return { ok: false, error: `Proposal ${id} not found` };
+			if (p.status !== "pending")
+				return { ok: false, error: `Proposal is already ${p.status}` };
+			proposalsDb.updateStatus(id, "approved");
+			const applyResult = await applyApprovedProposal(
+				{ proposalsDb, cfg, resolvedSqlitePath, api },
+				id,
+			);
+			if (!applyResult.ok) {
+				proposalsDb.updateStatus(id, "pending");
+				return { ok: false, error: applyResult.error };
+			}
+			return { ok: true };
+		},
+		proposalReject: async (id: string, reason?: string) => {
+			if (!proposalsDb) return { ok: false, error: "Proposals not available" };
+			const p = proposalsDb.get(id);
+			if (!p) return { ok: false, error: `Proposal ${id} not found` };
+			if (p.status !== "pending")
+				return { ok: false, error: `Proposal is already ${p.status}` };
+			proposalsDb.updateStatus(id, "rejected", undefined, reason);
+			return { ok: true };
+		},
+		listCorrections: async (opts: { workspace?: string }) => {
+			const report = getLatestCorrectionReport(opts.workspace);
+			if (!report) return { reportPath: null, items: [] };
+			const items = parseReportProposedSections(report.content);
+			return { reportPath: report.path, items };
+		},
+		correctionsApproveAll: async (opts: { workspace?: string }) => {
+			const report = getLatestCorrectionReport(opts.workspace);
+			if (!report)
+				return { applied: 0, error: "No self-correction report found" };
+			const { toolsRules, agentsRules } = parseReportRulesForApply(
+				report.content,
+			);
+			const totalRules = toolsRules.length + agentsRules.length;
+			if (totalRules === 0)
+				return {
+					applied: 0,
+					error:
+						"No suggested TOOLS or AGENTS rules in report (run self-correction-run first)",
+				};
+			const root = opts.workspace ?? workspaceRoot();
+			const scCfg = cfg.selfCorrection ?? {
+				toolsSection: "Self-correction rules",
+			};
+			const section =
+				typeof scCfg === "object" && scCfg && "toolsSection" in scCfg
+					? (scCfg.toolsSection as string)
+					: "Self-correction rules";
+			let applied = 0;
+			if (toolsRules.length > 0) {
+				const toolsPath = join(root, "TOOLS.md");
+				if (!existsSync(toolsPath))
+					return { applied: 0, error: "TOOLS.md not found in workspace" };
+				const { inserted } = insertRulesUnderSection(
+					toolsPath,
+					section,
+					toolsRules,
+				);
+				applied += inserted;
+			}
+			if (agentsRules.length > 0) {
+				const agentsPath = join(root, "AGENTS.md");
+				const { inserted } = insertRulesUnderSection(
+					agentsPath,
+					section,
+					agentsRules,
+					"# AGENTS",
+				);
+				applied += inserted;
+			}
+			return { applied };
+		},
+		showItem: async (id: string) => {
+			const fact = factsDb.getById(id);
+			if (fact) return { type: "fact" as const, data: fact };
+			if (proposalsDb) {
+				const p = proposalsDb.get(id);
+				if (p) return { type: "proposal" as const, data: p };
+			}
+			return null;
+		},
+	};
 }
 
 /**
  * Build the ActiveTaskContext from the handler context.
  * Resolves file paths against the workspace root.
  */
-function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContext {
-  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-  const { activeTask } = handlerCtx.cfg;
-  // Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
-  const activeTaskFilePath = isAbsolute(activeTask.filePath)
-    ? activeTask.filePath
-    : join(workspaceRoot, activeTask.filePath);
-  const memoryDir = join(workspaceRoot, "memory");
-  return {
-    activeTaskFilePath,
-    staleMinutes: parseDuration(activeTask.staleThreshold),
-    flushOnComplete: activeTask.flushOnComplete,
-    memoryDir,
-    ledger: activeTask.ledger,
-    projection: activeTask.projection,
-    factsDb: handlerCtx.factsDb,
-    vectorDb: handlerCtx.vectorDb,
-    embeddings: handlerCtx.embeddings,
-  };
+function buildActiveTaskCliContext(
+	handlerCtx: HandlerContext,
+): ActiveTaskContext {
+	const workspaceRoot =
+		getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+	const { activeTask } = handlerCtx.cfg;
+	// Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
+	const activeTaskFilePath = isAbsolute(activeTask.filePath)
+		? activeTask.filePath
+		: join(workspaceRoot, activeTask.filePath);
+	const memoryDir = join(workspaceRoot, "memory");
+	return {
+		activeTaskFilePath,
+		staleMinutes: parseDuration(activeTask.staleThreshold),
+		flushOnComplete: activeTask.flushOnComplete,
+		memoryDir,
+		ledger: activeTask.ledger,
+		projection: activeTask.projection,
+		factsDb: handlerCtx.factsDb,
+		vectorDb: handlerCtx.vectorDb,
+		embeddings: handlerCtx.embeddings,
+	};
 }
 
 /**
@@ -783,133 +959,185 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
  * Uses handlers from cli/handlers.ts and services for reflection/consolidation/export etc.
  */
 function createHybridMemCliContext(
-  handlerCtx: HandlerContext,
-  api: ClawdbotPluginApi,
-  services: CliContextServices,
+	handlerCtx: HandlerContext,
+	api: ClawdbotPluginApi,
+	services: CliContextServices,
 ): HybridMemCliContext {
-  const log = { warn: (m: string) => api.logger.warn?.(m) };
-  return {
-    factsDb: handlerCtx.factsDb,
-    vectorDb: handlerCtx.vectorDb,
-    aliasDb: handlerCtx.aliasDb,
-    versionInfo: services.versionInfo,
-    embeddings: handlerCtx.embeddings,
-    mergeResults: services.mergeResults,
-    parseSourceDate: services.parseSourceDate,
-    getMemoryCategories: services.getMemoryCategories,
-    cfg: handlerCtx.cfg,
-    runStore: (opts) => handlers.runStoreForCli(handlerCtx, opts, log),
-    runInstall: (opts) => Promise.resolve(handlers.runInstallForCli(opts)),
-    runVerify: (opts, sink) => handlers.runVerifyForCli(handlerCtx, opts, sink),
-    runResetAuthBackoff: () => handlers.runResetAuthBackoffForCli(handlerCtx),
-    runDistillWindow: (opts) => Promise.resolve(handlers.runDistillWindowForCli(handlerCtx, opts)),
-    runRecordDistill: () => Promise.resolve(handlers.runRecordDistillForCli(handlerCtx)),
-    runExtractDaily: (opts, sink) => handlers.runExtractDailyForCli(handlerCtx, opts, sink),
-    runExtractProcedures: (opts) => handlers.runExtractProceduresForCli(handlerCtx, opts),
-    runGenerateAutoSkills: (opts) => handlers.runGenerateAutoSkillsForCli(handlerCtx, opts),
-    runBackfill: (opts, sink) => handlers.runBackfillForCli(handlerCtx, opts, sink),
-    runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
-    runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
-    runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
-    runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
-    runCredentialsGet: (opts) => handlers.runCredentialsGetForCli(handlerCtx, opts),
-    runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
-    runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
-    runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
-    runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
-    runConfigView: (sink) => handlers.runConfigViewForCli(handlerCtx, sink),
-    runConfigMode: (mode) => Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),
-    runConfigSet: (key, value) => Promise.resolve(handlers.runConfigSetForCli(handlerCtx, key, value)),
-    runConfigSetHelp: (key) => Promise.resolve(handlers.runConfigSetHelpForCli(handlerCtx, key)),
-    runFindDuplicates: services.runFindDuplicates,
-    runConsolidate: services.runConsolidate,
-    runReflection: services.runReflection,
-    runReflectionRules: services.runReflectionRules,
-    runReflectionMeta: services.runReflectionMeta,
-    runDreamCycle: services.runDreamCycle,
-    runContinuousVerification: services.runContinuousVerification,
-    runResolveContradictions: services.runResolveContradictions,
-    reflectionConfig: {
-      ...handlerCtx.cfg.reflection,
-      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
-    },
-    runClassify: services.runClassify,
-    autoClassifyConfig: {
-      ...handlerCtx.cfg.autoClassify,
-      model: handlerCtx.cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "nano"),
-    },
-    runCompaction: services.runCompaction,
-    runBuildLanguageKeywords: services.runBuildLanguageKeywords,
-    runEntityEnrichment: services.runEntityEnrichment,
-    runSelfCorrectionExtract: (opts) => Promise.resolve(handlers.runSelfCorrectionExtractForCli(handlerCtx, opts)),
-    runSelfCorrectionRun: (opts) => handlers.runSelfCorrectionRunForCli(handlerCtx, opts),
-    runAnalyzeFeedbackPhrases: (opts) => handlers.runAnalyzeFeedbackPhrasesForCli(handlerCtx, opts),
-    runExtractDirectives: (opts) => handlers.runExtractDirectivesForCli(handlerCtx, opts),
-    runExtractReinforcement: (opts) => handlers.runExtractReinforcementForCli(handlerCtx, opts),
-    runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
-    runCrossAgentLearning: () => handlers.runCrossAgentLearningForCli(handlerCtx),
-    runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
-    runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
-    pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),
-    runExport: services.runExport,
-    richStatsExtras: buildRichStatsExtras(handlerCtx),
-    listCommands: buildListCommands(handlerCtx, api),
-    tieringEnabled: handlerCtx.cfg.memoryTiering.enabled,
-    resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
-    resolvedLancePath: handlerCtx.resolvedLancePath,
-    resolvePath: (file: string) => api.resolvePath(file),
-    // Issue #276 — Backup CLI
-    runBackup: (opts) =>
-      runBackupFn({
-        resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
-        resolvedLancePath: handlerCtx.resolvedLancePath,
-        backupDir: opts?.backupDir,
-      }),
-    runBackupVerify: () => runBackupVerifyFn({ resolvedSqlitePath: handlerCtx.resolvedSqlitePath }),
-    runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
-    activeTask: handlerCtx.cfg.activeTask.enabled ? buildActiveTaskCliContext(handlerCtx) : undefined,
-    eventBus: handlerCtx.eventBus ?? null,
-    auditStore: handlerCtx.auditStore ?? null,
-    agentHealthStore: handlerCtx.agentHealthStore ?? null,
-  };
+	const log = { warn: (m: string) => api.logger.warn?.(m) };
+	return {
+		factsDb: handlerCtx.factsDb,
+		vectorDb: handlerCtx.vectorDb,
+		aliasDb: handlerCtx.aliasDb,
+		versionInfo: services.versionInfo,
+		embeddings: handlerCtx.embeddings,
+		mergeResults: services.mergeResults,
+		parseSourceDate: services.parseSourceDate,
+		getMemoryCategories: services.getMemoryCategories,
+		cfg: handlerCtx.cfg,
+		runStore: (opts) => handlers.runStoreForCli(handlerCtx, opts, log),
+		runInstall: (opts) => Promise.resolve(handlers.runInstallForCli(opts)),
+		runVerify: (opts, sink) => handlers.runVerifyForCli(handlerCtx, opts, sink),
+		runResetAuthBackoff: () => handlers.runResetAuthBackoffForCli(handlerCtx),
+		runDistillWindow: (opts) =>
+			Promise.resolve(handlers.runDistillWindowForCli(handlerCtx, opts)),
+		runRecordDistill: () =>
+			Promise.resolve(handlers.runRecordDistillForCli(handlerCtx)),
+		runExtractDaily: (opts, sink) =>
+			handlers.runExtractDailyForCli(handlerCtx, opts, sink),
+		runExtractProcedures: (opts) =>
+			handlers.runExtractProceduresForCli(handlerCtx, opts),
+		runGenerateAutoSkills: (opts) =>
+			handlers.runGenerateAutoSkillsForCli(handlerCtx, opts),
+		runBackfill: (opts, sink) =>
+			handlers.runBackfillForCli(handlerCtx, opts, sink),
+		runIngestFiles: (opts, sink) =>
+			handlers.runIngestFilesForCli(handlerCtx, opts, sink),
+		runDistill: (opts, sink) =>
+			handlers.runDistillForCli(handlerCtx, opts, sink),
+		runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+		runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
+		runCredentialsGet: (opts) =>
+			handlers.runCredentialsGetForCli(handlerCtx, opts),
+		runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
+		runCredentialsPrune: (opts) =>
+			handlers.runCredentialsPruneForCli(handlerCtx, opts),
+		runUninstall: (opts) =>
+			Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
+		runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
+		runConfigView: (sink) => handlers.runConfigViewForCli(handlerCtx, sink),
+		runConfigMode: (mode) =>
+			Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),
+		runConfigSet: (key, value) =>
+			Promise.resolve(handlers.runConfigSetForCli(handlerCtx, key, value)),
+		runConfigSetHelp: (key) =>
+			Promise.resolve(handlers.runConfigSetHelpForCli(handlerCtx, key)),
+		runFindDuplicates: services.runFindDuplicates,
+		runConsolidate: services.runConsolidate,
+		runReflection: services.runReflection,
+		runReflectionRules: services.runReflectionRules,
+		runReflectionMeta: services.runReflectionMeta,
+		runDreamCycle: services.runDreamCycle,
+		runContinuousVerification: services.runContinuousVerification,
+		runResolveContradictions: services.runResolveContradictions,
+		reflectionConfig: {
+			...handlerCtx.cfg.reflection,
+			model:
+				handlerCtx.cfg.reflection.model ??
+				getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
+		},
+		runClassify: services.runClassify,
+		autoClassifyConfig: {
+			...handlerCtx.cfg.autoClassify,
+			model:
+				handlerCtx.cfg.autoClassify.model ??
+				getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "nano"),
+		},
+		runCompaction: services.runCompaction,
+		runBuildLanguageKeywords: services.runBuildLanguageKeywords,
+		runEntityEnrichment: services.runEntityEnrichment,
+		runSelfCorrectionExtract: (opts) =>
+			Promise.resolve(
+				handlers.runSelfCorrectionExtractForCli(handlerCtx, opts),
+			),
+		runSelfCorrectionRun: (opts) =>
+			handlers.runSelfCorrectionRunForCli(handlerCtx, opts),
+		runAnalyzeFeedbackPhrases: (opts) =>
+			handlers.runAnalyzeFeedbackPhrasesForCli(handlerCtx, opts),
+		runExtractDirectives: (opts) =>
+			handlers.runExtractDirectivesForCli(handlerCtx, opts),
+		runExtractReinforcement: (opts) =>
+			handlers.runExtractReinforcementForCli(handlerCtx, opts),
+		runExtractImplicitFeedback: (opts) =>
+			handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
+		runCrossAgentLearning: () =>
+			handlers.runCrossAgentLearningForCli(handlerCtx),
+		runToolEffectiveness: (opts) =>
+			handlers.runToolEffectivenessForCli(handlerCtx, opts),
+		runCostReport: (opts, sink) =>
+			handlers.runCostReportForCli(handlerCtx, opts, sink),
+		pruneCostLog: (retainDays) =>
+			handlerCtx.costTracker
+				? handlerCtx.costTracker.pruneOldEntries(retainDays)
+				: 0,
+		runExport: services.runExport,
+		richStatsExtras: buildRichStatsExtras(handlerCtx),
+		listCommands: buildListCommands(handlerCtx, api),
+		tieringEnabled: handlerCtx.cfg.memoryTiering.enabled,
+		resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
+		resolvedLancePath: handlerCtx.resolvedLancePath,
+		resolvePath: (file: string) => api.resolvePath(file),
+		// Issue #276 — Backup CLI
+		runBackup: (opts) =>
+			runBackupFn({
+				resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
+				resolvedLancePath: handlerCtx.resolvedLancePath,
+				backupDir: opts?.backupDir,
+			}),
+		runBackupVerify: () =>
+			runBackupVerifyFn({ resolvedSqlitePath: handlerCtx.resolvedSqlitePath }),
+		runGenerateProposals: (opts) =>
+			handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
+		activeTask: handlerCtx.cfg.activeTask.enabled
+			? buildActiveTaskCliContext(handlerCtx)
+			: undefined,
+		eventBus: handlerCtx.eventBus ?? null,
+		auditStore: handlerCtx.auditStore ?? null,
+		agentHealthStore: handlerCtx.agentHealthStore ?? null,
+	};
 }
 
 /** Register hybrid-mem CLI with the program subcommand and help text */
 function registerCliWithHelp(
-  program: { command: (name: string) => { description: (d: string) => unknown } },
-  ctx: HybridMemCliContext,
-  options?: RegisterHybridMemCliWithApiOptions,
+	program: {
+		command: (name: string) => { description: (d: string) => unknown };
+	},
+	ctx: HybridMemCliContext,
+	options?: RegisterHybridMemCliWithApiOptions,
 ): void {
-  const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands") as Command;
-  mem.option(
-    "-v, --verbose",
-    "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
-    false,
-  );
-  const onComplete = options?.onHybridMemCliComplete;
-  if (onComplete && typeof mem.hook === "function") {
-    mem.hook("postAction", async () => {
-      try {
-        await onComplete();
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "cli",
-          operation: "hybrid-mem-post-action-teardown",
-        });
-      }
-    });
-  }
-  try {
-    registerHybridMemCli(mem as Parameters<typeof registerHybridMemCli>[0], ctx);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "register-cli:hybrid-mem",
-    });
-    throw err;
-  }
-  if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
-    const helpText = HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS;
-    (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", helpText);
-  }
+	const mem = program
+		.command("hybrid-mem")
+		.description("Hybrid memory plugin commands") as Command;
+	mem.option(
+		"-v, --verbose",
+		"Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
+		false,
+	);
+	const onComplete = options?.onHybridMemCliComplete;
+	if (onComplete && typeof mem.hook === "function") {
+		mem.hook("postAction", async () => {
+			try {
+				await onComplete();
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						subsystem: "cli",
+						operation: "hybrid-mem-post-action-teardown",
+					},
+				);
+			}
+		});
+	}
+	try {
+		registerHybridMemCli(
+			mem as Parameters<typeof registerHybridMemCli>[0],
+			ctx,
+		);
+	} catch (err) {
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			subsystem: "registration",
+			operation: "register-cli:hybrid-mem",
+		});
+		throw err;
+	}
+	if (
+		typeof (mem as { addHelpText?: (loc: string, text: string) => void })
+			.addHelpText === "function"
+	) {
+		const helpText = HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS;
+		(mem as { addHelpText: (loc: string, text: string) => void }).addHelpText(
+			"after",
+			helpText,
+		);
+	}
 }

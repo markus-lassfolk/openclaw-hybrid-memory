@@ -15,15 +15,15 @@ export const MIN_CREDENTIAL_VALUE_LENGTH = 8;
  * Catches absolute paths (starting with /) and home-relative paths (starting with ~).
  */
 function looksLikePath(value: string): boolean {
-  // Tilde-home or absolute path
-  if (/^[/~]/.test(value)) {
-    if (/@|:\/\//.test(value)) return false; // URL with auth — not a bare path
-    return true;
-  }
-  if (!value.includes("/")) return false;
-  if (/@|:\/\//.test(value)) return false;
-  if (/^[\w.-]+\//.test(value) && value.length > 6) return true;
-  return false;
+	// Tilde-home or absolute path
+	if (/^[/~]/.test(value)) {
+		if (/@|:\/\//.test(value)) return false; // URL with auth — not a bare path
+		return true;
+	}
+	if (!value.includes("/")) return false;
+	if (/@|:\/\//.test(value)) return false;
+	if (/^[\w.-]+\//.test(value) && value.length > 6) return true;
+	return false;
 }
 
 /**
@@ -34,10 +34,10 @@ function looksLikePath(value: string): boolean {
  * word-list approaches.
  */
 function looksLikeNaturalLanguage(value: string): boolean {
-  const spaceTokens = (value.match(/\s+/g) ?? []).length;
-  const hasCredChars = /[=+/_@]/.test(value);
-  if (value.length > 25 && spaceTokens > 3 && !hasCredChars) return true;
-  return false;
+	const spaceTokens = (value.match(/\s+/g) ?? []).length;
+	const hasCredChars = /[=+/_@]/.test(value);
+	if (value.length > 25 && spaceTokens > 3 && !hasCredChars) return true;
+	return false;
 }
 
 /**
@@ -52,27 +52,33 @@ function looksLikeNaturalLanguage(value: string): boolean {
  *
  * Callers in `auto-capture.ts` apply this correctly via `secretFromParam` logic.
  */
-export function validateCredentialValue(value: string, type: string, hasPatternMatch: boolean): ValidationResult {
-  const trimmed = value.trim();
-  if (!trimmed) return { ok: false, reason: "empty" };
+export function validateCredentialValue(
+	value: string,
+	type: string,
+	hasPatternMatch: boolean,
+): ValidationResult {
+	const trimmed = value.trim();
+	if (!trimmed) return { ok: false, reason: "empty" };
 
-  // "other" type without a pattern match is held to a stricter minimum (12 chars).
-  // This check runs before the general MIN to produce the more-specific reason code.
-  if (!hasPatternMatch && trimmed.length < 12 && type === "other") {
-    return { ok: false, reason: "value_too_short_for_other" };
-  }
+	// "other" type without a pattern match is held to a stricter minimum (12 chars).
+	// This check runs before the general MIN to produce the more-specific reason code.
+	if (!hasPatternMatch && trimmed.length < 12 && type === "other") {
+		return { ok: false, reason: "value_too_short_for_other" };
+	}
 
-  // General minimum length — always applies even when a pattern matched.
-  if (trimmed.length < MIN_CREDENTIAL_VALUE_LENGTH) return { ok: false, reason: "value_too_short" };
+	// General minimum length — always applies even when a pattern matched.
+	if (trimmed.length < MIN_CREDENTIAL_VALUE_LENGTH)
+		return { ok: false, reason: "value_too_short" };
 
-  // Content checks only run when the value did NOT come from a direct pattern match,
-  // because pattern-matched values can legitimately be passphrases with spaces.
-  if (!hasPatternMatch) {
-    if (looksLikeNaturalLanguage(trimmed)) return { ok: false, reason: "natural_language" };
-    if (looksLikePath(trimmed)) return { ok: false, reason: "path" };
-  }
+	// Content checks only run when the value did NOT come from a direct pattern match,
+	// because pattern-matched values can legitimately be passphrases with spaces.
+	if (!hasPatternMatch) {
+		if (looksLikeNaturalLanguage(trimmed))
+			return { ok: false, reason: "natural_language" };
+		if (looksLikePath(trimmed)) return { ok: false, reason: "path" };
+	}
 
-  return { ok: true };
+	return { ok: true };
 }
 
 /** Max length for service name (reject longer). */
@@ -85,17 +91,17 @@ const CREDENTIAL_SERVICE_MAX_TOKENS = 6;
 
 /** Known service name variants -> canonical name (for dedup). */
 const SERVICE_NORMALIZE_MAP: Record<string, string> = {
-  anthropic_api_key: "anthropic",
-  anthropic: "anthropic",
-  glitchtip_api_token: "glitchtip",
-  glitchtip_api_key: "glitchtip",
-  glitchtip: "glitchtip",
-  openai: "openai",
-  github: "github",
-  minimax_generic: "minimax",
-  minimax: "minimax",
-  home_assistant: "home-assistant",
-  "home-assistant": "home-assistant",
+	anthropic_api_key: "anthropic",
+	anthropic: "anthropic",
+	glitchtip_api_token: "glitchtip",
+	glitchtip_api_key: "glitchtip",
+	glitchtip: "glitchtip",
+	openai: "openai",
+	github: "github",
+	minimax_generic: "minimax",
+	minimax: "minimax",
+	home_assistant: "home-assistant",
+	"home-assistant": "home-assistant",
 };
 
 /**
@@ -104,29 +110,31 @@ const SERVICE_NORMALIZE_MAP: Record<string, string> = {
  * Otherwise returns a validated slug, or a canonical name from the normalization map.
  * URL-style names (containing "://") and hostnames (containing ".") are only length-checked, not slugified.
  */
-export function validateAndNormalizeServiceName(serviceSlug: string): string | null {
-  const trimmed = serviceSlug.trim();
-  if (!trimmed) return "imported";
+export function validateAndNormalizeServiceName(
+	serviceSlug: string,
+): string | null {
+	const trimmed = serviceSlug.trim();
+	if (!trimmed) return "imported";
 
-  if (trimmed.includes("://")) {
-    if (trimmed.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
-    return trimmed.toLowerCase();
-  }
-  if (trimmed.includes(".")) {
-    if (trimmed.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
-    return trimmed.toLowerCase();
-  }
+	if (trimmed.includes("://")) {
+		if (trimmed.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
+		return trimmed.toLowerCase();
+	}
+	if (trimmed.includes(".")) {
+		if (trimmed.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
+		return trimmed.toLowerCase();
+	}
 
-  const slug =
-    trimmed
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9_-]/g, "") || "imported";
-  if (slug === "imported") return slug;
-  if (slug.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
-  const tokens = slug.split("-").filter(Boolean);
-  if (tokens.length > CREDENTIAL_SERVICE_MAX_TOKENS) return null;
-  return SERVICE_NORMALIZE_MAP[slug] ?? slug;
+	const slug =
+		trimmed
+			.toLowerCase()
+			.replace(/\s+/g, "-")
+			.replace(/[^a-z0-9_-]/g, "") || "imported";
+	if (slug === "imported") return slug;
+	if (slug.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
+	const tokens = slug.split("-").filter(Boolean);
+	if (tokens.length > CREDENTIAL_SERVICE_MAX_TOKENS) return null;
+	return SERVICE_NORMALIZE_MAP[slug] ?? slug;
 }
 
 /**
@@ -137,55 +145,59 @@ export function validateAndNormalizeServiceName(serviceSlug: string): string | n
  * Does not reject; use validateAndNormalizeServiceName for rejection.
  */
 export function normalizeServiceForDedup(serviceSlug: string): string {
-  // URL-style (contains ://) — preserve as-is after lower-casing
-  if (serviceSlug.includes("://")) {
-    const lower = serviceSlug.toLowerCase();
-    return SERVICE_NORMALIZE_MAP[lower] ?? lower;
-  }
-  // Hostname-style (contains dot) — preserve dots, only lower-case
-  if (serviceSlug.includes(".")) {
-    const lower = serviceSlug.toLowerCase();
-    return SERVICE_NORMALIZE_MAP[lower] ?? lower;
-  }
-  const key =
-    serviceSlug
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9_-]/g, "") || "imported";
-  return SERVICE_NORMALIZE_MAP[key] ?? key;
+	// URL-style (contains ://) — preserve as-is after lower-casing
+	if (serviceSlug.includes("://")) {
+		const lower = serviceSlug.toLowerCase();
+		return SERVICE_NORMALIZE_MAP[lower] ?? lower;
+	}
+	// Hostname-style (contains dot) — preserve dots, only lower-case
+	if (serviceSlug.includes(".")) {
+		const lower = serviceSlug.toLowerCase();
+		return SERVICE_NORMALIZE_MAP[lower] ?? lower;
+	}
+	const key =
+		serviceSlug
+			.toLowerCase()
+			.replace(/\s+/g, "-")
+			.replace(/[^a-z0-9_-]/g, "") || "imported";
+	return SERVICE_NORMALIZE_MAP[key] ?? key;
 }
 
 /**
  * Return audit flags for a credential value (for CLI audit). Uses same heuristics as validateCredentialValue.
  */
 export function auditCredentialValue(value: string, type: string): string[] {
-  const flags: string[] = [];
-  const trimmed = value.trim();
-  if (!trimmed) {
-    flags.push("empty");
-    return flags;
-  }
-  if (trimmed.length < MIN_CREDENTIAL_VALUE_LENGTH) flags.push("value_too_short");
-  if (trimmed.length < 12 && type === "other") flags.push("value_too_short_for_other");
-  if (looksLikeNaturalLanguage(trimmed)) flags.push("natural_language");
-  if (looksLikePath(trimmed)) flags.push("path");
-  return flags;
+	const flags: string[] = [];
+	const trimmed = value.trim();
+	if (!trimmed) {
+		flags.push("empty");
+		return flags;
+	}
+	if (trimmed.length < MIN_CREDENTIAL_VALUE_LENGTH)
+		flags.push("value_too_short");
+	if (trimmed.length < 12 && type === "other")
+		flags.push("value_too_short_for_other");
+	if (looksLikeNaturalLanguage(trimmed)) flags.push("natural_language");
+	if (looksLikePath(trimmed)) flags.push("path");
+	return flags;
 }
 
 /**
  * Return audit flags for a service name (for CLI audit).
  */
 export function auditServiceName(service: string): string[] {
-  const flags: string[] = [];
-  if (service.length > CREDENTIAL_SERVICE_MAX_LENGTH) flags.push("service_too_long");
-  // Skip the dash-token heuristic for URL-style names and hostname-style names.
-  // Both forms are valid multi-segment identifiers: hostnames like `my-api.example.com`
-  // can legitimately contain many dashes and should not be flagged as sentence-like.
-  if (!service.includes("://") && !service.includes(".")) {
-    const tokens = service.split("-").filter(Boolean);
-    if (tokens.length > CREDENTIAL_SERVICE_MAX_TOKENS) flags.push("service_sentence_like");
-  }
-  return flags;
+	const flags: string[] = [];
+	if (service.length > CREDENTIAL_SERVICE_MAX_LENGTH)
+		flags.push("service_too_long");
+	// Skip the dash-token heuristic for URL-style names and hostname-style names.
+	// Both forms are valid multi-segment identifiers: hostnames like `my-api.example.com`
+	// can legitimately contain many dashes and should not be flagged as sentence-like.
+	if (!service.includes("://") && !service.includes(".")) {
+		const tokens = service.split("-").filter(Boolean);
+		if (tokens.length > CREDENTIAL_SERVICE_MAX_TOKENS)
+			flags.push("service_sentence_like");
+	}
+	return flags;
 }
 
 /**
@@ -193,18 +205,22 @@ export function auditServiceName(service: string): string[] {
  * Throws if the row is structurally invalid (corrupt DB or manual tampering).
  */
 export function assertValidCredentialRow(row: {
-  service: string;
-  type: string;
-  created: number;
-  updated: number;
+	service: string;
+	type: string;
+	created: number;
+	updated: number;
 }): void {
-  if (typeof row.service !== "string" || row.service.trim().length === 0) {
-    throw new Error("memory-hybrid: credentials vault row has invalid service");
-  }
-  if (!CREDENTIAL_TYPES.includes(row.type as CredentialType)) {
-    throw new Error(`memory-hybrid: credentials vault row has invalid type: ${row.type}`);
-  }
-  if (!Number.isFinite(row.created) || !Number.isFinite(row.updated)) {
-    throw new Error("memory-hybrid: credentials vault row has invalid timestamps");
-  }
+	if (typeof row.service !== "string" || row.service.trim().length === 0) {
+		throw new Error("memory-hybrid: credentials vault row has invalid service");
+	}
+	if (!CREDENTIAL_TYPES.includes(row.type as CredentialType)) {
+		throw new Error(
+			`memory-hybrid: credentials vault row has invalid type: ${row.type}`,
+		);
+	}
+	if (!Number.isFinite(row.created) || !Number.isFinite(row.updated)) {
+		throw new Error(
+			"memory-hybrid: credentials vault row has invalid timestamps",
+		);
+	}
 }

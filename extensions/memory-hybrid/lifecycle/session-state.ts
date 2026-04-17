@@ -13,7 +13,9 @@ import type { SessionState } from "./types.js";
 const MAX_TRACKED_SESSIONS = 200;
 
 /** API slice used when resolving the current session key from a hook event (#990). */
-export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: string } };
+export type SessionKeyHookApi = {
+	context?: { sessionId?: string; sessionKey?: string };
+};
 
 /**
  * Best-effort session key string for lifecycle hooks — same precedence as
@@ -24,125 +26,135 @@ export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: s
  * Callers pass `withHookResolutionApi(api, hookCtx)` so hook `sessionId`/`sessionKey` land on
  * `api.context` and are consulted only after the event payload (#1005).
  */
-export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
-  const ev = event as {
-    session?: Record<string, unknown>;
-    sessionKey?: string;
-    context?: Record<string, unknown>;
-  };
-  const payloadCtx = ev?.context;
-  const sessionId =
-    ev?.session?.id ??
-    ev?.session?.sessionId ??
-    ev?.session?.key ??
-    ev?.session?.label ??
-    ev?.sessionKey ??
-    (payloadCtx?.sessionId as string | undefined) ??
-    (payloadCtx?.sessionKey as string | undefined) ??
-    (payloadCtx?.key as string | undefined) ??
-    (payloadCtx?.id as string | undefined) ??
-    (payloadCtx?.label as string | undefined) ??
-    api?.context?.sessionId ??
-    api?.context?.sessionKey ??
-    null;
-  return sessionId ? String(sessionId) : null;
+export function resolveSessionKeyFromHookEvent(
+	event: unknown,
+	api?: SessionKeyHookApi,
+): string | null {
+	const ev = event as {
+		session?: Record<string, unknown>;
+		sessionKey?: string;
+		context?: Record<string, unknown>;
+	};
+	const payloadCtx = ev?.context;
+	const sessionId =
+		ev?.session?.id ??
+		ev?.session?.sessionId ??
+		ev?.session?.key ??
+		ev?.session?.label ??
+		ev?.sessionKey ??
+		(payloadCtx?.sessionId as string | undefined) ??
+		(payloadCtx?.sessionKey as string | undefined) ??
+		(payloadCtx?.key as string | undefined) ??
+		(payloadCtx?.id as string | undefined) ??
+		(payloadCtx?.label as string | undefined) ??
+		api?.context?.sessionId ??
+		api?.context?.sessionKey ??
+		null;
+	return sessionId ? String(sessionId) : null;
 }
 
 export function createSessionState(): SessionState {
-  const authFailureRecallsThisSession = new Map<string, number>();
-  const sessionStartSeen = new Set<string>();
-  const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
-  const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
-  const ambientLastEmbeddingMap = new Map<string, number[] | null>();
-  const sessionLastActivity = new Map<string, number>();
+	const authFailureRecallsThisSession = new Map<string, number>();
+	const sessionStartSeen = new Set<string>();
+	const frustrationStateMap = new Map<
+		string,
+		{ level: number; turns: FrustrationConversationTurn[] }
+	>();
+	const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
+	const ambientLastEmbeddingMap = new Map<string, number[] | null>();
+	const sessionLastActivity = new Map<string, number>();
 
-  function touchSession(sessionKey: string): void {
-    sessionLastActivity.set(sessionKey, Date.now());
-  }
+	function touchSession(sessionKey: string): void {
+		sessionLastActivity.set(sessionKey, Date.now());
+	}
 
-  function clearSessionState(sessionKey: string): void {
-    sessionStartSeen.delete(sessionKey);
-    ambientSeenFactsMap.delete(sessionKey);
-    ambientLastEmbeddingMap.delete(sessionKey);
-    frustrationStateMap.delete(sessionKey);
-    sessionLastActivity.delete(sessionKey);
-    const prefix = `${sessionKey}:`;
-    for (const key of authFailureRecallsThisSession.keys()) {
-      if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
-    }
-  }
+	function clearSessionState(sessionKey: string): void {
+		sessionStartSeen.delete(sessionKey);
+		ambientSeenFactsMap.delete(sessionKey);
+		ambientLastEmbeddingMap.delete(sessionKey);
+		frustrationStateMap.delete(sessionKey);
+		sessionLastActivity.delete(sessionKey);
+		const prefix = `${sessionKey}:`;
+		for (const key of authFailureRecallsThisSession.keys()) {
+			if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
+		}
+	}
 
-  function pruneSessionMaps(): void {
-    if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
-      const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
-      const keys = ambientSeenFactsMap.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) {
-          ambientSeenFactsMap.delete(value);
-          ambientLastEmbeddingMap.delete(value);
-        }
-      }
-    }
-    if (frustrationStateMap.size > MAX_TRACKED_SESSIONS) {
-      const excess = frustrationStateMap.size - MAX_TRACKED_SESSIONS;
-      const keys = frustrationStateMap.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) frustrationStateMap.delete(value);
-      }
-    }
-    if (sessionStartSeen.size > MAX_TRACKED_SESSIONS) {
-      const excess = sessionStartSeen.size - MAX_TRACKED_SESSIONS;
-      const keys = sessionStartSeen.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sessionStartSeen.delete(value);
-      }
-    }
-    if (authFailureRecallsThisSession.size > MAX_TRACKED_SESSIONS * 3) {
-      const excess = authFailureRecallsThisSession.size - MAX_TRACKED_SESSIONS * 3;
-      const keys = authFailureRecallsThisSession.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) authFailureRecallsThisSession.delete(value);
-      }
-    }
-    if (sessionLastActivity.size > MAX_TRACKED_SESSIONS) {
-      const excess = sessionLastActivity.size - MAX_TRACKED_SESSIONS;
-      const keys = sessionLastActivity.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sessionLastActivity.delete(value);
-      }
-    }
-  }
+	function pruneSessionMaps(): void {
+		if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
+			const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
+			const keys = ambientSeenFactsMap.keys();
+			for (let i = 0; i < excess; i++) {
+				const { value } = keys.next();
+				if (value) {
+					ambientSeenFactsMap.delete(value);
+					ambientLastEmbeddingMap.delete(value);
+				}
+			}
+		}
+		if (frustrationStateMap.size > MAX_TRACKED_SESSIONS) {
+			const excess = frustrationStateMap.size - MAX_TRACKED_SESSIONS;
+			const keys = frustrationStateMap.keys();
+			for (let i = 0; i < excess; i++) {
+				const { value } = keys.next();
+				if (value) frustrationStateMap.delete(value);
+			}
+		}
+		if (sessionStartSeen.size > MAX_TRACKED_SESSIONS) {
+			const excess = sessionStartSeen.size - MAX_TRACKED_SESSIONS;
+			const keys = sessionStartSeen.keys();
+			for (let i = 0; i < excess; i++) {
+				const { value } = keys.next();
+				if (value) sessionStartSeen.delete(value);
+			}
+		}
+		if (authFailureRecallsThisSession.size > MAX_TRACKED_SESSIONS * 3) {
+			const excess =
+				authFailureRecallsThisSession.size - MAX_TRACKED_SESSIONS * 3;
+			const keys = authFailureRecallsThisSession.keys();
+			for (let i = 0; i < excess; i++) {
+				const { value } = keys.next();
+				if (value) authFailureRecallsThisSession.delete(value);
+			}
+		}
+		if (sessionLastActivity.size > MAX_TRACKED_SESSIONS) {
+			const excess = sessionLastActivity.size - MAX_TRACKED_SESSIONS;
+			const keys = sessionLastActivity.keys();
+			for (let i = 0; i < excess; i++) {
+				const { value } = keys.next();
+				if (value) sessionLastActivity.delete(value);
+			}
+		}
+	}
 
-  function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
-    return resolveSessionKeyFromHookEvent(event, api);
-  }
+	function resolveSessionKey(
+		event: unknown,
+		api?: SessionKeyHookApi,
+	): string | null {
+		return resolveSessionKeyFromHookEvent(event, api);
+	}
 
-  const clearAll = (): void => {
-    sessionStartSeen.clear();
-    ambientSeenFactsMap.clear();
-    ambientLastEmbeddingMap.clear();
-    frustrationStateMap.clear();
-    authFailureRecallsThisSession.clear();
-    sessionLastActivity.clear();
-  };
+	const clearAll = (): void => {
+		sessionStartSeen.clear();
+		ambientSeenFactsMap.clear();
+		ambientLastEmbeddingMap.clear();
+		frustrationStateMap.clear();
+		authFailureRecallsThisSession.clear();
+		sessionLastActivity.clear();
+	};
 
-  return {
-    sessionStartSeen,
-    ambientSeenFactsMap,
-    ambientLastEmbeddingMap,
-    frustrationStateMap,
-    authFailureRecallsThisSession,
-    sessionLastActivity,
-    touchSession,
-    clearSessionState,
-    pruneSessionMaps,
-    resolveSessionKey,
-    MAX_TRACKED_SESSIONS,
-    clearAll,
-  };
+	return {
+		sessionStartSeen,
+		ambientSeenFactsMap,
+		ambientLastEmbeddingMap,
+		frustrationStateMap,
+		authFailureRecallsThisSession,
+		sessionLastActivity,
+		touchSession,
+		clearSessionState,
+		pruneSessionMaps,
+		resolveSessionKey,
+		MAX_TRACKED_SESSIONS,
+		clearAll,
+	};
 }

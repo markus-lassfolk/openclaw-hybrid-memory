@@ -46,93 +46,95 @@ import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
 
 /** All mutable per-instance state for the memory-hybrid plugin. */
 export interface PluginRuntime {
-  // --- Config & resolved paths ---
-  cfg: HybridMemoryConfig;
-  resolvedLancePath: string;
-  resolvedSqlitePath: string;
+	// --- Config & resolved paths ---
+	cfg: HybridMemoryConfig;
+	resolvedLancePath: string;
+	resolvedSqlitePath: string;
 
-  // --- Core backends (always present after init) ---
-  factsDb: FactsDB;
-  edictStore: EdictStore;
-  vectorDb: VectorDB;
-  embeddings: EmbeddingProvider;
-  embeddingRegistry: EmbeddingRegistry;
-  openai: OpenAI;
+	// --- Core backends (always present after init) ---
+	factsDb: FactsDB;
+	edictStore: EdictStore;
+	vectorDb: VectorDB;
+	embeddings: EmbeddingProvider;
+	embeddingRegistry: EmbeddingRegistry;
+	openai: OpenAI;
 
-  // --- Optional backends (null when feature disabled) ---
-  credentialsDb: CredentialsDB | null;
-  wal: WriteAheadLog | null;
-  proposalsDb: ProposalsDB | null;
-  identityReflectionStore: IdentityReflectionStore | null;
-  personaStateStore: PersonaStateStore | null;
-  eventLog: EventLog | null;
-  narrativesDb: NarrativesDB | null;
-  aliasDb: AliasDB | null;
-  eventBus: EventBus | null;
-  costTracker: CostTracker | null;
-  issueStore: IssueStore | null;
-  workflowStore: WorkflowStore | null;
-  crystallizationStore: CrystallizationStore | null;
-  toolProposalStore: ToolProposalStore | null;
-  provenanceService: ProvenanceService | null;
-  verificationStore: VerificationStore | null;
-  apitapStore: ApitapStore | null;
-  pythonBridge: PythonBridge | null;
-  variantQueue: VariantGenerationQueue | null;
-  /** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */
-  learningsDb: LearningsDB | null;
-  /** Cross-agent audit log (Issue #790). */
-  auditStore: AuditStore | null;
-  agentHealthStore: AgentHealthStore | null;
+	// --- Optional backends (null when feature disabled) ---
+	credentialsDb: CredentialsDB | null;
+	wal: WriteAheadLog | null;
+	proposalsDb: ProposalsDB | null;
+	identityReflectionStore: IdentityReflectionStore | null;
+	personaStateStore: PersonaStateStore | null;
+	eventLog: EventLog | null;
+	narrativesDb: NarrativesDB | null;
+	aliasDb: AliasDB | null;
+	eventBus: EventBus | null;
+	costTracker: CostTracker | null;
+	issueStore: IssueStore | null;
+	workflowStore: WorkflowStore | null;
+	crystallizationStore: CrystallizationStore | null;
+	toolProposalStore: ToolProposalStore | null;
+	provenanceService: ProvenanceService | null;
+	verificationStore: VerificationStore | null;
+	apitapStore: ApitapStore | null;
+	pythonBridge: PythonBridge | null;
+	variantQueue: VariantGenerationQueue | null;
+	/** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */
+	learningsDb: LearningsDB | null;
+	/** Cross-agent audit log (Issue #790). */
+	auditStore: AuditStore | null;
+	agentHealthStore: AgentHealthStore | null;
 
-  // --- Lifecycle state ---
-  /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
-  lifecycleHooksHandle: LifecycleHooksHandle | null;
-  /**
-   * Resolves when async bootstrap work from `initializeDatabases` finishes (embedding/vault checks, etc.).
-   * Used to sequence CLI teardown so we do not close DBs while init I/O is still running (Issue #1039).
-   */
-  bootstrapAsyncInit: Promise<void>;
-  pendingLLMWarnings: PendingLLMWarnings;
+	// --- Lifecycle state ---
+	/** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
+	lifecycleHooksHandle: LifecycleHooksHandle | null;
+	/**
+	 * Resolves when async bootstrap work from `initializeDatabases` finishes (embedding/vault checks, etc.).
+	 * Used to sequence CLI teardown so we do not close DBs while init I/O is still running (Issue #1039).
+	 */
+	bootstrapAsyncInit: Promise<void>;
+	pendingLLMWarnings: PendingLLMWarnings;
 
-  // --- Mutable refs (objects so that closures can share mutations) ---
-  /** Detected agent for current session; updated on before_agent_start. */
-  currentAgentIdRef: { value: string | null };
-  /** Set to true once the restart-pending flag has been cleared this session. */
-  restartPendingClearedRef: { value: boolean };
-  /** Count of in-flight recall operations (degradation / back-pressure). */
-  recallInFlightRef: { value: number };
-  /** Last user prompt used for interactive auto-recall (issue #957 post-compaction reinjection). */
-  lastAutoRecallPromptRef: { value: string | null };
-  /** Last progressive index fact IDs (1-based position → fact id). */
-  lastProgressiveIndexIds: string[];
+	// --- Mutable refs (objects so that closures can share mutations) ---
+	/** Detected agent for current session; updated on before_agent_start. */
+	currentAgentIdRef: { value: string | null };
+	/** Set to true once the restart-pending flag has been cleared this session. */
+	restartPendingClearedRef: { value: boolean };
+	/** Count of in-flight recall operations (degradation / back-pressure). */
+	recallInFlightRef: { value: number };
+	/** Last user prompt used for interactive auto-recall (issue #957 post-compaction reinjection). */
+	lastAutoRecallPromptRef: { value: string | null };
+	/** Last progressive index fact IDs (1-based position → fact id). */
+	lastProgressiveIndexIds: string[];
 
-  // --- Timer refs (objects so they can be passed by reference to plugin-service) ---
-  timers: {
-    pruneTimer: { value: ReturnType<typeof setInterval> | null };
-    classifyTimer: { value: ReturnType<typeof setInterval> | null };
-    classifyStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
-    languageKeywordsTimer: { value: ReturnType<typeof setInterval> | null };
-    languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
-    passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
-    /** Issue #631: Stale-run watchdog timer for autonomous task queue self-healing. */
-    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
-  };
+	// --- Timer refs (objects so they can be passed by reference to plugin-service) ---
+	timers: {
+		pruneTimer: { value: ReturnType<typeof setInterval> | null };
+		classifyTimer: { value: ReturnType<typeof setInterval> | null };
+		classifyStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
+		proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
+		languageKeywordsTimer: { value: ReturnType<typeof setInterval> | null };
+		languageKeywordsStartupTimeout: {
+			value: ReturnType<typeof setTimeout> | null;
+		};
+		postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
+		passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
+		/** Issue #631: Stale-run watchdog timer for autonomous task queue self-healing. */
+		watchdogTimer: { value: ReturnType<typeof setInterval> | null };
+	};
 }
 
 /** Create a fresh, empty timers bag for a new PluginRuntime instance. */
 export function createTimers(): PluginRuntime["timers"] {
-  return {
-    pruneTimer: { value: null },
-    classifyTimer: { value: null },
-    classifyStartupTimeout: { value: null },
-    proposalsPruneTimer: { value: null },
-    languageKeywordsTimer: { value: null },
-    languageKeywordsStartupTimeout: { value: null },
-    postUpgradeTimeout: { value: null },
-    passiveObserverTimer: { value: null },
-    watchdogTimer: { value: null },
-  };
+	return {
+		pruneTimer: { value: null },
+		classifyTimer: { value: null },
+		classifyStartupTimeout: { value: null },
+		proposalsPruneTimer: { value: null },
+		languageKeywordsTimer: { value: null },
+		languageKeywordsStartupTimeout: { value: null },
+		postUpgradeTimeout: { value: null },
+		passiveObserverTimer: { value: null },
+		watchdogTimer: { value: null },
+	};
 }

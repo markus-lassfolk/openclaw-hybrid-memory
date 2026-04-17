@@ -17,17 +17,35 @@ import type { MemoryEntry } from "../types/memory.js";
 // ---------------------------------------------------------------------------
 
 export interface GapFactsDB {
-  getAll(options?: { includeSuperseded?: boolean }): MemoryEntry[];
-  getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
-  getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
+	getAll(options?: { includeSuperseded?: boolean }): MemoryEntry[];
+	getLinksFrom(
+		factId: string,
+	): Array<{
+		id: string;
+		targetFactId: string;
+		linkType: string;
+		strength: number;
+	}>;
+	getLinksTo(
+		factId: string,
+	): Array<{
+		id: string;
+		sourceFactId: string;
+		linkType: string;
+		strength: number;
+	}>;
 }
 
 export interface GapVectorDB {
-  search(vector: number[], limit: number, minScore: number): Promise<Array<{ entry: { id: string }; score: number }>>;
+	search(
+		vector: number[],
+		limit: number,
+		minScore: number,
+	): Promise<Array<{ entry: { id: string }; score: number }>>;
 }
 
 export interface GapEmbeddings {
-  embed(text: string): Promise<number[]>;
+	embed(text: string): Promise<number[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -38,29 +56,29 @@ export type GapMode = "orphans" | "weak" | "all";
 
 /** A fact identified as an orphan (0 links) or weak (1 link). */
 export interface GapFact {
-  factId: string;
-  text: string;
-  createdAt: number;
-  linkCount: number;
-  /** 1.0 for orphan, 0.5 for weak */
-  isolationScore: number;
-  /** age_factor × isolationScore — higher = more urgently needs a connection */
-  rankScore: number;
+	factId: string;
+	text: string;
+	createdAt: number;
+	linkCount: number;
+	/** 1.0 for orphan, 0.5 for weak */
+	isolationScore: number;
+	/** age_factor × isolationScore — higher = more urgently needs a connection */
+	rankScore: number;
 }
 
 /** A pair of facts that are semantically similar but have no existing link. */
 export interface SuggestedLink {
-  sourceId: string;
-  targetId: string;
-  sourceText: string;
-  targetText: string;
-  similarity: number;
+	sourceId: string;
+	targetId: string;
+	sourceText: string;
+	targetText: string;
+	similarity: number;
 }
 
 export interface KnowledgeGapReport {
-  orphans: GapFact[];
-  weak: GapFact[];
-  suggestedLinks: SuggestedLink[];
+	orphans: GapFact[];
+	weak: GapFact[];
+	suggestedLinks: SuggestedLink[];
 }
 
 // ---------------------------------------------------------------------------
@@ -77,19 +95,23 @@ const AGE_UNIT_SEC = 30 * 86_400;
  *  n links → 1 / (n + 1)  (diminishing isolation)
  */
 export function computeIsolationScore(linkCount: number): number {
-  if (linkCount === 0) return 1.0;
-  if (linkCount === 1) return 0.5;
-  return 1 / (linkCount + 1);
+	if (linkCount === 0) return 1.0;
+	if (linkCount === 1) return 0.5;
+	return 1 / (linkCount + 1);
 }
 
 /**
  * Rank score = age_factor × isolation_score.
  * age_factor = max(1, ageSeconds / AGE_UNIT_SEC) so brand-new facts still score ≥ 1.
  */
-export function computeRankScore(createdAt: number, isolationScore: number, nowSec: number): number {
-  const ageSeconds = Math.max(0, nowSec - createdAt);
-  const ageFactor = Math.max(1, ageSeconds / AGE_UNIT_SEC);
-  return ageFactor * isolationScore;
+export function computeRankScore(
+	createdAt: number,
+	isolationScore: number,
+	nowSec: number,
+): number {
+	const ageSeconds = Math.max(0, nowSec - createdAt);
+	const ageFactor = Math.max(1, ageSeconds / AGE_UNIT_SEC);
+	return ageFactor * isolationScore;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,32 +123,33 @@ export function computeRankScore(createdAt: number, isolationScore: number, nowS
  * Results are ranked by age × isolation score (descending).
  */
 export function detectOrphans(
-  factsDb: GapFactsDB,
-  limit: number,
-  nowSec: number,
-  linkCounts?: Map<string, number>,
+	factsDb: GapFactsDB,
+	limit: number,
+	nowSec: number,
+	linkCounts?: Map<string, number>,
 ): GapFact[] {
-  const facts = factsDb.getAll({ includeSuperseded: false });
-  const results: GapFact[] = [];
+	const facts = factsDb.getAll({ includeSuperseded: false });
+	const results: GapFact[] = [];
 
-  for (const fact of facts) {
-    const linkCount =
-      linkCounts?.get(fact.id) ?? factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
-    if (linkCount === 0) {
-      const isolationScore = computeIsolationScore(linkCount);
-      results.push({
-        factId: fact.id,
-        text: fact.text,
-        createdAt: fact.createdAt,
-        linkCount,
-        isolationScore,
-        rankScore: computeRankScore(fact.createdAt, isolationScore, nowSec),
-      });
-    }
-  }
+	for (const fact of facts) {
+		const linkCount =
+			linkCounts?.get(fact.id) ??
+			factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
+		if (linkCount === 0) {
+			const isolationScore = computeIsolationScore(linkCount);
+			results.push({
+				factId: fact.id,
+				text: fact.text,
+				createdAt: fact.createdAt,
+				linkCount,
+				isolationScore,
+				rankScore: computeRankScore(fact.createdAt, isolationScore, nowSec),
+			});
+		}
+	}
 
-  results.sort((a, b) => b.rankScore - a.rankScore);
-  return results.slice(0, limit);
+	results.sort((a, b) => b.rankScore - a.rankScore);
+	return results.slice(0, limit);
 }
 
 /**
@@ -134,32 +157,33 @@ export function detectOrphans(
  * Results are ranked by age × isolation score (descending).
  */
 export function detectWeak(
-  factsDb: GapFactsDB,
-  limit: number,
-  nowSec: number,
-  linkCounts?: Map<string, number>,
+	factsDb: GapFactsDB,
+	limit: number,
+	nowSec: number,
+	linkCounts?: Map<string, number>,
 ): GapFact[] {
-  const facts = factsDb.getAll({ includeSuperseded: false });
-  const results: GapFact[] = [];
+	const facts = factsDb.getAll({ includeSuperseded: false });
+	const results: GapFact[] = [];
 
-  for (const fact of facts) {
-    const linkCount =
-      linkCounts?.get(fact.id) ?? factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
-    if (linkCount === 1) {
-      const isolationScore = computeIsolationScore(linkCount);
-      results.push({
-        factId: fact.id,
-        text: fact.text,
-        createdAt: fact.createdAt,
-        linkCount,
-        isolationScore,
-        rankScore: computeRankScore(fact.createdAt, isolationScore, nowSec),
-      });
-    }
-  }
+	for (const fact of facts) {
+		const linkCount =
+			linkCounts?.get(fact.id) ??
+			factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
+		if (linkCount === 1) {
+			const isolationScore = computeIsolationScore(linkCount);
+			results.push({
+				factId: fact.id,
+				text: fact.text,
+				createdAt: fact.createdAt,
+				linkCount,
+				isolationScore,
+				rankScore: computeRankScore(fact.createdAt, isolationScore, nowSec),
+			});
+		}
+	}
 
-  results.sort((a, b) => b.rankScore - a.rankScore);
-  return results.slice(0, limit);
+	results.sort((a, b) => b.rankScore - a.rankScore);
+	return results.slice(0, limit);
 }
 
 /**
@@ -177,84 +201,88 @@ export function detectWeak(
  * processed first and hit the `limit` budget first.
  */
 export async function detectSuggestedLinks(
-  factsDb: GapFactsDB,
-  vectorDb: GapVectorDB,
-  embeddings: GapEmbeddings,
-  threshold: number,
-  limit: number,
-  nowSec: number,
-  linkCounts?: Map<string, number>,
+	factsDb: GapFactsDB,
+	vectorDb: GapVectorDB,
+	embeddings: GapEmbeddings,
+	threshold: number,
+	limit: number,
+	nowSec: number,
+	linkCounts?: Map<string, number>,
 ): Promise<SuggestedLink[]> {
-  const facts = factsDb.getAll({ includeSuperseded: false });
+	const facts = factsDb.getAll({ includeSuperseded: false });
 
-  // Build a lookup map for fast id → MemoryEntry access.
-  const factMap = new Map<string, MemoryEntry>(facts.map((f) => [f.id, f]));
+	// Build a lookup map for fast id → MemoryEntry access.
+	const factMap = new Map<string, MemoryEntry>(facts.map((f) => [f.id, f]));
 
-  // Collect orphan + weak candidates and rank them.
-  const candidates: Array<{ fact: MemoryEntry; rankScore: number }> = [];
-  for (const fact of facts) {
-    const linkCount =
-      linkCounts?.get(fact.id) ?? factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
-    if (linkCount <= 1) {
-      const iso = computeIsolationScore(linkCount);
-      candidates.push({
-        fact,
-        rankScore: computeRankScore(fact.createdAt, iso, nowSec),
-      });
-    }
-  }
-  candidates.sort((a, b) => b.rankScore - a.rankScore);
+	// Collect orphan + weak candidates and rank them.
+	const candidates: Array<{ fact: MemoryEntry; rankScore: number }> = [];
+	for (const fact of facts) {
+		const linkCount =
+			linkCounts?.get(fact.id) ??
+			factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
+		if (linkCount <= 1) {
+			const iso = computeIsolationScore(linkCount);
+			candidates.push({
+				fact,
+				rankScore: computeRankScore(fact.createdAt, iso, nowSec),
+			});
+		}
+	}
+	candidates.sort((a, b) => b.rankScore - a.rankScore);
 
-  const suggestions: SuggestedLink[] = [];
-  const seenPairs = new Set<string>();
+	const suggestions: SuggestedLink[] = [];
+	const seenPairs = new Set<string>();
 
-  // Process candidates until we have enough suggestions or run out of candidates.
-  const MAX_CANDIDATES = 50; // cap for performance
-  for (const { fact } of candidates.slice(0, MAX_CANDIDATES)) {
-    if (suggestions.length >= limit) break;
+	// Process candidates until we have enough suggestions or run out of candidates.
+	const MAX_CANDIDATES = 50; // cap for performance
+	for (const { fact } of candidates.slice(0, MAX_CANDIDATES)) {
+		if (suggestions.length >= limit) break;
 
-    let vector: number[];
-    try {
-      vector = await embeddings.embed(fact.text);
-    } catch {
-      continue; // skip if embedding fails
-    }
+		let vector: number[];
+		try {
+			vector = await embeddings.embed(fact.text);
+		} catch {
+			continue; // skip if embedding fails
+		}
 
-    // Use the threshold as minScore so the vector DB pre-filters.
-    const similar = await vectorDb.search(vector, 10, threshold);
+		// Use the threshold as minScore so the vector DB pre-filters.
+		const similar = await vectorDb.search(vector, 10, threshold);
 
-    // Collect this fact's direct neighbours for fast lookup.
-    const directNeighbours = new Set<string>();
-    for (const l of factsDb.getLinksFrom(fact.id)) directNeighbours.add(l.targetFactId);
-    for (const l of factsDb.getLinksTo(fact.id)) directNeighbours.add(l.sourceFactId);
+		// Collect this fact's direct neighbours for fast lookup.
+		const directNeighbours = new Set<string>();
+		for (const l of factsDb.getLinksFrom(fact.id))
+			directNeighbours.add(l.targetFactId);
+		for (const l of factsDb.getLinksTo(fact.id))
+			directNeighbours.add(l.sourceFactId);
 
-    for (const r of similar) {
-      if (suggestions.length >= limit) break;
+		for (const r of similar) {
+			if (suggestions.length >= limit) break;
 
-      const otherId = r.entry.id;
-      if (otherId === fact.id) continue;
-      if (directNeighbours.has(otherId)) continue;
+			const otherId = r.entry.id;
+			if (otherId === fact.id) continue;
+			if (directNeighbours.has(otherId)) continue;
 
-      // Canonical pair key (order-independent)
-      const pairKey = fact.id < otherId ? `${fact.id}:${otherId}` : `${otherId}:${fact.id}`;
-      if (seenPairs.has(pairKey)) continue;
-      seenPairs.add(pairKey);
+			// Canonical pair key (order-independent)
+			const pairKey =
+				fact.id < otherId ? `${fact.id}:${otherId}` : `${otherId}:${fact.id}`;
+			if (seenPairs.has(pairKey)) continue;
+			seenPairs.add(pairKey);
 
-      const other = factMap.get(otherId);
-      if (!other) continue;
+			const other = factMap.get(otherId);
+			if (!other) continue;
 
-      suggestions.push({
-        sourceId: fact.id,
-        targetId: otherId,
-        sourceText: fact.text,
-        targetText: other.text,
-        similarity: r.score,
-      });
-    }
-  }
+			suggestions.push({
+				sourceId: fact.id,
+				targetId: otherId,
+				sourceText: fact.text,
+				targetText: other.text,
+				similarity: r.score,
+			});
+		}
+	}
 
-  suggestions.sort((a, b) => b.similarity - a.similarity);
-  return suggestions.slice(0, limit);
+	suggestions.sort((a, b) => b.similarity - a.similarity);
+	return suggestions.slice(0, limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,33 +301,49 @@ export async function detectSuggestedLinks(
  * @param nowSec    - Current epoch time in seconds (injectable for tests).
  */
 export async function analyzeKnowledgeGaps(
-  factsDb: GapFactsDB,
-  vectorDb: GapVectorDB,
-  embeddings: GapEmbeddings,
-  mode: GapMode,
-  limit: number,
-  threshold: number,
-  nowSec?: number,
+	factsDb: GapFactsDB,
+	vectorDb: GapVectorDB,
+	embeddings: GapEmbeddings,
+	mode: GapMode,
+	limit: number,
+	threshold: number,
+	nowSec?: number,
 ): Promise<KnowledgeGapReport> {
-  const now = nowSec ?? Math.floor(Date.now() / 1000);
+	const now = nowSec ?? Math.floor(Date.now() / 1000);
 
-  let linkCounts: Map<string, number> | undefined;
-  if (mode === "all") {
-    const facts = factsDb.getAll({ includeSuperseded: false });
-    linkCounts = new Map<string, number>();
-    for (const fact of facts) {
-      const out = factsDb.getLinksFrom(fact.id);
-      const inn = factsDb.getLinksTo(fact.id);
-      linkCounts.set(fact.id, out.length + inn.length);
-    }
-  }
+	let linkCounts: Map<string, number> | undefined;
+	if (mode === "all") {
+		const facts = factsDb.getAll({ includeSuperseded: false });
+		linkCounts = new Map<string, number>();
+		for (const fact of facts) {
+			const out = factsDb.getLinksFrom(fact.id);
+			const inn = factsDb.getLinksTo(fact.id);
+			linkCounts.set(fact.id, out.length + inn.length);
+		}
+	}
 
-  const orphans: GapFact[] = mode === "orphans" || mode === "all" ? detectOrphans(factsDb, limit, now, linkCounts) : [];
+	const orphans: GapFact[] =
+		mode === "orphans" || mode === "all"
+			? detectOrphans(factsDb, limit, now, linkCounts)
+			: [];
 
-  const weak: GapFact[] = mode === "weak" || mode === "all" ? detectWeak(factsDb, limit, now, linkCounts) : [];
+	const weak: GapFact[] =
+		mode === "weak" || mode === "all"
+			? detectWeak(factsDb, limit, now, linkCounts)
+			: [];
 
-  const suggestedLinks: SuggestedLink[] =
-    mode === "all" ? await detectSuggestedLinks(factsDb, vectorDb, embeddings, threshold, limit, now, linkCounts) : [];
+	const suggestedLinks: SuggestedLink[] =
+		mode === "all"
+			? await detectSuggestedLinks(
+					factsDb,
+					vectorDb,
+					embeddings,
+					threshold,
+					limit,
+					now,
+					linkCounts,
+				)
+			: [];
 
-  return { orphans, weak, suggestedLinks };
+	return { orphans, weak, suggestedLinks };
 }

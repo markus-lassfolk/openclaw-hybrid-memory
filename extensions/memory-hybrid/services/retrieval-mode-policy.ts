@@ -1,42 +1,46 @@
-import type { AutoRecallConfig, HybridMemoryConfig, RetrievalConfig } from "../config.js";
+import type {
+	AutoRecallConfig,
+	HybridMemoryConfig,
+	RetrievalConfig,
+} from "../config.js";
 
 export type RetrievalMode = "interactive-recall" | "explicit-deep";
 
 /** @deprecated Use string literals directly or InteractiveRecallPolicy / ExplicitDeepRetrievalPolicy types */
 export const RETRIEVAL_MODE = {
-  INTERACTIVE_RECALL: "interactive-recall" as const,
-  EXPLICIT_DEEP: "explicit-deep" as const,
+	INTERACTIVE_RECALL: "interactive-recall" as const,
+	EXPLICIT_DEEP: "explicit-deep" as const,
 };
 
 export interface InteractiveRecallPolicy {
-  mode: "interactive-recall";
-  ownerModule: "lifecycle/stage-recall.ts";
-  contract: "latency-bounded chat-turn recall";
-  stageTimeoutMs: number;
-  vectorStepTimeoutMs: number;
-  contextBudgetTokens: number;
-  degradationQueueDepth: number;
-  degradationMaxLatencyMs: number;
-  allowHyde: boolean;
-  allowAmbientMultiQuery: boolean;
-  /** Resolved from `autoRecall.interactiveEnrichment` (default balanced). */
-  interactiveEnrichment: "fast" | "balanced" | "full";
-  notes: string[];
+	mode: "interactive-recall";
+	ownerModule: "lifecycle/stage-recall.ts";
+	contract: "latency-bounded chat-turn recall";
+	stageTimeoutMs: number;
+	vectorStepTimeoutMs: number;
+	contextBudgetTokens: number;
+	degradationQueueDepth: number;
+	degradationMaxLatencyMs: number;
+	allowHyde: boolean;
+	allowAmbientMultiQuery: boolean;
+	/** Resolved from `autoRecall.interactiveEnrichment` (default balanced). */
+	interactiveEnrichment: "fast" | "balanced" | "full";
+	notes: string[];
 }
 
 export interface ExplicitDeepRetrievalPolicy {
-  mode: "explicit-deep";
-  ownerModule: "services/retrieval-orchestrator.ts";
-  contract: "richer retrieval for explicit tools and deeper analysis";
-  budgetTokens: number;
-  allowHyde: boolean;
-  allowRrfFusion: boolean;
-  allowQueryExpansion: boolean;
-  allowReranking: boolean;
-  allowGraphExpansion: boolean;
-  allowAliasExpansion: boolean;
-  allowMultiModelSemantic: boolean;
-  notes: string[];
+	mode: "explicit-deep";
+	ownerModule: "services/retrieval-orchestrator.ts";
+	contract: "richer retrieval for explicit tools and deeper analysis";
+	budgetTokens: number;
+	allowHyde: boolean;
+	allowRrfFusion: boolean;
+	allowQueryExpansion: boolean;
+	allowReranking: boolean;
+	allowGraphExpansion: boolean;
+	allowAliasExpansion: boolean;
+	allowMultiModelSemantic: boolean;
+	notes: string[];
 }
 
 /** Wall-clock cap for the whole interactive recall stage (abort + return when exceeded). */
@@ -54,90 +58,103 @@ const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS = 5_000;
  * explicitly overriding this policy.
  */
 export const DEFAULT_INTERACTIVE_RECALL_POLICY: InteractiveRecallPolicy = {
-  mode: "interactive-recall",
-  ownerModule: "lifecycle/stage-recall.ts",
-  contract: "latency-bounded chat-turn recall",
-  stageTimeoutMs: INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
-  vectorStepTimeoutMs: INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS,
-  contextBudgetTokens: 0,
-  degradationQueueDepth: DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
-  degradationMaxLatencyMs: DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
-  allowHyde: false,
-  allowAmbientMultiQuery: true,
-  interactiveEnrichment: "balanced",
-  notes: [
-    "Owns the hot path for chat turns.",
-    "Falls back to bounded FTS-only/HOT recall under pressure.",
-    "Advanced enrichment stays off unless a caller opts in explicitly.",
-  ],
+	mode: "interactive-recall",
+	ownerModule: "lifecycle/stage-recall.ts",
+	contract: "latency-bounded chat-turn recall",
+	stageTimeoutMs: INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
+	vectorStepTimeoutMs: INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS,
+	contextBudgetTokens: 0,
+	degradationQueueDepth: DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
+	degradationMaxLatencyMs:
+		DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
+	allowHyde: false,
+	allowAmbientMultiQuery: true,
+	interactiveEnrichment: "balanced",
+	notes: [
+		"Owns the hot path for chat turns.",
+		"Falls back to bounded FTS-only/HOT recall under pressure.",
+		"Advanced enrichment stays off unless a caller opts in explicitly.",
+	],
 };
 
 export function resolveInteractiveRecallPolicy(
-  cfg: AutoRecallConfig,
-  queryExpansion?: { enabled: boolean; skipForInteractiveTurns: boolean },
-  retrieval?: { ambientBudgetTokens: number },
+	cfg: AutoRecallConfig,
+	queryExpansion?: { enabled: boolean; skipForInteractiveTurns: boolean },
+	retrieval?: { ambientBudgetTokens: number },
 ): InteractiveRecallPolicy {
-  const enrichment = cfg.interactiveEnrichment ?? "balanced";
+	const enrichment = cfg.interactiveEnrichment ?? "balanced";
 
-  // Baseline (balanced): HyDE on interactive turns only when QE is on and skipForInteractiveTurns is not true.
-  let allowHyde = queryExpansion?.enabled === true && queryExpansion.skipForInteractiveTurns !== true;
-  // Historically true whenever auto-recall is on; ambient multi-query still requires ambient.enabled && multiQuery in stage-recall.
-  let allowAmbientMultiQuery = cfg.enabled === true;
+	// Baseline (balanced): HyDE on interactive turns only when QE is on and skipForInteractiveTurns is not true.
+	let allowHyde =
+		queryExpansion?.enabled === true &&
+		queryExpansion.skipForInteractiveTurns !== true;
+	// Historically true whenever auto-recall is on; ambient multi-query still requires ambient.enabled && multiQuery in stage-recall.
+	let allowAmbientMultiQuery = cfg.enabled === true;
 
-  if (enrichment === "fast") {
-    allowHyde = false;
-    allowAmbientMultiQuery = false;
-  } else if (enrichment === "full") {
-    // HyDE whenever query expansion is enabled; ignore skipForInteractiveTurns for the hot path.
-    allowHyde = queryExpansion?.enabled === true;
-    allowAmbientMultiQuery = cfg.enabled === true;
-  }
+	if (enrichment === "fast") {
+		allowHyde = false;
+		allowAmbientMultiQuery = false;
+	} else if (enrichment === "full") {
+		// HyDE whenever query expansion is enabled; ignore skipForInteractiveTurns for the hot path.
+		allowHyde = queryExpansion?.enabled === true;
+		allowAmbientMultiQuery = cfg.enabled === true;
+	}
 
-  // Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
-  // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
-  // ceiling — the injected context must not exceed either.
-  const contextBudgetTokens = retrieval ? Math.min(cfg.maxTokens, retrieval.ambientBudgetTokens) : cfg.maxTokens;
-  return {
-    ...DEFAULT_INTERACTIVE_RECALL_POLICY,
-    contextBudgetTokens,
-    degradationQueueDepth: cfg.degradationQueueDepth ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
-    degradationMaxLatencyMs: cfg.degradationMaxLatencyMs ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
-    allowAmbientMultiQuery,
-    allowHyde,
-    interactiveEnrichment: enrichment,
-  };
+	// Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
+	// autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
+	// ceiling — the injected context must not exceed either.
+	const contextBudgetTokens = retrieval
+		? Math.min(cfg.maxTokens, retrieval.ambientBudgetTokens)
+		: cfg.maxTokens;
+	return {
+		...DEFAULT_INTERACTIVE_RECALL_POLICY,
+		contextBudgetTokens,
+		degradationQueueDepth:
+			cfg.degradationQueueDepth ??
+			DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
+		degradationMaxLatencyMs:
+			cfg.degradationMaxLatencyMs ??
+			DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
+		allowAmbientMultiQuery,
+		allowHyde,
+		interactiveEnrichment: enrichment,
+	};
 }
 
 /**
  * Resolve the richer explicit retrieval policy owned by `services/retrieval-orchestrator.ts`.
  */
-export function resolveExplicitDeepRetrievalPolicy(cfg: RetrievalConfig): ExplicitDeepRetrievalPolicy {
-  return {
-    mode: "explicit-deep",
-    ownerModule: "services/retrieval-orchestrator.ts",
-    contract: "richer retrieval for explicit tools and deeper analysis",
-    budgetTokens: cfg.explicitBudgetTokens,
-    allowHyde: true,
-    allowRrfFusion: true,
-    allowQueryExpansion: true,
-    allowReranking: true,
-    allowGraphExpansion: true,
-    allowAliasExpansion: true,
-    allowMultiModelSemantic: true,
-    notes: [
-      "Owns explicit memory tools and deeper retrieval work.",
-      "May spend more latency budget on fusion, expansion, and reranking.",
-      "Uses retrieval.explicitBudgetTokens as its packing budget.",
-    ],
-  };
+export function resolveExplicitDeepRetrievalPolicy(
+	cfg: RetrievalConfig,
+): ExplicitDeepRetrievalPolicy {
+	return {
+		mode: "explicit-deep",
+		ownerModule: "services/retrieval-orchestrator.ts",
+		contract: "richer retrieval for explicit tools and deeper analysis",
+		budgetTokens: cfg.explicitBudgetTokens,
+		allowHyde: true,
+		allowRrfFusion: true,
+		allowQueryExpansion: true,
+		allowReranking: true,
+		allowGraphExpansion: true,
+		allowAliasExpansion: true,
+		allowMultiModelSemantic: true,
+		notes: [
+			"Owns explicit memory tools and deeper retrieval work.",
+			"May spend more latency budget on fusion, expansion, and reranking.",
+			"Uses retrieval.explicitBudgetTokens as its packing budget.",
+		],
+	};
 }
 
 /**
  * Resolve the interactive recall budget tokens, capping to the minimum of
  * autoRecall.maxTokens and retrieval.ambientBudgetTokens.
  */
-export function resolveInteractiveRecallBudgetTokens(cfg: HybridMemoryConfig): number {
-  return Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens);
+export function resolveInteractiveRecallBudgetTokens(
+	cfg: HybridMemoryConfig,
+): number {
+	return Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens);
 }
 
 /**
@@ -146,21 +163,26 @@ export function resolveInteractiveRecallBudgetTokens(cfg: HybridMemoryConfig): n
  * For explicit deep mode, uses explicitBudgetTokens.
  */
 export function resolveOrchestratorBudgetTokens(
-  mode: RetrievalMode,
-  retrievalCfg: RetrievalConfig,
-  requestedBudget?: number,
+	mode: RetrievalMode,
+	retrievalCfg: RetrievalConfig,
+	requestedBudget?: number,
 ): number {
-  if (mode === RETRIEVAL_MODE.INTERACTIVE_RECALL) {
-    return requestedBudget !== undefined
-      ? Math.min(requestedBudget, retrievalCfg.ambientBudgetTokens)
-      : retrievalCfg.ambientBudgetTokens;
-  }
-  return requestedBudget !== undefined ? requestedBudget : retrievalCfg.explicitBudgetTokens;
+	if (mode === RETRIEVAL_MODE.INTERACTIVE_RECALL) {
+		return requestedBudget !== undefined
+			? Math.min(requestedBudget, retrievalCfg.ambientBudgetTokens)
+			: retrievalCfg.ambientBudgetTokens;
+	}
+	return requestedBudget !== undefined
+		? requestedBudget
+		: retrievalCfg.explicitBudgetTokens;
 }
 
 /**
  * Determine if HyDE should be skipped for a given retrieval mode.
  */
-export function shouldSkipHydeForMode(mode: RetrievalMode, skipForInteractiveTurns: boolean): boolean {
-  return mode === RETRIEVAL_MODE.INTERACTIVE_RECALL && skipForInteractiveTurns;
+export function shouldSkipHydeForMode(
+	mode: RetrievalMode,
+	skipForInteractiveTurns: boolean,
+): boolean {
+	return mode === RETRIEVAL_MODE.INTERACTIVE_RECALL && skipForInteractiveTurns;
 }

@@ -3,7 +3,7 @@
  * Use after heavy synchronous SQLite / merge work on the auto-recall path (#931).
  */
 export async function yieldEventLoop(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    setImmediate(resolve);
-  });
+	await new Promise<void>((resolve) => {
+		setImmediate(resolve);
+	});
 }

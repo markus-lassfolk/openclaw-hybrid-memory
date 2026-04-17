@@ -26,16 +26,16 @@ import { extractJsonArray } from "./json-array-parser.js";
 
 /** A fact with its score and metadata needed for re-ranking. */
 export interface ScoredFact {
-  /** Fact UUID. */
-  factId: string;
-  /** Full fact text. */
-  text: string;
-  /** Confidence score 0-1. */
-  confidence: number;
-  /** ISO date string (YYYY-MM-DD) of when the fact was stored. */
-  storedDate: string;
-  /** Final score from RRF pipeline (used for fallback ordering). */
-  finalScore: number;
+	/** Fact UUID. */
+	factId: string;
+	/** Full fact text. */
+	text: string;
+	/** Confidence score 0-1. */
+	confidence: number;
+	/** ISO date string (YYYY-MM-DD) of when the fact was stored. */
+	storedDate: string;
+	/** Final score from RRF pipeline (used for fallback ordering). */
+	finalScore: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -48,19 +48,20 @@ export interface ScoredFact {
  * confidence, and stored date so the LLM can judge freshness.
  */
 export function buildRerankPrompt(query: string, facts: ScoredFact[]): string {
-  const factLines = facts
-    .map((f, i) => {
-      const snippet = f.text.length > 200 ? `${f.text.slice(0, 197)}...` : f.text;
-      return (
-        `${i + 1}. ID: ${f.factId}\n` +
-        `   Text: ${snippet}\n` +
-        `   Confidence: ${f.confidence.toFixed(2)}\n` +
-        `   Stored: ${f.storedDate}`
-      );
-    })
-    .join("\n\n");
+	const factLines = facts
+		.map((f, i) => {
+			const snippet =
+				f.text.length > 200 ? `${f.text.slice(0, 197)}...` : f.text;
+			return (
+				`${i + 1}. ID: ${f.factId}\n` +
+				`   Text: ${snippet}\n` +
+				`   Confidence: ${f.confidence.toFixed(2)}\n` +
+				`   Stored: ${f.storedDate}`
+			);
+		})
+		.join("\n\n");
 
-  return `You are a retrieval relevance ranker. Given a search query and a list of candidate facts, return a JSON array of fact IDs ordered from most to least relevant to the query.\n\nQuery: "${query}"\n\nCandidate facts:\n${factLines}\n\nReturn ONLY a JSON array of fact ID strings in relevance order. Example: ["id-a", "id-b", "id-c"]`;
+	return `You are a retrieval relevance ranker. Given a search query and a list of candidate facts, return a JSON array of fact IDs ordered from most to least relevant to the query.\n\nQuery: "${query}"\n\nCandidate facts:\n${factLines}\n\nReturn ONLY a JSON array of fact ID strings in relevance order. Example: ["id-a", "id-b", "id-c"]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,19 +75,19 @@ export function buildRerankPrompt(query: string, facts: ScoredFact[]): string {
  * bracketed text (e.g. "id-1 first because [it was relevant]") does not over-match.
  */
 export function parseRankedIds(response: string): string[] {
-  const trimmed = extractJsonArray(response)
-    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-    .map((id) => (id as string).trim());
-  // De-dupe by first occurrence to match lookup behavior.
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const id of trimmed) {
-    if (!seen.has(id)) {
-      seen.add(id);
-      deduped.push(id);
-    }
-  }
-  return deduped;
+	const trimmed = extractJsonArray(response)
+		.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+		.map((id) => (id as string).trim());
+	// De-dupe by first occurrence to match lookup behavior.
+	const seen = new Set<string>();
+	const deduped: string[] = [];
+	for (const id of trimmed) {
+		if (!seen.has(id)) {
+			seen.add(id);
+			deduped.push(id);
+		}
+	}
+	return deduped;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,64 +105,64 @@ export function parseRankedIds(response: string): string[] {
  *   timeout, or unparseable/empty response), returns the original list unchanged.
  */
 export async function rerankResults(
-  query: string,
-  facts: ScoredFact[],
-  config: RerankingConfig,
-  openai: OpenAI,
+	query: string,
+	facts: ScoredFact[],
+	config: RerankingConfig,
+	openai: OpenAI,
 ): Promise<ScoredFact[]> {
-  if (!config.enabled || facts.length === 0) return facts;
+	if (!config.enabled || facts.length === 0) return facts;
 
-  // Split into the candidate set (to re-rank) and the tail (to append unchanged).
-  const candidates = facts.slice(0, config.candidateCount);
-  const tail = facts.slice(config.candidateCount);
+	// Split into the candidate set (to re-rank) and the tail (to append unchanged).
+	const candidates = facts.slice(0, config.candidateCount);
+	const tail = facts.slice(config.candidateCount);
 
-  const prompt = buildRerankPrompt(query, candidates);
-  const model = config.model ?? "openai/gpt-4.1-nano";
+	const prompt = buildRerankPrompt(query, candidates);
+	const model = config.model ?? "openai/gpt-4.1-nano";
 
-  try {
-    const response = await chatComplete({
-      model,
-      content: prompt,
-      temperature: 0,
-      maxTokens: 1000,
-      openai,
-      timeoutMs: config.timeoutMs,
-      feature: CostFeature.reranking,
-    });
+	try {
+		const response = await chatComplete({
+			model,
+			content: prompt,
+			temperature: 0,
+			maxTokens: 1000,
+			openai,
+			timeoutMs: config.timeoutMs,
+			feature: CostFeature.reranking,
+		});
 
-    const rankedIds = parseRankedIds(response);
+		const rankedIds = parseRankedIds(response);
 
-    // If LLM returned nothing useful, fall back to original order sliced to outputCount (consistent with error path).
-    if (rankedIds.length === 0) {
-      return facts.slice(0, config.outputCount);
-    }
+		// If LLM returned nothing useful, fall back to original order sliced to outputCount (consistent with error path).
+		if (rankedIds.length === 0) {
+			return facts.slice(0, config.outputCount);
+		}
 
-    // Build a lookup map from the candidate set.
-    const factById = new Map(candidates.map((f) => [f.factId, f]));
-    const ranked: ScoredFact[] = [];
-    const seen = new Set<string>();
+		// Build a lookup map from the candidate set.
+		const factById = new Map(candidates.map((f) => [f.factId, f]));
+		const ranked: ScoredFact[] = [];
+		const seen = new Set<string>();
 
-    // Add LLM-ranked facts first (in the order the LLM specified).
-    for (const id of rankedIds) {
-      const fact = factById.get(id);
-      if (fact && !seen.has(id)) {
-        ranked.push(fact);
-        seen.add(id);
-      }
-    }
+		// Add LLM-ranked facts first (in the order the LLM specified).
+		for (const id of rankedIds) {
+			const fact = factById.get(id);
+			if (fact && !seen.has(id)) {
+				ranked.push(fact);
+				seen.add(id);
+			}
+		}
 
-    // Append candidate facts not returned by the LLM (preserving original order).
-    for (const fact of candidates) {
-      if (!seen.has(fact.factId)) {
-        ranked.push(fact);
-      }
-    }
+		// Append candidate facts not returned by the LLM (preserving original order).
+		for (const fact of candidates) {
+			if (!seen.has(fact.factId)) {
+				ranked.push(fact);
+			}
+		}
 
-    // Append the tail facts (beyond candidateCount) and slice to outputCount.
-    return [...ranked, ...tail].slice(0, config.outputCount);
-  } catch (err) {
-    // Timeout or any error: fall back to original RRF ranking, sliced to outputCount.
-    void err;
-    return facts.slice(0, config.outputCount);
-  }
+		// Append the tail facts (beyond candidateCount) and slice to outputCount.
+		return [...ranked, ...tail].slice(0, config.outputCount);
+	} catch (err) {
+		// Timeout or any error: fall back to original RRF ranking, sliced to outputCount.
+		void err;
+		return facts.slice(0, config.outputCount);
+	}
 }

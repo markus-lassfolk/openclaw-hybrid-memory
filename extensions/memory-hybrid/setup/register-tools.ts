@@ -17,7 +17,7 @@ import { type ToolsContext, toolInstallers } from "./tool-installers.js";
  * `^[a-zA-Z0-9_-]{1,128}$` — letters, digits, underscore, hyphen only; no dots).
  */
 export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
-  for (const installer of toolInstallers) {
-    installer.install(installer.selectContext(ctx, api), api);
-  }
+	for (const installer of toolInstallers) {
+		installer.install(installer.selectContext(ctx, api), api);
+	}
 }

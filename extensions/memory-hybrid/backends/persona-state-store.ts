@@ -14,65 +14,65 @@ import { uniqueStrings } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface PersonaStateRow {
-  id: string;
-  state_key: string;
-  question_key: string;
-  target_file: IdentityFileType;
-  insight: string;
-  normalized_insight: string;
-  confidence: number;
-  durable_count: number;
-  evidence: string;
-  source_reflection_ids: string;
-  first_seen_at: number;
-  last_seen_at: number;
-  promoted_at: number;
-  updated_at: number;
+	id: string;
+	state_key: string;
+	question_key: string;
+	target_file: IdentityFileType;
+	insight: string;
+	normalized_insight: string;
+	confidence: number;
+	durable_count: number;
+	evidence: string;
+	source_reflection_ids: string;
+	first_seen_at: number;
+	last_seen_at: number;
+	promoted_at: number;
+	updated_at: number;
 }
 
 export interface PersonaStateEntry {
-  id: string;
-  stateKey: string;
-  questionKey: string;
-  targetFile: IdentityFileType;
-  insight: string;
-  normalizedInsight: string;
-  confidence: number;
-  durableCount: number;
-  evidence: string[];
-  sourceReflectionIds: string[];
-  firstSeenAt: number;
-  lastSeenAt: number;
-  promotedAt: number;
-  updatedAt: number;
+	id: string;
+	stateKey: string;
+	questionKey: string;
+	targetFile: IdentityFileType;
+	insight: string;
+	normalizedInsight: string;
+	confidence: number;
+	durableCount: number;
+	evidence: string[];
+	sourceReflectionIds: string[];
+	firstSeenAt: number;
+	lastSeenAt: number;
+	promotedAt: number;
+	updatedAt: number;
 }
 
 interface UpsertPersonaStateInput {
-  stateKey: string;
-  questionKey: string;
-  targetFile: IdentityFileType;
-  insight: string;
-  normalizedInsight: string;
-  confidence: number;
-  durableCount: number;
-  evidence?: string[];
-  sourceReflectionIds?: string[];
-  firstSeenAt: number;
-  lastSeenAt: number;
+	stateKey: string;
+	questionKey: string;
+	targetFile: IdentityFileType;
+	insight: string;
+	normalizedInsight: string;
+	confidence: number;
+	durableCount: number;
+	evidence?: string[];
+	sourceReflectionIds?: string[];
+	firstSeenAt: number;
+	lastSeenAt: number;
 }
 
 type UpsertPersonaStateResult = {
-  action: "created" | "updated" | "unchanged";
-  entry: PersonaStateEntry;
+	action: "created" | "updated" | "unchanged";
+	entry: PersonaStateEntry;
 };
 
 export class PersonaStateStore extends BaseSqliteStore {
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db);
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db);
 
-    this.liveDb.exec(`
+		this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS persona_state (
         id                   TEXT PRIMARY KEY,
         state_key            TEXT NOT NULL UNIQUE,
@@ -96,107 +96,114 @@ export class PersonaStateStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_persona_state_question
         ON persona_state(question_key, updated_at DESC);
     `);
-  }
+	}
 
-  protected getSubsystemName(): string {
-    return "persona-state-store";
-  }
+	protected getSubsystemName(): string {
+		return "persona-state-store";
+	}
 
-  getByStateKey(stateKey: string): PersonaStateEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM persona_state WHERE state_key = ?").get(stateKey) as
-      | PersonaStateRow
-      | undefined;
-    return row ? this.rowToEntry(row) : null;
-  }
+	getByStateKey(stateKey: string): PersonaStateEntry | null {
+		const row = this.liveDb
+			.prepare("SELECT * FROM persona_state WHERE state_key = ?")
+			.get(stateKey) as PersonaStateRow | undefined;
+		return row ? this.rowToEntry(row) : null;
+	}
 
-  listRecent(limit = 50): PersonaStateEntry[] {
-    const rows = this.liveDb
-      .prepare("SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?")
-      .all(limit) as unknown as PersonaStateRow[];
-    return rows.map((row) => this.rowToEntry(row));
-  }
+	listRecent(limit = 50): PersonaStateEntry[] {
+		const rows = this.liveDb
+			.prepare("SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?")
+			.all(limit) as unknown as PersonaStateRow[];
+		return rows.map((row) => this.rowToEntry(row));
+	}
 
-  count(): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) AS count FROM persona_state").get() as
-      | { count?: number }
-      | undefined;
-    return row?.count ?? 0;
-  }
+	count(): number {
+		const row = this.liveDb
+			.prepare("SELECT COUNT(*) AS count FROM persona_state")
+			.get() as { count?: number } | undefined;
+		return row?.count ?? 0;
+	}
 
-  upsert(entry: UpsertPersonaStateInput): UpsertPersonaStateResult {
-    const now = Math.floor(Date.now() / 1000);
-    const existing = this.getByStateKey(entry.stateKey);
-    const evidence = uniqueStrings(entry.evidence ?? []);
-    const sourceReflectionIds = uniqueStrings(entry.sourceReflectionIds ?? []);
+	upsert(entry: UpsertPersonaStateInput): UpsertPersonaStateResult {
+		const now = Math.floor(Date.now() / 1000);
+		const existing = this.getByStateKey(entry.stateKey);
+		const evidence = uniqueStrings(entry.evidence ?? []);
+		const sourceReflectionIds = uniqueStrings(entry.sourceReflectionIds ?? []);
 
-    if (!existing) {
-      const id = randomUUID();
-      this.liveDb
-        .prepare(
-          `INSERT INTO persona_state (
+		if (!existing) {
+			const id = randomUUID();
+			this.liveDb
+				.prepare(
+					`INSERT INTO persona_state (
              id, state_key, question_key, target_file, insight, normalized_insight,
              confidence, durable_count, evidence, source_reflection_ids,
              first_seen_at, last_seen_at, promoted_at, updated_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          entry.stateKey,
-          entry.questionKey,
-          entry.targetFile,
-          entry.insight,
-          entry.normalizedInsight,
-          entry.confidence,
-          entry.durableCount,
-          JSON.stringify(evidence),
-          JSON.stringify(sourceReflectionIds),
-          entry.firstSeenAt,
-          entry.lastSeenAt,
-          now,
-          now,
-        );
-      const created: PersonaStateEntry = {
-        id,
-        stateKey: entry.stateKey,
-        questionKey: entry.questionKey,
-        targetFile: entry.targetFile,
-        insight: entry.insight,
-        normalizedInsight: entry.normalizedInsight,
-        confidence: entry.confidence,
-        durableCount: entry.durableCount,
-        evidence,
-        sourceReflectionIds,
-        firstSeenAt: entry.firstSeenAt,
-        lastSeenAt: entry.lastSeenAt,
-        promotedAt: now,
-        updatedAt: now,
-      };
-      return { action: "created", entry: created };
-    }
+				)
+				.run(
+					id,
+					entry.stateKey,
+					entry.questionKey,
+					entry.targetFile,
+					entry.insight,
+					entry.normalizedInsight,
+					entry.confidence,
+					entry.durableCount,
+					JSON.stringify(evidence),
+					JSON.stringify(sourceReflectionIds),
+					entry.firstSeenAt,
+					entry.lastSeenAt,
+					now,
+					now,
+				);
+			const created: PersonaStateEntry = {
+				id,
+				stateKey: entry.stateKey,
+				questionKey: entry.questionKey,
+				targetFile: entry.targetFile,
+				insight: entry.insight,
+				normalizedInsight: entry.normalizedInsight,
+				confidence: entry.confidence,
+				durableCount: entry.durableCount,
+				evidence,
+				sourceReflectionIds,
+				firstSeenAt: entry.firstSeenAt,
+				lastSeenAt: entry.lastSeenAt,
+				promotedAt: now,
+				updatedAt: now,
+			};
+			return { action: "created", entry: created };
+		}
 
-    const mergedEvidence = uniqueStrings([...existing.evidence, ...evidence]);
-    const mergedSourceReflectionIds = uniqueStrings([...existing.sourceReflectionIds, ...sourceReflectionIds]);
-    const nextConfidence = Math.max(existing.confidence, entry.confidence);
-    const nextDurableCount = Math.max(existing.durableCount, entry.durableCount);
-    const nextFirstSeenAt = Math.min(existing.firstSeenAt, entry.firstSeenAt);
-    const nextLastSeenAt = Math.max(existing.lastSeenAt, entry.lastSeenAt);
-    const changed =
-      existing.insight !== entry.insight ||
-      existing.targetFile !== entry.targetFile ||
-      existing.confidence !== nextConfidence ||
-      existing.durableCount !== nextDurableCount ||
-      existing.firstSeenAt !== nextFirstSeenAt ||
-      existing.lastSeenAt !== nextLastSeenAt ||
-      JSON.stringify(existing.evidence) !== JSON.stringify(mergedEvidence) ||
-      JSON.stringify(existing.sourceReflectionIds) !== JSON.stringify(mergedSourceReflectionIds);
+		const mergedEvidence = uniqueStrings([...existing.evidence, ...evidence]);
+		const mergedSourceReflectionIds = uniqueStrings([
+			...existing.sourceReflectionIds,
+			...sourceReflectionIds,
+		]);
+		const nextConfidence = Math.max(existing.confidence, entry.confidence);
+		const nextDurableCount = Math.max(
+			existing.durableCount,
+			entry.durableCount,
+		);
+		const nextFirstSeenAt = Math.min(existing.firstSeenAt, entry.firstSeenAt);
+		const nextLastSeenAt = Math.max(existing.lastSeenAt, entry.lastSeenAt);
+		const changed =
+			existing.insight !== entry.insight ||
+			existing.targetFile !== entry.targetFile ||
+			existing.confidence !== nextConfidence ||
+			existing.durableCount !== nextDurableCount ||
+			existing.firstSeenAt !== nextFirstSeenAt ||
+			existing.lastSeenAt !== nextLastSeenAt ||
+			JSON.stringify(existing.evidence) !== JSON.stringify(mergedEvidence) ||
+			JSON.stringify(existing.sourceReflectionIds) !==
+				JSON.stringify(mergedSourceReflectionIds);
 
-    if (!changed) {
-      return { action: "unchanged", entry: existing };
-    }
+		if (!changed) {
+			return { action: "unchanged", entry: existing };
+		}
 
-    this.liveDb
-      .prepare(
-        `UPDATE persona_state
+		this.liveDb
+			.prepare(
+				`UPDATE persona_state
          SET target_file = ?,
              insight = ?,
              normalized_insight = ?,
@@ -208,65 +215,67 @@ export class PersonaStateStore extends BaseSqliteStore {
              last_seen_at = ?,
              updated_at = ?
          WHERE state_key = ?`,
-      )
-      .run(
-        entry.targetFile,
-        entry.insight,
-        entry.normalizedInsight,
-        nextConfidence,
-        nextDurableCount,
-        JSON.stringify(mergedEvidence),
-        JSON.stringify(mergedSourceReflectionIds),
-        nextFirstSeenAt,
-        nextLastSeenAt,
-        now,
-        entry.stateKey,
-      );
+			)
+			.run(
+				entry.targetFile,
+				entry.insight,
+				entry.normalizedInsight,
+				nextConfidence,
+				nextDurableCount,
+				JSON.stringify(mergedEvidence),
+				JSON.stringify(mergedSourceReflectionIds),
+				nextFirstSeenAt,
+				nextLastSeenAt,
+				now,
+				entry.stateKey,
+			);
 
-    const updated: PersonaStateEntry = {
-      id: existing.id,
-      stateKey: entry.stateKey,
-      questionKey: entry.questionKey,
-      targetFile: entry.targetFile,
-      insight: entry.insight,
-      normalizedInsight: entry.normalizedInsight,
-      confidence: nextConfidence,
-      durableCount: nextDurableCount,
-      evidence: mergedEvidence,
-      sourceReflectionIds: mergedSourceReflectionIds,
-      firstSeenAt: nextFirstSeenAt,
-      lastSeenAt: nextLastSeenAt,
-      promotedAt: existing.promotedAt,
-      updatedAt: now,
-    };
-    return { action: "updated", entry: updated };
-  }
+		const updated: PersonaStateEntry = {
+			id: existing.id,
+			stateKey: entry.stateKey,
+			questionKey: entry.questionKey,
+			targetFile: entry.targetFile,
+			insight: entry.insight,
+			normalizedInsight: entry.normalizedInsight,
+			confidence: nextConfidence,
+			durableCount: nextDurableCount,
+			evidence: mergedEvidence,
+			sourceReflectionIds: mergedSourceReflectionIds,
+			firstSeenAt: nextFirstSeenAt,
+			lastSeenAt: nextLastSeenAt,
+			promotedAt: existing.promotedAt,
+			updatedAt: now,
+		};
+		return { action: "updated", entry: updated };
+	}
 
-  private rowToEntry(row: PersonaStateRow): PersonaStateEntry {
-    return {
-      id: row.id,
-      stateKey: row.state_key,
-      questionKey: row.question_key,
-      targetFile: row.target_file,
-      insight: row.insight,
-      normalizedInsight: row.normalized_insight,
-      confidence: row.confidence,
-      durableCount: row.durable_count,
-      evidence: this.parseJsonArray(row.evidence),
-      sourceReflectionIds: this.parseJsonArray(row.source_reflection_ids),
-      firstSeenAt: row.first_seen_at,
-      lastSeenAt: row.last_seen_at,
-      promotedAt: row.promoted_at,
-      updatedAt: row.updated_at,
-    };
-  }
+	private rowToEntry(row: PersonaStateRow): PersonaStateEntry {
+		return {
+			id: row.id,
+			stateKey: row.state_key,
+			questionKey: row.question_key,
+			targetFile: row.target_file,
+			insight: row.insight,
+			normalizedInsight: row.normalized_insight,
+			confidence: row.confidence,
+			durableCount: row.durable_count,
+			evidence: this.parseJsonArray(row.evidence),
+			sourceReflectionIds: this.parseJsonArray(row.source_reflection_ids),
+			firstSeenAt: row.first_seen_at,
+			lastSeenAt: row.last_seen_at,
+			promotedAt: row.promoted_at,
+			updatedAt: row.updated_at,
+		};
+	}
 
-  private parseJsonArray(raw: string): string[] {
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
-    } catch {
-      return [];
-    }
-  }
+	private parseJsonArray(raw: string): string[] {
+		try {
+			const parsed = JSON.parse(raw);
+			return Array.isArray(parsed)
+				? parsed.filter((value): value is string => typeof value === "string")
+				: [];
+		} catch {
+			return [];
+		}
+	}
 }

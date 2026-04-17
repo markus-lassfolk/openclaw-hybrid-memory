@@ -12,13 +12,15 @@
  * @returns Deterministic JSON string with sorted object keys.
  */
 export function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
-  }
-  const serialized = JSON.stringify(value);
-  return serialized === undefined ? "null" : serialized;
+	if (Array.isArray(value)) {
+		return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+	}
+	if (value && typeof value === "object") {
+		const entries = Object.entries(value as Record<string, unknown>).sort(
+			([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+		);
+		return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+	}
+	const serialized = JSON.stringify(value);
+	return serialized === undefined ? "null" : serialized;
 }

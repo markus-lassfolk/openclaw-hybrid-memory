@@ -15,10 +15,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { BenchmarkResult } from "../benchmark/shadow-eval.js";
 import {
-  formatBenchmarkResult,
-  formatBenchmarkResults,
-  runAllBenchmarks,
-  runBenchmark,
+	formatBenchmarkResult,
+	formatBenchmarkResults,
+	runAllBenchmarks,
+	runBenchmark,
 } from "../benchmark/shadow-eval.js";
 import type { HybridMemCliContext } from "./register.js";
 import type { Chainable } from "./shared.js";
@@ -28,103 +28,144 @@ import type { Chainable } from "./shared.js";
 // ---------------------------------------------------------------------------
 
 type BenchmarkRunContext = {
-  /** Path to the SQLite database (llm_cost_log lives here) */
-  dbPath: string;
+	/** Path to the SQLite database (llm_cost_log lives here) */
+	dbPath: string;
 };
 
 async function runBenchmarkCommand(
-  ctx: BenchmarkRunContext,
-  options: {
-    feature?: string;
-    accuracy?: boolean;
-    shadow?: boolean;
-    format?: "text" | "json";
-    iterations?: number;
-    judgeModel?: string;
-  },
+	ctx: BenchmarkRunContext,
+	options: {
+		feature?: string;
+		accuracy?: boolean;
+		shadow?: boolean;
+		format?: "text" | "json";
+		iterations?: number;
+		judgeModel?: string;
+	},
 ): Promise<{ results: BenchmarkResult[] }> {
-  const {
-    feature,
-    accuracy = false,
-    shadow = false,
-    format = "text",
-    iterations = 100,
-    judgeModel = "openai/gpt-4.1-nano",
-  } = options;
+	const {
+		feature,
+		accuracy = false,
+		shadow = false,
+		format = "text",
+		iterations = 100,
+		judgeModel = "openai/gpt-4.1-nano",
+	} = options;
 
-  if (!existsSync(ctx.dbPath)) {
-    throw new Error(`Database not found at: ${ctx.dbPath}. Run 'openclaw verify' first to set up the database.`);
-  }
+	if (!existsSync(ctx.dbPath)) {
+		throw new Error(
+			`Database not found at: ${ctx.dbPath}. Run 'openclaw verify' first to set up the database.`,
+		);
+	}
 
-  const benchmarkCtx = { dbPath: ctx.dbPath };
+	const benchmarkCtx = { dbPath: ctx.dbPath };
 
-  let results: BenchmarkResult[];
+	let results: BenchmarkResult[];
 
-  if (feature) {
-    const result = await runBenchmark(feature, benchmarkCtx, {
-      accuracy,
-      judgeModel,
-      format,
-      iterations,
-    });
-    results = [result];
-  } else {
-    results = await runAllBenchmarks(benchmarkCtx, {
-      accuracy,
-      judgeModel,
-      format,
-      iterations,
-    });
-  }
+	if (feature) {
+		const result = await runBenchmark(feature, benchmarkCtx, {
+			accuracy,
+			judgeModel,
+			format,
+			iterations,
+		});
+		results = [result];
+	} else {
+		results = await runAllBenchmarks(benchmarkCtx, {
+			accuracy,
+			judgeModel,
+			format,
+			iterations,
+		});
+	}
 
-  if (format === "json") {
-    return { results };
-  }
+	if (format === "json") {
+		return { results };
+	}
 
-  // Text output
-  console.log("\n🧪 Shadow Evaluation Benchmark Suite");
-  console.log(`   Database: ${ctx.dbPath}`);
-  console.log(`   Iterations: ${iterations}${shadow ? " (shadow mode)" : ""}${accuracy ? " + accuracy tests" : ""}`);
-  console.log(formatBenchmarkResults(results));
+	// Text output
+	console.log("\n🧪 Shadow Evaluation Benchmark Suite");
+	console.log(`   Database: ${ctx.dbPath}`);
+	console.log(
+		`   Iterations: ${iterations}${shadow ? " (shadow mode)" : ""}${accuracy ? " + accuracy tests" : ""}`,
+	);
+	console.log(formatBenchmarkResults(results));
 
-  return { results };
+	return { results };
 }
 
 // ---------------------------------------------------------------------------
 // CLI registration
 // ---------------------------------------------------------------------------
 
-export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliContext): void {
-  const benchmark = mem.command("benchmark").description("Shadow evaluation benchmarks for hybrid-memory features");
+export function registerBenchmarkCommands(
+	mem: Chainable,
+	_ctx: HybridMemCliContext,
+): void {
+	const benchmark = mem
+		.command("benchmark")
+		.description("Shadow evaluation benchmarks for hybrid-memory features");
 
-  benchmark
-    .command("run")
-    .description("Run shadow evaluation benchmarks (latency, accuracy, token cost)")
-    .option("--feature <name>", "Specific feature to benchmark: episodes, frequency-autosave, procedure-feedback")
-    .option("--accuracy", "Run accuracy tests (uses LLM, max 10 calls per feature)", "false")
-    .option("--shadow", "Include shadow comparison (feature ON vs OFF)", "false")
-    .option("--format <format>", "Output format: text (default) or json", "text")
-    .option("--iterations <n>", "Latency test iterations (default 100)", "100")
-    .option("--judge-model <model>", "Model for accuracy scoring (default openai/gpt-4.1-nano)", "openai/gpt-4.1-nano")
-    .action(async (opts: Record<string, string | boolean | undefined>) => {
-      // Resolve dbPath from HybridMemoryConfig
-      const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
-      const dbPath = (
-        typeof cfg.sqlitePath === "string" && cfg.sqlitePath
-          ? cfg.sqlitePath
-          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
-      ) as string;
+	benchmark
+		.command("run")
+		.description(
+			"Run shadow evaluation benchmarks (latency, accuracy, token cost)",
+		)
+		.option(
+			"--feature <name>",
+			"Specific feature to benchmark: episodes, frequency-autosave, procedure-feedback",
+		)
+		.option(
+			"--accuracy",
+			"Run accuracy tests (uses LLM, max 10 calls per feature)",
+			"false",
+		)
+		.option(
+			"--shadow",
+			"Include shadow comparison (feature ON vs OFF)",
+			"false",
+		)
+		.option(
+			"--format <format>",
+			"Output format: text (default) or json",
+			"text",
+		)
+		.option("--iterations <n>", "Latency test iterations (default 100)", "100")
+		.option(
+			"--judge-model <model>",
+			"Model for accuracy scoring (default openai/gpt-4.1-nano)",
+			"openai/gpt-4.1-nano",
+		)
+		.action(async (opts: Record<string, string | boolean | undefined>) => {
+			// Resolve dbPath from HybridMemoryConfig
+			const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
+			const dbPath = (
+				typeof cfg.sqlitePath === "string" && cfg.sqlitePath
+					? cfg.sqlitePath
+					: join(
+							getEnv("HOME") ?? "/home/markus",
+							".openclaw",
+							"memory",
+							"facts.db",
+						)
+			) as string;
 
-      await runBenchmarkCommand(
-        { dbPath },
-        {
-          feature: typeof opts.feature === "string" ? opts.feature : undefined,
-          accuracy: opts.accuracy === "true",
-          shadow: opts.shadow === "true",
-          format: (opts.format === "json" ? "json" : "text") as "text" | "json",
-          iterations: typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100,
-          judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
-        },
-      );
-    });
+			await runBenchmarkCommand(
+				{ dbPath },
+				{
+					feature: typeof opts.feature === "string" ? opts.feature : undefined,
+					accuracy: opts.accuracy === "true",
+					shadow: opts.shadow === "true",
+					format: (opts.format === "json" ? "json" : "text") as "text" | "json",
+					iterations:
+						typeof opts.iterations === "string"
+							? Number.parseInt(opts.iterations, 10)
+							: 100,
+					judgeModel:
+						typeof opts["judge-model"] === "string"
+							? opts["judge-model"]
+							: "openai/gpt-4.1-nano",
+				},
+			);
+		});
 }

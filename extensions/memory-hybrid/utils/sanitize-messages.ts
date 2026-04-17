@@ -15,18 +15,18 @@
  */
 
 export type MessageLike = {
-  role: string;
-  content?:
-    | string
-    | Array<{
-        type?: string;
-        id?: string;
-        tool_use_id?: string;
-        content?: unknown;
-        text?: string;
-        name?: string;
-        input?: unknown;
-      }>;
+	role: string;
+	content?:
+		| string
+		| Array<{
+				type?: string;
+				id?: string;
+				tool_use_id?: string;
+				content?: unknown;
+				text?: string;
+				name?: string;
+				input?: unknown;
+		  }>;
 };
 
 const PLACEHOLDER_CONTENT = "[Output omitted or truncated.]";
@@ -35,34 +35,39 @@ const PLACEHOLDER_CONTENT = "[Output omitted or truncated.]";
  * Collect tool_use ids from an assistant message's content blocks.
  */
 function getToolUseIds(content: MessageLike["content"]): string[] {
-  if (!Array.isArray(content)) return [];
-  const ids: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object" && (block as { type?: string }).type === "tool_use") {
-      const id = (block as { id?: string }).id;
-      if (typeof id === "string" && id.trim()) ids.push(id.trim());
-    }
-  }
-  return ids;
+	if (!Array.isArray(content)) return [];
+	const ids: string[] = [];
+	for (const block of content) {
+		if (
+			block &&
+			typeof block === "object" &&
+			(block as { type?: string }).type === "tool_use"
+		) {
+			const id = (block as { id?: string }).id;
+			if (typeof id === "string" && id.trim()) ids.push(id.trim());
+		}
+	}
+	return ids;
 }
 
 /**
  * Collect tool_use_ids from a tool message's content blocks.
  */
 function getToolResultIds(content: MessageLike["content"]): Set<string> {
-  if (!Array.isArray(content)) return new Set();
-  const set = new Set<string>();
-  for (const block of content) {
-    if (
-      block &&
-      typeof block === "object" &&
-      ((block as { type?: string }).type === "tool_result" || (block as { type?: string }).type === "result")
-    ) {
-      const tid = (block as { tool_use_id?: string }).tool_use_id;
-      if (typeof tid === "string" && tid.trim()) set.add(tid.trim());
-    }
-  }
-  return set;
+	if (!Array.isArray(content)) return new Set();
+	const set = new Set<string>();
+	for (const block of content) {
+		if (
+			block &&
+			typeof block === "object" &&
+			((block as { type?: string }).type === "tool_result" ||
+				(block as { type?: string }).type === "result")
+		) {
+			const tid = (block as { tool_use_id?: string }).tool_use_id;
+			if (typeof tid === "string" && tid.trim()) set.add(tid.trim());
+		}
+	}
+	return set;
 }
 
 /**
@@ -75,69 +80,80 @@ function getToolResultIds(content: MessageLike["content"]): Set<string> {
  * @returns New array with inserted tool messages where needed (or same array if
  *   no changes).
  */
-export function sanitizeMessagesForClaude(messages: MessageLike[]): MessageLike[] {
-  if (!Array.isArray(messages) || messages.length === 0) return messages;
+export function sanitizeMessagesForClaude(
+	messages: MessageLike[],
+): MessageLike[] {
+	if (!Array.isArray(messages) || messages.length === 0) return messages;
 
-  const out: MessageLike[] = [];
-  let changed = false;
+	const out: MessageLike[] = [];
+	let changed = false;
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (!msg || typeof msg !== "object") {
-      out.push(msg);
-      continue;
-    }
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+		if (!msg || typeof msg !== "object") {
+			out.push(msg);
+			continue;
+		}
 
-    const role = (msg as MessageLike).role;
-    const content = (msg as MessageLike).content;
+		const role = (msg as MessageLike).role;
+		const content = (msg as MessageLike).content;
 
-    out.push(msg);
+		out.push(msg);
 
-    if (role !== "assistant") continue;
+		if (role !== "assistant") continue;
 
-    const toolUseIds = getToolUseIds(content);
-    if (toolUseIds.length === 0) continue;
+		const toolUseIds = getToolUseIds(content);
+		if (toolUseIds.length === 0) continue;
 
-    const next = messages[i + 1];
-    const nextRole = next && typeof next === "object" ? (next as MessageLike).role : undefined;
-    const nextContent = next && typeof next === "object" ? (next as MessageLike).content : undefined;
-    const nextResultIds = nextRole === "tool" ? getToolResultIds(nextContent) : new Set<string>();
+		const next = messages[i + 1];
+		const nextRole =
+			next && typeof next === "object" ? (next as MessageLike).role : undefined;
+		const nextContent =
+			next && typeof next === "object"
+				? (next as MessageLike).content
+				: undefined;
+		const nextResultIds =
+			nextRole === "tool" ? getToolResultIds(nextContent) : new Set<string>();
 
-    const missing = toolUseIds.filter((id) => !nextResultIds.has(id));
-    if (missing.length === 0) continue;
+		const missing = toolUseIds.filter((id) => !nextResultIds.has(id));
+		if (missing.length === 0) continue;
 
-    const placeholderToolMessage: MessageLike = {
-      role: "tool",
-      content: missing.map((tool_use_id) => ({
-        type: "tool_result",
-        tool_use_id,
-        content: PLACEHOLDER_CONTENT,
-      })),
-    };
+		const placeholderToolMessage: MessageLike = {
+			role: "tool",
+			content: missing.map((tool_use_id) => ({
+				type: "tool_result",
+				tool_use_id,
+				content: PLACEHOLDER_CONTENT,
+			})),
+		};
 
-    if (nextRole === "tool" && next && Array.isArray(nextContent)) {
-      const existingBlocks = nextContent.slice() as Array<{ type?: string; tool_use_id?: string; content?: unknown }>;
-      for (const id of missing) {
-        existingBlocks.push({
-          type: "tool_result",
-          tool_use_id: id,
-          content: PLACEHOLDER_CONTENT,
-        });
-      }
-      out.push({
-        ...next,
-        content: existingBlocks,
-      } as MessageLike);
-      changed = true;
-      i += 1;
-      continue;
-    }
+		if (nextRole === "tool" && next && Array.isArray(nextContent)) {
+			const existingBlocks = nextContent.slice() as Array<{
+				type?: string;
+				tool_use_id?: string;
+				content?: unknown;
+			}>;
+			for (const id of missing) {
+				existingBlocks.push({
+					type: "tool_result",
+					tool_use_id: id,
+					content: PLACEHOLDER_CONTENT,
+				});
+			}
+			out.push({
+				...next,
+				content: existingBlocks,
+			} as MessageLike);
+			changed = true;
+			i += 1;
+			continue;
+		}
 
-    out.push(placeholderToolMessage);
-    changed = true;
-  }
+		out.push(placeholderToolMessage);
+		changed = true;
+	}
 
-  return changed ? out : messages;
+	return changed ? out : messages;
 }
 
 /**
@@ -151,48 +167,52 @@ export function sanitizeMessagesForClaude(messages: MessageLike[]): MessageLike[
  * would become empty, insert a minimal text block so the request remains valid.
  */
 function isOpenAIResponsesReasoningBlock(block: unknown): boolean {
-  if (!block || typeof block !== "object") return false;
-  const b = block as Record<string, unknown>;
-  if (b.type === "reasoning") return true;
-  if (typeof b.id === "string" && b.id.startsWith("rs_")) return true;
-  return false;
+	if (!block || typeof block !== "object") return false;
+	const b = block as Record<string, unknown>;
+	if (b.type === "reasoning") return true;
+	if (typeof b.id === "string" && b.id.startsWith("rs_")) return true;
+	return false;
 }
 
 /**
  * @returns New array if any reasoning blocks were removed; otherwise the original array.
  */
-export function sanitizeMessagesForOpenAIResponses(messages: MessageLike[]): MessageLike[] {
-  if (!Array.isArray(messages) || messages.length === 0) return messages;
+export function sanitizeMessagesForOpenAIResponses(
+	messages: MessageLike[],
+): MessageLike[] {
+	if (!Array.isArray(messages) || messages.length === 0) return messages;
 
-  let changed = false;
-  const out: MessageLike[] = [];
+	let changed = false;
+	const out: MessageLike[] = [];
 
-  for (const msg of messages) {
-    if (!msg || typeof msg !== "object") {
-      out.push(msg);
-      continue;
-    }
-    const content = (msg as MessageLike).content;
-    if (!Array.isArray(content)) {
-      out.push(msg);
-      continue;
-    }
-    const filtered = content.filter((block) => !isOpenAIResponsesReasoningBlock(block));
-    if (filtered.length !== content.length) {
-      changed = true;
-      const role = (msg as MessageLike).role;
-      if (role === "assistant" && filtered.length === 0) {
-        out.push({
-          ...(msg as object),
-          content: [{ type: "text", text: "(prior reasoning trace omitted)" }],
-        } as MessageLike);
-      } else {
-        out.push({ ...(msg as object), content: filtered } as MessageLike);
-      }
-    } else {
-      out.push(msg);
-    }
-  }
+	for (const msg of messages) {
+		if (!msg || typeof msg !== "object") {
+			out.push(msg);
+			continue;
+		}
+		const content = (msg as MessageLike).content;
+		if (!Array.isArray(content)) {
+			out.push(msg);
+			continue;
+		}
+		const filtered = content.filter(
+			(block) => !isOpenAIResponsesReasoningBlock(block),
+		);
+		if (filtered.length !== content.length) {
+			changed = true;
+			const role = (msg as MessageLike).role;
+			if (role === "assistant" && filtered.length === 0) {
+				out.push({
+					...(msg as object),
+					content: [{ type: "text", text: "(prior reasoning trace omitted)" }],
+				} as MessageLike);
+			} else {
+				out.push({ ...(msg as object), content: filtered } as MessageLike);
+			}
+		} else {
+			out.push(msg);
+		}
+	}
 
-  return changed ? out : messages;
+	return changed ? out : messages;
 }

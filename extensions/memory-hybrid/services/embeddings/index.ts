@@ -16,22 +16,31 @@ export { AllEmbeddingProvidersFailed } from "./types.js";
 export type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
 
 export {
-  GOOGLE_EMBED_DEFAULT_DIMENSIONS,
-  GOOGLE_EMBED_DEFAULT_MODEL,
-  OPENAI_ONLY_EMBED_MODELS,
-  isOllamaCircuitBreakerOpen,
-  shouldSuppressEmbeddingError,
-  safeEmbed,
+	GOOGLE_EMBED_DEFAULT_DIMENSIONS,
+	GOOGLE_EMBED_DEFAULT_MODEL,
+	OPENAI_ONLY_EMBED_MODELS,
+	isOllamaCircuitBreakerOpen,
+	shouldSuppressEmbeddingError,
+	safeEmbed,
 } from "./shared.js";
 
 export { Embeddings } from "./openai-provider.js";
 
-export { OllamaEmbeddingProvider, _resetOllamaCircuitBreakerForTesting } from "./ollama-provider.js";
+export {
+	OllamaEmbeddingProvider,
+	_resetOllamaCircuitBreakerForTesting,
+} from "./ollama-provider.js";
 
-export { OnnxEmbeddingProvider, __setOnnxRuntimeLoaderForTests } from "./onnx-provider.js";
+export {
+	OnnxEmbeddingProvider,
+	__setOnnxRuntimeLoaderForTests,
+} from "./onnx-provider.js";
 
 export { FallbackEmbeddingProvider } from "./fallback-provider.js";
 
 export { ChainEmbeddingProvider } from "./chain-provider.js";
 
-export { createEmbeddingProvider, AZURE_OPENAI_API_VERSION } from "./factory.js";
+export {
+	createEmbeddingProvider,
+	AZURE_OPENAI_API_VERSION,
+} from "./factory.js";

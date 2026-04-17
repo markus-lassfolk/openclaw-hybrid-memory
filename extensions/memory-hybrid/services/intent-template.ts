@@ -8,112 +8,119 @@ import type { KeywordGroup } from "../utils/language-keywords.js";
 
 /** Human-readable intent of each keyword group. Sent to LLM so it produces natural equivalents. */
 export const KEYWORD_GROUP_INTENTS: Record<KeywordGroup, string> = {
-  triggers:
-    "Phrases that indicate the user wants to remember something: preferences, decisions, identity, credentials, or facts. Include single words and common sentence starters. Consider how speakers naturally introduce memorable information (e.g. 'I prefer', 'my X is', 'we decided').",
-  categoryDecision:
-    "Phrases that signal a past decision or choice (what was chosen, selected, or decided). Include verbs and phrases like 'chose X over Y', 'decided to use', 'went with'.",
-  categoryPreference:
-    "Verbs and short phrases that express preference or desire: like, love, hate, want, need, prefer.",
-  categoryEntity:
-    "Phrases that introduce a person/entity or contact info: name, email, phone, 'is called', identifiers.",
-  categoryFact:
-    "Phrases that state a fact about someone/something: birth, location, job, 'is/are', 'has/have'. Include common copula and possession phrasing.",
-  decayPermanent:
-    "Phrases that indicate long-term or permanent information: decisions, architecture choices, 'always use', 'never use'.",
-  decaySession:
-    "Phrases that indicate temporary, session-scoped state: 'right now', 'this session', 'currently debugging'.",
-  decayActive:
-    "Phrases that indicate current work or short-term focus: 'working on', 'need to', 'todo', 'blocker', 'sprint'.",
-  decayPermanentKeys:
-    "Key-field fragments (not free text) that identify a fact as permanent: personal identifiers like 'name', 'email', 'phone', 'birthday'; technical anchors like 'api_key', 'architecture'; and decision markers like 'decision'. These appear as the structured key in a key–value fact, e.g. key='email', key='architektur'. Provide word-form equivalents, not phrases.",
-  decaySessionKeys:
-    "Key-field fragments that identify a fact as session-scoped (ephemeral): e.g. 'current_file', 'debug', 'temp', 'working_on_right_now'. These appear as the structured key in a fact. Provide equivalents used in code/config context.",
-  decayActiveKeys:
-    "Key-field fragments that identify a fact as an active work item: e.g. 'task', 'todo', 'wip', 'branch', 'sprint', 'blocker'. These appear as the structured key in a fact. Provide equivalents for task-management vocabulary.",
-  decayPermanentEntities:
-    "Entity labels (not free text) that cause a fact to be classified as permanent: 'decision', 'convention'. These are exact entity values assigned during extraction. Provide translated equivalents of 'decision' and 'convention' as they appear in structured fact entities.",
-  decayCheckpointKeys:
-    "Key-field fragments that identify a fact as a checkpoint (build/CI state): 'checkpoint', 'preflight'. Provide equivalents for checkpoint/validation state in development workflows.",
-  /** Directive extraction — phrases where user instructs agent to remember or change behavior. */
-  /** Self-correction detection — phrases indicating the user is correcting the agent. */
-  correctionSignals:
-    "Phrases indicating the user is correcting the agent or nudging it to fix a mistake. Include: 'every time', 'i already told you', 'why didn't you', 'try again', 'you misunderstood', 'that was wrong', 'let's revert', 'just do X'. These are not new instructions but corrections of previous ones.",
-  /** Directive extraction — phrases where user instructs agent to remember or change behavior (10 categories merged). */
-  directiveSignals:
-    "Phrases indicating the user wants the agent to remember something or change future behavior. Include: explicit memory requests ('remember that', 'don't forget', 'keep in mind'), future behavior changes ('from now on', 'next time', 'going forward'), absolute rules ('always', 'never', 'you must'), preferences ('I prefer', 'I'd rather', 'default to'), warnings ('be careful with', 'watch out for', 'avoid'), procedural instructions ('first check', 'before you do', 'step 1 is always'), implicit corrections ('no, use', 'the other one', 'that's the old way'), emotional emphasis (ALL CAPS, multiple exclamation marks), and conditional rules ('when X happens', 'if you see', 'only when'). These are not questions but directives — the user is telling the agent how to behave.",
-  directiveExplicitMemory:
-    "Explicit memory requests: 'remember that', 'don't forget', 'keep in mind', 'store this', 'write this down'. User explicitly asks for memory.",
-  directiveFutureBehavior:
-    "Future behavior phrases: 'from now on', 'next time', 'going forward', 'in the future'. Changes how agent should act later.",
-  directiveAbsoluteRule:
-    "Absolute rule phrases: 'always', 'never', 'you must', 'under no circumstances'. Strict constraints on behavior.",
-  directivePreference:
-    "Preference phrases (directive): 'I prefer', 'use this instead', 'default to', 'I'd rather'. User stating a choice.",
-  directiveWarning: "Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
-  directiveProcedural:
-    "Procedural instruction phrases: 'first check', 'before you do', 'step 1 is', 'the order should be'. Defining a process.",
-  directiveImplicitCorrection:
-    "Implicit correction phrases: 'no, use', 'not that', 'the other one', 'that's the old way'. Short redirects.",
-  directiveConditionalRule:
-    "Conditional rule phrases: 'when this happens', 'if you see', 'only when', 'whenever'. Rules with triggers.",
-  /** Reinforcement extraction — phrases where user praises or approves of agent behavior. */
-  reinforcementSignals:
-    "Phrases indicating the user is praising or approving of the agent's behavior, output, or method. Include: explicit approval ('perfect', 'exactly', 'spot on', 'you nailed it', 'correct'), emotional praise ('love it', 'brilliant', 'amazing', 'excellent'), method confirmation ('yes, like that', 'keep this format', 'this is how it should be'), relief/finally ('finally!', 'now you get it', 'at last'), comparative praise ('much better', 'huge improvement', 'better than before'), encouragement ('keep doing this', 'more of this', 'don't change'), feature praise ('formatting is perfect', 'love the detail', 'great structure'), and sharing signals ('going to show this', 'saving this', 'bookmarked'). These are not corrections but positive reinforcement — the user is saying 'yes, do more of this'.",
-  reinforcementStrongPraise:
-    "Strong praise phrases: 'perfect', 'brilliant', 'amazing', 'excellent', 'you nailed it', 'spot on'. High enthusiasm.",
-  reinforcementMethodConfirmation:
-    "Method confirmation phrases: 'yes, like that', 'keep this format', 'this is how it should be', 'do it like this'. Approving the specific way a task was done.",
-  reinforcementRelief:
-    "Relief/finally phrases: 'finally!', 'now you get it', 'at last', 'there we go'. Success after struggle.",
-  reinforcementComparativePraise:
-    "Comparative praise phrases: 'much better', 'huge improvement', 'better than before', 'way better'. Improvement over past attempts.",
-  reinforcementSharingSignals:
-    "Sharing/saving signals: 'saving this', 'bookmarked', 'going to show this', 'will share this'. Content valuable enough to keep.",
+	triggers:
+		"Phrases that indicate the user wants to remember something: preferences, decisions, identity, credentials, or facts. Include single words and common sentence starters. Consider how speakers naturally introduce memorable information (e.g. 'I prefer', 'my X is', 'we decided').",
+	categoryDecision:
+		"Phrases that signal a past decision or choice (what was chosen, selected, or decided). Include verbs and phrases like 'chose X over Y', 'decided to use', 'went with'.",
+	categoryPreference:
+		"Verbs and short phrases that express preference or desire: like, love, hate, want, need, prefer.",
+	categoryEntity:
+		"Phrases that introduce a person/entity or contact info: name, email, phone, 'is called', identifiers.",
+	categoryFact:
+		"Phrases that state a fact about someone/something: birth, location, job, 'is/are', 'has/have'. Include common copula and possession phrasing.",
+	decayPermanent:
+		"Phrases that indicate long-term or permanent information: decisions, architecture choices, 'always use', 'never use'.",
+	decaySession:
+		"Phrases that indicate temporary, session-scoped state: 'right now', 'this session', 'currently debugging'.",
+	decayActive:
+		"Phrases that indicate current work or short-term focus: 'working on', 'need to', 'todo', 'blocker', 'sprint'.",
+	decayPermanentKeys:
+		"Key-field fragments (not free text) that identify a fact as permanent: personal identifiers like 'name', 'email', 'phone', 'birthday'; technical anchors like 'api_key', 'architecture'; and decision markers like 'decision'. These appear as the structured key in a key–value fact, e.g. key='email', key='architektur'. Provide word-form equivalents, not phrases.",
+	decaySessionKeys:
+		"Key-field fragments that identify a fact as session-scoped (ephemeral): e.g. 'current_file', 'debug', 'temp', 'working_on_right_now'. These appear as the structured key in a fact. Provide equivalents used in code/config context.",
+	decayActiveKeys:
+		"Key-field fragments that identify a fact as an active work item: e.g. 'task', 'todo', 'wip', 'branch', 'sprint', 'blocker'. These appear as the structured key in a fact. Provide equivalents for task-management vocabulary.",
+	decayPermanentEntities:
+		"Entity labels (not free text) that cause a fact to be classified as permanent: 'decision', 'convention'. These are exact entity values assigned during extraction. Provide translated equivalents of 'decision' and 'convention' as they appear in structured fact entities.",
+	decayCheckpointKeys:
+		"Key-field fragments that identify a fact as a checkpoint (build/CI state): 'checkpoint', 'preflight'. Provide equivalents for checkpoint/validation state in development workflows.",
+	/** Directive extraction — phrases where user instructs agent to remember or change behavior. */
+	/** Self-correction detection — phrases indicating the user is correcting the agent. */
+	correctionSignals:
+		"Phrases indicating the user is correcting the agent or nudging it to fix a mistake. Include: 'every time', 'i already told you', 'why didn't you', 'try again', 'you misunderstood', 'that was wrong', 'let's revert', 'just do X'. These are not new instructions but corrections of previous ones.",
+	/** Directive extraction — phrases where user instructs agent to remember or change behavior (10 categories merged). */
+	directiveSignals:
+		"Phrases indicating the user wants the agent to remember something or change future behavior. Include: explicit memory requests ('remember that', 'don't forget', 'keep in mind'), future behavior changes ('from now on', 'next time', 'going forward'), absolute rules ('always', 'never', 'you must'), preferences ('I prefer', 'I'd rather', 'default to'), warnings ('be careful with', 'watch out for', 'avoid'), procedural instructions ('first check', 'before you do', 'step 1 is always'), implicit corrections ('no, use', 'the other one', 'that's the old way'), emotional emphasis (ALL CAPS, multiple exclamation marks), and conditional rules ('when X happens', 'if you see', 'only when'). These are not questions but directives — the user is telling the agent how to behave.",
+	directiveExplicitMemory:
+		"Explicit memory requests: 'remember that', 'don't forget', 'keep in mind', 'store this', 'write this down'. User explicitly asks for memory.",
+	directiveFutureBehavior:
+		"Future behavior phrases: 'from now on', 'next time', 'going forward', 'in the future'. Changes how agent should act later.",
+	directiveAbsoluteRule:
+		"Absolute rule phrases: 'always', 'never', 'you must', 'under no circumstances'. Strict constraints on behavior.",
+	directivePreference:
+		"Preference phrases (directive): 'I prefer', 'use this instead', 'default to', 'I'd rather'. User stating a choice.",
+	directiveWarning:
+		"Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
+	directiveProcedural:
+		"Procedural instruction phrases: 'first check', 'before you do', 'step 1 is', 'the order should be'. Defining a process.",
+	directiveImplicitCorrection:
+		"Implicit correction phrases: 'no, use', 'not that', 'the other one', 'that's the old way'. Short redirects.",
+	directiveConditionalRule:
+		"Conditional rule phrases: 'when this happens', 'if you see', 'only when', 'whenever'. Rules with triggers.",
+	/** Reinforcement extraction — phrases where user praises or approves of agent behavior. */
+	reinforcementSignals:
+		"Phrases indicating the user is praising or approving of the agent's behavior, output, or method. Include: explicit approval ('perfect', 'exactly', 'spot on', 'you nailed it', 'correct'), emotional praise ('love it', 'brilliant', 'amazing', 'excellent'), method confirmation ('yes, like that', 'keep this format', 'this is how it should be'), relief/finally ('finally!', 'now you get it', 'at last'), comparative praise ('much better', 'huge improvement', 'better than before'), encouragement ('keep doing this', 'more of this', 'don't change'), feature praise ('formatting is perfect', 'love the detail', 'great structure'), and sharing signals ('going to show this', 'saving this', 'bookmarked'). These are not corrections but positive reinforcement — the user is saying 'yes, do more of this'.",
+	reinforcementStrongPraise:
+		"Strong praise phrases: 'perfect', 'brilliant', 'amazing', 'excellent', 'you nailed it', 'spot on'. High enthusiasm.",
+	reinforcementMethodConfirmation:
+		"Method confirmation phrases: 'yes, like that', 'keep this format', 'this is how it should be', 'do it like this'. Approving the specific way a task was done.",
+	reinforcementRelief:
+		"Relief/finally phrases: 'finally!', 'now you get it', 'at last', 'there we go'. Success after struggle.",
+	reinforcementComparativePraise:
+		"Comparative praise phrases: 'much better', 'huge improvement', 'better than before', 'way better'. Improvement over past attempts.",
+	reinforcementSharingSignals:
+		"Sharing/saving signals: 'saving this', 'bookmarked', 'going to show this', 'will share this'. Content valuable enough to keep.",
 };
 
 /** Structural patterns we need for trigger detection (sentence-level). */
 export const STRUCTURAL_TRIGGER_INTENTS = {
-  firstPersonPreference:
-    "First-person preference statement: subject (I/we) + verb (like, prefer, want, need, love, hate) + object. Provide natural equivalents: e.g. 'I prefer X', 'we like Y'. Include common word orders and particles for this language.",
-  possessiveFact:
-    "Possessive fact: 'my X is Y' or 'X's Y is Z'. How do speakers say 'my [thing] is [value]' or '[person]'s [thing] is [value]'? Provide phrase patterns or typical starters.",
-  alwaysNeverRule:
-    "Always/never rule: 'always do X', 'never do Y'. How are universal rules or habits stated? Provide typical adverbs and phrasing.",
+	firstPersonPreference:
+		"First-person preference statement: subject (I/we) + verb (like, prefer, want, need, love, hate) + object. Provide natural equivalents: e.g. 'I prefer X', 'we like Y'. Include common word orders and particles for this language.",
+	possessiveFact:
+		"Possessive fact: 'my X is Y' or 'X's Y is Z'. How do speakers say 'my [thing] is [value]' or '[person]'s [thing] is [value]'? Provide phrase patterns or typical starters.",
+	alwaysNeverRule:
+		"Always/never rule: 'always do X', 'never do Y'. How are universal rules or habits stated? Provide typical adverbs and phrasing.",
 };
 
 /** Extraction pattern intents: we need building blocks to build safe regex. */
 export const EXTRACTION_INTENTS = {
-  decision: {
-    description:
-      "Decision with optional rationale: ' [subject] decided/chose to use X [because/since/for] Y '. Capture: (1) what was chosen, (2) optional reason.",
-    verbs: "Verbs meaning decided, chose, picked, selected, went with (past tense).",
-    connectors: "Words introducing reason: because, since, for, due to, over.",
-  },
-  choiceOver: {
-    description:
-      "Explicit choice: ' use X over Y ' or ' prefer X instead of Y '. Capture: (1) chosen thing, (2) rejected thing, (3) optional reason.",
-    verbs: "Verbs: use, using, chose, prefer, picked.",
-    rejectors: "Phrases: over, instead of, rather than.",
-    connectors: "Reason: because, since, for.",
-  },
-  convention: {
-    description: "Always/never rule: ' always X ' or ' never X '. Capture: (1) the rule. Value is 'always' or 'never'.",
-    always: "Words for 'always' (and formal variants).",
-    never: "Words for 'never' (and formal variants).",
-  },
-  possessive: {
-    description:
-      "Possessive fact: ' my X is Y ' or ' X's Y is Z '. Capture: (1) possessor or 'user', (2) key, (3) value.",
-    possessiveWords: "Words for 'my', 'our', or possessive marker; or proper noun + possessive.",
-    isWords: "Copula: is, are, was (and equivalents).",
-  },
-  firstPersonPreferenceExtract: {
-    description: "First-person preference: ' I prefer/like/want X '. Capture: (1) verb, (2) object. Entity=user.",
-    subject: "First-person subject: I, we (and formal/informal).",
-    verbs: "Preference verbs: prefer, like, love, hate, want, need, use.",
-  },
-  nameIntro: {
-    description: "Name introduction: ' [I am] called X ' or ' name is X '. Capture: (1) name. Entity=entity, key=name.",
-    verbs: "Phrases/verbs: is called, call me, name is, heter (Swedish), heißen (German), etc.",
-  },
+	decision: {
+		description:
+			"Decision with optional rationale: ' [subject] decided/chose to use X [because/since/for] Y '. Capture: (1) what was chosen, (2) optional reason.",
+		verbs:
+			"Verbs meaning decided, chose, picked, selected, went with (past tense).",
+		connectors: "Words introducing reason: because, since, for, due to, over.",
+	},
+	choiceOver: {
+		description:
+			"Explicit choice: ' use X over Y ' or ' prefer X instead of Y '. Capture: (1) chosen thing, (2) rejected thing, (3) optional reason.",
+		verbs: "Verbs: use, using, chose, prefer, picked.",
+		rejectors: "Phrases: over, instead of, rather than.",
+		connectors: "Reason: because, since, for.",
+	},
+	convention: {
+		description:
+			"Always/never rule: ' always X ' or ' never X '. Capture: (1) the rule. Value is 'always' or 'never'.",
+		always: "Words for 'always' (and formal variants).",
+		never: "Words for 'never' (and formal variants).",
+	},
+	possessive: {
+		description:
+			"Possessive fact: ' my X is Y ' or ' X's Y is Z '. Capture: (1) possessor or 'user', (2) key, (3) value.",
+		possessiveWords:
+			"Words for 'my', 'our', or possessive marker; or proper noun + possessive.",
+		isWords: "Copula: is, are, was (and equivalents).",
+	},
+	firstPersonPreferenceExtract: {
+		description:
+			"First-person preference: ' I prefer/like/want X '. Capture: (1) verb, (2) object. Entity=user.",
+		subject: "First-person subject: I, we (and formal/informal).",
+		verbs: "Preference verbs: prefer, like, love, hate, want, need, use.",
+	},
+	nameIntro: {
+		description:
+			"Name introduction: ' [I am] called X ' or ' name is X '. Capture: (1) name. Entity=entity, key=name.",
+		verbs:
+			"Phrases/verbs: is called, call me, name is, heter (Swedish), heißen (German), etc.",
+	},
 };

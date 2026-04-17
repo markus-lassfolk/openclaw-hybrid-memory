@@ -28,53 +28,57 @@
  * @throws {Error} If input is empty, unrecognised, or resolves to zero/negative minutes.
  */
 export function parseDuration(input: string): number {
-  const trimmed = (input ?? "").trim().toLowerCase();
+	const trimmed = (input ?? "").trim().toLowerCase();
 
-  if (!trimmed) {
-    throw new Error(
-      'parseDuration: empty input. Expected a duration like "1d12h30m", "2h", "45m", or a plain number (minutes).',
-    );
-  }
+	if (!trimmed) {
+		throw new Error(
+			'parseDuration: empty input. Expected a duration like "1d12h30m", "2h", "45m", or a plain number (minutes).',
+		);
+	}
 
-  // Plain integer: treat as minutes (backward compat for staleHours migration)
-  if (/^\d+$/.test(trimmed)) {
-    const minutes = Number.parseInt(trimmed, 10);
-    if (minutes <= 0) {
-      throw new Error(`parseDuration: duration must be > 0 minutes (got "${input}").`);
-    }
-    return minutes;
-  }
+	// Plain integer: treat as minutes (backward compat for staleHours migration)
+	if (/^\d+$/.test(trimmed)) {
+		const minutes = Number.parseInt(trimmed, 10);
+		if (minutes <= 0) {
+			throw new Error(
+				`parseDuration: duration must be > 0 minutes (got "${input}").`,
+			);
+		}
+		return minutes;
+	}
 
-  // Duration string: optional d / h / m components in strict d→h→m order.
-  // Regex: at least one component must be present; each component is \d+<unit>.
-  const durationRegex = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?$/;
-  const match = durationRegex.exec(trimmed);
+	// Duration string: optional d / h / m components in strict d→h→m order.
+	// Regex: at least one component must be present; each component is \d+<unit>.
+	const durationRegex = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?$/;
+	const match = durationRegex.exec(trimmed);
 
-  if (!match) {
-    throw new Error(
-      `parseDuration: unrecognised duration "${input}". Expected format like "1d12h30m", "2h", "45m", "1d", or a plain number (minutes). Components must appear in d→h→m order.`,
-    );
-  }
+	if (!match) {
+		throw new Error(
+			`parseDuration: unrecognised duration "${input}". Expected format like "1d12h30m", "2h", "45m", "1d", or a plain number (minutes). Components must appear in d→h→m order.`,
+		);
+	}
 
-  const [, daysStr, hoursStr, minutesStr] = match;
+	const [, daysStr, hoursStr, minutesStr] = match;
 
-  // The regex matches the empty string too — reject that case explicitly.
-  if (!daysStr && !hoursStr && !minutesStr) {
-    throw new Error(
-      `parseDuration: unrecognised duration "${input}". Expected at least one component: d (days), h (hours), or m (minutes).`,
-    );
-  }
+	// The regex matches the empty string too — reject that case explicitly.
+	if (!daysStr && !hoursStr && !minutesStr) {
+		throw new Error(
+			`parseDuration: unrecognised duration "${input}". Expected at least one component: d (days), h (hours), or m (minutes).`,
+		);
+	}
 
-  const totalMinutes =
-    (daysStr ? Number.parseInt(daysStr, 10) * 1440 : 0) +
-    (hoursStr ? Number.parseInt(hoursStr, 10) * 60 : 0) +
-    (minutesStr ? Number.parseInt(minutesStr, 10) : 0);
+	const totalMinutes =
+		(daysStr ? Number.parseInt(daysStr, 10) * 1440 : 0) +
+		(hoursStr ? Number.parseInt(hoursStr, 10) * 60 : 0) +
+		(minutesStr ? Number.parseInt(minutesStr, 10) : 0);
 
-  if (totalMinutes <= 0) {
-    throw new Error(`parseDuration: duration must be > 0 minutes (got "${input}").`);
-  }
+	if (totalMinutes <= 0) {
+		throw new Error(
+			`parseDuration: duration must be > 0 minutes (got "${input}").`,
+		);
+	}
 
-  return totalMinutes;
+	return totalMinutes;
 }
 
 /**
@@ -92,16 +96,16 @@ export function parseDuration(input: string): number {
  * ```
  */
 export function formatDuration(totalMinutes: number): string {
-  if (totalMinutes <= 0) return "0m";
+	if (totalMinutes <= 0) return "0m";
 
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
+	const days = Math.floor(totalMinutes / 1440);
+	const hours = Math.floor((totalMinutes % 1440) / 60);
+	const minutes = totalMinutes % 60;
 
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
+	const parts: string[] = [];
+	if (days > 0) parts.push(`${days}d`);
+	if (hours > 0) parts.push(`${hours}h`);
+	if (minutes > 0) parts.push(`${minutes}m`);
 
-  return parts.join("") || "0m";
+	return parts.join("") || "0m";
 }

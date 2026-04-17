@@ -14,10 +14,12 @@
  * Returns true if the model should be classified as nano-tier (ultra-cheap or local).
  */
 export function isNanoModel(m: string): boolean {
-  return (
-    m.split("/")[0]?.toLowerCase() === "ollama" ||
-    /nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test((m.split("/").pop() ?? m).toLowerCase())
-  );
+	return (
+		m.split("/")[0]?.toLowerCase() === "ollama" ||
+		/nano|\bmini\b|haiku|\blite\b|\bturbo-mini\b/.test(
+			(m.split("/").pop() ?? m).toLowerCase(),
+		)
+	);
 }
 
 /**
@@ -25,10 +27,12 @@ export function isNanoModel(m: string): boolean {
  * Ollama models are never heavy-tier (they're local/free).
  */
 export function isHeavyModel(m: string): boolean {
-  return (
-    m.split("/")[0]?.toLowerCase() !== "ollama" &&
-    /\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test((m.split("/").pop() ?? m).toLowerCase())
-  );
+	return (
+		m.split("/")[0]?.toLowerCase() !== "ollama" &&
+		/\bpro\b|opus|\bo3\b|\bo1\b|\blarge\b|ultra|heavy|gpt-5/.test(
+			(m.split("/").pop() ?? m).toLowerCase(),
+		)
+	);
 }
 
 /**
@@ -36,5 +40,8 @@ export function isHeavyModel(m: string): boolean {
  * Ollama models are never light-tier (they're local/free, nano-tier).
  */
 export function isLightModel(m: string): boolean {
-  return m.split("/")[0]?.toLowerCase() !== "ollama" && /flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase());
+	return (
+		m.split("/")[0]?.toLowerCase() !== "ollama" &&
+		/flash|\bsmall\b/.test((m.split("/").pop() ?? m).toLowerCase())
+	);
 }

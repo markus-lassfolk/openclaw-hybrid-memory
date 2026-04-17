@@ -5,16 +5,20 @@ import { BOOTSTRAP_PHASES } from "../config/types/bootstrap.js";
 const BOOTSTRAP_PHASE_ORDER: readonly BootstrapPhase[] = BOOTSTRAP_PHASES;
 
 const BOOTSTRAP_PHASE_PRIORITY = new Map<BootstrapPhase, number>(
-  BOOTSTRAP_PHASE_ORDER.map((phase, index) => [phase, index]),
+	BOOTSTRAP_PHASE_ORDER.map((phase, index) => [phase, index]),
 );
 
 function compareBootstrapPhase(a: BootstrapPhase, b: BootstrapPhase): number {
-  return (
-    (BOOTSTRAP_PHASE_PRIORITY.get(a) ?? Number.MAX_SAFE_INTEGER) -
-    (BOOTSTRAP_PHASE_PRIORITY.get(b) ?? Number.MAX_SAFE_INTEGER)
-  );
+	return (
+		(BOOTSTRAP_PHASE_PRIORITY.get(a) ?? Number.MAX_SAFE_INTEGER) -
+		(BOOTSTRAP_PHASE_PRIORITY.get(b) ?? Number.MAX_SAFE_INTEGER)
+	);
 }
 
-export function orderByBootstrapPhase<T extends BootstrapPhaseConfig>(entries: readonly T[]): T[] {
-  return [...entries].sort((left, right) => compareBootstrapPhase(left.bootstrapPhase, right.bootstrapPhase));
+export function orderByBootstrapPhase<T extends BootstrapPhaseConfig>(
+	entries: readonly T[],
+): T[] {
+	return [...entries].sort((left, right) =>
+		compareBootstrapPhase(left.bootstrapPhase, right.bootstrapPhase),
+	);
 }

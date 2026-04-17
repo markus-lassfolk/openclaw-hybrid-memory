@@ -20,32 +20,32 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 type CrystallizationStatus = "pending" | "approved" | "rejected";
 
 interface CrystallizationProposal {
-  id: string;
-  patternId: string;
-  skillName: string;
-  skillContent: string;
-  status: CrystallizationStatus;
-  /** JSON-encoded WorkflowPattern for reference */
-  patternSnapshot: string;
-  /** Reason provided when rejecting */
-  rejectionReason?: string;
-  /** Path where the skill was written on approval */
-  outputPath?: string;
-  createdAt: string;
-  updatedAt: string;
+	id: string;
+	patternId: string;
+	skillName: string;
+	skillContent: string;
+	status: CrystallizationStatus;
+	/** JSON-encoded WorkflowPattern for reference */
+	patternSnapshot: string;
+	/** Reason provided when rejecting */
+	rejectionReason?: string;
+	/** Path where the skill was written on approval */
+	outputPath?: string;
+	createdAt: string;
+	updatedAt: string;
 }
 
 interface CreateProposalInput {
-  patternId: string;
-  skillName: string;
-  skillContent: string;
-  patternSnapshot: string;
+	patternId: string;
+	skillName: string;
+	skillContent: string;
+	patternSnapshot: string;
 }
 
 interface ProposalFilter {
-  status?: CrystallizationStatus;
-  skillName?: string;
-  limit?: number;
+	status?: CrystallizationStatus;
+	skillName?: string;
+	limit?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -53,12 +53,12 @@ interface ProposalFilter {
 // ---------------------------------------------------------------------------
 
 export class CrystallizationStore extends BaseSqliteStore {
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db, { deferClose: true });
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db, { deferClose: true });
 
-    this.db.exec(`
+		this.db.exec(`
       CREATE TABLE IF NOT EXISTS crystallization_proposals (
         id               TEXT PRIMARY KEY,
         pattern_id       TEXT NOT NULL,
@@ -76,182 +76,201 @@ export class CrystallizationStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_cp_pattern_id  ON crystallization_proposals(pattern_id);
       CREATE INDEX IF NOT EXISTS idx_cp_skill_name  ON crystallization_proposals(skill_name);
     `);
-  }
+	}
 
-  protected getSubsystemName(): string {
-    return "crystallization-store";
-  }
+	protected getSubsystemName(): string {
+		return "crystallization-store";
+	}
 
-  // -------------------------------------------------------------------------
-  // create
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// create
+	// -------------------------------------------------------------------------
 
-  create(input: CreateProposalInput): CrystallizationProposal {
-    return this.runWithDb("create", () => {
-      const id = randomUUID();
-      const now = new Date().toISOString();
+	create(input: CreateProposalInput): CrystallizationProposal {
+		return this.runWithDb("create", () => {
+			const id = randomUUID();
+			const now = new Date().toISOString();
 
-      this.liveDb
-        .prepare(
-          `INSERT INTO crystallization_proposals
+			this.liveDb
+				.prepare(
+					`INSERT INTO crystallization_proposals
            (id, pattern_id, skill_name, skill_content, status, pattern_snapshot, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
-        )
-        .run(id, input.patternId, input.skillName, input.skillContent, input.patternSnapshot, now, now);
+				)
+				.run(
+					id,
+					input.patternId,
+					input.skillName,
+					input.skillContent,
+					input.patternSnapshot,
+					now,
+					now,
+				);
 
-      // biome-ignore lint/style/noNonNullAssertion: Known to exist
-      return this.getByIdInternal(id)!;
-    });
-  }
+			// biome-ignore lint/style/noNonNullAssertion: Known to exist
+			return this.getByIdInternal(id)!;
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // getById
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// getById
+	// -------------------------------------------------------------------------
 
-  getById(id: string): CrystallizationProposal | null {
-    return this.runWithDb("getById", () => this.getByIdInternal(id));
-  }
+	getById(id: string): CrystallizationProposal | null {
+		return this.runWithDb("getById", () => this.getByIdInternal(id));
+	}
 
-  private getByIdInternal(id: string): CrystallizationProposal | null {
-    const row = this.liveDb.prepare("SELECT * FROM crystallization_proposals WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    if (!row) return null;
-    return this.rowToProposal(row);
-  }
+	private getByIdInternal(id: string): CrystallizationProposal | null {
+		const row = this.liveDb
+			.prepare("SELECT * FROM crystallization_proposals WHERE id = ?")
+			.get(id) as Record<string, unknown> | undefined;
+		if (!row) return null;
+		return this.rowToProposal(row);
+	}
 
-  // -------------------------------------------------------------------------
-  // getByPatternId — find proposal for a given pattern id
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// getByPatternId — find proposal for a given pattern id
+	// -------------------------------------------------------------------------
 
-  getByPatternId(patternId: string): CrystallizationProposal | null {
-    return this.runWithDb("getByPatternId", () => {
-      const row = this.liveDb
-        .prepare("SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT 1")
-        .get(patternId) as Record<string, unknown> | undefined;
-      if (!row) return null;
-      return this.rowToProposal(row);
-    });
-  }
+	getByPatternId(patternId: string): CrystallizationProposal | null {
+		return this.runWithDb("getByPatternId", () => {
+			const row = this.liveDb
+				.prepare(
+					"SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT 1",
+				)
+				.get(patternId) as Record<string, unknown> | undefined;
+			if (!row) return null;
+			return this.rowToProposal(row);
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // list
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// list
+	// -------------------------------------------------------------------------
 
-  list(filter?: ProposalFilter): CrystallizationProposal[] {
-    return this.runWithDb("list", () => {
-      let query = "SELECT * FROM crystallization_proposals WHERE 1=1";
-      const params: SQLInputValue[] = [];
+	list(filter?: ProposalFilter): CrystallizationProposal[] {
+		return this.runWithDb("list", () => {
+			let query = "SELECT * FROM crystallization_proposals WHERE 1=1";
+			const params: SQLInputValue[] = [];
 
-      if (filter?.status) {
-        query += " AND status = ?";
-        params.push(filter.status);
-      }
-      if (filter?.skillName) {
-        query += " AND skill_name LIKE ?";
-        params.push(`%${filter.skillName}%`);
-      }
+			if (filter?.status) {
+				query += " AND status = ?";
+				params.push(filter.status);
+			}
+			if (filter?.skillName) {
+				query += " AND skill_name LIKE ?";
+				params.push(`%${filter.skillName}%`);
+			}
 
-      query += " ORDER BY created_at DESC";
+			query += " ORDER BY created_at DESC";
 
-      if (filter?.limit && filter.limit > 0) {
-        query += " LIMIT ?";
-        params.push(filter.limit);
-      }
+			if (filter?.limit && filter.limit > 0) {
+				query += " LIMIT ?";
+				params.push(filter.limit);
+			}
 
-      const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
-      return rows.map((r) => this.rowToProposal(r));
-    });
-  }
+			const rows = this.liveDb.prepare(query).all(...params) as Record<
+				string,
+				unknown
+			>[];
+			return rows.map((r) => this.rowToProposal(r));
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // approve — transition pending → approved, write outputPath
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// approve — transition pending → approved, write outputPath
+	// -------------------------------------------------------------------------
 
-  approve(id: string, outputPath: string): CrystallizationProposal | null {
-    return this.runWithDb("approve", () => {
-      const now = new Date().toISOString();
-      const result = this.liveDb
-        .prepare(
-          `UPDATE crystallization_proposals
+	approve(id: string, outputPath: string): CrystallizationProposal | null {
+		return this.runWithDb("approve", () => {
+			const now = new Date().toISOString();
+			const result = this.liveDb
+				.prepare(
+					`UPDATE crystallization_proposals
          SET status = 'approved', output_path = ?, updated_at = ?
          WHERE id = ? AND status = 'pending'`,
-        )
-        .run(outputPath, now, id);
+				)
+				.run(outputPath, now, id);
 
-      if (result.changes === 0) return null;
-      return this.getByIdInternal(id);
-    });
-  }
+			if (result.changes === 0) return null;
+			return this.getByIdInternal(id);
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // reject — transition pending → rejected
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// reject — transition pending → rejected
+	// -------------------------------------------------------------------------
 
-  reject(id: string, reason?: string): CrystallizationProposal | null {
-    return this.runWithDb("reject", () => {
-      const now = new Date().toISOString();
-      const result = this.liveDb
-        .prepare(
-          `UPDATE crystallization_proposals
+	reject(id: string, reason?: string): CrystallizationProposal | null {
+		return this.runWithDb("reject", () => {
+			const now = new Date().toISOString();
+			const result = this.liveDb
+				.prepare(
+					`UPDATE crystallization_proposals
          SET status = 'rejected', rejection_reason = ?, updated_at = ?
          WHERE id = ? AND status = 'pending'`,
-        )
-        .run(reason ?? null, now, id);
+				)
+				.run(reason ?? null, now, id);
 
-      if (result.changes === 0) return null;
-      return this.getByIdInternal(id);
-    });
-  }
+			if (result.changes === 0) return null;
+			return this.getByIdInternal(id);
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // count
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// count
+	// -------------------------------------------------------------------------
 
-  count(status?: CrystallizationStatus): number {
-    return this.runWithDb("count", () => {
-      if (status) {
-        const row = this.liveDb
-          .prepare("SELECT COUNT(*) as n FROM crystallization_proposals WHERE status = ?")
-          .get(status) as { n: number };
-        return row.n;
-      }
-      const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM crystallization_proposals").get() as { n: number };
-      return row.n;
-    });
-  }
+	count(status?: CrystallizationStatus): number {
+		return this.runWithDb("count", () => {
+			if (status) {
+				const row = this.liveDb
+					.prepare(
+						"SELECT COUNT(*) as n FROM crystallization_proposals WHERE status = ?",
+					)
+					.get(status) as { n: number };
+				return row.n;
+			}
+			const row = this.liveDb
+				.prepare("SELECT COUNT(*) as n FROM crystallization_proposals")
+				.get() as { n: number };
+			return row.n;
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // hasPendingOrApprovedForPattern — prevent duplicate proposals
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// hasPendingOrApprovedForPattern — prevent duplicate proposals
+	// -------------------------------------------------------------------------
 
-  hasPendingOrApprovedForPattern(patternId: string): boolean {
-    return this.runWithDb("hasPendingOrApprovedForPattern", () => {
-      const row = this.liveDb
-        .prepare(
-          "SELECT COUNT(*) as n FROM crystallization_proposals WHERE pattern_id = ? AND status IN ('pending', 'approved')",
-        )
-        .get(patternId) as { n: number };
-      return row.n > 0;
-    });
-  }
+	hasPendingOrApprovedForPattern(patternId: string): boolean {
+		return this.runWithDb("hasPendingOrApprovedForPattern", () => {
+			const row = this.liveDb
+				.prepare(
+					"SELECT COUNT(*) as n FROM crystallization_proposals WHERE pattern_id = ? AND status IN ('pending', 'approved')",
+				)
+				.get(patternId) as { n: number };
+			return row.n > 0;
+		});
+	}
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// Private helpers
+	// -------------------------------------------------------------------------
 
-  private rowToProposal(row: Record<string, unknown>): CrystallizationProposal {
-    return {
-      id: row.id as string,
-      patternId: row.pattern_id as string,
-      skillName: row.skill_name as string,
-      skillContent: row.skill_content as string,
-      status: row.status as string as CrystallizationStatus,
-      patternSnapshot: row.pattern_snapshot as string,
-      rejectionReason: row.rejection_reason ? (row.rejection_reason as string) : undefined,
-      outputPath: row.output_path ? (row.output_path as string) : undefined,
-      createdAt: row.created_at as string,
-      updatedAt: row.updated_at as string,
-    };
-  }
+	private rowToProposal(row: Record<string, unknown>): CrystallizationProposal {
+		return {
+			id: row.id as string,
+			patternId: row.pattern_id as string,
+			skillName: row.skill_name as string,
+			skillContent: row.skill_content as string,
+			status: row.status as string as CrystallizationStatus,
+			patternSnapshot: row.pattern_snapshot as string,
+			rejectionReason: row.rejection_reason
+				? (row.rejection_reason as string)
+				: undefined,
+			outputPath: row.output_path ? (row.output_path as string) : undefined,
+			createdAt: row.created_at as string,
+			updatedAt: row.updated_at as string,
+		};
+	}
 }

@@ -3,204 +3,265 @@
  */
 
 export type FindDuplicatesResult = {
-  pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }>;
-  candidatesCount: number;
-  skippedStructured: number;
+	pairs: Array<{
+		idA: string;
+		idB: string;
+		score: number;
+		textA: string;
+		textB: string;
+	}>;
+	candidatesCount: number;
+	skippedStructured: number;
 };
 
 export type StoreCliOpts = {
-  text: string;
-  category?: string;
-  entity?: string;
-  key?: string;
-  value?: string;
-  sourceDate?: string;
-  tags?: string;
-  /** Fact id this store supersedes (replaces). */
-  supersedes?: string;
-  /** Memory scope (global, user, agent, session). Default global. */
-  scope?: "global" | "user" | "agent" | "session";
-  /** Scope target (userId, agentId, sessionId). Required when scope is user/agent/session. */
-  scopeTarget?: string;
+	text: string;
+	category?: string;
+	entity?: string;
+	key?: string;
+	value?: string;
+	sourceDate?: string;
+	tags?: string;
+	/** Fact id this store supersedes (replaces). */
+	supersedes?: string;
+	/** Memory scope (global, user, agent, session). Default global. */
+	scope?: "global" | "user" | "agent" | "session";
+	/** Scope target (userId, agentId, sessionId). Required when scope is user/agent/session. */
+	scopeTarget?: string;
 };
 
 export type StoreCliResult =
-  | { outcome: "duplicate" }
-  | { outcome: "credential"; id: string; service: string; type: string }
-  | { outcome: "credential_skipped_duplicate"; service: string; type: string }
-  | { outcome: "credential_parse_error" }
-  | { outcome: "credential_vault_error" }
-  | { outcome: "credential_db_error" }
-  | { outcome: "noop"; reason: string }
-  | { outcome: "retracted"; targetId: string; reason: string }
-  | { outcome: "updated"; id: string; supersededId: string; reason: string }
-  | { outcome: "stored"; id: string; textPreview: string; supersededId?: string };
+	| { outcome: "duplicate" }
+	| { outcome: "credential"; id: string; service: string; type: string }
+	| { outcome: "credential_skipped_duplicate"; service: string; type: string }
+	| { outcome: "credential_parse_error" }
+	| { outcome: "credential_vault_error" }
+	| { outcome: "credential_db_error" }
+	| { outcome: "noop"; reason: string }
+	| { outcome: "retracted"; targetId: string; reason: string }
+	| { outcome: "updated"; id: string; supersededId: string; reason: string }
+	| {
+			outcome: "stored";
+			id: string;
+			textPreview: string;
+			supersededId?: string;
+	  };
 
 export type InstallCliResult =
-  | {
-      ok: true;
-      configPath: string;
-      dryRun: boolean;
-      written: boolean;
-      configJson?: string;
-      pluginId: string;
-      /** Highest-precedence OpenClaw workspace skill path ({workspace}/skills/hybrid-memory/SKILL.md). */
-      workspaceSkillPath?: string;
-      workspaceSkillError?: string;
-      /** Workspace TOOLS.md path when the Hybrid memory managed block is applied. */
-      workspaceToolsMdPath?: string;
-      workspaceToolsMdError?: string;
-      workspaceToolsMdUpdated?: boolean;
-    }
-  | { ok: false; error: string };
+	| {
+			ok: true;
+			configPath: string;
+			dryRun: boolean;
+			written: boolean;
+			configJson?: string;
+			pluginId: string;
+			/** Highest-precedence OpenClaw workspace skill path ({workspace}/skills/hybrid-memory/SKILL.md). */
+			workspaceSkillPath?: string;
+			workspaceSkillError?: string;
+			/** Workspace TOOLS.md path when the Hybrid memory managed block is applied. */
+			workspaceToolsMdPath?: string;
+			workspaceToolsMdError?: string;
+			workspaceToolsMdUpdated?: boolean;
+	  }
+	| { ok: false; error: string };
 
-export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
+export type VerifyCliSink = {
+	log: (s: string) => void;
+	error?: (s: string) => void;
+};
 
 export type DistillWindowResult = {
-  mode: "full" | "incremental";
-  startDate: string;
-  endDate: string;
-  mtimeDays: number;
+	mode: "full" | "incremental";
+	startDate: string;
+	endDate: string;
+	mtimeDays: number;
 };
 
 export type RecordDistillResult = { path: string; timestamp: string };
 
-export type ExtractDailyResult = { totalExtracted: number; totalStored: number; daysBack: number; dryRun: boolean };
-export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => void };
+export type ExtractDailyResult = {
+	totalExtracted: number;
+	totalStored: number;
+	daysBack: number;
+	dryRun: boolean;
+};
+export type ExtractDailySink = {
+	log: (s: string) => void;
+	warn: (s: string) => void;
+};
 
 export type ExtractProceduresResult = {
-  sessionsScanned: number;
-  proceduresStored: number;
-  positiveCount: number;
-  negativeCount: number;
-  dryRun: boolean;
-  skipped?: boolean;
+	sessionsScanned: number;
+	proceduresStored: number;
+	positiveCount: number;
+	negativeCount: number;
+	dryRun: boolean;
+	skipped?: boolean;
 };
 
 export type GenerateAutoSkillsResult = {
-  generated: number;
-  skipped: number;
-  dryRun: boolean;
-  paths: string[];
+	generated: number;
+	skipped: number;
+	dryRun: boolean;
+	paths: string[];
 };
 
-export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
-export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+export type BackfillCliResult = {
+	stored: number;
+	skipped: number;
+	candidates: number;
+	files: number;
+	dryRun: boolean;
+};
+export type BackfillCliSink = {
+	log: (s: string) => void;
+	warn: (s: string) => void;
+};
 
-export type IngestFilesResult = { stored: number; skipped: number; extracted: number; files: number; dryRun: boolean };
-export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => void };
+export type IngestFilesResult = {
+	stored: number;
+	skipped: number;
+	extracted: number;
+	files: number;
+	dryRun: boolean;
+};
+export type IngestFilesSink = {
+	log: (s: string) => void;
+	warn: (s: string) => void;
+};
 
 export type DistillCliResult = {
-  sessionsScanned: number;
-  factsExtracted: number;
-  stored: number;
-  dedupSkipped: number;
-  dryRun: boolean;
-  skipped?: boolean;
+	sessionsScanned: number;
+	factsExtracted: number;
+	stored: number;
+	dedupSkipped: number;
+	dryRun: boolean;
+	skipped?: boolean;
 };
-export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+export type DistillCliSink = {
+	log: (s: string) => void;
+	warn: (s: string) => void;
+};
 
 export type SelfCorrectionExtractResult = {
-  incidents: Array<{
-    userMessage: string;
-    precedingAssistant: string;
-    followingAssistant: string;
-    timestamp?: string;
-    sessionFile: string;
-  }>;
-  sessionsScanned: number;
+	incidents: Array<{
+		userMessage: string;
+		precedingAssistant: string;
+		followingAssistant: string;
+		timestamp?: string;
+		sessionFile: string;
+	}>;
+	sessionsScanned: number;
 };
 export type SelfCorrectionRunResult = {
-  incidentsFound: number;
-  analysed: number;
-  autoFixed: number;
-  proposals: string[];
-  reportPath: string | null;
-  toolsSuggestions?: string[];
-  toolsApplied?: number;
-  error?: string;
-  skipped?: boolean;
+	incidentsFound: number;
+	analysed: number;
+	autoFixed: number;
+	proposals: string[];
+	reportPath: string | null;
+	toolsSuggestions?: string[];
+	toolsApplied?: number;
+	error?: string;
+	skipped?: boolean;
 };
 
 export type AnalyzeFeedbackPhrasesResult = {
-  reinforcement: string[];
-  correction: string[];
-  sessionsScanned: number;
-  learned?: boolean;
-  error?: string;
+	reinforcement: string[];
+	correction: string[];
+	sessionsScanned: number;
+	learned?: boolean;
+	error?: string;
 };
 
-export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
+export type MigrateToVaultResult = {
+	migrated: number;
+	skipped: number;
+	errors: string[];
+};
 
 export type CredentialsAuditEntry = {
-  service: string;
-  type: string;
-  url: string | null;
-  flags: string[];
+	service: string;
+	type: string;
+	url: string | null;
+	flags: string[];
 };
 
-export type CredentialsAuditResult = { entries: CredentialsAuditEntry[]; total: number };
+export type CredentialsAuditResult = {
+	entries: CredentialsAuditEntry[];
+	total: number;
+};
 
 export type CredentialsPruneResult = {
-  removed: number;
-  entries: Array<{ service: string; type: string }>;
-  dryRun: boolean;
+	removed: number;
+	entries: Array<{ service: string; type: string }>;
+	dryRun: boolean;
 };
 
 export type UpgradeCliResult =
-  | {
-      ok: true;
-      version: string;
-      pluginDir: string;
-      workspaceSkillPath?: string;
-      workspaceSkillError?: string;
-      workspaceToolsMdPath?: string;
-      workspaceToolsMdError?: string;
-      workspaceToolsMdUpdated?: boolean;
-    }
-  | { ok: false; error: string };
+	| {
+			ok: true;
+			version: string;
+			pluginDir: string;
+			workspaceSkillPath?: string;
+			workspaceSkillError?: string;
+			workspaceToolsMdPath?: string;
+			workspaceToolsMdError?: string;
+			workspaceToolsMdUpdated?: boolean;
+	  }
+	| { ok: false; error: string };
 
 export type UninstallCliResult =
-  | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
-  | { outcome: "config_not_found"; pluginId: string; cleaned: string[] }
-  | { outcome: "config_error"; error: string; pluginId: string; cleaned: string[] }
-  | { outcome: "leave_config"; pluginId: string; cleaned: string[] };
+	| { outcome: "config_updated"; pluginId: string; cleaned: string[] }
+	| { outcome: "config_not_found"; pluginId: string; cleaned: string[] }
+	| {
+			outcome: "config_error";
+			error: string;
+			pluginId: string;
+			cleaned: string[];
+	  }
+	| { outcome: "leave_config"; pluginId: string; cleaned: string[] };
 
-export type ConfigCliResult = { ok: true; configPath: string; message: string } | { ok: false; error: string };
+export type ConfigCliResult =
+	| { ok: true; configPath: string; message: string }
+	| { ok: false; error: string };
 
 /** Active task working memory CLI result types */
 export type ActiveTaskListResult = {
-  tasks: Array<{
-    label: string;
-    description: string;
-    status: string;
-    branch?: string;
-    subagent?: string;
-    next?: string;
-    started: string;
-    updated: string;
-    stale: boolean;
-  }>;
-  total: number;
-  staleCount: number;
-  filePath: string;
-  fileExists: boolean;
-  /** When `facts`, list comes from category:project in SQLite */
-  ledger?: "markdown" | "facts";
+	tasks: Array<{
+		label: string;
+		description: string;
+		status: string;
+		branch?: string;
+		subagent?: string;
+		next?: string;
+		started: string;
+		updated: string;
+		stale: boolean;
+	}>;
+	total: number;
+	staleCount: number;
+	filePath: string;
+	fileExists: boolean;
+	/** When `facts`, list comes from category:project in SQLite */
+	ledger?: "markdown" | "facts";
 };
 
-export type ActiveTaskCompleteResult = { ok: true; label: string; flushedTo?: string } | { ok: false; error: string };
+export type ActiveTaskCompleteResult =
+	| { ok: true; label: string; flushedTo?: string }
+	| { ok: false; error: string };
 
 export type ActiveTaskStaleResult = {
-  tasks: Array<{
-    label: string;
-    description: string;
-    status: string;
-    updated: string;
-    hoursStale: number | "?";
-  }>;
-  total: number;
-  filePath: string;
+	tasks: Array<{
+		label: string;
+		description: string;
+		status: string;
+		updated: string;
+		hoursStale: number | "?";
+	}>;
+	total: number;
+	filePath: string;
 };
 
-export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };
+export type ActiveTaskAddResult =
+	| { ok: true; label: string; upserted: boolean }
+	| { ok: false; error: string };

@@ -11,7 +11,7 @@ const costContext = new AsyncLocalStorage<string>();
  * @internal
  */
 export function withCostFeature<T>(feature: string, fn: () => T): T {
-  return costContext.run(feature, fn);
+	return costContext.run(feature, fn);
 }
 
 /**
@@ -20,5 +20,5 @@ export function withCostFeature<T>(feature: string, fn: () => T): T {
  * @internal
  */
 export function getCurrentCostFeature(): string | undefined {
-  return costContext.getStore();
+	return costContext.getStore();
 }

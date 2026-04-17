@@ -20,7 +20,7 @@ import {
 } from "../backends/agent-health-store.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import type { EdictStore } from "../backends/edict-store.js";
-import { EventLog, type EventLogEntry } from "../backends/event-log.js";
+import type { EventLog, EventLogEntry } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
@@ -503,8 +503,8 @@ async function collectCronJobs(): Promise<CronJobStatus[]> {
 						typeof state.lastStatus === "string"
 							? state.lastStatus
 							: typeof state.lastRunStatus === "string"
-							  ? state.lastRunStatus
-							  : null,
+								? state.lastRunStatus
+								: null,
 					lastError:
 						typeof state.lastError === "string" ? state.lastError : null,
 					consecutiveErrors:
@@ -1838,12 +1838,12 @@ function renderCosts(c) {
   } else {
     html += \`<div class="stat-row"><span class="stat-label">Total calls</span><span class="stat-value">\${c.totalCalls.toLocaleString()}</span></div>\`;
     html += \`<div class="stat-row"><span class="stat-label">Tokens in/out</span><span class="stat-value">\${c.totalInputTokens.toLocaleString()} / \${c.totalOutputTokens.toLocaleString()}</span></div>\`;
-    html += \`<div class="stat-row" style="margin-bottom:8px"><span class="stat-label">Est. cost</span><span class="stat-value" style="color:var(--green)">\$\${c.totalEstimatedCostUsd.toFixed(4)}</span></div>\`;
+    html += \`<div class="stat-row" style="margin-bottom:8px"><span class="stat-label">Est. cost</span><span class="stat-value" style="color:var(--green)">$\${c.totalEstimatedCostUsd.toFixed(4)}</span></div>\`;
     c.features.slice(0, 6).forEach(f => {
       html += \`<div class="cost-row">
         <div class="cost-feature">\${escHtml(f.feature)}</div>
         <div class="cost-calls">\${f.calls} calls</div>
-        <div class="cost-usd">\$\${f.estimatedCostUsd.toFixed(4)}</div>
+        <div class="cost-usd">$\${f.estimatedCostUsd.toFixed(4)}</div>
       </div>\`;
     });
   }

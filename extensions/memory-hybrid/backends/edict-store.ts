@@ -24,111 +24,111 @@ type EdictTtl = "never" | "event" | number;
 
 /** An edict entry — verified ground-truth fact */
 interface EdictEntry {
-  id: string;
-  /** The verified statement of fact */
-  text: string;
-  /** Optional source describing who or what verified this edict (e.g. "human:markus", "ops:oncall-runbook") */
-  source?: string | null;
-  /** Unix timestamp when this edict was verified */
-  verifiedAt: number | null;
-  /** ISO 8601 date or null. Edict expires after this date (for ttl="event"). */
-  expiresAt: string | null;
-  /** TTL mode: "never" (permanent), "event" (expiresAt date), or seconds (ttl as number) */
-  ttl: EdictTtl;
-  /** Labels for filtering (e.g. ["operations", "ssh"]) */
-  tags: string[];
-  /** When this edict was created (Unix epoch seconds) */
-  createdAt: number;
-  /** When this edict was last updated (Unix epoch seconds) */
-  updatedAt: number;
+	id: string;
+	/** The verified statement of fact */
+	text: string;
+	/** Optional source describing who or what verified this edict (e.g. "human:markus", "ops:oncall-runbook") */
+	source?: string | null;
+	/** Unix timestamp when this edict was verified */
+	verifiedAt: number | null;
+	/** ISO 8601 date or null. Edict expires after this date (for ttl="event"). */
+	expiresAt: string | null;
+	/** TTL mode: "never" (permanent), "event" (expiresAt date), or seconds (ttl as number) */
+	ttl: EdictTtl;
+	/** Labels for filtering (e.g. ["operations", "ssh"]) */
+	tags: string[];
+	/** When this edict was created (Unix epoch seconds) */
+	createdAt: number;
+	/** When this edict was last updated (Unix epoch seconds) */
+	updatedAt: number;
 }
 
 /** Input for creating a new edict */
 interface AddEdictInput {
-  text: string;
-  source?: string;
-  tags?: string[];
-  ttl?: EdictTtl;
-  expiresAt?: string;
+	text: string;
+	source?: string;
+	tags?: string[];
+	ttl?: EdictTtl;
+	expiresAt?: string;
 }
 
 /** Input for updating an existing edict */
 interface UpdateEdictInput {
-  id: string;
-  text?: string;
-  source?: string;
-  tags?: string[];
-  ttl?: EdictTtl;
-  expiresAt?: string;
+	id: string;
+	text?: string;
+	source?: string;
+	tags?: string[];
+	ttl?: EdictTtl;
+	expiresAt?: string;
 }
 
 /** Options for listing/retrieving edicts */
 interface ListEdictsOptions {
-  tags?: string[];
-  includeExpired?: boolean;
-  limit?: number;
+	tags?: string[];
+	includeExpired?: boolean;
+	limit?: number;
 }
 
 /** Options for getEdicts (extends ListEdictsOptions) */
 interface GetEdictsOptions extends ListEdictsOptions {
-  format?: "full" | "prompt";
+	format?: "full" | "prompt";
 }
 
 /** Statistics about the edict store */
 interface EdictStats {
-  total: number;
-  byTag: Record<string, number>;
-  expired: number;
-  expiringIn7Days: number;
+	total: number;
+	byTag: Record<string, number>;
+	expired: number;
+	expiringIn7Days: number;
 }
 
 /** Render an edict as a Markdown bullet line with tag prefix */
 function renderEdictLine(edict: EdictEntry): string {
-  const tagStr = edict.tags.length > 0 ? `[${edict.tags[0]}] ` : "";
-  return `- ${tagStr}${edict.text}`;
+	const tagStr = edict.tags.length > 0 ? `[${edict.tags[0]}] ` : "";
+	return `- ${tagStr}${edict.text}`;
 }
 
 /** Render a list of edicts as a Markdown block for system prompt injection */
 function renderEdictsForPrompt(edicts: EdictEntry[]): string {
-  if (edicts.length === 0) return "";
-  const header = "## Verified Ground Truth\n";
-  const lines = edicts.map((e) => renderEdictLine(e));
-  return `${header + lines.join("\n")}\n`;
+	if (edicts.length === 0) return "";
+	const header = "## Verified Ground Truth\n";
+	const lines = edicts.map((e) => renderEdictLine(e));
+	return `${header + lines.join("\n")}\n`;
 }
 
 /** Escape a string for safe use as a SQLite LIKE pattern */
 function escapeLikePattern(s: string): string {
-  return s.replace(/[%_\\]/g, "\\$&");
+	return s.replace(/[%_\\]/g, "\\$&");
 }
 
 export class EdictStore extends BaseSqliteStore {
-  /** Set true only after `runMigrations()` completes successfully (issue #964 / #953). */
-  private _isReady = false;
+	/** Set true only after `runMigrations()` completes successfully (issue #964 / #953). */
+	private _isReady = false;
 
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db, { deferClose: true });
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db, { deferClose: true });
 
-    try {
-      this.runMigrations();
-      this._isReady = true;
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "edict-store",
-        operation: "runMigrations",
-      });
-      this._isReady = false;
-    }
-  }
+		try {
+			this.runMigrations();
+			this._isReady = true;
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "edict-store",
+				operation: "runMigrations",
+			});
+			this._isReady = false;
+		}
+	}
 
-  protected getSubsystemName(): string {
-    return "edict-store";
-  }
+	protected getSubsystemName(): string {
+		return "edict-store";
+	}
 
-  /** Run all schema migrations. Idempotent — safe to call on existing databases. */
-  private runMigrations(): void {
-    this.db.exec(`
+	/** Run all schema migrations. Idempotent — safe to call on existing databases. */
+	private runMigrations(): void {
+		this.db.exec(`
       CREATE TABLE IF NOT EXISTS edicts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -142,286 +142,328 @@ export class EdictStore extends BaseSqliteStore {
       )
     `);
 
-    this.db.exec(`
+		this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
         WHERE tags IS NOT NULL AND tags != ''
     `);
 
-    this.db.exec(`
+		this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
         WHERE expires_at IS NOT NULL
     `);
 
-    // Ensure the id column is present (backward compat for edicts created before id was added)
-    const tableInfo = this.db.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
-    if (!tableInfo.some((c) => c.name === "id")) {
-      this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
-    }
-  }
+		// Ensure the id column is present (backward compat for edicts created before id was added)
+		const tableInfo = this.db
+			.prepare("PRAGMA table_info(edicts)")
+			.all() as Array<{ name: string }>;
+		if (!tableInfo.some((c) => c.name === "id")) {
+			this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
+		}
+	}
 
-  /** Check if an edict is currently expired (based on ttl and expires_at) */
-  isExpired(edict: EdictEntry): boolean {
-    if (edict.ttl === "never") return false;
-    if (edict.ttl === "event") {
-      if (!edict.expiresAt) return false;
-      return new Date(edict.expiresAt) <= new Date();
-    }
-    // Numeric TTL: seconds since creation
-    const ttlSec = typeof edict.ttl === "number" ? edict.ttl : 0;
-    return Date.now() / 1000 > edict.createdAt + ttlSec;
-  }
+	/** Check if an edict is currently expired (based on ttl and expires_at) */
+	isExpired(edict: EdictEntry): boolean {
+		if (edict.ttl === "never") return false;
+		if (edict.ttl === "event") {
+			if (!edict.expiresAt) return false;
+			return new Date(edict.expiresAt) <= new Date();
+		}
+		// Numeric TTL: seconds since creation
+		const ttlSec = typeof edict.ttl === "number" ? edict.ttl : 0;
+		return Date.now() / 1000 > edict.createdAt + ttlSec;
+	}
 
-  /** Add a new edict. Returns the created edict. Throws on duplicate text (normalized). */
-  add(input: AddEdictInput): EdictEntry {
-    return this.runWithDb("add", () => this.addInternal(input));
-  }
+	/** Add a new edict. Returns the created edict. Throws on duplicate text (normalized). */
+	add(input: AddEdictInput): EdictEntry {
+		return this.runWithDb("add", () => this.addInternal(input));
+	}
 
-  private addInternal(input: AddEdictInput): EdictEntry {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    const source = input.source ?? null;
-    const tagsStr = input.tags && input.tags.length > 0 ? serializeTags(input.tags) : null;
-    const ttl: EdictTtl = input.ttl ?? "never";
+	private addInternal(input: AddEdictInput): EdictEntry {
+		const nowSec = Math.floor(Date.now() / 1000);
+		const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+		const source = input.source ?? null;
+		const tagsStr =
+			input.tags && input.tags.length > 0 ? serializeTags(input.tags) : null;
+		const ttl: EdictTtl = input.ttl ?? "never";
 
-    const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
+		const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
 
-    const expiresAt = input.expiresAt ?? (ttl === "event" ? null : null);
+		const expiresAt = input.expiresAt ?? (ttl === "event" ? null : null);
 
-    const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
-    const existing = this.findByNormalizedTextInternal(normalizedText);
-    if (existing) {
-      throw new Error(`Edict with similar text already exists: ${existing.id}`);
-    }
+		const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
+		const existing = this.findByNormalizedTextInternal(normalizedText);
+		if (existing) {
+			throw new Error(`Edict with similar text already exists: ${existing.id}`);
+		}
 
-    this.liveDb
-      .prepare(
-        `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
+		this.liveDb
+			.prepare(
+				`INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, input.text.trim(), source, nowSec, expiresAt, ttlStr, tagsStr, nowSec, nowSec);
+			)
+			.run(
+				id,
+				input.text.trim(),
+				source,
+				nowSec,
+				expiresAt,
+				ttlStr,
+				tagsStr,
+				nowSec,
+				nowSec,
+			);
 
-    return {
-      id,
-      text: input.text.trim(),
-      source,
-      verifiedAt: nowSec,
-      expiresAt,
-      ttl,
-      tags: input.tags ?? [],
-      createdAt: nowSec,
-      updatedAt: nowSec,
-    };
-  }
+		return {
+			id,
+			text: input.text.trim(),
+			source,
+			verifiedAt: nowSec,
+			expiresAt,
+			ttl,
+			tags: input.tags ?? [],
+			createdAt: nowSec,
+			updatedAt: nowSec,
+		};
+	}
 
-  /** Find an edict by normalized text (for duplicate detection) */
-  private findByNormalizedTextInternal(normalized: string): EdictEntry | null {
-    const rows = this.liveDb
-      .prepare("SELECT * FROM edicts WHERE LOWER(REPLACE(text, ' ', ' ')) = ?")
-      .all(normalized.replace(/\s+/g, " ")) as Array<Record<string, unknown>>;
-    return rows.length > 0 ? this.rowToEntry(rows[0]) : null;
-  }
+	/** Find an edict by normalized text (for duplicate detection) */
+	private findByNormalizedTextInternal(normalized: string): EdictEntry | null {
+		const rows = this.liveDb
+			.prepare("SELECT * FROM edicts WHERE LOWER(REPLACE(text, ' ', ' ')) = ?")
+			.all(normalized.replace(/\s+/g, " ")) as Array<Record<string, unknown>>;
+		return rows.length > 0 ? this.rowToEntry(rows[0]) : null;
+	}
 
-  /** Get a single edict by id */
-  getById(id: string): EdictEntry | null {
-    return this.runWithDb("getById", () => this.getByIdInternal(id));
-  }
+	/** Get a single edict by id */
+	getById(id: string): EdictEntry | null {
+		return this.runWithDb("getById", () => this.getByIdInternal(id));
+	}
 
-  private getByIdInternal(id: string): EdictEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM edicts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.rowToEntry(row) : null;
-  }
+	private getByIdInternal(id: string): EdictEntry | null {
+		const row = this.liveDb
+			.prepare("SELECT * FROM edicts WHERE id = ?")
+			.get(id) as Record<string, unknown> | undefined;
+		return row ? this.rowToEntry(row) : null;
+	}
 
-  /** List edicts, optionally filtered by tags */
-  list(options: ListEdictsOptions = {}): EdictEntry[] {
-    if (!this._isReady) return [];
-    try {
-      return this.runWithDb("list", () => this.listInternal(options));
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "edict-store",
-        operation: "list",
-      });
-      return [];
-    }
-  }
+	/** List edicts, optionally filtered by tags */
+	list(options: ListEdictsOptions = {}): EdictEntry[] {
+		if (!this._isReady) return [];
+		try {
+			return this.runWithDb("list", () => this.listInternal(options));
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "edict-store",
+				operation: "list",
+			});
+			return [];
+		}
+	}
 
-  private listInternal(options: ListEdictsOptions = {}): EdictEntry[] {
-    const { tags, includeExpired = false, limit = 100 } = options;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const parts: string[] = [];
-    const params: SQLInputValue[] = [];
+	private listInternal(options: ListEdictsOptions = {}): EdictEntry[] {
+		const { tags, includeExpired = false, limit = 100 } = options;
+		const nowSec = Math.floor(Date.now() / 1000);
+		const parts: string[] = [];
+		const params: SQLInputValue[] = [];
 
-    if (!includeExpired) {
-      parts.push(
-        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
-      );
-      params.push(new Date().toISOString(), nowSec);
-    }
+		if (!includeExpired) {
+			parts.push(
+				`(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
+			);
+			params.push(new Date().toISOString(), nowSec);
+		}
 
-    if (tags && tags.length > 0) {
-      for (const tag of tags) {
-        parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
-        params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
-      }
-    }
+		if (tags && tags.length > 0) {
+			for (const tag of tags) {
+				parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
+				params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+			}
+		}
 
-    const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
-    params.push(limit);
+		const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
+		params.push(limit);
 
-    const rows = this.liveDb
-      .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
-      .all(...params) as Array<Record<string, unknown>>;
+		const rows = this.liveDb
+			.prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
+			.all(...params) as Array<Record<string, unknown>>;
 
-    return rows.map((r) => this.rowToEntry(r));
-  }
+		return rows.map((r) => this.rowToEntry(r));
+	}
 
-  /** Get all non-expired edicts, optionally filtered by tags */
-  getEdicts(options: GetEdictsOptions = {}): {
-    edicts: EdictEntry[];
-    renderForPrompt: string;
-  } {
-    if (!this._isReady) {
-      return { edicts: [], renderForPrompt: "" };
-    }
-    try {
-      return this.runWithDb("getEdicts", () => {
-        const { tags, format = "prompt", limit = 100 } = options;
-        const edicts = this.listInternal({
-          tags,
-          includeExpired: false,
-          limit,
-        });
-        const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
-        return { edicts, renderForPrompt };
-      });
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "edict-store",
-        operation: "getEdicts",
-      });
-      return { edicts: [], renderForPrompt: "" };
-    }
-  }
+	/** Get all non-expired edicts, optionally filtered by tags */
+	getEdicts(options: GetEdictsOptions = {}): {
+		edicts: EdictEntry[];
+		renderForPrompt: string;
+	} {
+		if (!this._isReady) {
+			return { edicts: [], renderForPrompt: "" };
+		}
+		try {
+			return this.runWithDb("getEdicts", () => {
+				const { tags, format = "prompt", limit = 100 } = options;
+				const edicts = this.listInternal({
+					tags,
+					includeExpired: false,
+					limit,
+				});
+				const renderForPrompt =
+					format === "prompt" ? renderEdictsForPrompt(edicts) : "";
+				return { edicts, renderForPrompt };
+			});
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "edict-store",
+				operation: "getEdicts",
+			});
+			return { edicts: [], renderForPrompt: "" };
+		}
+	}
 
-  /** Update an existing edict. Returns the updated edict or null if not found. */
-  update(input: UpdateEdictInput): EdictEntry | null {
-    return this.runWithDb("update", () => this.updateInternal(input));
-  }
+	/** Update an existing edict. Returns the updated edict or null if not found. */
+	update(input: UpdateEdictInput): EdictEntry | null {
+		return this.runWithDb("update", () => this.updateInternal(input));
+	}
 
-  private updateInternal(input: UpdateEdictInput): EdictEntry | null {
-    const existing = this.getByIdInternal(input.id);
-    if (!existing) return null;
+	private updateInternal(input: UpdateEdictInput): EdictEntry | null {
+		const existing = this.getByIdInternal(input.id);
+		if (!existing) return null;
 
-    const nowSec = Math.floor(Date.now() / 1000);
-    const text = input.text !== undefined ? input.text.trim() : existing.text;
-    const source = input.source !== undefined ? input.source : existing.source;
-    const tags = input.tags !== undefined ? input.tags : existing.tags;
-    const ttl = input.ttl !== undefined ? input.ttl : existing.ttl;
-    const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
-    const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
-    const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
+		const nowSec = Math.floor(Date.now() / 1000);
+		const text = input.text !== undefined ? input.text.trim() : existing.text;
+		const source = input.source !== undefined ? input.source : existing.source;
+		const tags = input.tags !== undefined ? input.tags : existing.tags;
+		const ttl = input.ttl !== undefined ? input.ttl : existing.ttl;
+		const expiresAt =
+			input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
+		const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
+		const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
 
-    this.liveDb
-      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
-      .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
+		this.liveDb
+			.prepare(
+				"UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?",
+			)
+			.run(
+				text,
+				source ?? null,
+				expiresAt ?? null,
+				ttlStr,
+				tagsStr,
+				nowSec,
+				input.id,
+			);
 
-    return {
-      ...existing,
-      text,
-      source,
-      expiresAt,
-      ttl,
-      tags,
-      updatedAt: nowSec,
-    };
-  }
+		return {
+			...existing,
+			text,
+			source,
+			expiresAt,
+			ttl,
+			tags,
+			updatedAt: nowSec,
+		};
+	}
 
-  /** Remove an edict by id */
-  remove(id: string): boolean {
-    return this.runWithDb("remove", () => {
-      const result = this.liveDb.prepare("DELETE FROM edicts WHERE id = ?").run(id);
-      return result.changes > 0;
-    });
-  }
+	/** Remove an edict by id */
+	remove(id: string): boolean {
+		return this.runWithDb("remove", () => {
+			const result = this.liveDb
+				.prepare("DELETE FROM edicts WHERE id = ?")
+				.run(id);
+			return result.changes > 0;
+		});
+	}
 
-  /** Count total edicts */
-  count(): number {
-    return this.runWithDb("count", () => {
-      const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
-      return row.cnt;
-    });
-  }
+	/** Count total edicts */
+	count(): number {
+		return this.runWithDb("count", () => {
+			const row = this.liveDb
+				.prepare("SELECT COUNT(*) as cnt FROM edicts")
+				.get() as { cnt: number };
+			return row.cnt;
+		});
+	}
 
-  /** Get statistics about the edict store */
-  stats(): EdictStats {
-    return this.runWithDb("stats", () => this.statsInternal());
-  }
+	/** Get statistics about the edict store */
+	stats(): EdictStats {
+		return this.runWithDb("stats", () => this.statsInternal());
+	}
 
-  private statsInternal(): EdictStats {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const totalRow = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
-    const total = totalRow.cnt;
+	private statsInternal(): EdictStats {
+		const nowSec = Math.floor(Date.now() / 1000);
+		const totalRow = this.liveDb
+			.prepare("SELECT COUNT(*) as cnt FROM edicts")
+			.get() as { cnt: number };
+		const total = totalRow.cnt;
 
-    const expiredRow = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) as cnt FROM edicts WHERE
+		const expiredRow = this.liveDb
+			.prepare(
+				`SELECT COUNT(*) as cnt FROM edicts WHERE
          (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
-      )
-      .get(new Date().toISOString(), nowSec) as { cnt: number };
-    const expired = expiredRow.cnt;
+			)
+			.get(new Date().toISOString(), nowSec) as { cnt: number };
+		const expired = expiredRow.cnt;
 
-    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-    const expiringRow = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND expires_at > datetime(?) AND expires_at <= ?`,
-      )
-      .get(new Date().toISOString(), sevenDaysFromNow) as { cnt: number };
-    const expiringIn7Days = expiringRow.cnt;
+		const sevenDaysFromNow = new Date(
+			Date.now() + 7 * 24 * 3600 * 1000,
+		).toISOString();
+		const expiringRow = this.liveDb
+			.prepare(
+				`SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND expires_at > datetime(?) AND expires_at <= ?`,
+			)
+			.get(new Date().toISOString(), sevenDaysFromNow) as { cnt: number };
+		const expiringIn7Days = expiringRow.cnt;
 
-    const allRows = this.liveDb.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
-    const byTag: Record<string, number> = {};
-    for (const row of allRows) {
-      if (!row.tags) continue;
-      const parsed = parseTags(row.tags);
-      for (const tag of parsed) {
-        byTag[tag] = (byTag[tag] ?? 0) + 1;
-      }
-    }
+		const allRows = this.liveDb
+			.prepare("SELECT tags FROM edicts")
+			.all() as Array<{ tags: string | null }>;
+		const byTag: Record<string, number> = {};
+		for (const row of allRows) {
+			if (!row.tags) continue;
+			const parsed = parseTags(row.tags);
+			for (const tag of parsed) {
+				byTag[tag] = (byTag[tag] ?? 0) + 1;
+			}
+		}
 
-    return { total, byTag, expired, expiringIn7Days };
-  }
+		return { total, byTag, expired, expiringIn7Days };
+	}
 
-  /** Prune all expired edicts. Returns count of deleted rows. */
-  pruneExpired(): number {
-    return this.runWithDb("pruneExpired", () => {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const result = this.liveDb
-        .prepare(
-          `DELETE FROM edicts WHERE
+	/** Prune all expired edicts. Returns count of deleted rows. */
+	pruneExpired(): number {
+		return this.runWithDb("pruneExpired", () => {
+			const nowSec = Math.floor(Date.now() / 1000);
+			const result = this.liveDb
+				.prepare(
+					`DELETE FROM edicts WHERE
          (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
-        )
-        .run(new Date().toISOString(), nowSec);
-      return Number(result.changes ?? 0);
-    });
-  }
+				)
+				.run(new Date().toISOString(), nowSec);
+			return Number(result.changes ?? 0);
+		});
+	}
 
-  /** Convert a raw SQLite row to an EdictEntry */
-  private rowToEntry(row: Record<string, unknown>): EdictEntry {
-    const ttlRaw = (row.ttl as string) ?? "never";
-    const ttl: EdictTtl = ttlRaw === "never" ? "never" : ttlRaw === "event" ? "event" : Number(ttlRaw);
+	/** Convert a raw SQLite row to an EdictEntry */
+	private rowToEntry(row: Record<string, unknown>): EdictEntry {
+		const ttlRaw = (row.ttl as string) ?? "never";
+		const ttl: EdictTtl =
+			ttlRaw === "never"
+				? "never"
+				: ttlRaw === "event"
+					? "event"
+					: Number(ttlRaw);
 
-    return {
-      id: row.id as string,
-      text: row.text as string,
-      source: (row.source as string) ?? null,
-      verifiedAt: (row.verified_at as number) ?? null,
-      expiresAt: (row.expires_at as string) ?? null,
-      ttl,
-      tags: parseTags(row.tags as string | null),
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
-    };
-  }
+		return {
+			id: row.id as string,
+			text: row.text as string,
+			source: (row.source as string) ?? null,
+			verifiedAt: (row.verified_at as number) ?? null,
+			expiresAt: (row.expires_at as string) ?? null,
+			ttl,
+			tags: parseTags(row.tags as string | null),
+			createdAt: row.created_at as number,
+			updatedAt: row.updated_at as number,
+		};
+	}
 }

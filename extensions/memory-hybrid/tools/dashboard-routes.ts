@@ -16,10 +16,13 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HealthConfig } from "../config/types/maintenance.js";
-import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
+import type {
+	HttpRequestHandler,
+	HttpRouteOptions,
+} from "./http-route-types.js";
 
 export interface DashboardRoutesContext {
-  cfg: Pick<{ health: HealthConfig }, "health">;
+	cfg: Pick<{ health: HealthConfig }, "health">;
 }
 
 /** Path prefix for all dashboard routes (plugin-scoped by OpenClaw gateway). */
@@ -27,8 +30,8 @@ export const DASHBOARD_PREFIX = "/plugins/memory-dashboard";
 
 /** Sub-paths registered under DASHBOARD_PREFIX. */
 export const DASHBOARD_PATHS = {
-  root: "/",
-  healthApi: "/api/health",
+	root: "/",
+	healthApi: "/api/health",
 } as const;
 
 /**
@@ -39,56 +42,74 @@ export const DASHBOARD_PATHS = {
  *
  * No-ops when `cfg.health.enabled` is false.
  */
-export function registerDashboardHttpRoutes(ctx: DashboardRoutesContext, api: ClawdbotPluginApi): void {
-  if (!ctx.cfg.health.enabled) return;
+export function registerDashboardHttpRoutes(
+	ctx: DashboardRoutesContext,
+	api: ClawdbotPluginApi,
+): void {
+	if (!ctx.cfg.health.enabled) return;
 
-  if (typeof api.registerHttpRoute !== "function") return;
+	if (typeof api.registerHttpRoute !== "function") return;
 
-  const routeOpts: HttpRouteOptions = {
-    authenticated: ctx.cfg.health.authenticated,
-  };
+	const routeOpts: HttpRouteOptions = {
+		authenticated: ctx.cfg.health.authenticated,
+	};
 
-  // All routes MUST use the same routeOpts to satisfy the consistent-auth
-  // requirement. Do not pass different options to any of these calls.
+	// All routes MUST use the same routeOpts to satisfy the consistent-auth
+	// requirement. Do not pass different options to any of these calls.
 
-  // GET /plugins/memory-dashboard/ — dashboard HTML shell
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
-    `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`,
-    async (_req) => ({
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-      body: getDashboardHtml(),
-    }),
-    routeOpts,
-  );
+	// GET /plugins/memory-dashboard/ — dashboard HTML shell
+	(
+		api.registerHttpRoute as (
+			path: string,
+			handler: HttpRequestHandler,
+			opts: HttpRouteOptions,
+		) => void
+	)(
+		`${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`,
+		async (_req) => ({
+			status: 200,
+			headers: { "Content-Type": "text/html; charset=utf-8" },
+			body: getDashboardHtml(),
+		}),
+		routeOpts,
+	);
 
-  // GET /plugins/memory-dashboard/api/health — JSON health summary
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
-    `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`,
-    async (_req) => ({
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "ok", generatedAt: new Date().toISOString() }),
-    }),
-    routeOpts,
-  );
+	// GET /plugins/memory-dashboard/api/health — JSON health summary
+	(
+		api.registerHttpRoute as (
+			path: string,
+			handler: HttpRequestHandler,
+			opts: HttpRouteOptions,
+		) => void
+	)(
+		`${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`,
+		async (_req) => ({
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				status: "ok",
+				generatedAt: new Date().toISOString(),
+			}),
+		}),
+		routeOpts,
+	);
 }
 
 /** Minimal HTML shell returned by the dashboard root route. */
 function getDashboardHtml(): string {
-  return [
-    "<!DOCTYPE html>",
-    '<html lang="en">',
-    "<head>",
-    '<meta charset="UTF-8">',
-    '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-    "<title>Memory Health Dashboard</title>",
-    "</head>",
-    "<body>",
-    "<h1>Memory Health Dashboard</h1>",
-    '<p>Dashboard implementation pending <a href="https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/148">#148</a>.</p>',
-    `<script>fetch("${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}").then(r=>r.json()).then(d=>console.log("health",d));</script>`,
-    "</body>",
-    "</html>",
-  ].join("\n");
+	return [
+		"<!DOCTYPE html>",
+		'<html lang="en">',
+		"<head>",
+		'<meta charset="UTF-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+		"<title>Memory Health Dashboard</title>",
+		"</head>",
+		"<body>",
+		"<h1>Memory Health Dashboard</h1>",
+		'<p>Dashboard implementation pending <a href="https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/148">#148</a>.</p>',
+		`<script>fetch("${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}").then(r=>r.json()).then(d=>console.log("health",d));</script>`,
+		"</body>",
+		"</html>",
+	].join("\n");
 }

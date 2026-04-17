@@ -1,8 +1,8 @@
 import {
-  execFile as cpExecFile,
-  execSync as cpExecSync,
-  spawn as cpSpawn,
-  spawnSync as cpSpawnSync,
+	execFile as cpExecFile,
+	execSync as cpExecSync,
+	spawn as cpSpawn,
+	spawnSync as cpSpawnSync,
 } from "node:child_process";
 import type * as cp from "node:child_process";
 

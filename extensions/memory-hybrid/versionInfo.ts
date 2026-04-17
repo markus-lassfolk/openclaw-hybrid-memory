@@ -19,7 +19,7 @@ const memoryManagerVersion = "3.0";
 const schemaVersion = 3;
 
 export const versionInfo = {
-  pluginVersion,
-  memoryManagerVersion,
-  schemaVersion,
+	pluginVersion,
+	memoryManagerVersion,
+	schemaVersion,
 } as const;

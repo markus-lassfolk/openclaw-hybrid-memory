@@ -9,9 +9,18 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
-import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../config.js";
+import {
+	getMemoryCategories,
+	isValidCategory,
+	setMemoryCategories,
+} from "../config.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
+import {
+	is404Like,
+	is500Like,
+	isConnectionErrorLike,
+	isOllamaOOM,
+} from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
@@ -28,14 +37,14 @@ const DEFAULT_DISCOVERY_INTERVAL_HOURS = 72;
  * Returns empty string if result would be "other" or invalid.
  */
 function normalizeSuggestedLabel(s: string): string {
-  const t = s
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[^a-z0-9_-]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "");
-  return t && t !== "other" && t.length <= 40 ? t : "";
+	const t = s
+		.toLowerCase()
+		.trim()
+		.replace(/\s+/g, " ")
+		.replace(/[^a-z0-9_-]/g, "_")
+		.replace(/_+/g, "_")
+		.replace(/^_|_$/g, "");
+	return t && t !== "other" && t.length <= 40 ? t : "";
 }
 
 /**
@@ -43,36 +52,45 @@ function normalizeSuggestedLabel(s: string): string {
  * Exported for testing.
  */
 export function getLastDiscoveryPath(discoveredCategoriesPath: string): string {
-  return `${discoveredCategoriesPath.replace(/\.json$/i, "")}.last-run.json`;
+	return `${discoveredCategoriesPath.replace(/\.json$/i, "")}.last-run.json`;
 }
 
 /**
  * Read the last-discovery timestamp from the sidecar file.
  * Returns null if the file doesn't exist or is malformed.
  */
-async function readLastDiscoveryTimestamp(lastRunPath: string): Promise<number | null> {
-  try {
-    const raw = await readFile(lastRunPath, "utf-8");
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as Record<string, unknown>).lastRunAt === "number"
-    ) {
-      return (parsed as { lastRunAt: number }).lastRunAt;
-    }
-    return null;
-  } catch {
-    return null;
-  }
+async function readLastDiscoveryTimestamp(
+	lastRunPath: string,
+): Promise<number | null> {
+	try {
+		const raw = await readFile(lastRunPath, "utf-8");
+		const parsed: unknown = JSON.parse(raw);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			typeof (parsed as Record<string, unknown>).lastRunAt === "number"
+		) {
+			return (parsed as { lastRunAt: number }).lastRunAt;
+		}
+		return null;
+	} catch {
+		return null;
+	}
 }
 
 /**
  * Write the last-discovery timestamp to the sidecar file.
  */
-async function writeLastDiscoveryTimestamp(lastRunPath: string, timestampMs: number): Promise<void> {
-  await mkdir(dirname(lastRunPath), { recursive: true });
-  await writeFile(lastRunPath, JSON.stringify({ lastRunAt: timestampMs }, null, 2), "utf-8");
+async function writeLastDiscoveryTimestamp(
+	lastRunPath: string,
+	timestampMs: number,
+): Promise<void> {
+	await mkdir(dirname(lastRunPath), { recursive: true });
+	await writeFile(
+		lastRunPath,
+		JSON.stringify({ lastRunAt: timestampMs }, null, 2),
+		"utf-8",
+	);
 }
 
 /**
@@ -81,134 +99,153 @@ async function writeLastDiscoveryTimestamp(lastRunPath: string, timestampMs: num
  * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
  */
 async function discoverCategoriesFromOther(
-  factsDb: FactsDB,
-  openai: OpenAI,
-  config: {
-    model: string;
-    batchSize: number;
-    suggestCategories?: boolean;
-    minFactsForNewCategory?: number;
-    discoveryIntervalHours?: number;
-  },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  discoveredCategoriesPath: string,
+	factsDb: FactsDB,
+	openai: OpenAI,
+	config: {
+		model: string;
+		batchSize: number;
+		suggestCategories?: boolean;
+		minFactsForNewCategory?: number;
+		discoveryIntervalHours?: number;
+	},
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	discoveredCategoriesPath: string,
 ): Promise<string[]> {
-  if (config.suggestCategories !== true) return [];
-  const minForNew = config.minFactsForNewCategory ?? 10;
-  const others = factsDb.getByCategory("other");
-  if (others.length < MIN_OTHER_FOR_DISCOVERY) return [];
+	if (config.suggestCategories !== true) return [];
+	const minForNew = config.minFactsForNewCategory ?? 10;
+	const others = factsDb.getByCategory("other");
+	if (others.length < MIN_OTHER_FOR_DISCOVERY) return [];
 
-  // Cooldown check: skip LLM if last discovery ran within discoveryIntervalHours
-  const intervalHours = config.discoveryIntervalHours ?? DEFAULT_DISCOVERY_INTERVAL_HOURS;
-  if (intervalHours > 0) {
-    const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
-    const lastRunAt = await readLastDiscoveryTimestamp(lastRunPath);
-    if (lastRunAt !== null) {
-      const elapsedMs = Date.now() - lastRunAt;
-      const intervalMs = intervalHours * 60 * 60 * 1000;
-      if (elapsedMs < intervalMs) {
-        const remainingHours = ((intervalMs - elapsedMs) / (60 * 60 * 1000)).toFixed(1);
-        logger.info(
-          `memory-hybrid: category discovery skipped — last run ${(elapsedMs / (60 * 60 * 1000)).toFixed(1)}h ago, cooldown ${intervalHours}h (${remainingHours}h remaining)`,
-        );
-        return [];
-      }
-    }
-  }
+	// Cooldown check: skip LLM if last discovery ran within discoveryIntervalHours
+	const intervalHours =
+		config.discoveryIntervalHours ?? DEFAULT_DISCOVERY_INTERVAL_HOURS;
+	if (intervalHours > 0) {
+		const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
+		const lastRunAt = await readLastDiscoveryTimestamp(lastRunPath);
+		if (lastRunAt !== null) {
+			const elapsedMs = Date.now() - lastRunAt;
+			const intervalMs = intervalHours * 60 * 60 * 1000;
+			if (elapsedMs < intervalMs) {
+				const remainingHours = (
+					(intervalMs - elapsedMs) /
+					(60 * 60 * 1000)
+				).toFixed(1);
+				logger.info(
+					`memory-hybrid: category discovery skipped — last run ${(elapsedMs / (60 * 60 * 1000)).toFixed(1)}h ago, cooldown ${intervalHours}h (${remainingHours}h remaining)`,
+				);
+				return [];
+			}
+		}
+	}
 
-  logger.info(`memory-hybrid: category discovery on ${others.length} "other" facts (min ${minForNew} per label)`);
+	logger.info(
+		`memory-hybrid: category discovery on ${others.length} "other" facts (min ${minForNew} per label)`,
+	);
 
-  const existingCategories = new Set(getMemoryCategories());
-  const labelToIds = new Map<string, string[]>();
-  let anyBatchSucceeded = false;
+	const existingCategories = new Set(getMemoryCategories());
+	const labelToIds = new Map<string, string[]>();
+	let anyBatchSucceeded = false;
 
-  for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
-    const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
-    const factLines = batch.map((f, idx) => `${idx + 1}. ${f.text.slice(0, 280)}`).join("\n");
-    const prompt = fillPrompt(loadPrompt("category-discovery"), { facts: factLines });
+	for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
+		const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
+		const factLines = batch
+			.map((f, idx) => `${idx + 1}. ${f.text.slice(0, 280)}`)
+			.join("\n");
+		const prompt = fillPrompt(loadPrompt("category-discovery"), {
+			facts: factLines,
+		});
 
-    try {
-      const { withLLMRetry } = await import("./chat.js");
-      const resp = await withLLMRetry(
-        () =>
-          openai.chat.completions.create({
-            model: config.model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0,
-            ...chatCompletionTokenParams(config.model, batch.length * 24),
-          }),
-        { maxRetries: 2 },
-      );
-      const content = resp.choices[0]?.message?.content?.trim() || "[]";
-      const labels = tryParseFirstJsonArray(content);
-      if (!labels) continue;
-      anyBatchSucceeded = true;
-      for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
-        const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
-        const label = normalizeSuggestedLabel(raw);
-        if (!label) continue;
-        if (!labelToIds.has(label)) labelToIds.set(label, []);
-        labelToIds.get(label)?.push(batch[j].id);
-      }
-    } catch (err) {
-      const discErr = err instanceof Error ? err : new Error(String(err));
-      // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
-      const isTransient =
-        isOllamaOOM(discErr) ||
-        is500Like(discErr) ||
-        is404Like(discErr) ||
-        /timed out|llm request timeout|request was aborted/i.test(discErr.message) ||
-        isConnectionErrorLike(discErr);
-      if (!isTransient) {
-        capturePluginError(discErr, {
-          subsystem: "auto-classifier",
-          operation: "category-discovery-batch",
-        });
-      }
-      logger.warn(`memory-hybrid: category discovery batch failed: ${err}`);
-    }
-    if (i + DISCOVERY_BATCH_SIZE < others.length) await new Promise((r) => setTimeout(r, 400));
-  }
+		try {
+			const { withLLMRetry } = await import("./chat.js");
+			const resp = await withLLMRetry(
+				() =>
+					openai.chat.completions.create({
+						model: config.model,
+						messages: [{ role: "user", content: prompt }],
+						temperature: 0,
+						...chatCompletionTokenParams(config.model, batch.length * 24),
+					}),
+				{ maxRetries: 2 },
+			);
+			const content = resp.choices[0]?.message?.content?.trim() || "[]";
+			const labels = tryParseFirstJsonArray(content);
+			if (!labels) continue;
+			anyBatchSucceeded = true;
+			for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
+				const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
+				const label = normalizeSuggestedLabel(raw);
+				if (!label) continue;
+				if (!labelToIds.has(label)) labelToIds.set(label, []);
+				labelToIds.get(label)?.push(batch[j].id);
+			}
+		} catch (err) {
+			const discErr = err instanceof Error ? err : new Error(String(err));
+			// Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
+			const isTransient =
+				isOllamaOOM(discErr) ||
+				is500Like(discErr) ||
+				is404Like(discErr) ||
+				/timed out|llm request timeout|request was aborted/i.test(
+					discErr.message,
+				) ||
+				isConnectionErrorLike(discErr);
+			if (!isTransient) {
+				capturePluginError(discErr, {
+					subsystem: "auto-classifier",
+					operation: "category-discovery-batch",
+				});
+			}
+			logger.warn(`memory-hybrid: category discovery batch failed: ${err}`);
+		}
+		if (i + DISCOVERY_BATCH_SIZE < others.length)
+			await new Promise((r) => setTimeout(r, 400));
+	}
 
-  const newCategoryNames: string[] = [];
-  for (const [label, ids] of labelToIds) {
-    if (existingCategories.has(label)) continue;
-    if (ids.length < minForNew) continue;
-    newCategoryNames.push(label);
-    for (const id of ids) factsDb.updateCategory(id, label);
-  }
+	const newCategoryNames: string[] = [];
+	for (const [label, ids] of labelToIds) {
+		if (existingCategories.has(label)) continue;
+		if (ids.length < minForNew) continue;
+		newCategoryNames.push(label);
+		for (const id of ids) factsDb.updateCategory(id, label);
+	}
 
-  // Write last-run timestamp only if at least one batch succeeded (even if no new categories were created).
-  // This prevents the LLM from firing again on the next cron tick when categories are settled.
-  // If all batches failed, don't write the timestamp so discovery is retried on the next run.
-  if (intervalHours > 0 && anyBatchSucceeded) {
-    const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
-    await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
-  }
+	// Write last-run timestamp only if at least one batch succeeded (even if no new categories were created).
+	// This prevents the LLM from firing again on the next cron tick when categories are settled.
+	// If all batches failed, don't write the timestamp so discovery is retried on the next run.
+	if (intervalHours > 0 && anyBatchSucceeded) {
+		const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
+		await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
+	}
 
-  if (newCategoryNames.length === 0) return [];
+	if (newCategoryNames.length === 0) return [];
 
-  setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
-  logger.info(
-    `memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`,
-  );
+	setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
+	logger.info(
+		`memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`,
+	);
 
-  await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
-  let existingList: string[] = [];
-  try {
-    existingList = JSON.parse(await readFile(discoveredCategoriesPath, "utf-8")) as string[];
-  } catch (err) {
-    capturePluginError(err as Error, {
-      operation: "read-discovered-categories",
-      severity: "info",
-      subsystem: "classifier",
-    });
-    // file doesn't exist yet
-  }
-  const merged = [...new Set([...existingList, ...newCategoryNames])];
-  await writeFile(discoveredCategoriesPath, JSON.stringify(merged, null, 2), "utf-8");
+	await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
+	let existingList: string[] = [];
+	try {
+		existingList = JSON.parse(
+			await readFile(discoveredCategoriesPath, "utf-8"),
+		) as string[];
+	} catch (err) {
+		capturePluginError(err as Error, {
+			operation: "read-discovered-categories",
+			severity: "info",
+			subsystem: "classifier",
+		});
+		// file doesn't exist yet
+	}
+	const merged = [...new Set([...existingList, ...newCategoryNames])];
+	await writeFile(
+		discoveredCategoriesPath,
+		JSON.stringify(merged, null, 2),
+		"utf-8",
+	);
 
-  return newCategoryNames;
+	return newCategoryNames;
 }
 
 /**
@@ -216,15 +253,17 @@ async function discoverCategoriesFromOther(
  * Returns a map of factId → newCategory.
  */
 async function classifyBatch(
-  openai: OpenAI,
-  model: string,
-  facts: { id: string; text: string }[],
-  categories: readonly string[],
+	openai: OpenAI,
+	model: string,
+	facts: { id: string; text: string }[],
+	categories: readonly string[],
 ): Promise<Map<string, string>> {
-  const catList = categories.filter((c) => c !== "other").join(", ");
-  const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
+	const catList = categories.filter((c) => c !== "other").join(", ");
+	const factLines = facts
+		.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`)
+		.join("\n");
 
-  const prompt = `You are a memory classifier. Categorize each fact into exactly one category.
+	const prompt = `You are a memory classifier. Categorize each fact into exactly one category.
 
 Available categories: ${catList}
 Use "other" ONLY if no category fits at all.
@@ -234,91 +273,101 @@ ${factLines}
 
 Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]`;
 
-  try {
-    const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          ...chatCompletionTokenParams(model, facts.length * 20),
-        }),
-      { maxRetries: 2 },
-    );
+	try {
+		const { withLLMRetry } = await import("./chat.js");
+		const resp = await withLLMRetry(
+			() =>
+				openai.chat.completions.create({
+					model,
+					messages: [{ role: "user", content: prompt }],
+					temperature: 0,
+					...chatCompletionTokenParams(model, facts.length * 20),
+				}),
+			{ maxRetries: 2 },
+		);
 
-    const content = resp.choices[0]?.message?.content?.trim() || "[]";
-    const parsed = tryParseFirstJsonArray(content);
-    if (!parsed) return new Map();
+		const content = resp.choices[0]?.message?.content?.trim() || "[]";
+		const parsed = tryParseFirstJsonArray(content);
+		if (!parsed) return new Map();
 
-    const results: string[] = parsed as string[];
-    const map = new Map<string, string>();
+		const results: string[] = parsed as string[];
+		const map = new Map<string, string>();
 
-    for (let i = 0; i < Math.min(results.length, facts.length); i++) {
-      const cat = results[i]?.toLowerCase()?.trim();
-      if (cat && cat !== "other" && isValidCategory(cat)) {
-        map.set(facts[i].id, cat);
-      }
-    }
-    return map;
-  } catch (err) {
-    const classifyErr = err instanceof Error ? err : new Error(String(err));
-    // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
-    // OOM: Ollama model too large for available RAM — not a bug, degrade gracefully.
-    const isTransient =
-      isOllamaOOM(classifyErr) ||
-      is500Like(classifyErr) ||
-      is404Like(classifyErr) ||
-      /timed out|llm request timeout|request was aborted/i.test(classifyErr.message) ||
-      isConnectionErrorLike(classifyErr);
-    if (!isTransient) {
-      capturePluginError(classifyErr, {
-        operation: "classify-batch",
-        severity: "info",
-        subsystem: "classifier",
-      });
-    }
-    return new Map();
-  }
+		for (let i = 0; i < Math.min(results.length, facts.length); i++) {
+			const cat = results[i]?.toLowerCase()?.trim();
+			if (cat && cat !== "other" && isValidCategory(cat)) {
+				map.set(facts[i].id, cat);
+			}
+		}
+		return map;
+	} catch (err) {
+		const classifyErr = err instanceof Error ? err : new Error(String(err));
+		// Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
+		// OOM: Ollama model too large for available RAM — not a bug, degrade gracefully.
+		const isTransient =
+			isOllamaOOM(classifyErr) ||
+			is500Like(classifyErr) ||
+			is404Like(classifyErr) ||
+			/timed out|llm request timeout|request was aborted/i.test(
+				classifyErr.message,
+			) ||
+			isConnectionErrorLike(classifyErr);
+		if (!isTransient) {
+			capturePluginError(classifyErr, {
+				operation: "classify-batch",
+				severity: "info",
+				subsystem: "classifier",
+			});
+		}
+		return new Map();
+	}
 }
 
 /** Progress reporter for batch CLI commands (optional). */
-type ClassifyProgressReporter = { update: (current: number) => void; done: () => void };
+type ClassifyProgressReporter = {
+	update: (current: number) => void;
+	done: () => void;
+};
 
 /** Progress bar when stdout is TTY; otherwise no-op (caller can use sink.log). */
 function createProgressReporter(
-  sink: { log: (s: string) => void },
-  total: number,
-  label: string,
+	sink: { log: (s: string) => void },
+	total: number,
+	label: string,
 ): { update: (current: number, extra?: string) => void; done: () => void } {
-  const isTTY = typeof process.stdout?.isTTY === "boolean" && process.stdout.isTTY;
-  const width = 40;
-  let lastLen = 0;
-  let lastPct = -1;
-  return {
-    update(current: number, extra?: string) {
-      if (total <= 0) return;
-      const pct = Math.min(100, Math.floor((current / total) * 100));
-      if (!isTTY) {
-        // Only log at milestones to avoid spam in non-TTY (25%, 50%, 75%, 100%)
-        if (pct === 100 || (pct >= 25 && pct !== lastPct && pct % 25 === 0)) {
-          sink.log(`${label}: ${pct}% (${current}/${total})${extra ? ` ${extra}` : ""}`);
-          lastPct = pct;
-        }
-        return;
-      }
-      const filled = Math.min(width, Math.round((current / total) * width));
-      const arrow = filled < width ? 1 : 0;
-      const dots = Math.max(0, width - filled - arrow);
-      const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
-      const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
-      process.stdout.write(`\r${line}${" ".repeat(Math.max(0, lastLen - line.length))}`);
-      lastLen = line.length;
-    },
-    done() {
-      if (isTTY && lastLen > 0) process.stdout.write("\n");
-    },
-  };
+	const isTTY =
+		typeof process.stdout?.isTTY === "boolean" && process.stdout.isTTY;
+	const width = 40;
+	let lastLen = 0;
+	let lastPct = -1;
+	return {
+		update(current: number, extra?: string) {
+			if (total <= 0) return;
+			const pct = Math.min(100, Math.floor((current / total) * 100));
+			if (!isTTY) {
+				// Only log at milestones to avoid spam in non-TTY (25%, 50%, 75%, 100%)
+				if (pct === 100 || (pct >= 25 && pct !== lastPct && pct % 25 === 0)) {
+					sink.log(
+						`${label}: ${pct}% (${current}/${total})${extra ? ` ${extra}` : ""}`,
+					);
+					lastPct = pct;
+				}
+				return;
+			}
+			const filled = Math.min(width, Math.round((current / total) * width));
+			const arrow = filled < width ? 1 : 0;
+			const dots = Math.max(0, width - filled - arrow);
+			const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
+			const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
+			process.stdout.write(
+				`\r${line}${" ".repeat(Math.max(0, lastLen - line.length))}`,
+			);
+			lastLen = line.length;
+		},
+		done() {
+			if (isTTY && lastLen > 0) process.stdout.write("\n");
+		},
+	};
 }
 
 /**
@@ -326,56 +375,81 @@ function createProgressReporter(
  * Used by CLI; returns counts and optional breakdown for printing.
  */
 async function runClassifyForCli(
-  factsDb: FactsDB,
-  openai: OpenAI,
-  config: {
-    model?: string;
-    batchSize: number;
-    suggestCategories?: boolean;
-    minFactsForNewCategory?: number;
-    discoveryIntervalHours?: number;
-  },
-  opts: { dryRun: boolean; limit: number; model?: string },
-  discoveredPath: string,
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  progressReporter?: ClassifyProgressReporter,
-): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number> }> {
-  // Callers (CLI, plugin-service) must pass opts.model or config.model so one is set
-  const classifyModel = opts.model ?? config.model;
-  if (!classifyModel) throw new Error("classify model required: set autoClassify.model or pass --model");
-  const categories = getMemoryCategories();
-  let others = factsDb.getByCategory("other").slice(0, opts.limit);
-  if (others.length === 0) {
-    return { reclassified: 0, total: 0 };
-  }
+	factsDb: FactsDB,
+	openai: OpenAI,
+	config: {
+		model?: string;
+		batchSize: number;
+		suggestCategories?: boolean;
+		minFactsForNewCategory?: number;
+		discoveryIntervalHours?: number;
+	},
+	opts: { dryRun: boolean; limit: number; model?: string },
+	discoveredPath: string,
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	progressReporter?: ClassifyProgressReporter,
+): Promise<{
+	reclassified: number;
+	total: number;
+	breakdown?: Record<string, number>;
+}> {
+	// Callers (CLI, plugin-service) must pass opts.model or config.model so one is set
+	const classifyModel = opts.model ?? config.model;
+	if (!classifyModel)
+		throw new Error(
+			"classify model required: set autoClassify.model or pass --model",
+		);
+	const categories = getMemoryCategories();
+	let others = factsDb.getByCategory("other").slice(0, opts.limit);
+	if (others.length === 0) {
+		return { reclassified: 0, total: 0 };
+	}
 
-  if (!opts.dryRun && config.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
-    await discoverCategoriesFromOther(factsDb, openai, { ...config, model: classifyModel }, logger, discoveredPath);
-    others = factsDb.getByCategory("other").slice(0, opts.limit);
-  }
+	if (
+		!opts.dryRun &&
+		config.suggestCategories &&
+		others.length >= MIN_OTHER_FOR_DISCOVERY
+	) {
+		await discoverCategoriesFromOther(
+			factsDb,
+			openai,
+			{ ...config, model: classifyModel },
+			logger,
+			discoveredPath,
+		);
+		others = factsDb.getByCategory("other").slice(0, opts.limit);
+	}
 
-  const numBatches = Math.ceil(others.length / config.batchSize);
-  if (!progressReporter && numBatches > 0) {
-    const sink = { log: (m: string) => logger.info(m) };
-    progressReporter = createProgressReporter(sink, numBatches, "Classifying");
-  }
-  let totalReclassified = 0;
-  let batchIndex = 0;
-  for (let i = 0; i < others.length; i += config.batchSize) {
-    progressReporter?.update(batchIndex + 1);
-    const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const results = await classifyBatch(openai, classifyModel, batch, categories);
-    for (const [id, newCat] of results) {
-      if (!opts.dryRun) factsDb.updateCategory(id, newCat);
-      totalReclassified++;
-    }
-    batchIndex++;
-    if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
-  }
-  progressReporter?.done();
+	const numBatches = Math.ceil(others.length / config.batchSize);
+	if (!progressReporter && numBatches > 0) {
+		const sink = { log: (m: string) => logger.info(m) };
+		progressReporter = createProgressReporter(sink, numBatches, "Classifying");
+	}
+	let totalReclassified = 0;
+	let batchIndex = 0;
+	for (let i = 0; i < others.length; i += config.batchSize) {
+		progressReporter?.update(batchIndex + 1);
+		const batch = others
+			.slice(i, i + config.batchSize)
+			.map((e) => ({ id: e.id, text: e.text }));
+		const results = await classifyBatch(
+			openai,
+			classifyModel,
+			batch,
+			categories,
+		);
+		for (const [id, newCat] of results) {
+			if (!opts.dryRun) factsDb.updateCategory(id, newCat);
+			totalReclassified++;
+		}
+		batchIndex++;
+		if (i + config.batchSize < others.length)
+			await new Promise((r) => setTimeout(r, 500));
+	}
+	progressReporter?.done();
 
-  const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
-  return { reclassified: totalReclassified, total: others.length, breakdown };
+	const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
+	return { reclassified: totalReclassified, total: others.length, breakdown };
 }
 
 /**
@@ -385,64 +459,74 @@ async function runClassifyForCli(
  * Model: use opts.model (e.g. from getDefaultCronModel) or config.model; one must be set.
  */
 async function runAutoClassify(
-  factsDb: FactsDB,
-  openai: OpenAI,
-  config: {
-    model?: string;
-    batchSize: number;
-    suggestCategories?: boolean;
-    minFactsForNewCategory?: number;
-    discoveryIntervalHours?: number;
-  },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  opts?: { discoveredCategoriesPath?: string; model?: string },
+	factsDb: FactsDB,
+	openai: OpenAI,
+	config: {
+		model?: string;
+		batchSize: number;
+		suggestCategories?: boolean;
+		minFactsForNewCategory?: number;
+		discoveryIntervalHours?: number;
+	},
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	opts?: { discoveredCategoriesPath?: string; model?: string },
 ): Promise<{ reclassified: number; suggested: string[] }> {
-  const model = opts?.model ?? config.model;
-  if (!model) {
-    throw new Error(
-      "auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)",
-    );
-  }
-  const configWithModel = { ...config, model };
-  const categories = getMemoryCategories();
+	const model = opts?.model ?? config.model;
+	if (!model) {
+		throw new Error(
+			"auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)",
+		);
+	}
+	const configWithModel = { ...config, model };
+	const categories = getMemoryCategories();
 
-  // Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
-  if (opts?.discoveredCategoriesPath && config.suggestCategories) {
-    await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
-  }
+	// Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
+	if (opts?.discoveredCategoriesPath && config.suggestCategories) {
+		await discoverCategoriesFromOther(
+			factsDb,
+			openai,
+			configWithModel,
+			logger,
+			opts.discoveredCategoriesPath,
+		);
+	}
 
-  // Get all "other" facts (after discovery some may have been reclassified)
-  const others = factsDb.getByCategory("other");
-  if (others.length === 0) {
-    return { reclassified: 0, suggested: [] };
-  }
+	// Get all "other" facts (after discovery some may have been reclassified)
+	const others = factsDb.getByCategory("other");
+	if (others.length === 0) {
+		return { reclassified: 0, suggested: [] };
+	}
 
-  logger.info(`memory-hybrid: auto-classify starting on ${others.length} "other" facts`);
+	logger.info(
+		`memory-hybrid: auto-classify starting on ${others.length} "other" facts`,
+	);
 
-  let totalReclassified = 0;
+	let totalReclassified = 0;
 
-  // Process in batches
-  for (let i = 0; i < others.length; i += config.batchSize) {
-    const batch = others.slice(i, i + config.batchSize).map((e) => ({
-      id: e.id,
-      text: e.text,
-    }));
+	// Process in batches
+	for (let i = 0; i < others.length; i += config.batchSize) {
+		const batch = others.slice(i, i + config.batchSize).map((e) => ({
+			id: e.id,
+			text: e.text,
+		}));
 
-    const results = await classifyBatch(openai, model, batch, categories);
+		const results = await classifyBatch(openai, model, batch, categories);
 
-    for (const [id, newCat] of results) {
-      factsDb.updateCategory(id, newCat);
-      totalReclassified++;
-    }
+		for (const [id, newCat] of results) {
+			factsDb.updateCategory(id, newCat);
+			totalReclassified++;
+		}
 
-    // Small delay between batches to avoid rate limits
-    if (i + config.batchSize < others.length) {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
+		// Small delay between batches to avoid rate limits
+		if (i + config.batchSize < others.length) {
+			await new Promise((r) => setTimeout(r, 500));
+		}
+	}
 
-  logger.info(`memory-hybrid: auto-classify done — reclassified ${totalReclassified}/${others.length} facts`);
-  return { reclassified: totalReclassified, suggested: [] };
+	logger.info(
+		`memory-hybrid: auto-classify done — reclassified ${totalReclassified}/${others.length} facts`,
+	);
+	return { reclassified: totalReclassified, suggested: [] };
 }
 
 // ============================================================================

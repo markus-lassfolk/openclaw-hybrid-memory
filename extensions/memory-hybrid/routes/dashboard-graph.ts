@@ -5,112 +5,128 @@
 import type { FactsDB } from "../backends/facts-db.js";
 
 interface MemoryGraphNode {
-  id: string;
-  label: string;
-  category: string;
-  importance: number;
-  decayClass: string;
+	id: string;
+	label: string;
+	category: string;
+	importance: number;
+	decayClass: string;
 }
 
 interface MemoryGraphEdge {
-  source: string;
-  target: string;
-  linkType: string;
-  strength: number;
+	source: string;
+	target: string;
+	linkType: string;
+	strength: number;
 }
 
 interface GraphPayload {
-  generatedAt: string;
-  nodes: MemoryGraphNode[];
-  edges: MemoryGraphEdge[];
+	generatedAt: string;
+	nodes: MemoryGraphNode[];
+	edges: MemoryGraphEdge[];
 }
 
 interface GraphRecallPayload extends GraphPayload {
-  activated: string[];
+	activated: string[];
 }
 
-export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: number): GraphPayload {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const cutoff = nowSec - days * 86400;
-  const capped = Math.min(2000, Math.max(20, maxNodes));
-  const db = factsDb.getRawDb();
-  const rows = db
-    .prepare(
-      "SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
-    )
-    .all(nowSec, cutoff, capped) as Array<{
-    id: string;
-    text: string;
-    category: string;
-    importance: number;
-    decay_class: string | null;
-  }>;
-  const idSet = new Set(rows.map((r) => r.id));
-  const allEdges = factsDb.getAllEdges(12000);
-  const edges = allEdges.filter((e) => idSet.has(e.source) && idSet.has(e.target)).slice(0, 2000);
-  const nodes: MemoryGraphNode[] = rows.map((r) => ({
-    id: r.id,
-    label: r.text.length > 120 ? `${r.text.slice(0, 120)}…` : r.text,
-    category: r.category,
-    importance: r.importance,
-    decayClass: r.decay_class ?? "stable",
-  }));
-  return {
-    generatedAt: new Date().toISOString(),
-    nodes,
-    edges: edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      linkType: e.linkType,
-      strength: e.strength,
-    })),
-  };
+export function collectGraphPayload(
+	factsDb: FactsDB,
+	days: number,
+	maxNodes: number,
+): GraphPayload {
+	const nowSec = Math.floor(Date.now() / 1000);
+	const cutoff = nowSec - days * 86400;
+	const capped = Math.min(2000, Math.max(20, maxNodes));
+	const db = factsDb.getRawDb();
+	const rows = db
+		.prepare(
+			"SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
+		)
+		.all(nowSec, cutoff, capped) as Array<{
+		id: string;
+		text: string;
+		category: string;
+		importance: number;
+		decay_class: string | null;
+	}>;
+	const idSet = new Set(rows.map((r) => r.id));
+	const allEdges = factsDb.getAllEdges(12000);
+	const edges = allEdges
+		.filter((e) => idSet.has(e.source) && idSet.has(e.target))
+		.slice(0, 2000);
+	const nodes: MemoryGraphNode[] = rows.map((r) => ({
+		id: r.id,
+		label: r.text.length > 120 ? `${r.text.slice(0, 120)}…` : r.text,
+		category: r.category,
+		importance: r.importance,
+		decayClass: r.decay_class ?? "stable",
+	}));
+	return {
+		generatedAt: new Date().toISOString(),
+		nodes,
+		edges: edges.map((e) => ({
+			source: e.source,
+			target: e.target,
+			linkType: e.linkType,
+			strength: e.strength,
+		})),
+	};
 }
 
-export function collectGraphRecallPayload(factsDb: FactsDB, query: string): GraphRecallPayload {
-  const q = query.trim();
-  if (!q) {
-    return { generatedAt: new Date().toISOString(), nodes: [], edges: [], activated: [] };
-  }
-  const results = factsDb.search(q, 12, {
-    includeSuperseded: false,
-    reinforcementBoost: 0.1,
-    diversityWeight: 1,
-  });
-  const seeds = results.map((r) => r.entry.id);
-  const expanded = new Set<string>(factsDb.getConnectedFactIds(seeds, 3));
-  const ids = [...expanded].slice(0, 2000);
-  const entryMap = factsDb.getByIds(ids);
-  const nodes: MemoryGraphNode[] = [];
-  for (const id of ids) {
-    const f = entryMap.get(id);
-    if (!f) continue;
-    nodes.push({
-      id: f.id,
-      label: f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text,
-      category: f.category,
-      importance: f.importance,
-      decayClass: f.decayClass ?? "stable",
-    });
-  }
-  const nodeIdSet = new Set(nodes.map((n) => n.id));
-  const allEdges = factsDb.getAllEdges(10000);
-  const edges = allEdges.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)).slice(0, 2000);
-  return {
-    generatedAt: new Date().toISOString(),
-    nodes,
-    edges: edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      linkType: e.linkType,
-      strength: e.strength,
-    })),
-    activated: seeds,
-  };
+export function collectGraphRecallPayload(
+	factsDb: FactsDB,
+	query: string,
+): GraphRecallPayload {
+	const q = query.trim();
+	if (!q) {
+		return {
+			generatedAt: new Date().toISOString(),
+			nodes: [],
+			edges: [],
+			activated: [],
+		};
+	}
+	const results = factsDb.search(q, 12, {
+		includeSuperseded: false,
+		reinforcementBoost: 0.1,
+		diversityWeight: 1,
+	});
+	const seeds = results.map((r) => r.entry.id);
+	const expanded = new Set<string>(factsDb.getConnectedFactIds(seeds, 3));
+	const ids = [...expanded].slice(0, 2000);
+	const entryMap = factsDb.getByIds(ids);
+	const nodes: MemoryGraphNode[] = [];
+	for (const id of ids) {
+		const f = entryMap.get(id);
+		if (!f) continue;
+		nodes.push({
+			id: f.id,
+			label: f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text,
+			category: f.category,
+			importance: f.importance,
+			decayClass: f.decayClass ?? "stable",
+		});
+	}
+	const nodeIdSet = new Set(nodes.map((n) => n.id));
+	const allEdges = factsDb.getAllEdges(10000);
+	const edges = allEdges
+		.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target))
+		.slice(0, 2000);
+	return {
+		generatedAt: new Date().toISOString(),
+		nodes,
+		edges: edges.map((e) => ({
+			source: e.source,
+			target: e.target,
+			linkType: e.linkType,
+			strength: e.strength,
+		})),
+		activated: seeds,
+	};
 }
 
 export function getGraphExplorerHtml(): string {
-  return `<!DOCTYPE html>
+	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">

@@ -6,9 +6,9 @@
  * `gemini-2.0-flash` (no slash) → `gemini-2.0-flash`.
  */
 export function inferModelProviderPrefix(model: string): string {
-  const t = model.trim();
-  if (!t) return "";
-  const slash = t.indexOf("/");
-  if (slash === -1) return t.toLowerCase();
-  return t.slice(0, slash).toLowerCase();
+	const t = model.trim();
+	if (!t) return "";
+	const slash = t.indexOf("/");
+	if (slash === -1) return t.toLowerCase();
+	return t.slice(0, slash).toLowerCase();
 }

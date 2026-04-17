@@ -41,25 +41,25 @@ type ProvenanceHeaders = Record<string, string>;
  *   });
  */
 export function getProvenanceHeaders(
-  sessionKey: string,
-  opts: {
-    councilMember?: string;
-    traceId?: string;
-    parentSession?: string;
-  } = {},
+	sessionKey: string,
+	opts: {
+		councilMember?: string;
+		traceId?: string;
+		parentSession?: string;
+	} = {},
 ): ProvenanceHeaders {
-  const traceId = opts.traceId ?? generateTraceId();
-  const headers: ProvenanceHeaders = {
-    "X-Trace-Id": traceId,
-    "X-Session-Key": sessionKey,
-  };
-  if (opts.councilMember) {
-    headers["X-Council-Member"] = opts.councilMember;
-  }
-  if (opts.parentSession) {
-    headers["X-Parent-Session"] = opts.parentSession;
-  }
-  return headers;
+	const traceId = opts.traceId ?? generateTraceId();
+	const headers: ProvenanceHeaders = {
+		"X-Trace-Id": traceId,
+		"X-Session-Key": sessionKey,
+	};
+	if (opts.councilMember) {
+		headers["X-Council-Member"] = opts.councilMember;
+	}
+	if (opts.parentSession) {
+		headers["X-Parent-Session"] = opts.parentSession;
+	}
+	return headers;
 }
 
 /**
@@ -74,9 +74,12 @@ export function getProvenanceHeaders(
  *   const receipt = formatProvenanceReceipt("trace-abc123", "council-review-pr-283");
  *   // Append to review body: body + "\n\n" + receipt
  */
-export function formatProvenanceReceipt(traceId: string, sessionKey: string): string {
-  const ts = new Date().toISOString();
-  return `---\n*Provenance: trace-id=${traceId} session=${sessionKey} at=${ts}*`;
+export function formatProvenanceReceipt(
+	traceId: string,
+	sessionKey: string,
+): string {
+	const ts = new Date().toISOString();
+	return `---\n*Provenance: trace-id=${traceId} session=${sessionKey} at=${ts}*`;
 }
 
 /**
@@ -89,27 +92,31 @@ export function formatProvenanceReceipt(traceId: string, sessionKey: string): st
  *                    Either may be null depending on mode.
  */
 export function buildProvenanceMetadata(
-  mode: CouncilProvenanceMode,
-  sessionKey: string,
-  opts: {
-    councilMember?: string;
-    traceId?: string;
-    parentSession?: string;
-  } = {},
+	mode: CouncilProvenanceMode,
+	sessionKey: string,
+	opts: {
+		councilMember?: string;
+		traceId?: string;
+		parentSession?: string;
+	} = {},
 ): { headers: ProvenanceHeaders | null; receipt: string | null } {
-  if (mode === "none") {
-    return { headers: null, receipt: null };
-  }
+	if (mode === "none") {
+		return { headers: null, receipt: null };
+	}
 
-  const traceId = opts.traceId ?? generateTraceId();
+	const traceId = opts.traceId ?? generateTraceId();
 
-  const headers: ProvenanceHeaders | null =
-    mode === "meta" || mode === "meta+receipt" ? getProvenanceHeaders(sessionKey, { ...opts, traceId }) : null;
+	const headers: ProvenanceHeaders | null =
+		mode === "meta" || mode === "meta+receipt"
+			? getProvenanceHeaders(sessionKey, { ...opts, traceId })
+			: null;
 
-  const receipt: string | null =
-    mode === "receipt" || mode === "meta+receipt" ? formatProvenanceReceipt(traceId, sessionKey) : null;
+	const receipt: string | null =
+		mode === "receipt" || mode === "meta+receipt"
+			? formatProvenanceReceipt(traceId, sessionKey)
+			: null;
 
-  return { headers, receipt };
+	return { headers, receipt };
 }
 
 /**
@@ -117,7 +124,7 @@ export function buildProvenanceMetadata(
  * Format: "trace-<8 hex chars>" — short enough to include in comments, unique enough for audit.
  */
 export function generateTraceId(): string {
-  return `trace-${randomBytes(4).toString("hex")}`;
+	return `trace-${randomBytes(4).toString("hex")}`;
 }
 
 /**
@@ -127,7 +134,10 @@ export function generateTraceId(): string {
  * @param suffix  Optional suffix (e.g. PR number "283" or short hash)
  * @returns       Combined session key (e.g. "council-review-283" or "council-review-a1b2c3d4")
  */
-export function buildCouncilSessionKey(prefix: string, suffix?: string): string {
-  const s = suffix?.trim() || randomBytes(4).toString("hex");
-  return `${prefix}-${s}`;
+export function buildCouncilSessionKey(
+	prefix: string,
+	suffix?: string,
+): string {
+	const s = suffix?.trim() || randomBytes(4).toString("hex");
+	return `${prefix}-${s}`;
 }

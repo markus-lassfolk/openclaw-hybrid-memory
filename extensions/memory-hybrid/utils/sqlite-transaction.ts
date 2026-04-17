@@ -27,37 +27,40 @@ import type { DatabaseSync } from "node:sqlite";
 
 let savepointCounter = 0;
 
-export function createTransaction<T extends unknown[], R>(db: DatabaseSync, fn: (...args: T) => R): (...args: T) => R {
-  return (...args: T): R => {
-    const isNested = db.isTransaction;
-    const savepointName = isNested ? `sp_${++savepointCounter}` : null;
+export function createTransaction<T extends unknown[], R>(
+	db: DatabaseSync,
+	fn: (...args: T) => R,
+): (...args: T) => R {
+	return (...args: T): R => {
+		const isNested = db.isTransaction;
+		const savepointName = isNested ? `sp_${++savepointCounter}` : null;
 
-    if (isNested) {
-      db.exec(`SAVEPOINT ${savepointName}`);
-    } else {
-      db.exec("BEGIN");
-    }
+		if (isNested) {
+			db.exec(`SAVEPOINT ${savepointName}`);
+		} else {
+			db.exec("BEGIN");
+		}
 
-    try {
-      const result = fn(...args);
-      if (isNested) {
-        db.exec(`RELEASE ${savepointName}`);
-      } else {
-        db.exec("COMMIT");
-      }
-      return result;
-    } catch (err) {
-      try {
-        if (isNested) {
-          db.exec(`ROLLBACK TO ${savepointName}`);
-          db.exec(`RELEASE ${savepointName}`);
-        } else {
-          db.exec("ROLLBACK");
-        }
-      } catch {
-        // ignore rollback errors — connection may already be broken
-      }
-      throw err;
-    }
-  };
+		try {
+			const result = fn(...args);
+			if (isNested) {
+				db.exec(`RELEASE ${savepointName}`);
+			} else {
+				db.exec("COMMIT");
+			}
+			return result;
+		} catch (err) {
+			try {
+				if (isNested) {
+					db.exec(`ROLLBACK TO ${savepointName}`);
+					db.exec(`RELEASE ${savepointName}`);
+				} else {
+					db.exec("ROLLBACK");
+				}
+			} catch {
+				// ignore rollback errors — connection may already be broken
+			}
+			throw err;
+		}
+	};
 }

@@ -9,42 +9,46 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { getDirectiveCategoryRegexes } from "../utils/language-keywords.js";
-import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
+import {
+	extractMessageText,
+	timestampFromFilename,
+	truncate,
+} from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** 10 directive categories (can overlap — a message may have multiple types). */
 export const DIRECTIVE_CATEGORIES = [
-  "explicit_memory",
-  "future_behavior",
-  "absolute_rule",
-  "correction",
-  "preference",
-  "warning",
-  "procedural",
-  "implicit_correction",
-  "emotional_emphasis",
-  "conditional_rule",
+	"explicit_memory",
+	"future_behavior",
+	"absolute_rule",
+	"correction",
+	"preference",
+	"warning",
+	"procedural",
+	"implicit_correction",
+	"emotional_emphasis",
+	"conditional_rule",
 ] as const;
 
 export type DirectiveCategory = (typeof DIRECTIVE_CATEGORIES)[number];
 
 export type DirectiveIncident = {
-  userMessage: string;
-  /** Which directive categories were detected (can be multiple). */
-  categories: DirectiveCategory[];
-  /** Extracted rule/instruction (what the agent should remember). */
-  extractedRule: string;
-  /** Preceding agent message (what triggered the directive). */
-  precedingAssistant: string;
-  /** Confidence score 0-1 (how certain this is a real directive vs conversational noise). */
-  confidence: number;
-  timestamp?: string;
-  sessionFile: string;
+	userMessage: string;
+	/** Which directive categories were detected (can be multiple). */
+	categories: DirectiveCategory[];
+	/** Extracted rule/instruction (what the agent should remember). */
+	extractedRule: string;
+	/** Preceding agent message (what triggered the directive). */
+	precedingAssistant: string;
+	/** Confidence score 0-1 (how certain this is a real directive vs conversational noise). */
+	confidence: number;
+	timestamp?: string;
+	sessionFile: string;
 };
 
 export type DirectiveExtractResult = {
-  incidents: DirectiveIncident[];
-  sessionsScanned: number;
+	incidents: DirectiveIncident[];
+	sessionsScanned: number;
 };
 
 const MAX_USER_MSG = 800;
@@ -65,22 +69,22 @@ const MAX_ASSISTANT_MSG = 500;
  *   - Pre-compaction flush log messages
  */
 const SKIP_PATTERNS = [
-  /heartbeat/i,
-  /cron\s+job|cronjob|schedule.*run|run\s+the\s+nightly|run\s+the\s+weekly/i,
-  /compact|pre-compaction|compaction\s+flush/i,
-  /sub-?agent|subagent\s+announce/i,
-  /NO_REPLY|no\s+reply\s+needed/i,
-  /^\s*\{.*"schedule"/m, // JSON cron definition
+	/heartbeat/i,
+	/cron\s+job|cronjob|schedule.*run|run\s+the\s+nightly|run\s+the\s+weekly/i,
+	/compact|pre-compaction|compaction\s+flush/i,
+	/sub-?agent|subagent\s+announce/i,
+	/NO_REPLY|no\s+reply\s+needed/i,
+	/^\s*\{.*"schedule"/m, // JSON cron definition
 ];
 
 function shouldSkipUserMessage(text: string): boolean {
-  if (!text || text.length < 25) return true;
-  const t = text.trim();
-  if (t.length < 25) return true;
-  for (const re of SKIP_PATTERNS) {
-    if (re.test(t)) return true;
-  }
-  return false;
+	if (!text || text.length < 25) return true;
+	const t = text.trim();
+	if (t.length < 25) return true;
+	for (const re of SKIP_PATTERNS) {
+		if (re.test(t)) return true;
+	}
+	return false;
 }
 
 let categoryRegexCache: Map<DirectiveCategory, RegExp> | null = null;
@@ -89,7 +93,7 @@ let categoryRegexCache: Map<DirectiveCategory, RegExp> | null = null;
  * Clear the category regex cache (e.g., after keyword rebuild).
  */
 export function clearDirectiveCategoryCache(): void {
-  categoryRegexCache = null;
+	categoryRegexCache = null;
 }
 
 /**
@@ -98,50 +102,54 @@ export function clearDirectiveCategoryCache(): void {
  * Confidence is based on signal strength and context.
  * Now uses multilingual keywords from language-keywords.ts.
  */
-function detectDirectiveCategories(text: string): { categories: DirectiveCategory[]; confidence: number } {
-  if (!categoryRegexCache) {
-    const regexes = getDirectiveCategoryRegexes();
-    categoryRegexCache = new Map();
-    categoryRegexCache.set("explicit_memory", regexes.explicit_memory);
-    categoryRegexCache.set("future_behavior", regexes.future_behavior);
-    categoryRegexCache.set("absolute_rule", regexes.absolute_rule);
-    categoryRegexCache.set("preference", regexes.preference);
-    categoryRegexCache.set("warning", regexes.warning);
-    categoryRegexCache.set("procedural", regexes.procedural);
-    categoryRegexCache.set("implicit_correction", regexes.implicit_correction);
-    categoryRegexCache.set("conditional_rule", regexes.conditional_rule);
-    categoryRegexCache.set("correction", regexes.correction);
-  }
+function detectDirectiveCategories(text: string): {
+	categories: DirectiveCategory[];
+	confidence: number;
+} {
+	if (!categoryRegexCache) {
+		const regexes = getDirectiveCategoryRegexes();
+		categoryRegexCache = new Map();
+		categoryRegexCache.set("explicit_memory", regexes.explicit_memory);
+		categoryRegexCache.set("future_behavior", regexes.future_behavior);
+		categoryRegexCache.set("absolute_rule", regexes.absolute_rule);
+		categoryRegexCache.set("preference", regexes.preference);
+		categoryRegexCache.set("warning", regexes.warning);
+		categoryRegexCache.set("procedural", regexes.procedural);
+		categoryRegexCache.set("implicit_correction", regexes.implicit_correction);
+		categoryRegexCache.set("conditional_rule", regexes.conditional_rule);
+		categoryRegexCache.set("correction", regexes.correction);
+	}
 
-  const categories: DirectiveCategory[] = [];
+	const categories: DirectiveCategory[] = [];
 
-  // Test against each category regex
-  for (const [category, regex] of categoryRegexCache) {
-    if (regex.test(text)) {
-      categories.push(category);
-    }
-  }
+	// Test against each category regex
+	for (const [category, regex] of categoryRegexCache) {
+		if (regex.test(text)) {
+			categories.push(category);
+		}
+	}
 
-  // Emotional emphasis (ALL CAPS words, multiple !!!, frustrated emoji)
-  const hasAllCaps = /\b[A-Z]{4,}\b/.test(text);
-  const hasMultipleExclamation = /!{2,}/.test(text);
-  const hasFrustratedEmoji = /[🤬😤😡]/u.test(text);
-  if (hasAllCaps || hasMultipleExclamation || hasFrustratedEmoji) {
-    categories.push("emotional_emphasis");
-  }
+	// Emotional emphasis (ALL CAPS words, multiple !!!, frustrated emoji)
+	const hasAllCaps = /\b[A-Z]{4,}\b/.test(text);
+	const hasMultipleExclamation = /!{2,}/.test(text);
+	const hasFrustratedEmoji = /[🤬😤😡]/u.test(text);
+	if (hasAllCaps || hasMultipleExclamation || hasFrustratedEmoji) {
+		categories.push("emotional_emphasis");
+	}
 
-  // Confidence heuristic:
-  // - 1+ explicit category: 0.7+
-  // - 2+ categories: 0.8+
-  // - Emotional emphasis boosts confidence
-  // - Very short message (< 40 chars) reduces confidence
-  let confidence = 0.5;
-  if (categories.length >= 1) confidence = 0.7;
-  if (categories.length >= 2) confidence = 0.8;
-  if (categories.includes("emotional_emphasis")) confidence = Math.min(1.0, confidence + 0.1);
-  if (text.length < 25) confidence *= 0.8; // Reduced threshold from 40 to 25
+	// Confidence heuristic:
+	// - 1+ explicit category: 0.7+
+	// - 2+ categories: 0.8+
+	// - Emotional emphasis boosts confidence
+	// - Very short message (< 40 chars) reduces confidence
+	let confidence = 0.5;
+	if (categories.length >= 1) confidence = 0.7;
+	if (categories.length >= 2) confidence = 0.8;
+	if (categories.includes("emotional_emphasis"))
+		confidence = Math.min(1.0, confidence + 0.1);
+	if (text.length < 25) confidence *= 0.8; // Reduced threshold from 40 to 25
 
-  return { categories, confidence };
+	return { categories, confidence };
 }
 
 /**
@@ -149,26 +157,26 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
  * must not be treated as directive separators (e.g. "Remember: ...").
  */
 const URI_SCHEMES = new Set([
-  "http",
-  "https",
-  "ftp",
-  "file",
-  "mailto",
-  "tel",
-  "ssh",
-  "data",
-  "ws",
-  "wss",
-  "irc",
-  "imap",
-  "nntp",
-  "ldap",
-  "sftp",
-  "git",
-  "svn",
-  "jdbc",
-  "redis",
-  "mongodb",
+	"http",
+	"https",
+	"ftp",
+	"file",
+	"mailto",
+	"tel",
+	"ssh",
+	"data",
+	"ws",
+	"wss",
+	"irc",
+	"imap",
+	"nntp",
+	"ldap",
+	"sftp",
+	"git",
+	"svn",
+	"jdbc",
+	"redis",
+	"mongodb",
 ]);
 
 /**
@@ -178,58 +186,65 @@ const URI_SCHEMES = new Set([
  * Skips colons that are part of URL schemes, time formats, numbered lists, etc.
  */
 function extractRule(text: string): string {
-  const trimmed = text.trim().replace(/\s+/g, " ");
+	const trimmed = text.trim().replace(/\s+/g, " ");
 
-  // Heuristic: If a colon exists after a word boundary (directive pattern), extract text after it.
-  // This regex matches colons that follow a word, but excludes:
-  // - URL/URI schemes (http:, https:, ftp:, mailto:, file:, ssh:, data:, etc.) via URI_SCHEMES set
-  // - Time formats (14:30) - digit before colon (not matched by \b[a-zA-Z]+)
-  // - Numbered lists (Step 1:) - digit before colon
-  // - Port numbers - negative lookahead (?!\d) and (?!\/\/)
-  const colonRegex = /\b([a-zA-Z]+)\s*:\s*(?!\/\/)(?!\d)(.+)/g;
-  let colonMatch;
-  while ((colonMatch = colonRegex.exec(trimmed)) !== null) {
-    const wordBeforeColon = colonMatch[1].toLowerCase();
-    if (URI_SCHEMES.has(wordBeforeColon)) {
-      // Skip past the URI by finding the next whitespace after the colon
-      // This prevents the greedy .+ from consuming directive colons that come after URIs
-      const uriStart = colonMatch.index;
-      const afterScheme = trimmed.substring(uriStart + colonMatch[1].length + 1);
-      const nextSpace = afterScheme.search(/\s/);
-      if (nextSpace !== -1) {
-        colonRegex.lastIndex = uriStart + colonMatch[1].length + 1 + nextSpace + 1;
-      } else {
-        colonRegex.lastIndex = trimmed.length;
-      }
-      continue;
-    }
-    const afterColon = colonMatch[2].trim();
-    if (afterColon.length >= 10 && !afterColon.startsWith("//")) {
-      return afterColon.slice(0, 200);
-    }
-  }
-  return fallbackExtract(trimmed);
+	// Heuristic: If a colon exists after a word boundary (directive pattern), extract text after it.
+	// This regex matches colons that follow a word, but excludes:
+	// - URL/URI schemes (http:, https:, ftp:, mailto:, file:, ssh:, data:, etc.) via URI_SCHEMES set
+	// - Time formats (14:30) - digit before colon (not matched by \b[a-zA-Z]+)
+	// - Numbered lists (Step 1:) - digit before colon
+	// - Port numbers - negative lookahead (?!\d) and (?!\/\/)
+	const colonRegex = /\b([a-zA-Z]+)\s*:\s*(?!\/\/)(?!\d)(.+)/g;
+	let colonMatch;
+	while ((colonMatch = colonRegex.exec(trimmed)) !== null) {
+		const wordBeforeColon = colonMatch[1].toLowerCase();
+		if (URI_SCHEMES.has(wordBeforeColon)) {
+			// Skip past the URI by finding the next whitespace after the colon
+			// This prevents the greedy .+ from consuming directive colons that come after URIs
+			const uriStart = colonMatch.index;
+			const afterScheme = trimmed.substring(
+				uriStart + colonMatch[1].length + 1,
+			);
+			const nextSpace = afterScheme.search(/\s/);
+			if (nextSpace !== -1) {
+				colonRegex.lastIndex =
+					uriStart + colonMatch[1].length + 1 + nextSpace + 1;
+			} else {
+				colonRegex.lastIndex = trimmed.length;
+			}
+			continue;
+		}
+		const afterColon = colonMatch[2].trim();
+		if (afterColon.length >= 10 && !afterColon.startsWith("//")) {
+			return afterColon.slice(0, 200);
+		}
+	}
+	return fallbackExtract(trimmed);
 }
 
 function fallbackExtract(trimmed: string): string {
-  if (trimmed.length <= 200) return trimmed;
+	if (trimmed.length <= 200) return trimmed;
 
-  // Try to find a sentence with directive keywords
-  const sentences = trimmed
-    .split(/[.!?]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 10);
-  for (const s of sentences) {
-    if (/\b(always|never|from now on|make sure|remember|prefer|avoid|when|if)\b/i.test(s)) {
-      return s.slice(0, 200);
-    }
-  }
-  return trimmed.slice(0, 200);
+	// Try to find a sentence with directive keywords
+	const sentences = trimmed
+		.split(/[.!?]+/)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 10);
+	for (const s of sentences) {
+		if (
+			/\b(always|never|from now on|make sure|remember|prefer|avoid|when|if)\b/i.test(
+				s,
+			)
+		) {
+			return s.slice(0, 200);
+		}
+	}
+	return trimmed.slice(0, 200);
 }
 
 type RunDirectiveExtractOpts = {
-  filePaths: string[];
-  directiveRegex: RegExp;
+	filePaths: string[];
+	directiveRegex: RegExp;
 };
 
 /**
@@ -237,73 +252,82 @@ type RunDirectiveExtractOpts = {
  * Uses the provided regex (from getDirectiveSignalRegex() after setKeywordsPath)
  * so that all languages from .language-keywords.json are included.
  */
-export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExtractResult {
-  const { filePaths, directiveRegex } = opts;
-  const incidents: DirectiveIncident[] = [];
+export function runDirectiveExtract(
+	opts: RunDirectiveExtractOpts,
+): DirectiveExtractResult {
+	const { filePaths, directiveRegex } = opts;
+	const incidents: DirectiveIncident[] = [];
 
-  for (const filePath of filePaths) {
-    let lines: string[];
-    try {
-      lines = readFileSync(filePath, "utf-8").split("\n");
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "read-session-file",
-        severity: "info",
-        subsystem: "directive-extract",
-      });
-      continue;
-    }
+	for (const filePath of filePaths) {
+		let lines: string[];
+		try {
+			lines = readFileSync(filePath, "utf-8").split("\n");
+		} catch (err) {
+			capturePluginError(err as Error, {
+				operation: "read-session-file",
+				severity: "info",
+				subsystem: "directive-extract",
+			});
+			continue;
+		}
 
-    const messages: Array<{ role: string; text: string }> = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: unknown } };
-        if (obj.type !== "message" || !obj.message) continue;
-        const msg = obj.message;
-        const role = msg.role === "user" || msg.role === "assistant" ? msg.role : null;
-        if (!role) continue;
-        const text = extractMessageText(msg.content);
-        messages.push({ role, text });
-      } catch (err) {
-        capturePluginError(err as Error, {
-          operation: "parse-session-line",
-          severity: "info",
-          subsystem: "directive-extract",
-        });
-        // skip malformed lines
-      }
-    }
+		const messages: Array<{ role: string; text: string }> = [];
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			try {
+				const obj = JSON.parse(trimmed) as {
+					type?: string;
+					message?: { role?: string; content?: unknown };
+				};
+				if (obj.type !== "message" || !obj.message) continue;
+				const msg = obj.message;
+				const role =
+					msg.role === "user" || msg.role === "assistant" ? msg.role : null;
+				if (!role) continue;
+				const text = extractMessageText(msg.content);
+				messages.push({ role, text });
+			} catch (err) {
+				capturePluginError(err as Error, {
+					operation: "parse-session-line",
+					severity: "info",
+					subsystem: "directive-extract",
+				});
+				// skip malformed lines
+			}
+		}
 
-    const sessionName = basename(filePath);
-    const ts = timestampFromFilename(sessionName);
+		const sessionName = basename(filePath);
+		const ts = timestampFromFilename(sessionName);
 
-    for (let i = 0; i < messages.length; i++) {
-      if (messages[i].role !== "user") continue;
-      const userText = messages[i].text;
-      // Reset lastIndex to avoid statefulness with global/sticky regexes
-      directiveRegex.lastIndex = 0;
-      if (!directiveRegex.test(userText)) continue;
-      if (shouldSkipUserMessage(userText)) continue;
+		for (let i = 0; i < messages.length; i++) {
+			if (messages[i].role !== "user") continue;
+			const userText = messages[i].text;
+			// Reset lastIndex to avoid statefulness with global/sticky regexes
+			directiveRegex.lastIndex = 0;
+			if (!directiveRegex.test(userText)) continue;
+			if (shouldSkipUserMessage(userText)) continue;
 
-      const { categories, confidence } = detectDirectiveCategories(userText);
-      if (categories.length === 0) continue; // No clear directive
+			const { categories, confidence } = detectDirectiveCategories(userText);
+			if (categories.length === 0) continue; // No clear directive
 
-      const precedingAssistant = i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
-      const extractedRule = extractRule(userText);
+			const precedingAssistant =
+				i > 0 && messages[i - 1].role === "assistant"
+					? messages[i - 1].text
+					: "";
+			const extractedRule = extractRule(userText);
 
-      incidents.push({
-        userMessage: truncate(userText, MAX_USER_MSG),
-        categories,
-        extractedRule,
-        precedingAssistant: truncate(precedingAssistant, MAX_ASSISTANT_MSG),
-        confidence,
-        timestamp: ts,
-        sessionFile: sessionName,
-      });
-    }
-  }
+			incidents.push({
+				userMessage: truncate(userText, MAX_USER_MSG),
+				categories,
+				extractedRule,
+				precedingAssistant: truncate(precedingAssistant, MAX_ASSISTANT_MSG),
+				confidence,
+				timestamp: ts,
+				sessionFile: sessionName,
+			});
+		}
+	}
 
-  return { incidents, sessionsScanned: filePaths.length };
+	return { incidents, sessionsScanned: filePaths.length };
 }

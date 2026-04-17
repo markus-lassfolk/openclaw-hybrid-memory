@@ -26,32 +26,32 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 
 /** Shared dependency bag passed to every CLI handler. */
 export interface HandlerContext {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  embeddings: EmbeddingProvider;
-  openai: OpenAI;
-  cfg: HybridMemoryConfig;
-  credentialsDb: CredentialsDB | null;
-  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
-  wal: WriteAheadLog | null;
-  proposalsDb: ProposalsDB | null;
-  identityReflectionStore: IdentityReflectionStore | null;
-  personaStateStore: PersonaStateStore | null;
-  resolvedSqlitePath: string;
-  resolvedLancePath: string;
-  pluginId: string;
-  logger: { info?: (m: string) => void; warn?: (m: string) => void };
-  /** Category detection for extract-daily and similar; uses language keywords when set */
-  detectCategory: (text: string) => MemoryCategory;
-  /** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
-  api?: import("openclaw/plugin-sdk/core").ClawdbotPluginApi;
-  /** LLM cost tracker — records per-call token usage (Issue #270). */
-  costTracker?: CostTracker | null;
-  /** Event Bus for sensor sweep (Issue #236). */
-  eventBus?: EventBus | null;
-  /** Cross-agent audit log (Issue #790). */
-  auditStore?: AuditStore | null;
-  agentHealthStore?: AgentHealthStore | null;
+	factsDb: FactsDB;
+	vectorDb: VectorDB;
+	embeddings: EmbeddingProvider;
+	openai: OpenAI;
+	cfg: HybridMemoryConfig;
+	credentialsDb: CredentialsDB | null;
+	aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
+	wal: WriteAheadLog | null;
+	proposalsDb: ProposalsDB | null;
+	identityReflectionStore: IdentityReflectionStore | null;
+	personaStateStore: PersonaStateStore | null;
+	resolvedSqlitePath: string;
+	resolvedLancePath: string;
+	pluginId: string;
+	logger: { info?: (m: string) => void; warn?: (m: string) => void };
+	/** Category detection for extract-daily and similar; uses language keywords when set */
+	detectCategory: (text: string) => MemoryCategory;
+	/** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
+	api?: import("openclaw/plugin-sdk/core").ClawdbotPluginApi;
+	/** LLM cost tracker — records per-call token usage (Issue #270). */
+	costTracker?: CostTracker | null;
+	/** Event Bus for sensor sweep (Issue #236). */
+	eventBus?: EventBus | null;
+	/** Cross-agent audit log (Issue #790). */
+	auditStore?: AuditStore | null;
+	agentHealthStore?: AgentHealthStore | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -14,24 +14,24 @@
 
 /** A result from one retrieval strategy, with a 1-based rank within that list. */
 export interface RankedResult {
-  /** UUID of the matching fact. */
-  factId: string;
-  /** 1-based rank within the strategy's result list (1 = best). */
-  rank: number;
-  /** Which strategy produced this result. Additional strategies (e.g. multi-model semantic) use string keys. */
-  source: "semantic" | "fts5" | "graph" | "aliases" | (string & {});
+	/** UUID of the matching fact. */
+	factId: string;
+	/** 1-based rank within the strategy's result list (1 = best). */
+	rank: number;
+	/** Which strategy produced this result. Additional strategies (e.g. multi-model semantic) use string keys. */
+	source: "semantic" | "fts5" | "graph" | "aliases" | (string & {});
 }
 
 /** A fused result after RRF combining and post-RRF score adjustments. */
 export interface FusedResult {
-  /** UUID of the fact. */
-  factId: string;
-  /** Raw RRF score before post-RRF adjustments: Σ 1/(k + rank_i). */
-  rrfScore: number;
-  /** Which strategies contributed to this result and at what rank. */
-  sources: Array<{ strategy: string; rank: number }>;
-  /** Final score after post-RRF multipliers (recency, confidence, access frequency). */
-  finalScore: number;
+	/** UUID of the fact. */
+	factId: string;
+	/** Raw RRF score before post-RRF adjustments: Σ 1/(k + rank_i). */
+	rrfScore: number;
+	/** Which strategies contributed to this result and at what rank. */
+	sources: Array<{ strategy: string; rank: number }>;
+	/** Final score after post-RRF multipliers (recency, confidence, access frequency). */
+	finalScore: number;
 }
 
 /**
@@ -39,14 +39,14 @@ export interface FusedResult {
  * Matches the subset of MemoryEntry that is always available.
  */
 export interface FactMetadata {
-  /** Fact UUID. */
-  id: string;
-  /** Confidence score 0-1. Default 1.0. */
-  confidence: number;
-  /** Unix epoch seconds when the fact was last accessed. Null if never. */
-  lastAccessed?: number | null;
-  /** Number of times the fact has been recalled. Default 0. */
-  recallCount?: number;
+	/** Fact UUID. */
+	id: string;
+	/** Confidence score 0-1. Default 1.0. */
+	confidence: number;
+	/** Unix epoch seconds when the fact was last accessed. Null if never. */
+	lastAccessed?: number | null;
+	/** Number of times the fact has been recalled. Default 0. */
+	recallCount?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,40 +73,46 @@ export const RRF_K_DEFAULT = 60;
  * @returns Fused results sorted by rrfScore descending. finalScore equals rrfScore
  *   until applyPostRrfAdjustments() is called.
  */
-export function fuseResults(strategyResults: Map<string, RankedResult[]>, k: number = RRF_K_DEFAULT): FusedResult[] {
-  if (!Number.isFinite(k) || k <= 0) {
-    throw new Error(`RRF k must be a positive finite number (got ${k})`);
-  }
-  // factId -> { rrfScore, sources }
-  const accumulator = new Map<string, { rrfScore: number; sources: Array<{ strategy: string; rank: number }> }>();
+export function fuseResults(
+	strategyResults: Map<string, RankedResult[]>,
+	k: number = RRF_K_DEFAULT,
+): FusedResult[] {
+	if (!Number.isFinite(k) || k <= 0) {
+		throw new Error(`RRF k must be a positive finite number (got ${k})`);
+	}
+	// factId -> { rrfScore, sources }
+	const accumulator = new Map<
+		string,
+		{ rrfScore: number; sources: Array<{ strategy: string; rank: number }> }
+	>();
 
-  for (const [strategy, results] of strategyResults) {
-    for (const result of results) {
-      if (!Number.isFinite(result.rank) || result.rank < 1) {
-        continue;
-      }
-      const existing = accumulator.get(result.factId);
-      const contribution = 1 / (k + result.rank);
-      if (existing) {
-        existing.rrfScore += contribution;
-        existing.sources.push({ strategy, rank: result.rank });
-      } else {
-        accumulator.set(result.factId, {
-          rrfScore: contribution,
-          sources: [{ strategy, rank: result.rank }],
-        });
-      }
-    }
-  }
+	for (const [strategy, results] of strategyResults) {
+		for (const result of results) {
+			if (!Number.isFinite(result.rank) || result.rank < 1) {
+				continue;
+			}
+			const existing = accumulator.get(result.factId);
+			const contribution = 1 / (k + result.rank);
+			if (existing) {
+				existing.rrfScore += contribution;
+				existing.sources.push({ strategy, rank: result.rank });
+			} else {
+				accumulator.set(result.factId, {
+					rrfScore: contribution,
+					sources: [{ strategy, rank: result.rank }],
+				});
+			}
+		}
+	}
 
-  const fused: FusedResult[] = [];
-  for (const [factId, { rrfScore, sources }] of accumulator) {
-    fused.push({ factId, rrfScore, sources, finalScore: rrfScore });
-  }
+	const fused: FusedResult[] = [];
+	for (const [factId, { rrfScore, sources }] of accumulator) {
+		fused.push({ factId, rrfScore, sources, finalScore: rrfScore });
+	}
 
-  // Sort by RRF score descending
-  fused.sort((a, b) => b.rrfScore - a.rrfScore);
-  return fused;
+	// Sort by RRF score descending
+	fused.sort((a, b) => b.rrfScore - a.rrfScore);
+	return fused;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,35 +141,44 @@ export function fuseResults(strategyResults: Map<string, RankedResult[]>, k: num
  * @returns The same array, mutated, re-sorted by finalScore descending.
  */
 export function applyPostRrfAdjustments(
-  results: FusedResult[],
-  facts: Map<string, FactMetadata>,
-  nowSec: number = Math.floor(Date.now() / 1000),
+	results: FusedResult[],
+	facts: Map<string, FactMetadata>,
+	nowSec: number = Math.floor(Date.now() / 1000),
 ): FusedResult[] {
-  const SECONDS_PER_DAY = 86_400;
+	const SECONDS_PER_DAY = 86_400;
 
-  for (const result of results) {
-    const fact = facts.get(result.factId);
-    let score = result.rrfScore;
+	for (const result of results) {
+		const fact = facts.get(result.factId);
+		let score = result.rrfScore;
 
-    // Recency adjustment
-    const lastAccessedRaw = fact?.lastAccessed;
-    const lastAccessedSec = Number.isFinite(lastAccessedRaw ?? Number.NaN) ? (lastAccessedRaw as number) : null;
-    const daysSince = lastAccessedSec != null ? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY) : 0; // no access record → treat as fresh (neutral)
-    score *= 1 + Math.log(daysSince + 1) * -0.01;
+		// Recency adjustment
+		const lastAccessedRaw = fact?.lastAccessed;
+		const lastAccessedSec = Number.isFinite(lastAccessedRaw ?? Number.NaN)
+			? (lastAccessedRaw as number)
+			: null;
+		const daysSince =
+			lastAccessedSec != null
+				? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY)
+				: 0; // no access record → treat as fresh (neutral)
+		score *= 1 + Math.log(daysSince + 1) * -0.01;
 
-    // Confidence adjustment
-    const confidenceRaw = fact?.confidence;
-    const confidence = Number.isFinite(confidenceRaw ?? Number.NaN) ? (confidenceRaw as number) : 1.0;
-    score *= Math.max(0, Math.min(1, confidence));
+		// Confidence adjustment
+		const confidenceRaw = fact?.confidence;
+		const confidence = Number.isFinite(confidenceRaw ?? Number.NaN)
+			? (confidenceRaw as number)
+			: 1.0;
+		score *= Math.max(0, Math.min(1, confidence));
 
-    // Access frequency adjustment
-    const rawRecall = fact?.recallCount;
-    const recallCount = Number.isFinite(rawRecall ?? Number.NaN) ? Math.max(0, rawRecall as number) : 0;
-    score *= 1 + Math.min(recallCount * 0.02, 0.2);
+		// Access frequency adjustment
+		const rawRecall = fact?.recallCount;
+		const recallCount = Number.isFinite(rawRecall ?? Number.NaN)
+			? Math.max(0, rawRecall as number)
+			: 0;
+		score *= 1 + Math.min(recallCount * 0.02, 0.2);
 
-    result.finalScore = score;
-  }
+		result.finalScore = score;
+	}
 
-  results.sort((a, b) => b.finalScore - a.finalScore);
-  return results;
+	results.sort((a, b) => b.finalScore - a.finalScore);
+	return results;
 }

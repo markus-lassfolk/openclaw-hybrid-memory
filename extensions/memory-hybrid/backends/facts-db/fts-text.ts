@@ -10,9 +10,9 @@ const NULL_BYTE_PATTERN = new RegExp(String.fromCharCode(0), "g");
  * Removes: NOT, AND, OR, NEAR (case-insensitive), null bytes, *, :, {, }, (, ), and quotes.
  */
 export function sanitizeFts5QueryForFacts(query: string): string {
-  return query
-    .replace(NULL_BYTE_PATTERN, " ")
-    .replace(/['"*(){}:]/g, "")
-    .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
-    .trim();
+	return query
+		.replace(NULL_BYTE_PATTERN, " ")
+		.replace(/['"*(){}:]/g, "")
+		.replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
+		.trim();
 }

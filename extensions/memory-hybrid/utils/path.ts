@@ -11,10 +11,10 @@ import { join } from "node:path";
  * Handles both "~" and "~/..." patterns.
  */
 export function expandTilde(p: string): string {
-  if (p === "~" || p.startsWith("~/")) {
-    return join(homedir(), p.slice(1));
-  }
-  return p;
+	if (p === "~" || p.startsWith("~/")) {
+		return join(homedir(), p.slice(1));
+	}
+	return p;
 }
 
 /**
@@ -23,9 +23,9 @@ export function expandTilde(p: string): string {
  * Use this when reading path values from user configuration files.
  */
 export function expandHomePlaceholders(p: string): string {
-  const home = getEnv("HOME") ?? homedir();
-  if (p === "$HOME" || p.startsWith("$HOME/")) {
-    return home + p.slice("$HOME".length);
-  }
-  return expandTilde(p);
+	const home = getEnv("HOME") ?? homedir();
+	if (p === "$HOME" || p.startsWith("$HOME/")) {
+		return home + p.slice("$HOME".length);
+	}
+	return expandTilde(p);
 }

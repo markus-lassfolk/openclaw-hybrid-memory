@@ -13,352 +13,406 @@ const LANG_FILE_NAME = ".language-keywords.json";
 
 /** English-only keywords (single source of truth). Other languages are added from file. */
 export const ENGLISH_KEYWORDS = {
-  triggers: [
-    "remember",
-    "prefer",
-    "decided",
-    "my",
-    "is my",
-    "i like",
-    "i prefer",
-    "i hate",
-    "i love",
-    "i want",
-    "i need",
-    "always",
-    "never",
-    "important",
-    "born on",
-    "birthday",
-    "lives in",
-    "works at",
-    "password is",
-    "api key",
-    "token is",
-    "chose",
-    "selected",
-    "went with",
-    "picked",
-    "because",
-    "since",
-    "for",
-    "architecture",
-    "stack",
-    "approach",
-  ],
-  categoryDecision: [
-    "decided",
-    "chose",
-    "went with",
-    "selected",
-    "always use",
-    "never use",
-    "over because",
-    "instead of since",
-    "will use",
-  ],
-  categoryPreference: ["prefer", "like", "love", "hate", "want"],
-  categoryEntity: ["is called", "email", "phone"],
-  categoryFact: ["born", "birthday", "lives", "works", "is ", "are ", "has ", "have "],
-  decayPermanent: ["decided", "architecture", "always use", "never use"],
-  decaySession: ["currently debugging", "right now", "this session"],
-  decayActive: ["working on", "need to", "todo", "blocker", "sprint"],
-  /** Key-field fragments that classify a fact as permanent. Translatable for multilingual key matching. */
-  decayPermanentKeys: [
-    "name",
-    "email",
-    "api_key",
-    "api_endpoint",
-    "architecture",
-    "decision",
-    "birthday",
-    "born",
-    "phone",
-    "language",
-    "location",
-  ],
-  /** Key-field fragments that classify a fact as session. Translatable for multilingual key matching. */
-  decaySessionKeys: ["current_file", "temp", "debug", "working_on_right_now"],
-  /** Key-field fragments that classify a fact as active. Translatable for multilingual key matching. */
-  decayActiveKeys: ["task", "todo", "wip", "branch", "sprint", "blocker"],
-  /** Entity exact-match values that classify a fact as permanent. Translatable for multilingual entity matching. */
-  decayPermanentEntities: ["decision", "convention"],
-  /** Key-field fragments that classify a fact as checkpoint. Translatable for multilingual key matching. */
-  decayCheckpointKeys: ["checkpoint", "preflight"],
-  /** Self-correction detection. Phrases that suggest the user is correcting the agent. Translated via build-languages for multi-language support. */
-  correctionSignals: [
-    "every time",
-    "i already told",
-    "you should have",
-    "why don't you",
-    "why are you not",
-    "help me understand why",
-    "i have to nudge",
-    "would have expected",
-    "you have password",
-    "you have credentials",
-    "you have token",
-    "lets revert",
-    "let's revert",
-    "that was wrong",
-    "you misunderstood",
-    "been waiting",
-    "not automatically progress",
-    "same mistake",
-    "try again",
-    "why can't you",
-    "why cant you",
-    "just ssh",
-    "just check",
-    "just use",
-    "just do",
-    // Strong frustration / stop / give up
-    "nooo",
-    "noooo",
-    "nooooo",
-    "stop!",
-    "don't do",
-    "stop doing",
-    "never do",
-    "why are you",
-    "why do you keep",
-    "ffs",
-    "i give up",
-    "never ever",
-  ],
-  /** Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
-  directiveSignals: [
-    // Explicit memory requests
-    "remember that",
-    "don't forget",
-    "keep in mind",
-    "store this",
-    "write this down",
-    "make a note",
-    "take note",
-    // Future behavior changes
-    "from now on",
-    "in the future",
-    "next time",
-    "going forward",
-    "moving forward",
-    "onwards",
-    // Absolute rules
-    "always",
-    "never",
-    "make sure to",
-    "under no circumstances",
-    "you must",
-    "you should always",
-    "you should never",
-    // Preferences
-    "i prefer",
-    "i'd rather",
-    "use this instead",
-    "default to",
-    "stick with",
-    // Warnings
-    "be careful with",
-    "watch out for",
-    "don't ever",
-    "avoid",
-    "stay away from",
-    // Procedural
-    "first check",
-    "before you do",
-    "the order should be",
-    "step 1 is always",
-    "make sure you",
-    // Implicit corrections (short redirects)
-    "no, use",
-    "the other one",
-    "that's the old way",
-    "not that",
-    // Emotional emphasis (ALL CAPS, multiple !!!, frustrated emoji captured by detection logic)
-    "NEVER",
-    "ALWAYS",
-    "IMPORTANT",
-    // Conditional rules
-    "when this happens",
-    "if you see",
-    "only when",
-    "whenever",
-  ],
-  /** Explicit memory request keywords (subset of directiveSignals for category detection). */
-  directiveExplicitMemory: [
-    "remember that",
-    "remember",
-    "don't forget",
-    "keep in mind",
-    "store this",
-    "write this down",
-    "make a note",
-    "take note",
-  ],
-  /** Future behavior keywords (subset of directiveSignals for category detection). */
-  directiveFutureBehavior: ["from now on", "in the future", "next time", "going forward", "moving forward", "onwards"],
-  /** Absolute rule keywords (subset of directiveSignals for category detection). */
-  directiveAbsoluteRule: [
-    "always",
-    "never",
-    "make sure to",
-    "under no circumstances",
-    "you must",
-    "you should always",
-    "you should never",
-  ],
-  /** Preference keywords (subset of directiveSignals for category detection). */
-  directivePreference: ["i prefer", "i'd rather", "use this instead", "default to", "stick with"],
-  /** Warning keywords (subset of directiveSignals for category detection). */
-  directiveWarning: ["be careful with", "watch out for", "don't ever", "avoid", "stay away from"],
-  /** Procedural keywords (subset of directiveSignals for category detection). */
-  directiveProcedural: ["first check", "before you do", "the order should be", "step 1 is always", "make sure you"],
-  /** Implicit correction keywords (subset of directiveSignals for category detection). */
-  directiveImplicitCorrection: ["no, use", "the other one", "that's the old way", "not that"],
-  /** Conditional rule keywords (subset of directiveSignals for category detection). */
-  directiveConditionalRule: ["when this happens", "if you see", "only when", "whenever"],
-  /** Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
-  reinforcementSignals: [
-    // Explicit approval
-    "perfect",
-    "exactly",
-    "spot on",
-    "you nailed it",
-    "that's right",
-    "correct",
-    // Emotional praise
-    "love it",
-    "brilliant",
-    "amazing",
-    "excellent",
-    "fantastic",
-    "great job",
-    "good job",
-    "good job!",
-    "great job!",
-    "i really liked",
-    "wow, that was great",
-    "wow that was great",
-    "wow, that was good",
-    "wow that was good",
-    "wow, that was fantastic",
-    "wow that was fantastic",
-    // Explicit appreciation (bare "appreciate" removed — too broad; use directional forms below)
-    "really appreciate",
-    "i appreciate",
-    "i really appreciate",
-    "appreciate that",
-    "thank you for",
-    // Method confirmation
-    "yes, like that",
-    "keep this format",
-    "this is how it should be",
-    "that's the way",
-    "do it like this",
-    // Relief/finally
-    "finally!",
-    "now you get it",
-    "at last",
-    "there we go",
-    // Comparative praise
-    "much better",
-    "huge improvement",
-    "better than before",
-    "way better",
-    // Encouragement
-    "keep doing this",
-    "more of this",
-    "don't change",
-    "stick with this",
-    // Feature praise
-    "formatting is perfect",
-    "love the detail",
-    "great structure",
-    "perfect layout",
-    // Sharing signals
-    "going to show this",
-    "saving this",
-    "bookmarked",
-    "will share this",
-  ],
-  /** Strong praise keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementStrongPraise: [
-    "perfect",
-    "brilliant",
-    "amazing",
-    "excellent",
-    "you nailed it",
-    "spot on",
-    "love it",
-    "really appreciate",
-    "i really appreciate",
-    "good job",
-    "great job",
-    "wow, that was great",
-    "wow that was fantastic",
-  ],
-  /** Method confirmation keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementMethodConfirmation: [
-    "keep this format",
-    "yes, like that",
-    "this is how it should be",
-    "do it like this",
-  ],
-  /** Relief keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementRelief: ["finally!", "now you get it", "at last", "there we go"],
-  /** Comparative praise keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementComparativePraise: ["much better", "huge improvement", "better than before", "way better"],
-  /** Sharing signal keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementSharingSignals: ["saving this", "bookmarked", "going to show this", "will share this"],
+	triggers: [
+		"remember",
+		"prefer",
+		"decided",
+		"my",
+		"is my",
+		"i like",
+		"i prefer",
+		"i hate",
+		"i love",
+		"i want",
+		"i need",
+		"always",
+		"never",
+		"important",
+		"born on",
+		"birthday",
+		"lives in",
+		"works at",
+		"password is",
+		"api key",
+		"token is",
+		"chose",
+		"selected",
+		"went with",
+		"picked",
+		"because",
+		"since",
+		"for",
+		"architecture",
+		"stack",
+		"approach",
+	],
+	categoryDecision: [
+		"decided",
+		"chose",
+		"went with",
+		"selected",
+		"always use",
+		"never use",
+		"over because",
+		"instead of since",
+		"will use",
+	],
+	categoryPreference: ["prefer", "like", "love", "hate", "want"],
+	categoryEntity: ["is called", "email", "phone"],
+	categoryFact: [
+		"born",
+		"birthday",
+		"lives",
+		"works",
+		"is ",
+		"are ",
+		"has ",
+		"have ",
+	],
+	decayPermanent: ["decided", "architecture", "always use", "never use"],
+	decaySession: ["currently debugging", "right now", "this session"],
+	decayActive: ["working on", "need to", "todo", "blocker", "sprint"],
+	/** Key-field fragments that classify a fact as permanent. Translatable for multilingual key matching. */
+	decayPermanentKeys: [
+		"name",
+		"email",
+		"api_key",
+		"api_endpoint",
+		"architecture",
+		"decision",
+		"birthday",
+		"born",
+		"phone",
+		"language",
+		"location",
+	],
+	/** Key-field fragments that classify a fact as session. Translatable for multilingual key matching. */
+	decaySessionKeys: ["current_file", "temp", "debug", "working_on_right_now"],
+	/** Key-field fragments that classify a fact as active. Translatable for multilingual key matching. */
+	decayActiveKeys: ["task", "todo", "wip", "branch", "sprint", "blocker"],
+	/** Entity exact-match values that classify a fact as permanent. Translatable for multilingual entity matching. */
+	decayPermanentEntities: ["decision", "convention"],
+	/** Key-field fragments that classify a fact as checkpoint. Translatable for multilingual key matching. */
+	decayCheckpointKeys: ["checkpoint", "preflight"],
+	/** Self-correction detection. Phrases that suggest the user is correcting the agent. Translated via build-languages for multi-language support. */
+	correctionSignals: [
+		"every time",
+		"i already told",
+		"you should have",
+		"why don't you",
+		"why are you not",
+		"help me understand why",
+		"i have to nudge",
+		"would have expected",
+		"you have password",
+		"you have credentials",
+		"you have token",
+		"lets revert",
+		"let's revert",
+		"that was wrong",
+		"you misunderstood",
+		"been waiting",
+		"not automatically progress",
+		"same mistake",
+		"try again",
+		"why can't you",
+		"why cant you",
+		"just ssh",
+		"just check",
+		"just use",
+		"just do",
+		// Strong frustration / stop / give up
+		"nooo",
+		"noooo",
+		"nooooo",
+		"stop!",
+		"don't do",
+		"stop doing",
+		"never do",
+		"why are you",
+		"why do you keep",
+		"ffs",
+		"i give up",
+		"never ever",
+	],
+	/** Directive extraction — phrases indicating user wants agent to remember/change behavior (10 categories merged). */
+	directiveSignals: [
+		// Explicit memory requests
+		"remember that",
+		"don't forget",
+		"keep in mind",
+		"store this",
+		"write this down",
+		"make a note",
+		"take note",
+		// Future behavior changes
+		"from now on",
+		"in the future",
+		"next time",
+		"going forward",
+		"moving forward",
+		"onwards",
+		// Absolute rules
+		"always",
+		"never",
+		"make sure to",
+		"under no circumstances",
+		"you must",
+		"you should always",
+		"you should never",
+		// Preferences
+		"i prefer",
+		"i'd rather",
+		"use this instead",
+		"default to",
+		"stick with",
+		// Warnings
+		"be careful with",
+		"watch out for",
+		"don't ever",
+		"avoid",
+		"stay away from",
+		// Procedural
+		"first check",
+		"before you do",
+		"the order should be",
+		"step 1 is always",
+		"make sure you",
+		// Implicit corrections (short redirects)
+		"no, use",
+		"the other one",
+		"that's the old way",
+		"not that",
+		// Emotional emphasis (ALL CAPS, multiple !!!, frustrated emoji captured by detection logic)
+		"NEVER",
+		"ALWAYS",
+		"IMPORTANT",
+		// Conditional rules
+		"when this happens",
+		"if you see",
+		"only when",
+		"whenever",
+	],
+	/** Explicit memory request keywords (subset of directiveSignals for category detection). */
+	directiveExplicitMemory: [
+		"remember that",
+		"remember",
+		"don't forget",
+		"keep in mind",
+		"store this",
+		"write this down",
+		"make a note",
+		"take note",
+	],
+	/** Future behavior keywords (subset of directiveSignals for category detection). */
+	directiveFutureBehavior: [
+		"from now on",
+		"in the future",
+		"next time",
+		"going forward",
+		"moving forward",
+		"onwards",
+	],
+	/** Absolute rule keywords (subset of directiveSignals for category detection). */
+	directiveAbsoluteRule: [
+		"always",
+		"never",
+		"make sure to",
+		"under no circumstances",
+		"you must",
+		"you should always",
+		"you should never",
+	],
+	/** Preference keywords (subset of directiveSignals for category detection). */
+	directivePreference: [
+		"i prefer",
+		"i'd rather",
+		"use this instead",
+		"default to",
+		"stick with",
+	],
+	/** Warning keywords (subset of directiveSignals for category detection). */
+	directiveWarning: [
+		"be careful with",
+		"watch out for",
+		"don't ever",
+		"avoid",
+		"stay away from",
+	],
+	/** Procedural keywords (subset of directiveSignals for category detection). */
+	directiveProcedural: [
+		"first check",
+		"before you do",
+		"the order should be",
+		"step 1 is always",
+		"make sure you",
+	],
+	/** Implicit correction keywords (subset of directiveSignals for category detection). */
+	directiveImplicitCorrection: [
+		"no, use",
+		"the other one",
+		"that's the old way",
+		"not that",
+	],
+	/** Conditional rule keywords (subset of directiveSignals for category detection). */
+	directiveConditionalRule: [
+		"when this happens",
+		"if you see",
+		"only when",
+		"whenever",
+	],
+	/** Reinforcement extraction — phrases indicating user praise/approval of agent behavior. */
+	reinforcementSignals: [
+		// Explicit approval
+		"perfect",
+		"exactly",
+		"spot on",
+		"you nailed it",
+		"that's right",
+		"correct",
+		// Emotional praise
+		"love it",
+		"brilliant",
+		"amazing",
+		"excellent",
+		"fantastic",
+		"great job",
+		"good job",
+		"good job!",
+		"great job!",
+		"i really liked",
+		"wow, that was great",
+		"wow that was great",
+		"wow, that was good",
+		"wow that was good",
+		"wow, that was fantastic",
+		"wow that was fantastic",
+		// Explicit appreciation (bare "appreciate" removed — too broad; use directional forms below)
+		"really appreciate",
+		"i appreciate",
+		"i really appreciate",
+		"appreciate that",
+		"thank you for",
+		// Method confirmation
+		"yes, like that",
+		"keep this format",
+		"this is how it should be",
+		"that's the way",
+		"do it like this",
+		// Relief/finally
+		"finally!",
+		"now you get it",
+		"at last",
+		"there we go",
+		// Comparative praise
+		"much better",
+		"huge improvement",
+		"better than before",
+		"way better",
+		// Encouragement
+		"keep doing this",
+		"more of this",
+		"don't change",
+		"stick with this",
+		// Feature praise
+		"formatting is perfect",
+		"love the detail",
+		"great structure",
+		"perfect layout",
+		// Sharing signals
+		"going to show this",
+		"saving this",
+		"bookmarked",
+		"will share this",
+	],
+	/** Strong praise keywords (subset of reinforcementSignals for confidence scoring). */
+	reinforcementStrongPraise: [
+		"perfect",
+		"brilliant",
+		"amazing",
+		"excellent",
+		"you nailed it",
+		"spot on",
+		"love it",
+		"really appreciate",
+		"i really appreciate",
+		"good job",
+		"great job",
+		"wow, that was great",
+		"wow that was fantastic",
+	],
+	/** Method confirmation keywords (subset of reinforcementSignals for confidence scoring). */
+	reinforcementMethodConfirmation: [
+		"keep this format",
+		"yes, like that",
+		"this is how it should be",
+		"do it like this",
+	],
+	/** Relief keywords (subset of reinforcementSignals for confidence scoring). */
+	reinforcementRelief: ["finally!", "now you get it", "at last", "there we go"],
+	/** Comparative praise keywords (subset of reinforcementSignals for confidence scoring). */
+	reinforcementComparativePraise: [
+		"much better",
+		"huge improvement",
+		"better than before",
+		"way better",
+	],
+	/** Sharing signal keywords (subset of reinforcementSignals for confidence scoring). */
+	reinforcementSharingSignals: [
+		"saving this",
+		"bookmarked",
+		"going to show this",
+		"will share this",
+	],
 } as const;
 
 export type KeywordGroup = keyof typeof ENGLISH_KEYWORDS;
 
 /** Directive category key in file (snake_case) -> MergedKeywords key (camelCase). */
 const DIRECTIVE_CATEGORY_TO_MERGED: Record<string, KeywordGroup> = {
-  explicit_memory: "directiveExplicitMemory",
-  future_behavior: "directiveFutureBehavior",
-  absolute_rule: "directiveAbsoluteRule",
-  preference: "directivePreference",
-  warning: "directiveWarning",
-  procedural: "directiveProcedural",
-  implicit_correction: "directiveImplicitCorrection",
-  conditional_rule: "directiveConditionalRule",
-  correction: "correctionSignals",
+	explicit_memory: "directiveExplicitMemory",
+	future_behavior: "directiveFutureBehavior",
+	absolute_rule: "directiveAbsoluteRule",
+	preference: "directivePreference",
+	warning: "directiveWarning",
+	procedural: "directiveProcedural",
+	implicit_correction: "directiveImplicitCorrection",
+	conditional_rule: "directiveConditionalRule",
+	correction: "correctionSignals",
 };
 
 /** Reinforcement category key in file -> MergedKeywords key. */
 const REINFORCEMENT_CATEGORY_TO_MERGED: Record<string, KeywordGroup> = {
-  strongPraise: "reinforcementStrongPraise",
-  methodConfirmation: "reinforcementMethodConfirmation",
-  relief: "reinforcementRelief",
-  comparativePraise: "reinforcementComparativePraise",
-  sharingSignals: "reinforcementSharingSignals",
+	strongPraise: "reinforcementStrongPraise",
+	methodConfirmation: "reinforcementMethodConfirmation",
+	relief: "reinforcementRelief",
+	comparativePraise: "reinforcementComparativePraise",
+	sharingSignals: "reinforcementSharingSignals",
 };
 
 export type LanguageKeywordsFile = {
-  version: number;
-  detectedAt: string;
-  topLanguages: string[];
-  translations: Record<string, Record<KeywordGroup, string[]>>;
-  /** v2: per-language structural trigger phrases (e.g. "I prefer X", "my X is Y") merged into trigger regex. */
-  triggerStructures?: Record<string, string[]>;
-  /** v2: per-language extraction building blocks; runtime builds safe regex from these. */
-  extraction?: Record<string, LanguageExtractionTemplate>;
-  /** Optional: per-category directive signals (explicit_memory, future_behavior, ...). Merged into merged keywords for multilingual category detection. */
-  directiveSignalsByCategory?: Record<string, string[]>;
-  /** Optional: per-category reinforcement signals (strongPraise, methodConfirmation, ..., genericPoliteness). Merged into merged keywords; genericPoliteness used for confidence regex. */
-  reinforcementCategories?: Record<string, string[]>;
+	version: number;
+	detectedAt: string;
+	topLanguages: string[];
+	translations: Record<string, Record<KeywordGroup, string[]>>;
+	/** v2: per-language structural trigger phrases (e.g. "I prefer X", "my X is Y") merged into trigger regex. */
+	triggerStructures?: Record<string, string[]>;
+	/** v2: per-language extraction building blocks; runtime builds safe regex from these. */
+	extraction?: Record<string, LanguageExtractionTemplate>;
+	/** Optional: per-category directive signals (explicit_memory, future_behavior, ...). Merged into merged keywords for multilingual category detection. */
+	directiveSignalsByCategory?: Record<string, string[]>;
+	/** Optional: per-category reinforcement signals (strongPraise, methodConfirmation, ..., genericPoliteness). Merged into merged keywords; genericPoliteness used for confidence regex. */
+	reinforcementCategories?: Record<string, string[]>;
 };
 
 /** Building blocks for structured fact extraction in a given language (verbs, connectors, etc.). */
 export type LanguageExtractionTemplate = {
-  decision?: { verbs: string[]; connectors: string[] };
-  choiceOver?: { verbs: string[]; rejectors: string[]; connectors: string[] };
-  convention?: { always: string[]; never: string[] };
-  possessive?: { possessiveWords: string[]; isWords: string[] };
-  preference?: { subject: string[]; verbs: string[] };
-  nameIntro?: { verbs: string[] };
+	decision?: { verbs: string[]; connectors: string[] };
+	choiceOver?: { verbs: string[]; rejectors: string[]; connectors: string[] };
+	convention?: { always: string[]; never: string[] };
+	possessive?: { possessiveWords: string[]; isWords: string[] };
+	preference?: { subject: string[]; verbs: string[] };
+	nameIntro?: { verbs: string[] };
 };
 
 export type MergedKeywords = Record<KeywordGroup, string[]>;
@@ -367,387 +421,475 @@ let keywordsPath: string | null = null;
 
 /** Set directory containing .language-keywords.json (e.g. dirname of facts.db). Call at plugin init. Pass empty string to clear (e.g. in tests). */
 export function setKeywordsPath(dirPath: string): void {
-  keywordsPath = dirPath === "" ? null : dirPath;
+	keywordsPath = dirPath === "" ? null : dirPath;
 }
 
 export function getKeywordsPath(): string | null {
-  return keywordsPath;
+	return keywordsPath;
 }
 
 /** Full path to .language-keywords.json, or null if path not set. */
 export function getLanguageKeywordsFilePath(): string | null {
-  if (!keywordsPath) return null;
-  return join(keywordsPath, LANG_FILE_NAME);
+	if (!keywordsPath) return null;
+	return join(keywordsPath, LANG_FILE_NAME);
 }
 
 const USER_FEEDBACK_PHRASES_FILE = ".user-feedback-phrases.json";
 
 /** Path to per-user discovered feedback phrases (reinforcement/correction). Merged into regex at runtime. */
 export function getUserFeedbackPhrasesPath(): string | null {
-  if (!keywordsPath) return null;
-  return join(keywordsPath, USER_FEEDBACK_PHRASES_FILE);
+	if (!keywordsPath) return null;
+	return join(keywordsPath, USER_FEEDBACK_PHRASES_FILE);
 }
 
 export type UserFeedbackPhrases = {
-  reinforcement: string[];
-  correction: string[];
-  updatedAt?: string;
-  /** Set true after first run so next runs use 3 days instead of 30. */
-  initialRunDone?: boolean;
+	reinforcement: string[];
+	correction: string[];
+	updatedAt?: string;
+	/** Set true after first run so next runs use 3 days instead of 30. */
+	initialRunDone?: boolean;
 };
 
 /** Load user-discovered feedback phrases from .user-feedback-phrases.json. Returns empty arrays if missing. */
 export function loadUserFeedbackPhrases(): UserFeedbackPhrases {
-  const filePath = getUserFeedbackPhrasesPath();
-  if (!filePath) return { reinforcement: [], correction: [] };
+	const filePath = getUserFeedbackPhrasesPath();
+	if (!filePath) return { reinforcement: [], correction: [] };
 
-  if (userFeedbackPhrasesCache && userFeedbackPhrasesCache.path === filePath) {
-    return userFeedbackPhrasesCache.data;
-  }
+	if (userFeedbackPhrasesCache && userFeedbackPhrasesCache.path === filePath) {
+		return userFeedbackPhrasesCache.data;
+	}
 
-  if (!existsSync(filePath)) {
-    const emptyData = { reinforcement: [], correction: [] };
-    userFeedbackPhrasesCache = { data: emptyData, path: filePath };
-    return emptyData;
-  }
+	if (!existsSync(filePath)) {
+		const emptyData = { reinforcement: [], correction: [] };
+		userFeedbackPhrasesCache = { data: emptyData, path: filePath };
+		return emptyData;
+	}
 
-  try {
-    const raw = readFileSync(filePath, "utf-8");
-    const data = JSON.parse(raw) as UserFeedbackPhrases;
-    const parsed = {
-      reinforcement: Array.isArray(data.reinforcement)
-        ? data.reinforcement.filter((s) => typeof s === "string" && s.trim())
-        : [],
-      correction: Array.isArray(data.correction)
-        ? data.correction.filter((s) => typeof s === "string" && s.trim())
-        : [],
-      updatedAt: data.updatedAt,
-      initialRunDone: data.initialRunDone === true,
-    };
-    userFeedbackPhrasesCache = { data: parsed, path: filePath };
-    return parsed;
-  } catch {
-    const emptyData = { reinforcement: [], correction: [] };
-    userFeedbackPhrasesCache = { data: emptyData, path: filePath };
-    return emptyData;
-  }
+	try {
+		const raw = readFileSync(filePath, "utf-8");
+		const data = JSON.parse(raw) as UserFeedbackPhrases;
+		const parsed = {
+			reinforcement: Array.isArray(data.reinforcement)
+				? data.reinforcement.filter((s) => typeof s === "string" && s.trim())
+				: [],
+			correction: Array.isArray(data.correction)
+				? data.correction.filter((s) => typeof s === "string" && s.trim())
+				: [],
+			updatedAt: data.updatedAt,
+			initialRunDone: data.initialRunDone === true,
+		};
+		userFeedbackPhrasesCache = { data: parsed, path: filePath };
+		return parsed;
+	} catch {
+		const emptyData = { reinforcement: [], correction: [] };
+		userFeedbackPhrasesCache = { data: emptyData, path: filePath };
+		return emptyData;
+	}
 }
 
 /** Save user-discovered feedback phrases to .user-feedback-phrases.json. */
 export function saveUserFeedbackPhrases(data: UserFeedbackPhrases): void {
-  const filePath = getUserFeedbackPhrasesPath();
-  if (!filePath) return;
-  const dir = dirname(filePath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const out = { ...data, updatedAt: new Date().toISOString(), initialRunDone: true };
-  writeFileSync(filePath, JSON.stringify(out, null, 2), "utf-8");
-  userFeedbackPhrasesCache = null;
+	const filePath = getUserFeedbackPhrasesPath();
+	if (!filePath) return;
+	const dir = dirname(filePath);
+	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+	const out = {
+		...data,
+		updatedAt: new Date().toISOString(),
+		initialRunDone: true,
+	};
+	writeFileSync(filePath, JSON.stringify(out, null, 2), "utf-8");
+	userFeedbackPhrasesCache = null;
 }
 
 let cache: {
-  merged: MergedKeywords;
-  path: string;
-  triggerStructures: string[];
-  extraction: Record<string, LanguageExtractionTemplate>;
-  /** From file reinforcementCategories.genericPoliteness; used by getReinforcementCategoryRegexes. */
-  reinforcementGenericPoliteness?: string[];
+	merged: MergedKeywords;
+	path: string;
+	triggerStructures: string[];
+	extraction: Record<string, LanguageExtractionTemplate>;
+	/** From file reinforcementCategories.genericPoliteness; used by getReinforcementCategoryRegexes. */
+	reinforcementGenericPoliteness?: string[];
 } | null = null;
 
 let userFeedbackPhrasesCache: {
-  data: UserFeedbackPhrases;
-  path: string;
+	data: UserFeedbackPhrases;
+	path: string;
 } | null = null;
 
 function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const LOWERCASE_GROUPS = new Set<KeywordGroup>([
-  "decayPermanentKeys",
-  "decaySessionKeys",
-  "decayActiveKeys",
-  "decayPermanentEntities",
-  "decayCheckpointKeys",
+	"decayPermanentKeys",
+	"decaySessionKeys",
+	"decayActiveKeys",
+	"decayPermanentEntities",
+	"decayCheckpointKeys",
 ]);
 
 function mergeGroup(
-  english: readonly string[],
-  translationsByLang: Record<string, Record<string, string[]>> | undefined,
-  group: KeywordGroup,
+	english: readonly string[],
+	translationsByLang: Record<string, Record<string, string[]>> | undefined,
+	group: KeywordGroup,
 ): string[] {
-  const shouldLowercase = LOWERCASE_GROUPS.has(group);
-  const set = new Set<string>(shouldLowercase ? english.map((s) => s.toLowerCase()) : english);
-  if (translationsByLang) {
-    for (const langData of Object.values(translationsByLang)) {
-      const list = langData?.[group];
-      if (Array.isArray(list))
-        for (const w of list)
-          if (typeof w === "string" && w.trim()) set.add(shouldLowercase ? w.trim().toLowerCase() : w.trim());
-    }
-  }
-  return [...set];
+	const shouldLowercase = LOWERCASE_GROUPS.has(group);
+	const set = new Set<string>(
+		shouldLowercase ? english.map((s) => s.toLowerCase()) : english,
+	);
+	if (translationsByLang) {
+		for (const langData of Object.values(translationsByLang)) {
+			const list = langData?.[group];
+			if (Array.isArray(list))
+				for (const w of list)
+					if (typeof w === "string" && w.trim())
+						set.add(shouldLowercase ? w.trim().toLowerCase() : w.trim());
+		}
+	}
+	return [...set];
 }
 
 /** Build merged keywords from English + translations (e.g. for build script to emit directiveSignalsByCategory). */
 export function buildMergedFromTranslations(
-  translations: Record<string, Record<KeywordGroup, string[]>>,
+	translations: Record<string, Record<KeywordGroup, string[]>>,
 ): MergedKeywords {
-  const merged: MergedKeywords = {} as MergedKeywords;
-  for (const group of Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]) {
-    const english = ENGLISH_KEYWORDS[group];
-    merged[group] = mergeGroup(english, translations, group);
-  }
-  return merged;
+	const merged: MergedKeywords = {} as MergedKeywords;
+	for (const group of Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]) {
+		const english = ENGLISH_KEYWORDS[group];
+		merged[group] = mergeGroup(english, translations, group);
+	}
+	return merged;
 }
 
 /** Load merged keywords (English + file). Returns English-only if file missing. */
 export function loadMergedKeywords(): MergedKeywords {
-  const path = keywordsPath;
-  if (!path) {
-    cache = null;
-    return Object.fromEntries(
-      (Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [
-        k,
-        LOWERCASE_GROUPS.has(k) ? ENGLISH_KEYWORDS[k].map((s) => s.toLowerCase()) : [...ENGLISH_KEYWORDS[k]],
-      ]),
-    ) as MergedKeywords;
-  }
-  const filePath = join(path, LANG_FILE_NAME);
-  if (cache && cache.path === filePath) return cache.merged;
+	const path = keywordsPath;
+	if (!path) {
+		cache = null;
+		return Object.fromEntries(
+			(Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [
+				k,
+				LOWERCASE_GROUPS.has(k)
+					? ENGLISH_KEYWORDS[k].map((s) => s.toLowerCase())
+					: [...ENGLISH_KEYWORDS[k]],
+			]),
+		) as MergedKeywords;
+	}
+	const filePath = join(path, LANG_FILE_NAME);
+	if (cache && cache.path === filePath) return cache.merged;
 
-  let data: LanguageKeywordsFile | null = null;
-  if (existsSync(filePath)) {
-    try {
-      const raw = readFileSync(filePath, "utf8");
-      data = JSON.parse(raw) as LanguageKeywordsFile;
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "load-language-keywords",
-        severity: "info",
-        subsystem: "utils",
-      });
-      // invalid or missing: use English only
-    }
-  }
+	let data: LanguageKeywordsFile | null = null;
+	if (existsSync(filePath)) {
+		try {
+			const raw = readFileSync(filePath, "utf8");
+			data = JSON.parse(raw) as LanguageKeywordsFile;
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "load-language-keywords",
+				severity: "info",
+				subsystem: "utils",
+			});
+			// invalid or missing: use English only
+		}
+	}
 
-  const merged: MergedKeywords = {} as MergedKeywords;
-  for (const group of Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]) {
-    const english = ENGLISH_KEYWORDS[group];
-    merged[group] = mergeGroup(english, data?.translations ?? undefined, group);
-  }
-  if (data?.directiveSignalsByCategory && typeof data.directiveSignalsByCategory === "object") {
-    for (const [fileKey, list] of Object.entries(data.directiveSignalsByCategory)) {
-      const mergedKey = DIRECTIVE_CATEGORY_TO_MERGED[fileKey];
-      if (mergedKey && Array.isArray(list)) {
-        const existing = new Set(merged[mergedKey] ?? []);
-        for (const s of list) if (typeof s === "string" && s.trim()) existing.add(s.trim());
-        merged[mergedKey] = [...existing];
-      }
-    }
-  }
-  if (data?.reinforcementCategories && typeof data.reinforcementCategories === "object") {
-    for (const [fileKey, list] of Object.entries(data.reinforcementCategories)) {
-      if (fileKey === "genericPoliteness") continue;
-      const mergedKey = REINFORCEMENT_CATEGORY_TO_MERGED[fileKey];
-      if (mergedKey && Array.isArray(list)) {
-        const existing = new Set(merged[mergedKey] ?? []);
-        for (const s of list) if (typeof s === "string" && s.trim()) existing.add(s.trim());
-        merged[mergedKey] = [...existing];
-      }
-    }
-  }
-  const triggerStructures: string[] = [];
-  if (data?.triggerStructures && typeof data.triggerStructures === "object") {
-    for (const list of Object.values(data.triggerStructures)) {
-      if (Array.isArray(list))
-        for (const s of list) if (typeof s === "string" && s.trim()) triggerStructures.push(s.trim());
-    }
-  }
-  const extraction: Record<string, LanguageExtractionTemplate> =
-    data?.extraction && typeof data.extraction === "object"
-      ? (data.extraction as Record<string, LanguageExtractionTemplate>)
-      : {};
-  const reinforcementGenericPoliteness =
-    data?.reinforcementCategories && Array.isArray(data.reinforcementCategories.genericPoliteness)
-      ? (data.reinforcementCategories.genericPoliteness as string[]).filter((s) => typeof s === "string" && s.trim())
-      : undefined;
-  cache = { merged, path: filePath, triggerStructures, extraction, reinforcementGenericPoliteness };
-  return cache.merged;
+	const merged: MergedKeywords = {} as MergedKeywords;
+	for (const group of Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]) {
+		const english = ENGLISH_KEYWORDS[group];
+		merged[group] = mergeGroup(english, data?.translations ?? undefined, group);
+	}
+	if (
+		data?.directiveSignalsByCategory &&
+		typeof data.directiveSignalsByCategory === "object"
+	) {
+		for (const [fileKey, list] of Object.entries(
+			data.directiveSignalsByCategory,
+		)) {
+			const mergedKey = DIRECTIVE_CATEGORY_TO_MERGED[fileKey];
+			if (mergedKey && Array.isArray(list)) {
+				const existing = new Set(merged[mergedKey] ?? []);
+				for (const s of list)
+					if (typeof s === "string" && s.trim()) existing.add(s.trim());
+				merged[mergedKey] = [...existing];
+			}
+		}
+	}
+	if (
+		data?.reinforcementCategories &&
+		typeof data.reinforcementCategories === "object"
+	) {
+		for (const [fileKey, list] of Object.entries(
+			data.reinforcementCategories,
+		)) {
+			if (fileKey === "genericPoliteness") continue;
+			const mergedKey = REINFORCEMENT_CATEGORY_TO_MERGED[fileKey];
+			if (mergedKey && Array.isArray(list)) {
+				const existing = new Set(merged[mergedKey] ?? []);
+				for (const s of list)
+					if (typeof s === "string" && s.trim()) existing.add(s.trim());
+				merged[mergedKey] = [...existing];
+			}
+		}
+	}
+	const triggerStructures: string[] = [];
+	if (data?.triggerStructures && typeof data.triggerStructures === "object") {
+		for (const list of Object.values(data.triggerStructures)) {
+			if (Array.isArray(list))
+				for (const s of list)
+					if (typeof s === "string" && s.trim())
+						triggerStructures.push(s.trim());
+		}
+	}
+	const extraction: Record<string, LanguageExtractionTemplate> =
+		data?.extraction && typeof data.extraction === "object"
+			? (data.extraction as Record<string, LanguageExtractionTemplate>)
+			: {};
+	const reinforcementGenericPoliteness =
+		data?.reinforcementCategories &&
+		Array.isArray(data.reinforcementCategories.genericPoliteness)
+			? (data.reinforcementCategories.genericPoliteness as string[]).filter(
+					(s) => typeof s === "string" && s.trim(),
+				)
+			: undefined;
+	cache = {
+		merged,
+		path: filePath,
+		triggerStructures,
+		extraction,
+		reinforcementGenericPoliteness,
+	};
+	return cache.merged;
 }
 
 /** Clear cached merged keywords (e.g. after writing new file or in tests). */
 export async function clearKeywordCache(): Promise<void> {
-  cache = null;
-  userFeedbackPhrasesCache = null;
-  // Also clear dependent regex caches in directive and reinforcement extraction
-  try {
-    const { clearDirectiveCategoryCache } = await import("../services/directive-extract.js");
-    clearDirectiveCategoryCache();
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "clear-directive-cache",
-      severity: "info",
-      subsystem: "utils",
-    });
-  }
-  try {
-    const { clearReinforcementRegexCache } = await import("../services/reinforcement-extract.js");
-    clearReinforcementRegexCache();
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "clear-reinforcement-cache",
-      severity: "info",
-      subsystem: "utils",
-    });
-  }
+	cache = null;
+	userFeedbackPhrasesCache = null;
+	// Also clear dependent regex caches in directive and reinforcement extraction
+	try {
+		const { clearDirectiveCategoryCache } = await import(
+			"../services/directive-extract.js"
+		);
+		clearDirectiveCategoryCache();
+	} catch (err) {
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "clear-directive-cache",
+			severity: "info",
+			subsystem: "utils",
+		});
+	}
+	try {
+		const { clearReinforcementRegexCache } = await import(
+			"../services/reinforcement-extract.js"
+		);
+		clearReinforcementRegexCache();
+	} catch (err) {
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "clear-reinforcement-cache",
+			severity: "info",
+			subsystem: "utils",
+		});
+	}
 }
 
 function buildRegexFromKeywords(keywords: string[]): RegExp {
-  if (keywords.length === 0) return /(?!.)/; // never match
-  const escaped = keywords.map(escapeRegex).filter((s) => s.length > 0);
-  return new RegExp(escaped.join("|"), "i");
+	if (keywords.length === 0) return /(?!.)/; // never match
+	const escaped = keywords.map(escapeRegex).filter((s) => s.length > 0);
+	return new RegExp(escaped.join("|"), "i");
 }
 
 /** Memory trigger regexes for shouldCapture. Includes merged keywords, optional structural phrases from file, and universal patterns (phone, email). */
 export function getMemoryTriggerRegexes(): RegExp[] {
-  const merged = loadMergedKeywords();
-  const triggerWords = merged.triggers;
-  const phraseRegex = buildRegexFromKeywords(triggerWords);
-  const list: RegExp[] = [phraseRegex, /\+\d{10,}/, /[\w.-]+@[\w.-]+\.\w+/];
-  if (cache?.triggerStructures && cache.triggerStructures.length > 0) {
-    list.push(buildRegexFromKeywords(cache.triggerStructures));
-  } else {
-    list.push(
-      /\bmy\s+\w+\s+is\b|\bis\s+my\b/i,
-      /\bi\s+(like|prefer|hate|love|want|need)\b/i,
-      /\balways\b.*\buse\b|\bnever\b.*\buse\b/i,
-    );
-  }
-  return list;
+	const merged = loadMergedKeywords();
+	const triggerWords = merged.triggers;
+	const phraseRegex = buildRegexFromKeywords(triggerWords);
+	const list: RegExp[] = [phraseRegex, /\+\d{10,}/, /[\w.-]+@[\w.-]+\.\w+/];
+	if (cache?.triggerStructures && cache.triggerStructures.length > 0) {
+		list.push(buildRegexFromKeywords(cache.triggerStructures));
+	} else {
+		list.push(
+			/\bmy\s+\w+\s+is\b|\bis\s+my\b/i,
+			/\bi\s+(like|prefer|hate|love|want|need)\b/i,
+			/\balways\b.*\buse\b|\bnever\b.*\buse\b/i,
+		);
+	}
+	return list;
 }
 
 /** Per-language extraction templates from .language-keywords.json (v2). Empty if file missing or no extraction. */
-export function getExtractionTemplates(): Record<string, LanguageExtractionTemplate> {
-  if (!keywordsPath) return {};
-  const filePath = join(keywordsPath, LANG_FILE_NAME);
-  if (cache?.path !== filePath) loadMergedKeywords();
-  return cache?.extraction ?? {};
+export function getExtractionTemplates(): Record<
+	string,
+	LanguageExtractionTemplate
+> {
+	if (!keywordsPath) return {};
+	const filePath = join(keywordsPath, LANG_FILE_NAME);
+	if (cache?.path !== filePath) loadMergedKeywords();
+	return cache?.extraction ?? {};
 }
 
 export function getCategoryDecisionRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().categoryDecision);
+	return buildRegexFromKeywords(loadMergedKeywords().categoryDecision);
 }
 
 export function getCategoryPreferenceRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().categoryPreference);
+	return buildRegexFromKeywords(loadMergedKeywords().categoryPreference);
 }
 
 export function getCategoryEntityRegex(): RegExp {
-  const merged = loadMergedKeywords();
-  const entityWords = merged.categoryEntity;
-  return new RegExp(`\\+\\d{10,}|@[\\w.-]+\\.\\w+|${entityWords.map(escapeRegex).join("|")}`, "i");
+	const merged = loadMergedKeywords();
+	const entityWords = merged.categoryEntity;
+	return new RegExp(
+		`\\+\\d{10,}|@[\\w.-]+\\.\\w+|${entityWords.map(escapeRegex).join("|")}`,
+		"i",
+	);
 }
 
 export function getCategoryFactRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().categoryFact);
+	return buildRegexFromKeywords(loadMergedKeywords().categoryFact);
 }
 
 export function getDecayPermanentRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().decayPermanent);
+	return buildRegexFromKeywords(loadMergedKeywords().decayPermanent);
 }
 
 export function getDecaySessionRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().decaySession);
+	return buildRegexFromKeywords(loadMergedKeywords().decaySession);
 }
 
 export function getDecayActiveRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().decayActive);
+	return buildRegexFromKeywords(loadMergedKeywords().decayActive);
 }
 
 /** Merged key-field fragments for permanent decay classification (English + translations). */
 export function getDecayPermanentKeys(): string[] {
-  return loadMergedKeywords().decayPermanentKeys;
+	return loadMergedKeywords().decayPermanentKeys;
 }
 
 /** Merged key-field fragments for session decay classification (English + translations). */
 export function getDecaySessionKeys(): string[] {
-  return loadMergedKeywords().decaySessionKeys;
+	return loadMergedKeywords().decaySessionKeys;
 }
 
 /** Merged key-field fragments for active decay classification (English + translations). */
 export function getDecayActiveKeys(): string[] {
-  return loadMergedKeywords().decayActiveKeys;
+	return loadMergedKeywords().decayActiveKeys;
 }
 
 /** Merged entity exact-match values for permanent decay classification (English + translations). */
 export function getDecayPermanentEntities(): string[] {
-  return loadMergedKeywords().decayPermanentEntities;
+	return loadMergedKeywords().decayPermanentEntities;
 }
 
 /** Merged key-field fragments for checkpoint decay classification (English + translations). */
 export function getDecayCheckpointKeys(): string[] {
-  return loadMergedKeywords().decayCheckpointKeys;
+	return loadMergedKeywords().decayCheckpointKeys;
 }
 
 /** Emoji that indicate user dissatisfaction — trigger self-correction extraction (with or without follow-up text). */
-const CORRECTION_EMOJIS = ["👎", "😠", "😤", "💩", "🙁", "😞", "😒", "😑", "🤬"];
+const CORRECTION_EMOJIS = [
+	"👎",
+	"😠",
+	"😤",
+	"💩",
+	"🙁",
+	"😞",
+	"😒",
+	"😑",
+	"🤬",
+];
 
 /** Emoji that indicate user approval — trigger reinforcement extraction (enforcer). */
-const REINFORCEMENT_EMOJIS = ["👍", "❤️", "💙", "💚", "💜", "😊", "😄", "🙂", "🔥", "⭐", "✨"];
+const REINFORCEMENT_EMOJIS = [
+	"👍",
+	"❤️",
+	"💙",
+	"💚",
+	"💜",
+	"😊",
+	"😄",
+	"🙂",
+	"🔥",
+	"⭐",
+	"✨",
+];
 
 /** Regex to detect user messages that look like corrections/nudges. Uses English + translated correctionSignals, negative emoji, and user-discovered phrases from .user-feedback-phrases.json. */
 export function getCorrectionSignalRegex(): RegExp {
-  const merged = loadMergedKeywords();
-  const user = loadUserFeedbackPhrases();
-  return buildRegexFromKeywords([...(merged.correctionSignals || []), ...CORRECTION_EMOJIS, ...user.correction]);
+	const merged = loadMergedKeywords();
+	const user = loadUserFeedbackPhrases();
+	return buildRegexFromKeywords([
+		...(merged.correctionSignals || []),
+		...CORRECTION_EMOJIS,
+		...user.correction,
+	]);
 }
 
 /** Regex to detect user messages that contain directive phrases (10 categories merged). */
 export function getDirectiveSignalRegex(): RegExp {
-  return buildRegexFromKeywords(loadMergedKeywords().directiveSignals);
+	return buildRegexFromKeywords(loadMergedKeywords().directiveSignals);
 }
 
 /** Regex to detect user messages that contain reinforcement/praise phrases. Uses English + file translations, positive emoji, and user-discovered phrases from .user-feedback-phrases.json. */
 export function getReinforcementSignalRegex(): RegExp {
-  const merged = loadMergedKeywords();
-  const user = loadUserFeedbackPhrases();
-  return buildRegexFromKeywords([
-    ...(merged.reinforcementSignals || []),
-    ...REINFORCEMENT_EMOJIS,
-    ...user.reinforcement,
-  ]);
+	const merged = loadMergedKeywords();
+	const user = loadUserFeedbackPhrases();
+	return buildRegexFromKeywords([
+		...(merged.reinforcementSignals || []),
+		...REINFORCEMENT_EMOJIS,
+		...user.reinforcement,
+	]);
 }
 
 /** Get category-specific directive regexes for multilingual detection. */
 export function getDirectiveCategoryRegexes(): Record<string, RegExp> {
-  const merged = loadMergedKeywords();
-  return {
-    explicit_memory: buildRegexFromKeywords(merged.directiveExplicitMemory || []),
-    future_behavior: buildRegexFromKeywords(merged.directiveFutureBehavior || []),
-    absolute_rule: buildRegexFromKeywords(merged.directiveAbsoluteRule || []),
-    preference: buildRegexFromKeywords(merged.directivePreference || []),
-    warning: buildRegexFromKeywords(merged.directiveWarning || []),
-    procedural: buildRegexFromKeywords(merged.directiveProcedural || []),
-    implicit_correction: buildRegexFromKeywords(merged.directiveImplicitCorrection || []),
-    conditional_rule: buildRegexFromKeywords(merged.directiveConditionalRule || []),
-    correction: buildRegexFromKeywords(merged.correctionSignals || []),
-  };
+	const merged = loadMergedKeywords();
+	return {
+		explicit_memory: buildRegexFromKeywords(
+			merged.directiveExplicitMemory || [],
+		),
+		future_behavior: buildRegexFromKeywords(
+			merged.directiveFutureBehavior || [],
+		),
+		absolute_rule: buildRegexFromKeywords(merged.directiveAbsoluteRule || []),
+		preference: buildRegexFromKeywords(merged.directivePreference || []),
+		warning: buildRegexFromKeywords(merged.directiveWarning || []),
+		procedural: buildRegexFromKeywords(merged.directiveProcedural || []),
+		implicit_correction: buildRegexFromKeywords(
+			merged.directiveImplicitCorrection || [],
+		),
+		conditional_rule: buildRegexFromKeywords(
+			merged.directiveConditionalRule || [],
+		),
+		correction: buildRegexFromKeywords(merged.correctionSignals || []),
+	};
 }
 
 /** Get reinforcement confidence regexes for multilingual detection. Uses reinforcementCategories from file when present. */
 export function getReinforcementCategoryRegexes(): Record<string, RegExp> {
-  const merged = loadMergedKeywords();
-  const genericPolitenessPhrases =
-    cache?.reinforcementGenericPoliteness && cache.reinforcementGenericPoliteness.length > 0
-      ? cache.reinforcementGenericPoliteness
-      : ["thanks", "thank you", "ok", "okay", "got it"];
-  const genericPolitenessRegex = new RegExp(`^(${genericPolitenessPhrases.map(escapeRegex).join("|")})\\.?$`, "i");
-  return {
-    strongPraise: buildRegexFromKeywords(merged.reinforcementStrongPraise || []),
-    methodConfirmation: buildRegexFromKeywords(merged.reinforcementMethodConfirmation || []),
-    relief: buildRegexFromKeywords(merged.reinforcementRelief || []),
-    comparativePraise: buildRegexFromKeywords(merged.reinforcementComparativePraise || []),
-    sharingSignals: buildRegexFromKeywords(merged.reinforcementSharingSignals || []),
-    genericPoliteness: genericPolitenessRegex,
-  };
+	const merged = loadMergedKeywords();
+	const genericPolitenessPhrases =
+		cache?.reinforcementGenericPoliteness &&
+		cache.reinforcementGenericPoliteness.length > 0
+			? cache.reinforcementGenericPoliteness
+			: ["thanks", "thank you", "ok", "okay", "got it"];
+	const genericPolitenessRegex = new RegExp(
+		`^(${genericPolitenessPhrases.map(escapeRegex).join("|")})\\.?$`,
+		"i",
+	);
+	return {
+		strongPraise: buildRegexFromKeywords(
+			merged.reinforcementStrongPraise || [],
+		),
+		methodConfirmation: buildRegexFromKeywords(
+			merged.reinforcementMethodConfirmation || [],
+		),
+		relief: buildRegexFromKeywords(merged.reinforcementRelief || []),
+		comparativePraise: buildRegexFromKeywords(
+			merged.reinforcementComparativePraise || [],
+		),
+		sharingSignals: buildRegexFromKeywords(
+			merged.reinforcementSharingSignals || [],
+		),
+		genericPoliteness: genericPolitenessRegex,
+	};
 }

@@ -16,22 +16,22 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
 
 interface MemoryEvent {
-  id: number;
-  event_type: string;
-  source: string;
-  payload: Record<string, unknown>;
-  importance: number;
-  status: EventStatus;
-  created_at: string;
-  processed_at: string | null;
-  fingerprint: string | null;
+	id: number;
+	event_type: string;
+	source: string;
+	payload: Record<string, unknown>;
+	importance: number;
+	status: EventStatus;
+	created_at: string;
+	processed_at: string | null;
+	fingerprint: string | null;
 }
 
 interface QueryFilter {
-  status?: EventStatus;
-  type?: string;
-  since?: string;
-  limit?: number;
+	status?: EventStatus;
+	type?: string;
+	since?: string;
+	limit?: number;
 }
 
 /**
@@ -39,7 +39,7 @@ interface QueryFilter {
  * Callers compose the input from type + entity_id + summary + ttl_bucket.
  */
 export function computeFingerprint(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
+	return createHash("sha256").update(input).digest("hex");
 }
 
 /**
@@ -50,59 +50,59 @@ export function computeFingerprint(input: string): string {
  * by the Rumination Engine.
  */
 export class EventBus extends BaseSqliteStore {
-  /** Tracks terminal closed state separately from base class field. */
-  private _terminallyClosed = false;
+	/** Tracks terminal closed state separately from base class field. */
+	private _terminallyClosed = false;
 
-  private readonly dbPath: string;
+	private readonly dbPath: string;
 
-  /**
-   * Initializes the Event Bus database, creating the file and schema if needed.
-   * @param dbPath Absolute path to the SQLite database file.
-   */
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db);
-    this.dbPath = dbPath;
-    this.migrate();
-  }
+	/**
+	 * Initializes the Event Bus database, creating the file and schema if needed.
+	 * @param dbPath Absolute path to the SQLite database file.
+	 */
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db);
+		this.dbPath = dbPath;
+		this.migrate();
+	}
 
-  protected getSubsystemName(): string {
-    return "event-bus";
-  }
+	protected getSubsystemName(): string {
+		return "event-bus";
+	}
 
-  /**
-   * Returns the terminal closed state of this EventBus.
-   * When true, all subsequent operations throw an Error.
-   */
-  public get closed(): boolean {
-    return this._terminallyClosed;
-  }
+	/**
+	 * Returns the terminal closed state of this EventBus.
+	 * When true, all subsequent operations throw an Error.
+	 */
+	public get closed(): boolean {
+		return this._terminallyClosed;
+	}
 
-  protected get liveDb(): DatabaseSync {
-    if (this._terminallyClosed) {
-      throw new Error("EventBus is closed");
-    }
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
-  }
+	protected get liveDb(): DatabaseSync {
+		if (this._terminallyClosed) {
+			throw new Error("EventBus is closed");
+		}
+		if (!this._dbOpen) {
+			this.db.open();
+			this._dbOpen = true;
+			this.applyPragmas();
+		}
+		return this.db;
+	}
 
-  /**
-   * Closes the EventBus and sets the terminal closed state.
-   * After this, all subsequent operations throw an Error.
-   */
-  public close(): void {
-    if (this._terminallyClosed) return;
-    this._terminallyClosed = true;
-    super.close();
-  }
+	/**
+	 * Closes the EventBus and sets the terminal closed state.
+	 * After this, all subsequent operations throw an Error.
+	 */
+	public close(): void {
+		if (this._terminallyClosed) return;
+		this._terminallyClosed = true;
+		super.close();
+	}
 
-  private migrate(): void {
-    this.liveDb.exec(`
+	private migrate(): void {
+		this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS memory_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_type TEXT NOT NULL,
@@ -120,126 +120,146 @@ export class EventBus extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_events_created ON memory_events(created_at);
       CREATE INDEX IF NOT EXISTS idx_events_fingerprint ON memory_events(fingerprint);
     `);
-  }
+	}
 
-  /**
-   * Append a new event and return its auto-generated id.
-   */
-  appendEvent(
-    type: string,
-    source: string,
-    payload: Record<string, unknown>,
-    importance = 0.5,
-    fingerprint?: string,
-  ): number {
-    if (!(importance >= 0 && importance <= 1)) {
-      throw new RangeError(`EventBus: importance must be between 0 and 1, got ${importance}`);
-    }
-    const result = this.liveDb
-      .prepare(
-        `INSERT INTO memory_events (event_type, source, payload, importance, fingerprint)
+	/**
+	 * Append a new event and return its auto-generated id.
+	 */
+	appendEvent(
+		type: string,
+		source: string,
+		payload: Record<string, unknown>,
+		importance = 0.5,
+		fingerprint?: string,
+	): number {
+		if (!(importance >= 0 && importance <= 1)) {
+			throw new RangeError(
+				`EventBus: importance must be between 0 and 1, got ${importance}`,
+			);
+		}
+		const result = this.liveDb
+			.prepare(
+				`INSERT INTO memory_events (event_type, source, payload, importance, fingerprint)
          VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(type, source, JSON.stringify(payload), importance, fingerprint ?? null);
-    return result.lastInsertRowid as number;
-  }
+			)
+			.run(
+				type,
+				source,
+				JSON.stringify(payload),
+				importance,
+				fingerprint ?? null,
+			);
+		return result.lastInsertRowid as number;
+	}
 
-  /**
-   * Query events with optional filters.
-   */
-  queryEvents(filter: QueryFilter = {}): MemoryEvent[] {
-    const { status, type, since, limit = 100 } = filter;
-    const conditions: string[] = [];
-    const params: SQLInputValue[] = [];
+	/**
+	 * Query events with optional filters.
+	 */
+	queryEvents(filter: QueryFilter = {}): MemoryEvent[] {
+		const { status, type, since, limit = 100 } = filter;
+		const conditions: string[] = [];
+		const params: SQLInputValue[] = [];
 
-    if (status !== undefined) {
-      conditions.push("status = ?");
-      params.push(status);
-    }
-    if (type !== undefined) {
-      conditions.push("event_type = ?");
-      params.push(type);
-    }
-    if (since !== undefined) {
-      conditions.push("created_at >= ?");
-      params.push(since);
-    }
+		if (status !== undefined) {
+			conditions.push("status = ?");
+			params.push(status);
+		}
+		if (type !== undefined) {
+			conditions.push("event_type = ?");
+			params.push(type);
+		}
+		if (since !== undefined) {
+			conditions.push("created_at >= ?");
+			params.push(since);
+		}
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const sql = `SELECT * FROM memory_events ${where} ORDER BY id ASC LIMIT ?`;
-    params.push(limit);
+		const where =
+			conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+		const sql = `SELECT * FROM memory_events ${where} ORDER BY id ASC LIMIT ?`;
+		params.push(limit);
 
-    const rows = this.liveDb.prepare(sql).all(...params) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToEvent(r));
-  }
+		const rows = this.liveDb.prepare(sql).all(...params) as Record<
+			string,
+			unknown
+		>[];
+		return rows.map((r) => this.rowToEvent(r));
+	}
 
-  /**
-   * Update the status of an event. Sets processed_at when transitioning away from 'raw'.
-   * Throws if no event with the given id exists.
-   */
-  updateStatus(id: number, newStatus: EventStatus): void {
-    const processedAt = newStatus !== "raw" ? new Date().toISOString() : null;
-    const result = this.liveDb
-      .prepare("UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?")
-      .run(newStatus, processedAt, id);
-    if (result.changes === 0) {
-      throw new Error(`EventBus: no event found with id ${id}`);
-    }
-  }
+	/**
+	 * Update the status of an event. Sets processed_at when transitioning away from 'raw'.
+	 * Throws if no event with the given id exists.
+	 */
+	updateStatus(id: number, newStatus: EventStatus): void {
+		const processedAt = newStatus !== "raw" ? new Date().toISOString() : null;
+		const result = this.liveDb
+			.prepare(
+				"UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?",
+			)
+			.run(newStatus, processedAt, id);
+		if (result.changes === 0) {
+			throw new Error(`EventBus: no event found with id ${id}`);
+		}
+	}
 
-  /**
-   * Check if a recent duplicate exists for the given fingerprint within a cooldown window.
-   * Returns true if a duplicate was found (caller should skip inserting).
-   */
-  dedup(fingerprint: string, cooldownHours = 3): boolean {
-    const cutoff = new Date(Date.now() - cooldownHours * 3600 * 1000).toISOString();
-    const row = this.liveDb
-      .prepare(
-        `SELECT 1 FROM memory_events
+	/**
+	 * Check if a recent duplicate exists for the given fingerprint within a cooldown window.
+	 * Returns true if a duplicate was found (caller should skip inserting).
+	 */
+	dedup(fingerprint: string, cooldownHours = 3): boolean {
+		const cutoff = new Date(
+			Date.now() - cooldownHours * 3600 * 1000,
+		).toISOString();
+		const row = this.liveDb
+			.prepare(
+				`SELECT 1 FROM memory_events
          WHERE fingerprint = ? AND created_at >= ?
          LIMIT 1`,
-      )
-      .get(fingerprint, cutoff);
-    return row !== undefined;
-  }
+			)
+			.get(fingerprint, cutoff);
+		return row !== undefined;
+	}
 
-  /**
-   * Delete archived events older than N days. Returns the number of rows deleted.
-   */
-  pruneArchived(olderThanDays = 30): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
-    const result = this.liveDb
-      .prepare(`DELETE FROM memory_events WHERE status = 'archived' AND created_at < ?`)
-      .run(cutoff);
-    return Number(result.changes);
-  }
+	/**
+	 * Delete archived events older than N days. Returns the number of rows deleted.
+	 */
+	pruneArchived(olderThanDays = 30): number {
+		const cutoff = new Date(
+			Date.now() - olderThanDays * 24 * 3600 * 1000,
+		).toISOString();
+		const result = this.liveDb
+			.prepare(
+				`DELETE FROM memory_events WHERE status = 'archived' AND created_at < ?`,
+			)
+			.run(cutoff);
+		return Number(result.changes);
+	}
 
-  /**
-   * Deserializes a raw SQLite row into a strongly-typed MemoryEvent.
-   * Gracefully falls back to an empty object if JSON parsing fails.
-   */
-  private rowToEvent(row: Record<string, unknown>): MemoryEvent {
-    let payload: Record<string, unknown> = {};
-    try {
-      payload = JSON.parse(row.payload as string) as Record<string, unknown>;
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "json-parse-payload",
-        severity: "info",
-        subsystem: "event-bus",
-      });
-    }
+	/**
+	 * Deserializes a raw SQLite row into a strongly-typed MemoryEvent.
+	 * Gracefully falls back to an empty object if JSON parsing fails.
+	 */
+	private rowToEvent(row: Record<string, unknown>): MemoryEvent {
+		let payload: Record<string, unknown> = {};
+		try {
+			payload = JSON.parse(row.payload as string) as Record<string, unknown>;
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "json-parse-payload",
+				severity: "info",
+				subsystem: "event-bus",
+			});
+		}
 
-    return {
-      id: row.id as number,
-      event_type: row.event_type as string,
-      source: row.source as string,
-      payload,
-      importance: row.importance as number,
-      status: row.status as EventStatus,
-      created_at: row.created_at as string,
-      processed_at: (row.processed_at as string | null) ?? null,
-      fingerprint: (row.fingerprint as string | null) ?? null,
-    };
-  }
+		return {
+			id: row.id as number,
+			event_type: row.event_type as string,
+			source: row.source as string,
+			payload,
+			importance: row.importance as number,
+			status: row.status as EventStatus,
+			created_at: row.created_at as string,
+			processed_at: (row.processed_at as string | null) ?? null,
+			fingerprint: (row.fingerprint as string | null) ?? null,
+		};
+	}
 }

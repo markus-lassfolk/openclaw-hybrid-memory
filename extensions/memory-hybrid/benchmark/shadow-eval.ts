@@ -34,30 +34,30 @@ import { DatabaseSync } from "node:sqlite";
 // ---------------------------------------------------------------------------
 
 export interface LatencyStats {
-  p50: number; // ms
-  p95: number;
-  p99: number;
-  samples: number;
+	p50: number; // ms
+	p95: number;
+	p99: number;
+	samples: number;
 }
 
 export interface AccuracyResult {
-  score: number; // 0–1
-  llmCalls: number;
-  tokensUsed: number;
-  judgement: string; // human-readable explanation
+	score: number; // 0–1
+	llmCalls: number;
+	tokensUsed: number;
+	judgement: string; // human-readable explanation
 }
 
 export interface BenchmarkResult {
-  feature: string;
-  latency: LatencyStats;
-  /** Populated when an accuracy test was run */
-  accuracy?: AccuracyResult;
-  /** Total tokens tracked from llm_cost_log for the feature in the window */
-  tokensTracked?: number;
-  /** Estimated USD cost from llm_cost_log */
-  costTrackedUsd?: number;
-  /** Shadow-mode diff: positive = feature slowed it down */
-  latencyDeltaMs?: number;
+	feature: string;
+	latency: LatencyStats;
+	/** Populated when an accuracy test was run */
+	accuracy?: AccuracyResult;
+	/** Total tokens tracked from llm_cost_log for the feature in the window */
+	tokensTracked?: number;
+	/** Estimated USD cost from llm_cost_log */
+	costTrackedUsd?: number;
+	/** Shadow-mode diff: positive = feature slowed it down */
+	latencyDeltaMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,10 +65,10 @@ export interface BenchmarkResult {
 // ---------------------------------------------------------------------------
 
 function percentile(values: number[], p: number): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.max(0, idx)];
+	if (values.length === 0) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const idx = Math.ceil((p / 100) * sorted.length) - 1;
+	return sorted[Math.max(0, idx)];
 }
 
 /**
@@ -79,26 +79,30 @@ function percentile(values: number[], p: number): number {
  * @param iterations Number of iterations (default 100)
  * @param warmup     Number of warmup runs (default 3)
  */
-export function measureLatency<R>(fn: () => R, iterations = 100, warmup = 3): LatencyStats & { values: number[] } {
-  // Warm up
-  for (let i = 0; i < warmup; i++) fn();
+export function measureLatency<R>(
+	fn: () => R,
+	iterations = 100,
+	warmup = 3,
+): LatencyStats & { values: number[] } {
+	// Warm up
+	for (let i = 0; i < warmup; i++) fn();
 
-  const values: number[] = [];
+	const values: number[] = [];
 
-  for (let i = 0; i < iterations; i++) {
-    const start = performance.now();
-    fn();
-    const end = performance.now();
-    values.push(end - start);
-  }
+	for (let i = 0; i < iterations; i++) {
+		const start = performance.now();
+		fn();
+		const end = performance.now();
+		values.push(end - start);
+	}
 
-  return {
-    p50: percentile(values, 50),
-    p95: percentile(values, 95),
-    p99: percentile(values, 99),
-    samples: values.length,
-    values,
-  };
+	return {
+		p50: percentile(values, 50),
+		p95: percentile(values, 95),
+		p99: percentile(values, 99),
+		samples: values.length,
+		values,
+	};
 }
 
 /**
@@ -106,29 +110,29 @@ export function measureLatency<R>(fn: () => R, iterations = 100, warmup = 3): La
  * return delta in p50 latency. Useful for measuring feature overhead.
  */
 export function shadowMeasure(
-  baseline: () => void,
-  shadow: () => void,
-  iterations = 100,
-  warmup = 3,
+	baseline: () => void,
+	shadow: () => void,
+	iterations = 100,
+	warmup = 3,
 ): { baselineStats: LatencyStats; shadowStats: LatencyStats; deltaMs: number } {
-  const baselineResult = measureLatency(baseline, iterations, warmup);
-  const shadowResult = measureLatency(shadow, iterations, warmup);
+	const baselineResult = measureLatency(baseline, iterations, warmup);
+	const shadowResult = measureLatency(shadow, iterations, warmup);
 
-  return {
-    baselineStats: {
-      p50: baselineResult.p50,
-      p95: baselineResult.p95,
-      p99: baselineResult.p99,
-      samples: baselineResult.samples,
-    },
-    shadowStats: {
-      p50: shadowResult.p50,
-      p95: shadowResult.p95,
-      p99: shadowResult.p99,
-      samples: shadowResult.samples,
-    },
-    deltaMs: shadowResult.p50 - baselineResult.p50,
-  };
+	return {
+		baselineStats: {
+			p50: baselineResult.p50,
+			p95: baselineResult.p95,
+			p99: baselineResult.p99,
+			samples: baselineResult.samples,
+		},
+		shadowStats: {
+			p50: shadowResult.p50,
+			p95: shadowResult.p95,
+			p99: shadowResult.p99,
+			samples: shadowResult.samples,
+		},
+		deltaMs: shadowResult.p50 - baselineResult.p50,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -140,34 +144,43 @@ export function shadowMeasure(
  * Pass 0 for sinceTimestamp to get all-time.
  */
 export function readTokensFromLog(
-  db: DatabaseSync,
-  feature: string,
-  sinceTimestamp?: number,
-): { inputTokens: number; outputTokens: number; calls: number; estimatedCostUsd: number } {
-  const where = sinceTimestamp ? "WHERE feature = ? AND timestamp >= ?" : "WHERE feature = ?";
-  const params: (string | number)[] = sinceTimestamp ? [feature, sinceTimestamp] : [feature];
+	db: DatabaseSync,
+	feature: string,
+	sinceTimestamp?: number,
+): {
+	inputTokens: number;
+	outputTokens: number;
+	calls: number;
+	estimatedCostUsd: number;
+} {
+	const where = sinceTimestamp
+		? "WHERE feature = ? AND timestamp >= ?"
+		: "WHERE feature = ?";
+	const params: (string | number)[] = sinceTimestamp
+		? [feature, sinceTimestamp]
+		: [feature];
 
-  const row = db
-    .prepare(
-      `SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+	const row = db
+		.prepare(
+			`SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
               COALESCE(SUM(output_tokens), 0) AS output_tokens,
               COUNT(*) AS calls,
               COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost_usd
        FROM llm_cost_log ${where}`,
-    )
-    .get(...params) as {
-    input_tokens: number;
-    output_tokens: number;
-    calls: number;
-    estimated_cost_usd: number;
-  };
+		)
+		.get(...params) as {
+		input_tokens: number;
+		output_tokens: number;
+		calls: number;
+		estimated_cost_usd: number;
+	};
 
-  return {
-    inputTokens: Number(row.input_tokens),
-    outputTokens: Number(row.output_tokens),
-    calls: Number(row.calls),
-    estimatedCostUsd: row.estimated_cost_usd,
-  };
+	return {
+		inputTokens: Number(row.input_tokens),
+		outputTokens: Number(row.output_tokens),
+		calls: Number(row.calls),
+		estimatedCostUsd: row.estimated_cost_usd,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -175,9 +188,9 @@ export function readTokensFromLog(
 // ---------------------------------------------------------------------------
 
 export type AccuracyTestFn = () => Promise<{
-  featureOn: string;
-  featureOff: string;
-  prompt: string;
+	featureOn: string;
+	featureOff: string;
+	prompt: string;
 }>;
 
 /**
@@ -188,13 +201,13 @@ export type AccuracyTestFn = () => Promise<{
  * Creates its own OpenAI client from environment variables — no plugin context needed.
  */
 export async function scoreAccuracy(
-  testCase: AccuracyTestFn,
-  judgeModel = "openai/gpt-4.1-nano",
+	testCase: AccuracyTestFn,
+	judgeModel = "openai/gpt-4.1-nano",
 ): Promise<AccuracyResult> {
-  const { featureOn, featureOff, prompt } = await testCase();
+	const { featureOn, featureOff, prompt } = await testCase();
 
-  // Build a comparison prompt for the judge
-  const judgePrompt = `You are an expert evaluator comparing two outputs for the same task.
+	// Build a comparison prompt for the judge
+	const judgePrompt = `You are an expert evaluator comparing two outputs for the same task.
 
 TASK PROMPT:
 ${prompt}
@@ -214,69 +227,74 @@ Respond with a JSON object and nothing else:
   "reasoning": "brief explanation"
 }`;
 
-  let tokensUsed = 0;
-  let llmCalls = 0;
-  let judgement = "";
+	let tokensUsed = 0;
+	let llmCalls = 0;
+	let judgement = "";
 
-  try {
-    // Dynamically import OpenAI to avoid a hard dependency here
-    const { default: OpenAI } = (await import("openai")) as { default: typeof import("openai").default };
-    const apiKey = getEnv("OPENAI_API_KEY") ?? getEnv("GOOGLE_API_KEY") ?? undefined;
-    if (!apiKey) {
-      judgement = "No API key available (set OPENAI_API_KEY or GOOGLE_API_KEY)";
-      return { score: 0.5, llmCalls, tokensUsed, judgement };
-    }
+	try {
+		// Dynamically import OpenAI to avoid a hard dependency here
+		const { default: OpenAI } = (await import("openai")) as {
+			default: typeof import("openai").default;
+		};
+		const apiKey =
+			getEnv("OPENAI_API_KEY") ?? getEnv("GOOGLE_API_KEY") ?? undefined;
+		if (!apiKey) {
+			judgement = "No API key available (set OPENAI_API_KEY or GOOGLE_API_KEY)";
+			return { score: 0.5, llmCalls, tokensUsed, judgement };
+		}
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // biome-ignore lint/suspicious/noExplicitAny: third-party SDK typing
-    const client: any = new OpenAI({ apiKey });
-    const isGoogle = judgeModel.startsWith("google/") || judgeModel.startsWith("gemini/");
-    const isAnthropic = judgeModel.startsWith("anthropic/") || judgeModel.startsWith("claude/");
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		// biome-ignore lint/suspicious/noExplicitAny: third-party SDK typing
+		const client: any = new OpenAI({ apiKey });
+		const isGoogle =
+			judgeModel.startsWith("google/") || judgeModel.startsWith("gemini/");
+		const isAnthropic =
+			judgeModel.startsWith("anthropic/") || judgeModel.startsWith("claude/");
 
-    const model = isGoogle
-      ? judgeModel.replace(/^google\//, "")
-      : isAnthropic
-        ? judgeModel.replace(/^anthropic\//, "").replace(/^claude\//, "")
-        : judgeModel.replace(/^openai\//, "");
+		const model = isGoogle
+			? judgeModel.replace(/^google\//, "")
+			: isAnthropic
+				? judgeModel.replace(/^anthropic\//, "").replace(/^claude\//, "")
+				: judgeModel.replace(/^openai\//, "");
 
-    const res = await client.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: judgePrompt }],
-      ...chatCompletionTokenParams(model, 300),
-      temperature: 0,
-    });
+		const res = await client.chat.completions.create({
+			model,
+			messages: [{ role: "user", content: judgePrompt }],
+			...chatCompletionTokenParams(model, 300),
+			temperature: 0,
+		});
 
-    llmCalls = 1;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // biome-ignore lint/suspicious/noExplicitAny: LLM response typing requires any
-    const resAny = res as any;
-    const responseText: string = resAny.choices?.[0]?.message?.content ?? "";
-    tokensUsed = resAny.usage?.total_tokens ?? 0;
+		llmCalls = 1;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		// biome-ignore lint/suspicious/noExplicitAny: LLM response typing requires any
+		const resAny = res as any;
+		const responseText: string = resAny.choices?.[0]?.message?.content ?? "";
+		tokensUsed = resAny.usage?.total_tokens ?? 0;
 
-    // Try to parse JSON from response
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as {
-        winner: string;
-        scoreA: number;
-        scoreB: number;
-        reasoning: string;
-      };
-      const score =
-        parsed.winner === "A"
-          ? parsed.scoreA
-          : parsed.winner === "B"
-            ? parsed.scoreB
-            : (parsed.scoreA + parsed.scoreB) / 2;
-      judgement = `[${parsed.winner}] ${parsed.reasoning}`;
-      return { score, llmCalls, tokensUsed, judgement };
-    }
-    judgement = responseText.slice(0, 200);
-    return { score: 0.5, llmCalls, tokensUsed, judgement };
-  } catch (err) {
-    judgement = `Error running judge: ${err instanceof Error ? err.message : String(err)}`;
-    return { score: 0.5, llmCalls, tokensUsed, judgement };
-  }
+		// Try to parse JSON from response
+		const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+		if (jsonMatch) {
+			const parsed = JSON.parse(jsonMatch[0]) as {
+				winner: string;
+				scoreA: number;
+				scoreB: number;
+				reasoning: string;
+			};
+			const score =
+				parsed.winner === "A"
+					? parsed.scoreA
+					: parsed.winner === "B"
+						? parsed.scoreB
+						: (parsed.scoreA + parsed.scoreB) / 2;
+			judgement = `[${parsed.winner}] ${parsed.reasoning}`;
+			return { score, llmCalls, tokensUsed, judgement };
+		}
+		judgement = responseText.slice(0, 200);
+		return { score: 0.5, llmCalls, tokensUsed, judgement };
+	} catch (err) {
+		judgement = `Error running judge: ${err instanceof Error ? err.message : String(err)}`;
+		return { score: 0.5, llmCalls, tokensUsed, judgement };
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -284,109 +302,122 @@ Respond with a JSON object and nothing else:
 // ---------------------------------------------------------------------------
 
 export interface BenchmarkContext {
-  /** Path to the SQLite database (llm_cost_log lives here) */
-  dbPath: string;
-  /** Currently configured embeddings (for accuracy scoring) */
-  embeddings?: unknown;
+	/** Path to the SQLite database (llm_cost_log lives here) */
+	dbPath: string;
+	/** Currently configured embeddings (for accuracy scoring) */
+	embeddings?: unknown;
 }
 
 export interface RunBenchmarkOptions {
-  /** Run accuracy tests (uses LLM, max 2 calls per feature) */
-  accuracy?: boolean;
-  /** Judge model for accuracy tests */
-  judgeModel?: string;
-  /** Output format */
-  format?: "text" | "json";
-  /** Iterations for latency tests (default 100) */
-  iterations?: number;
+	/** Run accuracy tests (uses LLM, max 2 calls per feature) */
+	accuracy?: boolean;
+	/** Judge model for accuracy tests */
+	judgeModel?: string;
+	/** Output format */
+	format?: "text" | "json";
+	/** Iterations for latency tests (default 100) */
+	iterations?: number;
 }
 
 /**
  * Run the full benchmark suite for a feature or all features.
  */
 export async function runBenchmark(
-  feature: string,
-  ctx: BenchmarkContext,
-  options: RunBenchmarkOptions = {},
+	feature: string,
+	ctx: BenchmarkContext,
+	options: RunBenchmarkOptions = {},
 ): Promise<BenchmarkResult> {
-  const { accuracy = false, judgeModel = "openai/gpt-4.1-nano", format = "text", iterations = 100 } = options;
+	const {
+		accuracy = false,
+		judgeModel = "openai/gpt-4.1-nano",
+		format = "text",
+		iterations = 100,
+	} = options;
 
-  // Lazy-load the per-feature benchmark
-  const featureModule = await import(`./features/${feature}.js`).catch(() => null);
-  if (!featureModule) {
-    throw new Error(
-      `Unknown feature benchmark: ${feature}. Available: episodes, frequency-autosave, procedure-feedback`,
-    );
-  }
+	// Lazy-load the per-feature benchmark
+	const featureModule = await import(`./features/${feature}.js`).catch(
+		() => null,
+	);
+	if (!featureModule) {
+		throw new Error(
+			`Unknown feature benchmark: ${feature}. Available: episodes, frequency-autosave, procedure-feedback`,
+		);
+	}
 
-  const { benchmark, testAccuracy } = featureModule as {
-    benchmark: (ctx: BenchmarkContext, iterations: number) => LatencyStats;
-    testAccuracy?: (ctx: BenchmarkContext) => Promise<{ featureOn: string; featureOff: string; prompt: string }>;
-  };
+	const { benchmark, testAccuracy } = featureModule as {
+		benchmark: (ctx: BenchmarkContext, iterations: number) => LatencyStats;
+		testAccuracy?: (
+			ctx: BenchmarkContext,
+		) => Promise<{ featureOn: string; featureOff: string; prompt: string }>;
+	};
 
-  // ── 1. Latency ────────────────────────────────────────────────────────────
-  const latency = benchmark(ctx, iterations);
+	// ── 1. Latency ────────────────────────────────────────────────────────────
+	const latency = benchmark(ctx, iterations);
 
-  // ── 2. Accuracy (optional) ───────────────────────────────────────────────
-  let accuracyResult: AccuracyResult | undefined;
-  if (accuracy && testAccuracy) {
-    accuracyResult = await scoreAccuracy(() => testAccuracy(ctx), judgeModel);
-  }
+	// ── 2. Accuracy (optional) ───────────────────────────────────────────────
+	let accuracyResult: AccuracyResult | undefined;
+	if (accuracy && testAccuracy) {
+		accuracyResult = await scoreAccuracy(() => testAccuracy(ctx), judgeModel);
+	}
 
-  // ── 3. Token tracking from llm_cost_log ─────────────────────────────────
-  const db = new DatabaseSync(ctx.dbPath, { readOnly: true });
-  try {
-    const tokens = readTokensFromLog(db, feature);
-    if (format === "json") {
-      return {
-        feature,
-        latency,
-        accuracy: accuracyResult,
-        tokensTracked: tokens.inputTokens + tokens.outputTokens,
-        costTrackedUsd: tokens.estimatedCostUsd,
-      };
-    }
-    return {
-      feature,
-      latency,
-      accuracy: accuracyResult,
-      tokensTracked: tokens.inputTokens + tokens.outputTokens,
-      costTrackedUsd: tokens.estimatedCostUsd,
-    };
-  } finally {
-    db.close();
-  }
+	// ── 3. Token tracking from llm_cost_log ─────────────────────────────────
+	const db = new DatabaseSync(ctx.dbPath, { readOnly: true });
+	try {
+		const tokens = readTokensFromLog(db, feature);
+		if (format === "json") {
+			return {
+				feature,
+				latency,
+				accuracy: accuracyResult,
+				tokensTracked: tokens.inputTokens + tokens.outputTokens,
+				costTrackedUsd: tokens.estimatedCostUsd,
+			};
+		}
+		return {
+			feature,
+			latency,
+			accuracy: accuracyResult,
+			tokensTracked: tokens.inputTokens + tokens.outputTokens,
+			costTrackedUsd: tokens.estimatedCostUsd,
+		};
+	} finally {
+		db.close();
+	}
 }
 
 /**
  * Run all benchmarks and return an array of results.
  */
 export async function runAllBenchmarks(
-  ctx: BenchmarkContext,
-  options: RunBenchmarkOptions = {},
+	ctx: BenchmarkContext,
+	options: RunBenchmarkOptions = {},
 ): Promise<BenchmarkResult[]> {
-  const features = ["episodes", "frequency-autosave", "procedure-feedback"] as const;
-  const results: BenchmarkResult[] = [];
+	const features = [
+		"episodes",
+		"frequency-autosave",
+		"procedure-feedback",
+	] as const;
+	const results: BenchmarkResult[] = [];
 
-  for (const feature of features) {
-    try {
-      const result = await runBenchmark(feature, ctx, options);
-      results.push(result);
-    } catch (err) {
-      results.push({
-        feature,
-        latency: { p50: -1, p95: -1, p99: -1, samples: 0 },
-        accuracy: {
-          score: 0,
-          llmCalls: 0,
-          tokensUsed: 0,
-          judgement: `Error: ${err instanceof Error ? err.message : String(err)}`,
-        },
-      });
-    }
-  }
+	for (const feature of features) {
+		try {
+			const result = await runBenchmark(feature, ctx, options);
+			results.push(result);
+		} catch (err) {
+			results.push({
+				feature,
+				latency: { p50: -1, p95: -1, p99: -1, samples: 0 },
+				accuracy: {
+					score: 0,
+					llmCalls: 0,
+					tokensUsed: 0,
+					judgement: `Error: ${err instanceof Error ? err.message : String(err)}`,
+				},
+			});
+		}
+	}
 
-  return results;
+	return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,33 +425,33 @@ export async function runAllBenchmarks(
 // ---------------------------------------------------------------------------
 
 export function formatBenchmarkResult(result: BenchmarkResult): string {
-  const lines: string[] = [];
-  lines.push(`\n📊 ${result.feature}`);
-  lines.push(
-    `   Latency  p50=${result.latency.p50.toFixed(2)}ms  p95=${result.latency.p95.toFixed(2)}ms  p99=${result.latency.p99.toFixed(2)}ms  (n=${result.latency.samples})`,
-  );
+	const lines: string[] = [];
+	lines.push(`\n📊 ${result.feature}`);
+	lines.push(
+		`   Latency  p50=${result.latency.p50.toFixed(2)}ms  p95=${result.latency.p95.toFixed(2)}ms  p99=${result.latency.p99.toFixed(2)}ms  (n=${result.latency.samples})`,
+	);
 
-  if (result.latencyDeltaMs !== undefined) {
-    const sign = result.latencyDeltaMs >= 0 ? "+" : "";
-    lines.push(`   Shadow Δ p50: ${sign}${result.latencyDeltaMs.toFixed(2)}ms`);
-  }
+	if (result.latencyDeltaMs !== undefined) {
+		const sign = result.latencyDeltaMs >= 0 ? "+" : "";
+		lines.push(`   Shadow Δ p50: ${sign}${result.latencyDeltaMs.toFixed(2)}ms`);
+	}
 
-  if (result.accuracy) {
-    const pct = (result.accuracy.score * 100).toFixed(0);
-    lines.push(
-      `   Accuracy: ${pct}%  (${result.accuracy.llmCalls} LLM call(s), ${result.accuracy.tokensUsed} tokens) — ${result.accuracy.judgement}`,
-    );
-  }
+	if (result.accuracy) {
+		const pct = (result.accuracy.score * 100).toFixed(0);
+		lines.push(
+			`   Accuracy: ${pct}%  (${result.accuracy.llmCalls} LLM call(s), ${result.accuracy.tokensUsed} tokens) — ${result.accuracy.judgement}`,
+		);
+	}
 
-  if (result.tokensTracked !== undefined) {
-    lines.push(
-      `   Tokens tracked: ${result.tokensTracked.toLocaleString()}  (≈$${(result.costTrackedUsd ?? 0).toFixed(6)})`,
-    );
-  }
+	if (result.tokensTracked !== undefined) {
+		lines.push(
+			`   Tokens tracked: ${result.tokensTracked.toLocaleString()}  (≈$${(result.costTrackedUsd ?? 0).toFixed(6)})`,
+		);
+	}
 
-  return lines.join("\n");
+	return lines.join("\n");
 }
 
 export function formatBenchmarkResults(results: BenchmarkResult[]): string {
-  return results.map(formatBenchmarkResult).join("\n");
+	return results.map(formatBenchmarkResult).join("\n");
 }

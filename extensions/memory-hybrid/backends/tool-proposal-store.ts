@@ -19,36 +19,40 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type ToolProposalStatus = "proposed" | "approved" | "rejected" | "implemented";
+export type ToolProposalStatus =
+	| "proposed"
+	| "approved"
+	| "rejected"
+	| "implemented";
 
 export interface ToolProposal {
-  id: string;
-  name: string;
-  description: string;
-  /** JSON Schema of parameters (serialized as string). */
-  parameters: string;
-  rationale: string;
-  /** JSON array of pattern/gap IDs that motivated this proposal. */
-  sourcePatterns: string;
-  implementationHint: string;
-  status: ToolProposalStatus;
-  createdAt: string;
-  updatedAt: string;
+	id: string;
+	name: string;
+	description: string;
+	/** JSON Schema of parameters (serialized as string). */
+	parameters: string;
+	rationale: string;
+	/** JSON array of pattern/gap IDs that motivated this proposal. */
+	sourcePatterns: string;
+	implementationHint: string;
+	status: ToolProposalStatus;
+	createdAt: string;
+	updatedAt: string;
 }
 
 interface CreateToolProposalInput {
-  name: string;
-  description: string;
-  parameters: string;
-  rationale: string;
-  sourcePatterns: string;
-  implementationHint: string;
+	name: string;
+	description: string;
+	parameters: string;
+	rationale: string;
+	sourcePatterns: string;
+	implementationHint: string;
 }
 
 interface ToolProposalFilter {
-  status?: ToolProposalStatus;
-  name?: string;
-  limit?: number;
+	status?: ToolProposalStatus;
+	name?: string;
+	limit?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,12 +60,12 @@ interface ToolProposalFilter {
 // ---------------------------------------------------------------------------
 
 export class ToolProposalStore extends BaseSqliteStore {
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db);
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db);
 
-    this.liveDb.exec(`
+		this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS tool_proposals (
         id                   TEXT PRIMARY KEY,
         name                 TEXT NOT NULL,
@@ -78,141 +82,160 @@ export class ToolProposalStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_tp_status ON tool_proposals(status);
       CREATE INDEX IF NOT EXISTS idx_tp_name   ON tool_proposals(name);
     `);
-  }
+	}
 
-  protected getSubsystemName(): string {
-    return "tool-proposal-store";
-  }
+	protected getSubsystemName(): string {
+		return "tool-proposal-store";
+	}
 
-  // -------------------------------------------------------------------------
-  // create
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// create
+	// -------------------------------------------------------------------------
 
-  create(input: CreateToolProposalInput): ToolProposal {
-    const id = randomUUID();
-    const now = new Date().toISOString();
+	create(input: CreateToolProposalInput): ToolProposal {
+		const id = randomUUID();
+		const now = new Date().toISOString();
 
-    this.liveDb
-      .prepare(
-        `INSERT INTO tool_proposals
+		this.liveDb
+			.prepare(
+				`INSERT INTO tool_proposals
            (id, name, description, parameters, rationale, source_patterns, implementation_hint, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)`,
-      )
-      .run(
-        id,
-        input.name,
-        input.description,
-        input.parameters,
-        input.rationale,
-        input.sourcePatterns,
-        input.implementationHint,
-        now,
-        now,
-      );
+			)
+			.run(
+				id,
+				input.name,
+				input.description,
+				input.parameters,
+				input.rationale,
+				input.sourcePatterns,
+				input.implementationHint,
+				now,
+				now,
+			);
 
-    // biome-ignore lint/style/noNonNullAssertion: Known to exist
-    return this.getById(id)!;
-  }
+		// biome-ignore lint/style/noNonNullAssertion: Known to exist
+		return this.getById(id)!;
+	}
 
-  // -------------------------------------------------------------------------
-  // getById
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// getById
+	// -------------------------------------------------------------------------
 
-  getById(id: string): ToolProposal | null {
-    const row = this.liveDb.prepare("SELECT * FROM tool_proposals WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    if (!row) return null;
-    return this.rowToProposal(row);
-  }
+	getById(id: string): ToolProposal | null {
+		const row = this.liveDb
+			.prepare("SELECT * FROM tool_proposals WHERE id = ?")
+			.get(id) as Record<string, unknown> | undefined;
+		if (!row) return null;
+		return this.rowToProposal(row);
+	}
 
-  // -------------------------------------------------------------------------
-  // list — filtered listing
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// list — filtered listing
+	// -------------------------------------------------------------------------
 
-  list(filter?: ToolProposalFilter): ToolProposal[] {
-    let query = "SELECT * FROM tool_proposals WHERE 1=1";
-    const params: SQLInputValue[] = [];
+	list(filter?: ToolProposalFilter): ToolProposal[] {
+		let query = "SELECT * FROM tool_proposals WHERE 1=1";
+		const params: SQLInputValue[] = [];
 
-    if (filter?.status) {
-      query += " AND status = ?";
-      params.push(filter.status);
-    }
-    if (filter?.name) {
-      query += " AND name LIKE ?";
-      params.push(`%${filter.name}%`);
-    }
+		if (filter?.status) {
+			query += " AND status = ?";
+			params.push(filter.status);
+		}
+		if (filter?.name) {
+			query += " AND name LIKE ?";
+			params.push(`%${filter.name}%`);
+		}
 
-    query += " ORDER BY created_at DESC";
+		query += " ORDER BY created_at DESC";
 
-    if (filter?.limit && filter.limit > 0) {
-      query += " LIMIT ?";
-      params.push(filter.limit);
-    }
+		if (filter?.limit && filter.limit > 0) {
+			query += " LIMIT ?";
+			params.push(filter.limit);
+		}
 
-    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToProposal(r));
-  }
+		const rows = this.liveDb.prepare(query).all(...params) as Record<
+			string,
+			unknown
+		>[];
+		return rows.map((r) => this.rowToProposal(r));
+	}
 
-  // -------------------------------------------------------------------------
-  // updateStatus — change proposal status
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// updateStatus — change proposal status
+	// -------------------------------------------------------------------------
 
-  updateStatus(id: string, status: ToolProposalStatus, fromStatus?: ToolProposalStatus): ToolProposal | null {
-    const now = new Date().toISOString();
-    const result =
-      fromStatus !== undefined
-        ? this.liveDb
-            .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-            .run(status, now, id, fromStatus)
-        : this.liveDb.prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
+	updateStatus(
+		id: string,
+		status: ToolProposalStatus,
+		fromStatus?: ToolProposalStatus,
+	): ToolProposal | null {
+		const now = new Date().toISOString();
+		const result =
+			fromStatus !== undefined
+				? this.liveDb
+						.prepare(
+							"UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+						)
+						.run(status, now, id, fromStatus)
+				: this.liveDb
+						.prepare(
+							"UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?",
+						)
+						.run(status, now, id);
 
-    if (result.changes === 0) return null;
-    return this.getById(id);
-  }
+		if (result.changes === 0) return null;
+		return this.getById(id);
+	}
 
-  // -------------------------------------------------------------------------
-  // count
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// count
+	// -------------------------------------------------------------------------
 
-  count(status?: ToolProposalStatus): number {
-    const row = status
-      ? (this.liveDb.prepare("SELECT COUNT(*) as n FROM tool_proposals WHERE status = ?").get(status) as { n: number })
-      : (this.liveDb.prepare("SELECT COUNT(*) as n FROM tool_proposals").get() as { n: number });
-    return row.n;
-  }
+	count(status?: ToolProposalStatus): number {
+		const row = status
+			? (this.liveDb
+					.prepare("SELECT COUNT(*) as n FROM tool_proposals WHERE status = ?")
+					.get(status) as { n: number })
+			: (this.liveDb
+					.prepare("SELECT COUNT(*) as n FROM tool_proposals")
+					.get() as { n: number });
+		return row.n;
+	}
 
-  // -------------------------------------------------------------------------
-  // existsByName — prevent duplicate proposals for the same tool name
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// existsByName — prevent duplicate proposals for the same tool name
+	// -------------------------------------------------------------------------
 
-  existsByName(name: string): boolean {
-    const row = this.liveDb
-      .prepare("SELECT id FROM tool_proposals WHERE name = ? AND status IN ('proposed', 'approved') LIMIT 1")
-      .get(name) as { id: string } | undefined;
-    return row !== undefined;
-  }
+	existsByName(name: string): boolean {
+		const row = this.liveDb
+			.prepare(
+				"SELECT id FROM tool_proposals WHERE name = ? AND status IN ('proposed', 'approved') LIMIT 1",
+			)
+			.get(name) as { id: string } | undefined;
+		return row !== undefined;
+	}
 
-  // -------------------------------------------------------------------------
-  // close / isOpen
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// close / isOpen
+	// -------------------------------------------------------------------------
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// Private helpers
+	// -------------------------------------------------------------------------
 
-  private rowToProposal(row: Record<string, unknown>): ToolProposal {
-    return {
-      id: row.id as string,
-      name: row.name as string,
-      description: row.description as string,
-      parameters: row.parameters as string,
-      rationale: row.rationale as string,
-      sourcePatterns: row.source_patterns as string,
-      implementationHint: row.implementation_hint as string,
-      status: row.status as ToolProposalStatus,
-      createdAt: row.created_at as string,
-      updatedAt: row.updated_at as string,
-    };
-  }
+	private rowToProposal(row: Record<string, unknown>): ToolProposal {
+		return {
+			id: row.id as string,
+			name: row.name as string,
+			description: row.description as string,
+			parameters: row.parameters as string,
+			rationale: row.rationale as string,
+			sourcePatterns: row.source_patterns as string,
+			implementationHint: row.implementation_hint as string,
+			status: row.status as ToolProposalStatus,
+			createdAt: row.created_at as string,
+			updatedAt: row.updated_at as string,
+		};
+	}
 }

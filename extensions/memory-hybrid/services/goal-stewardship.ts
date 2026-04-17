@@ -17,32 +17,37 @@ export * from "./goal-circuit-breaker.js";
 const globalDispatchTimestamps: number[] = [];
 
 function pruneOldTimestamps(): void {
-  const cutoff = Date.now() - 60 * 60 * 1000;
-  let firstValid = 0;
-  while (firstValid < globalDispatchTimestamps.length && globalDispatchTimestamps[firstValid]! < cutoff) {
-    firstValid++;
-  }
-  if (firstValid > 0) {
-    globalDispatchTimestamps.splice(0, firstValid);
-  }
+	const cutoff = Date.now() - 60 * 60 * 1000;
+	let firstValid = 0;
+	while (
+		firstValid < globalDispatchTimestamps.length &&
+		globalDispatchTimestamps[firstValid]! < cutoff
+	) {
+		firstValid++;
+	}
+	if (firstValid > 0) {
+		globalDispatchTimestamps.splice(0, firstValid);
+	}
 }
 
 export function recordGoalDispatch(): void {
-  pruneOldTimestamps();
-  globalDispatchTimestamps.push(Date.now());
+	pruneOldTimestamps();
+	globalDispatchTimestamps.push(Date.now());
 }
 
 export function isGlobalRateLimited(maxPerHour: number): boolean {
-  pruneOldTimestamps();
-  return globalDispatchTimestamps.length >= maxPerHour;
+	pruneOldTimestamps();
+	return globalDispatchTimestamps.length >= maxPerHour;
 }
 
-export function goalStewardshipDefaultsFromConfig(cfg: GoalStewardshipConfig): GoalDefaults {
-  return {
-    maxDispatches: cfg.defaults.maxDispatches,
-    maxAssessments: cfg.defaults.maxAssessments,
-    cooldownMinutes: cfg.defaults.cooldownMinutes,
-    escalateAfterFailures: cfg.defaults.escalateAfterFailures,
-    priority: cfg.defaults.priority,
-  };
+export function goalStewardshipDefaultsFromConfig(
+	cfg: GoalStewardshipConfig,
+): GoalDefaults {
+	return {
+		maxDispatches: cfg.defaults.maxDispatches,
+		maxAssessments: cfg.defaults.maxAssessments,
+		cooldownMinutes: cfg.defaults.cooldownMinutes,
+		escalateAfterFailures: cfg.defaults.escalateAfterFailures,
+		priority: cfg.defaults.priority,
+	};
 }

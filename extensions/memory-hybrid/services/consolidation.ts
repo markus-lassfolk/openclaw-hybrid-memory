@@ -12,7 +12,10 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
-import { BATCH_STORE_IMPORTANCE, CONSOLIDATION_MERGE_MAX_CHARS } from "../utils/constants.js";
+import {
+	BATCH_STORE_IMPORTANCE,
+	CONSOLIDATION_MERGE_MAX_CHARS,
+} from "../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { withCostFeature } from "./cost-context.js";
@@ -24,316 +27,381 @@ import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
 
 interface ConsolidateOptions {
-  threshold: number;
-  includeStructured: boolean;
-  dryRun: boolean;
-  limit: number;
-  model: string;
+	threshold: number;
+	includeStructured: boolean;
+	dryRun: boolean;
+	limit: number;
+	model: string;
 }
 
 interface ConsolidateResult {
-  clustersFound: number;
-  merged: number;
-  deleted: number;
+	clustersFound: number;
+	merged: number;
+	deleted: number;
 }
 
 /**
  * Union-Find data structure for clustering.
  */
-export function unionFind(ids: string[], edges: Array<[string, string]>): Map<string, string> {
-  const parent = new Map<string, string>();
-  for (const id of ids) parent.set(id, id);
-  function find(x: string): string {
-    const p = parent.get(x)!;
-    if (p !== x) parent.set(x, find(p));
-    return parent.get(x)!;
-  }
-  function union(a: string, b: string): void {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent.set(ra, rb);
-  }
-  for (const [a, b] of edges) union(a, b);
-  return parent;
+export function unionFind(
+	ids: string[],
+	edges: Array<[string, string]>,
+): Map<string, string> {
+	const parent = new Map<string, string>();
+	for (const id of ids) parent.set(id, id);
+	function find(x: string): string {
+		const p = parent.get(x)!;
+		if (p !== x) parent.set(x, find(p));
+		return parent.get(x)!;
+	}
+	function union(a: string, b: string): void {
+		const ra = find(a);
+		const rb = find(b);
+		if (ra !== rb) parent.set(ra, rb);
+	}
+	for (const [a, b] of edges) union(a, b);
+	return parent;
 }
 
 /**
  * Get root ID for a cluster.
  */
 export function getRoot(parent: Map<string, string>, id: string): string {
-  let r = id;
-  while (parent.get(r) !== r) r = parent.get(r)!;
-  return r;
+	let r = id;
+	while (parent.get(r) !== r) r = parent.get(r)!;
+	return r;
 }
 
 /**
  * True if fact looks like identifier/number (IP, email, phone, UUID, etc.).
  * Used by consolidate to skip by default (2.2/2.4).
  */
-export function isStructuredForConsolidation(text: string, entity: string | null, key: string | null): boolean {
-  if (/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(text)) return true;
-  if (/[\w.-]+@[\w.-]+\.\w+/.test(text)) return true;
-  if (/\+\d{10,}/.test(text) || /\b\d{10,}\b/.test(text)) return true;
-  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return true;
-  const k = (key ?? "").toLowerCase();
-  const e = (entity ?? "").toLowerCase();
-  if (["email", "phone", "api_key", "ip", "uuid", "password"].some((x) => k.includes(x) || e.includes(x))) return true;
-  // Check for sensitive patterns to prevent credential leakage in consolidation
-  if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(text))) return true;
-  return false;
+export function isStructuredForConsolidation(
+	text: string,
+	entity: string | null,
+	key: string | null,
+): boolean {
+	if (/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(text)) return true;
+	if (/[\w.-]+@[\w.-]+\.\w+/.test(text)) return true;
+	if (/\+\d{10,}/.test(text) || /\b\d{10,}\b/.test(text)) return true;
+	if (
+		/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)
+	)
+		return true;
+	const k = (key ?? "").toLowerCase();
+	const e = (entity ?? "").toLowerCase();
+	if (
+		["email", "phone", "api_key", "ip", "uuid", "password"].some(
+			(x) => k.includes(x) || e.includes(x),
+		)
+	)
+		return true;
+	// Check for sensitive patterns to prevent credential leakage in consolidation
+	if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(text))) return true;
+	return false;
 }
 
-function selectConsolidatedKeyValue(facts: MemoryEntry[]): { key: string | null; value: string | null } {
-  if (facts.length === 0) return { key: null, value: null };
-  const highestConfidence = facts.reduce((best, f) => (f.confidence > best.confidence ? f : best), facts[0]);
-  const factsWithKey = facts.filter(
-    (f): f is MemoryEntry & { key: string } => typeof f.key === "string" && f.key.trim().length > 0,
-  );
-  if (factsWithKey.length === 0) return { key: null, value: null };
+function selectConsolidatedKeyValue(facts: MemoryEntry[]): {
+	key: string | null;
+	value: string | null;
+} {
+	if (facts.length === 0) return { key: null, value: null };
+	const highestConfidence = facts.reduce(
+		(best, f) => (f.confidence > best.confidence ? f : best),
+		facts[0],
+	);
+	const factsWithKey = facts.filter(
+		(f): f is MemoryEntry & { key: string } =>
+			typeof f.key === "string" && f.key.trim().length > 0,
+	);
+	if (factsWithKey.length === 0) return { key: null, value: null };
 
-  const keyToBest = new Map<string, MemoryEntry>();
-  for (const fact of factsWithKey) {
-    const key = fact.key.trim();
-    const prev = keyToBest.get(key);
-    if (!prev || fact.confidence > prev.confidence) {
-      keyToBest.set(key, fact);
-    }
-  }
+	const keyToBest = new Map<string, MemoryEntry>();
+	for (const fact of factsWithKey) {
+		const key = fact.key.trim();
+		const prev = keyToBest.get(key);
+		if (!prev || fact.confidence > prev.confidence) {
+			keyToBest.set(key, fact);
+		}
+	}
 
-  const keys = [...keyToBest.keys()];
-  let selectedKey = keys[0];
-  if (keys.length > 1) {
-    selectedKey = keys.reduce((bestKey, candidate) => {
-      const bestFact = keyToBest.get(bestKey)!;
-      const candidateFact = keyToBest.get(candidate)!;
-      if (candidateFact.confidence > bestFact.confidence) return candidate;
-      if (candidateFact.confidence < bestFact.confidence) return bestKey;
-      return candidate.length > bestKey.length ? candidate : bestKey;
-    }, selectedKey);
-  }
+	const keys = [...keyToBest.keys()];
+	let selectedKey = keys[0];
+	if (keys.length > 1) {
+		selectedKey = keys.reduce((bestKey, candidate) => {
+			const bestFact = keyToBest.get(bestKey)!;
+			const candidateFact = keyToBest.get(candidate)!;
+			if (candidateFact.confidence > bestFact.confidence) return candidate;
+			if (candidateFact.confidence < bestFact.confidence) return bestKey;
+			return candidate.length > bestKey.length ? candidate : bestKey;
+		}, selectedKey);
+	}
 
-  const bestForKey = keyToBest.get(selectedKey)!;
-  const selectedValue =
-    highestConfidence.key?.trim() === selectedKey && highestConfidence.value != null
-      ? highestConfidence.value
-      : (bestForKey.value ?? null);
-  return { key: selectedKey, value: selectedValue };
+	const bestForKey = keyToBest.get(selectedKey)!;
+	const selectedValue =
+		highestConfidence.key?.trim() === selectedKey &&
+		highestConfidence.value != null
+			? highestConfidence.value
+			: (bestForKey.value ?? null);
+	return { key: selectedKey, value: selectedValue };
 }
 
 /**
  * Run consolidation: cluster similar facts and merge them with LLM.
  */
 export async function runConsolidate(
-  factsDb: FactsDB,
-  vectorDb: VectorDB,
-  embeddings: EmbeddingProvider,
-  openai: OpenAI,
-  opts: ConsolidateOptions,
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  aliasDb?: import("./retrieval-aliases.js").AliasDB | null,
-  provenanceService?: ProvenanceService | null,
+	factsDb: FactsDB,
+	vectorDb: VectorDB,
+	embeddings: EmbeddingProvider,
+	openai: OpenAI,
+	opts: ConsolidateOptions,
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	aliasDb?: import("./retrieval-aliases.js").AliasDB | null,
+	provenanceService?: ProvenanceService | null,
 ): Promise<ConsolidateResult> {
-  const facts = factsDb.getFactsForConsolidation(opts.limit);
-  const candidateFacts = opts.includeStructured
-    ? facts
-    : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));
-  if (candidateFacts.length < 2) {
-    logger.info("memory-hybrid: consolidate — fewer than 2 candidate facts");
-    return { clustersFound: 0, merged: 0, deleted: 0 };
-  }
+	const facts = factsDb.getFactsForConsolidation(opts.limit);
+	const candidateFacts = opts.includeStructured
+		? facts
+		: facts.filter(
+				(f) => !isStructuredForConsolidation(f.text, f.entity, f.key),
+			);
+	if (candidateFacts.length < 2) {
+		logger.info("memory-hybrid: consolidate — fewer than 2 candidate facts");
+		return { clustersFound: 0, merged: 0, deleted: 0 };
+	}
 
-  const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
-  const ids = candidateFacts.map((f) => f.id);
+	const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
+	const ids = candidateFacts.map((f) => f.id);
 
-  logger.info(`memory-hybrid: consolidate — embedding ${ids.length} facts...`);
-  const vectors: number[][] = [];
-  for (let i = 0; i < ids.length; i += 20) {
-    const batch = ids.slice(i, i + 20);
-    for (const id of batch) {
-      const f = idToFact.get(id)!;
-      try {
-        const vec = await embeddings.embed(f.text);
-        vectors.push(normalizeVector(vec));
-      } catch (err) {
-        logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "consolidate-embed",
-            subsystem: "embeddings",
-            factId: id,
-          });
-        }
-        vectors.push([]);
-      }
-    }
-    if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
-  }
+	logger.info(`memory-hybrid: consolidate — embedding ${ids.length} facts...`);
+	const vectors: number[][] = [];
+	for (let i = 0; i < ids.length; i += 20) {
+		const batch = ids.slice(i, i + 20);
+		for (const id of batch) {
+			const f = idToFact.get(id)!;
+			try {
+				const vec = await embeddings.embed(f.text);
+				vectors.push(normalizeVector(vec));
+			} catch (err) {
+				logger.warn(
+					`memory-hybrid: consolidate embed failed for ${id}: ${err}`,
+				);
+				// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+				if (!shouldSuppressEmbeddingError(err)) {
+					capturePluginError(
+						err instanceof Error ? err : new Error(String(err)),
+						{
+							operation: "consolidate-embed",
+							subsystem: "embeddings",
+							factId: id,
+						},
+					);
+				}
+				vectors.push([]);
+			}
+		}
+		if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
+	}
 
-  const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
-  const edges: Array<[string, string]> = [];
-  for (let i = 0; i < ids.length; i++) {
-    const vi = vectors[i];
-    if (vi.length === 0) continue;
-    for (let j = i + 1; j < ids.length; j++) {
-      const vj = vectors[j];
-      if (vj.length === 0) continue;
-      const score = dotProductSimilarity(vi, vj);
-      if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
-    }
-  }
+	const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
+	const edges: Array<[string, string]> = [];
+	for (let i = 0; i < ids.length; i++) {
+		const vi = vectors[i];
+		if (vi.length === 0) continue;
+		for (let j = i + 1; j < ids.length; j++) {
+			const vj = vectors[j];
+			if (vj.length === 0) continue;
+			const score = dotProductSimilarity(vi, vj);
+			if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
+		}
+	}
 
-  const parent = unionFind(ids, edges);
-  const rootToCluster = new Map<string, string[]>();
-  for (const id of ids) {
-    const r = getRoot(parent, id);
-    if (!rootToCluster.has(r)) rootToCluster.set(r, []);
-    rootToCluster.get(r)?.push(id);
-  }
-  const clusters = [...rootToCluster.values()].filter((c) => c.length >= 2);
-  logger.info(`memory-hybrid: consolidate — ${clusters.length} clusters (≥2 facts)`);
+	const parent = unionFind(ids, edges);
+	const rootToCluster = new Map<string, string[]>();
+	for (const id of ids) {
+		const r = getRoot(parent, id);
+		if (!rootToCluster.has(r)) rootToCluster.set(r, []);
+		rootToCluster.get(r)?.push(id);
+	}
+	const clusters = [...rootToCluster.values()].filter((c) => c.length >= 2);
+	logger.info(
+		`memory-hybrid: consolidate — ${clusters.length} clusters (≥2 facts)`,
+	);
 
-  if (clusters.length === 0) return { clustersFound: 0, merged: 0, deleted: 0 };
+	if (clusters.length === 0) return { clustersFound: 0, merged: 0, deleted: 0 };
 
-  let merged = 0;
-  let deleted = 0;
-  const consolidationRunId = provenanceService ? randomUUID() : null;
-  for (const clusterIds of clusters) {
-    const texts = clusterIds.map((id) => idToFact.get(id)?.text);
-    const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
-    const prompt = fillPrompt(loadPrompt("consolidate"), { facts_list: factsList });
-    let mergedText: string;
-    try {
-      const { withLLMRetry } = await import("./chat.js");
-      // Uses withCostFeature context-wrapper (rather than a feature: param) because
-      // openai.chat.completions.create is called directly here, not via chatCompleteWithRetry.
-      const resp = await withCostFeature("consolidation", () =>
-        withLLMRetry(
-          () =>
-            openai.chat.completions.create({
-              model: opts.model,
-              messages: [{ role: "user", content: prompt }],
-              temperature: 0,
-              ...chatCompletionTokenParams(opts.model, 300),
-            }),
-          { maxRetries: 2 },
-        ),
-      );
-      mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
-    } catch (err) {
-      logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "consolidate-llm",
-        subsystem: "openai",
-        clusterSize: clusterIds.length,
-      });
-      continue;
-    }
-    if (!mergedText) continue;
+	let merged = 0;
+	let deleted = 0;
+	const consolidationRunId = provenanceService ? randomUUID() : null;
+	for (const clusterIds of clusters) {
+		const texts = clusterIds.map((id) => idToFact.get(id)?.text);
+		const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
+		const prompt = fillPrompt(loadPrompt("consolidate"), {
+			facts_list: factsList,
+		});
+		let mergedText: string;
+		try {
+			const { withLLMRetry } = await import("./chat.js");
+			// Uses withCostFeature context-wrapper (rather than a feature: param) because
+			// openai.chat.completions.create is called directly here, not via chatCompleteWithRetry.
+			const resp = await withCostFeature("consolidation", () =>
+				withLLMRetry(
+					() =>
+						openai.chat.completions.create({
+							model: opts.model,
+							messages: [{ role: "user", content: prompt }],
+							temperature: 0,
+							...chatCompletionTokenParams(opts.model, 300),
+						}),
+					{ maxRetries: 2 },
+				),
+			);
+			mergedText = (resp.choices[0]?.message?.content ?? "")
+				.trim()
+				.slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
+		} catch (err) {
+			logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "consolidate-llm",
+				subsystem: "openai",
+				clusterSize: clusterIds.length,
+			});
+			continue;
+		}
+		if (!mergedText) continue;
 
-    const clusterFacts = clusterIds.map((id) => factsDb.getById(id)).filter(Boolean) as MemoryEntry[];
-    const first = clusterFacts[0];
-    const category = (first?.category as MemoryCategory) ?? "other";
-    const maxSourceDate = clusterFacts.reduce(
-      (acc, f) => (f.sourceDate != null && (acc == null || f.sourceDate > acc) ? f.sourceDate : acc),
-      null as number | null,
-    );
-    const mergedTags = [...new Set([...clusterFacts.flatMap((f) => f.tags ?? []), "consolidated"])];
-    const { key: mergedKey, value: mergedValue } = selectConsolidatedKeyValue(clusterFacts);
+		const clusterFacts = clusterIds
+			.map((id) => factsDb.getById(id))
+			.filter(Boolean) as MemoryEntry[];
+		const first = clusterFacts[0];
+		const category = (first?.category as MemoryCategory) ?? "other";
+		const maxSourceDate = clusterFacts.reduce(
+			(acc, f) =>
+				f.sourceDate != null && (acc == null || f.sourceDate > acc)
+					? f.sourceDate
+					: acc,
+			null as number | null,
+		);
+		const mergedTags = [
+			...new Set([
+				...clusterFacts.flatMap((f) => f.tags ?? []),
+				"consolidated",
+			]),
+		];
+		const { key: mergedKey, value: mergedValue } =
+			selectConsolidatedKeyValue(clusterFacts);
 
-    if (opts.dryRun) {
-      logger.info(
-        `memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`,
-      );
-      merged++;
-      continue;
-    }
+		if (opts.dryRun) {
+			logger.info(
+				`memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`,
+			);
+			merged++;
+			continue;
+		}
 
-    const entry = factsDb.store({
-      text: mergedText,
-      category,
-      importance: BATCH_STORE_IMPORTANCE,
-      entity: first?.entity ?? null,
-      key: mergedKey,
-      value: mergedValue,
-      source: "consolidation",
-      decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
-      sourceDate: maxSourceDate,
-      tags: mergedTags.length > 0 ? mergedTags : undefined,
-      extractionMethod: "consolidation",
-      extractionConfidence: BATCH_STORE_IMPORTANCE,
-    });
-    if (provenanceService && consolidationRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "consolidation",
-          sourceId: consolidationRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "consolidate-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
-    let vector: number[] | undefined;
-    try {
-      vector = await embeddings.embed(mergedText);
-    } catch (err) {
-      logger.warn(`memory-hybrid: consolidate embed failed: ${err}`);
-      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "consolidate-embed",
-          subsystem: "embeddings",
-          factId: entry.id,
-        });
-      }
-    }
-    if (vector !== undefined) {
-      try {
-        await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
-        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-      } catch (err) {
-        logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "consolidate-vector-store",
-          subsystem: "vector",
-          factId: entry.id,
-        });
-      }
-    }
-    // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
-    for (const id of clusterIds) {
-      factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
-    }
-    if (provenanceService) {
-      for (const sourceFact of clusterFacts) {
-        try {
-          provenanceService.addEdge(entry.id, {
-            edgeType: "CONSOLIDATED_FROM",
-            sourceType: "consolidation",
-            sourceId: sourceFact.id,
-            sourceText: sourceFact.text,
-          });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "consolidate-provenance-chain",
-            subsystem: "provenance",
-            factId: entry.id,
-          });
-        }
-      }
-    }
-    for (const id of clusterIds) {
-      factsDb.delete(id);
-      aliasDb?.deleteByFactId(id);
-      deleted++;
-    }
-    merged++;
-  }
+		const entry = factsDb.store({
+			text: mergedText,
+			category,
+			importance: BATCH_STORE_IMPORTANCE,
+			entity: first?.entity ?? null,
+			key: mergedKey,
+			value: mergedValue,
+			source: "consolidation",
+			decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
+			sourceDate: maxSourceDate,
+			tags: mergedTags.length > 0 ? mergedTags : undefined,
+			extractionMethod: "consolidation",
+			extractionConfidence: BATCH_STORE_IMPORTANCE,
+		});
+		if (provenanceService && consolidationRunId) {
+			try {
+				provenanceService.addEdge(entry.id, {
+					edgeType: "DERIVED_FROM",
+					sourceType: "consolidation",
+					sourceId: consolidationRunId,
+				});
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "consolidate-provenance-derived",
+						subsystem: "provenance",
+						factId: entry.id,
+					},
+				);
+			}
+		}
+		let vector: number[] | undefined;
+		try {
+			vector = await embeddings.embed(mergedText);
+		} catch (err) {
+			logger.warn(`memory-hybrid: consolidate embed failed: ${err}`);
+			// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+			if (!shouldSuppressEmbeddingError(err)) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "consolidate-embed",
+						subsystem: "embeddings",
+						factId: entry.id,
+					},
+				);
+			}
+		}
+		if (vector !== undefined) {
+			try {
+				await vectorDb.store({
+					text: mergedText,
+					vector,
+					importance: BATCH_STORE_IMPORTANCE,
+					category,
+					id: entry.id,
+				});
+				factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+			} catch (err) {
+				logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "consolidate-vector-store",
+						subsystem: "vector",
+						factId: entry.id,
+					},
+				);
+			}
+		}
+		// Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
+		for (const id of clusterIds) {
+			factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
+		}
+		if (provenanceService) {
+			for (const sourceFact of clusterFacts) {
+				try {
+					provenanceService.addEdge(entry.id, {
+						edgeType: "CONSOLIDATED_FROM",
+						sourceType: "consolidation",
+						sourceId: sourceFact.id,
+						sourceText: sourceFact.text,
+					});
+				} catch (err) {
+					capturePluginError(
+						err instanceof Error ? err : new Error(String(err)),
+						{
+							operation: "consolidate-provenance-chain",
+							subsystem: "provenance",
+							factId: entry.id,
+						},
+					);
+				}
+			}
+		}
+		for (const id of clusterIds) {
+			factsDb.delete(id);
+			aliasDb?.deleteByFactId(id);
+			deleted++;
+		}
+		merged++;
+	}
 
-  return { clustersFound: clusters.length, merged, deleted };
+	return { clustersFound: clusters.length, merged, deleted };
 }

@@ -11,7 +11,11 @@ export const PLUGIN_ID = "openclaw-hybrid-memory";
 
 /** Path to marker file written by config-mode/config-set; cleared when gateway loads plugin. */
 export function getRestartPendingPath(): string {
-  return join(homedir(), ".openclaw", ".restart-pending.openclaw-hybrid-memory");
+	return join(
+		homedir(),
+		".openclaw",
+		".restart-pending.openclaw-hybrid-memory",
+	);
 }
 
 /** Max characters for a single fact in reflection/consolidation prompts. */
@@ -97,7 +101,8 @@ export const VECTORDB_INIT_RETRY_DELAY_MS = 500;
  * as the user-facing guard in memory_forget.
  * Centralised here to avoid drift between vector-db.ts and memory-tools.ts.
  */
-export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const UUID_REGEX =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Substring of the LanceDB error thrown on vector-dimension mismatch.
@@ -113,7 +118,7 @@ export const LANCE_VECTOR_SEARCH_MAX_LIMIT = 1000;
 
 /** Default session transcript file suffix (override with OPENCLAW_SESSION_LOG_SUFFIX, e.g. `.jsonl`). */
 export function getSessionLogFileSuffix(): string {
-  const raw = getEnv("OPENCLAW_SESSION_LOG_SUFFIX")?.trim();
-  if (!raw) return ".jsonl";
-  return raw.startsWith(".") ? raw : `.${raw}`;
+	const raw = getEnv("OPENCLAW_SESSION_LOG_SUFFIX")?.trim();
+	if (!raw) return ".jsonl";
+	return raw.startsWith(".") ? raw : `.${raw}`;
 }

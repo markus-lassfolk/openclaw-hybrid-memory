@@ -22,13 +22,16 @@ import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
+import {
+	type RecallPipelineDeps,
+	runRecallPipelineQuery,
+} from "../services/recall-pipeline.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 
 vi.mock("../services/error-reporter.js", () => ({
-  capturePluginError: vi.fn(),
+	capturePluginError: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -36,83 +39,94 @@ vi.mock("../services/error-reporter.js", () => ({
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  vi.mocked(capturePluginError).mockClear();
+	vi.mocked(capturePluginError).mockClear();
 });
 
-function makeEntry(id: string, overrides: Partial<MemoryEntry> = {}): MemoryEntry {
-  return {
-    id,
-    text: `fact ${id}`,
-    category: "general",
-    importance: 0.5,
-    entity: null,
-    key: null,
-    value: null,
-    source: "test",
-    createdAt: 1_700_000_000,
-    decayClass: "stable",
-    expiresAt: null,
-    lastConfirmedAt: 0,
-    confidence: 1,
-    ...overrides,
-  };
+function makeEntry(
+	id: string,
+	overrides: Partial<MemoryEntry> = {},
+): MemoryEntry {
+	return {
+		id,
+		text: `fact ${id}`,
+		category: "general",
+		importance: 0.5,
+		entity: null,
+		key: null,
+		value: null,
+		source: "test",
+		createdAt: 1_700_000_000,
+		decayClass: "stable",
+		expiresAt: null,
+		lastConfirmedAt: 0,
+		confidence: 1,
+		...overrides,
+	};
 }
 
-function makeSearchResult(id: string, score = 0.8, overrides: Partial<MemoryEntry> = {}): SearchResult {
-  return { entry: makeEntry(id, overrides), score, backend: "sqlite" };
+function makeSearchResult(
+	id: string,
+	score = 0.8,
+	overrides: Partial<MemoryEntry> = {},
+): SearchResult {
+	return { entry: makeEntry(id, overrides), score, backend: "sqlite" };
 }
 
 /** Minimal stub for RecallPipelineDeps with FTS-only (no semantic). */
-function makeDeps(overrides: Partial<RecallPipelineDeps> = {}): RecallPipelineDeps {
-  const factsDb = {
-    search: vi.fn(() => [] as SearchResult[]),
-    getById: vi.fn((_id: string) => null as MemoryEntry | null),
-    lookup: vi.fn((_entity: string) => [] as SearchResult[]),
-    getSupersededTexts: vi.fn(() => new Set<string>()),
-  };
+function makeDeps(
+	overrides: Partial<RecallPipelineDeps> = {},
+): RecallPipelineDeps {
+	const factsDb = {
+		search: vi.fn(() => [] as SearchResult[]),
+		getById: vi.fn((_id: string) => null as MemoryEntry | null),
+		lookup: vi.fn((_entity: string) => [] as SearchResult[]),
+		getSupersededTexts: vi.fn(() => new Set<string>()),
+	};
 
-  const vectorDb = {
-    search: vi.fn(async () => [] as SearchResult[]),
-  };
+	const vectorDb = {
+		search: vi.fn(async () => [] as SearchResult[]),
+	};
 
-  const embeddings = {
-    embed: vi.fn(async (_text: string) => [0.1, 0.2, 0.3] as number[]),
-  };
+	const embeddings = {
+		embed: vi.fn(async (_text: string) => [0.1, 0.2, 0.3] as number[]),
+	};
 
-  const openai = {} as RecallPipelineDeps["openai"];
+	const openai = {} as RecallPipelineDeps["openai"];
 
-  const defaultDeps: RecallPipelineDeps = {
-    factsDb,
-    vectorDb,
-    embeddings,
-    openai,
-    cfg: {
-      queryExpansion: {
-        enabled: false,
-        maxVariants: 4,
-        cacheSize: 100,
-        timeoutMs: 15_000,
-        skipForInteractiveTurns: true,
-      },
-      retrievalStrategies: ["fts5"],
-      memoryTieringEnabled: false,
-      rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-    },
-    recallOpts: {
-      tierFilter: "all",
-      scopeFilter: undefined,
-      reinforcementBoost: 0.1,
-      diversityWeight: 1.0,
-    },
-    minScore: 0.0,
-    pendingLLMWarnings: createPendingLLMWarnings(),
-    logger: {
-      debug: vi.fn(),
-      warn: vi.fn(),
-    },
-  };
+	const defaultDeps: RecallPipelineDeps = {
+		factsDb,
+		vectorDb,
+		embeddings,
+		openai,
+		cfg: {
+			queryExpansion: {
+				enabled: false,
+				maxVariants: 4,
+				cacheSize: 100,
+				timeoutMs: 15_000,
+				skipForInteractiveTurns: true,
+			},
+			retrievalStrategies: ["fts5"],
+			memoryTieringEnabled: false,
+			rawCfg: {
+				llm: undefined,
+			} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+		},
+		recallOpts: {
+			tierFilter: "all",
+			scopeFilter: undefined,
+			reinforcementBoost: 0.1,
+			diversityWeight: 1.0,
+		},
+		minScore: 0.0,
+		pendingLLMWarnings: createPendingLLMWarnings(),
+		logger: {
+			debug: vi.fn(),
+			warn: vi.fn(),
+		},
+	};
 
-  return { ...defaultDeps, ...overrides };
+	return { ...defaultDeps, ...overrides };
 }
 
 // ---------------------------------------------------------------------------
@@ -120,19 +134,21 @@ function makeDeps(overrides: Partial<RecallPipelineDeps> = {}): RecallPipelineDe
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — empty/whitespace query", () => {
-  it("returns [] for empty string", async () => {
-    const deps = makeDeps();
-    const result = await runRecallPipelineQuery("", 10, deps, { value: false });
-    expect(result).toEqual([]);
-    expect(deps.factsDb.search).not.toHaveBeenCalled();
-  });
+	it("returns [] for empty string", async () => {
+		const deps = makeDeps();
+		const result = await runRecallPipelineQuery("", 10, deps, { value: false });
+		expect(result).toEqual([]);
+		expect(deps.factsDb.search).not.toHaveBeenCalled();
+	});
 
-  it("returns [] for whitespace-only string", async () => {
-    const deps = makeDeps();
-    const result = await runRecallPipelineQuery("   ", 10, deps, { value: false });
-    expect(result).toEqual([]);
-    expect(deps.factsDb.search).not.toHaveBeenCalled();
-  });
+	it("returns [] for whitespace-only string", async () => {
+		const deps = makeDeps();
+		const result = await runRecallPipelineQuery("   ", 10, deps, {
+			value: false,
+		});
+		expect(result).toEqual([]);
+		expect(deps.factsDb.search).not.toHaveBeenCalled();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -140,28 +156,36 @@ describe("runRecallPipelineQuery — empty/whitespace query", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — FTS-only mode", () => {
-  it("calls factsDb.search and returns FTS results", async () => {
-    const r1 = makeSearchResult("a");
-    const r2 = makeSearchResult("b");
-    const deps = makeDeps();
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([r1, r2]);
+	it("calls factsDb.search and returns FTS results", async () => {
+		const r1 = makeSearchResult("a");
+		const r2 = makeSearchResult("b");
+		const deps = makeDeps();
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([r1, r2]);
 
-    const result = await runRecallPipelineQuery("hello world", 10, deps, { value: false });
+		const result = await runRecallPipelineQuery("hello world", 10, deps, {
+			value: false,
+		});
 
-    expect(deps.factsDb.search).toHaveBeenCalledWith("hello world", 10, deps.recallOpts);
-    expect(deps.vectorDb.search).not.toHaveBeenCalled();
-    expect(deps.embeddings.embed).not.toHaveBeenCalled();
-    expect(result.length).toBeGreaterThanOrEqual(1);
-  });
+		expect(deps.factsDb.search).toHaveBeenCalledWith(
+			"hello world",
+			10,
+			deps.recallOpts,
+		);
+		expect(deps.vectorDb.search).not.toHaveBeenCalled();
+		expect(deps.embeddings.embed).not.toHaveBeenCalled();
+		expect(result.length).toBeGreaterThanOrEqual(1);
+	});
 
-  it("does not call embed when strategies only include fts5", async () => {
-    const deps = makeDeps();
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("x")]);
+	it("does not call embed when strategies only include fts5", async () => {
+		const deps = makeDeps();
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			makeSearchResult("x"),
+		]);
 
-    await runRecallPipelineQuery("test query", 5, deps, { value: false });
+		await runRecallPipelineQuery("test query", 5, deps, { value: false });
 
-    expect(deps.embeddings.embed).not.toHaveBeenCalled();
-  });
+		expect(deps.embeddings.embed).not.toHaveBeenCalled();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -169,127 +193,153 @@ describe("runRecallPipelineQuery — FTS-only mode", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — semantic mode", () => {
-  it("calls embeddings.embed and vectorDb.search when semantic strategy is on", async () => {
-    const ftsResult = makeSearchResult("fts-1", 0.6);
-    const vecResult = makeSearchResult("vec-1", 0.9);
+	it("calls embeddings.embed and vectorDb.search when semantic strategy is on", async () => {
+		const ftsResult = makeSearchResult("fts-1", 0.6);
+		const vecResult = makeSearchResult("vec-1", 0.9);
 
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([ftsResult]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([vecResult]);
-    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      id === "vec-1" ? makeEntry("vec-1") : null,
-    );
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			ftsResult,
+		]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+			vecResult,
+		]);
+		(deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation(
+			(id: string) => (id === "vec-1" ? makeEntry("vec-1") : null),
+		);
 
-    const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+		const result = await runRecallPipelineQuery("vector query", 10, deps, {
+			value: false,
+		});
 
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("vector query");
-    expect(deps.vectorDb.search).toHaveBeenCalled();
-    // Both fts and vector results should be present (merged)
-    const ids = result.map((r) => r.entry.id);
-    expect(ids).toContain("fts-1");
-    expect(ids).toContain("vec-1");
-  });
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("vector query");
+		expect(deps.vectorDb.search).toHaveBeenCalled();
+		// Both fts and vector results should be present (merged)
+		const ids = result.map((r) => r.entry.id);
+		expect(ids).toContain("fts-1");
+		expect(ids).toContain("vec-1");
+	});
 
-  it("uses precomputedVector when provided and query matches trimmed text", async () => {
-    const precomputed = [1, 2, 3, 4];
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("uses precomputedVector when provided and query matches trimmed text", async () => {
+		const precomputed = [1, 2, 3, 4];
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery(
-      "exact query",
-      5,
-      deps,
-      { value: false },
-      {
-        precomputedVector: precomputed,
-      },
-    );
+		await runRecallPipelineQuery(
+			"exact query",
+			5,
+			deps,
+			{ value: false },
+			{
+				precomputedVector: precomputed,
+			},
+		);
 
-    // Should NOT call embed since precomputedVector was provided and query matches
-    expect(deps.embeddings.embed).not.toHaveBeenCalled();
-    expect(deps.vectorDb.search).toHaveBeenCalledWith(precomputed, expect.any(Number), expect.any(Number));
-  });
-  it("falls back to FTS-only without reporting expected all-provider failures", async () => {
-    const ftsResult = makeSearchResult("fts-1", 0.6);
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+		// Should NOT call embed since precomputedVector was provided and query matches
+		expect(deps.embeddings.embed).not.toHaveBeenCalled();
+		expect(deps.vectorDb.search).toHaveBeenCalledWith(
+			precomputed,
+			expect.any(Number),
+			expect.any(Number),
+		);
+	});
+	it("falls back to FTS-only without reporting expected all-provider failures", async () => {
+		const ftsResult = makeSearchResult("fts-1", 0.6);
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([ftsResult]);
-    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new AllEmbeddingProvidersFailed([Object.assign(new Error("429 Too Many Requests"), { status: 429 })]),
-    );
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			ftsResult,
+		]);
+		(deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new AllEmbeddingProvidersFailed([
+				Object.assign(new Error("429 Too Many Requests"), { status: 429 }),
+			]),
+		);
 
-    const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+		const result = await runRecallPipelineQuery("vector query", 10, deps, {
+			value: false,
+		});
 
-    expect(result.map((entry) => entry.entry.id)).toEqual(["fts-1"]);
-    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
-    expect(deps.logger.warn).toHaveBeenCalledWith(expect.stringContaining("vector recall failed"));
-  });
+		expect(result.map((entry) => entry.entry.id)).toEqual(["fts-1"]);
+		expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+		expect(deps.logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining("vector recall failed"),
+		);
+	});
 
-  it("still reports transient all-provider failures during recall", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+	it("still reports transient all-provider failures during recall", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new AllEmbeddingProvidersFailed([new Error("network timeout")]),
-    );
+		(deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new AllEmbeddingProvidersFailed([new Error("network timeout")]),
+		);
 
-    await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+		await runRecallPipelineQuery("vector query", 10, deps, { value: false });
 
-    expect(vi.mocked(capturePluginError)).toHaveBeenCalled();
-  });
+		expect(vi.mocked(capturePluginError)).toHaveBeenCalled();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -297,33 +347,40 @@ describe("runRecallPipelineQuery — semantic mode", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — entity option", () => {
-  it("calls factsDb.lookup when opts.entity is provided", async () => {
-    const entityResult = makeSearchResult("entity-fact", 0.95);
-    const deps = makeDeps();
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.factsDb.lookup as ReturnType<typeof vi.fn>).mockReturnValue([entityResult]);
+	it("calls factsDb.lookup when opts.entity is provided", async () => {
+		const entityResult = makeSearchResult("entity-fact", 0.95);
+		const deps = makeDeps();
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.factsDb.lookup as ReturnType<typeof vi.fn>).mockReturnValue([
+			entityResult,
+		]);
 
-    await runRecallPipelineQuery(
-      "something about user",
-      10,
-      deps,
-      { value: false },
-      {
-        entity: "user",
-      },
-    );
+		await runRecallPipelineQuery(
+			"something about user",
+			10,
+			deps,
+			{ value: false },
+			{
+				entity: "user",
+			},
+		);
 
-    expect(deps.factsDb.lookup).toHaveBeenCalledWith("user", undefined, undefined, { scopeFilter: undefined });
-  });
+		expect(deps.factsDb.lookup).toHaveBeenCalledWith(
+			"user",
+			undefined,
+			undefined,
+			{ scopeFilter: undefined },
+		);
+	});
 
-  it("does not call factsDb.lookup when opts.entity is absent", async () => {
-    const deps = makeDeps();
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+	it("does not call factsDb.lookup when opts.entity is absent", async () => {
+		const deps = makeDeps();
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
-    await runRecallPipelineQuery("no entity", 5, deps, { value: false });
+		await runRecallPipelineQuery("no entity", 5, deps, { value: false });
 
-    expect(deps.factsDb.lookup).not.toHaveBeenCalled();
-  });
+		expect(deps.factsDb.lookup).not.toHaveBeenCalled();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -331,126 +388,145 @@ describe("runRecallPipelineQuery — entity option", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — HyDE disabled (queryExpansion.enabled = false)", () => {
-  it("keeps HyDE off by default on the interactive path even when queryExpansion is enabled", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("keeps HyDE off by default on the interactive path even when queryExpansion is enabled", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    const hydeUsedRef = { value: false };
-    await runRecallPipelineQuery("raw query", 5, deps, hydeUsedRef);
+		const hydeUsedRef = { value: false };
+		await runRecallPipelineQuery("raw query", 5, deps, hydeUsedRef);
 
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query");
-    expect(hydeUsedRef.value).toBe(false);
-  });
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query");
+		expect(hydeUsedRef.value).toBe(false);
+	});
 
-  it("never calls chat when queryExpansion is disabled", async () => {
-    // We can observe this indirectly: if HyDE ran, it would call embed with the
-    // HyDE-generated text. With HyDE off, embed is called with the raw query.
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("never calls chat when queryExpansion is disabled", async () => {
+		// We can observe this indirectly: if HyDE ran, it would call embed with the
+		// HyDE-generated text. With HyDE off, embed is called with the raw query.
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("a query", 5, deps, { value: false });
+		await runRecallPipelineQuery("a query", 5, deps, { value: false });
 
-    // embed called with the raw query (not a HyDE expansion)
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("a query");
-  });
+		// embed called with the raw query (not a HyDE expansion)
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("a query");
+	});
 });
 
 describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
-  it("limitHydeOnce marks hydeUsedRef.value = true on first call", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+	it("limitHydeOnce marks hydeUsedRef.value = true on first call", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
-    const hydeUsedRef = { value: false };
+		const hydeUsedRef = { value: false };
 
-    // With fts5 only, vector step (and HyDE) is skipped — but limitHydeOnce gate
-    // is inside the vector step, so with fts5-only deps, HyDE never runs and the
-    // ref stays false. Verify no mutation when semantic is off.
-    await runRecallPipelineQuery("query", 5, deps, hydeUsedRef, { limitHydeOnce: true });
+		// With fts5 only, vector step (and HyDE) is skipped — but limitHydeOnce gate
+		// is inside the vector step, so with fts5-only deps, HyDE never runs and the
+		// ref stays false. Verify no mutation when semantic is off.
+		await runRecallPipelineQuery("query", 5, deps, hydeUsedRef, {
+			limitHydeOnce: true,
+		});
 
-    expect(hydeUsedRef.value).toBe(false);
-  });
+		expect(hydeUsedRef.value).toBe(false);
+	});
 
-  it("hydeUsedRef shared across calls prevents duplicate HyDE in semantic mode", async () => {
-    // Semantic mode, HyDE enabled but will fail (no real openai) — we care that
-    // the ref is set on first call so subsequent calls skip the HyDE attempt.
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 500,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: {
-          llm: undefined,
-          // mock getCronModelConfig path via rawCfg — not called since chatCompleteWithRetry is mocked at module level
-        } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("hydeUsedRef shared across calls prevents duplicate HyDE in semantic mode", async () => {
+		// Semantic mode, HyDE enabled but will fail (no real openai) — we care that
+		// the ref is set on first call so subsequent calls skip the HyDE attempt.
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 500,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+					// mock getCronModelConfig path via rawCfg — not called since chatCompleteWithRetry is mocked at module level
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    const hydeUsedRef = { value: false };
+		const hydeUsedRef = { value: false };
 
-    // First call with limitHydeOnce — HyDE will fail (no real openai) but
-    // should set the ref to true inside the semantic branch.
-    await runRecallPipelineQuery("first call", 5, deps, hydeUsedRef, {
-      limitHydeOnce: true,
-      policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
-    });
-    // hydeUsedRef.value is set to true inside the vector step
-    expect(hydeUsedRef.value).toBe(true);
+		// First call with limitHydeOnce — HyDE will fail (no real openai) but
+		// should set the ref to true inside the semantic branch.
+		await runRecallPipelineQuery("first call", 5, deps, hydeUsedRef, {
+			limitHydeOnce: true,
+			policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
+		});
+		// hydeUsedRef.value is set to true inside the vector step
+		expect(hydeUsedRef.value).toBe(true);
 
-    // Second call — HyDE is skipped, so embed is called with raw query
-    const embedCallsBefore = (deps.embeddings.embed as ReturnType<typeof vi.fn>).mock.calls.length;
-    await runRecallPipelineQuery("second call", 5, deps, hydeUsedRef, {
-      limitHydeOnce: true,
-      policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
-    });
-    const embedCallsAfter = (deps.embeddings.embed as ReturnType<typeof vi.fn>).mock.calls.length;
+		// Second call — HyDE is skipped, so embed is called with raw query
+		const embedCallsBefore = (deps.embeddings.embed as ReturnType<typeof vi.fn>)
+			.mock.calls.length;
+		await runRecallPipelineQuery("second call", 5, deps, hydeUsedRef, {
+			limitHydeOnce: true,
+			policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
+		});
+		const embedCallsAfter = (deps.embeddings.embed as ReturnType<typeof vi.fn>)
+			.mock.calls.length;
 
-    // embed was called for the second query (with raw text, since HyDE was skipped)
-    expect(embedCallsAfter).toBe(embedCallsBefore + 1);
-    expect((deps.embeddings.embed as ReturnType<typeof vi.fn>).mock.calls[embedCallsBefore][0]).toBe("second call");
-  });
+		// embed was called for the second query (with raw text, since HyDE was skipped)
+		expect(embedCallsAfter).toBe(embedCallsBefore + 1);
+		expect(
+			(deps.embeddings.embed as ReturnType<typeof vi.fn>).mock.calls[
+				embedCallsBefore
+			][0],
+		).toBe("second call");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -458,52 +534,66 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — memory tiering", () => {
-  it("removes cold-tier results when memoryTieringEnabled = true", async () => {
-    const warmResult = makeSearchResult("warm", 0.9, { tier: "warm" });
-    const coldResult = makeSearchResult("cold", 0.8, { tier: "cold" });
+	it("removes cold-tier results when memoryTieringEnabled = true", async () => {
+		const warmResult = makeSearchResult("warm", 0.9, { tier: "warm" });
+		const coldResult = makeSearchResult("cold", 0.8, { tier: "cold" });
 
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["fts5"],
-        memoryTieringEnabled: true,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["fts5"],
+				memoryTieringEnabled: true,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([warmResult, coldResult]);
-    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
-      if (id === "warm") return makeEntry("warm", { tier: "warm" });
-      if (id === "cold") return makeEntry("cold", { tier: "cold" });
-      return null;
-    });
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			warmResult,
+			coldResult,
+		]);
+		(deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation(
+			(id: string) => {
+				if (id === "warm") return makeEntry("warm", { tier: "warm" });
+				if (id === "cold") return makeEntry("cold", { tier: "cold" });
+				return null;
+			},
+		);
 
-    const result = await runRecallPipelineQuery("query", 10, deps, { value: false });
+		const result = await runRecallPipelineQuery("query", 10, deps, {
+			value: false,
+		});
 
-    const ids = result.map((r) => r.entry.id);
-    expect(ids).toContain("warm");
-    expect(ids).not.toContain("cold");
-  });
+		const ids = result.map((r) => r.entry.id);
+		expect(ids).toContain("warm");
+		expect(ids).not.toContain("cold");
+	});
 
-  it("returns all results when memoryTieringEnabled = false", async () => {
-    const warmResult = makeSearchResult("warm", 0.9, { tier: "warm" });
-    const coldResult = makeSearchResult("cold", 0.8, { tier: "cold" });
+	it("returns all results when memoryTieringEnabled = false", async () => {
+		const warmResult = makeSearchResult("warm", 0.9, { tier: "warm" });
+		const coldResult = makeSearchResult("cold", 0.8, { tier: "cold" });
 
-    const deps = makeDeps();
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([warmResult, coldResult]);
+		const deps = makeDeps();
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			warmResult,
+			coldResult,
+		]);
 
-    const result = await runRecallPipelineQuery("query", 10, deps, { value: false });
+		const result = await runRecallPipelineQuery("query", 10, deps, {
+			value: false,
+		});
 
-    const ids = result.map((r) => r.entry.id);
-    expect(ids).toContain("warm");
-    expect(ids).toContain("cold");
-  });
+		const ids = result.map((r) => r.entry.id);
+		expect(ids).toContain("warm");
+		expect(ids).toContain("cold");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -511,15 +601,21 @@ describe("runRecallPipelineQuery — memory tiering", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — limit", () => {
-  it("returns at most limitNum results from FTS", async () => {
-    const manyResults = Array.from({ length: 20 }, (_, i) => makeSearchResult(`r${i}`, 0.9 - i * 0.01));
-    const deps = makeDeps();
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue(manyResults);
+	it("returns at most limitNum results from FTS", async () => {
+		const manyResults = Array.from({ length: 20 }, (_, i) =>
+			makeSearchResult(`r${i}`, 0.9 - i * 0.01),
+		);
+		const deps = makeDeps();
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue(
+			manyResults,
+		);
 
-    const result = await runRecallPipelineQuery("query", 5, deps, { value: false });
+		const result = await runRecallPipelineQuery("query", 5, deps, {
+			value: false,
+		});
 
-    expect(result.length).toBeLessThanOrEqual(5);
-  });
+		expect(result.length).toBeLessThanOrEqual(5);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -527,133 +623,155 @@ describe("runRecallPipelineQuery — limit", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — HyDE fallback, FTS/embed ordering, vector timeout (#558, #42)", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.useRealTimers();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.useRealTimers();
+	});
 
-  it("still calls embeddings.embed with raw query when HyDE fails (non-abort)", async () => {
-    // When HyDE fails for a transient reason, embed should still be called
-    // with the raw query — the embed promise was kicked off before HyDE.
-    vi.spyOn(chatModule, "chatCompleteWithRetry").mockRejectedValue(
-      new Error("LLM request timeout after 5000ms (model: test-model)"),
-    );
+	it("still calls embeddings.embed with raw query when HyDE fails (non-abort)", async () => {
+		// When HyDE fails for a transient reason, embed should still be called
+		// with the raw query — the embed promise was kicked off before HyDE.
+		vi.spyOn(chatModule, "chatCompleteWithRetry").mockRejectedValue(
+			new Error("LLM request timeout after 5000ms (model: test-model)"),
+		);
 
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 5_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 5_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("raw query fallback", 5, deps, { value: false });
+		await runRecallPipelineQuery("raw query fallback", 5, deps, {
+			value: false,
+		});
 
-    // HyDE failed; embed should proceed with raw query
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
-  });
+		// HyDE failed; embed should proceed with raw query
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
+	});
 
-  it("drains embed promise when FTS throws (avoids unhandled rejection while embed is in flight)", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+	it("drains embed promise when FTS throws (avoids unhandled rejection while embed is in flight)", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("embed failed"));
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      throw new Error("FTS boom");
-    });
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+		(deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error("embed failed"),
+		);
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockImplementation(() => {
+			throw new Error("FTS boom");
+		});
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await expect(runRecallPipelineQuery("q", 5, deps, { value: false })).rejects.toThrow("FTS boom");
-    expect(deps.embeddings.embed).toHaveBeenCalled();
-  });
+		await expect(
+			runRecallPipelineQuery("q", 5, deps, { value: false }),
+		).rejects.toThrow("FTS boom");
+		expect(deps.embeddings.embed).toHaveBeenCalled();
+	});
 
-  it("embed call is initiated before FTS blocks the event loop (#42)", async () => {
-    // Verify that embeddings.embed is called eagerly (before FTS runs via setImmediate),
-    // so that the HTTP request is in-flight while FTS occupies the CPU.
-    const callOrder: string[] = [];
+	it("embed call is initiated before FTS blocks the event loop (#42)", async () => {
+		// Verify that embeddings.embed is called eagerly (before FTS runs via setImmediate),
+		// so that the HTTP request is in-flight while FTS occupies the CPU.
+		const callOrder: string[] = [];
 
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      callOrder.push("embed");
-      return [0.1, 0.2, 0.3];
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      callOrder.push("fts");
-      return [];
-    });
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+		(deps.embeddings.embed as ReturnType<typeof vi.fn>).mockImplementation(
+			async () => {
+				callOrder.push("embed");
+				return [0.1, 0.2, 0.3];
+			},
+		);
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockImplementation(() => {
+			callOrder.push("fts");
+			return [];
+		});
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("order test", 5, deps, { value: false });
+		await runRecallPipelineQuery("order test", 5, deps, { value: false });
 
-    // embed must be initiated before FTS runs
-    expect(callOrder.indexOf("embed")).toBeLessThan(callOrder.indexOf("fts"));
-  });
+		// embed must be initiated before FTS runs
+		expect(callOrder.indexOf("embed")).toBeLessThan(callOrder.indexOf("fts"));
+	});
 
-  it("vector-step timeout does not count FTS execution time (#42)", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
+	it("vector-step timeout does not count FTS execution time (#42)", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
 
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockResolvedValue([0.1, 0.2, 0.3]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([makeSearchResult("vec-1")]);
-    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      id === "vec-1" ? makeEntry("vec-1") : null,
-    );
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.embeddings.embed as ReturnType<typeof vi.fn>).mockResolvedValue([
+			0.1, 0.2, 0.3,
+		]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+			makeSearchResult("vec-1"),
+		]);
+		(deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation(
+			(id: string) => (id === "vec-1" ? makeEntry("vec-1") : null),
+		);
 
-    const result = await runRecallPipelineQuery("timeout test", 5, deps, { value: false });
+		const result = await runRecallPipelineQuery("timeout test", 5, deps, {
+			value: false,
+		});
 
-    // Vector results should be present (FTS didn't starve the timeout)
-    expect(deps.vectorDb.search).toHaveBeenCalled();
-    expect(result.map((r) => r.entry.id)).toContain("vec-1");
-  });
+		// Vector results should be present (FTS didn't starve the timeout)
+		expect(deps.vectorDb.search).toHaveBeenCalled();
+		expect(result.map((r) => r.entry.id)).toContain("vec-1");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -661,231 +779,298 @@ describe("runRecallPipelineQuery — HyDE fallback, FTS/embed ordering, vector t
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
-  beforeEach(() => {
-    vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue("HyDE generated text");
-  });
+	beforeEach(() => {
+		vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue(
+			"HyDE generated text",
+		);
+	});
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-  it("skips HyDE when interactive=true and skipForInteractiveTurns is true", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("skips HyDE when interactive=true and skipForInteractiveTurns is true", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false });
+		await runRecallPipelineQuery("my interactive query", 5, deps, {
+			value: false,
+		});
 
-    // HyDE was blocked — embed must be called with raw query, not HyDE-generated text
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
-    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
-  });
+		// HyDE was blocked — embed must be called with raw query, not HyDE-generated text
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
+		expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
+	});
 
-  it("allows HyDE when policy.allowHyde is true", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: false,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("allows HyDE when policy.allowHyde is true", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: false,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery(
-      "query with hyde",
-      5,
-      deps,
-      { value: false },
-      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
-    );
+		await runRecallPipelineQuery(
+			"query with hyde",
+			5,
+			deps,
+			{ value: false },
+			{ policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+		);
 
-    // HyDE was allowed — chatCompleteWithRetry must have been called
-    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
-    // embed should be called with HyDE-generated text (not raw query)
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
-  });
+		// HyDE was allowed — chatCompleteWithRetry must have been called
+		expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+		// embed should be called with HyDE-generated text (not raw query)
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+	});
 
-  it("allows HyDE when interactive is not set (background/cron recall)", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("allows HyDE when interactive is not set (background/cron recall)", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    // No interactive option — background/cron path
-    await runRecallPipelineQuery(
-      "background query",
-      5,
-      deps,
-      { value: false },
-      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
-    );
+		// No interactive option — background/cron path
+		await runRecallPipelineQuery(
+			"background query",
+			5,
+			deps,
+			{ value: false },
+			{ policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+		);
 
-    // HyDE was allowed on the background path
-    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
-  });
+		// HyDE was allowed on the background path
+		expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+	});
 
-  it("allows HyDE when policy.allowHyde is true regardless of skipForInteractiveTurns", async () => {
-    // The policy controls HyDE behavior, not the config directly
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("allows HyDE when policy.allowHyde is true regardless of skipForInteractiveTurns", async () => {
+		// The policy controls HyDE behavior, not the config directly
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery(
-      "explicit non-interactive query",
-      5,
-      deps,
-      { value: false },
-      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
-    );
+		await runRecallPipelineQuery(
+			"explicit non-interactive query",
+			5,
+			deps,
+			{ value: false },
+			{ policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+		);
 
-    // HyDE was allowed because policy.allowHyde is true
-    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
-  });
+		// HyDE was allowed because policy.allowHyde is true
+		expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+		expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+	});
 });
 
 describe("runRecallPipelineQuery — structured recall timing logs", () => {
-  it("emits completed phase logs with duration and hit counts in basic mode", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic", "fts5"],
-        memoryTieringEnabled: false,
-        recallTiming: "basic",
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([makeSearchResult("vec-1")]);
-    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      id === "vec-1" ? makeEntry("vec-1") : null,
-    );
+	it("emits completed phase logs with duration and hit counts in basic mode", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic", "fts5"],
+				memoryTieringEnabled: false,
+				recallTiming: "basic",
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			makeSearchResult("fts-1"),
+		]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([
+			makeSearchResult("vec-1"),
+		]);
+		(deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation(
+			(id: string) => (id === "vec-1" ? makeEntry("vec-1") : null),
+		);
 
-    await runRecallPipelineQuery("timing test", 5, deps, { value: false }, { timingSpan: "span-123", timingOp: "op" });
+		await runRecallPipelineQuery(
+			"timing test",
+			5,
+			deps,
+			{ value: false },
+			{ timingSpan: "span-123", timingOp: "op" },
+		);
 
-    const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => line);
-    expect(debugCalls.some((line) => line.includes("recall span=span-123 phase=lancedb_search"))).toBe(true);
-    expect(debugCalls.some((line) => line.includes("phase=lancedb_search") && line.includes("hits=1"))).toBe(true);
-    expect(debugCalls.some((line) => line.includes("phase=fts_search") && line.includes("duration_ms="))).toBe(true);
-  });
+		const debugCalls = vi
+			.mocked(deps.logger.debug)
+			.mock.calls.map(([line]) => line);
+		expect(
+			debugCalls.some((line) =>
+				line.includes("recall span=span-123 phase=lancedb_search"),
+			),
+		).toBe(true);
+		expect(
+			debugCalls.some(
+				(line) =>
+					line.includes("phase=lancedb_search") && line.includes("hits=1"),
+			),
+		).toBe(true);
+		expect(
+			debugCalls.some(
+				(line) =>
+					line.includes("phase=fts_search") && line.includes("duration_ms="),
+			),
+		).toBe(true);
+	});
 
-  it("emits started events and timestamps in verbose mode", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: false,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["fts5"],
-        memoryTieringEnabled: false,
-        recallTiming: "verbose",
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
+	it("emits started events and timestamps in verbose mode", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: false,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["fts5"],
+				memoryTieringEnabled: false,
+				recallTiming: "verbose",
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([
+			makeSearchResult("fts-1"),
+		]);
 
-    await runRecallPipelineQuery("verbose timing", 3, deps, { value: false }, { timingSpan: "span-v", timingOp: "op" });
+		await runRecallPipelineQuery(
+			"verbose timing",
+			3,
+			deps,
+			{ value: false },
+			{ timingSpan: "span-v", timingOp: "op" },
+		);
 
-    const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => line);
-    expect(debugCalls.some((line) => line.includes("phase=pipeline_run") && line.includes("event=started"))).toBe(true);
-    expect(debugCalls.some((line) => line.includes("event=started") && line.includes("ts="))).toBe(true);
-  });
+		const debugCalls = vi
+			.mocked(deps.logger.debug)
+			.mock.calls.map(([line]) => line);
+		expect(
+			debugCalls.some(
+				(line) =>
+					line.includes("phase=pipeline_run") && line.includes("event=started"),
+			),
+		).toBe(true);
+		expect(
+			debugCalls.some(
+				(line) => line.includes("event=started") && line.includes("ts="),
+			),
+		).toBe(true);
+	});
 });
 
 describe("runRecallPipelineQuery — retrieval mode policy (#639)", () => {
-  beforeEach(() => {
-    vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue("HyDE generated text");
-  });
+	beforeEach(() => {
+		vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue(
+			"HyDE generated text",
+		);
+	});
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-  it("treats mode=interactive-recall-path as hot-path even without interactive flag", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+	it("treats mode=interactive-recall-path as hot-path even without interactive flag", async () => {
+		const deps = makeDeps({
+			cfg: {
+				queryExpansion: {
+					enabled: true,
+					maxVariants: 4,
+					cacheSize: 100,
+					timeoutMs: 15_000,
+					skipForInteractiveTurns: true,
+				},
+				retrievalStrategies: ["semantic"],
+				memoryTieringEnabled: false,
+				rawCfg: {
+					llm: undefined,
+				} as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+			},
+		});
+		(deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+		(deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery(
-      "interactive mode query",
-      5,
-      deps,
-      { value: false },
-      {
-        mode: RETRIEVAL_MODE.INTERACTIVE_RECALL,
-      },
-    );
+		await runRecallPipelineQuery(
+			"interactive mode query",
+			5,
+			deps,
+			{ value: false },
+			{
+				mode: RETRIEVAL_MODE.INTERACTIVE_RECALL,
+			},
+		);
 
-    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("interactive mode query");
-  });
+		expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
+		expect(deps.embeddings.embed).toHaveBeenCalledWith(
+			"interactive mode query",
+		);
+	});
 });

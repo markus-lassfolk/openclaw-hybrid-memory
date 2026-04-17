@@ -12,13 +12,16 @@ import { registerManageCredentialsAndScope } from "./manage/register-credentials
 import { registerManageProcedureAndLifecycle } from "./manage/register-procedure-lifecycle.js";
 import { registerManageStorageAndStats } from "./manage/register-storage-and-stats.js";
 
-export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
-  const b = buildManageBindings(ctx);
-  registerManageAgentsAuditRunall(mem, b);
-  registerManageStorageAndStats(mem, b);
-  registerManageBudgetAndProposals(mem, b);
-  registerManageCorrectionsAndPipeline(mem, b);
-  registerManageCredentialsAndScope(mem, b);
-  registerManageProcedureAndLifecycle(mem, b);
-  registerManageCouncil(mem, b);
+export function registerManageCommands(
+	mem: Chainable,
+	ctx: ManageContext,
+): void {
+	const b = buildManageBindings(ctx);
+	registerManageAgentsAuditRunall(mem, b);
+	registerManageStorageAndStats(mem, b);
+	registerManageBudgetAndProposals(mem, b);
+	registerManageCorrectionsAndPipeline(mem, b);
+	registerManageCredentialsAndScope(mem, b);
+	registerManageProcedureAndLifecycle(mem, b);
+	registerManageCouncil(mem, b);
 }

@@ -21,7 +21,14 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import {
+	copyFileSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -32,29 +39,35 @@ import { capturePluginError } from "../services/error-reporter.js";
 // ---------------------------------------------------------------------------
 
 export type BackupCliResult =
-  | {
-      ok: true;
-      backupDir: string;
-      sqliteSize: number;
-      lancedbSize: number;
-      durationMs: number;
-      integrityOk: boolean;
-    }
-  | { ok: false; error: string };
+	| {
+			ok: true;
+			backupDir: string;
+			sqliteSize: number;
+			lancedbSize: number;
+			durationMs: number;
+			integrityOk: boolean;
+	  }
+	| { ok: false; error: string };
 
 export type BackupVerifyResult =
-  | { ok: true; integrityOk: boolean; sqlitePath: string; factCount: number; message: string }
-  | { ok: false; error: string };
+	| {
+			ok: true;
+			integrityOk: boolean;
+			sqlitePath: string;
+			factCount: number;
+			message: string;
+	  }
+	| { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
 
 interface BackupContext {
-  resolvedSqlitePath: string;
-  resolvedLancePath: string;
-  /** Override default backup destination (~/.openclaw/backups/memory/). */
-  backupDir?: string;
+	resolvedSqlitePath: string;
+	resolvedLancePath: string;
+	/** Override default backup destination (~/.openclaw/backups/memory/). */
+	backupDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,61 +75,61 @@ interface BackupContext {
 // ---------------------------------------------------------------------------
 
 function defaultBackupRoot(): string {
-  return join(homedir(), ".openclaw", "backups", "memory");
+	return join(homedir(), ".openclaw", "backups", "memory");
 }
 
 function timestampedDir(root: string): string {
-  const now = new Date();
-  const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-mm-ss
-  return join(root, ts);
+	const now = new Date();
+	const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-mm-ss
+	return join(root, ts);
 }
 
 /** Recursively measure directory size in bytes. Returns 0 if dir doesn't exist. */
 function dirSizeSync(dirPath: string): number {
-  if (!existsSync(dirPath)) return 0;
-  let total = 0;
-  const entries = readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      total += dirSizeSync(fullPath);
-    } else {
-      try {
-        total += statSync(fullPath).size;
-      } catch {
-        // skip unreadable
-      }
-    }
-  }
-  return total;
+	if (!existsSync(dirPath)) return 0;
+	let total = 0;
+	const entries = readdirSync(dirPath, { withFileTypes: true });
+	for (const entry of entries) {
+		const fullPath = join(dirPath, entry.name);
+		if (entry.isDirectory()) {
+			total += dirSizeSync(fullPath);
+		} else {
+			try {
+				total += statSync(fullPath).size;
+			} catch {
+				// skip unreadable
+			}
+		}
+	}
+	return total;
 }
 
 /** Recursively copy a directory. Uses cpSync when available (Node 16.7+), falls back to manual. */
 function copyDirSync(src: string, dest: string): void {
-  if (!existsSync(src)) return;
-  mkdirSync(dest, { recursive: true });
+	if (!existsSync(src)) return;
+	mkdirSync(dest, { recursive: true });
 
-  // cpSync with recursive is available in Node 16.7+
-  if (typeof cpSync === "function") {
-    cpSync(src, dest, { recursive: true, force: true, errorOnExist: false });
-    return;
-  }
+	// cpSync with recursive is available in Node 16.7+
+	if (typeof cpSync === "function") {
+		cpSync(src, dest, { recursive: true, force: true, errorOnExist: false });
+		return;
+	}
 
-  // Fallback: manual recursive copy
-  const entries = readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = join(src, entry.name);
-    const destPath = join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath);
-    } else {
-      try {
-        copyFileSync(srcPath, destPath);
-      } catch {
-        // skip unreadable files
-      }
-    }
-  }
+	// Fallback: manual recursive copy
+	const entries = readdirSync(src, { withFileTypes: true });
+	for (const entry of entries) {
+		const srcPath = join(src, entry.name);
+		const destPath = join(dest, entry.name);
+		if (entry.isDirectory()) {
+			copyDirSync(srcPath, destPath);
+		} else {
+			try {
+				copyFileSync(srcPath, destPath);
+			} catch {
+				// skip unreadable files
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -128,72 +141,77 @@ function copyDirSync(src: string, dest: string): void {
  * Uses VACUUM INTO for a consistent SQLite copy and recursive copy for LanceDB.
  */
 export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
-  const start = Date.now();
-  const root = ctx.backupDir ?? defaultBackupRoot();
-  const dest = timestampedDir(root);
+	const start = Date.now();
+	const root = ctx.backupDir ?? defaultBackupRoot();
+	const dest = timestampedDir(root);
 
-  try {
-    mkdirSync(dest, { recursive: true });
-  } catch (err) {
-    return { ok: false, error: `Failed to create backup directory ${dest}: ${err}` };
-  }
+	try {
+		mkdirSync(dest, { recursive: true });
+	} catch (err) {
+		return {
+			ok: false,
+			error: `Failed to create backup directory ${dest}: ${err}`,
+		};
+	}
 
-  // -- SQLite backup --
-  let sqliteSize = 0;
-  let integrityOk = true;
+	// -- SQLite backup --
+	let sqliteSize = 0;
+	let integrityOk = true;
 
-  if (existsSync(ctx.resolvedSqlitePath)) {
-    const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
-    try {
-      // Open read-only to verify integrity, then use VACUUM INTO for a consistent hot copy.
-      const db = new DatabaseSync(ctx.resolvedSqlitePath, { readOnly: true });
-      try {
-        // Run integrity check on source before backup
-        const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
-        integrityOk = row?.integrity_check === "ok";
+	if (existsSync(ctx.resolvedSqlitePath)) {
+		const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
+		try {
+			// Open read-only to verify integrity, then use VACUUM INTO for a consistent hot copy.
+			const db = new DatabaseSync(ctx.resolvedSqlitePath, { readOnly: true });
+			try {
+				// Run integrity check on source before backup
+				const row = db.prepare("PRAGMA integrity_check").get() as
+					| { integrity_check?: string }
+					| undefined;
+				integrityOk = row?.integrity_check === "ok";
 
-        // VACUUM INTO creates a consistent snapshot compatible with WAL mode databases.
-        // Escape single quotes in the path (path is system-generated, not user input).
-        const escapedDest = destSqlite.replace(/'/g, "''");
-        db.exec(`VACUUM INTO '${escapedDest}'`);
-      } finally {
-        db.close();
-      }
-      sqliteSize = statSync(destSqlite).size;
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "backup",
-        operation: "sqlite-backup",
-      });
-      return { ok: false, error: `SQLite backup failed: ${err}` };
-    }
-  }
+				// VACUUM INTO creates a consistent snapshot compatible with WAL mode databases.
+				// Escape single quotes in the path (path is system-generated, not user input).
+				const escapedDest = destSqlite.replace(/'/g, "''");
+				db.exec(`VACUUM INTO '${escapedDest}'`);
+			} finally {
+				db.close();
+			}
+			sqliteSize = statSync(destSqlite).size;
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "backup",
+				operation: "sqlite-backup",
+			});
+			return { ok: false, error: `SQLite backup failed: ${err}` };
+		}
+	}
 
-  // -- LanceDB backup --
-  let lancedbSize = 0;
-  if (existsSync(ctx.resolvedLancePath)) {
-    const destLance = join(dest, basename(ctx.resolvedLancePath));
-    try {
-      copyDirSync(ctx.resolvedLancePath, destLance);
-      lancedbSize = dirSizeSync(destLance);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "backup",
-        operation: "lancedb-backup",
-      });
-      return { ok: false, error: `LanceDB backup failed: ${err}` };
-    }
-  }
+	// -- LanceDB backup --
+	let lancedbSize = 0;
+	if (existsSync(ctx.resolvedLancePath)) {
+		const destLance = join(dest, basename(ctx.resolvedLancePath));
+		try {
+			copyDirSync(ctx.resolvedLancePath, destLance);
+			lancedbSize = dirSizeSync(destLance);
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "backup",
+				operation: "lancedb-backup",
+			});
+			return { ok: false, error: `LanceDB backup failed: ${err}` };
+		}
+	}
 
-  const durationMs = Date.now() - start;
-  return {
-    ok: true,
-    backupDir: dest,
-    sqliteSize,
-    lancedbSize,
-    durationMs,
-    integrityOk,
-  };
+	const durationMs = Date.now() - start;
+	return {
+		ok: true,
+		backupDir: dest,
+		sqliteSize,
+		lancedbSize,
+		durationMs,
+		integrityOk,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -204,41 +222,54 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
  * Verify DB integrity without creating a new backup.
  * Runs PRAGMA integrity_check and counts facts.
  */
-export function runBackupVerify(ctx: { resolvedSqlitePath: string }): BackupVerifyResult {
-  if (!existsSync(ctx.resolvedSqlitePath)) {
-    return { ok: false, error: `SQLite database not found at: ${ctx.resolvedSqlitePath}` };
-  }
+export function runBackupVerify(ctx: {
+	resolvedSqlitePath: string;
+}): BackupVerifyResult {
+	if (!existsSync(ctx.resolvedSqlitePath)) {
+		return {
+			ok: false,
+			error: `SQLite database not found at: ${ctx.resolvedSqlitePath}`,
+		};
+	}
 
-  let db: DatabaseSync | null = null;
-  try {
-    db = new DatabaseSync(ctx.resolvedSqlitePath, { readOnly: true });
+	let db: DatabaseSync | null = null;
+	try {
+		db = new DatabaseSync(ctx.resolvedSqlitePath, { readOnly: true });
 
-    // integrity_check
-    const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
-    const integrityOk = row?.integrity_check === "ok";
+		// integrity_check
+		const row = db.prepare("PRAGMA integrity_check").get() as
+			| { integrity_check?: string }
+			| undefined;
+		const integrityOk = row?.integrity_check === "ok";
 
-    // Count facts
-    const countRow = db.prepare("SELECT COUNT(*) as n FROM facts WHERE superseded_by IS NULL").get() as
-      | { n: number }
-      | undefined;
-    const factCount = countRow?.n ?? 0;
+		// Count facts
+		const countRow = db
+			.prepare("SELECT COUNT(*) as n FROM facts WHERE superseded_by IS NULL")
+			.get() as { n: number } | undefined;
+		const factCount = countRow?.n ?? 0;
 
-    const message = integrityOk
-      ? `SQLite integrity OK — ${factCount} active facts`
-      : "SQLite integrity FAILED — database may be corrupt";
+		const message = integrityOk
+			? `SQLite integrity OK — ${factCount} active facts`
+			: "SQLite integrity FAILED — database may be corrupt";
 
-    return { ok: true, integrityOk, sqlitePath: ctx.resolvedSqlitePath, factCount: factCount, message };
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "backup",
-      operation: "verify",
-    });
-    return { ok: false, error: `Verification failed: ${err}` };
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // ignore
-    }
-  }
+		return {
+			ok: true,
+			integrityOk,
+			sqlitePath: ctx.resolvedSqlitePath,
+			factCount: factCount,
+			message,
+		};
+	} catch (err) {
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			subsystem: "backup",
+			operation: "verify",
+		});
+		return { ok: false, error: `Verification failed: ${err}` };
+	} finally {
+		try {
+			db?.close();
+		} catch {
+			// ignore
+		}
+	}
 }

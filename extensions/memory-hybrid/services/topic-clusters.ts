@@ -19,41 +19,41 @@ import type { MemoryEntry } from "../types/memory.js";
 
 /** A detected topic cluster of interconnected facts. */
 export interface TopicCluster {
-  /** UUID for this cluster. */
-  id: string;
-  /** 2-3 word label derived from dominant entity/tags in cluster. */
-  label: string;
-  /** Fact IDs belonging to this cluster (sorted for stability). */
-  factIds: string[];
-  /** Number of facts (= factIds.length). */
-  factCount: number;
-  /** Epoch seconds when cluster was first detected. */
-  createdAt: number;
-  /** Epoch seconds when cluster was last updated. */
-  updatedAt: number;
+	/** UUID for this cluster. */
+	id: string;
+	/** 2-3 word label derived from dominant entity/tags in cluster. */
+	label: string;
+	/** Fact IDs belonging to this cluster (sorted for stability). */
+	factIds: string[];
+	/** Number of facts (= factIds.length). */
+	factCount: number;
+	/** Epoch seconds when cluster was first detected. */
+	createdAt: number;
+	/** Epoch seconds when cluster was last updated. */
+	updatedAt: number;
 }
 
 /** Options for cluster detection. */
 export interface ClusterDetectionOptions {
-  /** Minimum number of facts to form a cluster (default: 3). */
-  minClusterSize?: number;
-  /** Reserved: model for label generation; null = rule-based only (default: null). */
-  labelModel?: string | null;
-  /**
-   * Map from canonical component key (sorted IDs joined by ",") to existing cluster metadata.
-   * Enables stable cluster IDs and createdAt timestamps across incremental re-runs.
-   */
-  existingClusterIds?: Map<string, { id: string; createdAt: number }>;
+	/** Minimum number of facts to form a cluster (default: 3). */
+	minClusterSize?: number;
+	/** Reserved: model for label generation; null = rule-based only (default: null). */
+	labelModel?: string | null;
+	/**
+	 * Map from canonical component key (sorted IDs joined by ",") to existing cluster metadata.
+	 * Enables stable cluster IDs and createdAt timestamps across incremental re-runs.
+	 */
+	existingClusterIds?: Map<string, { id: string; createdAt: number }>;
 }
 
 /** Result of a cluster detection run. */
 export interface ClusterDetectionResult {
-  /** Detected clusters above minClusterSize threshold, sorted by size desc. */
-  clusters: TopicCluster[];
-  /** Number of linked facts that belong to no cluster (below threshold). */
-  isolatedFacts: number;
-  /** Total number of unique fact IDs that appear in at least one link. */
-  totalLinkedFacts: number;
+	/** Detected clusters above minClusterSize threshold, sorted by size desc. */
+	clusters: TopicCluster[];
+	/** Number of linked facts that belong to no cluster (below threshold). */
+	isolatedFacts: number;
+	/** Total number of unique fact IDs that appear in at least one link. */
+	totalLinkedFacts: number;
 }
 
 /**
@@ -61,18 +61,18 @@ export interface ClusterDetectionResult {
  * FactsDB already satisfies this interface.
  */
 export interface ClusterFactLookup {
-  /**
-   * Get all unique fact IDs that participate in at least one memory link
-   * (as source or target).
-   */
-  getAllLinkedFactIds(): string[];
-  /**
-   * Get all edges in the memory_links graph as [sourceFactId, targetFactId] pairs.
-   * Used for building the adjacency map in one efficient DB query.
-   */
-  getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }>;
-  /** Get a fact entry by ID. Returns null when not found or expired. */
-  getById(id: string): MemoryEntry | null;
+	/**
+	 * Get all unique fact IDs that participate in at least one memory link
+	 * (as source or target).
+	 */
+	getAllLinkedFactIds(): string[];
+	/**
+	 * Get all edges in the memory_links graph as [sourceFactId, targetFactId] pairs.
+	 * Used for building the adjacency map in one efficient DB query.
+	 */
+	getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }>;
+	/** Get a fact entry by ID. Returns null when not found or expired. */
+	getById(id: string): MemoryEntry | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,52 +85,56 @@ export interface ClusterFactLookup {
  * even when getAllLinks() returns no edges for them (isolated case).
  */
 function buildAdjacency(
-  factIds: string[],
-  edges: Array<{ sourceFactId: string; targetFactId: string }>,
+	factIds: string[],
+	edges: Array<{ sourceFactId: string; targetFactId: string }>,
 ): Map<string, Set<string>> {
-  const adj = new Map<string, Set<string>>();
+	const adj = new Map<string, Set<string>>();
 
-  // Seed all known nodes
-  for (const id of factIds) {
-    if (!adj.has(id)) adj.set(id, new Set());
-  }
+	// Seed all known nodes
+	for (const id of factIds) {
+		if (!adj.has(id)) adj.set(id, new Set());
+	}
 
-  // Add edges (bidirectional)
-  for (const { sourceFactId, targetFactId } of edges) {
-    if (!adj.has(sourceFactId)) adj.set(sourceFactId, new Set());
-    if (!adj.has(targetFactId)) adj.set(targetFactId, new Set());
-    adj.get(sourceFactId)?.add(targetFactId);
-    adj.get(targetFactId)?.add(sourceFactId);
-  }
+	// Add edges (bidirectional)
+	for (const { sourceFactId, targetFactId } of edges) {
+		if (!adj.has(sourceFactId)) adj.set(sourceFactId, new Set());
+		if (!adj.has(targetFactId)) adj.set(targetFactId, new Set());
+		adj.get(sourceFactId)?.add(targetFactId);
+		adj.get(targetFactId)?.add(sourceFactId);
+	}
 
-  return adj;
+	return adj;
 }
 
 /**
  * BFS from startId, collecting all reachable fact IDs.
  * Marks visited nodes in the shared `visited` set.
  */
-function bfsComponent(startId: string, adj: Map<string, Set<string>>, visited: Set<string>): string[] {
-  const component: string[] = [];
-  const queue: string[] = [startId];
-  visited.add(startId);
+function bfsComponent(
+	startId: string,
+	adj: Map<string, Set<string>>,
+	visited: Set<string>,
+): string[] {
+	const component: string[] = [];
+	const queue: string[] = [startId];
+	visited.add(startId);
 
-  let head = 0;
-  while (head < queue.length) {
-    const current = queue[head++];
-    component.push(current);
-    const neighbors = adj.get(current);
-    if (neighbors) {
-      for (const neighbor of neighbors) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          queue.push(neighbor);
-        }
-      }
-    }
-  }
+	let head = 0;
+	while (head < queue.length) {
+		const current = queue[head++];
+		component.push(current);
+		const neighbors = adj.get(current);
+		if (neighbors) {
+			for (const neighbor of neighbors) {
+				if (!visited.has(neighbor)) {
+					visited.add(neighbor);
+					queue.push(neighbor);
+				}
+			}
+		}
+	}
 
-  return component;
+	return component;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,54 +151,58 @@ function bfsComponent(startId: string, adj: Map<string, Set<string>>, visited: S
  * 4. Generic fallback "knowledge cluster"
  */
 export function generateClusterLabel(entries: MemoryEntry[]): string {
-  if (entries.length === 0) return "knowledge cluster";
+	if (entries.length === 0) return "knowledge cluster";
 
-  // 1. Entity frequency
-  const entityCounts = new Map<string, number>();
-  for (const entry of entries) {
-    const e = entry.entity?.trim();
-    if (e) entityCounts.set(e, (entityCounts.get(e) ?? 0) + 1);
-  }
-  if (entityCounts.size > 0) {
-    const topEntity = [...entityCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    // Limit to 3 words, lowercase
-    return topEntity
-      .split(/[\s_-]+/)
-      .slice(0, 3)
-      .join(" ")
-      .toLowerCase();
-  }
+	// 1. Entity frequency
+	const entityCounts = new Map<string, number>();
+	for (const entry of entries) {
+		const e = entry.entity?.trim();
+		if (e) entityCounts.set(e, (entityCounts.get(e) ?? 0) + 1);
+	}
+	if (entityCounts.size > 0) {
+		const topEntity = [...entityCounts.entries()].sort(
+			(a, b) => b[1] - a[1],
+		)[0][0];
+		// Limit to 3 words, lowercase
+		return topEntity
+			.split(/[\s_-]+/)
+			.slice(0, 3)
+			.join(" ")
+			.toLowerCase();
+	}
 
-  // 2. Tag frequency (entry.tags is already string[] | null after DB mapping)
-  const tagCounts = new Map<string, number>();
-  for (const entry of entries) {
-    const tags = Array.isArray(entry.tags) ? entry.tags : [];
-    for (const tag of tags) {
-      const t = tag.trim();
-      if (t) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
-    }
-  }
-  if (tagCounts.size > 0) {
-    const topTag = [...tagCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    return topTag
-      .split(/[\s_-]+/)
-      .slice(0, 3)
-      .join(" ")
-      .toLowerCase();
-  }
+	// 2. Tag frequency (entry.tags is already string[] | null after DB mapping)
+	const tagCounts = new Map<string, number>();
+	for (const entry of entries) {
+		const tags = Array.isArray(entry.tags) ? entry.tags : [];
+		for (const tag of tags) {
+			const t = tag.trim();
+			if (t) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+		}
+	}
+	if (tagCounts.size > 0) {
+		const topTag = [...tagCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+		return topTag
+			.split(/[\s_-]+/)
+			.slice(0, 3)
+			.join(" ")
+			.toLowerCase();
+	}
 
-  // 3. Category frequency
-  const categoryCounts = new Map<string, number>();
-  for (const entry of entries) {
-    const cat = entry.category;
-    categoryCounts.set(cat, (categoryCounts.get(cat) ?? 0) + 1);
-  }
-  if (categoryCounts.size > 0) {
-    const topCat = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    return `${topCat} cluster`;
-  }
+	// 3. Category frequency
+	const categoryCounts = new Map<string, number>();
+	for (const entry of entries) {
+		const cat = entry.category;
+		categoryCounts.set(cat, (categoryCounts.get(cat) ?? 0) + 1);
+	}
+	if (categoryCounts.size > 0) {
+		const topCat = [...categoryCounts.entries()].sort(
+			(a, b) => b[1] - a[1],
+		)[0][0];
+		return `${topCat} cluster`;
+	}
 
-  return "knowledge cluster";
+	return "knowledge cluster";
 }
 
 // ---------------------------------------------------------------------------
@@ -216,68 +224,70 @@ export function generateClusterLabel(entries: MemoryEntry[]): string {
  * @returns        ClusterDetectionResult with clusters sorted by size desc.
  */
 export function detectClusters(
-  factsDb: ClusterFactLookup,
-  options: ClusterDetectionOptions = {},
+	factsDb: ClusterFactLookup,
+	options: ClusterDetectionOptions = {},
 ): ClusterDetectionResult {
-  const { minClusterSize = 3, existingClusterIds } = options;
-  const minSize = Number.isFinite(minClusterSize) ? Math.max(1, Math.floor(minClusterSize)) : 3;
+	const { minClusterSize = 3, existingClusterIds } = options;
+	const minSize = Number.isFinite(minClusterSize)
+		? Math.max(1, Math.floor(minClusterSize))
+		: 3;
 
-  const linkedFactIds = factsDb.getAllLinkedFactIds();
-  const totalLinkedFacts = linkedFactIds.length;
+	const linkedFactIds = factsDb.getAllLinkedFactIds();
+	const totalLinkedFacts = linkedFactIds.length;
 
-  if (totalLinkedFacts === 0) {
-    return { clusters: [], isolatedFacts: 0, totalLinkedFacts: 0 };
-  }
+	if (totalLinkedFacts === 0) {
+		return { clusters: [], isolatedFacts: 0, totalLinkedFacts: 0 };
+	}
 
-  // Build adjacency from all links at once (efficient: single DB query)
-  const allEdges = factsDb.getAllLinks();
-  const adj = buildAdjacency(linkedFactIds, allEdges);
+	// Build adjacency from all links at once (efficient: single DB query)
+	const allEdges = factsDb.getAllLinks();
+	const adj = buildAdjacency(linkedFactIds, allEdges);
 
-  // BFS connected-component analysis
-  const visited = new Set<string>();
-  const components: string[][] = [];
+	// BFS connected-component analysis
+	const visited = new Set<string>();
+	const components: string[][] = [];
 
-  for (const factId of adj.keys()) {
-    if (!visited.has(factId)) {
-      components.push(bfsComponent(factId, adj, visited));
-    }
-  }
+	for (const factId of adj.keys()) {
+		if (!visited.has(factId)) {
+			components.push(bfsComponent(factId, adj, visited));
+		}
+	}
 
-  const now = Math.floor(Date.now() / 1000);
-  let isolatedFacts = 0;
-  const clusters: TopicCluster[] = [];
+	const now = Math.floor(Date.now() / 1000);
+	let isolatedFacts = 0;
+	const clusters: TopicCluster[] = [];
 
-  for (const component of components) {
-    if (component.length < minSize) {
-      isolatedFacts += component.length;
-      continue;
-    }
+	for (const component of components) {
+		if (component.length < minSize) {
+			isolatedFacts += component.length;
+			continue;
+		}
 
-    const sortedIds = [...component].sort();
-    const componentKey = sortedIds.join(",");
-    const existing = existingClusterIds?.get(componentKey);
-    const clusterId = existing?.id ?? randomUUID();
-    const createdAt = existing?.createdAt ?? now;
+		const sortedIds = [...component].sort();
+		const componentKey = sortedIds.join(",");
+		const existing = existingClusterIds?.get(componentKey);
+		const clusterId = existing?.id ?? randomUUID();
+		const createdAt = existing?.createdAt ?? now;
 
-    // Load entries for label generation (skips missing/expired facts)
-    const entries: MemoryEntry[] = [];
-    for (const id of sortedIds) {
-      const entry = factsDb.getById(id);
-      if (entry) entries.push(entry);
-    }
+		// Load entries for label generation (skips missing/expired facts)
+		const entries: MemoryEntry[] = [];
+		for (const id of sortedIds) {
+			const entry = factsDb.getById(id);
+			if (entry) entries.push(entry);
+		}
 
-    clusters.push({
-      id: clusterId,
-      label: generateClusterLabel(entries),
-      factIds: sortedIds,
-      factCount: sortedIds.length,
-      createdAt,
-      updatedAt: now,
-    });
-  }
+		clusters.push({
+			id: clusterId,
+			label: generateClusterLabel(entries),
+			factIds: sortedIds,
+			factCount: sortedIds.length,
+			createdAt,
+			updatedAt: now,
+		});
+	}
 
-  // Sort by size descending (largest cluster first)
-  clusters.sort((a, b) => b.factCount - a.factCount);
+	// Sort by size descending (largest cluster first)
+	clusters.sort((a, b) => b.factCount - a.factCount);
 
-  return { clusters, isolatedFacts, totalLinkedFacts };
+	return { clusters, isolatedFacts, totalLinkedFacts };
 }

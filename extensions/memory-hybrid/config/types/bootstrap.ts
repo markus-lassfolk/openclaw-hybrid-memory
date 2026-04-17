@@ -6,5 +6,5 @@ export type BootstrapPhase = (typeof BOOTSTRAP_PHASES)[number];
 
 /** Shared manifest metadata for phased bootstrap and tool installers. */
 export type BootstrapPhaseConfig = {
-  bootstrapPhase: BootstrapPhase;
+	bootstrapPhase: BootstrapPhase;
 };

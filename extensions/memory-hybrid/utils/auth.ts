@@ -9,8 +9,11 @@
  * (i.e. not just the plain API-key profile). Used to decide whether to route through the gateway.
  * API-key-only profiles end with ':api' or ':default' (e.g. 'anthropic:api', 'google:default').
  */
-export function hasOAuthProfiles(order: string[] | undefined, provider: string): boolean {
-  if (!order || order.length === 0) return false;
-  const apiOnlyPatterns = [`${provider}:api`, `${provider}:default`];
-  return order.some((p) => !apiOnlyPatterns.includes(p));
+export function hasOAuthProfiles(
+	order: string[] | undefined,
+	provider: string,
+): boolean {
+	if (!order || order.length === 0) return false;
+	const apiOnlyPatterns = [`${provider}:api`, `${provider}:default`];
+	return order.some((p) => !apiOnlyPatterns.includes(p));
 }

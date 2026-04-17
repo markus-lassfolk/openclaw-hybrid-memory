@@ -10,63 +10,68 @@ export * from "./sensors.js";
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
 import type {
-  AutoClassifyConfig,
-  AutoRecallConfig,
-  ContextualVariantsConfig,
-  DocumentGradingConfig,
-  QueryExpansionConfig,
-  RerankingConfig,
-  RetrievalConfig,
-  SearchConfig,
+	AutoClassifyConfig,
+	AutoRecallConfig,
+	ContextualVariantsConfig,
+	DocumentGradingConfig,
+	QueryExpansionConfig,
+	RerankingConfig,
+	RetrievalConfig,
+	SearchConfig,
 } from "./retrieval.js";
 
-import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
+import type {
+	EventLogConfig,
+	PathConfig,
+	StoreConfig,
+	WALConfig,
+} from "./core.js";
 
 import type {
-  ExtractionConfig,
-  IdentityPromotionConfig,
-  IdentityReflectionConfig,
-  PassiveObserverConfig,
-  ProceduresConfig,
-  ReflectionConfig,
+	ExtractionConfig,
+	IdentityPromotionConfig,
+	IdentityReflectionConfig,
+	PassiveObserverConfig,
+	ProceduresConfig,
+	ReflectionConfig,
 } from "./capture.js";
 
 import type {
-  CouncilConfig,
-  CouncilProvenanceMode,
-  CronReliabilityConfig,
-  HealthConfig,
-  MaintenanceConfig,
-  NightlyCycleConfig,
-  ProvenanceConfig,
-  VerificationConfig,
+	CouncilConfig,
+	CouncilProvenanceMode,
+	CronReliabilityConfig,
+	HealthConfig,
+	MaintenanceConfig,
+	NightlyCycleConfig,
+	ProvenanceConfig,
+	VerificationConfig,
 } from "./maintenance.js";
 
 import type {
-  AliasesConfig,
-  AmbientConfig,
-  ApiTapConfig,
-  ClosedLoopConfig,
-  ClustersConfig,
-  CostTrackingConfig,
-  CrossAgentLearningConfig,
-  CrystallizationConfig,
-  DashboardConfig,
-  DocumentsConfig,
-  FrequencyCaptureConfig,
-  FrustrationDetectionConfig,
-  FutureDateProtectionConfig,
-  GapsConfig,
-  GraphConfig,
-  GraphRetrievalConfig,
-  HumanizerConfig,
-  ImplicitFeedbackConfig,
-  IngestConfig,
-  MemoryTieringConfig,
-  ReinforcementConfig,
-  SelfExtensionConfig,
-  ToolEffectivenessConfig,
-  WorkflowTrackingConfig,
+	AliasesConfig,
+	AmbientConfig,
+	ApiTapConfig,
+	ClosedLoopConfig,
+	ClustersConfig,
+	CostTrackingConfig,
+	CrossAgentLearningConfig,
+	CrystallizationConfig,
+	DashboardConfig,
+	DocumentsConfig,
+	FrequencyCaptureConfig,
+	FrustrationDetectionConfig,
+	FutureDateProtectionConfig,
+	GapsConfig,
+	GraphConfig,
+	GraphRetrievalConfig,
+	HumanizerConfig,
+	ImplicitFeedbackConfig,
+	IngestConfig,
+	MemoryTieringConfig,
+	ReinforcementConfig,
+	SelfExtensionConfig,
+	ToolEffectivenessConfig,
+	WorkflowTrackingConfig,
 } from "./features.js";
 
 import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
@@ -82,354 +87,367 @@ export type CronModelTier = "default" | "heavy" | "nano";
  * Built-in defaults: google uses distill.apiKey + Gemini OpenAI-compat endpoint; openai uses embedding.apiKey.
  */
 export type LLMProviderConfig = {
-  /** API key for this provider. Overrides built-in defaults (distill.apiKey for google, embedding.apiKey for openai). */
-  apiKey?: string;
-  /** OpenAI-compatible base URL. Overrides built-in defaults. */
-  baseURL?: string;
+	/** API key for this provider. Overrides built-in defaults (distill.apiKey for google, embedding.apiKey for openai). */
+	apiKey?: string;
+	/** OpenAI-compatible base URL. Overrides built-in defaults. */
+	baseURL?: string;
 };
 
 /** LLM model preference: ordered lists per tier with direct provider API calls. */
 export type LLMConfig = {
-  /** Internal: set to "gateway" when auto-derived from agents.defaults.model; undefined when from plugin config. */
-  _source?: "gateway";
-  /** Ordered preference for default-tier LLM calls (first available wins). */
-  default: string[];
-  /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
-  heavy: string[];
-  /**
-   * Optional: ordered model list for nano/ultra-light ops — autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize.
-   * These run on every chat message or write, so cheapness matters most.
-   * When not set, falls back to the default tier.
-   * Ideal models: openai/gpt-4.1-nano, google/gemini-2.5-flash-lite, anthropic/claude-haiku-*.
-   */
-  nano?: string[];
-  /** When true, if all preferred models fail, try the fallback model. */
-  fallbackToDefault?: boolean;
-  /** When fallbackToDefault is true, this model is tried last. */
-  fallbackModel?: string;
-  /**
-   * Per-provider API config for direct LLM calls.
-   * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic", "ollama").
-   * Built-in providers (google, openai, ollama) have defaults; others require explicit apiKey + baseURL.
-   * Example: { google: { apiKey: "AIzaSy..." }, anthropic: { apiKey: "sk-ant-...", baseURL: "https://api.anthropic.com/v1" } }
-   * Ollama example: { ollama: { baseURL: "http://127.0.0.1:11434/v1" } }
-   */
-  providers?: Record<string, LLMProviderConfig | undefined>;
-  /**
-   * When true and an `ollama/*` model appears in any tier list, automatically start Ollama (`ollama serve`)
-   * if it is not already running. Only has effect when Ollama models are configured.
-   * Default: false.
-   */
-  localAutoStart?: boolean;
-  /**
-   * Provider IDs to exclude from all LLM use (tier lists, verify, etc.).
-   * Use when a provider is configured (e.g. in llm.default) but you want hybrid-memory to never use it (e.g. low credits).
-   * Example: ["anthropic"] — Anthropic models are not tried even if listed in llm.nano/default/heavy.
-   */
-  disabledProviders?: string[];
+	/** Internal: set to "gateway" when auto-derived from agents.defaults.model; undefined when from plugin config. */
+	_source?: "gateway";
+	/** Ordered preference for default-tier LLM calls (first available wins). */
+	default: string[];
+	/** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
+	heavy: string[];
+	/**
+	 * Optional: ordered model list for nano/ultra-light ops — autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize.
+	 * These run on every chat message or write, so cheapness matters most.
+	 * When not set, falls back to the default tier.
+	 * Ideal models: openai/gpt-4.1-nano, google/gemini-2.5-flash-lite, anthropic/claude-haiku-*.
+	 */
+	nano?: string[];
+	/** When true, if all preferred models fail, try the fallback model. */
+	fallbackToDefault?: boolean;
+	/** When fallbackToDefault is true, this model is tried last. */
+	fallbackModel?: string;
+	/**
+	 * Per-provider API config for direct LLM calls.
+	 * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic", "ollama").
+	 * Built-in providers (google, openai, ollama) have defaults; others require explicit apiKey + baseURL.
+	 * Example: { google: { apiKey: "AIzaSy..." }, anthropic: { apiKey: "sk-ant-...", baseURL: "https://api.anthropic.com/v1" } }
+	 * Ollama example: { ollama: { baseURL: "http://127.0.0.1:11434/v1" } }
+	 */
+	providers?: Record<string, LLMProviderConfig | undefined>;
+	/**
+	 * When true and an `ollama/*` model appears in any tier list, automatically start Ollama (`ollama serve`)
+	 * if it is not already running. Only has effect when Ollama models are configured.
+	 * Default: false.
+	 */
+	localAutoStart?: boolean;
+	/**
+	 * Provider IDs to exclude from all LLM use (tier lists, verify, etc.).
+	 * Use when a provider is configured (e.g. in llm.default) but you want hybrid-memory to never use it (e.g. low credits).
+	 * Example: ["anthropic"] — Anthropic models are not tried even if listed in llm.nano/default/heavy.
+	 */
+	disabledProviders?: string[];
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
 export type CronModelConfig = {
-  embedding?: { apiKey?: string };
-  distill?: { apiKey?: string; defaultModel?: string; fallbackModels?: string[] };
-  reflection?: { model?: string };
-  /** Optional: when present, use for cron LLM (e.g. Claude). */
-  claude?: { apiKey?: string; defaultModel?: string };
-  /** Optional: gateway-routed LLM preference lists (issue #87). When set, overrides provider-based resolution. */
-  llm?: LLMConfig;
+	embedding?: { apiKey?: string };
+	distill?: {
+		apiKey?: string;
+		defaultModel?: string;
+		fallbackModels?: string[];
+	};
+	reflection?: { model?: string };
+	/** Optional: when present, use for cron LLM (e.g. Claude). */
+	claude?: { apiKey?: string; defaultModel?: string };
+	/** Optional: gateway-routed LLM preference lists (issue #87). When set, overrides provider-based resolution. */
+	llm?: LLMConfig;
 };
 
 /** Credential types supported by the credentials store */
-export const CREDENTIAL_TYPES = ["token", "password", "api_key", "ssh", "bearer", "other"] as const;
+export const CREDENTIAL_TYPES = [
+	"token",
+	"password",
+	"api_key",
+	"ssh",
+	"bearer",
+	"other",
+] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 /** Auto-capture configuration for credential scanning from tool call inputs */
 export type CredentialAutoCaptureConfig = {
-  /** Enable scanning of tool call inputs for credential patterns (default: false, opt-in) */
-  toolCalls: boolean;
-  /**
-   * Pattern set to use: "builtin" uses the built-in regex set (default: "builtin").
-   * Custom patterns are not currently supported but reserved for future extension.
-   */
-  patterns?: "builtin";
-  /** Emit info-level log on each capture (default: true) */
-  logCaptures?: boolean;
-  /** When true, only store when a credential pattern matched (reject value-only extraction). Default false. */
-  requirePatternMatch?: boolean;
+	/** Enable scanning of tool call inputs for credential patterns (default: false, opt-in) */
+	toolCalls: boolean;
+	/**
+	 * Pattern set to use: "builtin" uses the built-in regex set (default: "builtin").
+	 * Custom patterns are not currently supported but reserved for future extension.
+	 */
+	patterns?: "builtin";
+	/** Emit info-level log on each capture (default: true) */
+	logCaptures?: boolean;
+	/** When true, only store when a credential pattern matched (reject value-only extraction). Default false. */
+	requirePatternMatch?: boolean;
 };
 
 /** Opt-in credentials: structured, encrypted storage for API keys, tokens, etc. */
 export type CredentialsConfig = {
-  enabled: boolean;
-  store: "sqlite";
-  /** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
-  encryptionKey: string;
-  /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
-  autoDetect?: boolean;
-  /** Auto-capture credentials from tool call inputs (default: disabled) */
-  autoCapture?: CredentialAutoCaptureConfig;
-  /** Days before expiry to warn (default 7) */
-  expiryWarningDays?: number;
+	enabled: boolean;
+	store: "sqlite";
+	/** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
+	encryptionKey: string;
+	/** When enabled, detect credential patterns in conversation and prompt to store (default false) */
+	autoDetect?: boolean;
+	/** Auto-capture credentials from tool call inputs (default: disabled) */
+	autoCapture?: CredentialAutoCaptureConfig;
+	/** Days before expiry to warn (default 7) */
+	expiryWarningDays?: number;
 };
 
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
 export type UpdateNudgeConfig = {
-  /** Emit upgrade reminders for outdated installs (default: true). */
-  enabled: boolean;
-  /** Minimum hours between repeated upgrade reminders (default: 24). */
-  intervalHours: number;
-  /** How long cached latest-version results stay fresh (default: 24). */
-  cacheTtlHours: number;
+	/** Emit upgrade reminders for outdated installs (default: true). */
+	enabled: boolean;
+	/** Minimum hours between repeated upgrade reminders (default: 24). */
+	intervalHours: number;
+	/** How long cached latest-version results stay fresh (default: 24). */
+	cacheTtlHours: number;
 };
 
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
 export type ErrorReportingConfig = {
-  enabled: boolean;
-  /** DSN for self-hosted mode. Not required in schema (only at runtime for self-hosted). */
-  dsn?: string;
-  consent: boolean;
-  /** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN. */
-  mode: "community" | "self-hosted";
-  environment?: string;
-  sampleRate?: number;
-  /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
-   * Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
-  botId?: string;
-  /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
-   * Optional friendly name for this bot; sent as tag for readable reports. */
-  botName?: string;
-  /**
-   * Optional map of error fingerprints to the version that fixed them.
-   * Errors matching a fingerprint from an older version are silently dropped (not regressions).
-   * Format: { "ErrorType:message prefix (first 100 chars)": "YYYY.M.NNN" }
-   * When not configured, behavior is identical to today.
-   */
-  resolvedIssues?: Record<string, string>;
-  /** Background latest-version check plus user-facing upgrade reminders. */
-  updateNudge: UpdateNudgeConfig;
+	enabled: boolean;
+	/** DSN for self-hosted mode. Not required in schema (only at runtime for self-hosted). */
+	dsn?: string;
+	consent: boolean;
+	/** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN. */
+	mode: "community" | "self-hosted";
+	environment?: string;
+	sampleRate?: number;
+	/** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+	 * Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
+	botId?: string;
+	/** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+	 * Optional friendly name for this bot; sent as tag for readable reports. */
+	botName?: string;
+	/**
+	 * Optional map of error fingerprints to the version that fixed them.
+	 * Errors matching a fingerprint from an older version are silently dropped (not regressions).
+	 * Format: { "ErrorType:message prefix (first 100 chars)": "YYYY.M.NNN" }
+	 * When not configured, behavior is identical to today.
+	 */
+	resolvedIssues?: Record<string, string>;
+	/** Background latest-version check plus user-facing upgrade reminders. */
+	updateNudge: UpdateNudgeConfig;
 };
 
 /** Configuration for a single embedding model in a multi-model setup (Issue #158). */
 export interface EmbeddingModelConfig {
-  /** Model identifier (e.g. "nomic-embed-text", "text-embedding-3-small"). */
-  name: string;
-  /** Provider for this model. */
-  provider: "openai" | "ollama" | "onnx";
-  /** Vector dimensions this model produces. */
-  dimensions: number;
-  /** Semantic role this model plays. */
-  role: "general" | "domain" | "query" | "custom";
-  /** API key for openai provider (overrides embedding.apiKey). */
-  apiKey?: string;
-  /** Endpoint for ollama provider (overrides embedding.endpoint). */
-  endpoint?: string;
-  /** Whether this model is active (default: true). */
-  enabled?: boolean;
+	/** Model identifier (e.g. "nomic-embed-text", "text-embedding-3-small"). */
+	name: string;
+	/** Provider for this model. */
+	provider: "openai" | "ollama" | "onnx";
+	/** Vector dimensions this model produces. */
+	dimensions: number;
+	/** Semantic role this model plays. */
+	role: "general" | "domain" | "query" | "custom";
+	/** API key for openai provider (overrides embedding.apiKey). */
+	apiKey?: string;
+	/** Endpoint for ollama provider (overrides embedding.endpoint). */
+	endpoint?: string;
+	/** Whether this model is active (default: true). */
+	enabled?: boolean;
 }
 
 /** Configuration for LanceDB vector store behaviour (issue #128). */
 export type VectorConfig = {
-  /**
-   * When true, automatically drop and recreate the LanceDB table if its vector dimension
-   * doesn't match the configured embedding model dimension.
-   * After repair, existing facts from SQLite are re-embedded automatically.
-   * Default: false (log the mismatch and return empty results instead of throwing).
-   */
-  autoRepair: boolean;
+	/**
+	 * When true, automatically drop and recreate the LanceDB table if its vector dimension
+	 * doesn't match the configured embedding model dimension.
+	 * After repair, existing facts from SQLite are re-embedded automatically.
+	 * Default: false (log the mismatch and return empty results instead of throwing).
+	 */
+	autoRepair: boolean;
 };
 
 /** Optional heartbeat / long-running hints for ACTIVE-TASKS.md rows (not goals). */
 export type ActiveTaskHygieneConfig = {
-  /**
-   * When the last user message matches goal stewardship heartbeat patterns,
-   * prepend an extra **task hygiene** block (stale counts, review nudge). Default: true.
-   */
-  heartbeatEscalation: boolean;
-  /**
-   * If > 0, tasks whose **updated** timestamp is older than this many **days**
-   * get a line suggesting `active_task_propose_goal` + `goal_register`. Default: 0 (off).
-   */
-  suggestGoalAfterTaskAgeDays: number;
-  /** Character budget for the heartbeat task-hygiene block. Default: 2500. */
-  heartbeatNudgeMaxChars: number;
+	/**
+	 * When the last user message matches goal stewardship heartbeat patterns,
+	 * prepend an extra **task hygiene** block (stale counts, review nudge). Default: true.
+	 */
+	heartbeatEscalation: boolean;
+	/**
+	 * If > 0, tasks whose **updated** timestamp is older than this many **days**
+	 * get a line suggesting `active_task_propose_goal` + `goal_register`. Default: 0 (off).
+	 */
+	suggestGoalAfterTaskAgeDays: number;
+	/** Character budget for the heartbeat task-hygiene block. Default: 2500. */
+	heartbeatNudgeMaxChars: number;
 };
 
 export type ActiveTaskProjectionDedupeBy = "none" | "label" | "normalizedTitle";
 
 /** Facts-backed `ACTIVE-TASKS.md` projection (`hybrid-mem active-tasks render`). See docs/ACTIVE-TASKS-PROJECTION.md. */
 export type ActiveTaskProjectionConfig = {
-  /**
-   * `readable` applies filters and optional caps (default).
-   * `full` lists all rows (no title/dedupe filters); caps still apply when `maxRowsPerSection` is set.
-   */
-  mode: "readable" | "full";
-  /** Drop rows whose title resolves to the generic placeholder when `mode` is `readable` (default: true). */
-  excludeGenericTitle: boolean;
-  /** Minimum trimmed title length when > 0 (`readable` only). */
-  titleMinChars: number;
-  dedupeBy: ActiveTaskProjectionDedupeBy;
-  /** Cap per section (Active, Stale — revisit, Completed); omitted rows summarized in a footer line. */
-  maxRowsPerSection?: number;
-  /** Use sectioned layout (Active / Stale — revisit) for facts render (default: true). */
-  sectioned: boolean;
+	/**
+	 * `readable` applies filters and optional caps (default).
+	 * `full` lists all rows (no title/dedupe filters); caps still apply when `maxRowsPerSection` is set.
+	 */
+	mode: "readable" | "full";
+	/** Drop rows whose title resolves to the generic placeholder when `mode` is `readable` (default: true). */
+	excludeGenericTitle: boolean;
+	/** Minimum trimmed title length when > 0 (`readable` only). */
+	titleMinChars: number;
+	dedupeBy: ActiveTaskProjectionDedupeBy;
+	/** Cap per section (Active, Stale — revisit, Completed); omitted rows summarized in a footer line. */
+	maxRowsPerSection?: number;
+	/** Use sectioned layout (Active / Stale — revisit) for facts render (default: true). */
+	sectioned: boolean;
 };
 
 /** Active task working memory: ACTIVE-TASKS.md persistence and session injection */
 export type ActiveTaskConfig = {
-  /** Enable active task working memory (default: true) */
-  enabled: boolean;
-  /**
-   * Where the task ledger lives: `markdown` reads/writes ACTIVE-TASKS.md.
-   * `facts` uses hybrid-memory `category:project` facts (memory_store compatible).
-   * Default: markdown.
-   */
-  ledger: "markdown" | "facts";
-  /** Path to ACTIVE-TASKS.md (default: "ACTIVE-TASKS.md" in workspace root) */
-  filePath: string;
-  /** Auto-write task entries on subagent spawn/complete events (default: true) */
-  autoCheckpoint: boolean;
-  /**
-   * Max tokens for session-start injection (default: 500).
-   * Config must be a positive integer; fractional values are floored; non-positive values are not used (default applies).
-   */
-  injectionBudget: number;
-  /**
-   * Duration before flagging a task as stale. Supports human-friendly strings:
-   * "24h", "1d", "1d12h30m", "45m", or a plain integer (treated as minutes).
-   * Default: "24h".
-   *
-   * Legacy `staleHours: number` is automatically converted on config load.
-   */
-  staleThreshold: string;
-  /** Flush task summary to memory/YYYY-MM-DD.md on completion (default: true) */
-  flushOnComplete: boolean;
-  /** Stale-task warning injection at session start */
-  staleWarning: {
-    /** Inject stale task warnings into context on before_agent_start (default: true) */
-    enabled: boolean;
-  };
-  /**
-   * Stronger nudges for normal tasks (docs/TASK-HYGIENE.md): heartbeat escalation,
-   * optional “consider a goal” hints for long-running tasks.
-   */
-  taskHygiene: ActiveTaskHygieneConfig;
-  /** Markdown projection when `ledger` is `facts` (render path, filters, sectioning). */
-  projection: ActiveTaskProjectionConfig;
+	/** Enable active task working memory (default: true) */
+	enabled: boolean;
+	/**
+	 * Where the task ledger lives: `markdown` reads/writes ACTIVE-TASKS.md.
+	 * `facts` uses hybrid-memory `category:project` facts (memory_store compatible).
+	 * Default: markdown.
+	 */
+	ledger: "markdown" | "facts";
+	/** Path to ACTIVE-TASKS.md (default: "ACTIVE-TASKS.md" in workspace root) */
+	filePath: string;
+	/** Auto-write task entries on subagent spawn/complete events (default: true) */
+	autoCheckpoint: boolean;
+	/**
+	 * Max tokens for session-start injection (default: 500).
+	 * Config must be a positive integer; fractional values are floored; non-positive values are not used (default applies).
+	 */
+	injectionBudget: number;
+	/**
+	 * Duration before flagging a task as stale. Supports human-friendly strings:
+	 * "24h", "1d", "1d12h30m", "45m", or a plain integer (treated as minutes).
+	 * Default: "24h".
+	 *
+	 * Legacy `staleHours: number` is automatically converted on config load.
+	 */
+	staleThreshold: string;
+	/** Flush task summary to memory/YYYY-MM-DD.md on completion (default: true) */
+	flushOnComplete: boolean;
+	/** Stale-task warning injection at session start */
+	staleWarning: {
+		/** Inject stale task warnings into context on before_agent_start (default: true) */
+		enabled: boolean;
+	};
+	/**
+	 * Stronger nudges for normal tasks (docs/TASK-HYGIENE.md): heartbeat escalation,
+	 * optional “consider a goal” hints for long-running tasks.
+	 */
+	taskHygiene: ActiveTaskHygieneConfig;
+	/** Markdown projection when `ledger` is `facts` (render path, filters, sectioning). */
+	projection: ActiveTaskProjectionConfig;
 };
 
 /** Goal stewardship — autonomous pursuit of long-running goals (docs/GOAL-STEWARDSHIP-DESIGN.md). */
 export type GoalStewardshipDefaults = {
-  maxDispatches: number;
-  maxAssessments: number;
-  cooldownMinutes: number;
-  escalateAfterFailures: number;
-  priority: "critical" | "high" | "normal" | "low";
+	maxDispatches: number;
+	maxAssessments: number;
+	cooldownMinutes: number;
+	escalateAfterFailures: number;
+	priority: "critical" | "high" | "normal" | "low";
 };
 
 export type GoalStewardshipGlobalLimits = {
-  maxDispatchesPerHour: number;
-  maxActiveGoals: number;
+	maxDispatchesPerHour: number;
+	maxActiveGoals: number;
 };
 
 /** Optional knobs for cross-feature escalation visibility (defaults preserve prior behavior). */
 export type GoalStewardshipEscalationPolicy = {
-  /**
-   * When heartbeat matches and task hygiene runs, append a **goal-escalation** snippet if any goal is **blocked** or **stalled**.
-   * Default: true.
-   */
-  taskHygieneOnBlockedGoals: boolean;
+	/**
+	 * When heartbeat matches and task hygiene runs, append a **goal-escalation** snippet if any goal is **blocked** or **stalled**.
+	 * Default: true.
+	 */
+	taskHygieneOnBlockedGoals: boolean;
 };
 
 /** Trip goals stuck with unchanged blockers / no progress; escalate to human with summary (see docs/GOAL-STEWARDSHIP-OPERATOR.md). */
 export type GoalStewardshipCircuitBreakerConfig = {
-  enabled: boolean;
-  /** Consecutive assessments with the same blocker fingerprint before blocking (default: 0 = off). */
-  sameBlockerRepeatLimit: number;
-  /** Block when (assessmentCount - last progress assessment count) reaches this; 0 = off (default: 0). */
-  maxAssessmentsWithoutProgress: number;
-  /** Build human-readable summary for history / memory (default: true). */
-  composeHumanSummary: boolean;
-  /** Append escalation to workspace memory/YYYY-MM-DD.md when composeHumanSummary (default: true). */
-  appendMemoryEscalation: boolean;
+	enabled: boolean;
+	/** Consecutive assessments with the same blocker fingerprint before blocking (default: 0 = off). */
+	sameBlockerRepeatLimit: number;
+	/** Block when (assessmentCount - last progress assessment count) reaches this; 0 = off (default: 0). */
+	maxAssessmentsWithoutProgress: number;
+	/** Build human-readable summary for history / memory (default: true). */
+	composeHumanSummary: boolean;
+	/** Append escalation to workspace memory/YYYY-MM-DD.md when composeHumanSummary (default: true). */
+	appendMemoryEscalation: boolean;
 };
 
 /** Relative weights for multi-goal stewardship attention (default: critical 4, high 2, normal 1, low 0.5). */
 export type GoalStewardshipAttentionWeights = {
-  critical: number;
-  high: number;
-  normal: number;
-  low: number;
+	critical: number;
+	high: number;
+	normal: number;
+	low: number;
 };
 
 /** Which goal priorities require explicit `confirmed: true` on goal_register. */
 export type GoalStewardshipConfirmationPolicy = {
-  requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low">;
+	requireRegisterAckForPriorities: Array<
+		"critical" | "high" | "normal" | "low"
+	>;
 };
 
 export type GoalStewardshipConfig = {
-  enabled: boolean;
-  goalsDir: string;
-  model: string | null;
-  heartbeatStewardship: boolean;
-  watchdogHealthCheck: boolean;
-  defaults: GoalStewardshipDefaults;
-  globalLimits: GoalStewardshipGlobalLimits;
-  /**
-   * Regex sources for heartbeat detection. Empty = built-in defaults (`heartbeat` and common variants).
-   */
-  heartbeatPatterns: string[];
-  attentionWeights: GoalStewardshipAttentionWeights;
-  /** Combined cap (characters) for multi-goal stewardship prepend blocks in one heartbeat. */
-  multiGoalMaxChars: number;
-  /** Max goals to include in one heartbeat after weighting. */
-  multiGoalMaxGoals: number;
-  /** On heartbeat, rewrite ACTIVE-TASKS.md with a Goals mirror section (requires activeTask.enabled). */
-  heartbeatRefreshActiveTask: boolean;
-  confirmationPolicy: GoalStewardshipConfirmationPolicy;
-  /**
-   * When true, call a nano-tier LLM once per heartbeat to refine triage. When false, heuristics only.
-   */
-  llmTriageOnHeartbeat: boolean;
-  /** When triage/heuristic indicates complex work, add a line suggesting heavy-tier reasoning for dispatch. */
-  triageSuggestHeavyDirective: boolean;
-  circuitBreaker: GoalStewardshipCircuitBreakerConfig;
-  /** Cross-layer nudges and visibility (issue #1096). */
-  escalationPolicy: GoalStewardshipEscalationPolicy;
-  /** Allow command_exit_zero verification in the watchdog (shell execution). Default: false. */
-  allowCommandVerification: boolean;
-  /** Allow pr_merged verification (GitHub API). Default: false — network + token required. */
-  allowPrVerification: boolean;
+	enabled: boolean;
+	goalsDir: string;
+	model: string | null;
+	heartbeatStewardship: boolean;
+	watchdogHealthCheck: boolean;
+	defaults: GoalStewardshipDefaults;
+	globalLimits: GoalStewardshipGlobalLimits;
+	/**
+	 * Regex sources for heartbeat detection. Empty = built-in defaults (`heartbeat` and common variants).
+	 */
+	heartbeatPatterns: string[];
+	attentionWeights: GoalStewardshipAttentionWeights;
+	/** Combined cap (characters) for multi-goal stewardship prepend blocks in one heartbeat. */
+	multiGoalMaxChars: number;
+	/** Max goals to include in one heartbeat after weighting. */
+	multiGoalMaxGoals: number;
+	/** On heartbeat, rewrite ACTIVE-TASKS.md with a Goals mirror section (requires activeTask.enabled). */
+	heartbeatRefreshActiveTask: boolean;
+	confirmationPolicy: GoalStewardshipConfirmationPolicy;
+	/**
+	 * When true, call a nano-tier LLM once per heartbeat to refine triage. When false, heuristics only.
+	 */
+	llmTriageOnHeartbeat: boolean;
+	/** When triage/heuristic indicates complex work, add a line suggesting heavy-tier reasoning for dispatch. */
+	triageSuggestHeavyDirective: boolean;
+	circuitBreaker: GoalStewardshipCircuitBreakerConfig;
+	/** Cross-layer nudges and visibility (issue #1096). */
+	escalationPolicy: GoalStewardshipEscalationPolicy;
+	/** Allow command_exit_zero verification in the watchdog (shell execution). Default: false. */
+	allowCommandVerification: boolean;
+	/** Allow pr_merged verification (GitHub API). Default: false — network + token required. */
+	allowPrVerification: boolean;
 };
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
-  /** Enable self-correction pipeline (default: true). */
-  enabled?: boolean;
-  /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
-  semanticDedup: boolean;
-  /** Similarity threshold for semantic dedup, 0–1 (default: 0.92). */
-  semanticDedupThreshold: number;
-  /** TOOLS.md section heading for new rules, e.g. "Self-correction rules" (default: "Self-correction rules"). */
-  toolsSection: string;
-  /** When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest in report (then use --approve to apply). */
-  applyToolsByDefault: boolean;
-  /** When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (or suggest if applyToolsByDefault is false) (default: false). */
-  autoRewriteTools: boolean;
-  /** When true and incident count > spawnThreshold, run Phase 2 via `openclaw sessions spawn --model <model>` for large context. Model is chosen from config (Gemini/OpenAI/Claude) when spawnModel is empty (default: false). */
-  analyzeViaSpawn: boolean;
-  /** Use spawn for Phase 2 when incidents exceed this count (default: 15). */
-  spawnThreshold: number;
-  /** Model for spawn when analyzeViaSpawn is true. Empty = use provider default from config (see getDefaultCronModel). */
-  spawnModel: string;
-  /** TOOLS.md section heading for positive reinforcement rules (default: "Positive Reinforcement Rules"). */
-  positiveRulesSection?: string;
-  /** When true, run LLM analysis on reinforcement incidents (default: true). */
-  reinforcementLLMAnalysis?: boolean;
-  /** When true, reinforcement analysis may create proposals in the proposals DB (default: true). */
-  reinforcementToProposals?: boolean;
-  /** When true, self-correction AGENTS_RULE remediations are written to proposals DB (default: true). */
-  agentsRuleToProposals?: boolean;
+	/** Enable self-correction pipeline (default: true). */
+	enabled?: boolean;
+	/** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
+	semanticDedup: boolean;
+	/** Similarity threshold for semantic dedup, 0–1 (default: 0.92). */
+	semanticDedupThreshold: number;
+	/** TOOLS.md section heading for new rules, e.g. "Self-correction rules" (default: "Self-correction rules"). */
+	toolsSection: string;
+	/** When true (default), insert suggested TOOLS rules under toolsSection. Set false to only suggest in report (then use --approve to apply). */
+	applyToolsByDefault: boolean;
+	/** When true, LLM rewrites TOOLS.md to integrate new rules (no duplicates/contradictions). When false, use section insert (or suggest if applyToolsByDefault is false) (default: false). */
+	autoRewriteTools: boolean;
+	/** When true and incident count > spawnThreshold, run Phase 2 via `openclaw sessions spawn --model <model>` for large context. Model is chosen from config (Gemini/OpenAI/Claude) when spawnModel is empty (default: false). */
+	analyzeViaSpawn: boolean;
+	/** Use spawn for Phase 2 when incidents exceed this count (default: 15). */
+	spawnThreshold: number;
+	/** Model for spawn when analyzeViaSpawn is true. Empty = use provider default from config (see getDefaultCronModel). */
+	spawnModel: string;
+	/** TOOLS.md section heading for positive reinforcement rules (default: "Positive Reinforcement Rules"). */
+	positiveRulesSection?: string;
+	/** When true, run LLM analysis on reinforcement incidents (default: true). */
+	reinforcementLLMAnalysis?: boolean;
+	/** When true, reinforcement analysis may create proposals in the proposals DB (default: true). */
+	reinforcementToProposals?: boolean;
+	/** When true, self-correction AGENTS_RULE remediations are written to proposals DB (default: true). */
+	agentsRuleToProposals?: boolean;
 };
 
 /**
@@ -441,12 +459,12 @@ export type SelfCorrectionConfig = {
  * When set, takes priority over the OPENCLAW_GATEWAY_TOKEN environment variable.
  */
 export type GatewayAuthConfig = {
-  /**
-   * Auth token for the OpenClaw gateway.
-   * Use a SecretRef so the plaintext token is never stored in config files:
-   *   "env:OPENCLAW_GATEWAY_TOKEN" or "file:/run/secrets/gateway-token"
-   */
-  token?: string;
+	/**
+	 * Auth token for the OpenClaw gateway.
+	 * Use a SecretRef so the plaintext token is never stored in config files:
+	 *   "env:OPENCLAW_GATEWAY_TOKEN" or "file:/run/secrets/gateway-token"
+	 */
+	token?: string;
 };
 
 /**
@@ -455,11 +473,11 @@ export type GatewayAuthConfig = {
  * property so it never appears in JSON.stringify or config dumps.
  */
 export type ResolvedGatewayAuthConfig = GatewayAuthConfig & {
-  readonly _resolvedToken?: string;
+	readonly _resolvedToken?: string;
 };
 
 export type GatewayConfig = {
-  auth?: ResolvedGatewayAuthConfig;
+	auth?: ResolvedGatewayAuthConfig;
 };
 
 /**
@@ -484,28 +502,28 @@ export type GatewayConfig = {
  *   - minimax-portal:minimax-cli — MiniMax CLI OAuth
  */
 export type AuthOrderConfig = {
-  /**
-   * Per-provider ordered list of auth profile IDs.
-   * First eligible profile wins; falls through on missing/expired OAuth token.
-   * Keys are provider prefixes (e.g. "anthropic", "openai", "google").
-   * Always populated when an AuthOrderConfig is present (parseAuthConfig never returns {}).
-   */
-  order: Record<string, string[]>;
-  /**
-   * When a provider has both OAuth and an API key, prefer OAuth (default: true).
-   * On OAuth failure the plugin records backoff and uses the API key until backoff expires.
-   */
-  preferOAuthWhenBoth?: boolean;
-  /**
-   * Backoff delays in minutes after each OAuth failure before trying OAuth again.
-   * Default: [5, 30, 60, 120, 240] (5min → 30min → 1h → 2h → 4h).
-   */
-  backoffScheduleMinutes?: number[];
-  /**
-   * Reset backoff levels after this many hours so OAuth is tried again from level 0.
-   * Default: 24.
-   */
-  resetBackoffAfterHours?: number;
+	/**
+	 * Per-provider ordered list of auth profile IDs.
+	 * First eligible profile wins; falls through on missing/expired OAuth token.
+	 * Keys are provider prefixes (e.g. "anthropic", "openai", "google").
+	 * Always populated when an AuthOrderConfig is present (parseAuthConfig never returns {}).
+	 */
+	order: Record<string, string[]>;
+	/**
+	 * When a provider has both OAuth and an API key, prefer OAuth (default: true).
+	 * On OAuth failure the plugin records backoff and uses the API key until backoff expires.
+	 */
+	preferOAuthWhenBoth?: boolean;
+	/**
+	 * Backoff delays in minutes after each OAuth failure before trying OAuth again.
+	 * Default: [5, 30, 60, 120, 240] (5min → 30min → 1h → 2h → 4h).
+	 */
+	backoffScheduleMinutes?: number[];
+	/**
+	 * Reset backoff levels after this many hours so OAuth is tried again from level 0.
+	 * Default: 24.
+	 */
+	resetBackoffAfterHours?: number;
 };
 
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
@@ -527,218 +545,218 @@ export type VerbosityLevel = "silent" | "quiet" | "normal" | "verbose";
 export type MemoryCategory = string;
 
 export type HybridMemoryConfig = {
-  embedding: {
-    provider: "openai" | "ollama" | "onnx" | "google";
-    model: string;
-    /** Required for openai provider; optional for ollama/onnx. */
-    apiKey?: string;
-    /** Optional ordered preference list (openai gateway fallback). First model defines vector dimension; all must have same dimension. */
-    models?: string[];
-    /** Vector dimensions for this model (required for ollama/onnx; auto-resolved for known openai models). */
-    dimensions: number;
-    /** Azure OpenAI: embedding deployment name (must match Azure Portal). When set, used as the API model id; `model` still resolves dimensions. */
-    deployment?: string;
-    /** Ollama endpoint URL (default: http://localhost:11434). Only used when provider='ollama'. */
-    endpoint?: string;
-    /** Number of texts to embed per batch call (default: 50). */
-    batchSize: number;
-    /**
-     * Ordered list of embedding providers to try (failover). First working wins.
-     * When unset, inferred from llm config (ollama if llm.nano/default/heavy contains "ollama/", openai if apiKey set, google if distill.apiKey or llm.providers.google set); default ["ollama", "openai"] when both possible so Ollama acts as a tier.
-     */
-    preferredProviders?: ("ollama" | "openai" | "google")[];
-    /** Resolved by parser from distill.apiKey or llm.providers.google.apiKey when preferredProviders includes "google". Not set by user. */
-    googleApiKey?: string;
-    /**
-     * Additional embedding models for multi-model support (Issue #158).
-     * When non-empty, facts are embedded with all models and stored in the fact_embeddings table.
-     * At retrieval time, all model indices are queried and results are merged via RRF.
-     * When empty/undefined, the system works in single-model mode (backward compatible).
-     */
-    multiModels?: EmbeddingModelConfig[];
-    /**
-     * When `true`, automatically re-generate embeddings for all facts whenever the
-     * embedding model or provider changes on startup (Issue #153).
-     * Default: `false` — changes are logged but no re-embedding is performed automatically.
-     * Enable when switching models to avoid stale vectors causing poor search quality.
-     */
-    autoMigrate?: boolean;
-  };
-  lanceDbPath: string;
-  sqlitePath: string;
-  autoCapture: boolean;
-  autoRecall: AutoRecallConfig;
-  /** Max characters per captured/stored fact (filter and truncation). Default 5000. */
-  captureMaxChars: number;
-  categories: string[];
-  autoClassify: AutoClassifyConfig;
-  /** Store options (2.3): fuzzyDedupe = skip store when normalized text matches existing. */
-  store: StoreConfig;
-  /** Opt-in credential management: structured, encrypted storage (default: disabled) */
-  credentials: CredentialsConfig;
-  /** Graph-based spreading activation: auto-linking and graph traversal */
-  graph: GraphConfig;
-  /** Write-Ahead Log for crash resilience (default: enabled) */
-  wal: WALConfig;
-  /** Event log archival configuration. */
-  eventLog: EventLogConfig;
-  /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
-  personaProposals: PersonaProposalsConfig;
-  /** Passive observer — background fact extraction from session transcripts (default: disabled) */
-  passiveObserver: PassiveObserverConfig;
-  /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
-  reflection: ReflectionConfig;
-  /** Identity reflection layer — synthesize persona-level insights from reflection outputs (default: disabled) */
-  identityReflection: IdentityReflectionConfig;
-  /** Promotion pipeline — cluster repeated durable identity reflections into stable persona state. */
-  identityPromotion: IdentityPromotionConfig;
-  /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
-  procedures: ProceduresConfig;
-  /** Multi-pass extraction with LLM verification (Issue #166, default: disabled). */
-  extraction: ExtractionConfig;
-  /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
-  memoryTiering: MemoryTieringConfig;
-  /** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
-  llm?: LLMConfig;
-  /**
-   * Optional: OAuth-first auth profile ordering per provider (issue #311).
-   * When set, providers with OAuth profiles route through the OpenClaw gateway instead of direct API keys.
-   * Falls back to API keys when gateway is unavailable or OAuth token is missing/expired.
-   */
-  auth?: AuthOrderConfig;
-  /** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
-  distill?: {
-    apiKey?: string;
-    defaultModel?: string;
-    /** Fallback models to try if primary model fails after retries (optional). Deprecated: use llm.default/heavy. */
-    fallbackModels?: string[];
-    /** Enable directive extraction from sessions (default: true). */
-    extractDirectives?: boolean;
-    /** Enable reinforcement extraction from sessions (default: true). */
-    extractReinforcement?: boolean;
-    /** Reinforcement boost added to facts search score (default: 0.1). */
-    reinforcementBoost?: number;
-    /** Phase 2: Reinforcement boost added to procedures search score (default: 0.1). */
-    reinforcementProcedureBoost?: number;
-    /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
-    reinforcementPromotionThreshold?: number;
-    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" or "default" saves cost and avoids locking the main model; unset = "heavy". */
-    extractionModelTier?: "nano" | "default" | "heavy";
-  };
-  /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
-  languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
-  /** Optional: ingest workspace markdown files as facts (skills, TOOLS.md, etc.) */
-  ingest?: IngestConfig;
-  /** Optional: search tweaks (HyDE query expansion) */
-  search?: SearchConfig;
-  /** Multi-strategy RRF retrieval pipeline configuration (Issue #152). */
-  retrieval: RetrievalConfig;
-  /** Optional: self-correction analysis — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
-  selfCorrection?: SelfCorrectionConfig;
-  /** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
-  multiAgent: MultiAgentConfig;
-  /** Error reporting to GlitchTip/Sentry (opt-out, default: enabled with community DSN). Set enabled: false or consent: false to opt out. */
-  errorReporting: ErrorReportingConfig;
-  /** Active task working memory — ACTIVE-TASKS.md persistence and session injection (default: enabled) */
-  activeTask: ActiveTaskConfig;
-  /** Goal stewardship — autonomous long-running goals (default: disabled). */
-  goalStewardship: GoalStewardshipConfig;
-  /** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
-  vector: VectorConfig;
-  /** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */
-  ambient: AmbientConfig;
-  /** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
-  graphRetrieval: GraphRetrievalConfig;
-  /** Future-date decay freeze protection (#144). Enabled by default. */
-  futureDateProtection: FutureDateProtectionConfig;
-  /** Maintenance tasks: monthly review, consolidation, etc. */
-  maintenance: MaintenanceConfig;
-  /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
-  nightlyCycle: NightlyCycleConfig;
-  /** Confidence reinforcement on repeated mentions (Issue #147, default: enabled). */
-  reinforcement: ReinforcementConfig;
-  /** Topic cluster detection: BFS connected-component analysis on memory_links (Issue #146). */
-  clusters: ClustersConfig;
-  /** Memory health dashboard (Issue #148, default: enabled). */
-  health: HealthConfig;
-  /** Knowledge gap analysis — orphan/weak detection and suggested links (Issue #141, default: enabled). */
-  gaps: GapsConfig;
-  /** Multi-hook retrieval aliases: generate and index alternative phrasings per fact (Issue #149, default: disabled). */
-  aliases: AliasesConfig;
-  /** Shortest-path traversal between memories via BFS (Issue #140, default: enabled). */
-  path: PathConfig;
-  /** Document ingestion via MarkItDown Python bridge (Issue #206, default: disabled). */
-  documents: DocumentsConfig;
-  /** Workflow tracking: tool-sequence capture and pattern learning (Issue #209, default: disabled). */
-  workflowTracking: WorkflowTrackingConfig;
-  /** Workflow crystallization: auto-generate AgentSkill SKILL.md files from repeated patterns (Issue #208, default: disabled). */
-  crystallization: CrystallizationConfig;
-  /** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
-  selfExtension: SelfExtensionConfig;
-  /**
-   * Top-level alias for implicitFeedback.trajectoryLLMAnalysis (Issue #754).
-   * When set, takes precedence over implicitFeedback.trajectoryLLMAnalysis.
-   * The nested key is still supported with a deprecation warning.
-   */
-  trajectoryLLMAnalysis?: boolean;
-  /**
-   * Top-level alias for implicitFeedback.feedToSelfCorrection (Issue #754).
-   * When set, takes precedence over implicitFeedback.feedToSelfCorrection.
-   * The nested key is still supported with a deprecation warning.
-   */
-  feedToSelfCorrection?: boolean;
-  /**
-   * Top-level alias for distill.extractReinforcement (Issue #754).
-   * When set, takes precedence over distill.extractReinforcement.
-   * The nested key is still supported with a deprecation warning.
-   */
-  extractReinforcement?: boolean;
-  /** Implicit feedback detection from behavioral conversation signals (Issue #262, default: enabled). */
-  implicitFeedback: ImplicitFeedbackConfig;
-  /** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
-  closedLoop: ClosedLoopConfig;
-  /** Real-time frustration detection from conversation signals (Issue #263, default: enabled). */
-  frustrationDetection: FrustrationDetectionConfig;
-  /** Cross-agent lesson generalisation — promote agent-scoped lessons to global (Issue #263, default: disabled). */
-  crossAgentLearning: CrossAgentLearningConfig;
-  /** Tool effectiveness scoring from workflow traces (Issue #263, default: enabled). */
-  toolEffectiveness: ToolEffectivenessConfig;
-  /** Contextual variant generation at index time (Issue #159, default: disabled). */
-  contextualVariants: ContextualVariantsConfig;
-  /** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
-  queryExpansion: QueryExpansionConfig;
-  /** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
-  reranking: RerankingConfig;
-  /** Adaptive document grading and query rewriting for retrieval quality (default: disabled). */
-  documentGrading: DocumentGradingConfig;
-  /** Verification store for critical facts (Issue #162, default: disabled). */
-  verification: VerificationConfig;
-  /** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
-  provenance: ProvenanceConfig;
-  /** LLM cost tracking — per-feature token usage and estimated cost (Issue #270, default: enabled). */
-  costTracking: CostTrackingConfig;
-  /** Mission Control dashboard HTTP server (Issue #309, default: enabled on port 7700). */
-  dashboard: DashboardConfig;
-  /** Sensor sweep — cron-based data collection writing to Event Bus, no LLM (Issue #236, default: disabled). */
-  sensorSweep: SensorSweepConfig;
-  /** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
-  apiTap: ApiTapConfig;
-  /** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
-  humanizer: HumanizerConfig;
-  /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */
-  frequencyCapture: FrequencyCaptureConfig;
-  /**
-   * Output verbosity level for CLI commands and tool responses (Issue #282).
-   * quiet: counts/totals only. normal: balanced default. verbose: full detail.
-   * Defaults: local→quiet, minimal→normal, enhanced→normal, complete→verbose.
-   */
-  verbosity: VerbosityLevel;
-  /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
-  mode?: ConfigMode | "custom";
-  /**
-   * Gateway connection settings. Token supports SecretRef:
-   *   "env:VAR_NAME" or "file:/path/to/file"
-   * Overrides the OPENCLAW_GATEWAY_TOKEN environment variable when set.
-   */
-  gateway?: GatewayConfig;
+	embedding: {
+		provider: "openai" | "ollama" | "onnx" | "google";
+		model: string;
+		/** Required for openai provider; optional for ollama/onnx. */
+		apiKey?: string;
+		/** Optional ordered preference list (openai gateway fallback). First model defines vector dimension; all must have same dimension. */
+		models?: string[];
+		/** Vector dimensions for this model (required for ollama/onnx; auto-resolved for known openai models). */
+		dimensions: number;
+		/** Azure OpenAI: embedding deployment name (must match Azure Portal). When set, used as the API model id; `model` still resolves dimensions. */
+		deployment?: string;
+		/** Ollama endpoint URL (default: http://localhost:11434). Only used when provider='ollama'. */
+		endpoint?: string;
+		/** Number of texts to embed per batch call (default: 50). */
+		batchSize: number;
+		/**
+		 * Ordered list of embedding providers to try (failover). First working wins.
+		 * When unset, inferred from llm config (ollama if llm.nano/default/heavy contains "ollama/", openai if apiKey set, google if distill.apiKey or llm.providers.google set); default ["ollama", "openai"] when both possible so Ollama acts as a tier.
+		 */
+		preferredProviders?: ("ollama" | "openai" | "google")[];
+		/** Resolved by parser from distill.apiKey or llm.providers.google.apiKey when preferredProviders includes "google". Not set by user. */
+		googleApiKey?: string;
+		/**
+		 * Additional embedding models for multi-model support (Issue #158).
+		 * When non-empty, facts are embedded with all models and stored in the fact_embeddings table.
+		 * At retrieval time, all model indices are queried and results are merged via RRF.
+		 * When empty/undefined, the system works in single-model mode (backward compatible).
+		 */
+		multiModels?: EmbeddingModelConfig[];
+		/**
+		 * When `true`, automatically re-generate embeddings for all facts whenever the
+		 * embedding model or provider changes on startup (Issue #153).
+		 * Default: `false` — changes are logged but no re-embedding is performed automatically.
+		 * Enable when switching models to avoid stale vectors causing poor search quality.
+		 */
+		autoMigrate?: boolean;
+	};
+	lanceDbPath: string;
+	sqlitePath: string;
+	autoCapture: boolean;
+	autoRecall: AutoRecallConfig;
+	/** Max characters per captured/stored fact (filter and truncation). Default 5000. */
+	captureMaxChars: number;
+	categories: string[];
+	autoClassify: AutoClassifyConfig;
+	/** Store options (2.3): fuzzyDedupe = skip store when normalized text matches existing. */
+	store: StoreConfig;
+	/** Opt-in credential management: structured, encrypted storage (default: disabled) */
+	credentials: CredentialsConfig;
+	/** Graph-based spreading activation: auto-linking and graph traversal */
+	graph: GraphConfig;
+	/** Write-Ahead Log for crash resilience (default: enabled) */
+	wal: WALConfig;
+	/** Event log archival configuration. */
+	eventLog: EventLogConfig;
+	/** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
+	personaProposals: PersonaProposalsConfig;
+	/** Passive observer — background fact extraction from session transcripts (default: disabled) */
+	passiveObserver: PassiveObserverConfig;
+	/** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
+	reflection: ReflectionConfig;
+	/** Identity reflection layer — synthesize persona-level insights from reflection outputs (default: disabled) */
+	identityReflection: IdentityReflectionConfig;
+	/** Promotion pipeline — cluster repeated durable identity reflections into stable persona state. */
+	identityPromotion: IdentityPromotionConfig;
+	/** Procedural memory — procedure tagging and auto-skills (default: enabled) */
+	procedures: ProceduresConfig;
+	/** Multi-pass extraction with LLM verification (Issue #166, default: disabled). */
+	extraction: ExtractionConfig;
+	/** Dynamic memory tiering — hot/warm/cold (default: enabled) */
+	memoryTiering: MemoryTieringConfig;
+	/** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
+	llm?: LLMConfig;
+	/**
+	 * Optional: OAuth-first auth profile ordering per provider (issue #311).
+	 * When set, providers with OAuth profiles route through the OpenClaw gateway instead of direct API keys.
+	 * Falls back to API keys when gateway is unavailable or OAuth token is missing/expired.
+	 */
+	auth?: AuthOrderConfig;
+	/** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
+	distill?: {
+		apiKey?: string;
+		defaultModel?: string;
+		/** Fallback models to try if primary model fails after retries (optional). Deprecated: use llm.default/heavy. */
+		fallbackModels?: string[];
+		/** Enable directive extraction from sessions (default: true). */
+		extractDirectives?: boolean;
+		/** Enable reinforcement extraction from sessions (default: true). */
+		extractReinforcement?: boolean;
+		/** Reinforcement boost added to facts search score (default: 0.1). */
+		reinforcementBoost?: number;
+		/** Phase 2: Reinforcement boost added to procedures search score (default: 0.1). */
+		reinforcementProcedureBoost?: number;
+		/** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
+		reinforcementPromotionThreshold?: number;
+		/** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" or "default" saves cost and avoids locking the main model; unset = "heavy". */
+		extractionModelTier?: "nano" | "default" | "heavy";
+	};
+	/** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
+	languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
+	/** Optional: ingest workspace markdown files as facts (skills, TOOLS.md, etc.) */
+	ingest?: IngestConfig;
+	/** Optional: search tweaks (HyDE query expansion) */
+	search?: SearchConfig;
+	/** Multi-strategy RRF retrieval pipeline configuration (Issue #152). */
+	retrieval: RetrievalConfig;
+	/** Optional: self-correction analysis — semantic dedup, TOOLS sectioning, auto-rewrite, spawn */
+	selfCorrection?: SelfCorrectionConfig;
+	/** Multi-agent memory scoping — dynamic agent detection and scope defaults (default: orchestratorId="main", defaultStoreScope="global") */
+	multiAgent: MultiAgentConfig;
+	/** Error reporting to GlitchTip/Sentry (opt-out, default: enabled with community DSN). Set enabled: false or consent: false to opt out. */
+	errorReporting: ErrorReportingConfig;
+	/** Active task working memory — ACTIVE-TASKS.md persistence and session injection (default: enabled) */
+	activeTask: ActiveTaskConfig;
+	/** Goal stewardship — autonomous long-running goals (default: disabled). */
+	goalStewardship: GoalStewardshipConfig;
+	/** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
+	vector: VectorConfig;
+	/** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */
+	ambient: AmbientConfig;
+	/** GraphRAG retrieval: semantic search + graph expansion (Issue #145, default: enabled, defaultExpand: false). */
+	graphRetrieval: GraphRetrievalConfig;
+	/** Future-date decay freeze protection (#144). Enabled by default. */
+	futureDateProtection: FutureDateProtectionConfig;
+	/** Maintenance tasks: monthly review, consolidation, etc. */
+	maintenance: MaintenanceConfig;
+	/** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
+	nightlyCycle: NightlyCycleConfig;
+	/** Confidence reinforcement on repeated mentions (Issue #147, default: enabled). */
+	reinforcement: ReinforcementConfig;
+	/** Topic cluster detection: BFS connected-component analysis on memory_links (Issue #146). */
+	clusters: ClustersConfig;
+	/** Memory health dashboard (Issue #148, default: enabled). */
+	health: HealthConfig;
+	/** Knowledge gap analysis — orphan/weak detection and suggested links (Issue #141, default: enabled). */
+	gaps: GapsConfig;
+	/** Multi-hook retrieval aliases: generate and index alternative phrasings per fact (Issue #149, default: disabled). */
+	aliases: AliasesConfig;
+	/** Shortest-path traversal between memories via BFS (Issue #140, default: enabled). */
+	path: PathConfig;
+	/** Document ingestion via MarkItDown Python bridge (Issue #206, default: disabled). */
+	documents: DocumentsConfig;
+	/** Workflow tracking: tool-sequence capture and pattern learning (Issue #209, default: disabled). */
+	workflowTracking: WorkflowTrackingConfig;
+	/** Workflow crystallization: auto-generate AgentSkill SKILL.md files from repeated patterns (Issue #208, default: disabled). */
+	crystallization: CrystallizationConfig;
+	/** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
+	selfExtension: SelfExtensionConfig;
+	/**
+	 * Top-level alias for implicitFeedback.trajectoryLLMAnalysis (Issue #754).
+	 * When set, takes precedence over implicitFeedback.trajectoryLLMAnalysis.
+	 * The nested key is still supported with a deprecation warning.
+	 */
+	trajectoryLLMAnalysis?: boolean;
+	/**
+	 * Top-level alias for implicitFeedback.feedToSelfCorrection (Issue #754).
+	 * When set, takes precedence over implicitFeedback.feedToSelfCorrection.
+	 * The nested key is still supported with a deprecation warning.
+	 */
+	feedToSelfCorrection?: boolean;
+	/**
+	 * Top-level alias for distill.extractReinforcement (Issue #754).
+	 * When set, takes precedence over distill.extractReinforcement.
+	 * The nested key is still supported with a deprecation warning.
+	 */
+	extractReinforcement?: boolean;
+	/** Implicit feedback detection from behavioral conversation signals (Issue #262, default: enabled). */
+	implicitFeedback: ImplicitFeedbackConfig;
+	/** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
+	closedLoop: ClosedLoopConfig;
+	/** Real-time frustration detection from conversation signals (Issue #263, default: enabled). */
+	frustrationDetection: FrustrationDetectionConfig;
+	/** Cross-agent lesson generalisation — promote agent-scoped lessons to global (Issue #263, default: disabled). */
+	crossAgentLearning: CrossAgentLearningConfig;
+	/** Tool effectiveness scoring from workflow traces (Issue #263, default: enabled). */
+	toolEffectiveness: ToolEffectivenessConfig;
+	/** Contextual variant generation at index time (Issue #159, default: disabled). */
+	contextualVariants: ContextualVariantsConfig;
+	/** Query expansion via LLM at retrieval time (Issue #160, default: disabled). */
+	queryExpansion: QueryExpansionConfig;
+	/** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
+	reranking: RerankingConfig;
+	/** Adaptive document grading and query rewriting for retrieval quality (default: disabled). */
+	documentGrading: DocumentGradingConfig;
+	/** Verification store for critical facts (Issue #162, default: disabled). */
+	verification: VerificationConfig;
+	/** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
+	provenance: ProvenanceConfig;
+	/** LLM cost tracking — per-feature token usage and estimated cost (Issue #270, default: enabled). */
+	costTracking: CostTrackingConfig;
+	/** Mission Control dashboard HTTP server (Issue #309, default: enabled on port 7700). */
+	dashboard: DashboardConfig;
+	/** Sensor sweep — cron-based data collection writing to Event Bus, no LLM (Issue #236, default: disabled). */
+	sensorSweep: SensorSweepConfig;
+	/** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
+	apiTap: ApiTapConfig;
+	/** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
+	humanizer: HumanizerConfig;
+	/** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */
+	frequencyCapture: FrequencyCaptureConfig;
+	/**
+	 * Output verbosity level for CLI commands and tool responses (Issue #282).
+	 * quiet: counts/totals only. normal: balanced default. verbose: full detail.
+	 * Defaults: local→quiet, minimal→normal, enhanced→normal, complete→verbose.
+	 */
+	verbosity: VerbosityLevel;
+	/** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
+	mode?: ConfigMode | "custom";
+	/**
+	 * Gateway connection settings. Token supports SecretRef:
+	 *   "env:VAR_NAME" or "file:/path/to/file"
+	 * Overrides the OPENCLAW_GATEWAY_TOKEN environment variable when set.
+	 */
+	gateway?: GatewayConfig;
 };

@@ -35,7 +35,11 @@ import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { VerificationStore } from "../services/verification-store.js";
-import type { RunReflectionFn, RunReflectionMetaFn, RunReflectionRulesFn } from "../tools/utility-tools.js";
+import type {
+	RunReflectionFn,
+	RunReflectionMetaFn,
+	RunReflectionRulesFn,
+} from "../tools/utility-tools.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 
 /** Raw WAL helpers (caller binds wal). Used by tools and lifecycle. */
@@ -44,26 +48,26 @@ export type WalRemoveFn = typeof import("../services/wal-helpers.js").walRemove;
 
 /** Vector similarity search (used by recall and tools). */
 export type FindSimilarByEmbeddingFn = (
-  vectorDb: VectorDB,
-  factsDb: { getById(id: string): MemoryEntry | null },
-  vector: number[],
-  limit: number,
-  minScore?: number,
+	vectorDb: VectorDB,
+	factsDb: { getById(id: string): MemoryEntry | null },
+	vector: number[],
+	limit: number,
+	minScore?: number,
 ) => Promise<MemoryEntry[]>;
 
 /** Builds scope filter for tools from user/agent/session and config. */
 export type BuildToolScopeFilterFn = (
-  params: {
-    userId?: string | null;
-    agentId?: string | null;
-    sessionId?: string | null;
-    confirmCrossTenantScope?: boolean;
-  },
-  currentAgent: string | null,
-  config: {
-    multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
-    autoRecall: { scopeFilter?: ScopeFilter };
-  },
+	params: {
+		userId?: string | null;
+		agentId?: string | null;
+		sessionId?: string | null;
+		confirmCrossTenantScope?: boolean;
+	},
+	currentAgent: string | null,
+	config: {
+		multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
+		autoRecall: { scopeFilter?: ScopeFilter };
+	},
 ) => ScopeFilter | undefined;
 
 /**
@@ -71,63 +75,63 @@ export type BuildToolScopeFilterFn = (
  * Optional modules depend on this type only; index.ts builds the single implementation.
  */
 export interface MemoryPluginAPI {
-  // --- Core (always present) ---
-  factsDb: FactsDB;
-  edictStore: EdictStore;
-  vectorDb: VectorDB;
-  cfg: HybridMemoryConfig;
-  embeddings: EmbeddingProvider;
-  openai: OpenAI;
-  resolvedSqlitePath: string;
-  currentAgentIdRef: { value: string | null };
-  lastProgressiveIndexIds: string[];
-  pendingLLMWarnings: PendingLLMWarnings;
+	// --- Core (always present) ---
+	factsDb: FactsDB;
+	edictStore: EdictStore;
+	vectorDb: VectorDB;
+	cfg: HybridMemoryConfig;
+	embeddings: EmbeddingProvider;
+	openai: OpenAI;
+	resolvedSqlitePath: string;
+	currentAgentIdRef: { value: string | null };
+	lastProgressiveIndexIds: string[];
+	pendingLLMWarnings: PendingLLMWarnings;
 
-  // --- Optional core (nullable) ---
-  wal: WriteAheadLog | null;
-  embeddingRegistry: EmbeddingRegistry | null;
-  credentialsDb: CredentialsDB | null;
-  aliasDb: AliasDB | null;
-  proposalsDb: ProposalsDB | null;
-  eventLog: EventLog | null;
-  narrativesDb: NarrativesDB | null;
-  provenanceService: ProvenanceService | null;
-  issueStore: IssueStore | null;
-  workflowStore: WorkflowStore | null;
-  crystallizationStore: CrystallizationStore | null;
-  toolProposalStore: ToolProposalStore | null;
-  verificationStore: VerificationStore | null;
-  variantQueue: VariantGenerationQueue | null;
-  pythonBridge: PythonBridge | null;
-  apitapStore: ApitapStore | null;
-  /** Cross-agent audit trail (Issue #790); null when memory DB is :memory:. */
-  auditStore: AuditStore | null;
-  /** Per-agent health snapshots (Issue #789). */
-  agentHealthStore: AgentHealthStore | null;
+	// --- Optional core (nullable) ---
+	wal: WriteAheadLog | null;
+	embeddingRegistry: EmbeddingRegistry | null;
+	credentialsDb: CredentialsDB | null;
+	aliasDb: AliasDB | null;
+	proposalsDb: ProposalsDB | null;
+	eventLog: EventLog | null;
+	narrativesDb: NarrativesDB | null;
+	provenanceService: ProvenanceService | null;
+	issueStore: IssueStore | null;
+	workflowStore: WorkflowStore | null;
+	crystallizationStore: CrystallizationStore | null;
+	toolProposalStore: ToolProposalStore | null;
+	verificationStore: VerificationStore | null;
+	variantQueue: VariantGenerationQueue | null;
+	pythonBridge: PythonBridge | null;
+	apitapStore: ApitapStore | null;
+	/** Cross-agent audit trail (Issue #790); null when memory DB is :memory:. */
+	auditStore: AuditStore | null;
+	/** Per-agent health snapshots (Issue #789). */
+	agentHealthStore: AgentHealthStore | null;
 
-  // --- Refs (lifecycle / degradation) ---
-  restartPendingClearedRef: { value: boolean };
-  recallInFlightRef: { value: number };
-  /** Last prompt used for before_agent_start recall; used to re-match memories after compaction (#957). */
-  lastAutoRecallPromptRef: { value: string | null };
+	// --- Refs (lifecycle / degradation) ---
+	restartPendingClearedRef: { value: boolean };
+	recallInFlightRef: { value: number };
+	/** Last prompt used for before_agent_start recall; used to re-match memories after compaction (#957). */
+	lastAutoRecallPromptRef: { value: string | null };
 
-  // --- WAL & search (raw; caller binds wal where needed) ---
-  walWrite: WalWriteFn;
-  walRemove: WalRemoveFn;
-  findSimilarByEmbedding: FindSimilarByEmbeddingFn;
+	// --- WAL & search (raw; caller binds wal where needed) ---
+	walWrite: WalWriteFn;
+	walRemove: WalRemoveFn;
+	findSimilarByEmbedding: FindSimilarByEmbeddingFn;
 
-  // --- Capture helpers (used by lifecycle) ---
-  shouldCapture: (text: string) => boolean;
-  detectCategory: (text: string) => MemoryCategory;
+	// --- Capture helpers (used by lifecycle) ---
+	shouldCapture: (text: string) => boolean;
+	detectCategory: (text: string) => MemoryCategory;
 
-  // --- Tools: scope filter & reflection ---
-  buildToolScopeFilter: BuildToolScopeFilterFn;
-  runReflection: RunReflectionFn;
-  runReflectionRules: RunReflectionRulesFn;
-  runReflectionMeta: RunReflectionMetaFn;
+	// --- Tools: scope filter & reflection ---
+	buildToolScopeFilter: BuildToolScopeFilterFn;
+	runReflection: RunReflectionFn;
+	runReflectionRules: RunReflectionRulesFn;
+	runReflectionMeta: RunReflectionMetaFn;
 
-  // --- Tools: timers (for cleanup on stop) ---
-  timers: {
-    proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
-  };
+	// --- Tools: timers (for cleanup on stop) ---
+	timers: {
+		proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
+	};
 }

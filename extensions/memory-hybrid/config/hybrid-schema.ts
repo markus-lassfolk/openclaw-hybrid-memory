@@ -5,5 +5,5 @@ import { parseConfig } from "./parsers/index.js";
  * Uses the same parser pipeline as plugin registration; throws on invalid hybrid config.
  */
 export const hybridConfigSchema = {
-  parse: parseConfig,
+	parse: parseConfig,
 };

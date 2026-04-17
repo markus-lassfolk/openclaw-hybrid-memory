@@ -32,15 +32,21 @@ export type ErrorContext = Parameters<typeof capturePluginError>[1];
  * );
  * safeFn();
  */
-export function withErrorTracking<T>(fn: () => T extends Promise<any> ? never : T, context: ErrorContext): () => T {
-  return () => {
-    try {
-      return fn();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), context);
-      throw err;
-    }
-  };
+export function withErrorTracking<T>(
+	fn: () => T extends Promise<any> ? never : T,
+	context: ErrorContext,
+): () => T {
+	return () => {
+		try {
+			return fn();
+		} catch (err) {
+			capturePluginError(
+				err instanceof Error ? err : new Error(String(err)),
+				context,
+			);
+			throw err;
+		}
+	};
 }
 
 /**
@@ -58,13 +64,19 @@ export function withErrorTracking<T>(fn: () => T extends Promise<any> ? never : 
  * );
  * await safeFn();
  */
-export function withErrorTrackingAsync<T>(fn: () => Promise<T>, context: ErrorContext): () => Promise<T> {
-  return async () => {
-    try {
-      return await fn();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), context);
-      throw err;
-    }
-  };
+export function withErrorTrackingAsync<T>(
+	fn: () => Promise<T>,
+	context: ErrorContext,
+): () => Promise<T> {
+	return async () => {
+		try {
+			return await fn();
+		} catch (err) {
+			capturePluginError(
+				err instanceof Error ? err : new Error(String(err)),
+				context,
+			);
+			throw err;
+		}
+	};
 }

@@ -11,57 +11,57 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface ProposalRow {
-  id: string;
-  target_file: string;
-  title: string;
-  observation: string;
-  suggested_change: string;
-  confidence: number;
-  evidence_sessions: string;
-  status: string;
-  created_at: number;
-  reviewed_at: number | null;
-  reviewed_by: string | null;
-  applied_at: number | null;
-  expires_at: number | null;
-  rejection_reason: string | null;
-  target_mtime_ms: number | null;
-  target_hash: string | null;
+	id: string;
+	target_file: string;
+	title: string;
+	observation: string;
+	suggested_change: string;
+	confidence: number;
+	evidence_sessions: string;
+	status: string;
+	created_at: number;
+	reviewed_at: number | null;
+	reviewed_by: string | null;
+	applied_at: number | null;
+	expires_at: number | null;
+	rejection_reason: string | null;
+	target_mtime_ms: number | null;
+	target_hash: string | null;
 }
 
 interface CountRow {
-  count: number;
+	count: number;
 }
 
 export type ProposalEntry = {
-  id: string;
-  targetFile: string;
-  title: string;
-  observation: string;
-  suggestedChange: string;
-  confidence: number;
-  evidenceSessions: string[];
-  status: string;
-  createdAt: number;
-  reviewedAt: number | null;
-  reviewedBy: string | null;
-  appliedAt: number | null;
-  expiresAt: number | null;
-  rejectionReason: string | null;
-  targetMtimeMs: number | null;
-  targetHash: string | null;
+	id: string;
+	targetFile: string;
+	title: string;
+	observation: string;
+	suggestedChange: string;
+	confidence: number;
+	evidenceSessions: string[];
+	status: string;
+	createdAt: number;
+	reviewedAt: number | null;
+	reviewedBy: string | null;
+	appliedAt: number | null;
+	expiresAt: number | null;
+	rejectionReason: string | null;
+	targetMtimeMs: number | null;
+	targetHash: string | null;
 };
 
 export class ProposalsDB extends BaseSqliteStore {
-  private readonly dbPath: string;
+	private readonly dbPath: string;
 
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db);
-    this.dbPath = dbPath;
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db);
+		this.dbPath = dbPath;
 
-    this.liveDb.exec(`
+		this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS proposals (
         id TEXT PRIMARY KEY,
         target_file TEXT NOT NULL,
@@ -82,166 +82,185 @@ export class ProposalsDB extends BaseSqliteStore {
       )
     `);
 
-    this.liveDb.exec(`
+		this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
       CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
       CREATE INDEX IF NOT EXISTS idx_proposals_expires ON proposals(expires_at);
     `);
 
-    this.migrateRejectionReasonColumn();
-    this.migrateTargetSnapshotColumns();
-  }
+		this.migrateRejectionReasonColumn();
+		this.migrateTargetSnapshotColumns();
+	}
 
-  protected getSubsystemName(): string {
-    return "proposals-db";
-  }
+	protected getSubsystemName(): string {
+		return "proposals-db";
+	}
 
-  private migrateRejectionReasonColumn(): void {
-    const cols = this.liveDb.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === "rejection_reason")) return;
-    this.liveDb.exec("ALTER TABLE proposals ADD COLUMN rejection_reason TEXT");
-  }
+	private migrateRejectionReasonColumn(): void {
+		const cols = this.liveDb
+			.prepare("PRAGMA table_info(proposals)")
+			.all() as Array<{ name: string }>;
+		if (cols.some((c) => c.name === "rejection_reason")) return;
+		this.liveDb.exec("ALTER TABLE proposals ADD COLUMN rejection_reason TEXT");
+	}
 
-  private migrateTargetSnapshotColumns(): void {
-    const cols = this.liveDb.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
-    if (!cols.some((c) => c.name === "target_mtime_ms")) {
-      this.liveDb.exec("ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL");
-    }
-    if (!cols.some((c) => c.name === "target_hash")) {
-      this.liveDb.exec("ALTER TABLE proposals ADD COLUMN target_hash TEXT");
-    }
-  }
+	private migrateTargetSnapshotColumns(): void {
+		const cols = this.liveDb
+			.prepare("PRAGMA table_info(proposals)")
+			.all() as Array<{ name: string }>;
+		if (!cols.some((c) => c.name === "target_mtime_ms")) {
+			this.liveDb.exec("ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL");
+		}
+		if (!cols.some((c) => c.name === "target_hash")) {
+			this.liveDb.exec("ALTER TABLE proposals ADD COLUMN target_hash TEXT");
+		}
+	}
 
-  create(entry: {
-    targetFile: string;
-    title: string;
-    observation: string;
-    suggestedChange: string;
-    confidence: number;
-    evidenceSessions: string[];
-    expiresAt?: number | null;
-    targetMtimeMs?: number | null;
-    targetHash?: string | null;
-  }): ProposalEntry {
-    const id = randomUUID();
-    const now = Math.floor(Date.now() / 1000);
-    const evidenceJson = JSON.stringify(entry.evidenceSessions);
+	create(entry: {
+		targetFile: string;
+		title: string;
+		observation: string;
+		suggestedChange: string;
+		confidence: number;
+		evidenceSessions: string[];
+		expiresAt?: number | null;
+		targetMtimeMs?: number | null;
+		targetHash?: string | null;
+	}): ProposalEntry {
+		const id = randomUUID();
+		const now = Math.floor(Date.now() / 1000);
+		const evidenceJson = JSON.stringify(entry.evidenceSessions);
 
-    this.liveDb
-      .prepare(
-        `INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at, target_mtime_ms, target_hash)
+		this.liveDb
+			.prepare(
+				`INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at, target_mtime_ms, target_hash)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        entry.targetFile,
-        entry.title,
-        entry.observation,
-        entry.suggestedChange,
-        entry.confidence,
-        evidenceJson,
-        now,
-        entry.expiresAt ?? null,
-        entry.targetMtimeMs ?? null,
-        entry.targetHash ?? null,
-      );
+			)
+			.run(
+				id,
+				entry.targetFile,
+				entry.title,
+				entry.observation,
+				entry.suggestedChange,
+				entry.confidence,
+				evidenceJson,
+				now,
+				entry.expiresAt ?? null,
+				entry.targetMtimeMs ?? null,
+				entry.targetHash ?? null,
+			);
 
-    // biome-ignore lint/style/noNonNullAssertion: Known to exist
-    return this.get(id)!;
-  }
+		// biome-ignore lint/style/noNonNullAssertion: Known to exist
+		return this.get(id)!;
+	}
 
-  get(id: string): ProposalEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as
-      | ProposalRow
-      | undefined;
-    if (!row) return null;
-    return this.rowToEntry(row);
-  }
+	get(id: string): ProposalEntry | null {
+		const row = this.liveDb
+			.prepare("SELECT * FROM proposals WHERE id = ?")
+			.get(id) as unknown as ProposalRow | undefined;
+		if (!row) return null;
+		return this.rowToEntry(row);
+	}
 
-  list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
-    let query = "SELECT * FROM proposals WHERE 1=1";
-    const params: string[] = [];
+	list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
+		let query = "SELECT * FROM proposals WHERE 1=1";
+		const params: string[] = [];
 
-    if (filters?.status) {
-      query += " AND status = ?";
-      params.push(filters.status);
-    }
-    if (filters?.targetFile) {
-      query += " AND target_file = ?";
-      params.push(filters.targetFile);
-    }
+		if (filters?.status) {
+			query += " AND status = ?";
+			params.push(filters.status);
+		}
+		if (filters?.targetFile) {
+			query += " AND target_file = ?";
+			params.push(filters.targetFile);
+		}
 
-    query += " ORDER BY created_at DESC";
+		query += " ORDER BY created_at DESC";
 
-    const rows = this.liveDb.prepare(query).all(...params) as unknown as ProposalRow[];
-    return rows.map((r) => this.rowToEntry(r));
-  }
+		const rows = this.liveDb
+			.prepare(query)
+			.all(...params) as unknown as ProposalRow[];
+		return rows.map((r) => this.rowToEntry(r));
+	}
 
-  updateStatus(id: string, status: string, reviewedBy?: string, rejectionReason?: string): ProposalEntry | null {
-    const now = Math.floor(Date.now() / 1000);
-    this.liveDb
-      .prepare("UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?")
-      .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
-    return this.get(id);
-  }
+	updateStatus(
+		id: string,
+		status: string,
+		reviewedBy?: string,
+		rejectionReason?: string,
+	): ProposalEntry | null {
+		const now = Math.floor(Date.now() / 1000);
+		this.liveDb
+			.prepare(
+				"UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?",
+			)
+			.run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
+		return this.get(id);
+	}
 
-  markApplied(id: string): ProposalEntry | null {
-    const now = Math.floor(Date.now() / 1000);
-    this.liveDb.prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?").run(now, id);
-    return this.get(id);
-  }
+	markApplied(id: string): ProposalEntry | null {
+		const now = Math.floor(Date.now() / 1000);
+		this.liveDb
+			.prepare(
+				"UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?",
+			)
+			.run(now, id);
+		return this.get(id);
+	}
 
-  countRecentProposals(daysBack: number): number {
-    const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
-    const row = this.liveDb
-      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
-      .get(cutoff) as unknown as CountRow | undefined;
-    return row?.count ?? 0;
-  }
+	countRecentProposals(daysBack: number): number {
+		const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
+		const row = this.liveDb
+			.prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
+			.get(cutoff) as unknown as CountRow | undefined;
+		return row?.count ?? 0;
+	}
 
-  pruneExpired(): number {
-    const now = Math.floor(Date.now() / 1000);
-    const result = this.liveDb
-      .prepare("DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'")
-      .run(now);
-    return Number(result.changes);
-  }
+	pruneExpired(): number {
+		const now = Math.floor(Date.now() / 1000);
+		const result = this.liveDb
+			.prepare(
+				"DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'",
+			)
+			.run(now);
+		return Number(result.changes);
+	}
 
-  private rowToEntry(row: ProposalRow): ProposalEntry {
-    // Parse evidence_sessions with error handling for corrupted data
-    let evidenceSessions: string[] = [];
-    try {
-      evidenceSessions = JSON.parse(row.evidence_sessions);
-      if (!Array.isArray(evidenceSessions)) {
-        evidenceSessions = [];
-      }
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "json-parse-evidence",
-        severity: "info",
-        subsystem: "proposals",
-      });
-      // Corrupted JSON - fallback to empty array
-      evidenceSessions = [];
-    }
+	private rowToEntry(row: ProposalRow): ProposalEntry {
+		// Parse evidence_sessions with error handling for corrupted data
+		let evidenceSessions: string[] = [];
+		try {
+			evidenceSessions = JSON.parse(row.evidence_sessions);
+			if (!Array.isArray(evidenceSessions)) {
+				evidenceSessions = [];
+			}
+		} catch (err) {
+			capturePluginError(err as Error, {
+				operation: "json-parse-evidence",
+				severity: "info",
+				subsystem: "proposals",
+			});
+			// Corrupted JSON - fallback to empty array
+			evidenceSessions = [];
+		}
 
-    return {
-      id: row.id,
-      targetFile: row.target_file,
-      title: row.title,
-      observation: row.observation,
-      suggestedChange: row.suggested_change,
-      confidence: row.confidence,
-      evidenceSessions,
-      status: row.status,
-      createdAt: row.created_at,
-      reviewedAt: row.reviewed_at,
-      reviewedBy: row.reviewed_by,
-      appliedAt: row.applied_at,
-      expiresAt: row.expires_at,
-      rejectionReason: row.rejection_reason,
-      targetMtimeMs: row.target_mtime_ms ?? null,
-      targetHash: row.target_hash ?? null,
-    };
-  }
+		return {
+			id: row.id,
+			targetFile: row.target_file,
+			title: row.title,
+			observation: row.observation,
+			suggestedChange: row.suggested_change,
+			confidence: row.confidence,
+			evidenceSessions,
+			status: row.status,
+			createdAt: row.created_at,
+			reviewedAt: row.reviewed_at,
+			reviewedBy: row.reviewed_by,
+			appliedAt: row.applied_at,
+			expiresAt: row.expires_at,
+			rejectionReason: row.rejection_reason,
+			targetMtimeMs: row.target_mtime_ms ?? null,
+			targetHash: row.target_hash ?? null,
+		};
+	}
 }

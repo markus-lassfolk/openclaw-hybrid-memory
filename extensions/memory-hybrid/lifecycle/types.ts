@@ -19,7 +19,11 @@ import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import type { WorkflowTracker } from "../services/workflow-tracker.js";
-import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+import type {
+	MemoryEntry,
+	ScopeFilter,
+	SearchResult,
+} from "../types/memory.js";
 
 /**
  * Subset of OpenClaw `PluginHookAgentContext` read at the hook boundary (#1005).
@@ -29,103 +33,117 @@ import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js"
  * structured event/session fields over `api.context`, so the event payload wins when both differ.
  */
 export type HookAgentContextSlice = {
-  agentId?: string;
-  sessionKey?: string;
-  sessionId?: string;
+	agentId?: string;
+	sessionKey?: string;
+	sessionId?: string;
 };
 
 export interface LifecycleContext {
-  factsDb: FactsDB;
-  edictStore: EdictStore;
-  vectorDb: VectorDB;
-  embeddings: EmbeddingProvider;
-  embeddingRegistry: EmbeddingRegistry | null;
-  openai: OpenAI;
-  cfg: HybridMemoryConfig;
-  credentialsDb: CredentialsDB | null;
-  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
-  wal: WriteAheadLog | null;
-  eventLog: EventLog | null;
-  narrativesDb: NarrativesDB | null;
-  workflowStore: WorkflowStore | null;
-  workflowTracker?: WorkflowTracker;
-  currentAgentIdRef: { value: string | null };
-  lastProgressiveIndexIds: string[];
-  restartPendingClearedRef: { value: boolean };
-  resolvedSqlitePath: string;
-  walWrite: (
-    operation: "store" | "update",
-    data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void },
-    supersedeTargetId?: string,
-  ) => Promise<string>;
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number,
-  ) => Promise<MemoryEntry[]>;
-  shouldCapture: (text: string) => boolean;
-  detectCategory: (text: string) => MemoryCategory;
-  pendingLLMWarnings: PendingLLMWarnings;
-  issueStore: import("../backends/issue-store.js").IssueStore | null;
-  recallInFlightRef: { value: number };
-  /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
-  lastAutoRecallPromptRef: { value: string | null };
+	factsDb: FactsDB;
+	edictStore: EdictStore;
+	vectorDb: VectorDB;
+	embeddings: EmbeddingProvider;
+	embeddingRegistry: EmbeddingRegistry | null;
+	openai: OpenAI;
+	cfg: HybridMemoryConfig;
+	credentialsDb: CredentialsDB | null;
+	aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
+	wal: WriteAheadLog | null;
+	eventLog: EventLog | null;
+	narrativesDb: NarrativesDB | null;
+	workflowStore: WorkflowStore | null;
+	workflowTracker?: WorkflowTracker;
+	currentAgentIdRef: { value: string | null };
+	lastProgressiveIndexIds: string[];
+	restartPendingClearedRef: { value: boolean };
+	resolvedSqlitePath: string;
+	walWrite: (
+		operation: "store" | "update",
+		data: Record<string, unknown>,
+		logger: { warn: (msg: string) => void },
+		supersedeTargetId?: string,
+	) => Promise<string>;
+	walRemove: (
+		id: string,
+		logger: { warn: (msg: string) => void },
+	) => Promise<void>;
+	findSimilarByEmbedding: (
+		vectorDb: VectorDB,
+		factsDb: { getById(id: string): MemoryEntry | null },
+		vector: number[],
+		limit: number,
+		minScore?: number,
+	) => Promise<MemoryEntry[]>;
+	shouldCapture: (text: string) => boolean;
+	detectCategory: (text: string) => MemoryCategory;
+	pendingLLMWarnings: PendingLLMWarnings;
+	issueStore: import("../backends/issue-store.js").IssueStore | null;
+	recallInFlightRef: { value: number };
+	/** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
+	lastAutoRecallPromptRef: { value: string | null };
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */
 export interface SessionState {
-  sessionStartSeen: Set<string>;
-  ambientSeenFactsMap: Map<string, SessionSeenFacts>;
-  ambientLastEmbeddingMap: Map<string, number[] | null>;
-  frustrationStateMap: Map<string, { level: number; turns: FrustrationConversationTurn[] }>;
-  authFailureRecallsThisSession: Map<string, number>;
-  sessionLastActivity: Map<string, number>;
-  touchSession: (sessionKey: string) => void;
-  clearSessionState: (sessionKey: string) => void;
-  pruneSessionMaps: () => void;
-  resolveSessionKey: (event: unknown, api?: { context?: { sessionId?: string; sessionKey?: string } }) => string | null;
-  MAX_TRACKED_SESSIONS: number;
-  /** Optional: clear all session maps (used by dispose). Set by hooks when creating sessionState. */
-  clearAll?: () => void;
+	sessionStartSeen: Set<string>;
+	ambientSeenFactsMap: Map<string, SessionSeenFacts>;
+	ambientLastEmbeddingMap: Map<string, number[] | null>;
+	frustrationStateMap: Map<
+		string,
+		{ level: number; turns: FrustrationConversationTurn[] }
+	>;
+	authFailureRecallsThisSession: Map<string, number>;
+	sessionLastActivity: Map<string, number>;
+	touchSession: (sessionKey: string) => void;
+	clearSessionState: (sessionKey: string) => void;
+	pruneSessionMaps: () => void;
+	resolveSessionKey: (
+		event: unknown,
+		api?: { context?: { sessionId?: string; sessionKey?: string } },
+	) => string | null;
+	MAX_TRACKED_SESSIONS: number;
+	/** Optional: clear all session maps (used by dispose). Set by hooks when creating sessionState. */
+	clearAll?: () => void;
 }
 
 /** Result of recall stage (candidates + blocks for injection). */
 export interface RecallResult {
-  candidates: SearchResult[];
-  issueBlock: string;
-  narrativeBlock: string;
-  hotBlock: string;
-  procedureBlock: string;
-  withProcedures: (s: string) => string;
-  recallSpan: string;
-  recallStartMs: number;
-  degradationMaxLatencyMs: number;
-  injectionFormat: "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";
-  maxTokens: number;
-  maxPerMemoryChars: number;
-  useSummaryInInjection: boolean;
-  indexCap: number;
-  summarizeWhenOverBudget: boolean;
-  summarizeModel: string | undefined;
-  groupByCategory: boolean;
-  pinnedRecallThreshold: number;
-  lastProgressiveIndexIdsRef: string[];
-  ambientCfg: { enabled: boolean; multiQuery?: boolean };
-  /** When ambient multiQuery is on, the session's seen-facts for topic-shift deduplication. */
-  ambientSeenFacts: SessionSeenFacts | null;
+	candidates: SearchResult[];
+	issueBlock: string;
+	narrativeBlock: string;
+	hotBlock: string;
+	procedureBlock: string;
+	withProcedures: (s: string) => string;
+	recallSpan: string;
+	recallStartMs: number;
+	degradationMaxLatencyMs: number;
+	injectionFormat:
+		| "full"
+		| "short"
+		| "minimal"
+		| "progressive"
+		| "progressive_hybrid";
+	maxTokens: number;
+	maxPerMemoryChars: number;
+	useSummaryInInjection: boolean;
+	indexCap: number;
+	summarizeWhenOverBudget: boolean;
+	summarizeModel: string | undefined;
+	groupByCategory: boolean;
+	pinnedRecallThreshold: number;
+	lastProgressiveIndexIdsRef: string[];
+	ambientCfg: { enabled: boolean; multiQuery?: boolean };
+	/** When ambient multiQuery is on, the session's seen-facts for topic-shift deduplication. */
+	ambientSeenFacts: SessionSeenFacts | null;
 }
 
 /** Result of injection stage. */
 interface InjectionResult {
-  prependContext: string;
+	prependContext: string;
 }
 
 /** Return type of runRecallStage: degraded/empty return prependContext; full goes to injection. */
 export type RecallStageResult =
-  | { kind: "degraded"; prependContext: string }
-  | { kind: "empty"; prependContext: string | undefined }
-  | { kind: "full"; result: RecallResult };
+	| { kind: "degraded"; prependContext: string }
+	| { kind: "empty"; prependContext: string | undefined }
+	| { kind: "full"; result: RecallResult };

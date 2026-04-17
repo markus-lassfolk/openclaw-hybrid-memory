@@ -13,13 +13,13 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import {
-  REFLECTION_DEDUPE_THRESHOLD,
-  REFLECTION_IMPORTANCE,
-  REFLECTION_MAX_FACTS_PER_CATEGORY,
-  REFLECTION_MAX_FACT_LENGTH,
-  REFLECTION_META_MAX_CHARS,
-  REFLECTION_PATTERN_MAX_CHARS,
-  REFLECTION_TEMPERATURE,
+	REFLECTION_DEDUPE_THRESHOLD,
+	REFLECTION_IMPORTANCE,
+	REFLECTION_MAX_FACTS_PER_CATEGORY,
+	REFLECTION_MAX_FACT_LENGTH,
+	REFLECTION_META_MAX_CHARS,
+	REFLECTION_PATTERN_MAX_CHARS,
+	REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
@@ -37,42 +37,42 @@ const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
 const REFLECTION_MAX_PATTERNS_FOR_META = 30;
 
 export interface ReflectionConfig {
-  defaultWindow: number;
-  minObservations: number;
-  enabled?: boolean;
+	defaultWindow: number;
+	minObservations: number;
+	enabled?: boolean;
 }
 
 interface ReflectionOptions {
-  window: number;
-  dryRun: boolean;
-  model: string;
-  verbose?: boolean;
-  fallbackModels?: string[];
+	window: number;
+	dryRun: boolean;
+	model: string;
+	verbose?: boolean;
+	fallbackModels?: string[];
 }
 
 interface ReflectionResult {
-  factsAnalyzed: number;
-  patternsExtracted: number;
-  patternsStored: number;
-  window: number;
+	factsAnalyzed: number;
+	patternsExtracted: number;
+	patternsStored: number;
+	window: number;
 }
 
 interface ReflectionRulesResult {
-  rulesExtracted: number;
-  rulesStored: number;
+	rulesExtracted: number;
+	rulesStored: number;
 }
 
 interface ReflectionMetaResult {
-  metaExtracted: number;
-  metaStored: number;
+	metaExtracted: number;
+	metaStored: number;
 }
 
 /**
  * Normalize vector to unit length.
  */
 export function normalizeVector(v: number[]): number[] {
-  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-  return v.map((x) => x / norm);
+	const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+	return v.map((x) => x / norm);
 }
 
 /**
@@ -84,627 +84,748 @@ export function normalizeVector(v: number[]): number[] {
  * For arbitrary (non-normalized) vectors, use cosineSimilarity from ambient-retrieval.ts instead.
  */
 export function dotProductSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  let dot = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-  }
-  return dot;
+	if (a.length !== b.length) return 0;
+	let dot = 0;
+	for (let i = 0; i < a.length; i++) {
+		dot += a[i] * b[i];
+	}
+	return dot;
 }
 
 /**
  * Parse PATTERN: lines from reflection LLM response. Exported for tests.
  */
-export function parsePatternsFromReflectionResponse(rawResponse: string): string[] {
-  const patterns: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*PATTERN:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
-      patterns.push(text);
-    }
-  }
-  const seenInBatch = new Set<string>();
-  const unique: string[] = [];
-  for (const p of patterns) {
-    const key = p.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    unique.push(p);
-  }
-  return unique;
+export function parsePatternsFromReflectionResponse(
+	rawResponse: string,
+): string[] {
+	const patterns: string[] = [];
+	for (const line of rawResponse.split(/\n/)) {
+		const m = line.match(/^\s*PATTERN:\s*(.+)/);
+		if (!m) continue;
+		const text = m[1].trim();
+		if (
+			text.length >= REFLECTION_PATTERN_MIN_CHARS &&
+			text.length <= REFLECTION_PATTERN_MAX_CHARS
+		) {
+			patterns.push(text);
+		}
+	}
+	const seenInBatch = new Set<string>();
+	const unique: string[] = [];
+	for (const p of patterns) {
+		const key = p.toLowerCase().replace(/\s+/g, " ");
+		if (seenInBatch.has(key)) continue;
+		seenInBatch.add(key);
+		unique.push(p);
+	}
+	return unique;
 }
 
 /**
  * Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
  */
 export async function runReflection(
-  factsDb: FactsDB,
-  vectorDb: VectorDB,
-  embeddings: EmbeddingProvider,
-  openai: OpenAI,
-  config: ReflectionConfig,
-  opts: ReflectionOptions,
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null,
+	factsDb: FactsDB,
+	vectorDb: VectorDB,
+	embeddings: EmbeddingProvider,
+	openai: OpenAI,
+	config: ReflectionConfig,
+	opts: ReflectionOptions,
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionResult> {
-  // Feature-gating: exit 0 if reflection is disabled
-  if (config.enabled === false) {
-    return { factsAnalyzed: 0, patternsExtracted: 0, patternsStored: 0, window: opts.window };
-  }
-  const windowDays = Math.min(90, Math.max(1, opts.window));
-  const recentFacts = factsDb.getRecentFacts(windowDays);
+	// Feature-gating: exit 0 if reflection is disabled
+	if (config.enabled === false) {
+		return {
+			factsAnalyzed: 0,
+			patternsExtracted: 0,
+			patternsStored: 0,
+			window: opts.window,
+		};
+	}
+	const windowDays = Math.min(90, Math.max(1, opts.window));
+	const recentFacts = factsDb.getRecentFacts(windowDays);
 
-  if (recentFacts.length < config.minObservations) {
-    logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
-  }
+	if (recentFacts.length < config.minObservations) {
+		logger.info(
+			`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`,
+		);
+		return {
+			factsAnalyzed: recentFacts.length,
+			patternsExtracted: 0,
+			patternsStored: 0,
+			window: windowDays,
+		};
+	}
 
-  // Group by category, cap length and count
-  const byCategory = new Map<string, MemoryEntry[]>();
-  for (const f of recentFacts) {
-    const cat = f.category;
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    const arr = byCategory.get(cat)!;
-    if (arr.length >= REFLECTION_MAX_FACTS_PER_CATEGORY) continue;
-    arr.push(f);
-  }
+	// Group by category, cap length and count
+	const byCategory = new Map<string, MemoryEntry[]>();
+	for (const f of recentFacts) {
+		const cat = f.category;
+		if (!byCategory.has(cat)) byCategory.set(cat, []);
+		const arr = byCategory.get(cat)!;
+		if (arr.length >= REFLECTION_MAX_FACTS_PER_CATEGORY) continue;
+		arr.push(f);
+	}
 
-  const factLines: string[] = [];
-  for (const [cat, entries] of byCategory) {
-    for (const e of entries) {
-      const text = e.text.slice(0, REFLECTION_MAX_FACT_LENGTH).trim();
-      if (text.length < 10) continue;
-      factLines.push(`[${cat}] ${text}`);
-    }
-  }
-  const factsBlock = factLines.join("\n");
-  const prompt = fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock });
+	const factLines: string[] = [];
+	for (const [cat, entries] of byCategory) {
+		for (const e of entries) {
+			const text = e.text.slice(0, REFLECTION_MAX_FACT_LENGTH).trim();
+			if (text.length < 10) continue;
+			factLines.push(`[${cat}] ${text}`);
+		}
+	}
+	const factsBlock = factLines.join("\n");
+	const prompt = fillPrompt(loadPrompt("reflection"), {
+		window: String(windowDays),
+		facts: factsBlock,
+	});
 
-  let rawResponse: string;
-  try {
-    rawResponse = await chatCompleteWithRetry({
-      model: opts.model,
-      content: prompt,
-      temperature: REFLECTION_TEMPERATURE,
-      maxTokens: 1500,
-      openai,
-      fallbackModels: opts.fallbackModels ?? [],
-      label: "memory-hybrid: reflection",
-      feature: CostFeature.reflection,
-    });
-  } catch (err) {
-    logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
-    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "reflection-llm",
-      subsystem: "openai",
-      windowDays,
-      retryAttempt,
-    });
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
-  }
+	let rawResponse: string;
+	try {
+		rawResponse = await chatCompleteWithRetry({
+			model: opts.model,
+			content: prompt,
+			temperature: REFLECTION_TEMPERATURE,
+			maxTokens: 1500,
+			openai,
+			fallbackModels: opts.fallbackModels ?? [],
+			label: "memory-hybrid: reflection",
+			feature: CostFeature.reflection,
+		});
+	} catch (err) {
+		logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
+		const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "reflection-llm",
+			subsystem: "openai",
+			windowDays,
+			retryAttempt,
+		});
+		return {
+			factsAnalyzed: recentFacts.length,
+			patternsExtracted: 0,
+			patternsStored: 0,
+			window: windowDays,
+		};
+	}
 
-  const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);
+	const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);
 
-  if (uniqueNewPatterns.length === 0) {
-    logger.info("memory-hybrid: reflection — 0 patterns extracted from LLM");
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
-  }
+	if (uniqueNewPatterns.length === 0) {
+		logger.info("memory-hybrid: reflection — 0 patterns extracted from LLM");
+		return {
+			factsAnalyzed: recentFacts.length,
+			patternsExtracted: 0,
+			patternsStored: 0,
+			window: windowDays,
+		};
+	}
 
-  if (opts.verbose) {
-    logger.info(`memory-hybrid: reflection — extracted ${uniqueNewPatterns.length} patterns:`);
-    for (const pattern of uniqueNewPatterns) {
-      logger.info(`  PATTERN: ${pattern}`);
-    }
-  }
+	if (opts.verbose) {
+		logger.info(
+			`memory-hybrid: reflection — extracted ${uniqueNewPatterns.length} patterns:`,
+		);
+		for (const pattern of uniqueNewPatterns) {
+			logger.info(`  PATTERN: ${pattern}`);
+		}
+	}
 
-  // Existing patterns (non-superseded, still valid) for dedupe
-  const nowSec = Math.floor(Date.now() / 1000);
-  const existingPatternFacts = factsDb
-    .getByCategory("pattern")
-    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const existingVectors: (number[] | null)[] = [];
-  if (existingPatternFacts.length > 0) {
-    for (let i = 0; i < existingPatternFacts.length; i += 20) {
-      const batch = existingPatternFacts.slice(i, i + 20);
-      for (const f of batch) {
-        try {
-          const vec = await embeddings.embed(f.text);
-          existingVectors.push(normalizeVector(vec));
-        } catch (err) {
-          // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-          if (!shouldSuppressEmbeddingError(err)) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "reflection-embed-existing",
-              subsystem: "embeddings",
-              factId: f.id,
-            });
-          }
-          existingVectors.push(null);
-        }
-      }
-      if (i + 20 < existingPatternFacts.length) await new Promise((r) => setTimeout(r, 200));
-    }
-  }
+	// Existing patterns (non-superseded, still valid) for dedupe
+	const nowSec = Math.floor(Date.now() / 1000);
+	const existingPatternFacts = factsDb
+		.getByCategory("pattern")
+		.filter(
+			(f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+		);
+	const existingVectors: (number[] | null)[] = [];
+	if (existingPatternFacts.length > 0) {
+		for (let i = 0; i < existingPatternFacts.length; i += 20) {
+			const batch = existingPatternFacts.slice(i, i + 20);
+			for (const f of batch) {
+				try {
+					const vec = await embeddings.embed(f.text);
+					existingVectors.push(normalizeVector(vec));
+				} catch (err) {
+					// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+					if (!shouldSuppressEmbeddingError(err)) {
+						capturePluginError(
+							err instanceof Error ? err : new Error(String(err)),
+							{
+								operation: "reflection-embed-existing",
+								subsystem: "embeddings",
+								factId: f.id,
+							},
+						);
+					}
+					existingVectors.push(null);
+				}
+			}
+			if (i + 20 < existingPatternFacts.length)
+				await new Promise((r) => setTimeout(r, 200));
+		}
+	}
 
-  let stored = 0;
-  const reflectionRunId = provenanceService ? randomUUID() : null;
-  for (const patternText of uniqueNewPatterns) {
-    let vec: number[];
-    try {
-      vec = await embeddings.embed(patternText);
-    } catch (err) {
-      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "embed-pattern",
-          severity: "info",
-          subsystem: "reflection",
-        });
-      }
-      continue; // Skip this pattern on embed failure
-    }
-    const normVec = normalizeVector(vec);
-    let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
-      }
-    }
-    if (isDuplicate) {
-      if (opts.verbose) {
-        logger.info(`memory-hybrid: reflection — skipped duplicate: ${patternText.slice(0, 60)}...`);
-      }
-      continue;
-    }
+	let stored = 0;
+	const reflectionRunId = provenanceService ? randomUUID() : null;
+	for (const patternText of uniqueNewPatterns) {
+		let vec: number[];
+		try {
+			vec = await embeddings.embed(patternText);
+		} catch (err) {
+			// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+			if (!shouldSuppressEmbeddingError(err)) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "embed-pattern",
+						severity: "info",
+						subsystem: "reflection",
+					},
+				);
+			}
+			continue; // Skip this pattern on embed failure
+		}
+		const normVec = normalizeVector(vec);
+		let isDuplicate = false;
+		for (const ev of existingVectors) {
+			if (ev === null || ev.length === 0) continue;
+			if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+				isDuplicate = true;
+				break;
+			}
+		}
+		if (isDuplicate) {
+			if (opts.verbose) {
+				logger.info(
+					`memory-hybrid: reflection — skipped duplicate: ${patternText.slice(0, 60)}...`,
+				);
+			}
+			continue;
+		}
 
-    if (opts.dryRun) {
-      logger.info(`memory-hybrid: reflection [dry-run] would store: ${patternText.slice(0, 60)}...`);
-      stored++;
-      continue;
-    }
+		if (opts.dryRun) {
+			logger.info(
+				`memory-hybrid: reflection [dry-run] would store: ${patternText.slice(0, 60)}...`,
+			);
+			stored++;
+			continue;
+		}
 
-    const entry = factsDb.store({
-      text: patternText,
-      category: "pattern" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    });
-    if (provenanceService && reflectionRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "reflection",
-          sourceId: reflectionRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
+		const entry = factsDb.store({
+			text: patternText,
+			category: "pattern" as MemoryCategory,
+			importance: REFLECTION_IMPORTANCE,
+			entity: null,
+			key: null,
+			value: null,
+			source: "reflection",
+			decayClass: "permanent",
+			tags: ["reflection", "pattern"],
+			extractionMethod: "reflection",
+			extractionConfidence: REFLECTION_IMPORTANCE,
+		});
+		if (provenanceService && reflectionRunId) {
+			try {
+				provenanceService.addEdge(entry.id, {
+					edgeType: "DERIVED_FROM",
+					sourceType: "reflection",
+					sourceId: reflectionRunId,
+				});
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "reflection-provenance-derived",
+						subsystem: "provenance",
+						factId: entry.id,
+					},
+				);
+			}
+		}
 
-    if (opts.verbose) {
-      logger.info(
-        `memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? "..." : ""}`,
-      );
-    }
-    try {
-      await vectorDb.store({
-        text: patternText,
-        vector: vec,
-        importance: REFLECTION_IMPORTANCE,
-        category: "pattern",
-        id: entry.id,
-      });
-      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-    } catch (err) {
-      logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "reflection-vector-store",
-        subsystem: "vector",
-        factId: entry.id,
-      });
-    }
-    existingVectors.push(normVec);
-    stored++;
-  }
+		if (opts.verbose) {
+			logger.info(
+				`memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? "..." : ""}`,
+			);
+		}
+		try {
+			await vectorDb.store({
+				text: patternText,
+				vector: vec,
+				importance: REFLECTION_IMPORTANCE,
+				category: "pattern",
+				id: entry.id,
+			});
+			factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+		} catch (err) {
+			logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "reflection-vector-store",
+				subsystem: "vector",
+				factId: entry.id,
+			});
+		}
+		existingVectors.push(normVec);
+		stored++;
+	}
 
-  return {
-    factsAnalyzed: recentFacts.length,
-    patternsExtracted: uniqueNewPatterns.length,
-    patternsStored: stored,
-    window: windowDays,
-  };
+	return {
+		factsAnalyzed: recentFacts.length,
+		patternsExtracted: uniqueNewPatterns.length,
+		patternsStored: stored,
+		window: windowDays,
+	};
 }
 
 /**
  * Rules layer — synthesize patterns into actionable one-line rules (category "rule").
  */
 export async function runReflectionRules(
-  factsDb: FactsDB,
-  vectorDb: VectorDB,
-  embeddings: EmbeddingProvider,
-  openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null,
+	factsDb: FactsDB,
+	vectorDb: VectorDB,
+	embeddings: EmbeddingProvider,
+	openai: OpenAI,
+	opts: {
+		dryRun: boolean;
+		model: string;
+		verbose?: boolean;
+		fallbackModels?: string[];
+	},
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionRulesResult> {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const patternFacts = factsDb
-    .getByCategory("pattern")
-    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES).map((f) => f.text);
-  if (patterns.length < 2) {
-    logger.info(`memory-hybrid: reflect-rules — need at least 2 patterns, have ${patterns.length}`);
-    return { rulesExtracted: 0, rulesStored: 0 };
-  }
-  const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
-  const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
-  let rawResponse: string;
-  try {
-    rawResponse = await chatCompleteWithRetry({
-      model: opts.model,
-      content: prompt,
-      temperature: REFLECTION_TEMPERATURE,
-      maxTokens: 800,
-      openai,
-      fallbackModels: opts.fallbackModels ?? [],
-      label: "memory-hybrid: reflect-rules",
-      feature: CostFeature.reflectionRules,
-    });
-  } catch (err) {
-    logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
-    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "reflection-rules-llm",
-      subsystem: "openai",
-      retryAttempt,
-    });
-    return { rulesExtracted: 0, rulesStored: 0 };
-  }
-  const rules: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*RULE:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) rules.push(text);
-  }
-  const seenInBatch = new Set<string>();
-  const uniqueRules: string[] = [];
-  for (const r of rules) {
-    const key = r.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    uniqueRules.push(r);
-  }
-  if (uniqueRules.length === 0) {
-    logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
-    return { rulesExtracted: rules.length, rulesStored: 0 };
-  }
+	const nowSec = Math.floor(Date.now() / 1000);
+	const patternFacts = factsDb
+		.getByCategory("pattern")
+		.filter(
+			(f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+		);
+	const patterns = patternFacts
+		.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES)
+		.map((f) => f.text);
+	if (patterns.length < 2) {
+		logger.info(
+			`memory-hybrid: reflect-rules — need at least 2 patterns, have ${patterns.length}`,
+		);
+		return { rulesExtracted: 0, rulesStored: 0 };
+	}
+	const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
+	const prompt = fillPrompt(loadPrompt("reflection-rules"), {
+		patterns: patternsBlock,
+	});
+	let rawResponse: string;
+	try {
+		rawResponse = await chatCompleteWithRetry({
+			model: opts.model,
+			content: prompt,
+			temperature: REFLECTION_TEMPERATURE,
+			maxTokens: 800,
+			openai,
+			fallbackModels: opts.fallbackModels ?? [],
+			label: "memory-hybrid: reflect-rules",
+			feature: CostFeature.reflectionRules,
+		});
+	} catch (err) {
+		logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
+		const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "reflection-rules-llm",
+			subsystem: "openai",
+			retryAttempt,
+		});
+		return { rulesExtracted: 0, rulesStored: 0 };
+	}
+	const rules: string[] = [];
+	for (const line of rawResponse.split(/\n/)) {
+		const m = line.match(/^\s*RULE:\s*(.+)/);
+		if (!m) continue;
+		const text = m[1].trim();
+		if (
+			text.length >= REFLECTION_RULE_MIN_CHARS &&
+			text.length <= REFLECTION_RULE_MAX_CHARS
+		)
+			rules.push(text);
+	}
+	const seenInBatch = new Set<string>();
+	const uniqueRules: string[] = [];
+	for (const r of rules) {
+		const key = r.toLowerCase().replace(/\s+/g, " ");
+		if (seenInBatch.has(key)) continue;
+		seenInBatch.add(key);
+		uniqueRules.push(r);
+	}
+	if (uniqueRules.length === 0) {
+		logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
+		return { rulesExtracted: rules.length, rulesStored: 0 };
+	}
 
-  if (opts.verbose) {
-    logger.info(`memory-hybrid: reflect-rules — extracted ${uniqueRules.length} rules:`);
-    for (const rule of uniqueRules) {
-      logger.info(`  RULE: ${rule}`);
-    }
-  }
-  const existingRuleFacts = factsDb
-    .getByCategory("rule")
-    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const existingVectors: (number[] | null)[] = [];
-  for (let i = 0; i < existingRuleFacts.length; i += 20) {
-    const batch = existingRuleFacts.slice(i, i + 20);
-    for (const f of batch) {
-      try {
-        existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
-      } catch (err) {
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "reflection-rules-embed-existing",
-            subsystem: "embeddings",
-            factId: f.id,
-          });
-        }
-        existingVectors.push(null);
-      }
-    }
-    if (i + 20 < existingRuleFacts.length) await new Promise((r) => setTimeout(r, 200));
-  }
-  let stored = 0;
-  const reflectionRunId = provenanceService ? randomUUID() : null;
-  for (const ruleText of uniqueRules) {
-    let vec: number[];
-    try {
-      vec = await embeddings.embed(ruleText);
-    } catch (err) {
-      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "embed-rule",
-          severity: "info",
-          subsystem: "reflection",
-        });
-      }
-      continue; // Skip this rule on embed failure
-    }
-    const normVec = normalizeVector(vec);
-    let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
-      }
-    }
-    if (isDuplicate) {
-      if (opts.verbose) {
-        logger.info(`memory-hybrid: reflect-rules — skipped duplicate: ${ruleText.slice(0, 50)}...`);
-      }
-      continue;
-    }
-    if (opts.dryRun) {
-      logger.info(`memory-hybrid: reflect-rules [dry-run] would store: ${ruleText.slice(0, 50)}...`);
-      stored++;
-      continue;
-    }
-    const entry = factsDb.store({
-      text: ruleText,
-      category: "rule" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "rule"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    });
-    if (provenanceService && reflectionRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "reflection",
-          sourceId: reflectionRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-rules-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
+	if (opts.verbose) {
+		logger.info(
+			`memory-hybrid: reflect-rules — extracted ${uniqueRules.length} rules:`,
+		);
+		for (const rule of uniqueRules) {
+			logger.info(`  RULE: ${rule}`);
+		}
+	}
+	const existingRuleFacts = factsDb
+		.getByCategory("rule")
+		.filter(
+			(f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+		);
+	const existingVectors: (number[] | null)[] = [];
+	for (let i = 0; i < existingRuleFacts.length; i += 20) {
+		const batch = existingRuleFacts.slice(i, i + 20);
+		for (const f of batch) {
+			try {
+				existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
+			} catch (err) {
+				// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+				if (!shouldSuppressEmbeddingError(err)) {
+					capturePluginError(
+						err instanceof Error ? err : new Error(String(err)),
+						{
+							operation: "reflection-rules-embed-existing",
+							subsystem: "embeddings",
+							factId: f.id,
+						},
+					);
+				}
+				existingVectors.push(null);
+			}
+		}
+		if (i + 20 < existingRuleFacts.length)
+			await new Promise((r) => setTimeout(r, 200));
+	}
+	let stored = 0;
+	const reflectionRunId = provenanceService ? randomUUID() : null;
+	for (const ruleText of uniqueRules) {
+		let vec: number[];
+		try {
+			vec = await embeddings.embed(ruleText);
+		} catch (err) {
+			// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+			if (!shouldSuppressEmbeddingError(err)) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "embed-rule",
+						severity: "info",
+						subsystem: "reflection",
+					},
+				);
+			}
+			continue; // Skip this rule on embed failure
+		}
+		const normVec = normalizeVector(vec);
+		let isDuplicate = false;
+		for (const ev of existingVectors) {
+			if (ev === null || ev.length === 0) continue;
+			if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+				isDuplicate = true;
+				break;
+			}
+		}
+		if (isDuplicate) {
+			if (opts.verbose) {
+				logger.info(
+					`memory-hybrid: reflect-rules — skipped duplicate: ${ruleText.slice(0, 50)}...`,
+				);
+			}
+			continue;
+		}
+		if (opts.dryRun) {
+			logger.info(
+				`memory-hybrid: reflect-rules [dry-run] would store: ${ruleText.slice(0, 50)}...`,
+			);
+			stored++;
+			continue;
+		}
+		const entry = factsDb.store({
+			text: ruleText,
+			category: "rule" as MemoryCategory,
+			importance: REFLECTION_IMPORTANCE,
+			entity: null,
+			key: null,
+			value: null,
+			source: "reflection",
+			decayClass: "permanent",
+			tags: ["reflection", "rule"],
+			extractionMethod: "reflection",
+			extractionConfidence: REFLECTION_IMPORTANCE,
+		});
+		if (provenanceService && reflectionRunId) {
+			try {
+				provenanceService.addEdge(entry.id, {
+					edgeType: "DERIVED_FROM",
+					sourceType: "reflection",
+					sourceId: reflectionRunId,
+				});
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "reflection-rules-provenance-derived",
+						subsystem: "provenance",
+						factId: entry.id,
+					},
+				);
+			}
+		}
 
-    if (opts.verbose) {
-      logger.info(
-        `memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? "..." : ""}`,
-      );
-    }
-    try {
-      await vectorDb.store({
-        text: ruleText,
-        vector: vec,
-        importance: REFLECTION_IMPORTANCE,
-        category: "rule",
-        id: entry.id,
-      });
-      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-    } catch (err) {
-      logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "reflection-rules-vector-store",
-        subsystem: "vector",
-        factId: entry.id,
-      });
-    }
-    existingVectors.push(normVec);
-    stored++;
-  }
-  return { rulesExtracted: rules.length, rulesStored: stored };
+		if (opts.verbose) {
+			logger.info(
+				`memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? "..." : ""}`,
+			);
+		}
+		try {
+			await vectorDb.store({
+				text: ruleText,
+				vector: vec,
+				importance: REFLECTION_IMPORTANCE,
+				category: "rule",
+				id: entry.id,
+			});
+			factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+		} catch (err) {
+			logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "reflection-rules-vector-store",
+				subsystem: "vector",
+				factId: entry.id,
+			});
+		}
+		existingVectors.push(normVec);
+		stored++;
+	}
+	return { rulesExtracted: rules.length, rulesStored: stored };
 }
 
 /**
  * Reflection on reflections — synthesize patterns into 1-3 meta-patterns (stored as pattern + meta tag).
  */
 export async function runReflectionMeta(
-  factsDb: FactsDB,
-  vectorDb: VectorDB,
-  embeddings: EmbeddingProvider,
-  openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null,
+	factsDb: FactsDB,
+	vectorDb: VectorDB,
+	embeddings: EmbeddingProvider,
+	openai: OpenAI,
+	opts: {
+		dryRun: boolean;
+		model: string;
+		verbose?: boolean;
+		fallbackModels?: string[];
+	},
+	logger: { info: (msg: string) => void; warn: (msg: string) => void },
+	provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionMetaResult> {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const patternFacts = factsDb
-    .getByCategory("pattern")
-    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_META).map((f) => f.text);
-  if (patterns.length < 3) {
-    logger.info(`memory-hybrid: reflect-meta — need at least 3 patterns, have ${patterns.length}`);
-    return { metaExtracted: 0, metaStored: 0 };
-  }
-  const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
-  const prompt = fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock });
-  let rawResponse: string;
-  try {
-    rawResponse = await chatCompleteWithRetry({
-      model: opts.model,
-      content: prompt,
-      temperature: REFLECTION_TEMPERATURE,
-      maxTokens: 500,
-      openai,
-      fallbackModels: opts.fallbackModels ?? [],
-      label: "memory-hybrid: reflect-meta",
-      feature: CostFeature.reflectionMeta,
-    });
-  } catch (err) {
-    logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
-    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "reflection-meta-llm",
-      subsystem: "openai",
-      retryAttempt,
-    });
-    return { metaExtracted: 0, metaStored: 0 };
-  }
-  const metas: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*META:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_META_MIN_CHARS && text.length <= REFLECTION_META_MAX_CHARS) metas.push(text);
-  }
-  const seenInBatch = new Set<string>();
-  const uniqueMetas: string[] = [];
-  for (const x of metas) {
-    const key = x.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    uniqueMetas.push(x);
-  }
-  if (uniqueMetas.length === 0) {
-    logger.info("memory-hybrid: reflect-meta — 0 meta-patterns extracted from LLM");
-    return { metaExtracted: metas.length, metaStored: 0 };
-  }
+	const nowSec = Math.floor(Date.now() / 1000);
+	const patternFacts = factsDb
+		.getByCategory("pattern")
+		.filter(
+			(f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
+		);
+	const patterns = patternFacts
+		.slice(0, REFLECTION_MAX_PATTERNS_FOR_META)
+		.map((f) => f.text);
+	if (patterns.length < 3) {
+		logger.info(
+			`memory-hybrid: reflect-meta — need at least 3 patterns, have ${patterns.length}`,
+		);
+		return { metaExtracted: 0, metaStored: 0 };
+	}
+	const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
+	const prompt = fillPrompt(loadPrompt("reflection-meta"), {
+		patterns: patternsBlock,
+	});
+	let rawResponse: string;
+	try {
+		rawResponse = await chatCompleteWithRetry({
+			model: opts.model,
+			content: prompt,
+			temperature: REFLECTION_TEMPERATURE,
+			maxTokens: 500,
+			openai,
+			fallbackModels: opts.fallbackModels ?? [],
+			label: "memory-hybrid: reflect-meta",
+			feature: CostFeature.reflectionMeta,
+		});
+	} catch (err) {
+		logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
+		const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "reflection-meta-llm",
+			subsystem: "openai",
+			retryAttempt,
+		});
+		return { metaExtracted: 0, metaStored: 0 };
+	}
+	const metas: string[] = [];
+	for (const line of rawResponse.split(/\n/)) {
+		const m = line.match(/^\s*META:\s*(.+)/);
+		if (!m) continue;
+		const text = m[1].trim();
+		if (
+			text.length >= REFLECTION_META_MIN_CHARS &&
+			text.length <= REFLECTION_META_MAX_CHARS
+		)
+			metas.push(text);
+	}
+	const seenInBatch = new Set<string>();
+	const uniqueMetas: string[] = [];
+	for (const x of metas) {
+		const key = x.toLowerCase().replace(/\s+/g, " ");
+		if (seenInBatch.has(key)) continue;
+		seenInBatch.add(key);
+		uniqueMetas.push(x);
+	}
+	if (uniqueMetas.length === 0) {
+		logger.info(
+			"memory-hybrid: reflect-meta — 0 meta-patterns extracted from LLM",
+		);
+		return { metaExtracted: metas.length, metaStored: 0 };
+	}
 
-  if (opts.verbose) {
-    logger.info(`memory-hybrid: reflect-meta — extracted ${uniqueMetas.length} meta-patterns:`);
-    for (const meta of uniqueMetas) {
-      logger.info(`  META: ${meta}`);
-    }
-  }
-  const existingMetaFacts = factsDb
-    .getByCategory("pattern")
-    .filter(
-      (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
-    );
-  const existingVectors: (number[] | null)[] = [];
-  for (let i = 0; i < existingMetaFacts.length; i += 20) {
-    const batch = existingMetaFacts.slice(i, i + 20);
-    for (const f of batch) {
-      try {
-        existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
-      } catch (err) {
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "reflection-meta-embed-existing",
-            subsystem: "embeddings",
-            factId: f.id,
-          });
-        }
-        existingVectors.push(null);
-      }
-    }
-    if (i + 20 < existingMetaFacts.length) await new Promise((r) => setTimeout(r, 200));
-  }
-  let stored = 0;
-  const reflectionRunId = provenanceService ? randomUUID() : null;
-  for (const metaText of uniqueMetas) {
-    let vec: number[];
-    try {
-      vec = await embeddings.embed(metaText);
-    } catch (err) {
-      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "embed-meta",
-          severity: "info",
-          subsystem: "reflection",
-        });
-      }
-      continue; // Skip this meta-pattern on embed failure
-    }
-    const normVec = normalizeVector(vec);
-    let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
-      }
-    }
-    if (isDuplicate) {
-      if (opts.verbose) {
-        logger.info(`memory-hybrid: reflect-meta — skipped duplicate: ${metaText.slice(0, 50)}...`);
-      }
-      continue;
-    }
-    if (opts.dryRun) {
-      logger.info(`memory-hybrid: reflect-meta [dry-run] would store: ${metaText.slice(0, 50)}...`);
-      stored++;
-      continue;
-    }
-    const entry = factsDb.store({
-      text: metaText,
-      category: "pattern" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern", "meta"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    });
-    if (provenanceService && reflectionRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "reflection",
-          sourceId: reflectionRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-meta-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
+	if (opts.verbose) {
+		logger.info(
+			`memory-hybrid: reflect-meta — extracted ${uniqueMetas.length} meta-patterns:`,
+		);
+		for (const meta of uniqueMetas) {
+			logger.info(`  META: ${meta}`);
+		}
+	}
+	const existingMetaFacts = factsDb
+		.getByCategory("pattern")
+		.filter(
+			(f) =>
+				!f.supersededAt &&
+				(f.expiresAt === null || f.expiresAt > nowSec) &&
+				f.tags?.includes("meta") === true,
+		);
+	const existingVectors: (number[] | null)[] = [];
+	for (let i = 0; i < existingMetaFacts.length; i += 20) {
+		const batch = existingMetaFacts.slice(i, i + 20);
+		for (const f of batch) {
+			try {
+				existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
+			} catch (err) {
+				// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+				if (!shouldSuppressEmbeddingError(err)) {
+					capturePluginError(
+						err instanceof Error ? err : new Error(String(err)),
+						{
+							operation: "reflection-meta-embed-existing",
+							subsystem: "embeddings",
+							factId: f.id,
+						},
+					);
+				}
+				existingVectors.push(null);
+			}
+		}
+		if (i + 20 < existingMetaFacts.length)
+			await new Promise((r) => setTimeout(r, 200));
+	}
+	let stored = 0;
+	const reflectionRunId = provenanceService ? randomUUID() : null;
+	for (const metaText of uniqueMetas) {
+		let vec: number[];
+		try {
+			vec = await embeddings.embed(metaText);
+		} catch (err) {
+			// AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+			if (!shouldSuppressEmbeddingError(err)) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "embed-meta",
+						severity: "info",
+						subsystem: "reflection",
+					},
+				);
+			}
+			continue; // Skip this meta-pattern on embed failure
+		}
+		const normVec = normalizeVector(vec);
+		let isDuplicate = false;
+		for (const ev of existingVectors) {
+			if (ev === null || ev.length === 0) continue;
+			if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+				isDuplicate = true;
+				break;
+			}
+		}
+		if (isDuplicate) {
+			if (opts.verbose) {
+				logger.info(
+					`memory-hybrid: reflect-meta — skipped duplicate: ${metaText.slice(0, 50)}...`,
+				);
+			}
+			continue;
+		}
+		if (opts.dryRun) {
+			logger.info(
+				`memory-hybrid: reflect-meta [dry-run] would store: ${metaText.slice(0, 50)}...`,
+			);
+			stored++;
+			continue;
+		}
+		const entry = factsDb.store({
+			text: metaText,
+			category: "pattern" as MemoryCategory,
+			importance: REFLECTION_IMPORTANCE,
+			entity: null,
+			key: null,
+			value: null,
+			source: "reflection",
+			decayClass: "permanent",
+			tags: ["reflection", "pattern", "meta"],
+			extractionMethod: "reflection",
+			extractionConfidence: REFLECTION_IMPORTANCE,
+		});
+		if (provenanceService && reflectionRunId) {
+			try {
+				provenanceService.addEdge(entry.id, {
+					edgeType: "DERIVED_FROM",
+					sourceType: "reflection",
+					sourceId: reflectionRunId,
+				});
+			} catch (err) {
+				capturePluginError(
+					err instanceof Error ? err : new Error(String(err)),
+					{
+						operation: "reflection-meta-provenance-derived",
+						subsystem: "provenance",
+						factId: entry.id,
+					},
+				);
+			}
+		}
 
-    if (opts.verbose) {
-      logger.info(
-        `memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? "..." : ""}`,
-      );
-    }
-    try {
-      await vectorDb.store({
-        text: metaText,
-        vector: vec,
-        importance: REFLECTION_IMPORTANCE,
-        category: "pattern",
-        id: entry.id,
-      });
-      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-    } catch (err) {
-      logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "reflection-meta-vector-store",
-        subsystem: "vector",
-        factId: entry.id,
-      });
-    }
-    existingVectors.push(normVec);
-    stored++;
-  }
-  return { metaExtracted: metas.length, metaStored: stored };
+		if (opts.verbose) {
+			logger.info(
+				`memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? "..." : ""}`,
+			);
+		}
+		try {
+			await vectorDb.store({
+				text: metaText,
+				vector: vec,
+				importance: REFLECTION_IMPORTANCE,
+				category: "pattern",
+				id: entry.id,
+			});
+			factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+		} catch (err) {
+			logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				operation: "reflection-meta-vector-store",
+				subsystem: "vector",
+				factId: entry.id,
+			});
+		}
+		existingVectors.push(normVec);
+		stored++;
+	}
+	return { metaExtracted: metas.length, metaStored: stored };
 }

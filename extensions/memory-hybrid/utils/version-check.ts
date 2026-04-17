@@ -20,9 +20,9 @@ export const MIN_OPENCLAW_VERSION = "2026.3.8";
  * Returns null if three non-negative integers cannot be found.
  */
 export function parseVersion(version: string): [number, number, number] | null {
-  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+	const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+	if (!match) return null;
+	return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
 /**
@@ -30,14 +30,14 @@ export function parseVersion(version: string): [number, number, number] | null {
  * If either version is unparseable, returns true to avoid false positives.
  */
 export function isVersionAtLeast(current: string, minimum: string): boolean {
-  const cur = parseVersion(current);
-  const min = parseVersion(minimum);
-  if (!cur || !min) return true;
-  for (let i = 0; i < 3; i++) {
-    if (cur[i] > min[i]) return true;
-    if (cur[i] < min[i]) return false;
-  }
-  return true; // equal
+	const cur = parseVersion(current);
+	const min = parseVersion(minimum);
+	if (!cur || !min) return true;
+	for (let i = 0; i < 3; i++) {
+		if (cur[i] > min[i]) return true;
+		if (cur[i] < min[i]) return false;
+	}
+	return true; // equal
 }
 
 /**
@@ -45,16 +45,16 @@ export function isVersionAtLeast(current: string, minimum: string): boolean {
  * Returns -1 when `a < b`, 1 when `a > b`, and 0 when equal or unparseable.
  */
 export function compareVersions(a: string, b: string): number {
-  const versionA = parseVersion(a);
-  const versionB = parseVersion(b);
-  if (!versionA || !versionB) return 0;
+	const versionA = parseVersion(a);
+	const versionB = parseVersion(b);
+	if (!versionA || !versionB) return 0;
 
-  for (let i = 0; i < 3; i++) {
-    if (versionA[i] < versionB[i]) return -1;
-    if (versionA[i] > versionB[i]) return 1;
-  }
+	for (let i = 0; i < 3; i++) {
+		if (versionA[i] < versionB[i]) return -1;
+		if (versionA[i] > versionB[i]) return 1;
+	}
 
-  return 0;
+	return 0;
 }
 
 /**
@@ -65,18 +65,18 @@ export function compareVersions(a: string, b: string): number {
  * @param logger - Plugin logger for emitting the warning
  */
 export function checkOpenClawVersion(
-  currentVersion: string | undefined,
-  logger: { warn: (msg: string) => void },
+	currentVersion: string | undefined,
+	logger: { warn: (msg: string) => void },
 ): void {
-  if (!currentVersion) {
-    logger.warn(
-      `memory-hybrid: WARNING — OpenClaw version is undefined (gateway likely < v${MIN_OPENCLAW_VERSION}). Minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
-    );
-    return;
-  }
-  if (!isVersionAtLeast(currentVersion, MIN_OPENCLAW_VERSION)) {
-    logger.warn(
-      `memory-hybrid: WARNING — OpenClaw v${currentVersion} detected, minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
-    );
-  }
+	if (!currentVersion) {
+		logger.warn(
+			`memory-hybrid: WARNING — OpenClaw version is undefined (gateway likely < v${MIN_OPENCLAW_VERSION}). Minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
+		);
+		return;
+	}
+	if (!isVersionAtLeast(currentVersion, MIN_OPENCLAW_VERSION)) {
+		logger.warn(
+			`memory-hybrid: WARNING — OpenClaw v${currentVersion} detected, minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
+		);
+	}
 }

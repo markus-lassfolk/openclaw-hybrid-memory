@@ -20,227 +20,244 @@ import { randomUUID } from "node:crypto";
 const require = createRequire(import.meta.url);
 
 const WORKSPACE =
-  process.env.OPENCLAW_WORKSPACE || join(homedir(), ".openclaw", "workspace");
+	process.env.OPENCLAW_WORKSPACE || join(homedir(), ".openclaw", "workspace");
 const OPENCLAW_ROOT = join(homedir(), ".openclaw");
 const CONFIG_PATH = join(OPENCLAW_ROOT, "openclaw.json");
 
 // Resolve extension dir for loading deps (better-sqlite3, openai, lancedb)
 async function getExtensionDir() {
-  if (process.env.OPENCLAW_EXTENSION_DIR) return process.env.OPENCLAW_EXTENSION_DIR;
-  try {
-    const { execSync } = await import("node:child_process");
-    const npmRoot = execSync("npm root -g", { encoding: "utf-8" }).trim();
-    return join(npmRoot, "openclaw", "extensions", "memory-hybrid");
-  } catch {
-    return join(dirname(import.meta.url), "..", "extensions", "memory-hybrid");
-  }
+	if (process.env.OPENCLAW_EXTENSION_DIR)
+		return process.env.OPENCLAW_EXTENSION_DIR;
+	try {
+		const { execSync } = await import("node:child_process");
+		const npmRoot = execSync("npm root -g", { encoding: "utf-8" }).trim();
+		return join(npmRoot, "openclaw", "extensions", "memory-hybrid");
+	} catch {
+		return join(dirname(import.meta.url), "..", "extensions", "memory-hybrid");
+	}
 }
 
 function resolveEnvVars(str) {
-  if (typeof str !== "string") return str;
-  return str.replace(/\$\{([^}]+)\}/g, (_, name) => {
-    const v = process.env[name];
-    if (v === undefined) throw new Error(`Missing env: ${name}`);
-    return v;
-  });
+	if (typeof str !== "string") return str;
+	return str.replace(/\$\{([^}]+)\}/g, (_, name) => {
+		const v = process.env[name];
+		if (v === undefined) throw new Error(`Missing env: ${name}`);
+		return v;
+	});
 }
 
 function expandPath(p) {
-  if (typeof p !== "string") return p;
-  return p.replace(/^~/, homedir());
+	if (typeof p !== "string") return p;
+	return p.replace(/^~/, homedir());
 }
 
 // Simple fact extraction (no hardcoded sections — pattern-based)
 // When parsing old memories: include source_date if available (e.g. [YYYY-MM-DD] prefix).
 function extractFact(line) {
-  let t = line.replace(/^[-*#>\s]+/, "").trim();
+	let t = line.replace(/^[-*#>\s]+/, "").trim();
 
-  // If line starts with [YYYY-MM-DD], extract as source_date and strip from text
-  const datePrefix = /^\[(\d{4}-\d{2}-\d{2})\]\s*/;
-  let source_date = null;
-  const match = t.match(datePrefix);
-  if (match) {
-    source_date = match[1];
-    t = t.slice(match[0].length).trim();
-  }
-  if (t.length < 10 || t.length > 500) return null;
-  const lower = t.toLowerCase();
-  if (/\b(api[_-]?key|password|secret|token)\s*[:=]/i.test(t)) return null;
-  if (/^(see\s|---|```|\s*$)/.test(t) || t.split(/\s+/).length < 2) return null;
+	// If line starts with [YYYY-MM-DD], extract as source_date and strip from text
+	const datePrefix = /^\[(\d{4}-\d{2}-\d{2})\]\s*/;
+	let source_date = null;
+	const match = t.match(datePrefix);
+	if (match) {
+		source_date = match[1];
+		t = t.slice(match[0].length).trim();
+	}
+	if (t.length < 10 || t.length > 500) return null;
+	const lower = t.toLowerCase();
+	if (/\b(api[_-]?key|password|secret|token)\s*[:=]/i.test(t)) return null;
+	if (/^(see\s|---|```|\s*$)/.test(t) || t.split(/\s+/).length < 2) return null;
 
-  let entity = null,
-    key = null,
-    value = null;
-  let category = "other";
+	let entity = null,
+		key = null,
+		value = null;
+	let category = "other";
 
-  const decisionMatch = t.match(
-    /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
-  );
-  const decisionMatchSv = t.match(
-    /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i
-  );
-  if (decisionMatch) {
-    entity = "decision";
-    key = decisionMatch[1].trim().slice(0, 100);
-    value = (decisionMatch[2] || "no rationale").trim();
-    category = "decision";
-  } else if (decisionMatchSv) {
-    entity = "decision";
-    key = decisionMatchSv[1].trim().slice(0, 100);
-    value = (decisionMatchSv[2] || "no rationale").trim();
-    category = "decision";
-  }
+	const decisionMatch = t.match(
+		/(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i,
+	);
+	const decisionMatchSv = t.match(
+		/(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i,
+	);
+	if (decisionMatch) {
+		entity = "decision";
+		key = decisionMatch[1].trim().slice(0, 100);
+		value = (decisionMatch[2] || "no rationale").trim();
+		category = "decision";
+	} else if (decisionMatchSv) {
+		entity = "decision";
+		key = decisionMatchSv[1].trim().slice(0, 100);
+		value = (decisionMatchSv[2] || "no rationale").trim();
+		category = "decision";
+	}
 
-  const ruleMatch = t.match(/(?:always|never|alltid|aldrig)\s+(.+?)\.?$/i);
-  if (ruleMatch) {
-    entity = "convention";
-    key = ruleMatch[1].trim().slice(0, 100);
-    value = lower.includes("never") || lower.includes("aldrig") ? "never" : "always";
-    category = "preference";
-  }
+	const ruleMatch = t.match(/(?:always|never|alltid|aldrig)\s+(.+?)\.?$/i);
+	if (ruleMatch) {
+		entity = "convention";
+		key = ruleMatch[1].trim().slice(0, 100);
+		value =
+			lower.includes("never") || lower.includes("aldrig") ? "never" : "always";
+		category = "preference";
+	}
 
-  const possessiveMatch = t.match(
-    /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
-  );
-  const possessiveMatchSv = t.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
-  if (possessiveMatch) {
-    entity = possessiveMatch[1] || "user";
-    key = possessiveMatch[2].trim();
-    value = possessiveMatch[3].trim();
-    category = "fact";
-  } else if (possessiveMatchSv) {
-    entity = "user";
-    key = possessiveMatchSv[1].trim();
-    value = possessiveMatchSv[2].trim();
-    category = "fact";
-  }
+	const possessiveMatch = t.match(
+		/(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/,
+	);
+	const possessiveMatchSv = t.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
+	if (possessiveMatch) {
+		entity = possessiveMatch[1] || "user";
+		key = possessiveMatch[2].trim();
+		value = possessiveMatch[3].trim();
+		category = "fact";
+	} else if (possessiveMatchSv) {
+		entity = "user";
+		key = possessiveMatchSv[1].trim();
+		value = possessiveMatchSv[2].trim();
+		category = "fact";
+	}
 
-  const preferMatch = t.match(
-    /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
-  );
-  const preferMatchSv = t.match(/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i);
-  if (preferMatch) {
-    entity = "user";
-    key = preferMatch[1];
-    value = preferMatch[2].trim();
-    category = "preference";
-  } else if (preferMatchSv) {
-    entity = "user";
-    key = preferMatchSv[1];
-    value = preferMatchSv[2].trim();
-    category = "preference";
-  }
+	const preferMatch = t.match(
+		/[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/,
+	);
+	const preferMatchSv = t.match(
+		/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i,
+	);
+	if (preferMatch) {
+		entity = "user";
+		key = preferMatch[1];
+		value = preferMatch[2].trim();
+		category = "preference";
+	} else if (preferMatchSv) {
+		entity = "user";
+		key = preferMatchSv[1];
+		value = preferMatchSv[2].trim();
+		category = "preference";
+	}
 
-  // Fallback: keep as generic fact so backfill doesn't drop valid bullets
-  if (!entity && !key && category === "other") {
-    return { text: t, category: "other", entity: null, key: null, value: t.slice(0, 200), source_date };
-  }
-  return {
-    text: t,
-    category,
-    entity: entity || null,
-    key: key || null,
-    value: value || t.slice(0, 200),
-    source_date,
-  };
+	// Fallback: keep as generic fact so backfill doesn't drop valid bullets
+	if (!entity && !key && category === "other") {
+		return {
+			text: t,
+			category: "other",
+			entity: null,
+			key: null,
+			value: t.slice(0, 200),
+			source_date,
+		};
+	}
+	return {
+		text: t,
+		category,
+		entity: entity || null,
+		key: key || null,
+		value: value || t.slice(0, 200),
+		source_date,
+	};
 }
 
 // Collect fact-like lines from content (no hardcoded section names)
 function collectLines(content, sourceLabel) {
-  const lines = [];
-  const raw = content.split(/\n/);
-  for (const line of raw) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    lines.push({ line: trimmed, source: sourceLabel });
-  }
-  return lines;
+	const lines = [];
+	const raw = content.split(/\n/);
+	for (const line of raw) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		lines.push({ line: trimmed, source: sourceLabel });
+	}
+	return lines;
 }
 
 // Glob memory/**/*.md and MEMORY.md under workspace (dynamic)
 function gatherFiles(workspaceRoot) {
-  const memoryDir = join(workspaceRoot, "memory");
-  const memoryMd = join(workspaceRoot, "MEMORY.md");
-  const out = [];
+	const memoryDir = join(workspaceRoot, "memory");
+	const memoryMd = join(workspaceRoot, "MEMORY.md");
+	const out = [];
 
-  if (existsSync(memoryMd)) out.push({ path: memoryMd, label: "MEMORY.md" });
-  if (!existsSync(memoryDir)) return out;
+	if (existsSync(memoryMd)) out.push({ path: memoryMd, label: "MEMORY.md" });
+	if (!existsSync(memoryDir)) return out;
 
-  function walk(dir, rel = "memory") {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const e of entries) {
-      const full = join(dir, e.name);
-      const relPath = join(rel, e.name);
-      if (e.isDirectory()) walk(full, relPath);
-      else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
-    }
-  }
-  walk(memoryDir);
-  return out;
+	function walk(dir, rel = "memory") {
+		const entries = readdirSync(dir, { withFileTypes: true });
+		for (const e of entries) {
+			const full = join(dir, e.name);
+			const relPath = join(rel, e.name);
+			if (e.isDirectory()) walk(full, relPath);
+			else if (e.name.endsWith(".md")) out.push({ path: full, label: relPath });
+		}
+	}
+	walk(memoryDir);
+	return out;
 }
 
 async function main() {
-  const dryRun = process.argv.includes("--dry-run");
+	const dryRun = process.argv.includes("--dry-run");
 
-  const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-  const pluginConfig = config?.plugins?.entries?.["memory-hybrid"]?.config;
-  if (!pluginConfig?.embedding?.apiKey) {
-    console.error("memory-hybrid config with embedding.apiKey not found in", CONFIG_PATH);
-    process.exit(1);
-  }
+	const config = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+	const pluginConfig = config?.plugins?.entries?.["memory-hybrid"]?.config;
+	if (!pluginConfig?.embedding?.apiKey) {
+		console.error(
+			"memory-hybrid config with embedding.apiKey not found in",
+			CONFIG_PATH,
+		);
+		process.exit(1);
+	}
 
-  const apiKey = resolveEnvVars(pluginConfig.embedding.apiKey);
-  const sqlitePath = expandPath(
-    pluginConfig.sqlitePath || join(OPENCLAW_ROOT, "memory", "facts.db")
-  );
-  const lancePath = expandPath(
-    pluginConfig.lanceDbPath || join(OPENCLAW_ROOT, "memory", "lancedb")
-  );
-  const model = pluginConfig.embedding?.model || "text-embedding-3-small";
+	const apiKey = resolveEnvVars(pluginConfig.embedding.apiKey);
+	const sqlitePath = expandPath(
+		pluginConfig.sqlitePath || join(OPENCLAW_ROOT, "memory", "facts.db"),
+	);
+	const lancePath = expandPath(
+		pluginConfig.lanceDbPath || join(OPENCLAW_ROOT, "memory", "lancedb"),
+	);
+	const model = pluginConfig.embedding?.model || "text-embedding-3-small";
 
-  const extDir = await getExtensionDir();
-  const Database = require(join(extDir, "node_modules", "better-sqlite3"));
-  const OpenAIModule = require(join(extDir, "node_modules", "openai"));
-  const OpenAI = (OpenAIModule && OpenAIModule.default) || OpenAIModule;
-  const lancedb = require(join(extDir, "node_modules", "@lancedb", "lancedb"));
+	const extDir = await getExtensionDir();
+	const Database = require(join(extDir, "node_modules", "better-sqlite3"));
+	const OpenAIModule = require(join(extDir, "node_modules", "openai"));
+	const OpenAI = (OpenAIModule && OpenAIModule.default) || OpenAIModule;
+	const lancedb = require(join(extDir, "node_modules", "@lancedb", "lancedb"));
 
-  const openai = new OpenAI({ apiKey });
-  const EMBED_DIM =
-    model === "text-embedding-3-large" ? 3072 : 1536;
-  const LANCE_TABLE = "memories";
+	const openai = new OpenAI({ apiKey });
+	const EMBED_DIM = model === "text-embedding-3-large" ? 3072 : 1536;
+	const LANCE_TABLE = "memories";
 
-  const files = gatherFiles(WORKSPACE);
-  if (files.length === 0) {
-    console.log("No MEMORY.md or memory/**/*.md under", WORKSPACE);
-    process.exit(0);
-  }
+	const files = gatherFiles(WORKSPACE);
+	if (files.length === 0) {
+		console.log("No MEMORY.md or memory/**/*.md under", WORKSPACE);
+		process.exit(0);
+	}
 
-  const allCandidates = [];
-  for (const { path: filePath, label } of files) {
-    const content = readFileSync(filePath, "utf-8");
-    for (const { line, source } of collectLines(content, label)) {
-      const fact = extractFact(line);
-      if (fact) allCandidates.push({ ...fact, source });
-    }
-  }
+	const allCandidates = [];
+	for (const { path: filePath, label } of files) {
+		const content = readFileSync(filePath, "utf-8");
+		for (const { line, source } of collectLines(content, label)) {
+			const fact = extractFact(line);
+			if (fact) allCandidates.push({ ...fact, source });
+		}
+	}
 
-  if (dryRun) {
-    console.log(
-      `[dry-run] Would process ${allCandidates.length} facts from ${files.length} files under ${WORKSPACE}`
-    );
-    allCandidates.slice(0, 15).forEach((f, i) =>
-      console.log(`  ${i + 1}. [${f.category}] ${f.entity || "?"}/${f.key || "?"} = ${(f.value || "").slice(0, 50)}...`)
-    );
-    if (allCandidates.length > 15) console.log("  ...");
-    return;
-  }
+	if (dryRun) {
+		console.log(
+			`[dry-run] Would process ${allCandidates.length} facts from ${files.length} files under ${WORKSPACE}`,
+		);
+		allCandidates
+			.slice(0, 15)
+			.forEach((f, i) =>
+				console.log(
+					`  ${i + 1}. [${f.category}] ${f.entity || "?"}/${f.key || "?"} = ${(f.value || "").slice(0, 50)}...`,
+				),
+			);
+		if (allCandidates.length > 15) console.log("  ...");
+		return;
+	}
 
-  const db = new Database(sqlitePath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 5000");
-  db.pragma("synchronous = NORMAL");
-  db.pragma("wal_autocheckpoint = 1000");
-  db.exec(`
+	const db = new Database(sqlitePath);
+	db.pragma("journal_mode = WAL");
+	db.pragma("busy_timeout = 5000");
+	db.pragma("synchronous = NORMAL");
+	db.pragma("wal_autocheckpoint = 1000");
+	db.exec(`
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY,
       text TEXT NOT NULL,
@@ -253,14 +270,14 @@ async function main() {
       created_at INTEGER NOT NULL
     )
   `);
-  db.exec(`
+	db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
       text, category, entity, key, value,
       content=facts, content_rowid=rowid,
       tokenize='porter unicode61'
     )
   `);
-  db.exec(`
+	db.exec(`
     CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
       INSERT INTO facts_fts(rowid, text, category, entity, key, value)
       VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
@@ -276,103 +293,121 @@ async function main() {
       VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
     END
   `);
-  db.exec(`
+	db.exec(`
     CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);
     CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
     CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
   `);
-  const cols = db.prepare("PRAGMA table_info(facts)").all().map((c) => c.name);
-  if (!cols.includes("decay_class")) {
-    db.exec(`
+	const cols = db
+		.prepare("PRAGMA table_info(facts)")
+		.all()
+		.map((c) => c.name);
+	if (!cols.includes("decay_class")) {
+		db.exec(`
       ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable';
       ALTER TABLE facts ADD COLUMN expires_at INTEGER;
       ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER;
       ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
     `);
-    db.exec(`
+		db.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at) WHERE expires_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
     `);
-  }
-  const colsAfter = db.prepare("PRAGMA table_info(facts)").all().map((c) => c.name);
-  if (!colsAfter.includes("source_date")) {
-    db.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`);
-  }
-  const hasDup = (text) => db.prepare("SELECT id FROM facts WHERE text = ? LIMIT 1").get(text);
+	}
+	const colsAfter = db
+		.prepare("PRAGMA table_info(facts)")
+		.all()
+		.map((c) => c.name);
+	if (!colsAfter.includes("source_date")) {
+		db.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_facts_source_date ON facts(source_date) WHERE source_date IS NOT NULL`,
+		);
+	}
+	const hasDup = (text) =>
+		db.prepare("SELECT id FROM facts WHERE text = ? LIMIT 1").get(text);
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const stableTtl = 90 * 24 * 3600;
-  const parseSourceDate = (s) => {
-    if (!s || typeof s !== "string") return null;
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
-    if (!m) return null;
-    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
-    const sec = Math.floor(ms / 1000);
-    return isNaN(sec) ? null : sec;
-  };
-  const insertFact = db.prepare(
-    `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, source_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stable', ?, ?, 1.0, ?)`
-  );
+	const nowSec = Math.floor(Date.now() / 1000);
+	const stableTtl = 90 * 24 * 3600;
+	const parseSourceDate = (s) => {
+		if (!s || typeof s !== "string") return null;
+		const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+		if (!m) return null;
+		const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+		const sec = Math.floor(ms / 1000);
+		return isNaN(sec) ? null : sec;
+	};
+	const insertFact = db.prepare(
+		`INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, source_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stable', ?, ?, 1.0, ?)`,
+	);
 
-  const conn = await lancedb.connect(lancePath);
-  let table;
-  const tables = await conn.tableNames();
-  if (tables.includes(LANCE_TABLE)) {
-    table = await conn.openTable(LANCE_TABLE);
-  } else {
-    table = await conn.createTable(LANCE_TABLE, [
-      {
-        id: "__schema__",
-        text: "",
-        vector: new Array(EMBED_DIM).fill(0),
-        importance: 0,
-        category: "other",
-        createdAt: 0,
-      },
-    ]);
-    await table.delete('id = "__schema__"');
-  }
+	const conn = await lancedb.connect(lancePath);
+	let table;
+	const tables = await conn.tableNames();
+	if (tables.includes(LANCE_TABLE)) {
+		table = await conn.openTable(LANCE_TABLE);
+	} else {
+		table = await conn.createTable(LANCE_TABLE, [
+			{
+				id: "__schema__",
+				text: "",
+				vector: new Array(EMBED_DIM).fill(0),
+				importance: 0,
+				category: "other",
+				createdAt: 0,
+			},
+		]);
+		await table.delete('id = "__schema__"');
+	}
 
-  let stored = 0;
-  let skipped = 0;
-  for (const fact of allCandidates) {
-    if (hasDup(fact.text)) {
-      skipped++;
-      continue;
-    }
-    const id = randomUUID();
-    const sourceDate = parseSourceDate(fact.source_date);
-    insertFact.run(
-      id,
-      fact.text,
-      fact.category,
-      0.8,
-      fact.entity,
-      fact.key,
-      fact.value,
-      `backfill:${fact.source}`,
-      nowSec,
-      nowSec + stableTtl,
-      nowSec,
-      sourceDate
-    );
-    const { data } = await openai.embeddings.create({
-      model,
-      input: fact.text,
-    });
-    const vector = data[0].embedding;
-    await table.add([{ id, text: fact.text, vector, importance: 0.8, category: fact.category, createdAt: nowSec }]);
-    stored++;
-  }
-  db.close();
-  console.log(
-    `Backfill done: ${stored} new facts stored, ${skipped} duplicates skipped (${allCandidates.length} candidates from ${files.length} files).`
-  );
+	let stored = 0;
+	let skipped = 0;
+	for (const fact of allCandidates) {
+		if (hasDup(fact.text)) {
+			skipped++;
+			continue;
+		}
+		const id = randomUUID();
+		const sourceDate = parseSourceDate(fact.source_date);
+		insertFact.run(
+			id,
+			fact.text,
+			fact.category,
+			0.8,
+			fact.entity,
+			fact.key,
+			fact.value,
+			`backfill:${fact.source}`,
+			nowSec,
+			nowSec + stableTtl,
+			nowSec,
+			sourceDate,
+		);
+		const { data } = await openai.embeddings.create({
+			model,
+			input: fact.text,
+		});
+		const vector = data[0].embedding;
+		await table.add([
+			{
+				id,
+				text: fact.text,
+				vector,
+				importance: 0.8,
+				category: fact.category,
+				createdAt: nowSec,
+			},
+		]);
+		stored++;
+	}
+	db.close();
+	console.log(
+		`Backfill done: ${stored} new facts stored, ${skipped} duplicates skipped (${allCandidates.length} candidates from ${files.length} files).`,
+	);
 }
 
 main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+	console.error(err);
+	process.exit(1);
 });

@@ -4,7 +4,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 export function bootstrapFactsCoreSchema(db: DatabaseSync): void {
-  db.exec(`
+	db.exec(`
       CREATE TABLE IF NOT EXISTS facts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -19,7 +19,7 @@ export function bootstrapFactsCoreSchema(db: DatabaseSync): void {
       )
     `);
 
-  db.exec(`
+	db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
         category,
@@ -30,7 +30,7 @@ export function bootstrapFactsCoreSchema(db: DatabaseSync): void {
       )
     `);
 
-  db.exec(`
+	db.exec(`
       CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
         INSERT INTO facts_fts(rowid, text, category, entity, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
@@ -47,7 +47,7 @@ export function bootstrapFactsCoreSchema(db: DatabaseSync): void {
       END
     `);
 
-  db.exec(`
+	db.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);
       CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);

@@ -5,15 +5,15 @@
 import type { HybridMemoryConfig } from "../config.js";
 
 export function getHybridMemoryContextBudgetHint(cfg: HybridMemoryConfig): {
-  autoRecallMaxTokens: number;
-  proceduresMaxInjectionTokens: number;
-  retrievalAmbientBudgetTokens: number;
-  retrievalExplicitBudgetTokens: number;
+	autoRecallMaxTokens: number;
+	proceduresMaxInjectionTokens: number;
+	retrievalAmbientBudgetTokens: number;
+	retrievalExplicitBudgetTokens: number;
 } {
-  return {
-    autoRecallMaxTokens: cfg.autoRecall.maxTokens,
-    proceduresMaxInjectionTokens: cfg.procedures.maxInjectionTokens,
-    retrievalAmbientBudgetTokens: cfg.retrieval.ambientBudgetTokens,
-    retrievalExplicitBudgetTokens: cfg.retrieval.explicitBudgetTokens,
-  };
+	return {
+		autoRecallMaxTokens: cfg.autoRecall.maxTokens,
+		proceduresMaxInjectionTokens: cfg.procedures.maxInjectionTokens,
+		retrievalAmbientBudgetTokens: cfg.retrieval.ambientBudgetTokens,
+		retrievalExplicitBudgetTokens: cfg.retrieval.explicitBudgetTokens,
+	};
 }

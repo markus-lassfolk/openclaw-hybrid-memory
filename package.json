@@ -1,20 +1,20 @@
 {
-  "name": "openclaw-hybrid-memory-root",
-  "private": true,
-  "description": "Root package for git hooks and pre-commit formatting.",
-  "scripts": {
-    "prepare": "husky"
-  },
-  "devDependencies": {
-    "husky": "^9.0.0",
-    "lint-staged": "^15.0.0"
-  },
-  "lint-staged": {
-    "extensions/memory-hybrid/**/*.ts": "npm exec --prefix extensions/memory-hybrid -- biome format --config-path extensions/memory-hybrid --write"
-  },
-  "dependencies": {
-    "@lancedb/lancedb": "^0.27.1",
-    "js-yaml": "^4.1.1",
-    "openai": "^6.33.0"
-  }
+	"name": "openclaw-hybrid-memory-root",
+	"private": true,
+	"description": "Root package for git hooks and pre-commit formatting.",
+	"scripts": {
+		"prepare": "husky"
+	},
+	"devDependencies": {
+		"husky": "^9.0.0",
+		"lint-staged": "^15.0.0"
+	},
+	"lint-staged": {
+		"extensions/memory-hybrid/**/*.ts": "npm exec --prefix extensions/memory-hybrid -- biome format --config-path extensions/memory-hybrid --write"
+	},
+	"dependencies": {
+		"@lancedb/lancedb": "^0.27.1",
+		"js-yaml": "^4.1.1",
+		"openai": "^6.33.0"
+	}
 }

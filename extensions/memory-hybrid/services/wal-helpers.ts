@@ -6,7 +6,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { type WALEntry, WAL_ENTRY_SCHEMA_VERSION, type WriteAheadLog } from "../backends/wal.js";
+import {
+	type WALEntry,
+	WAL_ENTRY_SCHEMA_VERSION,
+	type WriteAheadLog,
+} from "../backends/wal.js";
 import { capturePluginError } from "./error-reporter.js";
 
 const WAL_FAILURE_THRESHOLD = 10;
@@ -15,68 +19,70 @@ let walDisabled = false;
 
 /** JSON.stringify drops Float32Array as `{}`; normalize before WAL persistence (#896). */
 function normalizeWalPayload(data: Record<string, unknown>): WALEntry["data"] {
-  const d = { ...data } as Record<string, unknown>;
-  const v = d.vector;
-  if (v instanceof Float32Array) {
-    d.vector = Array.from(v);
-  }
-  return d as WALEntry["data"];
+	const d = { ...data } as Record<string, unknown>;
+	const v = d.vector;
+	if (v instanceof Float32Array) {
+		d.vector = Array.from(v);
+	}
+	return d as WALEntry["data"];
 }
 
 export async function walWrite(
-  wal: WriteAheadLog | null,
-  operation: "store" | "update",
-  data: Record<string, unknown>,
-  logger: { warn: (msg: string) => void },
-  supersedeTargetId?: string,
+	wal: WriteAheadLog | null,
+	operation: "store" | "update",
+	data: Record<string, unknown>,
+	logger: { warn: (msg: string) => void },
+	supersedeTargetId?: string,
 ): Promise<string> {
-  const id = randomUUID();
-  if (wal && !walDisabled) {
-    try {
-      const entry: WALEntry = {
-        id,
-        timestamp: Date.now(),
-        schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
-        operation,
-        data: normalizeWalPayload(data),
-      };
-      if (operation === "update" && supersedeTargetId) {
-        entry.targetId = supersedeTargetId;
-      }
-      await wal.write(entry);
-      walFailureCount = 0; // Reset on success
-    } catch (err) {
-      walFailureCount++;
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "wal",
-        operation: "wal-write",
-      });
-      logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-      if (walFailureCount >= WAL_FAILURE_THRESHOLD) {
-        walDisabled = true;
-        logger.warn(`memory-hybrid: WAL disabled after ${WAL_FAILURE_THRESHOLD} consecutive failures`);
-      }
-    }
-  }
-  return id;
+	const id = randomUUID();
+	if (wal && !walDisabled) {
+		try {
+			const entry: WALEntry = {
+				id,
+				timestamp: Date.now(),
+				schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
+				operation,
+				data: normalizeWalPayload(data),
+			};
+			if (operation === "update" && supersedeTargetId) {
+				entry.targetId = supersedeTargetId;
+			}
+			await wal.write(entry);
+			walFailureCount = 0; // Reset on success
+		} catch (err) {
+			walFailureCount++;
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "wal",
+				operation: "wal-write",
+			});
+			logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+			if (walFailureCount >= WAL_FAILURE_THRESHOLD) {
+				walDisabled = true;
+				logger.warn(
+					`memory-hybrid: WAL disabled after ${WAL_FAILURE_THRESHOLD} consecutive failures`,
+				);
+			}
+		}
+	}
+	return id;
 }
 
 export async function walRemove(
-  wal: WriteAheadLog | null,
-  id: string,
-  logger: { warn: (msg: string) => void },
+	wal: WriteAheadLog | null,
+	id: string,
+	logger: { warn: (msg: string) => void },
 ): Promise<void> {
-  if (wal) {
-    try {
-      await wal.remove(id);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "wal",
-        operation: "wal-remove",
-      });
-      logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
-    }
-  }
+	if (wal) {
+		try {
+			await wal.remove(id);
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "wal",
+				operation: "wal-remove",
+			});
+			logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
+		}
+	}
 }
 
 /**
@@ -84,6 +90,6 @@ export async function walRemove(
  * Intended for use in tests only — do not call in production code.
  */
 export function _resetWalCircuitBreakerForTesting(): void {
-  walFailureCount = 0;
-  walDisabled = false;
+	walFailureCount = 0;
+	walDisabled = false;
 }

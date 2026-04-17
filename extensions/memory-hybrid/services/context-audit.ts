@@ -6,212 +6,268 @@ import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { estimateTokens } from "../utils/text.js";
-import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "./active-task.js";
+import {
+	buildActiveTaskInjection,
+	buildStaleWarningInjection,
+	readActiveTaskFile,
+} from "./active-task.js";
 import { capturePluginError } from "./error-reporter.js";
 import { readActiveTaskRowsFromFacts } from "./task-ledger-facts.js";
 
 type ContextAuditResult = {
-  autoRecall: { enabled: boolean; budgetTokens: number; hotTokens: number; injectionFormat: string };
-  procedures: { enabled: boolean; tokens: number; lines: number };
-  activeTasks: { enabled: boolean; tokens: number; count: number; stale: number };
-  workspaceFiles: { totalTokens: number; files: Array<{ file: string; tokens: number }> };
-  totalTokens: number;
-  recommendations: string[];
+	autoRecall: {
+		enabled: boolean;
+		budgetTokens: number;
+		hotTokens: number;
+		injectionFormat: string;
+	};
+	procedures: { enabled: boolean; tokens: number; lines: number };
+	activeTasks: {
+		enabled: boolean;
+		tokens: number;
+		count: number;
+		stale: number;
+	};
+	workspaceFiles: {
+		totalTokens: number;
+		files: Array<{ file: string; tokens: number }>;
+	};
+	totalTokens: number;
+	recommendations: string[];
 };
 
 const DEFAULT_BOOTSTRAP_FILES = [
-  "AGENTS.md",
-  "SOUL.md",
-  "USER.md",
-  "TOOLS.md",
-  "MEMORY.md",
-  "HEARTBEAT.md",
-  "IDENTITY.md",
+	"AGENTS.md",
+	"SOUL.md",
+	"USER.md",
+	"TOOLS.md",
+	"MEMORY.md",
+	"HEARTBEAT.md",
+	"IDENTITY.md",
 ];
 
 export async function runContextAudit(opts: {
-  cfg: HybridMemoryConfig;
-  factsDb: FactsDB;
-  workspaceRoot?: string;
+	cfg: HybridMemoryConfig;
+	factsDb: FactsDB;
+	workspaceRoot?: string;
 }): Promise<ContextAuditResult> {
-  const { cfg, factsDb } = opts;
-  const workspaceRoot = opts.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+	const { cfg, factsDb } = opts;
+	const workspaceRoot =
+		opts.workspaceRoot ??
+		getEnv("OPENCLAW_WORKSPACE") ??
+		join(homedir(), ".openclaw", "workspace");
 
-  const workspaceFiles: Array<{ file: string; tokens: number }> = [];
-  for (const file of DEFAULT_BOOTSTRAP_FILES) {
-    const fp = isAbsolute(file) ? file : join(workspaceRoot, file);
-    if (!existsSync(fp)) continue;
-    const content = readFileSync(fp, "utf-8");
-    workspaceFiles.push({ file, tokens: estimateTokens(content) });
-  }
-  const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
+	const workspaceFiles: Array<{ file: string; tokens: number }> = [];
+	for (const file of DEFAULT_BOOTSTRAP_FILES) {
+		const fp = isAbsolute(file) ? file : join(workspaceRoot, file);
+		if (!existsSync(fp)) continue;
+		const content = readFileSync(fp, "utf-8");
+		workspaceFiles.push({ file, tokens: estimateTokens(content) });
+	}
+	const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
 
-  let activeTasksTokens = 0;
-  let activeTasksCount = 0;
-  let activeTasksStale = 0;
-  if (cfg.activeTask.enabled) {
-    try {
-      const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
-      let activeRows: import("./active-task.js").ActiveTaskEntry[] = [];
-      if (cfg.activeTask.ledger === "facts") {
-        const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
-        activeRows = active;
-      } else {
-        const taskFile = await readActiveTaskFile(
-          isAbsolute(cfg.activeTask.filePath) ? cfg.activeTask.filePath : join(workspaceRoot, cfg.activeTask.filePath),
-          staleMinutes,
-        );
-        if (taskFile?.active.length) activeRows = taskFile.active;
-      }
-      if (activeRows.length > 0) {
-        const injection = buildActiveTaskInjection(activeRows, cfg.activeTask.injectionBudget);
-        let staleWarningBlock = "";
-        if (cfg.activeTask.staleWarning.enabled) {
-          const injectionChars = injection.length;
-          const budgetChars = cfg.activeTask.injectionBudget * 4;
-          const remainingChars = Math.max(0, budgetChars - injectionChars);
-          staleWarningBlock = buildStaleWarningInjection(activeRows, staleMinutes, remainingChars);
-        }
-        const combined = [injection, staleWarningBlock].filter(Boolean).join("\n\n");
-        activeTasksTokens = combined ? estimateTokens(combined) : 0;
-        activeTasksCount = activeRows.length;
-        activeTasksStale = activeRows.filter((t) => t.stale).length;
-      }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "context-audit",
-        operation: "active-task",
-      });
-    }
-  }
+	let activeTasksTokens = 0;
+	let activeTasksCount = 0;
+	let activeTasksStale = 0;
+	if (cfg.activeTask.enabled) {
+		try {
+			const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
+			let activeRows: import("./active-task.js").ActiveTaskEntry[] = [];
+			if (cfg.activeTask.ledger === "facts") {
+				const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
+				activeRows = active;
+			} else {
+				const taskFile = await readActiveTaskFile(
+					isAbsolute(cfg.activeTask.filePath)
+						? cfg.activeTask.filePath
+						: join(workspaceRoot, cfg.activeTask.filePath),
+					staleMinutes,
+				);
+				if (taskFile?.active.length) activeRows = taskFile.active;
+			}
+			if (activeRows.length > 0) {
+				const injection = buildActiveTaskInjection(
+					activeRows,
+					cfg.activeTask.injectionBudget,
+				);
+				let staleWarningBlock = "";
+				if (cfg.activeTask.staleWarning.enabled) {
+					const injectionChars = injection.length;
+					const budgetChars = cfg.activeTask.injectionBudget * 4;
+					const remainingChars = Math.max(0, budgetChars - injectionChars);
+					staleWarningBlock = buildStaleWarningInjection(
+						activeRows,
+						staleMinutes,
+						remainingChars,
+					);
+				}
+				const combined = [injection, staleWarningBlock]
+					.filter(Boolean)
+					.join("\n\n");
+				activeTasksTokens = combined ? estimateTokens(combined) : 0;
+				activeTasksCount = activeRows.length;
+				activeTasksStale = activeRows.filter((t) => t.stale).length;
+			}
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "context-audit",
+				operation: "active-task",
+			});
+		}
+	}
 
-  let proceduresTokens = 0;
-  let proceduresLines = 0;
-  if (cfg.procedures.enabled) {
-    try {
-      const procedures = factsDb.getProceduresForAudit(5);
-      const positive = procedures.filter((p) => p.procedureType === "positive");
-      const negative = procedures.filter((p) => p.procedureType === "negative");
-      const lines: string[] = [];
+	let proceduresTokens = 0;
+	let proceduresLines = 0;
+	if (cfg.procedures.enabled) {
+		try {
+			const procedures = factsDb.getProceduresForAudit(5);
+			const positive = procedures.filter((p) => p.procedureType === "positive");
+			const negative = procedures.filter((p) => p.procedureType === "negative");
+			const lines: string[] = [];
 
-      if (positive.length > 0) {
-        lines.push("Last time this worked:");
-        for (const p of positive.slice(0, 3)) {
-          try {
-            const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>)
-              .map((s) => s.tool)
-              .filter(Boolean)
-              .join(" → ");
-            const emoji = p.confidence >= 0.7 ? "✅" : "⚠️";
-            const confidence = Math.round(p.confidence * 100);
-            lines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`);
-          } catch {
-            const emoji = p.confidence >= 0.7 ? "✅" : "⚠️";
-            const confidence = Math.round(p.confidence * 100);
-            lines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 70)}…`);
-          }
-        }
-      }
+			if (positive.length > 0) {
+				lines.push("Last time this worked:");
+				for (const p of positive.slice(0, 3)) {
+					try {
+						const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>)
+							.map((s) => s.tool)
+							.filter(Boolean)
+							.join(" → ");
+						const emoji = p.confidence >= 0.7 ? "✅" : "⚠️";
+						const confidence = Math.round(p.confidence * 100);
+						lines.push(
+							`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`,
+						);
+					} catch {
+						const emoji = p.confidence >= 0.7 ? "✅" : "⚠️";
+						const confidence = Math.round(p.confidence * 100);
+						lines.push(
+							`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 70)}…`,
+						);
+					}
+				}
+			}
 
-      if (negative.length > 0) {
-        lines.push("⚠️ Known issue (avoid):");
-        for (const n of negative.slice(0, 2)) {
-          try {
-            const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>)
-              .map((s) => s.tool)
-              .filter(Boolean)
-              .join(" → ");
-            const emoji = n.confidence >= 0.7 ? "❌" : "⚠️";
-            const confidence = Math.round(n.confidence * 100);
-            lines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
-          } catch {
-            const emoji = n.confidence >= 0.7 ? "❌" : "⚠️";
-            const confidence = Math.round(n.confidence * 100);
-            lines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 70)}…`);
-          }
-        }
-      }
+			if (negative.length > 0) {
+				lines.push("⚠️ Known issue (avoid):");
+				for (const n of negative.slice(0, 2)) {
+					try {
+						const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>)
+							.map((s) => s.tool)
+							.filter(Boolean)
+							.join(" → ");
+						const emoji = n.confidence >= 0.7 ? "❌" : "⚠️";
+						const confidence = Math.round(n.confidence * 100);
+						lines.push(
+							`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`,
+						);
+					} catch {
+						const emoji = n.confidence >= 0.7 ? "❌" : "⚠️";
+						const confidence = Math.round(n.confidence * 100);
+						lines.push(
+							`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 70)}…`,
+						);
+					}
+				}
+			}
 
-      if (lines.length > 0) {
-        const block = `<relevant-procedures>\n${lines.join("\n")}\n</relevant-procedures>`;
-        proceduresTokens = estimateTokens(block);
-        proceduresLines = lines.length;
-      }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "context-audit",
-        operation: "procedures",
-      });
-    }
-  }
+			if (lines.length > 0) {
+				const block = `<relevant-procedures>\n${lines.join("\n")}\n</relevant-procedures>`;
+				proceduresTokens = estimateTokens(block);
+				proceduresLines = lines.length;
+			}
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "context-audit",
+				operation: "procedures",
+			});
+		}
+	}
 
-  let hotTokens = 0;
-  if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
-    try {
-      const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens);
-      if (hotResults.length > 0) {
-        const hotLines = hotResults.map(
-          (r) =>
-            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
-        const hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>`;
-        hotTokens = estimateTokens(hotBlock);
-      }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "context-audit",
-        operation: "hot-memories",
-      });
-    }
-  }
+	let hotTokens = 0;
+	if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
+		try {
+			const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens);
+			if (hotResults.length > 0) {
+				const hotLines = hotResults.map(
+					(r) =>
+						`- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+				);
+				const hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>`;
+				hotTokens = estimateTokens(hotBlock);
+			}
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "context-audit",
+				operation: "hot-memories",
+			});
+		}
+	}
 
-  const autoRecallBudget = cfg.autoRecall.enabled
-    ? cfg.autoRecall.injectionFormat === "progressive" || cfg.autoRecall.injectionFormat === "progressive_hybrid"
-      ? (cfg.autoRecall.progressiveIndexMaxTokens ?? cfg.autoRecall.maxTokens)
-      : cfg.autoRecall.maxTokens
-    : 0;
+	const autoRecallBudget = cfg.autoRecall.enabled
+		? cfg.autoRecall.injectionFormat === "progressive" ||
+			cfg.autoRecall.injectionFormat === "progressive_hybrid"
+			? (cfg.autoRecall.progressiveIndexMaxTokens ?? cfg.autoRecall.maxTokens)
+			: cfg.autoRecall.maxTokens
+		: 0;
 
-  const totalTokens = autoRecallBudget + hotTokens + proceduresTokens + activeTasksTokens + workspaceTokens;
+	const totalTokens =
+		autoRecallBudget +
+		hotTokens +
+		proceduresTokens +
+		activeTasksTokens +
+		workspaceTokens;
 
-  const recommendations: string[] = [];
-  if (workspaceTokens > 3000) {
-    recommendations.push("Trim bootstrap files (AGENTS.md / TOOLS.md / MEMORY.md) to keep total under ~3000 tokens.");
-  }
-  if (cfg.autoRecall.enabled && autoRecallBudget > 1200) {
-    recommendations.push("Lower autoRecall.maxTokens or switch to progressive injection to save context.");
-  }
-  if (cfg.activeTask.enabled && activeTasksTokens > cfg.activeTask.injectionBudget) {
-    recommendations.push(
-      "Active tasks exceed the injection budget; consider summarizing or lowering activeTask.injectionBudget.",
-    );
-  }
-  if (proceduresTokens > 600) {
-    recommendations.push(
-      "Procedure injection is sizable; consider pruning procedures or raising the relevance threshold.",
-    );
-  }
-  if (totalTokens > 8000) {
-    recommendations.push(
-      "Total injected context is high; reduce auto-recall, bootstrap files, or active tasks to avoid compaction.",
-    );
-  }
+	const recommendations: string[] = [];
+	if (workspaceTokens > 3000) {
+		recommendations.push(
+			"Trim bootstrap files (AGENTS.md / TOOLS.md / MEMORY.md) to keep total under ~3000 tokens.",
+		);
+	}
+	if (cfg.autoRecall.enabled && autoRecallBudget > 1200) {
+		recommendations.push(
+			"Lower autoRecall.maxTokens or switch to progressive injection to save context.",
+		);
+	}
+	if (
+		cfg.activeTask.enabled &&
+		activeTasksTokens > cfg.activeTask.injectionBudget
+	) {
+		recommendations.push(
+			"Active tasks exceed the injection budget; consider summarizing or lowering activeTask.injectionBudget.",
+		);
+	}
+	if (proceduresTokens > 600) {
+		recommendations.push(
+			"Procedure injection is sizable; consider pruning procedures or raising the relevance threshold.",
+		);
+	}
+	if (totalTokens > 8000) {
+		recommendations.push(
+			"Total injected context is high; reduce auto-recall, bootstrap files, or active tasks to avoid compaction.",
+		);
+	}
 
-  return {
-    autoRecall: {
-      enabled: cfg.autoRecall.enabled,
-      budgetTokens: autoRecallBudget,
-      hotTokens,
-      injectionFormat: cfg.autoRecall.injectionFormat,
-    },
-    procedures: { enabled: cfg.procedures.enabled, tokens: proceduresTokens, lines: proceduresLines },
-    activeTasks: {
-      enabled: cfg.activeTask.enabled,
-      tokens: activeTasksTokens,
-      count: activeTasksCount,
-      stale: activeTasksStale,
-    },
-    workspaceFiles: { totalTokens: workspaceTokens, files: workspaceFiles },
-    totalTokens,
-    recommendations,
-  };
+	return {
+		autoRecall: {
+			enabled: cfg.autoRecall.enabled,
+			budgetTokens: autoRecallBudget,
+			hotTokens,
+			injectionFormat: cfg.autoRecall.injectionFormat,
+		},
+		procedures: {
+			enabled: cfg.procedures.enabled,
+			tokens: proceduresTokens,
+			lines: proceduresLines,
+		},
+		activeTasks: {
+			enabled: cfg.activeTask.enabled,
+			tokens: activeTasksTokens,
+			count: activeTasksCount,
+			stale: activeTasksStale,
+		},
+		workspaceFiles: { totalTokens: workspaceTokens, files: workspaceFiles },
+		totalTokens,
+		recommendations,
+	};
 }

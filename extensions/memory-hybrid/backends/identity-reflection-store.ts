@@ -15,42 +15,42 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 type Durability = "durable" | "temporary";
 
 interface IdentityReflectionRow {
-  id: string;
-  run_id: string;
-  question_key: string;
-  question_text: string;
-  insight: string;
-  durability: Durability;
-  confidence: number;
-  evidence: string;
-  source_pattern_count: number;
-  source_rule_count: number;
-  source_meta_count: number;
-  created_at: number;
+	id: string;
+	run_id: string;
+	question_key: string;
+	question_text: string;
+	insight: string;
+	durability: Durability;
+	confidence: number;
+	evidence: string;
+	source_pattern_count: number;
+	source_rule_count: number;
+	source_meta_count: number;
+	created_at: number;
 }
 
 export interface IdentityReflectionEntry {
-  id: string;
-  runId: string;
-  questionKey: string;
-  questionText: string;
-  insight: string;
-  durability: Durability;
-  confidence: number;
-  evidence: string[];
-  sourcePatternCount: number;
-  sourceRuleCount: number;
-  sourceMetaCount: number;
-  createdAt: number;
+	id: string;
+	runId: string;
+	questionKey: string;
+	questionText: string;
+	insight: string;
+	durability: Durability;
+	confidence: number;
+	evidence: string[];
+	sourcePatternCount: number;
+	sourceRuleCount: number;
+	sourceMetaCount: number;
+	createdAt: number;
 }
 
 export class IdentityReflectionStore extends BaseSqliteStore {
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db);
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		const db = new DatabaseSync(dbPath);
+		super(db);
 
-    this.liveDb.exec(`
+		this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS identity_reflections (
         id                    TEXT PRIMARY KEY,
         run_id                TEXT NOT NULL,
@@ -72,101 +72,106 @@ export class IdentityReflectionStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_identity_reflections_question
         ON identity_reflections(question_key, created_at DESC);
     `);
-  }
+	}
 
-  protected getSubsystemName(): string {
-    return "identity-reflection-store";
-  }
+	protected getSubsystemName(): string {
+		return "identity-reflection-store";
+	}
 
-  create(entry: {
-    runId: string;
-    questionKey: string;
-    questionText: string;
-    insight: string;
-    durability: Durability;
-    confidence: number;
-    evidence?: string[];
-    sourcePatternCount?: number;
-    sourceRuleCount?: number;
-    sourceMetaCount?: number;
-  }): IdentityReflectionEntry {
-    const id = randomUUID();
-    const createdAt = Math.floor(Date.now() / 1000);
-    const evidence = JSON.stringify(entry.evidence ?? []);
-    this.liveDb
-      .prepare(
-        `INSERT INTO identity_reflections (
+	create(entry: {
+		runId: string;
+		questionKey: string;
+		questionText: string;
+		insight: string;
+		durability: Durability;
+		confidence: number;
+		evidence?: string[];
+		sourcePatternCount?: number;
+		sourceRuleCount?: number;
+		sourceMetaCount?: number;
+	}): IdentityReflectionEntry {
+		const id = randomUUID();
+		const createdAt = Math.floor(Date.now() / 1000);
+		const evidence = JSON.stringify(entry.evidence ?? []);
+		this.liveDb
+			.prepare(
+				`INSERT INTO identity_reflections (
            id, run_id, question_key, question_text, insight, durability, confidence, evidence,
            source_pattern_count, source_rule_count, source_meta_count, created_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        entry.runId,
-        entry.questionKey,
-        entry.questionText,
-        entry.insight,
-        entry.durability,
-        entry.confidence,
-        evidence,
-        entry.sourcePatternCount ?? 0,
-        entry.sourceRuleCount ?? 0,
-        entry.sourceMetaCount ?? 0,
-        createdAt,
-      );
+			)
+			.run(
+				id,
+				entry.runId,
+				entry.questionKey,
+				entry.questionText,
+				entry.insight,
+				entry.durability,
+				entry.confidence,
+				evidence,
+				entry.sourcePatternCount ?? 0,
+				entry.sourceRuleCount ?? 0,
+				entry.sourceMetaCount ?? 0,
+				createdAt,
+			);
 
-    const created = this.get(id);
-    if (!created) throw new Error(`Failed to create identity reflection: ${id}`);
-    return created;
-  }
+		const created = this.get(id);
+		if (!created)
+			throw new Error(`Failed to create identity reflection: ${id}`);
+		return created;
+	}
 
-  get(id: string): IdentityReflectionEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM identity_reflections WHERE id = ?").get(id) as
-      | IdentityReflectionRow
-      | undefined;
-    if (!row) return null;
-    return this.rowToEntry(row);
-  }
+	get(id: string): IdentityReflectionEntry | null {
+		const row = this.liveDb
+			.prepare("SELECT * FROM identity_reflections WHERE id = ?")
+			.get(id) as IdentityReflectionRow | undefined;
+		if (!row) return null;
+		return this.rowToEntry(row);
+	}
 
-  listRecent(limit = 50): IdentityReflectionEntry[] {
-    const rows = this.liveDb
-      .prepare("SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as unknown as IdentityReflectionRow[];
-    return rows.map((row) => this.rowToEntry(row));
-  }
+	listRecent(limit = 50): IdentityReflectionEntry[] {
+		const rows = this.liveDb
+			.prepare(
+				"SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?",
+			)
+			.all(limit) as unknown as IdentityReflectionRow[];
+		return rows.map((row) => this.rowToEntry(row));
+	}
 
-  getLatestByQuestion(questionKey: string): IdentityReflectionEntry | null {
-    const row = this.liveDb
-      .prepare("SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1")
-      .get(questionKey) as IdentityReflectionRow | undefined;
-    if (!row) return null;
-    return this.rowToEntry(row);
-  }
+	getLatestByQuestion(questionKey: string): IdentityReflectionEntry | null {
+		const row = this.liveDb
+			.prepare(
+				"SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1",
+			)
+			.get(questionKey) as IdentityReflectionRow | undefined;
+		if (!row) return null;
+		return this.rowToEntry(row);
+	}
 
-  private rowToEntry(row: IdentityReflectionRow): IdentityReflectionEntry {
-    let evidence: string[] = [];
-    try {
-      const parsed = JSON.parse(row.evidence);
-      if (Array.isArray(parsed)) {
-        evidence = parsed.filter((x): x is string => typeof x === "string");
-      }
-    } catch {
-      // Keep malformed JSON non-fatal; callers can still use the insight.
-      evidence = [];
-    }
-    return {
-      id: row.id,
-      runId: row.run_id,
-      questionKey: row.question_key,
-      questionText: row.question_text,
-      insight: row.insight,
-      durability: row.durability,
-      confidence: row.confidence,
-      evidence,
-      sourcePatternCount: row.source_pattern_count,
-      sourceRuleCount: row.source_rule_count,
-      sourceMetaCount: row.source_meta_count,
-      createdAt: row.created_at,
-    };
-  }
+	private rowToEntry(row: IdentityReflectionRow): IdentityReflectionEntry {
+		let evidence: string[] = [];
+		try {
+			const parsed = JSON.parse(row.evidence);
+			if (Array.isArray(parsed)) {
+				evidence = parsed.filter((x): x is string => typeof x === "string");
+			}
+		} catch {
+			// Keep malformed JSON non-fatal; callers can still use the insight.
+			evidence = [];
+		}
+		return {
+			id: row.id,
+			runId: row.run_id,
+			questionKey: row.question_key,
+			questionText: row.question_text,
+			insight: row.insight,
+			durability: row.durability,
+			confidence: row.confidence,
+			evidence,
+			sourcePatternCount: row.source_pattern_count,
+			sourceRuleCount: row.source_rule_count,
+			sourceMetaCount: row.source_meta_count,
+			createdAt: row.created_at,
+		};
+	}
 }

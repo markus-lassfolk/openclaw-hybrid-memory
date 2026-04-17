@@ -14,21 +14,21 @@ import { capturePluginError } from "./error-reporter.js";
 const MAX_SKILLS_PER_RUN = 10;
 
 function ensureUniqueSlug(basePath: string, slug: string): string {
-  let candidate = slug;
-  let n = 0;
-  while (existsSync(join(basePath, candidate))) {
-    n++;
-    candidate = `${slug}-${n}`;
-  }
-  return candidate;
+	let candidate = slug;
+	let n = 0;
+	while (existsSync(join(basePath, candidate))) {
+		n++;
+		candidate = `${slug}-${n}`;
+	}
+	return candidate;
 }
 
 type GenerateAutoSkillsOptions = {
-  skillsAutoPath: string;
-  validationThreshold: number;
-  skillTTLDays: number;
-  maxPerRun?: number;
-  dryRun?: boolean;
+	skillsAutoPath: string;
+	validationThreshold: number;
+	skillTTLDays: number;
+	maxPerRun?: number;
+	dryRun?: boolean;
 };
 
 /**
@@ -36,70 +36,88 @@ type GenerateAutoSkillsOptions = {
  * that have been validated at least validationThreshold times.
  */
 export function generateAutoSkills(
-  factsDb: FactsDB,
-  options: GenerateAutoSkillsOptions,
-  logger: { info: (s: string) => void; warn: (s: string) => void },
+	factsDb: FactsDB,
+	options: GenerateAutoSkillsOptions,
+	logger: { info: (s: string) => void; warn: (s: string) => void },
 ): GenerateAutoSkillsResult {
-  const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
-  const dryRun = options.dryRun ?? false;
-  const basePath = options.skillsAutoPath.startsWith("/")
-    ? options.skillsAutoPath
-    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), options.skillsAutoPath);
+	const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
+	const dryRun = options.dryRun ?? false;
+	const basePath = options.skillsAutoPath.startsWith("/")
+		? options.skillsAutoPath
+		: join(
+				getEnv("OPENCLAW_WORKSPACE") || process.cwd(),
+				options.skillsAutoPath,
+			);
 
-  const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
-  const paths: string[] = [];
-  let skipped = 0;
+	const procedures = factsDb.getProceduresReadyForSkill(
+		options.validationThreshold,
+		maxPerRun,
+	);
+	const paths: string[] = [];
+	let skipped = 0;
 
-  for (const proc of procedures) {
-    const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
-    const skillDir = join(basePath, slug);
-    const skillPath = join(skillDir, "SKILL.md");
-    const recipePath = join(skillDir, "recipe.json");
+	for (const proc of procedures) {
+		const slug = ensureUniqueSlug(
+			basePath,
+			slugifyForSkill(proc.taskPattern, "procedure"),
+		);
+		const skillDir = join(basePath, slug);
+		const skillPath = join(skillDir, "SKILL.md");
+		const recipePath = join(skillDir, "recipe.json");
 
-    if (dryRun) {
-      logger.info(`[dry-run] Would generate skill: ${skillPath}`);
-      paths.push(skillPath);
-      continue;
-    }
+		if (dryRun) {
+			logger.info(`[dry-run] Would generate skill: ${skillPath}`);
+			paths.push(skillPath);
+			continue;
+		}
 
-    try {
-      mkdirSync(skillDir, { recursive: true });
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "procedure-skill-generator",
-        operation: "mkdir-skill-dir",
-      });
-      logger.warn(`procedure-skill-generator: mkdir ${skillDir}: ${err}`);
-      skipped++;
-      continue;
-    }
+		try {
+			mkdirSync(skillDir, { recursive: true });
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "procedure-skill-generator",
+				operation: "mkdir-skill-dir",
+			});
+			logger.warn(`procedure-skill-generator: mkdir ${skillDir}: ${err}`);
+			skipped++;
+			continue;
+		}
 
-    let recipe: unknown;
-    try {
-      recipe = JSON.parse(proc.recipeJson);
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "parse-recipe",
-        severity: "info",
-        subsystem: "procedures",
-      });
-      recipe = [];
-    }
-    const steps = Array.isArray(recipe) ? recipe : [];
+		let recipe: unknown;
+		try {
+			recipe = JSON.parse(proc.recipeJson);
+		} catch (err) {
+			capturePluginError(err as Error, {
+				operation: "parse-recipe",
+				severity: "info",
+				subsystem: "procedures",
+			});
+			recipe = [];
+		}
+		const steps = Array.isArray(recipe) ? recipe : [];
 
-    const lastValidatedStr = proc.lastValidated
-      ? new Date(proc.lastValidated * 1000).toISOString().slice(0, 10)
-      : "never";
-    const stepsMd = Array.isArray(steps)
-      ? (steps as Array<{ tool?: string; args?: Record<string, unknown>; summary?: string }>)
-          .map((s, i) => {
-            const args = s.args && Object.keys(s.args).length > 0 ? ` ${JSON.stringify(s.args)}` : "";
-            return `${i + 1}. **${s.tool || "step"}**${args}${s.summary ? ` — ${s.summary}` : ""}`;
-          })
-          .join("\n")
-      : "See recipe.json";
+		const lastValidatedStr = proc.lastValidated
+			? new Date(proc.lastValidated * 1000).toISOString().slice(0, 10)
+			: "never";
+		const stepsMd = Array.isArray(steps)
+			? (
+					steps as Array<{
+						tool?: string;
+						args?: Record<string, unknown>;
+						summary?: string;
+					}>
+				)
+					.map((s, i) => {
+						const args =
+							s.args && Object.keys(s.args).length > 0
+								? ` ${JSON.stringify(s.args)}`
+								: "";
+						return `${i + 1}. **${s.tool || "step"}**${args}${s.summary ? ` — ${s.summary}` : ""}`;
+					})
+					.join("\n")
+			: "See recipe.json";
 
-    const skillMd = `# ${slug.replace(/-/g, " ")}
+		const skillMd = `# ${slug.replace(/-/g, " ")}
 
 Auto-generated procedure (procedural memory). Last validated: ${lastValidatedStr}. Confidence: ${(proc.confidence * 100).toFixed(0)}%.
 
@@ -115,29 +133,29 @@ ${stepsMd}
 - Do not store secrets in procedures; use credential references only.
 `;
 
-    try {
-      writeFileSync(skillPath, skillMd, "utf-8");
-      writeFileSync(recipePath, JSON.stringify(steps, null, 2), "utf-8");
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "procedure-skill-generator",
-        operation: "write-skill-files",
-      });
-      logger.warn(`procedure-skill-generator: write ${skillPath}: ${err}`);
-      skipped++;
-      continue;
-    }
+		try {
+			writeFileSync(skillPath, skillMd, "utf-8");
+			writeFileSync(recipePath, JSON.stringify(steps, null, 2), "utf-8");
+		} catch (err) {
+			capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+				subsystem: "procedure-skill-generator",
+				operation: "write-skill-files",
+			});
+			logger.warn(`procedure-skill-generator: write ${skillPath}: ${err}`);
+			skipped++;
+			continue;
+		}
 
-    const relativePath = join(options.skillsAutoPath, slug);
-    factsDb.markProcedurePromoted(proc.id, relativePath);
-    paths.push(skillPath);
-    logger.info(`procedure-skill-generator: generated ${skillPath}`);
-  }
+		const relativePath = join(options.skillsAutoPath, slug);
+		factsDb.markProcedurePromoted(proc.id, relativePath);
+		paths.push(skillPath);
+		logger.info(`procedure-skill-generator: generated ${skillPath}`);
+	}
 
-  return {
-    generated: paths.length,
-    skipped,
-    dryRun,
-    paths,
-  };
+	return {
+		generated: paths.length,
+		skipped,
+		dryRun,
+		paths,
+	};
 }

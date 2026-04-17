@@ -22,21 +22,21 @@ import type { Issue } from "../types/issue-types.js";
 export type AmbientQueryType = "message" | "entity" | "temporal" | "context";
 
 export interface AmbientQuery {
-  /** The query text to run against the retrieval pipeline. */
-  text: string;
-  /** What generated this query. */
-  type: AmbientQueryType;
-  /** If type=entity, which entity triggered this query. */
-  entity?: string;
+	/** The query text to run against the retrieval pipeline. */
+	text: string;
+	/** What generated this query. */
+	type: AmbientQueryType;
+	/** If type=entity, which entity triggered this query. */
+	entity?: string;
 }
 
 interface AmbientContext {
-  /** User/author identifier (e.g. userId). */
-  userId?: string;
-  /** Channel or conversation identifier. */
-  channelId?: string;
-  /** Current time in milliseconds (default: Date.now()). */
-  nowMs?: number;
+	/** User/author identifier (e.g. userId). */
+	userId?: string;
+	/** Channel or conversation identifier. */
+	channelId?: string;
+	/** Current time in milliseconds (default: Date.now()). */
+	nowMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,18 +55,18 @@ interface AmbientContext {
  * that skips magnitude computation (just computes dot product).
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  if (denom === 0) return 0;
-  return dot / denom;
+	if (a.length === 0 || a.length !== b.length) return 0;
+	let dot = 0;
+	let magA = 0;
+	let magB = 0;
+	for (let i = 0; i < a.length; i++) {
+		dot += a[i] * b[i];
+		magA += a[i] * a[i];
+		magB += b[i] * b[i];
+	}
+	const denom = Math.sqrt(magA) * Math.sqrt(magB);
+	if (denom === 0) return 0;
+	return dot / denom;
 }
 
 /**
@@ -74,7 +74,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  * Returns a value in [0, 2], where 0 = identical, 2 = opposite directions.
  */
 export function cosineDistance(a: number[], b: number[]): number {
-  return 1 - cosineSimilarity(a, b);
+	return 1 - cosineSimilarity(a, b);
 }
 
 /**
@@ -86,10 +86,14 @@ export function cosineDistance(a: number[], b: number[]): number {
  * @param threshold - Cosine distance threshold (default: 0.4). Higher = less sensitive.
  * @returns true when the distance exceeds the threshold (topic shifted).
  */
-export function detectTopicShift(prev: number[], next: number[], threshold = 0.4): boolean {
-  if (prev.length === 0 || next.length === 0) return false;
-  const distance = cosineDistance(prev, next);
-  return distance > threshold;
+export function detectTopicShift(
+	prev: number[],
+	next: number[],
+	threshold = 0.4,
+): boolean {
+	if (prev.length === 0 || next.length === 0) return false;
+	const distance = cosineDistance(prev, next);
+	return distance > threshold;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,115 +102,122 @@ export function detectTopicShift(prev: number[], next: number[], threshold = 0.4
 
 /** Common English stop-words / sentence starters to exclude from capitalised-word extraction. */
 const COMMON_STOP_WORDS = new Set([
-  "the",
-  "this",
-  "that",
-  "when",
-  "what",
-  "which",
-  "where",
-  "who",
-  "how",
-  "and",
-  "but",
-  "for",
-  "now",
-  "then",
-  "are",
-  "was",
-  "has",
-  "have",
-  "had",
-  "not",
-  "can",
-  "does",
-  "did",
-  "will",
-  "may",
-  "use",
-  "get",
-  "set",
-  "run",
-  "all",
-  "any",
-  "each",
-  "one",
-  "two",
-  "new",
-  "old",
-  "my",
-  "your",
-  "our",
-  "his",
-  "her",
-  "its",
-  "they",
-  "them",
-  "with",
-  "from",
-  "into",
-  "over",
-  "also",
-  "just",
-  "more",
-  "most",
-  "very",
-  "some",
-  "such",
-  "true",
-  "false",
+	"the",
+	"this",
+	"that",
+	"when",
+	"what",
+	"which",
+	"where",
+	"who",
+	"how",
+	"and",
+	"but",
+	"for",
+	"now",
+	"then",
+	"are",
+	"was",
+	"has",
+	"have",
+	"had",
+	"not",
+	"can",
+	"does",
+	"did",
+	"will",
+	"may",
+	"use",
+	"get",
+	"set",
+	"run",
+	"all",
+	"any",
+	"each",
+	"one",
+	"two",
+	"new",
+	"old",
+	"my",
+	"your",
+	"our",
+	"his",
+	"her",
+	"its",
+	"they",
+	"them",
+	"with",
+	"from",
+	"into",
+	"over",
+	"also",
+	"just",
+	"more",
+	"most",
+	"very",
+	"some",
+	"such",
+	"true",
+	"false",
 ]);
 
 const ENTITY_PREFIX_LEN = 3;
-const entityCache = new Map<string, { prefixMap: Map<string, string[]>; timestamp: number }>();
+const entityCache = new Map<
+	string,
+	{ prefixMap: Map<string, string[]>; timestamp: number }
+>();
 const ENTITY_CACHE_TTL_MS = 5 * 60 * 1000;
 /** Issue #463: Maximum entity cache entries to prevent unbounded growth. */
 const ENTITY_CACHE_MAX_SIZE = 50;
 
 function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
-  const cacheKey = knownEntities.join("\x00");
-  const now = Date.now();
-  const cached = entityCache.get(cacheKey);
-  if (cached && now - cached.timestamp < ENTITY_CACHE_TTL_MS) {
-    return cached.prefixMap;
-  }
-  const prefixMap = new Map<string, string[]>();
-  const seen = new Set<string>();
-  for (const entity of knownEntities) {
-    const lower = entity.toLowerCase().trim();
-    if (lower.length < 2 || seen.has(lower)) continue;
-    seen.add(lower);
-    const firstWordMatch = lower.match(/^[a-z0-9][a-z0-9_-]*/);
-    if (firstWordMatch) {
-      const word = firstWordMatch[0];
-      for (let len = Math.min(word.length, ENTITY_PREFIX_LEN); len >= 2; len--) {
-        const prefix = word.slice(0, len);
-        const list = prefixMap.get(prefix);
-        if (list) list.push(lower);
-        else prefixMap.set(prefix, [lower]);
-      }
-    } else {
-      const prefix = lower.slice(0, ENTITY_PREFIX_LEN);
-      const list = prefixMap.get(prefix);
-      if (list) list.push(lower);
-      else prefixMap.set(prefix, [lower]);
-    }
-  }
-  entityCache.set(cacheKey, { prefixMap, timestamp: now });
-  // Evict stale entries to prevent unbounded growth when entity lists change over time.
-  for (const [k, v] of entityCache) {
-    if (now - v.timestamp >= ENTITY_CACHE_TTL_MS) entityCache.delete(k);
-  }
-  // Issue #463: Hard cap on cache size to prevent unbounded growth
-  if (entityCache.size > ENTITY_CACHE_MAX_SIZE) {
-    const excess = entityCache.size - ENTITY_CACHE_MAX_SIZE;
-    const keys = entityCache.keys();
-    for (let i = 0; i < excess; i++) {
-      const { value } = keys.next();
-      if (value) entityCache.delete(value);
-    }
-  }
-  return prefixMap;
+	const cacheKey = knownEntities.join("\x00");
+	const now = Date.now();
+	const cached = entityCache.get(cacheKey);
+	if (cached && now - cached.timestamp < ENTITY_CACHE_TTL_MS) {
+		return cached.prefixMap;
+	}
+	const prefixMap = new Map<string, string[]>();
+	const seen = new Set<string>();
+	for (const entity of knownEntities) {
+		const lower = entity.toLowerCase().trim();
+		if (lower.length < 2 || seen.has(lower)) continue;
+		seen.add(lower);
+		const firstWordMatch = lower.match(/^[a-z0-9][a-z0-9_-]*/);
+		if (firstWordMatch) {
+			const word = firstWordMatch[0];
+			for (
+				let len = Math.min(word.length, ENTITY_PREFIX_LEN);
+				len >= 2;
+				len--
+			) {
+				const prefix = word.slice(0, len);
+				const list = prefixMap.get(prefix);
+				if (list) list.push(lower);
+				else prefixMap.set(prefix, [lower]);
+			}
+		} else {
+			const prefix = lower.slice(0, ENTITY_PREFIX_LEN);
+			const list = prefixMap.get(prefix);
+			if (list) list.push(lower);
+			else prefixMap.set(prefix, [lower]);
+		}
+	}
+	entityCache.set(cacheKey, { prefixMap, timestamp: now });
+	// Evict stale entries to prevent unbounded growth when entity lists change over time.
+	for (const [k, v] of entityCache) {
+		if (now - v.timestamp >= ENTITY_CACHE_TTL_MS) entityCache.delete(k);
+	}
+	// Issue #463: Hard cap on cache size to prevent unbounded growth
+	if (entityCache.size > ENTITY_CACHE_MAX_SIZE) {
+		const excess = entityCache.size - ENTITY_CACHE_MAX_SIZE;
+		const keys = entityCache.keys();
+		for (let i = 0; i < excess; i++) {
+			const { value } = keys.next();
+			if (value) entityCache.delete(value);
+		}
+	}
+	return prefixMap;
 }
 
 /**
@@ -219,59 +230,66 @@ function getEntityPrefixMap(knownEntities: string[]): Map<string, string[]> {
  *
  * Returns distinct lowercase entity strings (max 10).
  */
-export function extractEntitiesFromMessage(text: string, knownEntities: string[] = []): string[] {
-  const candidates = new Set<string>();
-  const lower = text.toLowerCase();
+export function extractEntitiesFromMessage(
+	text: string,
+	knownEntities: string[] = [],
+): string[] {
+	const candidates = new Set<string>();
+	const lower = text.toLowerCase();
 
-  // 1. Known entities (case-insensitive)
-  if (knownEntities.length > 0) {
-    const prefixMap = getEntityPrefixMap(knownEntities);
-    const seenPrefixes = new Set<string>();
-    for (const m of lower.matchAll(/\b[a-z0-9][a-z0-9_-]{1,}\b/g)) {
-      const token = m[0];
-      for (let len = Math.min(token.length, ENTITY_PREFIX_LEN); len >= 2; len--) {
-        seenPrefixes.add(token.slice(0, len));
-      }
-    }
-    for (const prefix of seenPrefixes) {
-      const list = prefixMap.get(prefix);
-      if (!list) continue;
-      for (const entity of list) {
-        if (lower.includes(entity)) candidates.add(entity);
-      }
-    }
-  }
+	// 1. Known entities (case-insensitive)
+	if (knownEntities.length > 0) {
+		const prefixMap = getEntityPrefixMap(knownEntities);
+		const seenPrefixes = new Set<string>();
+		for (const m of lower.matchAll(/\b[a-z0-9][a-z0-9_-]{1,}\b/g)) {
+			const token = m[0];
+			for (
+				let len = Math.min(token.length, ENTITY_PREFIX_LEN);
+				len >= 2;
+				len--
+			) {
+				seenPrefixes.add(token.slice(0, len));
+			}
+		}
+		for (const prefix of seenPrefixes) {
+			const list = prefixMap.get(prefix);
+			if (!list) continue;
+			for (const entity of list) {
+				if (lower.includes(entity)) candidates.add(entity);
+			}
+		}
+	}
 
-  // 2. @mentions
-  for (const m of text.matchAll(/@([\w.-]+)/g)) {
-    if (m[1] && m[1].length >= 2) candidates.add(m[1].toLowerCase());
-  }
+	// 2. @mentions
+	for (const m of text.matchAll(/@([\w.-]+)/g)) {
+		if (m[1] && m[1].length >= 2) candidates.add(m[1].toLowerCase());
+	}
 
-  // 3. #tags
-  for (const m of text.matchAll(/#([\w-]+)/g)) {
-    if (m[1] && m[1].length >= 2) candidates.add(m[1].toLowerCase());
-  }
+	// 3. #tags
+	for (const m of text.matchAll(/#([\w-]+)/g)) {
+		if (m[1] && m[1].length >= 2) candidates.add(m[1].toLowerCase());
+	}
 
-  // 4. IPv4 addresses
-  for (const m of text.matchAll(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/g)) {
-    candidates.add(m[1]);
-  }
+	// 4. IPv4 addresses
+	for (const m of text.matchAll(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/g)) {
+		candidates.add(m[1]);
+	}
 
-  // 5. Capitalised words (PascalCase or ALL_CAPS, 3+ chars)
-  for (const m of text.matchAll(/\b([A-Z][a-zA-Z0-9_]{2,}|[A-Z]{3,})\b/g)) {
-    const word = m[1];
-    if (!COMMON_STOP_WORDS.has(word.toLowerCase())) {
-      candidates.add(word.toLowerCase());
-    }
-  }
+	// 5. Capitalised words (PascalCase or ALL_CAPS, 3+ chars)
+	for (const m of text.matchAll(/\b([A-Z][a-zA-Z0-9_]{2,}|[A-Z]{3,})\b/g)) {
+		const word = m[1];
+		if (!COMMON_STOP_WORDS.has(word.toLowerCase())) {
+			candidates.add(word.toLowerCase());
+		}
+	}
 
-  // 6. Quoted strings (single or double), 3–40 chars
-  for (const m of text.matchAll(/["']([^"']{3,40})["']/g)) {
-    const val = m[1].toLowerCase().trim();
-    if (val.length > 0) candidates.add(val);
-  }
+	// 6. Quoted strings (single or double), 3–40 chars
+	for (const m of text.matchAll(/["']([^"']{3,40})["']/g)) {
+		const val = m[1].toLowerCase().trim();
+		if (val.length > 0) candidates.add(val);
+	}
 
-  return [...candidates].slice(0, 10);
+	return [...candidates].slice(0, 10);
 }
 
 // ---------------------------------------------------------------------------
@@ -283,18 +301,27 @@ export function extractEntitiesFromMessage(text: string, knownEntities: string[]
  * Returns up to 2 query strings.
  */
 export function generateTemporalQueries(nowMs: number = Date.now()): string[] {
-  const hour = new Date(nowMs).getHours();
+	const hour = new Date(nowMs).getHours();
 
-  if (hour >= 6 && hour < 12) {
-    // Morning: today's plan and pending items
-    return ["action items and tasks for today", "pending decisions and upcoming deadlines"];
-  }
-  if (hour >= 12 && hour < 18) {
-    // Afternoon: recent progress and blockers
-    return ["action items from last 48 hours", "upcoming deadlines and commitments"];
-  }
-  // Evening/night: unresolved issues and follow-ups
-  return ["unresolved issues and follow-ups", "action items from last 48 hours"];
+	if (hour >= 6 && hour < 12) {
+		// Morning: today's plan and pending items
+		return [
+			"action items and tasks for today",
+			"pending decisions and upcoming deadlines",
+		];
+	}
+	if (hour >= 12 && hour < 18) {
+		// Afternoon: recent progress and blockers
+		return [
+			"action items from last 48 hours",
+			"upcoming deadlines and commitments",
+		];
+	}
+	// Evening/night: unresolved issues and follow-ups
+	return [
+		"unresolved issues and follow-ups",
+		"action items from last 48 hours",
+	];
 }
 
 // ---------------------------------------------------------------------------
@@ -306,34 +333,34 @@ export function generateTemporalQueries(nowMs: number = Date.now()): string[] {
  * Used to prevent re-injecting the same facts after a topic shift.
  */
 export class SessionSeenFacts {
-  private readonly _seen = new Set<string>();
+	private readonly _seen = new Set<string>();
 
-  /** Mark a list of fact IDs as seen/injected. */
-  markSeen(factIds: string[]): void {
-    for (const id of factIds) {
-      this._seen.add(id);
-    }
-  }
+	/** Mark a list of fact IDs as seen/injected. */
+	markSeen(factIds: string[]): void {
+		for (const id of factIds) {
+			this._seen.add(id);
+		}
+	}
 
-  /** Return true when a fact ID has already been injected this session. */
-  hasBeenSeen(factId: string): boolean {
-    return this._seen.has(factId);
-  }
+	/** Return true when a fact ID has already been injected this session. */
+	hasBeenSeen(factId: string): boolean {
+		return this._seen.has(factId);
+	}
 
-  /** Filter a list of fact IDs, returning only those not yet seen. */
-  filterUnseen(factIds: string[]): string[] {
-    return factIds.filter((id) => !this._seen.has(id));
-  }
+	/** Filter a list of fact IDs, returning only those not yet seen. */
+	filterUnseen(factIds: string[]): string[] {
+		return factIds.filter((id) => !this._seen.has(id));
+	}
 
-  /** Number of unique fact IDs seen so far. */
-  get size(): number {
-    return this._seen.size;
-  }
+	/** Number of unique fact IDs seen so far. */
+	get size(): number {
+		return this._seen.size;
+	}
 
-  /** Clear all seen state (e.g. on session end or reset). */
-  clear(): void {
-    this._seen.clear();
-  }
+	/** Clear all seen state (e.g. on session end or reset). */
+	clear(): void {
+		this._seen.clear();
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -353,53 +380,53 @@ export class SessionSeenFacts {
  * When `config.multiQuery` is false, only the direct message query is returned.
  */
 export function generateAmbientQueries(
-  message: string,
-  config: Pick<AmbientConfig, "maxQueriesPerTrigger" | "multiQuery">,
-  context: AmbientContext = {},
-  knownEntities: string[] = [],
+	message: string,
+	config: Pick<AmbientConfig, "maxQueriesPerTrigger" | "multiQuery">,
+	context: AmbientContext = {},
+	knownEntities: string[] = [],
 ): AmbientQuery[] {
-  const queries: AmbientQuery[] = [];
-  const trimmed = message.trim();
+	const queries: AmbientQuery[] = [];
+	const trimmed = message.trim();
 
-  // 1. Message-based query (always included — current behaviour)
-  if (trimmed.length > 0) {
-    queries.push({ text: trimmed, type: "message" });
-  }
+	// 1. Message-based query (always included — current behaviour)
+	if (trimmed.length > 0) {
+		queries.push({ text: trimmed, type: "message" });
+	}
 
-  if (!config.multiQuery) {
-    return queries;
-  }
+	if (!config.multiQuery) {
+		return queries;
+	}
 
-  const max = Math.max(1, Math.min(4, config.maxQueriesPerTrigger ?? 4));
+	const max = Math.max(1, Math.min(4, config.maxQueriesPerTrigger ?? 4));
 
-  // 2. Entity-based queries
-  const entities = extractEntitiesFromMessage(trimmed, knownEntities);
-  for (const entity of entities) {
-    if (queries.length >= max) break;
-    queries.push({ text: entity, type: "entity", entity });
-  }
+	// 2. Entity-based queries
+	const entities = extractEntitiesFromMessage(trimmed, knownEntities);
+	for (const entity of entities) {
+		if (queries.length >= max) break;
+		queries.push({ text: entity, type: "entity", entity });
+	}
 
-  // 3. Temporal context queries
-  if (queries.length < max) {
-    const nowMs = context.nowMs ?? Date.now();
-    const temporal = generateTemporalQueries(nowMs);
-    for (const t of temporal) {
-      if (queries.length >= max) break;
-      queries.push({ text: t, type: "temporal" });
-    }
-  }
+	// 3. Temporal context queries
+	if (queries.length < max) {
+		const nowMs = context.nowMs ?? Date.now();
+		const temporal = generateTemporalQueries(nowMs);
+		for (const t of temporal) {
+			if (queries.length >= max) break;
+			queries.push({ text: t, type: "temporal" });
+		}
+	}
 
-  // 4. User/channel context query
-  if (queries.length < max && (context.userId || context.channelId)) {
-    const parts: string[] = [];
-    if (context.userId) parts.push(`recent topics with ${context.userId}`);
-    if (context.channelId) parts.push(`discussion in ${context.channelId}`);
-    if (parts.length > 0) {
-      queries.push({ text: parts.join(" and "), type: "context" });
-    }
-  }
+	// 4. User/channel context query
+	if (queries.length < max && (context.userId || context.channelId)) {
+		const parts: string[] = [];
+		if (context.userId) parts.push(`recent topics with ${context.userId}`);
+		if (context.channelId) parts.push(`discussion in ${context.channelId}`);
+		if (parts.length > 0) {
+			queries.push({ text: parts.join(" and "), type: "context" });
+		}
+	}
 
-  return queries.slice(0, max);
+	return queries.slice(0, max);
 }
 
 // ---------------------------------------------------------------------------
@@ -414,19 +441,22 @@ export function generateAmbientQueries(
  * @param getId      - Function that extracts the unique ID from a result.
  * @returns Flat deduplicated list, first occurrence wins.
  */
-export function deduplicateResultsById<T>(resultSets: T[][], getId: (item: T) => string): T[] {
-  const seen = new Set<string>();
-  const deduped: T[] = [];
-  for (const results of resultSets) {
-    for (const r of results) {
-      const id = getId(r);
-      if (!seen.has(id)) {
-        seen.add(id);
-        deduped.push(r);
-      }
-    }
-  }
-  return deduped;
+export function deduplicateResultsById<T>(
+	resultSets: T[][],
+	getId: (item: T) => string,
+): T[] {
+	const seen = new Set<string>();
+	const deduped: T[] = [];
+	for (const results of resultSets) {
+		for (const r of results) {
+			const id = getId(r);
+			if (!seen.has(id)) {
+				seen.add(id);
+				deduped.push(r);
+			}
+		}
+	}
+	return deduped;
 }
 
 // ---------------------------------------------------------------------------
@@ -435,19 +465,19 @@ export function deduplicateResultsById<T>(resultSets: T[][], getId: (item: T) =>
 
 /** Keywords that suggest the conversation involves an active problem or error. */
 const ERROR_KEYWORDS = [
-  "error",
-  "failed",
-  "crash",
-  "timeout",
-  "broken",
-  "not working",
-  "exception",
-  "bug",
-  "issue",
-  "problem",
-  "fault",
-  "failure",
-  "down",
+	"error",
+	"failed",
+	"crash",
+	"timeout",
+	"broken",
+	"not working",
+	"exception",
+	"bug",
+	"issue",
+	"problem",
+	"fault",
+	"failure",
+	"down",
 ];
 
 /**
@@ -455,15 +485,15 @@ const ERROR_KEYWORDS = [
  * the user is dealing with an active problem.
  */
 function hasErrorKeywords(text: string): boolean {
-  const lower = text.toLowerCase();
-  return ERROR_KEYWORDS.some((kw) => lower.includes(kw));
+	const lower = text.toLowerCase();
+	return ERROR_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
 interface IssueAmbientResult {
-  /** Open issues that may be relevant to the current message. */
-  openIssues: Issue[];
-  /** Resolved/verified issues that may contain relevant resolution context. */
-  resolvedIssues: Issue[];
+	/** Open issues that may be relevant to the current message. */
+	openIssues: Issue[];
+	/** Resolved/verified issues that may contain relevant resolution context. */
+	resolvedIssues: Issue[];
 }
 
 /**
@@ -475,39 +505,49 @@ interface IssueAmbientResult {
  *
  * Returns at most 3 open + 3 resolved issues.
  */
-export function searchAmbientIssues(message: string, issueStore: IssueStore): IssueAmbientResult {
-  if (!hasErrorKeywords(message)) {
-    return { openIssues: [], resolvedIssues: [] };
-  }
+export function searchAmbientIssues(
+	message: string,
+	issueStore: IssueStore,
+): IssueAmbientResult {
+	if (!hasErrorKeywords(message)) {
+		return { openIssues: [], resolvedIssues: [] };
+	}
 
-  const lower = message.toLowerCase();
-  const keywords: string[] = [];
-  for (const kw of ERROR_KEYWORDS) {
-    if (lower.includes(kw)) {
-      keywords.push(kw);
-    }
-  }
-  const words = message.match(/\b[a-zA-Z0-9_-]{3,}\b/g) || [];
-  for (const word of words.slice(0, 5)) {
-    if (!ERROR_KEYWORDS.includes(word.toLowerCase())) {
-      keywords.push(word);
-    }
-  }
+	const lower = message.toLowerCase();
+	const keywords: string[] = [];
+	for (const kw of ERROR_KEYWORDS) {
+		if (lower.includes(kw)) {
+			keywords.push(kw);
+		}
+	}
+	const words = message.match(/\b[a-zA-Z0-9_-]{3,}\b/g) || [];
+	for (const word of words.slice(0, 5)) {
+		if (!ERROR_KEYWORDS.includes(word.toLowerCase())) {
+			keywords.push(word);
+		}
+	}
 
-  const allMatches = new Map<string, Issue>();
-  for (const keyword of keywords.slice(0, 3)) {
-    const matches = issueStore.search(keyword);
-    for (const match of matches) {
-      allMatches.set(match.id, match);
-    }
-  }
+	const allMatches = new Map<string, Issue>();
+	for (const keyword of keywords.slice(0, 3)) {
+		const matches = issueStore.search(keyword);
+		for (const match of matches) {
+			allMatches.set(match.id, match);
+		}
+	}
 
-  const matchList = Array.from(allMatches.values());
-  const openIssues = matchList
-    .filter((i) => i.status === "open" || i.status === "diagnosed" || i.status === "fix-attempted")
-    .slice(0, 3);
+	const matchList = Array.from(allMatches.values());
+	const openIssues = matchList
+		.filter(
+			(i) =>
+				i.status === "open" ||
+				i.status === "diagnosed" ||
+				i.status === "fix-attempted",
+		)
+		.slice(0, 3);
 
-  const resolvedIssues = matchList.filter((i) => i.status === "resolved" || i.status === "verified").slice(0, 3);
+	const resolvedIssues = matchList
+		.filter((i) => i.status === "resolved" || i.status === "verified")
+		.slice(0, 3);
 
-  return { openIssues, resolvedIssues };
+	return { openIssues, resolvedIssues };
 }

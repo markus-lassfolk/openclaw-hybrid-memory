@@ -11,7 +11,12 @@
 
 import OpenAI from "openai";
 import type { EmbeddingModelConfig } from "../config.js";
-import { type EmbeddingProvider, Embeddings, OllamaEmbeddingProvider, OnnxEmbeddingProvider } from "./embeddings.js";
+import {
+	type EmbeddingProvider,
+	Embeddings,
+	OllamaEmbeddingProvider,
+	OnnxEmbeddingProvider,
+} from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -35,132 +40,135 @@ import { capturePluginError } from "./error-reporter.js";
  * ```
  */
 export class EmbeddingRegistry {
-  /** The primary (existing) embedding provider. */
-  private readonly primary: EmbeddingProvider;
-  /** Canonical name for the primary model (used as map key). */
-  private readonly primaryName: string;
+	/** The primary (existing) embedding provider. */
+	private readonly primary: EmbeddingProvider;
+	/** Canonical name for the primary model (used as map key). */
+	private readonly primaryName: string;
 
-  /** Additional model configs (populated via register()). */
-  private readonly modelConfigs: EmbeddingModelConfig[] = [];
-  /** Lazily-initialized providers for additional models. */
-  private readonly providers = new Map<string, EmbeddingProvider>();
+	/** Additional model configs (populated via register()). */
+	private readonly modelConfigs: EmbeddingModelConfig[] = [];
+	/** Lazily-initialized providers for additional models. */
+	private readonly providers = new Map<string, EmbeddingProvider>();
 
-  constructor(primary: EmbeddingProvider, primaryName: string) {
-    this.primary = primary;
-    this.primaryName = primaryName;
-  }
+	constructor(primary: EmbeddingProvider, primaryName: string) {
+		this.primary = primary;
+		this.primaryName = primaryName;
+	}
 
-  /**
-   * Register an additional embedding model.
-   * Skips models that are disabled (enabled === false).
-   * Skips registration if a model with the same name already exists.
-   */
-  register(config: EmbeddingModelConfig): void {
-    if (config.enabled === false) return;
-    // Prevent duplicate registrations
-    if (config.name === this.primaryName) return;
-    if (this.modelConfigs.some((m) => m.name === config.name)) return;
-    this.modelConfigs.push(config);
-  }
+	/**
+	 * Register an additional embedding model.
+	 * Skips models that are disabled (enabled === false).
+	 * Skips registration if a model with the same name already exists.
+	 */
+	register(config: EmbeddingModelConfig): void {
+		if (config.enabled === false) return;
+		// Prevent duplicate registrations
+		if (config.name === this.primaryName) return;
+		if (this.modelConfigs.some((m) => m.name === config.name)) return;
+		this.modelConfigs.push(config);
+	}
 
-  /**
-   * Get all registered model configs (additional models only; does not include primary).
-   */
-  getModels(): EmbeddingModelConfig[] {
-    return [...this.modelConfigs];
-  }
+	/**
+	 * Get all registered model configs (additional models only; does not include primary).
+	 */
+	getModels(): EmbeddingModelConfig[] {
+		return [...this.modelConfigs];
+	}
 
-  /**
-   * Get the primary model config-like object.
-   */
-  getPrimaryModel(): { name: string; provider: string; dimensions: number } {
-    return {
-      name: this.primaryName,
-      provider: this.primary.constructor.name,
-      dimensions: this.primary.dimensions,
-    };
-  }
+	/**
+	 * Get the primary model config-like object.
+	 */
+	getPrimaryModel(): { name: string; provider: string; dimensions: number } {
+		return {
+			name: this.primaryName,
+			provider: this.primary.constructor.name,
+			dimensions: this.primary.dimensions,
+		};
+	}
 
-  /** Whether any additional models are registered (multi-model mode). */
-  isMultiModel(): boolean {
-    return this.modelConfigs.length > 0;
-  }
+	/** Whether any additional models are registered (multi-model mode). */
+	isMultiModel(): boolean {
+		return this.modelConfigs.length > 0;
+	}
 
-  /**
-   * Embed text with a specific model by name.
-   * Pass undefined or primaryName to use the primary model.
-   */
-  async embed(text: string, modelName?: string): Promise<Float32Array> {
-    if (!modelName || modelName === this.primaryName) {
-      const vec = await this.primary.embed(text);
-      return toFloat32Array(vec);
-    }
-    const provider = this.getOrCreateProvider(modelName);
-    const vec = await provider.embed(text);
-    return toFloat32Array(vec);
-  }
+	/**
+	 * Embed text with a specific model by name.
+	 * Pass undefined or primaryName to use the primary model.
+	 */
+	async embed(text: string, modelName?: string): Promise<Float32Array> {
+		if (!modelName || modelName === this.primaryName) {
+			const vec = await this.primary.embed(text);
+			return toFloat32Array(vec);
+		}
+		const provider = this.getOrCreateProvider(modelName);
+		const vec = await provider.embed(text);
+		return toFloat32Array(vec);
+	}
 
-  /**
-   * Embed text with ALL registered models (primary + additional).
-   * Returns a Map from model name → Float32Array.
-   * On partial failure, reports each error via capturePluginError and returns
-   * whatever succeeded so callers get partial results instead of losing all data.
-   */
-  async embedAll(text: string): Promise<Map<string, Float32Array>> {
-    const result = new Map<string, Float32Array>();
+	/**
+	 * Embed text with ALL registered models (primary + additional).
+	 * Returns a Map from model name → Float32Array.
+	 * On partial failure, reports each error via capturePluginError and returns
+	 * whatever succeeded so callers get partial results instead of losing all data.
+	 */
+	async embedAll(text: string): Promise<Map<string, Float32Array>> {
+		const result = new Map<string, Float32Array>();
 
-    // Primary model first
-    const primaryVec = await this.primary.embed(text);
-    result.set(this.primaryName, toFloat32Array(primaryVec));
+		// Primary model first
+		const primaryVec = await this.primary.embed(text);
+		result.set(this.primaryName, toFloat32Array(primaryVec));
 
-    // Additional models in parallel
-    if (this.modelConfigs.length > 0) {
-      const tasks = this.modelConfigs.map(async (cfg) => {
-        const provider = this.getOrCreateProvider(cfg.name);
-        const vec = await provider.embed(text);
-        return [cfg.name, toFloat32Array(vec)] as const;
-      });
-      const settled = await Promise.allSettled(tasks);
-      for (const s of settled) {
-        if (s.status === "fulfilled") {
-          const [name, vec] = s.value;
-          result.set(name, vec);
-        } else {
-          capturePluginError(s.reason instanceof Error ? s.reason : new Error(String(s.reason)), {
-            subsystem: "embedding-registry",
-            operation: "embedAll",
-          });
-        }
-      }
-    }
+		// Additional models in parallel
+		if (this.modelConfigs.length > 0) {
+			const tasks = this.modelConfigs.map(async (cfg) => {
+				const provider = this.getOrCreateProvider(cfg.name);
+				const vec = await provider.embed(text);
+				return [cfg.name, toFloat32Array(vec)] as const;
+			});
+			const settled = await Promise.allSettled(tasks);
+			for (const s of settled) {
+				if (s.status === "fulfilled") {
+					const [name, vec] = s.value;
+					result.set(name, vec);
+				} else {
+					capturePluginError(
+						s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
+						{
+							subsystem: "embedding-registry",
+							operation: "embedAll",
+						},
+					);
+				}
+			}
+		}
 
-    return result;
-  }
+		return result;
+	}
 
-  /**
-   * Return the names of all models (primary + additional enabled models).
-   */
-  allModelNames(): string[] {
-    return [this.primaryName, ...this.modelConfigs.map((m) => m.name)];
-  }
+	/**
+	 * Return the names of all models (primary + additional enabled models).
+	 */
+	allModelNames(): string[] {
+		return [this.primaryName, ...this.modelConfigs.map((m) => m.name)];
+	}
 
-  // ---------------------------------------------------------------------------
-  // Internal: lazy provider creation
-  // ---------------------------------------------------------------------------
+	// ---------------------------------------------------------------------------
+	// Internal: lazy provider creation
+	// ---------------------------------------------------------------------------
 
-  private getOrCreateProvider(modelName: string): EmbeddingProvider {
-    const existing = this.providers.get(modelName);
-    if (existing) return existing;
+	private getOrCreateProvider(modelName: string): EmbeddingProvider {
+		const existing = this.providers.get(modelName);
+		if (existing) return existing;
 
-    const cfg = this.modelConfigs.find((m) => m.name === modelName);
-    if (!cfg) {
-      throw new Error(`No embedding model registered with name '${modelName}'`);
-    }
+		const cfg = this.modelConfigs.find((m) => m.name === modelName);
+		if (!cfg) {
+			throw new Error(`No embedding model registered with name '${modelName}'`);
+		}
 
-    const provider = createProviderForConfig(cfg);
-    this.providers.set(modelName, provider);
-    return provider;
-  }
+		const provider = createProviderForConfig(cfg);
+		this.providers.set(modelName, provider);
+		return provider;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -168,30 +176,34 @@ export class EmbeddingRegistry {
 // ---------------------------------------------------------------------------
 
 function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
-  if (cfg.provider === "ollama") {
-    return new OllamaEmbeddingProvider({
-      model: cfg.name,
-      dimensions: cfg.dimensions,
-      endpoint: cfg.endpoint,
-    });
-  }
+	if (cfg.provider === "ollama") {
+		return new OllamaEmbeddingProvider({
+			model: cfg.name,
+			dimensions: cfg.dimensions,
+			endpoint: cfg.endpoint,
+		});
+	}
 
-  if (cfg.provider === "openai") {
-    if (!cfg.apiKey) {
-      throw new Error(`EmbeddingModelConfig for '${cfg.name}': apiKey is required for openai provider`);
-    }
-    const client = new OpenAI({ apiKey: cfg.apiKey });
-    return new Embeddings(client, cfg.name, cfg.dimensions);
-  }
+	if (cfg.provider === "openai") {
+		if (!cfg.apiKey) {
+			throw new Error(
+				`EmbeddingModelConfig for '${cfg.name}': apiKey is required for openai provider`,
+			);
+		}
+		const client = new OpenAI({ apiKey: cfg.apiKey });
+		return new Embeddings(client, cfg.name, cfg.dimensions);
+	}
 
-  if (cfg.provider === "onnx") {
-    return new OnnxEmbeddingProvider({
-      model: cfg.name,
-      dimensions: cfg.dimensions,
-    });
-  }
+	if (cfg.provider === "onnx") {
+		return new OnnxEmbeddingProvider({
+			model: cfg.name,
+			dimensions: cfg.dimensions,
+		});
+	}
 
-  throw new Error(`EmbeddingModelConfig for '${cfg.name}': unknown provider '${cfg.provider as string}'`);
+	throw new Error(
+		`EmbeddingModelConfig for '${cfg.name}': unknown provider '${cfg.provider as string}'`,
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +212,7 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
 
 /** Convert number[] or Float32Array to Float32Array. */
 export function toFloat32Array(vec: number[] | Float32Array): Float32Array {
-  return vec instanceof Float32Array ? vec : new Float32Array(vec);
+	return vec instanceof Float32Array ? vec : new Float32Array(vec);
 }
 
 /**
@@ -208,15 +220,15 @@ export function toFloat32Array(vec: number[] | Float32Array): Float32Array {
  * If cfg.multiModels is empty/undefined, returns a single-model registry.
  */
 export function buildEmbeddingRegistry(
-  primary: EmbeddingProvider,
-  primaryName: string,
-  multiModels?: EmbeddingModelConfig[],
+	primary: EmbeddingProvider,
+	primaryName: string,
+	multiModels?: EmbeddingModelConfig[],
 ): EmbeddingRegistry {
-  const registry = new EmbeddingRegistry(primary, primaryName);
-  if (multiModels && multiModels.length > 0) {
-    for (const modelCfg of multiModels) {
-      registry.register(modelCfg);
-    }
-  }
-  return registry;
+	const registry = new EmbeddingRegistry(primary, primaryName);
+	if (multiModels && multiModels.length > 0) {
+		for (const modelCfg of multiModels) {
+			registry.register(modelCfg);
+		}
+	}
+	return registry;
 }

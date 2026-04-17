@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 describe("verify-publish", () => {
-  it("enforces explicit native runtime dependency declarations", () => {
-    const scriptPath = join(root, "scripts", "verify-publish.cjs");
-    const content = readFileSync(scriptPath, "utf-8");
-    expect(content).toContain("requiredRuntimeDeps");
-    expect(content).toContain("optionalDependencies");
-    expect(content).toContain("peerDependencies");
-  });
+	it("enforces explicit native runtime dependency declarations", () => {
+		const scriptPath = join(root, "scripts", "verify-publish.cjs");
+		const content = readFileSync(scriptPath, "utf-8");
+		expect(content).toContain("requiredRuntimeDeps");
+		expect(content).toContain("optionalDependencies");
+		expect(content).toContain("peerDependencies");
+	});
 });
