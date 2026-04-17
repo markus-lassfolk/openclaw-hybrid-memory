@@ -117,7 +117,7 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   return hasAllNewHelpers && !hasLegacyWal;
 }
 
-import { getEnv } from "../utils/env-manager";
+import { getEnv } from "../utils/env-manager.js";
 
 function isEdictWriteToolEnabled(): boolean {
   const raw = getEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL");
