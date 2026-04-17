@@ -340,7 +340,9 @@ export function findByIdPrefixScoped(
 
   const scopeClause = scopeFilterClausePositional(scopeFilter);
   const scopeParams = scopeClause.params;
-  const whereClause = scopeClause.clause ? `WHERE ${scopeClause.clause.replace(/^ AND /, '')} AND id LIKE ? || '%'` : `WHERE id LIKE ? || '%'`;
+  const whereClause = scopeClause.clause
+    ? `WHERE ${scopeClause.clause.replace(/^ AND /, "")} AND id LIKE ? || '%'`
+    : `WHERE id LIKE ? || '%'`;
   const sql = `SELECT id FROM facts ${whereClause} LIMIT 3`;
   const params = [...scopeParams, pattern];
 
