@@ -646,10 +646,11 @@ export interface RetrievalPipelineOptions {
   /** Retrieval mode shortcut. When provided, derives the policy automatically.
    * 'interactive-recall' -> interactive recall policy (disables graph expansion).
    * 'explicit-deep' -> explicit deep retrieval policy.
+   * 'constrained-recall' -> constrained retrieval policy (filter-before-rank).
    * Overridden by an explicit `policy` option. */
   mode?: import("./retrieval-mode-policy.js").RetrievalMode;
-  /** Explicit/deep retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
-  policy?: ExplicitDeepRetrievalPolicy;
+  /** Retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
+  policy?: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy | ConstrainedRetrievalPolicy;
   /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
   config?: RetrievalConfig;
   /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
@@ -1040,10 +1041,10 @@ export async function runExplicitDeepRetrieval(
             finalScore: 1 / (k + res.rank),
             rrfScore: 1 / (k + res.rank),
 
-            sources: [{ strategy: (res as any).strategyName || "unknown", rank: res.rank }],
+            sources: [{ strategy: res.source || "unknown", rank: res.rank }],
           });
         } else {
-          deduped.get(res.factId)?.sources.push({ strategy: (res as any).strategyName || "unknown", rank: res.rank });
+          deduped.get(res.factId)?.sources.push({ strategy: res.source || "unknown", rank: res.rank });
         }
       }
 
