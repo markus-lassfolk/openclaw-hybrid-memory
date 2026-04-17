@@ -80,21 +80,21 @@ function safeLoadNarratives(
   scopeFilter: ScopeFilter | null,
 ): NarrativeExportEntry[] {
   if (!db) return [];
-  if (!scopeFilter?.sessionId) return [];
   try {
-    return db
-      .listRecent(MAX_LIMIT, "all")
-      .filter((n) => n.sessionId === scopeFilter.sessionId)
-      .slice(0, limit)
-      .map((n) => ({
-        id: n.id,
-        sessionId: n.sessionId,
-        periodStart: n.periodStart,
-        periodEnd: n.periodEnd,
-        tag: n.tag,
-        narrativeText: n.narrativeText,
-        createdAt: n.createdAt,
-      }));
+    const allNarratives = db.listRecent(MAX_LIMIT, "all");
+    const filtered =
+      scopeFilter?.sessionId
+        ? allNarratives.filter((n) => n.sessionId === scopeFilter.sessionId)
+        : allNarratives;
+    return filtered.slice(0, limit).map((n) => ({
+      id: n.id,
+      sessionId: n.sessionId,
+      periodStart: n.periodStart,
+      periodEnd: n.periodEnd,
+      tag: n.tag,
+      narrativeText: n.narrativeText,
+      createdAt: n.createdAt,
+    }));
   } catch (_err) {
     return [];
   }
