@@ -82,10 +82,16 @@ function safeLoadNarratives(
   if (!db) return [];
   try {
     const allNarratives = db.listRecent(MAX_LIMIT, "all");
-    const filtered =
-      scopeFilter?.sessionId
-        ? allNarratives.filter((n) => n.sessionId === scopeFilter.sessionId)
-        : allNarratives;
+    let filtered: typeof allNarratives;
+    if (scopeFilter) {
+      if (scopeFilter.sessionId) {
+        filtered = allNarratives.filter((n) => n.sessionId === scopeFilter.sessionId);
+      } else {
+        filtered = [];
+      }
+    } else {
+      filtered = allNarratives;
+    }
     return filtered.slice(0, limit).map((n) => ({
       id: n.id,
       sessionId: n.sessionId,
