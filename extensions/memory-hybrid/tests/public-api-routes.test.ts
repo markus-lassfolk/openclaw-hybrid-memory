@@ -152,6 +152,99 @@ describe("registerPublicApiRoutes", () => {
     expect(missingFactRes.status).toBe(404);
   });
 
+  it("applies scope filtering to search, timeline, export, and fact endpoints", async () => {
+    const globalFact = factsDb.store({
+      text: "Global fact visible to all",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+      scopeTarget: null,
+    });
+
+    const agentAFact = factsDb.store({
+      text: "Agent A secret",
+      category: "fact",
+      importance: 0.9,
+      entity: "agent",
+      key: "name",
+      value: "A",
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-a",
+    });
+
+    const agentBFact = factsDb.store({
+      text: "Agent B secret",
+      category: "fact",
+      importance: 0.9,
+      entity: "agent",
+      key: "name",
+      value: "B",
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-b",
+    });
+
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes(
+      {
+        cfg: { health: { enabled: true, authenticated: true } },
+        factsDb,
+        narrativesDb,
+      },
+      api,
+    );
+
+    const scopedReq = (url: string) => ({
+      method: "GET",
+      url,
+      headers: { "x-openclaw-agent-id": "agent-a" },
+    });
+
+    const search = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}`)!;
+    const searchRes = await search.handler(
+      scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}?q=secret&limit=10`) as ReturnType<typeof fakeReq>,
+    );
+    expect(searchRes.status).toBe(200);
+    const searchBody = JSON.parse(searchRes.body);
+    expect(searchBody.results.map((r: { entry: { id: string } }) => r.entry.id)).toContain(agentAFact.id);
+    expect(searchBody.results.map((r: { entry: { id: string } }) => r.entry.id)).not.toContain(agentBFact.id);
+
+    const timeline = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}`)!;
+    const timelineRes = await timeline.handler(
+      scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}?limit=10`) as ReturnType<typeof fakeReq>,
+    );
+    expect(timelineRes.status).toBe(200);
+    const timelineIds = JSON.parse(timelineRes.body).timeline.map((f: { id: string }) => f.id);
+    expect(timelineIds).toContain(globalFact.id);
+    expect(timelineIds).toContain(agentAFact.id);
+    expect(timelineIds).not.toContain(agentBFact.id);
+
+    const exported = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`)!;
+    const exportRes = await exported.handler(
+      scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`) as ReturnType<typeof fakeReq>,
+    );
+    expect(exportRes.status).toBe(200);
+    const exportIds = JSON.parse(exportRes.body).facts.map((f: { id: string }) => f.id);
+    expect(exportIds).toContain(globalFact.id);
+    expect(exportIds).toContain(agentAFact.id);
+    expect(exportIds).not.toContain(agentBFact.id);
+
+    const fact = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`)!;
+    const allowedFact = await fact.handler(
+      scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${agentAFact.id}`) as ReturnType<typeof fakeReq>,
+    );
+    expect(allowedFact.status).toBe(200);
+    const deniedFact = await fact.handler(
+      scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${agentBFact.id}`) as ReturnType<typeof fakeReq>,
+    );
+    expect(deniedFact.status).toBe(404);
+  });
+
   it("does not register routes when health is disabled", () => {
     const { api, routes } = makeApi();
     registerPublicApiRoutes(

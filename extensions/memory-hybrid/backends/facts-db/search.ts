@@ -320,6 +320,38 @@ export function findByIdPrefix(
   return { ambiguous: true, count: rows.length >= 3 ? 3 : rows.length };
 }
 
+export function findByIdPrefixScoped(
+  db: DatabaseSync,
+  prefix: string,
+  scopeFilter: ScopeFilter | null | undefined,
+): { id: string } | { ambiguous: true; count: number } | { id: null } {
+  if (!prefix || prefix.length < 4) return { id: null };
+  if (!/^[0-9a-f]+$/i.test(prefix)) return { id: null };
+  let pattern = prefix.toLowerCase();
+  if (prefix.length > 8 && !prefix.includes("-")) {
+    const parts: string[] = [];
+    parts.push(pattern.slice(0, 8));
+    if (pattern.length > 8) parts.push(pattern.slice(8, 12));
+    if (pattern.length > 12) parts.push(pattern.slice(12, 16));
+    if (pattern.length > 16) parts.push(pattern.slice(16, 20));
+    if (pattern.length > 20) parts.push(pattern.slice(20));
+    pattern = parts.join("-");
+  }
+
+  const scopeClause = scopeFilterClausePositional(scopeFilter);
+  const scopeParams = scopeClause.params;
+  const whereClause = scopeClause.clause
+    ? `WHERE ${scopeClause.clause.replace(/^\s+AND /, "")} AND id LIKE ? || '%'`
+    : `WHERE id LIKE ? || '%'`;
+  const sql = `SELECT id FROM facts ${whereClause} LIMIT 3`;
+  const params = [...scopeParams, pattern];
+
+  const rows = db.prepare(sql).all(...params) as Array<{ id: string }>;
+  if (rows.length === 0) return { id: null };
+  if (rows.length === 1) return { id: rows[0].id };
+  return { ambiguous: true, count: rows.length >= 3 ? 3 : rows.length };
+}
+
 export function getSupersededTextsSnapshot(cache: SupersededTextsCache, db: DatabaseSync): Set<string> {
   const now = Date.now();
   return cache.getSnapshot(now, () => fetchSupersededFactTextsLower(db));
