@@ -327,6 +327,51 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(texts.some((t) => t.includes("banana server port 9999"))).toBe(true);
   });
 
+  it("memory_recall exposes constrained-recall mode with filter and rank explanation", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+
+    await storeTool?.execute("call-constrained-1", {
+      text: "UX preference: user prefers compact dashboards",
+      importance: 0.9,
+      category: "preference",
+      entity: "ux",
+    });
+    await storeTool?.execute("call-constrained-2", {
+      text: "UX fact: dashboard service listens on port 8080",
+      importance: 0.8,
+      category: "fact",
+      entity: "ux",
+    });
+
+    const constrainedResult = (await recallTool?.execute("call-constrained-3", {
+      query: "compact dashboard preference",
+      entity: "ux",
+      category: "preference",
+      retrievalMode: "constrained-recall",
+      limit: 5,
+    })) as {
+      content?: { type: string; text: string }[];
+      details?: {
+        count: number;
+        memories?: { text: string }[];
+        retrieval?: { mode?: string; filterBasis?: string[]; rankBasis?: string };
+      };
+    };
+
+    expect(constrainedResult.details?.count).toBeGreaterThanOrEqual(1);
+    const texts = (constrainedResult.details?.memories ?? []).map((m) => m.text);
+    expect(texts.some((t) => t.includes("prefers compact dashboards"))).toBe(true);
+    expect(texts.some((t) => t.includes("listens on port 8080"))).toBe(false);
+    expect(constrainedResult.content?.[0]?.text).toContain("Retrieval: constrained-recall");
+    expect(constrainedResult.content?.[0]?.text).toContain("Filter basis:");
+    expect(constrainedResult.content?.[0]?.text).toContain("Rank basis:");
+    expect(constrainedResult.details?.retrieval?.mode).toBe("constrained-recall");
+    expect(constrainedResult.details?.retrieval?.filterBasis).toContain("category=preference");
+  });
+
   it("memory_forget by memoryId removes the fact", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 

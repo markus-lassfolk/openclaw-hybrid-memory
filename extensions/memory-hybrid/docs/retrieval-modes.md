@@ -51,3 +51,80 @@ Use this path for explicit tool requests such as `memory_recall`, maintenance fl
 - `services/retrieval-mode-policy.ts` names both modes and defines the default contracts
 
 This split is meant to optimize maintainability and runtime predictability, not just move code around.
+
+## 3. Constrained-recall path (filter → rank → hydrate)
+
+**Owner:** `services/retrieval-orchestrator.ts`
+
+Introduced for Issue #1026. Use this path when you need to search *within a known boundary* — e.g., facts about a specific project, from the last 30 days, or only verified memories.
+
+### Pattern: filter → rank → hydrate
+
+```
+structured filters (SQL)
+    ↓
+vector / FTS ranking within candidate set
+    ↓
+hydrate with provenance, graph context, supersession state, explanation
+```
+
+### Contrast with explicit-deep
+
+| | explicit-deep | constrained-recall |
+|---|---|---|
+| Candidate set | All facts | Pre-filtered via SQL |
+| Fusion | RRF across all strategies | Ranked by semantic score only |
+| Graph expansion | Yes | No |
+| HyDE | Yes | Yes |
+| Use case | Open-ended search | Bounded precision recall |
+
+### ConstrainedSearchFilters
+
+Available structured filters (all optional):
+- `entity` — exact entity name match
+- `tag` — LIKE %tag% match
+- `category` — exact category match
+- `source` — exact fact source match
+- `scope` / `scopeTarget` — exact scope match
+- `verificationTier` — only verified facts of a given tier
+- `validFromSec` / `validUntilSec` — temporal window
+- `tier` — hot/warm/cold
+- `sourceSession` — limit to a specific session
+
+### Example usage
+
+```typescript
+const result = await runExplicitDeepRetrieval(
+  "API key rotation",
+  queryVector,
+  db,
+  vectorDb,
+  factsDb,
+  {
+    mode: "constrained-recall",
+    constrainedFilters: {
+      entity: "openclaw-hybrid-memory",
+      validFromSec: Date.now() / 1000 - 30 * 86400, // last 30 days
+      verificationTier: "critical",
+    },
+  },
+);
+```
+
+### Good use cases
+
+- "show facts about project X from the last 30 days"
+- "search only verified infra-related memories"
+- "find session notes linked to this entity"
+- "search within one imported document or source domain"
+
+### Tooling exposure
+
+- `memory_recall` can now explicitly request `retrievalMode: "constrained-recall"`
+- Tool callers can pass structured filters such as `entity`, `tag`, `category`, `source`, `verificationTier`, `validFromSec`, `validUntilSec`, and `sourceSession`
+- Tool responses should explain both the **filter basis** and the **rank basis** when constrained recall is used
+
+### What it does not replace
+
+- Broader graph or semantic recall without constraints
+- Interactive recall (use `mode: "interactive-recall"` for that)

@@ -47,7 +47,12 @@ import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narr
 import type { ProvenanceService } from "../services/provenance.js";
 import { QueryExpander } from "../services/query-expander.js";
 import { type AliasDB, storeAliases } from "../services/retrieval-aliases.js";
-import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
+import {
+  resolveConstrainedRetrievalPolicy,
+  resolveExplicitDeepRetrievalPolicy,
+  type ConstrainedRetrievalPolicy,
+  type ExplicitDeepRetrievalPolicy,
+} from "../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
@@ -317,6 +322,42 @@ export function registerMemoryTools(
             description: "Optional: filter by topic tag (e.g. nibe, zigbee)",
           }),
         ),
+        category: Type.Optional(
+          Type.String({
+            description: "Optional: constrain results to a specific category/type before ranking.",
+          }),
+        ),
+        source: Type.Optional(
+          Type.String({
+            description: "Optional: constrain results to an exact fact source before ranking (e.g. conversation, ingest, reflection).",
+          }),
+        ),
+        verificationTier: Type.Optional(
+          Type.String({
+            description: "Optional: constrain results to verified facts of a given tier before ranking (e.g. critical).",
+          }),
+        ),
+        validFromSec: Type.Optional(
+          Type.Number({
+            description: "Optional: constrain results to facts whose valid_from is on/after this Unix timestamp before ranking.",
+          }),
+        ),
+        validUntilSec: Type.Optional(
+          Type.Number({
+            description: "Optional: constrain results to facts whose validity extends past this Unix timestamp before ranking.",
+          }),
+        ),
+        sourceSession: Type.Optional(
+          Type.String({
+            description: "Optional: constrain results to facts linked to a specific source session before ranking.",
+          }),
+        ),
+        retrievalMode: Type.Optional(
+          Type.Union([Type.Literal("interactive-recall"), Type.Literal("explicit-deep"), Type.Literal("constrained-recall")], {
+            description:
+              'Optional retrieval strategy selection. Use "constrained-recall" for filter → rank → hydrate searches inside a known boundary.',
+          }),
+        ),
         includeSuperseded: Type.Optional(
           Type.Boolean({
             description: "Include superseded (historical) facts in results. Default: only current facts.",
@@ -511,8 +552,15 @@ export function registerMemoryTools(
       query: queryParam,
       id: idParam,
       limit = 10,
-      entity,
-      tag,
+      entity: entityParam,
+      tag: tagParam,
+      category: categoryParam,
+      source: sourceParam,
+      verificationTier: verificationTierParam,
+      validFromSec,
+      validUntilSec,
+      sourceSession: sourceSessionParam,
+      retrievalMode,
       includeSuperseded = false,
       asOf: asOfParam,
       includeCold = false,
@@ -528,6 +576,13 @@ export function registerMemoryTools(
       limit?: number;
       entity?: string;
       tag?: string;
+      category?: string;
+      source?: string;
+      verificationTier?: string;
+      validFromSec?: number;
+      validUntilSec?: number;
+      sourceSession?: string;
+      retrievalMode?: "interactive-recall" | "explicit-deep" | "constrained-recall";
       includeSuperseded?: boolean;
       asOf?: string;
       includeCold?: boolean;
@@ -538,6 +593,17 @@ export function registerMemoryTools(
       expandGraph?: boolean;
       expandDepth?: number;
     };
+    const normalizeOptionalString = (value: unknown): string | undefined => {
+      if (typeof value !== "string") return undefined;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    };
+    const entity = normalizeOptionalString(entityParam);
+    const tag = normalizeOptionalString(tagParam);
+    const category = normalizeOptionalString(categoryParam);
+    const source = normalizeOptionalString(sourceParam);
+    const verificationTier = normalizeOptionalString(verificationTierParam);
+    const sourceSession = normalizeOptionalString(sourceSessionParam);
     const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
 
     // Scope filtering with auto-detection
@@ -686,9 +752,28 @@ export function registerMemoryTools(
       ...(asOfSec != null ? { asOf: asOfSec } : {}),
     };
 
-    // Entity-targeted lookup (always runs when entity filter is set; separate from RRF)
+    const hasAdditionalConstrainedFilters = Boolean(
+      category || source || verificationTier || validFromSec != null || validUntilSec != null || sourceSession,
+    );
+    const shouldUseConstrainedMode = retrievalMode === "constrained-recall" || (!retrievalMode && hasAdditionalConstrainedFilters);
+    const effectiveMode = shouldUseConstrainedMode ? "constrained-recall" : retrievalMode;
+    const constrainedFilters = shouldUseConstrainedMode
+      ? {
+          ...(entity ? { entity } : {}),
+          ...(tag ? { tag } : {}),
+          ...(category ? { category } : {}),
+          ...(source ? { source } : {}),
+          ...(verificationTier ? { verificationTier } : {}),
+          ...(typeof validFromSec === "number" ? { validFromSec: Math.floor(validFromSec) } : {}),
+          ...(typeof validUntilSec === "number" ? { validUntilSec: Math.floor(validUntilSec) } : {}),
+          ...(sourceSession ? { sourceSession } : {}),
+        }
+      : undefined;
+
+    // Entity-targeted lookup is useful for legacy explicit recall, but it bypasses
+    // filter → rank → hydrate semantics, so disable it in constrained mode.
     let entityResults: SearchResult[] = [];
-    if (entity) {
+    if (entity && !shouldUseConstrainedMode) {
       entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
 
@@ -697,13 +782,23 @@ export function registerMemoryTools(
     let semanticWarning: string | null = null;
 
     // RRF multi-strategy retrieval pipeline (Issue #152)
-    // When tag is set, skip semantic strategy (same behaviour as before).
+    // Legacy tag-only recall skips semantic search; constrained mode keeps semantic ranking
+    // because tag/entity/category/etc. are applied before ranking inside the candidate set.
     let results: SearchResult[] = [];
     try {
-      const rrfStrategies = tag ? cfg.retrieval.strategies.filter((s) => s !== "semantic") : cfg.retrieval.strategies;
+      const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode);
+      const rrfStrategies = useLegacyTagShortcut
+        ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
+        : cfg.retrieval.strategies;
       const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
-      const explicitPolicy = resolveExplicitDeepRetrievalPolicy(rrfConfig);
-      if (!tag) {
+      // interactive-recall uses a different policy with its own vector prep; skip for other modes
+      const effectivePolicy =
+        effectiveMode !== "interactive-recall"
+          ? effectiveMode === "constrained-recall"
+            ? resolveConstrainedRetrievalPolicy(rrfConfig)
+            : resolveExplicitDeepRetrievalPolicy(rrfConfig)
+          : undefined;
+      if (!useLegacyTagShortcut && effectivePolicy !== undefined) {
         const vectorPrep = await buildExplicitSemanticQueryVector({
           query,
           cfg,
@@ -711,15 +806,13 @@ export function registerMemoryTools(
           openai,
           pendingLLMWarnings,
           logger: api.logger,
-          policy: explicitPolicy,
+          policy: effectivePolicy as ExplicitDeepRetrievalPolicy,
         });
         queryVector = vectorPrep.queryVector;
         semanticWarning = vectorPrep.warning;
       }
       const queryExpander =
-        cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
-          ? new QueryExpander(cfg.queryExpansion, openai)
-          : null;
+        cfg.queryExpansion?.enabled && rrfStrategies.includes("semantic") ? new QueryExpander(cfg.queryExpansion, openai) : null;
       const embedFn =
         queryVector != null
           ? (text: string) =>
@@ -727,8 +820,11 @@ export function registerMemoryTools(
           : null;
       const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
-        policy: explicitPolicy,
-        tagFilter: tag ?? undefined,
+        ...(effectiveMode !== "interactive-recall" && effectivePolicy
+          ? { policy: effectivePolicy }
+          : effectiveMode === "interactive-recall" ? { mode: effectiveMode as "interactive-recall" } : {}),
+        ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
+        ...(constrainedFilters ? { constrainedFilters } : {}),
         includeSuperseded,
         scopeFilter,
         asOf: asOfSec ?? undefined,
@@ -865,18 +961,39 @@ export function registerMemoryTools(
       results = results.slice(0, limit);
     }
 
+    const retrievalExplanation = (() => {
+      if (!shouldUseConstrainedMode || !constrainedFilters) return undefined;
+      const filterPairs = Object.entries(constrainedFilters)
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([key, value]) => `${key}=${String(value)}`);
+      return {
+        mode: "constrained-recall" as const,
+        contract: "filter → rank → hydrate",
+        filterBasis: filterPairs,
+        rankBasis: "semantic rank inside the structured candidate set (with hydrated provenance/context in the final result)",
+      };
+    })();
+    const retrievalExplanationText = retrievalExplanation
+      ? `Retrieval: constrained-recall (filter → rank → hydrate)\nFilter basis: ${retrievalExplanation.filterBasis.join(", ")}\nRank basis: ${retrievalExplanation.rankBasis}`
+      : undefined;
+
     if (results.length === 0) {
       logRecall(false);
+      const noResultsText = semanticWarning
+        ? `No relevant memories found.\n\n⚠️ ${semanticWarning}`
+        : "No relevant memories found.";
       return {
         content: [
           {
             type: "text",
-            text: semanticWarning
-              ? `No relevant memories found.\n\n⚠️ ${semanticWarning}`
-              : "No relevant memories found.",
+            text: retrievalExplanationText ? `${retrievalExplanationText}\n\n${noResultsText}` : noResultsText,
           },
         ],
-        details: { count: 0, warning: semanticWarning ?? undefined },
+        details: {
+          count: 0,
+          warning: semanticWarning ?? undefined,
+          retrieval: retrievalExplanation,
+        },
       };
     }
 
@@ -957,10 +1074,15 @@ export function registerMemoryTools(
       content: [
         {
           type: "text",
-          text: `Found ${results.length} memories:\n\n${text}${semanticWarning ? `\n\n⚠️ ${semanticWarning}` : ""}`,
+          text: `${retrievalExplanationText ? `${retrievalExplanationText}\n\n` : ""}Found ${results.length} memories:\n\n${text}${semanticWarning ? `\n\n⚠️ ${semanticWarning}` : ""}`,
         },
       ],
-      details: { count: results.length, memories: sanitized, warning: semanticWarning ?? undefined },
+      details: {
+        count: results.length,
+        memories: sanitized,
+        warning: semanticWarning ?? undefined,
+        retrieval: retrievalExplanation,
+      },
     };
   }
 
