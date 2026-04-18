@@ -176,9 +176,7 @@ export async function buildSessionObservabilityReport(
 
     for (const row of auditRows) {
       const label = row.action;
-      const desc = row.target
-        ? `${row.action} → ${row.target}`
-        : row.action;
+      const desc = row.target ? `${row.action} → ${row.target}` : row.action;
 
       if (
         row.outcome === "failed" ||
@@ -225,10 +223,18 @@ export async function buildSessionObservabilityReport(
     const sinceMs = now - 24 * 3600 * 1000;
     try {
       // episodes are stored in facts DB; we use factsDb to retrieve them
-      const episodes = (factsDb as { getEpisodesBySession?(sid: string, lim: number): unknown[] })?.getEpisodesBySession?.(sessionId ?? "recent", limit) ?? [];
+      const episodes =
+        (factsDb as { getEpisodesBySession?(sid: string, lim: number): unknown[] })?.getEpisodesBySession?.(
+          sessionId ?? "recent",
+          limit,
+        ) ?? [];
 
       for (const ep of episodes as Array<{
-        id?: string; event?: string; outcome?: string; timestamp?: number | string; context?: string;
+        id?: string;
+        event?: string;
+        outcome?: string;
+        timestamp?: number | string;
+        context?: string;
       }>) {
         const ts = typeof ep.timestamp === "number" ? ep.timestamp : Date.parse(String(ep.timestamp ?? "0"));
         eventEntries.push(
@@ -281,6 +287,8 @@ export async function buildSessionObservabilityReport(
       noopSkipped++;
     } else if (a.includes("update")) {
       factsUpdated++;
+    } else if (a.includes("delete")) {
+      // Delete operations should not be counted as stored facts
     } else if (a.includes("store") || a.includes("capture")) {
       factsStored++;
     }
@@ -357,9 +365,7 @@ export async function buildSessionObservabilityReport(
 
   const injectionSummary: InjectionSummary = {
     totalChars: injectionEntries.reduce((s, e) => s + (e.description.length ?? 0), 0),
-    totalTokensEstimate: Math.ceil(
-      injectionEntries.reduce((s, e) => s + (e.description.length ?? 0), 0) / 4,
-    ),
+    totalTokensEstimate: Math.ceil(injectionEntries.reduce((s, e) => s + (e.description.length ?? 0), 0) / 4),
     blocksInjected: injectionEntries.length,
     budgetTokens: (injectionDetail?.budgetTokens as number) ?? 0,
     budgetUsedFraction: (injectionDetail?.budgetTokens as number)
@@ -415,16 +421,15 @@ export async function buildSessionObservabilityReport(
     );
   }
   if (injectionEntries.length > 0) {
-    parts.push(`${injectionEntries.length} injection block${injectionEntries.length !== 1 ? "s" : ""} added to prompt.`);
+    parts.push(
+      `${injectionEntries.length} injection block${injectionEntries.length !== 1 ? "s" : ""} added to prompt.`,
+    );
   }
   if (suppressionEntries.length > 0) {
     parts.push(`${suppressionEntries.length} suppression${suppressionEntries.length !== 1 ? "s" : ""} recorded.`);
   }
 
-  const summary =
-    parts.length > 0
-      ? parts.join(" ")
-      : "No significant memory activity was recorded for this session.";
+  const summary = parts.length > 0 ? parts.join(" ") : "No significant memory activity was recorded for this session.";
 
   // ---------------------------------------------------------------------------
   // 8. Window start/end from audit / event log bounds

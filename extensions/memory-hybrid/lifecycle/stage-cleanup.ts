@@ -377,16 +377,14 @@ export function registerCleanupHandlers(
         api.context?.sessionKey,
       );
       if (writeResult.skipped) {
-        api.logger.debug?.(
-              `memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: ${writeResult.reason}`,
-            );
-            ctx.auditStore?.append({
-              agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-              action: "cleanup:active-task-write-skipped",
-              outcome: "skipped",
-              sessionId: api.context?.sessionKey,
-              context: { reason: writeResult.reason, taskLabel: completed?.label },
-            });
+        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: ${writeResult.reason}`);
+        ctx.auditStore?.append({
+          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+          action: "cleanup:active-task-write-skipped",
+          outcome: "skipped",
+          sessionId: api.context?.sessionKey,
+          context: { reason: writeResult.reason, taskLabel: completed?.label },
+        });
       } else {
         api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);
       }

@@ -528,15 +528,11 @@ export function registerMemoryTools(
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const sessionId =
-          typeof params.sessionId === "string" && params.sessionId.trim().length > 0
-            ? params.sessionId.trim()
-            : null;
+          typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
         const agentId =
           typeof params.agentId === "string" && params.agentId.trim().length > 0 ? params.agentId.trim() : null;
         const limit =
-          typeof params.limit === "number" && params.limit > 0
-            ? Math.min(200, Math.floor(params.limit))
-            : 50;
+          typeof params.limit === "number" && params.limit > 0 ? Math.min(200, Math.floor(params.limit)) : 50;
 
         // Build report synchronously (factsDb / auditStore are sync interfaces)
         let report;

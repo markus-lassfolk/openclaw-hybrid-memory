@@ -80,16 +80,24 @@ function makeMockAuditStore(): Pick<AuditStore, "query" | "append"> {
 
 function makeMockFactsDb(): Pick<FactsDB, "search" | "count" | "getEpisodesBySession"> {
   return {
-    count() { return 0; },
-    search() { return []; },
-    getEpisodesBySession(_sessionId: string, _limit: number) { return []; },
+    count() {
+      return 0;
+    },
+    search() {
+      return [];
+    },
+    getEpisodesBySession(_sessionId: string, _limit: number) {
+      return [];
+    },
   } as unknown as FactsDB;
 }
 
 function makeMockEventLog(): Pick<EventLog, "append" | "list"> {
   return {
-    append() { },
-    list() { return []; },
+    append() {},
+    list() {
+      return [];
+    },
   } as unknown as EventLog;
 }
 
@@ -188,7 +196,12 @@ describe("buildSessionObservabilityReport", () => {
     auditStore.append!({ agentId: "forge", action: "auto-capture:noop", outcome: "skipped", sessionId: "s1" });
     auditStore.append!({ agentId: "forge", action: "auto-capture:duplicate", outcome: "skipped", sessionId: "s1" });
     auditStore.append!({ agentId: "forge", action: "auto-capture:delete", outcome: "success", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:classification-error", outcome: "failed", sessionId: "s1" });
+    auditStore.append!({
+      agentId: "forge",
+      action: "auto-capture:classification-error",
+      outcome: "failed",
+      sessionId: "s1",
+    });
 
     const report = await buildSessionObservabilityReport({
       factsDb: makeMockFactsDb() as unknown as FactsDB,
@@ -200,10 +213,10 @@ describe("buildSessionObservabilityReport", () => {
       limit: 20,
     });
 
-    // Facts stored: depends on counting logic (3 based on test output)
-    expect(report.capture.factsStored).toBeGreaterThanOrEqual(1);
-    // Facts updated: depends on counting logic
-    expect(report.capture.factsUpdated).toBeGreaterThanOrEqual(0);
+    // Facts stored: 2 (auto-capture:stored events only, delete should NOT be counted)
+    expect(report.capture.factsStored).toBe(2);
+    // Facts updated: 1 (auto-capture:updated)
+    expect(report.capture.factsUpdated).toBe(1);
     // Noop skipped: 2 (auto-capture:noop)
     expect(report.capture.noopSkipped).toBe(2);
     // Duplicates suppressed: 1 (auto-capture:duplicate)
