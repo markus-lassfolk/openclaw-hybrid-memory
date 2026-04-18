@@ -502,6 +502,113 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_recall_timeline" },
+    {
+      name: "memory_session_observability",
+      label: "Memory Session Observability",
+      description:
+        "Get a unified session observability report: timeline of capture, recall, injection, suppressions, and used-vs-stored analysis. Use sessionId from the session context or pass a specific session id.",
+      parameters: Type.Object({
+        sessionId: Type.Optional(
+          Type.String({
+            description: "Session id to report on. Defaults to the current session from context.",
+          }),
+        ),
+        agentId: Type.Optional(
+          Type.String({
+            description: "Agent id to scope the report to (optional).",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max timeline entries per section (default: 50, max: 200).",
+            minimum: 1,
+            maximum: 200,
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const sessionId =
+          typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
+        const agentId =
+          typeof params.agentId === "string" && params.agentId.trim().length > 0 ? params.agentId.trim() : null;
+        const limit =
+          typeof params.limit === "number" && params.limit > 0 ? Math.min(200, Math.floor(params.limit)) : 50;
+
+        // Build report synchronously (factsDb / auditStore are sync interfaces)
+        let report;
+        try {
+          const { buildSessionObservabilityReport } = await import("../services/session-observability.js");
+          report = await buildSessionObservabilityReport({
+            factsDb: factsDb as import("../backends/facts-db.js").FactsDB,
+            eventLog: eventLog as import("../backends/event-log.js").EventLog | null,
+            narrativesDb: narrativesDb as import("../backends/narratives-db.js").NarrativesDB | null,
+            auditStore: (ctx as import("./memory-tools.js").MemoryToolsContext).auditStore ?? null,
+            sessionId,
+            agentId,
+            limit,
+          });
+        } catch (err) {
+          return {
+            content: [{ type: "text" as const, text: `Failed to build session report: ${String(err)}` }],
+            details: { error: String(err) },
+          };
+        }
+
+        // Human-readable summary line
+        const summaryText =
+          report.summary ||
+          `Session ${sessionId ?? "unknown"}: ${report.timeline.length} timeline entries, ` +
+            `${report.capture.factsStored} stored, ${report.capture.duplicatesSuppressed} suppressed, ` +
+            `${report.recall.injectedCount} injected.`;
+
+        const detail = {
+          sessionId: report.sessionId,
+          agentId: report.agentId,
+          windowStart: report.windowStart,
+          windowEnd: report.windowEnd,
+          timelineCount: report.timeline.length,
+          capture: {
+            factsStored: report.capture.factsStored,
+            factsUpdated: report.capture.factsUpdated,
+            duplicatesSuppressed: report.capture.duplicatesSuppressed,
+            noopSkipped: report.capture.noopSkipped,
+            errorsEncountered: report.capture.errorsEncountered,
+            entitiesExtracted: report.capture.entitiesExtracted,
+            episodesRecorded: report.capture.episodesRecorded,
+            proceduresLearned: report.capture.proceduresLearned,
+          },
+          recall: {
+            candidatesFound: report.recall.candidatesFound,
+            injectedCount: report.recall.injectedCount,
+            omittedCount: report.recall.omittedCount,
+            strategies: report.recall.strategies,
+            directiveMatches: report.recall.directiveMatches,
+            suppressionReasons: report.recall.suppressionReasons,
+          },
+          injection: {
+            totalChars: report.injection.totalChars,
+            totalTokensEstimate: report.injection.totalTokensEstimate,
+            blocksInjected: report.injection.blocksInjected,
+            budgetTokens: report.injection.budgetTokens,
+            budgetUsedFraction: Math.round(report.injection.budgetUsedFraction * 100) / 100,
+          },
+          suppressions: report.suppressions,
+          timeline: report.timeline.slice(0, limit).map((e) => ({
+            timestamp: e.timestamp,
+            kind: e.kind,
+            label: e.label,
+            description: e.description,
+            outcome: e.outcome,
+            score: e.score,
+          })),
+        };
+
+        return {
+          content: [{ type: "text" as const, text: summaryText }],
+          details: detail,
+        };
+      },
+    },
   );
 
   // Internal implementation so we can return from the try block

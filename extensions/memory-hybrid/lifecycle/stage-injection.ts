@@ -13,6 +13,7 @@ import { createRecallSpan, createRecallTimingLogger } from "../services/recall-t
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
+import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
 const HEBBIAN_MAX_K = 8;
@@ -48,8 +49,9 @@ export async function runInjectionStage(
   recallResult: RecallResult,
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
+  event: unknown,
 ): Promise<{ prependContext: string } | undefined> {
-  return withTimeout(INJECTION_STAGE_TIMEOUT_MS, () => runInjection(recallResult, api, ctx), undefined);
+  return withTimeout(INJECTION_STAGE_TIMEOUT_MS, () => runInjection(recallResult, api, ctx, event), undefined);
 }
 
 /** Get the edict block for forced prompt injection (always preserved, never trimmed). */
@@ -70,6 +72,7 @@ async function runInjection(
   r: RecallResult,
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
+  event: unknown,
 ): Promise<{ prependContext: string } | undefined> {
   const recallTiming = createRecallTimingLogger({
     logger: api.logger,
@@ -77,6 +80,9 @@ async function runInjection(
     span: r.recallSpan || createRecallSpan("recall-injection"),
     op: "auto-recall-injection",
   });
+
+  const agentId = resolveAgentIdFromHookEvent(event, api);
+  const injectionStart = Date.now();
 
   const wrapRecalledContext = (content: string): string =>
     content ? `<recalled-context>\n${content}\n</recalled-context>` : "";
@@ -113,6 +119,17 @@ async function runInjection(
   } = r;
   const edictBlock = buildEdictBlock(ctx);
   const baseContext = edictBlock + issueBlock + narrativeBlock + hotBlock;
+
+  const emitAudit = (tokens: number) => {
+    ctx.auditStore?.append({
+      agentId: agentId ?? ctx.currentAgentIdRef.value ?? "unknown",
+      action: "injection:completed",
+      outcome: "success",
+      sessionId: api.context?.sessionKey,
+      durationMs: Date.now() - injectionStart,
+      tokens,
+    });
+  };
 
   function buildProgressiveIndex(
     list: typeof candidates,
@@ -204,17 +221,21 @@ async function runInjection(
         api.logger.info?.(
           `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, no index (~${pinnedTokens} tokens)`,
         );
+        emitAudit(pinnedTokens);
         return {
           prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
         };
       }
       if (procedureBlock) {
+        emitAudit(estimateTokens(baseContext + procedureBlock));
         return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
       }
       const combinedContext = baseContext;
-      return combinedContext
-        ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) }
-        : undefined;
+      if (combinedContext) {
+        emitAudit(estimateTokens(combinedContext));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) };
+      }
+      return undefined;
     }
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, indexBudget, 1);
     lastProgressiveIndexIdsRef.length = 0;
@@ -231,9 +252,11 @@ async function runInjection(
       pinnedPart.length > 0
         ? `${pinnedHeader}${pinnedPart.join("\n")}${indexIntro}${indexContent}${indexFooter}`
         : `${indexIntro}${indexContent}${indexFooter}`;
+    const totalTokens = pinnedTokens + estimateTokens(indexContent);
     api.logger.info?.(
-      `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
+      `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${totalTokens} tokens)`,
     );
+    emitAudit(totalTokens);
     return {
       prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
     };
@@ -249,12 +272,15 @@ async function runInjection(
     } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
     if (indexLines.length === 0) {
       if (procedureBlock) {
+        emitAudit(estimateTokens(baseContext + procedureBlock));
         return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
       }
       const combinedContext = baseContext;
-      return combinedContext
-        ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) }
-        : undefined;
+      if (combinedContext) {
+        emitAudit(estimateTokens(combinedContext));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) };
+      }
+      return undefined;
     }
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
@@ -267,6 +293,7 @@ async function runInjection(
     api.logger.info?.(
       `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
     );
+    emitAudit(indexTokens);
     return {
       prependContext: markDegradedLatency(
         wrapRecalledContext(baseContext + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
@@ -297,10 +324,15 @@ async function runInjection(
 
   if (lines.length === 0) {
     if (procedureBlock) {
+      emitAudit(estimateTokens(baseContext + procedureBlock));
       return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
     }
     const combinedContext = baseContext;
-    return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
+    if (combinedContext) {
+      emitAudit(estimateTokens(combinedContext));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) };
+    }
+    return undefined;
   }
 
   ctx.factsDb.refreshAccessedFacts(injectedIds);
@@ -372,15 +404,22 @@ async function runInjection(
 
   if (!memoryContext) {
     if (procedureBlock) {
+      emitAudit(estimateTokens(baseContext + procedureBlock));
       return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
     }
     const combinedContext = baseContext;
-    return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
+    if (combinedContext) {
+      emitAudit(estimateTokens(combinedContext));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) };
+    }
+    return undefined;
   }
 
   if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
     api.logger.info?.(`memory-hybrid: injecting ${lines.length} memories (~${usedTokens} tokens)`);
   }
+
+  emitAudit(usedTokens);
 
   return {
     prependContext: markDegradedLatency(

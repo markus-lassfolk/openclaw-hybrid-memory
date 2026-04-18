@@ -27,6 +27,7 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
+import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
 import {
   type SubagentEndedEvent,
   findActiveTaskForSubagentEnd,
@@ -377,6 +378,13 @@ export function registerCleanupHandlers(
       );
       if (writeResult.skipped) {
         api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: ${writeResult.reason}`);
+        ctx.auditStore?.append({
+          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+          action: "cleanup:active-task-write-skipped",
+          outcome: "skipped",
+          sessionId: api.context?.sessionKey,
+          context: { reason: writeResult.reason, taskLabel: completed?.label },
+        });
       } else {
         api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);
       }
@@ -460,6 +468,13 @@ export function registerCleanupHandlers(
               api.logger.debug?.(
                 "memory-hybrid: skipped facts ledger write in subagent_ended (Done, sub-agent session)",
               );
+              ctx.auditStore?.append({
+                agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                action: "cleanup:facts-ledger-write-skipped",
+                outcome: "skipped",
+                sessionId: api.context?.sessionKey,
+                context: { reason: "sub-agent session", taskLabel: completed?.label },
+              });
             } else {
               const doneEntry: ActiveTaskEntry = { ...completed, status: "Done", updated: now };
               await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, doneEntry, api.logger);
@@ -482,6 +497,13 @@ export function registerCleanupHandlers(
               api.logger.debug?.(
                 `memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Done): ${writeResult.reason}`,
               );
+              ctx.auditStore?.append({
+                agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                action: "cleanup:active-task-write-skipped",
+                outcome: "skipped",
+                sessionId: api.context?.sessionKey,
+                context: { reason: writeResult.reason, taskLabel },
+              });
             } else {
               if (ctx.cfg.activeTask.flushOnComplete) {
                 const memoryDir = join(workspaceRoot, "memory");

@@ -4,6 +4,7 @@
  */
 
 import type OpenAI from "openai";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { EventLog } from "../backends/event-log.js";
@@ -70,6 +71,7 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+  auditStore: AuditStore | null;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
   recallInFlightRef: { value: number };
   /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */

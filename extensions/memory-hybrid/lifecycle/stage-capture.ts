@@ -28,6 +28,7 @@ import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
@@ -288,7 +289,17 @@ async function runCapture(
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
           const extracted = extractStructuredFields(textToStore, category);
-          if (ctx.factsDb.hasDuplicate(textToStore)) continue;
+          if (ctx.factsDb.hasDuplicate(textToStore)) {
+            ctx.auditStore?.append({
+              agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+              action: "auto-capture:duplicate",
+              target: textToStore.slice(0, 80),
+              outcome: "skipped",
+              sessionId: captureProvenance.sessionId ?? undefined,
+              context: { category },
+            });
+            continue;
+          }
           const summaryThreshold = ctx.cfg.autoRecall.summaryThreshold;
           const summary =
             summaryThreshold > 0 && textToStore.length > summaryThreshold
@@ -357,10 +368,28 @@ async function runCapture(
                     api.logger,
                   );
                 }
-                if (classification.action === "NOOP") continue;
+                if (classification.action === "NOOP") {
+                  ctx.auditStore?.append({
+                    agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                    action: "auto-capture:noop",
+                    target: textToStore.slice(0, 80),
+                    outcome: "skipped",
+                    sessionId: captureProvenance.sessionId ?? undefined,
+                    context: { reason: classification.reason ?? "no-op", category },
+                  });
+                  continue;
+                }
                 if (classification.action === "DELETE" && classification.targetId) {
                   ctx.factsDb.supersede(classification.targetId, null);
                   ctx.aliasDb?.deleteByFactId(classification.targetId);
+                  ctx.auditStore?.append({
+                    agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                    action: "auto-capture:delete",
+                    target: classification.targetId,
+                    outcome: "success",
+                    sessionId: captureProvenance.sessionId ?? undefined,
+                    context: { reason: classification.reason ?? "delete", textPreview: textToStore.slice(0, 80) },
+                  });
                   api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                   continue;
                 }
@@ -432,6 +461,14 @@ async function runCapture(
                       api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
                     }
                     await ctx.walRemove(walEntryId, api.logger);
+                    ctx.auditStore?.append({
+                      agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                      action: "auto-capture:updated",
+                      target: newEntry.id,
+                      outcome: "success",
+                      sessionId: captureProvenance.sessionId ?? undefined,
+                      context: { supersededId: classification.targetId, category, entity: extracted.entity },
+                    });
                     api.logger.info?.(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
@@ -443,6 +480,13 @@ async function runCapture(
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   operation: "auto-capture-classification",
                   subsystem: "auto-capture",
+                });
+                ctx.auditStore?.append({
+                  agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                  action: "auto-capture:classification-error",
+                  outcome: "failed",
+                  error: String(err).slice(0, 200),
+                  sessionId: captureProvenance.sessionId ?? undefined,
                 });
                 api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
               }
@@ -505,6 +549,14 @@ async function runCapture(
           }
           await ctx.walRemove(walEntryId, api.logger);
           stored++;
+          ctx.auditStore?.append({
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+            action: "auto-capture:stored",
+            target: storedEntry.id,
+            outcome: "success",
+            sessionId: captureProvenance.sessionId ?? undefined,
+            context: { category, entity: extracted.entity, role: candidate.role },
+          });
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }
