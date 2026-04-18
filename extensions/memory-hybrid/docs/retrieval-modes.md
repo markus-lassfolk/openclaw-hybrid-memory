@@ -84,6 +84,7 @@ Available structured filters (all optional):
 - `entity` — exact entity name match
 - `tag` — LIKE %tag% match
 - `category` — exact category match
+- `source` — exact fact source match
 - `scope` / `scopeTarget` — exact scope match
 - `verificationTier` — only verified facts of a given tier
 - `validFromSec` / `validUntilSec` — temporal window
@@ -116,6 +117,12 @@ const result = await runExplicitDeepRetrieval(
 - "search only verified infra-related memories"
 - "find session notes linked to this entity"
 - "search within one imported document or source domain"
+
+### Tooling exposure
+
+- `memory_recall` can now explicitly request `retrievalMode: "constrained-recall"`
+- Tool callers can pass structured filters such as `entity`, `tag`, `category`, `source`, `verificationTier`, `validFromSec`, `validUntilSec`, and `sourceSession`
+- Tool responses should explain both the **filter basis** and the **rank basis** when constrained recall is used
 
 ### What it does not replace
 

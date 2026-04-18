@@ -341,19 +341,21 @@ export interface ConstrainedSearchFilters {
   tag?: string | null;
   /** Match facts with this category. */
   category?: string | null;
+  /** Match facts with this exact source value. */
+  source?: string | null;
   /** Match facts with this scope value. */
   scope?: string | null;
   /** Match facts with this scope target. */
   scopeTarget?: string | null;
   /** Include only facts with this verification tier (e.g. 'critical'). */
   verificationTier?: string | null;
-  /** Include only facts created/valid from this Unix timestamp onward. */
+  /** Include only facts created/valid from this Unix timestamp onward. `0` is treated as active. */
   validFromSec?: number | null;
-  /** Include only facts created/valid before this Unix timestamp. */
+  /** Include only facts created/valid before this Unix timestamp. `0` is treated as active. */
   validUntilSec?: number | null;
   /** Include only facts with this tier (hot/warm/cold). */
   tier?: string | null;
-  /** Limit to a specific source/session. */
+  /** Limit to a specific source/session. Wildcards are treated literally. */
   sourceSession?: string | null;
 }
 
@@ -369,6 +371,7 @@ export function hasActiveFilters(filters: ConstrainedSearchFilters): boolean {
     filters.entity ||
     filters.tag ||
     filters.category ||
+    filters.source ||
     filters.scope ||
     filters.scopeTarget ||
     filters.verificationTier ||
@@ -377,6 +380,10 @@ export function hasActiveFilters(filters: ConstrainedSearchFilters): boolean {
     filters.tier ||
     filters.sourceSession
   );
+}
+
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
 }
 
 export function getCandidateIdsByStructuredFilters(
@@ -401,6 +408,10 @@ export function getCandidateIdsByStructuredFilters(
   if (filters.category) {
     conditions.push("category = ?");
     params.push(filters.category);
+  }
+  if (filters.source) {
+    conditions.push("source = ?");
+    params.push(filters.source);
   }
   if (filters.scope) {
     conditions.push("scope = ?");
@@ -427,8 +438,8 @@ export function getCandidateIdsByStructuredFilters(
     params.push(filters.validUntilSec);
   }
   if (filters.sourceSession) {
-    conditions.push("source_sessions LIKE ?");
-    params.push(`%${filters.sourceSession}%`);
+    conditions.push("source_sessions LIKE ? ESCAPE '\\'");
+    params.push(`%${escapeSqlLike(filters.sourceSession)}%`);
   }
 
   // Handle verified_facts JOIN for verificationTier
