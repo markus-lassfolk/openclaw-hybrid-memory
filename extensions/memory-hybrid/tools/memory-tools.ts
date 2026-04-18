@@ -57,6 +57,7 @@ import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import { getEnv } from "../utils/env-manager.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 
@@ -116,8 +117,6 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
 
   return hasAllNewHelpers && !hasLegacyWal;
 }
-
-import { getEnv } from "../utils/env-manager.js";
 
 function isEdictWriteToolEnabled(): boolean {
   const raw = getEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL");
