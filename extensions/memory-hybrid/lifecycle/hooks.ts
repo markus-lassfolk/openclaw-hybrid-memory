@@ -59,7 +59,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (recallStageResult.kind === "empty") {
             return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
           }
-          const inj = await runInjectionStage(recallStageResult.result, rApi, ctx);
+          const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
           return inj ?? undefined;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {

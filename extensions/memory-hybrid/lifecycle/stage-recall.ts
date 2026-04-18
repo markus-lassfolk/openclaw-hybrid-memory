@@ -26,6 +26,7 @@ import type { ScopeFilter } from "../types/memory.js";
 import type { SearchResult } from "../types/memory.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
 import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
+import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
 import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
@@ -647,7 +648,6 @@ async function runRecall(
           if (recallAborted(signal)) {
             return abortDirectives();
           }
-          const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
               hydeLabel: "HyDE",
@@ -689,6 +689,13 @@ async function runRecall(
     }
 
     if (candidates.length === 0) {
+      ctx.auditStore?.append({
+        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+        action: "recall:empty",
+        outcome: "partial",
+        sessionId: sessionKey,
+        context: { issueBlockInjected: issueBlock.length > 0, narrativeBlockInjected: narrativeBlock.length > 0 },
+      });
       const combinedContext = issueBlock + narrativeBlock + hotBlock;
       return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }

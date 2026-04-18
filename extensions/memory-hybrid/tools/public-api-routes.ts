@@ -1,4 +1,6 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import type { AuditStore } from "../backends/audit-store.js";
+import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
@@ -14,6 +16,9 @@ export interface PublicApiRoutesContext {
   };
   factsDb: FactsDB;
   narrativesDb: NarrativesDB | null;
+  auditStore?: AuditStore | null;
+  eventLog?: EventLog | null;
+  resolvedSqlitePath?: string;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -25,6 +30,7 @@ export const PUBLIC_API_PATHS = {
   stats: "/stats",
   export: "/export",
   fact: "/fact",
+  session: "/session",
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
@@ -203,5 +209,26 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         incoming: ctx.factsDb.getLinksTo(resolvedId),
       },
     });
+  });
+
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`, async (req) => {
+    const url = parseReqUrl(req.url);
+    const sessionId = url.searchParams.get("sessionId")?.trim() ?? null;
+    const agentId = url.searchParams.get("agentId")?.trim() ?? null;
+    const limit = parseLimitParam(url.searchParams.get("limit"), 50, 200);
+
+    const { buildSessionObservabilityReport } = await import("../services/session-observability.js");
+
+    const report = await buildSessionObservabilityReport({
+      factsDb: ctx.factsDb,
+      eventLog: ctx.eventLog ?? null,
+      narrativesDb: ctx.narrativesDb ?? null,
+      auditStore: ctx.auditStore ?? null,
+      sessionId,
+      agentId,
+      limit,
+    });
+
+    return toJson(200, report);
   });
 }

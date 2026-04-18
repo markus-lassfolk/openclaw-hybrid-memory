@@ -19,7 +19,7 @@ export interface AuditEventInput {
   durationMs?: number;
   error?: string;
   context?: Record<string, unknown>;
-  sessionId?: string;
+  
   model?: string;
   tokens?: number;
 }
@@ -127,6 +127,7 @@ export class AuditStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_audit_agent_ts ON audit_log(agent_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_action_ts ON audit_log(action, timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target);
+      CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(timestamp);
     `);
   }
@@ -168,6 +169,7 @@ export class AuditStore extends BaseSqliteStore {
     action?: string;
     outcome?: AuditOutcome;
     targetContains?: string;
+    sessionId?: string;
     limit?: number;
   }): AuditEventRow[] {
     const limit = Math.min(Math.max(1, opts.limit ?? 200), 5000);
@@ -197,6 +199,10 @@ export class AuditStore extends BaseSqliteStore {
       const escapedTarget = opts.targetContains.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");
       clauses.push("target LIKE ? ESCAPE '\\'");
       params.push(`%${escapedTarget}%`);
+    }
+    if (opts.sessionId) {
+      clauses.push("session_id = ?");
+      params.push(opts.sessionId);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.liveDb

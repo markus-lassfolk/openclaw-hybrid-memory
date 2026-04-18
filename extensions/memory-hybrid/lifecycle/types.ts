@@ -70,6 +70,8 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+  auditStore: AuditStore | null;
+  auditStore: AuditStore | null;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
   recallInFlightRef: { value: number };
   /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
