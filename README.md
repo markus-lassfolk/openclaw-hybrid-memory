@@ -107,6 +107,15 @@ Guide: [docs/advanced-capabilities.md](docs/advanced-capabilities.md)
 Track progress and shipped product milestones in:
 - [`produkt/hybrid-memory-productisation.md`](produkt/hybrid-memory-productisation.md)
 
+## Productisation status
+
+Track the coordinating product roadmap in [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md).
+
+Current snapshot:
+- **Shipped:** Memory Viewer / Mission Control, README/onboarding overhaul, public API/export surface
+- **Open lanes:** session observability, messaging/demo package, explicit filter → rank → hydrate retrieval mode
+- **Important:** Epic #1029 is the coordination layer; implementation lands through the child issues
+
 ## Fast path docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path
@@ -114,6 +123,7 @@ Track progress and shipped product milestones in:
 - [docs/PRESENTATION-STRATEGY.md](docs/PRESENTATION-STRATEGY.md): product message, visuals, demos, terminology
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
+- [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md): shipped productisation milestones and open lanes
 
 ## Common commands
 

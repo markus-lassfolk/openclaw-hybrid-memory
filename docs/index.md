@@ -105,6 +105,7 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 | [Model-Agnostic Analysis](MODEL-AGNOSTIC-ANALYSIS) | Compatibility across LLM providers |
 | [Presentation strategy](PRESENTATION-STRATEGY) | Canonical product message, demo story, visuals, and terminology |
 | [Feedback Roadmap](FEEDBACK-ROADMAP) | Planned improvements and feature requests |
+| [Productisation Track](PRODUCTISATION-TRACK) | Coordinating view of shipped product work, open lanes, and phase order |
 
 ### Project
 
