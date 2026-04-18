@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the changelog with a trivial entry for **issue #1131** to exercise the Forge → Council → Merge pipeline end-to-end after the recent gateway and token fixes.
+
 ---
 
 ## [2026.4.141] - 2026-04-14
