@@ -286,15 +286,6 @@ export async function buildSessionObservabilityReport(
     }
   }
 
-  // Facts stored via direct DB lookup (for this session)
-  try {
-    const recentFacts = factsDb.search ? factsDb.search("session", limit, { tierFilter: "all" }) : [];
-    // Count facts with matching session provenance
-    // We approximate by counting audit entries with "store" action
-  } catch {
-    // ignore
-  }
-
   const captureSummary: CaptureSummary = {
     factsStored,
     factsUpdated,
@@ -383,7 +374,6 @@ export async function buildSessionObservabilityReport(
   // ---------------------------------------------------------------------------
   const allEntries: SessionTimelineEntry[] = [
     ...eventEntries,
-    ...auditEntries,
     ...captureEntries.map((e) => ({ ...e, kind: "memory_captured" as const })),
     ...recallEntries.map((e) => ({ ...e, kind: "memory_recalled" as const })),
     ...injectionEntries.map((e) => ({ ...e, kind: "memory_injected" as const })),
