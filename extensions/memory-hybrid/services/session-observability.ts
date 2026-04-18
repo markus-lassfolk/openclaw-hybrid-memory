@@ -225,7 +225,7 @@ export async function buildSessionObservabilityReport(
     const sinceMs = now - 24 * 3600 * 1000;
     try {
       // episodes are stored in facts DB; we use factsDb to retrieve them
-      const episodes = (factsDb as { getEpisodesBySession?(sid: string, lim: number): unknown[] })?.(sessionId ?? "recent", limit) ?? [];
+      const episodes = (factsDb as { getEpisodesBySession?(sid: string, lim: number): unknown[] })?.getEpisodesBySession?.(sessionId ?? "recent", limit) ?? [];
 
       for (const ep of episodes as Array<{
         id?: string; event?: string; outcome?: string; timestamp?: number | string; context?: string;

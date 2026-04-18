@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-type AuditOutcome = "success" | "partial" | "failed";
+type AuditOutcome = "success" | "partial" | "failed" | "skipped";
 
 export interface AuditEventInput {
   timestamp?: number;
@@ -19,7 +19,7 @@ export interface AuditEventInput {
   durationMs?: number;
   error?: string;
   context?: Record<string, unknown>;
-  
+  sessionId?: string;
   model?: string;
   tokens?: number;
 }
@@ -116,7 +116,7 @@ export class AuditStore extends BaseSqliteStore {
         agent_id TEXT NOT NULL,
         action TEXT NOT NULL,
         target TEXT,
-        outcome TEXT NOT NULL CHECK(outcome IN ('success','partial','failed')),
+        outcome TEXT NOT NULL CHECK(outcome IN ('success','partial','failed','skipped')),
         duration_ms INTEGER,
         error TEXT,
         context TEXT,
@@ -250,7 +250,7 @@ export class AuditStore extends BaseSqliteStore {
       .prepare("SELECT outcome, agent_id, COUNT(*) as c FROM audit_log WHERE timestamp >= ? GROUP BY outcome, agent_id")
       .all(since) as Array<{ outcome: string; agent_id: string; c: number }>;
     let total = 0;
-    const byOutcome: Record<AuditOutcome, number> = { success: 0, partial: 0, failed: 0 };
+    const byOutcome: Record<AuditOutcome, number> = { success: 0, partial: 0, failed: 0, skipped: 0 };
     const byAgent: Record<string, number> = {};
     for (const r of rows) {
       const c = Number(r.c);

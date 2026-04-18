@@ -331,6 +331,7 @@ async function runRecall(
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
+    const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
     if (!ambientSeenFactsMap.has(sessionScopeKey)) {
       ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
       ambientLastEmbeddingMap.set(sessionScopeKey, null);
