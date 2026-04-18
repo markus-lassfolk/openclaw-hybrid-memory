@@ -7,7 +7,7 @@ nav_order: 2
 
 # Scenarios & benefits
 
-Hybrid Memory is built for **people who use an AI assistant as a partner**, not a one-off chat. These are the situations where it pays off.
+Hybrid Memory is built for **people who use an AI assistant as a partner**, not a one-off chat. It matters most when memory needs to be durable, local-first, and inspectable rather than merely clever. These are the situations where it pays off.
 
 ---
 
@@ -72,6 +72,7 @@ The [repository README](https://github.com/markus-lassfolk/openclaw-hybrid-memor
 | Fewer “I already told you” moments | Relevant memories are pulled into context automatically when configured |
 | Less copy-paste from old threads | Long-term facts live outside a single conversation transcript |
 | Answers that fit *your* defaults | Preferences and decisions persist |
+| You can explain why a memory showed up | Search, verification, and provenance give you proof paths |
 | A system you can trust over weeks | Background consolidation, optional reflection, and cleanup run on a schedule you control |
 
 ---

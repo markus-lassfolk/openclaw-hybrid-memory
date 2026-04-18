@@ -12,6 +12,8 @@
 
 </div>
 
+Hybrid Memory makes OpenClaw feel like a serious product instead of a clever demo: durable context that stays **local-first**, **inspectable**, and under operator control.
+
 ## Mental model first
 
 ```mermaid
@@ -32,6 +34,14 @@ Hybrid Memory keeps durable context in your control:
 - `Control`: explicit config modes, export, backup, and delete paths
 
 ![Hybrid Memory dashboard mock](docs/assets/hybrid-memory-dashboard-mock.svg)
+
+## Remember these 3 things
+
+1. **Local-first by default** — memory stays on your machine unless you explicitly choose external providers.
+2. **Inspectable and controllable** — verify, search, export, back up, and delete it with explicit paths.
+3. **Hybrid retrieval** — structured facts and semantic recall work together, so it is stronger than session-only memory or a naive vector store.
+
+Short version: **not just session memory, not just a vector store, and not a black-box hosted memory service.**
 
 ## What users ask first
 
@@ -83,19 +93,20 @@ Guide: [docs/advanced-capabilities.md](docs/advanced-capabilities.md)
 
 ## Comparison at a glance
 
-| Capability | Session-only memory | Generic vector memory | **Hybrid Memory** |
-|---|---:|---:|---:|
-| Persists across sessions | No | Yes | Yes |
-| Structured + semantic retrieval | No | Usually semantic-only | Yes (merged ranking) |
-| Inspectability (stats/verify/provenance) | Low | Medium | High |
-| Explicit trust/deletion controls | Low | Varies | High |
-| Local-first operation | N/A | Sometimes | Yes |
-| Multi-agent scope controls | No | Limited | Yes |
+| Capability | Session-only memory | Naive vector memory | Hosted memory | **Hybrid Memory** |
+|---|---:|---:|---:|---:|
+| Persists across sessions | No | Yes | Yes | Yes |
+| Local-first by default | N/A | Sometimes | Rarely | Yes |
+| Structured + semantic retrieval | No | Usually semantic-only | Varies | Yes |
+| Inspectability (stats / verify / provenance) | Low | Medium | Medium | High |
+| Explicit trust / deletion / export paths | Low | Limited | Provider-dependent | High |
+| Multi-agent scope controls | No | Limited | Varies | Yes |
 
 ## Fast path docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path
 - [docs/trust-and-privacy.md](docs/trust-and-privacy.md): local-first, provenance, deletion, export
+- [docs/PRESENTATION-STRATEGY.md](docs/PRESENTATION-STRATEGY.md): product message, visuals, demos, terminology
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
 
