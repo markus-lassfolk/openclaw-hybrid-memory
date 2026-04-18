@@ -92,12 +92,22 @@ Guide: [docs/advanced-capabilities.md](docs/advanced-capabilities.md)
 | Local-first operation | N/A | Sometimes | Yes |
 | Multi-agent scope controls | No | Limited | Yes |
 
+## Productisation status
+
+Track the coordinating product roadmap in [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md).
+
+Current snapshot:
+- **Shipped:** Memory Viewer / Mission Control, README/onboarding overhaul, public API/export surface
+- **Open lanes:** session observability, messaging/demo package, explicit filter → rank → hydrate retrieval mode
+- **Important:** Epic #1029 is the coordination layer; implementation lands through the child issues
+
 ## Fast path docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path
 - [docs/trust-and-privacy.md](docs/trust-and-privacy.md): local-first, provenance, deletion, export
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
+- [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md): shipped productisation milestones and open lanes
 
 ## Common commands
 

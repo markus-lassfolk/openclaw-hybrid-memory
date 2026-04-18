@@ -8,8 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added [`docs/PRODUCTISATION-TRACK.md`](docs/PRODUCTISATION-TRACK.md) as the coordinating status page for Epic #1029, with phase order, shipped milestones, open product lanes, and guardrails.
+
 ### Changed
 
+- Linked the new productisation track page from the repository README and docs home so the shipped-vs-open product story is visible without digging through issue history.
 - Updated the changelog with a trivial entry for **issue #1131** to exercise the Forge → Council → Merge pipeline end-to-end after the recent gateway and token fixes.
 
 ---
