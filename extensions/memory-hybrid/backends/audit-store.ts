@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-type AuditOutcome = "success" | "partial" | "failed";
+type AuditOutcome = "success" | "partial" | "failed" | "skipped";
 
 export interface AuditEventInput {
   timestamp?: number;
@@ -116,7 +116,7 @@ export class AuditStore extends BaseSqliteStore {
         agent_id TEXT NOT NULL,
         action TEXT NOT NULL,
         target TEXT,
-        outcome TEXT NOT NULL CHECK(outcome IN ('success','partial','failed')),
+        outcome TEXT NOT NULL CHECK(outcome IN ('success','partial','failed','skipped')),
         duration_ms INTEGER,
         error TEXT,
         context TEXT,
@@ -127,6 +127,7 @@ export class AuditStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_audit_agent_ts ON audit_log(agent_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_action_ts ON audit_log(action, timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target);
+      CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(timestamp);
     `);
   }
@@ -168,6 +169,7 @@ export class AuditStore extends BaseSqliteStore {
     action?: string;
     outcome?: AuditOutcome;
     targetContains?: string;
+    sessionId?: string;
     limit?: number;
   }): AuditEventRow[] {
     const limit = Math.min(Math.max(1, opts.limit ?? 200), 5000);
@@ -197,6 +199,10 @@ export class AuditStore extends BaseSqliteStore {
       const escapedTarget = opts.targetContains.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");
       clauses.push("target LIKE ? ESCAPE '\\'");
       params.push(`%${escapedTarget}%`);
+    }
+    if (opts.sessionId) {
+      clauses.push("session_id = ?");
+      params.push(opts.sessionId);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.liveDb
@@ -244,7 +250,7 @@ export class AuditStore extends BaseSqliteStore {
       .prepare("SELECT outcome, agent_id, COUNT(*) as c FROM audit_log WHERE timestamp >= ? GROUP BY outcome, agent_id")
       .all(since) as Array<{ outcome: string; agent_id: string; c: number }>;
     let total = 0;
-    const byOutcome: Record<AuditOutcome, number> = { success: 0, partial: 0, failed: 0 };
+    const byOutcome: Record<AuditOutcome, number> = { success: 0, partial: 0, failed: 0, skipped: 0 };
     const byAgent: Record<string, number> = {};
     for (const r of rows) {
       const c = Number(r.c);
