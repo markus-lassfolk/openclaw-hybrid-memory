@@ -57,6 +57,7 @@ import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import { getEnv } from "../utils/env-manager.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 
@@ -115,6 +116,11 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
 
   return hasAllNewHelpers && !hasLegacyWal;
+}
+
+function isEdictWriteToolEnabled(): boolean {
+  const raw = getEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL");
+  return raw === "1" || raw?.toLowerCase() === "true";
 }
 
 async function storeRegistryEmbeddings({
@@ -412,13 +418,6 @@ export function registerMemoryTools(
               "Optional session id to fetch a specific session narrative or event timeline. In multi-tenant environments, only pass a sessionId derived from the authenticated context; never accept arbitrary end-user input here, to avoid cross-session data exposure.",
           }),
         ),
-        days: Type.Optional(
-          Type.Number({
-            description: "Look back window in days when sessionId is omitted (default: 7).",
-            minimum: 1,
-            maximum: 365,
-          }),
-        ),
         limit: Type.Optional(
           Type.Number({
             description: "Max summaries to return (default: 3).",
@@ -428,17 +427,23 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const MAX_DAYS_LOOKBACK = 365;
-        const MIN_DAYS_LOOKBACK = 1;
         const MAX_SUMMARY_LIMIT = 50;
         const MIN_SUMMARY_LIMIT = 1;
 
         const query = typeof params.query === "string" && params.query.trim().length > 0 ? params.query.trim() : null;
-        const sessionId =
+        const requestedSessionId =
           typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
-
-        let days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
-        days = Math.min(MAX_DAYS_LOOKBACK, Math.max(MIN_DAYS_LOOKBACK, days));
+        const contextSessionId =
+          typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
+            ? api.context.sessionId.trim()
+            : null;
+        if (!contextSessionId) {
+          throw new Error("memory_recall_timeline requires an authenticated session context");
+        }
+        if (requestedSessionId && requestedSessionId !== contextSessionId) {
+          throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
+        }
+        const sessionId = contextSessionId;
 
         let limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
         limit = Math.min(MAX_SUMMARY_LIMIT, Math.max(MIN_SUMMARY_LIMIT, limit));
@@ -450,7 +455,7 @@ export function registerMemoryTools(
           sessionId,
           limit,
           nowSec,
-          sinceSec: sessionId ? undefined : nowSec - days * 86_400,
+          sinceSec: undefined,
         });
 
         if (summaries.length === 0) {
@@ -458,9 +463,7 @@ export function registerMemoryTools(
             content: [
               {
                 type: "text" as const,
-                text: sessionId
-                  ? `No narrative summary found for session ${sessionId}.`
-                  : `No narrative summaries found in the last ${days} day(s).`,
+                text: `No narrative summary found for session ${sessionId}.`,
               },
             ],
             details: { count: 0, narratives: [] },
@@ -2658,6 +2661,18 @@ export function registerMemoryTools(
       "Only Markus (the human) should use this tool directly.";
     const _execAddEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_add_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { text, source, tags, ttl, expiresAt } = params as {
           text: string;
           source?: string;
@@ -2832,6 +2847,18 @@ export function registerMemoryTools(
     const _updateEdictDesc = "Update the text, tags, source, or expiry of an existing edict.";
     const _execUpdateEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_update_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { id, text, source, tags, ttl, expiresAt } = params as {
           id: string;
           text?: string;
@@ -2903,6 +2930,18 @@ export function registerMemoryTools(
     const _removeEdictDesc = "Delete an edict from memory by its id.";
     const _execRemoveEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_remove_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { id } = params as { id: string };
         const removed = edictStore.remove(id);
         return {

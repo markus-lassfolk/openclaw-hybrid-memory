@@ -102,6 +102,11 @@ Guide: [docs/advanced-capabilities.md](docs/advanced-capabilities.md)
 | Explicit trust / deletion / export paths | Low | Limited | Provider-dependent | High |
 | Multi-agent scope controls | No | Limited | Varies | Yes |
 
+## Productisation status
+
+Track progress and shipped product milestones in:
+- [`produkt/hybrid-memory-productisation.md`](produkt/hybrid-memory-productisation.md)
+
 ## Fast path docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path

@@ -36,6 +36,7 @@ export {
 } from "./crud.js";
 export {
   findByIdPrefix,
+  findByIdPrefixScoped,
   getSupersededTextsSnapshot,
   lookupFacts,
   searchFacts,
