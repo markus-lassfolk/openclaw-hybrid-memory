@@ -418,13 +418,6 @@ export function registerMemoryTools(
               "Optional session id to fetch a specific session narrative or event timeline. In multi-tenant environments, only pass a sessionId derived from the authenticated context; never accept arbitrary end-user input here, to avoid cross-session data exposure.",
           }),
         ),
-        days: Type.Optional(
-          Type.Number({
-            description: "Look back window in days when sessionId is omitted (default: 7).",
-            minimum: 1,
-            maximum: 365,
-          }),
-        ),
         limit: Type.Optional(
           Type.Number({
             description: "Max summaries to return (default: 3).",
@@ -434,17 +427,23 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const MAX_DAYS_LOOKBACK = 365;
-        const MIN_DAYS_LOOKBACK = 1;
         const MAX_SUMMARY_LIMIT = 50;
         const MIN_SUMMARY_LIMIT = 1;
 
         const query = typeof params.query === "string" && params.query.trim().length > 0 ? params.query.trim() : null;
-        const sessionId =
+        const requestedSessionId =
           typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
-
-        let days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
-        days = Math.min(MAX_DAYS_LOOKBACK, Math.max(MIN_DAYS_LOOKBACK, days));
+        const contextSessionId =
+          typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
+            ? api.context.sessionId.trim()
+            : null;
+        if (!contextSessionId) {
+          throw new Error("memory_recall_timeline requires an authenticated session context");
+        }
+        if (requestedSessionId && requestedSessionId !== contextSessionId) {
+          throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
+        }
+        const sessionId = contextSessionId;
 
         let limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
         limit = Math.min(MAX_SUMMARY_LIMIT, Math.max(MIN_SUMMARY_LIMIT, limit));
@@ -456,7 +455,7 @@ export function registerMemoryTools(
           sessionId,
           limit,
           nowSec,
-          sinceSec: sessionId ? undefined : nowSec - days * 86_400,
+          sinceSec: undefined,
         });
 
         if (summaries.length === 0) {
@@ -464,9 +463,7 @@ export function registerMemoryTools(
             content: [
               {
                 type: "text" as const,
-                text: sessionId
-                  ? `No narrative summary found for session ${sessionId}.`
-                  : `No narrative summaries found in the last ${days} day(s).`,
+                text: `No narrative summary found for session ${sessionId}.`,
               },
             ],
             details: { count: 0, narratives: [] },
