@@ -28,11 +28,14 @@ import { type ScoredFact, rerankResults } from "./reranker.js";
 import { type AliasDB, searchAliasStrategy } from "./retrieval-aliases.js";
 import {
   DEFAULT_INTERACTIVE_RECALL_POLICY,
+  type ConstrainedRetrievalPolicy,
   type ExplicitDeepRetrievalPolicy,
   type InteractiveRecallPolicy,
+  resolveConstrainedRetrievalPolicy,
   resolveExplicitDeepRetrievalPolicy,
   resolveInteractiveRecallPolicy,
 } from "./retrieval-mode-policy.js";
+import { getCandidateIdsByStructuredFilters, hasActiveFilters } from "../backends/facts-db/search.js";
 import {
   type FactMetadata,
   type FusedResult,
@@ -220,6 +223,8 @@ export function packIntoBudget(
 
 /**
  * Run FTS5 full-text search strategy.
+ * When candidateIds is provided (constrained-recall mode), only results within
+ * that candidate set are returned and ranks are reassigned within that filtered set.
  * Returns ranked results (best = rank 1).
  */
 function runFts5Strategy(
@@ -229,9 +234,12 @@ function runFts5Strategy(
   tagFilter?: string,
   includeSuperseded?: boolean,
   asOf?: number,
+  candidateIds?: Set<string> | null,
 ): RankedResult[] {
-  const results = searchFts(db, query, { limit, tagFilter, includeSuperseded, asOf });
-  return results.map((r, i) => ({
+  const effectiveLimit = candidateIds ? Math.max(limit * 5, 200) : limit;
+  const results = searchFts(db, query, { limit: effectiveLimit, tagFilter, includeSuperseded, asOf });
+  const filtered = candidateIds ? results.filter((r) => candidateIds.has(r.factId)) : results;
+  return filtered.slice(0, limit).map((r, i) => ({
     factId: r.factId,
     rank: i + 1,
     source: "fts5" as const,
@@ -240,11 +248,21 @@ function runFts5Strategy(
 
 /**
  * Run semantic (vector) search strategy.
+ * When candidateIds is provided (constrained-recall mode), only results within
+ * that candidate set are returned and ranks are reassigned within that filtered set.
  * Returns ranked results (best = rank 1).
  */
-async function runSemanticStrategy(vectorDb: VectorDB, queryVector: number[], topK: number): Promise<RankedResult[]> {
-  const results: SearchResult[] = await vectorDb.search(queryVector, topK, 0.3);
-  return results.map((r, i) => ({
+async function runSemanticStrategy(
+  vectorDb: VectorDB,
+  queryVector: number[],
+  topK: number,
+  candidateIds?: Set<string> | null,
+): Promise<RankedResult[]> {
+  // Use a larger topK when filtering to account for candidates being filtered out
+  const effectiveTopK = candidateIds ? Math.max(topK * 5, 200) : topK;
+  const results: SearchResult[] = await vectorDb.search(queryVector, effectiveTopK, 0.3);
+  const filtered = candidateIds ? results.filter((r) => candidateIds.has(r.entry.id)) : results;
+  return filtered.slice(0, topK).map((r, i) => ({
     factId: r.entry.id,
     rank: i + 1,
     source: "semantic" as const,
@@ -264,6 +282,7 @@ async function runMultiModelSemanticStrategies(
   registry: EmbeddingRegistry,
   queryText: string,
   topK: number,
+  candidateIds?: Set<string> | null,
 ): Promise<Map<string, RankedResult[]>> {
   const result = new Map<string, RankedResult[]>();
   const models = registry.getModels();
@@ -285,7 +304,8 @@ async function runMultiModelSemanticStrategies(
       continue;
     }
     const { name, queryVec } = s.value;
-    const maxCandidatesPerModel = Math.max(topK * 10, 500);
+    const effectiveTopK = candidateIds ? Math.max(topK * 5, 200) : topK;
+    const maxCandidatesPerModel = Math.max(effectiveTopK * 10, 500);
     const candidates = factsDbWithEmbeddings.getEmbeddingsByModel(name, maxCandidatesPerModel);
     if (candidates.length === 0) continue;
 
@@ -297,12 +317,15 @@ async function runMultiModelSemanticStrategies(
       }))
       .filter((r) => r.score >= 0.3)
       .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
+      .slice(0, effectiveTopK);
 
-    if (scored.length > 0) {
+    const filtered = candidateIds ? scored.filter((r) => candidateIds.has(r.factId)) : scored;
+    const finalResults = filtered.slice(0, topK);
+
+    if (finalResults.length > 0) {
       result.set(
         `semantic:${name}`,
-        scored.map((r, i) => ({
+        finalResults.map((r, i) => ({
           factId: r.factId,
           rank: i + 1,
           source: `semantic:${name}` as const,
@@ -512,6 +535,7 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     queryExpansionContext: options.queryExpansionContext ?? null,
     embeddingRegistry: describeEmbeddingRegistry(options.embeddingRegistry),
     embeddingFactsEnabled: Boolean(options.factsDbForEmbeddings),
+    constrainedFilters: options.constrainedFilters ?? null,
   });
 }
 
@@ -622,10 +646,11 @@ export interface RetrievalPipelineOptions {
   /** Retrieval mode shortcut. When provided, derives the policy automatically.
    * 'interactive-recall' -> interactive recall policy (disables graph expansion).
    * 'explicit-deep' -> explicit deep retrieval policy.
+   * 'constrained-recall' -> constrained retrieval policy (filter-before-rank).
    * Overridden by an explicit `policy` option. */
   mode?: import("./retrieval-mode-policy.js").RetrievalMode;
-  /** Explicit/deep retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
-  policy?: ExplicitDeepRetrievalPolicy;
+  /** Retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
+  policy?: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy | ConstrainedRetrievalPolicy;
   /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
   config?: RetrievalConfig;
   /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
@@ -670,6 +695,11 @@ export interface RetrievalPipelineOptions {
   adaptiveOpenai?: import("openai").default | null;
   /** Document grading configuration. */
   documentGradingConfig?: import("../config.js").DocumentGradingConfig | null;
+  /** Structured pre-filters for constrained-recall mode.
+   * When set, the pipeline first retrieves candidate fact IDs via SQLite structured filters,
+   * then limits semantic/FTS5 ranking to only those candidates.
+   * This implements the "filter → rank → hydrate" pattern (Issue #1026). */
+  constrainedFilters?: import("../backends/facts-db/search.js").ConstrainedSearchFilters;
 }
 
 /**
@@ -699,11 +729,20 @@ export async function runExplicitDeepRetrieval(
   options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
   const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
-  let resolvedPolicy: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy;
+
+  // Check if constrained mode has actual filters before selecting policy
+  const hasConstrainedFilters = options.constrainedFilters && hasActiveFilters(options.constrainedFilters);
+
+  let resolvedPolicy: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy | ConstrainedRetrievalPolicy;
   if (options.policy) {
-    resolvedPolicy = options.policy;
+    resolvedPolicy = options.policy as
+      | ExplicitDeepRetrievalPolicy
+      | InteractiveRecallPolicy
+      | ConstrainedRetrievalPolicy;
   } else if (options.mode === "interactive-recall") {
     resolvedPolicy = DEFAULT_INTERACTIVE_RECALL_POLICY;
+  } else if (options.mode === "constrained-recall" && hasConstrainedFilters) {
+    resolvedPolicy = resolveConstrainedRetrievalPolicy(config, options.budgetTokens);
   } else {
     resolvedPolicy = resolveExplicitDeepRetrievalPolicy(config);
   }
@@ -730,6 +769,7 @@ export async function runExplicitDeepRetrieval(
     documentGrader,
     adaptiveOpenai,
     documentGradingConfig,
+    constrainedFilters,
   } = options;
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
@@ -743,6 +783,18 @@ export async function runExplicitDeepRetrieval(
           timeoutMs: documentGradingConfig.timeoutMs,
         })
       : null);
+
+  // -------------------------------------------------------------------------
+  // Constrained-recall: pre-filter candidate set before ranking (Issue #1026)
+  // -------------------------------------------------------------------------
+  let candidateIds: Set<string> | null = null;
+  if (policy.mode === "constrained-recall" && constrainedFilters) {
+    const ids = getCandidateIdsByStructuredFilters(db, constrainedFilters, { limit: 1000, nowSec });
+    if (ids.length === 0) {
+      return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
+    }
+    candidateIds = new Set(ids);
+  }
 
   const applyConditionalReranking = async (
     queryText: string,
@@ -819,7 +871,8 @@ export async function runExplicitDeepRetrieval(
         filterKey: semanticCacheFilterKey,
       });
       if (cached) {
-        const cachedResult = buildCachedResult(factsDb, cached.factIds, budgetTokens, {
+        const filteredFactIds = candidateIds ? cached.factIds.filter((id) => candidateIds.has(id)) : cached.factIds;
+        const cachedResult = buildCachedResult(factsDb, filteredFactIds, budgetTokens, {
           includeSuperseded,
           scopeFilter,
           asOf,
@@ -857,19 +910,25 @@ export async function runExplicitDeepRetrieval(
 
     if (strategies.includes("fts5")) {
       strategyPromises.push(
-        safeStrategy("fts5", () => runFts5Strategy(db, queryText, fts5TopK, tagFilter, includeSuperseded, asOf)),
+        safeStrategy("fts5", () =>
+          runFts5Strategy(db, queryText, fts5TopK, tagFilter, includeSuperseded, asOf, candidateIds),
+        ),
       );
     }
 
     if (strategies.includes("semantic") && currentQueryVector) {
       strategyPromises.push(
-        safeStrategy("semantic", () => runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK)),
+        safeStrategy("semantic", () => runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK, candidateIds)),
       );
     }
 
     if ((policy as ExplicitDeepRetrievalPolicy).allowAliasExpansion && aliasDb && currentQueryVector) {
       strategyPromises.push(
-        safeStrategy("aliases", () => searchAliasStrategy(aliasDb, currentQueryVector, semanticTopK)),
+        safeStrategy("aliases", async () => {
+          const results = await searchAliasStrategy(aliasDb, currentQueryVector, semanticTopK);
+          const filtered = candidateIds ? results.filter((r) => candidateIds.has(r.factId)) : results;
+          return filtered.map((r, i) => ({ ...r, rank: i + 1 }));
+        }),
       );
     }
 
@@ -894,7 +953,7 @@ export async function runExplicitDeepRetrieval(
           strategyPromises.push(
             safeStrategy(strategyName, async () => {
               const variantVector = await embedFn(variantQuery);
-              return runSemanticStrategy(vectorDb, variantVector, semanticTopK);
+              return runSemanticStrategy(vectorDb, variantVector, semanticTopK, candidateIds);
             }),
           );
         }
@@ -915,6 +974,7 @@ export async function runExplicitDeepRetrieval(
         embeddingRegistry,
         queryText,
         semanticTopK,
+        candidateIds,
       );
     }
 
@@ -981,10 +1041,18 @@ export async function runExplicitDeepRetrieval(
             finalScore: 1 / (k + res.rank),
             rrfScore: 1 / (k + res.rank),
 
-            sources: [{ strategy: (res as any).strategyName || "unknown", rank: res.rank }],
+            sources: [{ strategy: res.source || "unknown", rank: res.rank }],
           });
         } else {
-          deduped.get(res.factId)?.sources.push({ strategy: (res as any).strategyName || "unknown", rank: res.rank });
+          const existing = deduped.get(res.factId)!;
+          existing.sources.push({ strategy: res.source || "unknown", rank: res.rank });
+          if (res.source === "semantic" || res.source?.startsWith("semantic:")) {
+            const semanticScore = 1 / (k + res.rank);
+            if (semanticScore > existing.finalScore) {
+              existing.finalScore = semanticScore;
+              existing.rrfScore = semanticScore;
+            }
+          }
         }
       }
 

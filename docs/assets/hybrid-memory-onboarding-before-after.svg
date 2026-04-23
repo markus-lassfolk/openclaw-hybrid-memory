@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" fill="none">
+  <rect width="1200" height="760" fill="#0B1220"/>
+  <rect x="40" y="40" width="1120" height="680" rx="28" fill="#101A2F" stroke="#24324D" stroke-width="2"/>
+  <text x="80" y="110" fill="#F8FAFC" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="700">Before / after onboarding flow</text>
+  <text x="80" y="145" fill="#93A4BF" font-size="19" font-family="Arial, Helvetica, sans-serif">The key change: move from capability sprawl to a proof-first product story.</text>
+
+  <rect x="90" y="200" width="470" height="430" rx="24" fill="#1A2236" stroke="#334155" stroke-width="2"/>
+  <text x="125" y="250" fill="#FDE68A" font-size="28" font-family="Arial, Helvetica, sans-serif" font-weight="700">Before</text>
+  <text x="125" y="286" fill="#CBD5E1" font-size="19" font-family="Arial, Helvetica, sans-serif">Feature depth leads the story.</text>
+
+  <rect x="125" y="320" width="400" height="62" rx="14" fill="#0F172A" stroke="#334155"/>
+  <text x="155" y="359" fill="#E2E8F0" font-size="20" font-family="Arial, Helvetica, sans-serif">1. Explain many subsystems up front</text>
+
+  <rect x="125" y="398" width="400" height="62" rx="14" fill="#0F172A" stroke="#334155"/>
+  <text x="155" y="437" fill="#E2E8F0" font-size="20" font-family="Arial, Helvetica, sans-serif">2. Mention vectors, tiers, graphs, RRF</text>
+
+  <rect x="125" y="476" width="400" height="62" rx="14" fill="#0F172A" stroke="#334155"/>
+  <text x="155" y="515" fill="#E2E8F0" font-size="20" font-family="Arial, Helvetica, sans-serif">3. Trust story appears later, if at all</text>
+
+  <rect x="125" y="554" width="400" height="62" rx="14" fill="#0F172A" stroke="#334155"/>
+  <text x="155" y="593" fill="#E2E8F0" font-size="20" font-family="Arial, Helvetica, sans-serif">4. Product feels heavier than it is</text>
+
+  <rect x="640" y="200" width="470" height="430" rx="24" fill="#14263C" stroke="#2C4163" stroke-width="2"/>
+  <text x="675" y="250" fill="#86EFAC" font-size="28" font-family="Arial, Helvetica, sans-serif" font-weight="700">After</text>
+  <text x="675" y="286" fill="#DBEAFE" font-size="19" font-family="Arial, Helvetica, sans-serif">Start with the product promise, then prove it.</text>
+
+  <rect x="675" y="320" width="400" height="62" rx="14" fill="#0F172A" stroke="#2C4163"/>
+  <text x="705" y="359" fill="#F8FAFC" font-size="20" font-family="Arial, Helvetica, sans-serif">1. Local-first memory for OpenClaw</text>
+
+  <rect x="675" y="398" width="400" height="62" rx="14" fill="#0F172A" stroke="#2C4163"/>
+  <text x="705" y="437" fill="#F8FAFC" font-size="20" font-family="Arial, Helvetica, sans-serif">2. Show inspect / verify / export paths</text>
+
+  <rect x="675" y="476" width="400" height="62" rx="14" fill="#0F172A" stroke="#2C4163"/>
+  <text x="705" y="515" fill="#F8FAFC" font-size="20" font-family="Arial, Helvetica, sans-serif">3. Explain hybrid retrieval second</text>
+
+  <rect x="675" y="554" width="400" height="62" rx="14" fill="#0F172A" stroke="#2C4163"/>
+  <text x="705" y="593" fill="#F8FAFC" font-size="20" font-family="Arial, Helvetica, sans-serif">4. Product feels serious, elegant, usable</text>
+
+  <path d="M585 410 L615 410" stroke="#64748B" stroke-width="6" stroke-linecap="round"/>
+  <path d="M607 392 L630 410 L607 428" stroke="#64748B" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
