@@ -101,6 +101,7 @@ afterEach(() => {
   factsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
@@ -157,6 +158,57 @@ describe("memory tools embedding registry wiring", () => {
     expect(names).not.toContain("memory.remove_edict");
     expect(names).not.toContain("memory.edict_stats");
     expect(names.every((name) => /^[a-zA-Z0-9_-]{1,64}$/.test(name))).toBe(true);
+  });
+
+  it("blocks memory_add_edict writes by default unless explicitly enabled", async () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg();
+    const vectorDb = makeMockVectorDb();
+    const addEdict = vi.fn().mockReturnValue({
+      id: "edict-1",
+      text: "verified fact",
+      tags: [],
+      source: "human:markus",
+      ttl: "never",
+      expiresAt: null,
+    });
+
+    registerMemoryTools(
+      {
+        factsDb,
+        edictStore: { add: addEdict } as never,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_add_edict");
+    expect(tool).toBeTruthy();
+
+    const blocked = await tool!.execute("tc-1", { text: "verified fact" });
+    expect(blocked).toMatchObject({ details: { error: "forbidden", reason: "edict_write_disabled" } });
+    expect(addEdict).not.toHaveBeenCalled();
+
+    vi.stubEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL", "true");
+    const allowed = await tool!.execute("tc-2", { text: "verified fact", source: "human:markus" });
+    expect(allowed).toMatchObject({ details: { edict: { id: "edict-1" } } });
+    expect(addEdict).toHaveBeenCalledTimes(1);
   });
 
   it("memory_directory list_contacts and org_view return structured results", async () => {
