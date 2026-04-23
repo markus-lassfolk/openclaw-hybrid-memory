@@ -1,3 +1,16 @@
+## 2026.4.15 - Productisation baseline tracking (Epic #1029)
+
+### Added
+- Added `produkt/hybrid-memory-productisation.md` to track shipped capabilities and open productisation lanes.
+
+### Changed
+- Updated `README.md` with a Productisation status section linking to the new tracker document.
+
+### Notes
+- Epic #1029 is maintained as a planning/coordinating epic; implementation is split into focused child issues.
+- Shipped productisation milestones reflected: #1023 (viewer UX track), #1024 (README/onboarding), #1027 (public API/export surface).
+- Remaining open tracks: #1025 (session observability), #1028 (messaging/demo package), #1026 (filter→rank→hydrate retrieval mode).
+
 # Changelog
 
 All notable changes to the OpenClaw Hybrid Memory project (memory-hybrid plugin, v3 deployment guide, and related tooling) are documented here.
@@ -7,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ---
 
 ## [Unreleased]
+
+### Changed
+
+- Updated the changelog with a trivial entry for **issue #1131** to exercise the Forge → Council → Merge pipeline end-to-end after the recent gateway and token fixes.
 
 ---
 
