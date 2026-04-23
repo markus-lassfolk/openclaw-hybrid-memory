@@ -57,6 +57,7 @@ import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import { getEnv } from "../utils/env-manager.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 
@@ -115,6 +116,11 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
 
   return hasAllNewHelpers && !hasLegacyWal;
+}
+
+function isEdictWriteToolEnabled(): boolean {
+  const raw = getEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL");
+  return raw === "1" || raw?.toLowerCase() === "true";
 }
 
 async function storeRegistryEmbeddings({
@@ -2655,6 +2661,18 @@ export function registerMemoryTools(
       "Only Markus (the human) should use this tool directly.";
     const _execAddEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_add_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { text, source, tags, ttl, expiresAt } = params as {
           text: string;
           source?: string;
@@ -2829,6 +2847,18 @@ export function registerMemoryTools(
     const _updateEdictDesc = "Update the text, tags, source, or expiry of an existing edict.";
     const _execUpdateEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_update_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { id, text, source, tags, ttl, expiresAt } = params as {
           id: string;
           text?: string;
@@ -2900,6 +2930,18 @@ export function registerMemoryTools(
     const _removeEdictDesc = "Delete an edict from memory by its id.";
     const _execRemoveEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_remove_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { id } = params as { id: string };
         const removed = edictStore.remove(id);
         return {
