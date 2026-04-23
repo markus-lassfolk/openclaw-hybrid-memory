@@ -8,15 +8,25 @@ permalink: /
 # OpenClaw Hybrid Memory
 {: .fs-9 }
 
-Durable, structured, searchable memory for OpenClaw agents.
+Local-first memory for OpenClaw that stays inspectable, trustworthy, and useful over time.
 {: .fs-6 .fw-300 }
 
-Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes this &mdash; it gives your agent **persistent memory** that auto-captures what matters and recalls it when relevant.
+Hybrid Memory gives your OpenClaw agent **persistent memory** without turning memory into a black box. It can remember across sessions, show its work when you need proof, and stay under your control.
 {: .fs-5 .fw-300 }
 
 [Get Started](QUICKSTART){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [Scenarios & benefits](SCENARIOS){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory){: .btn .fs-5 .mb-4 .mb-md-0 }
+
+---
+
+## Remember these 3 things
+
+| What to remember | Why it matters |
+|---|---|
+| **Local-first by default** | Memory stays on your machine unless you deliberately choose otherwise. |
+| **Inspectable and controllable** | You can verify, search, export, back up, and delete it. |
+| **Hybrid retrieval** | Structured facts and semantic recall work together, so results are stronger than session-only or vector-only memory. |
 
 ---
 
@@ -28,6 +38,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 | You paste the same context again | Relevant memories can load automatically each turn |
 | Hard to find “that thing we said” | Search by meaning and by structure |
 | Memory becomes a junk drawer | Decay, tiering, and jobs keep storage manageable |
+| Hard to tell why a memory showed up | Search, verification, provenance, and docs make recall inspectable |
 | Lost work if a process crashes badly | Durable writes designed for safe recovery |
 
 *How the engines work (SQLite, vectors, merge, WAL): [How it works](HOW-IT-WORKS) and [Architecture](ARCHITECTURE). Narrative examples: [Scenarios & benefits](SCENARIOS).*
@@ -92,7 +103,9 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 | Document | Description |
 |----------|-------------|
 | [Model-Agnostic Analysis](MODEL-AGNOSTIC-ANALYSIS) | Compatibility across LLM providers |
+| [Presentation strategy](PRESENTATION-STRATEGY) | Canonical product message, demo story, visuals, and terminology |
 | [Feedback Roadmap](FEEDBACK-ROADMAP) | Planned improvements and feature requests |
+| [Productisation Track](PRODUCTISATION-TRACK) | Coordinating view of shipped product work, open lanes, and phase order |
 
 ### Project
 
