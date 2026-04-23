@@ -92,6 +92,11 @@ Guide: [docs/advanced-capabilities.md](docs/advanced-capabilities.md)
 | Local-first operation | N/A | Sometimes | Yes |
 | Multi-agent scope controls | No | Limited | Yes |
 
+## Productisation status
+
+Track progress and shipped product milestones in:
+- [`produkt/hybrid-memory-productisation.md`](produkt/hybrid-memory-productisation.md)
+
 ## Fast path docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path
