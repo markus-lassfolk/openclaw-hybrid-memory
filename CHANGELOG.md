@@ -21,14 +21,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+No unreleased changes are documented here yet.
+
+---
+
+## [2026.4.260] - 2026-04-26
+
+**Previous baseline:** [2026.4.141] (2026-04-14)
+
+### Release summary
+
+**2026.4.260** ships **session observability**, **constrained-recall retrieval**, **security hardening** on public API and edicts, **productisation** documentation, and a **dependency refresh** (notably **OpenClaw** on the **2026.4** line). It also includes **correctness fixes** for typed-hook agent resolution and **tooling** alignment so CI format checks stay green. Version **2026.4.260** is published across **`extensions/memory-hybrid/package.json`**, **`openclaw.plugin.json`**, **`packages/openclaw-hybrid-memory-install/package.json`**, and **`package-lock.json`**. Human-oriented upgrade notes: [`release-notes/release-notes-2026.4.260.md`](release-notes/release-notes-2026.4.260.md).
+
+### Security
+
+- **Public memory HTTP API:** Responses are **scope-filtered** so callers only receive data appropriate to their session and configured visibility (#1137).
+- **`memory_add_edict`:** Writes are **gated behind explicit configuration opt-in** so edicts cannot be applied unless you deliberately enable that capability (#1136).
+
 ### Added
 
-- Added [`docs/PRODUCTISATION-TRACK.md`](docs/PRODUCTISATION-TRACK.md) as the coordinating status page for Epic #1029, with phase order, shipped milestones, open product lanes, and guardrails.
+- **Session observability (#1025):** A **session-level report** merges audit, capture, recall, injection, and suppression signals into a **timeline**—aimed at answering “what did memory do for this session?” without reading raw SQLite (#1148).
+- **Constrained-recall (#1026):** Retrieval supports a **filter → rank → hydrate** path via **`retrievalMode: "constrained-recall"`** (and related tool/schema wiring) for bounded searches (#1141).
+- **Productisation (#1029):** **[`docs/PRODUCTISATION-TRACK.md`](docs/PRODUCTISATION-TRACK.md)** and related README/docs links summarize **shipped** versus **planned** product work (#1134, #1147).
+- **Presentation (#1139):** README and narrative updates to improve **onboarding** and **product storytelling** for Hybrid Memory.
 
 ### Changed
 
-- Linked the new productisation track page from the repository README and docs home so the shipped-vs-open product story is visible without digging through issue history.
-- Updated the changelog with a trivial entry for **issue #1131** to exercise the Forge → Council → Merge pipeline end-to-end after the recent gateway and token fixes.
+- **OpenClaw / toolchain:** **`openclaw`** and other dependencies were bumped (e.g. **2026.4.24** in the extension lockfile via #1145 / #1149; also **protobufjs** #1146, **basic-ftp** #1144). Prefer upgrading the **gateway** to a compatible **2026.4.x** OpenClaw build when you adopt this plugin version; see upstream OpenClaw release notes for full platform changes.
+- **Docs:** README and docs home now surface the **productisation** tracker; changelog entry for **#1131** records automation validation for the release pipeline.
+
+### Fixed
+
+- **Recall isolation:** **Session isolation** for **timeline-style recall** so one session cannot read another session’s episode stream by mistake (#1135).
+- **Lifecycle hooks:** Import **`resolveAgentIdFromHookEvent`** from **`resolve-agent-id`** (not **`hook-resolution-api`**) in capture, cleanup, injection, and recall stages; **`subagent_spawned`** skip audits now attach the correct **task label**.
+- **Observability code:** Safer **injection summary** math when optional audit detail is missing; **tests** updated to match **`AuditEventInput`** / **`AuditStore.query`** typing.
+- **Formatting:** **`memory-tools.ts`** formatted to satisfy **Biome `format:check`**.
 
 ---
 
@@ -1355,7 +1382,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.141...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.260...HEAD
+[2026.4.260]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.141...v2026.4.260
 [2026.4.141]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.140...v2026.4.141
 [2026.4.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.61...v2026.4.140
 [2026.4.61]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.60...v2026.4.61
