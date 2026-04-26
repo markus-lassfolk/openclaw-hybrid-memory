@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractBalancedArraySlice,
   extractFirstJsonArraySubstring,
+  stripBracketContextPreamble,
   stripMarkdownCodeFence,
   tryParseFirstJsonArray,
 } from "../utils/llm-json-array.js";
@@ -93,5 +94,10 @@ describe("tryParseFirstJsonArray", () => {
     const raw = `[[not valid json inside]]
 ["alpha", "beta"]`;
     expect(tryParseFirstJsonArray(raw)).toEqual(["alpha", "beta"]);
+  });
+
+  it("strips [Context: …] preamble before JSON array (#1166)", () => {
+    expect(stripBracketContextPreamble(`[Context: Tool]\n["a"]`)).toBe(`["a"]`);
+    expect(tryParseFirstJsonArray(`[Context: Topics]\n["fact","entity"]`)).toEqual(["fact", "entity"]);
   });
 });

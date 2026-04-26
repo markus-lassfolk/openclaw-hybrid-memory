@@ -139,7 +139,7 @@ async function discoverCategoriesFromOther(
           }),
         { maxRetries: 2 },
       );
-      const content = resp.choices[0]?.message?.content?.trim() || "[]";
+      const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
       const labels = tryParseFirstJsonArray(content);
       if (!labels) continue;
       anyBatchSucceeded = true;
@@ -247,7 +247,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       { maxRetries: 2 },
     );
 
-    const content = resp.choices[0]?.message?.content?.trim() || "[]";
+    const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
     const parsed = tryParseFirstJsonArray(content);
     if (!parsed) return new Map();
 

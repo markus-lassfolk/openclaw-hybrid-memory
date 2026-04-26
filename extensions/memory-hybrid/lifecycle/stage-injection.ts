@@ -60,10 +60,14 @@ function buildEdictBlock(ctx: LifecycleContext): string {
     const { renderForPrompt } = ctx.edictStore.getEdicts({ format: "prompt" });
     return renderForPrompt;
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "stage-injection",
-      operation: "get-edicts",
-    });
+    const e = err instanceof Error ? err : new Error(String(err));
+    // Expected when the plugin is shutting down or the edict DB closed mid-hook (#1162).
+    if (!/database connection is not open/i.test(e.message)) {
+      capturePluginError(e, {
+        subsystem: "stage-injection",
+        operation: "get-edicts",
+      });
+    }
     return "";
   }
 }

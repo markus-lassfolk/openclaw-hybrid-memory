@@ -179,8 +179,12 @@ export function searchEpisodes(
 
   const scopeClause = scopeFilterClausePositional(scopeFilter);
   if (scopeClause.clause) {
-    conditions.push(scopeClause.clause.replace(/^AND /, ""));
-    params.push(...scopeClause.params);
+    // Positional scope fragment is ` AND ( … )`; strip leading AND (not `^AND` — clause starts with spaces).
+    const trimmed = scopeClause.clause.trimStart().replace(/^AND\s+/i, "");
+    if (trimmed) {
+      conditions.push(trimmed);
+      params.push(...scopeClause.params);
+    }
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

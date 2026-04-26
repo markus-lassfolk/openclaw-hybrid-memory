@@ -342,6 +342,12 @@ function is400EmptyBodyGatewayError(err: unknown): boolean {
   return /\b400\b.*\bno body\b/i.test(err.message);
 }
 
+/** Some Azure/Foundry deployments return 400 when chat params are not supported for the model (#1165). */
+function is400UnsupportedOperationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /\b400\b.*\bunsupported\b/i.test(err.message);
+}
+
 /**
  * Detect malformed Responses API reasoning-output sequencing errors, e.g.:
  * "Item 'rs_...' of type 'reasoning' was provided without its required following item."
@@ -517,7 +523,9 @@ export async function chatComplete(opts: {
       isOllamaOOM(err) || // #387: Ollama OOM — model too large for available RAM, not a bug
       isResponsesReasoningSequenceError(err) || // #1034: malformed reasoning item sequence — retryable
       is400EmptyBodyGatewayError(error) ||
-      is400EmptyBodyGatewayError(err); // #1157: 400 (no body) from gateway — do not GlitchTip
+      is400EmptyBodyGatewayError(err) || // #1157: 400 (no body) from gateway — do not GlitchTip
+      is400UnsupportedOperationError(error) ||
+      is400UnsupportedOperationError(err); // #1165: model/endpoint mismatch
     const isConfigError =
       err instanceof UnconfiguredProviderError ||
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
@@ -699,7 +707,8 @@ export async function withLLMRetry<T>(
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
           /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
           isResponsesReasoningSequenceError(lastError) || // #1034
-          is400EmptyBodyGatewayError(lastError); // #1157
+          is400EmptyBodyGatewayError(lastError) || // #1157
+          is400UnsupportedOperationError(lastError); // #1165
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",

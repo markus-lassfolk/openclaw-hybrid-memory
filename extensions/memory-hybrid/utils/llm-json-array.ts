@@ -13,6 +13,20 @@ export function stripMarkdownCodeFence(raw: string): string {
 }
 
 /**
+ * Strip gateway/model bracket lines like `[Context: …]` that precede real JSON (#1166).
+ */
+export function stripBracketContextPreamble(raw: string): string {
+  let t = raw.trimStart();
+  for (let i = 0; i < 8; i++) {
+    const m = t.match(/^\[[^\]]*\]\s*/);
+    if (!m) break;
+    if (!/^\[(?:context|Contexts?):/i.test(m[0])) break;
+    t = t.slice(m[0].length).trimStart();
+  }
+  return t;
+}
+
+/**
  * From `s`, extract the balanced `[` … `]` substring starting at index `start` (which must be `[`),
  * respecting double-quoted strings so `]` inside strings does not close the array.
  */
@@ -69,7 +83,7 @@ export function extractFirstJsonArraySubstring(text: string): string | null {
  * Skips prose like `[see below]` or `[batch]` that are not valid JSON arrays.
  */
 export function tryParseFirstJsonArray(raw: string): unknown[] | null {
-  const s = stripMarkdownCodeFence(raw);
+  const s = stripBracketContextPreamble(stripMarkdownCodeFence(raw));
   let searchFrom = 0;
   while (searchFrom < s.length) {
     const start = s.indexOf("[", searchFrom);
