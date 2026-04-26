@@ -83,9 +83,9 @@ export function tryParseFirstJsonArray(raw: string): unknown[] | null {
       const parsed: unknown = JSON.parse(slice);
       if (Array.isArray(parsed)) return parsed;
     } catch {
-      /* try next [ */
+      /* try next [ — skip this whole balanced span (avoids O(n) single-char steps on long junk) */
     }
-    searchFrom = start + 1;
+    searchFrom = start + slice.length;
   }
   return null;
 }
