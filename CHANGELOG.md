@@ -25,6 +25,25 @@ No unreleased changes are documented here yet.
 
 ---
 
+## [2026.4.270] - 2026-04-27
+
+**Previous baseline:** [2026.4.260] (2026-04-26)
+
+### Release summary
+
+**2026.4.270** is a **correctness and robustness** release for the memory-hybrid plugin: **batch classification** and **JSON array parsing** tolerate more LLM output shapes; **chat** and **auto-classifier** paths harden **empty `choices`** and **transient provider errors**; **episode SQL** scope clauses avoid invalid `WHERE AND` fragments; **embeddings** gain **input truncation** and **context-length** error suppression; **vector DB** initialization reports **non-`Error` rejections** safely and reduces **hot-reload** noise; **lifecycle injection** avoids mis-attributing **edict** failures when the DB is not open. Version **2026.4.270** is published across **`extensions/memory-hybrid/package.json`**, **`openclaw.plugin.json`**, **`packages/openclaw-hybrid-memory-install/package.json`**, and **`package-lock.json`**. Human-oriented upgrade notes: [`release-notes/release-notes-2026.4.270.md`](release-notes/release-notes-2026.4.270.md). *(Issues #1151–#1167, PR #1168.)*
+
+### Fixed
+
+- **LLM JSON / classification:** More resilient **first-array** parsing, **batch classify** response handling, **`[Context:…]`** preamble stripping, and related **Vitest** coverage (#1151–#1154, #1155–#1160).
+- **Chat / classifier HTTP:** Safer **`choices?.[0]`** access; **400** empty-body and **unsupported-operation** handling where appropriate (#1165 and related).
+- **Facts / episodes SQL:** **Scope** fragments strip a leading **`AND`** so dynamic `WHERE` clauses stay valid (#1161).
+- **Embeddings:** **Character cap** aligned with provider limits, **truncation** before request, and **context-length** classification for **suppressed** telemetry (#1162).
+- **Vector DB:** **Init** failure path normalizes unknown rejections to **`Error`** for reporting; **hot-reload** race strings skip redundant **GlitchTip** capture (#1163, #1167).
+- **Lifecycle:** **Stage injection** and **auto-classifier CLI** edge cases (edict DB state, **reporter** binding) (#1164, #1166).
+
+---
+
 ## [2026.4.260] - 2026-04-26
 
 **Previous baseline:** [2026.4.141] (2026-04-14)
@@ -1382,7 +1401,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.260...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.270...HEAD
+[2026.4.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.260...v2026.4.270
 [2026.4.260]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.141...v2026.4.260
 [2026.4.141]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.140...v2026.4.141
 [2026.4.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.61...v2026.4.140
