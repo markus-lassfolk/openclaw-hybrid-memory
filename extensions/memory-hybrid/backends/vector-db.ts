@@ -1042,9 +1042,7 @@ export class VectorDB {
         if (!this.vectorDimMismatchLogged) {
           this.vectorDimMismatchLogged = true;
           this.logWarn(
-            `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. ` +
-              `Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details. ` +
-              `(Further mismatches in this session are silent; fix config and re-index.)`,
+            `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details. (Further mismatches in this session are silent; fix config and re-index.)`,
           );
         }
         return [];

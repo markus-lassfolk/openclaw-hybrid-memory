@@ -118,7 +118,7 @@ async function runInjection(
     groupByCategory,
     pinnedRecallThreshold,
     lastProgressiveIndexIdsRef,
-    ambientCfg,
+    ambientCfg: _ambientCfg,
     ambientSeenFacts,
   } = r;
   const edictBlock = buildEdictBlock(ctx);
@@ -169,7 +169,7 @@ async function runInjection(
       const sortedCats = [...byCat.keys()].sort();
       lines = [header.trimEnd()];
       for (const cat of sortedCats) {
-        const entries = byCat.get(cat)!;
+        const entries = byCat.get(cat) ?? [];
         lines.push(`  ${cat} (${entries.length}):`);
         for (const e of entries) {
           lines.push(e.line.replace(/^(\s+)(\d+\.)/, "  $2"));

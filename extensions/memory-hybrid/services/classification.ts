@@ -184,8 +184,9 @@ function stripThinkingWrapperBlocks(s: string): string {
 function preferMarkdownJsonFenceContent(s: string): string {
   const re = /```(?:json)?\s*\n?([\s\S]*?)```/gi;
   const chunks: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s)) !== null) {
+  for (;;) {
+    const m = re.exec(s);
+    if (m === null) break;
     chunks.push(m[1].trim());
   }
   if (chunks.length === 0) return s;
@@ -207,7 +208,7 @@ function extractTopLevelJsonArraySubstring(s: string): string | null {
   let inString = false;
   let escaped = false;
   for (let i = start; i < s.length; i++) {
-    const ch = s[i]!;
+    const ch = s.charAt(i);
     if (inString) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;

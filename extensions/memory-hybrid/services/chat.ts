@@ -484,7 +484,7 @@ export async function chatComplete(opts: {
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = (resp as any).choices?.[0]?.message;
+    const msg = resp.choices?.[0]?.message;
     const msgContent = msg?.content?.trim();
     if (msgContent) return msgContent;
     // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
