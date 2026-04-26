@@ -18,6 +18,24 @@ function makeEntry(id: string, text: string): MemoryEntry {
 }
 
 describe("classifyMemoryOperationsBatch (#862)", () => {
+  it("single classify tolerates missing choices on response (#1159)", async () => {
+    const create = vi.fn().mockResolvedValue({} as { choices?: unknown[] });
+    const openai = { chat: { completions: { create } } } as unknown as OpenAI;
+    const warn = vi.fn();
+    const out = await classifyMemoryOperation(
+      "new fact",
+      null,
+      null,
+      [makeEntry("id1", "old")],
+      openai,
+      "gpt-4.1-nano",
+      { warn },
+    );
+    expect(out.action).toBe("ADD");
+    expect(out.reason).toMatch(/unparseable LLM response|classification failed/);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
   it("uses one chat.completions call for multiple candidates", async () => {
     const create = vi.fn().mockResolvedValue({
       choices: [
@@ -108,6 +126,27 @@ describe("classifyMemoryOperationsBatch (#862)", () => {
     expect(out).toHaveLength(2);
     expect(out[0].action).toBe("NOOP");
     expect(out[1].action).toBe("ADD");
+  });
+
+  it("falls back to sequential classify when batch response has no JSON array (#1155)", async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: "Here are my thoughts — no structured JSON." } }],
+      })
+      .mockResolvedValue({ choices: [{ message: { content: "NOOP | ok" } }] });
+    const openai = { chat: { completions: { create } } } as unknown as OpenAI;
+    const warn = vi.fn();
+    const items = [
+      { candidateText: "a", candidateEntity: null, candidateKey: null, existingFacts: [makeEntry("id1", "old a")] },
+      { candidateText: "b", candidateEntity: null, candidateKey: null, existingFacts: [makeEntry("id2", "old b")] },
+    ];
+    const out = await classifyMemoryOperationsBatch(items, openai, "gpt-4.1-nano", { warn });
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(out).toHaveLength(2);
+    expect(out[0].action).toBe("NOOP");
+    expect(out[1].action).toBe("NOOP");
+    expect(warn.mock.calls.some((c) => /parse\/length mismatch|batch classify/i.test(String(c[0])))).toBe(true);
   });
 });
 
