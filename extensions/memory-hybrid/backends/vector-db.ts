@@ -274,9 +274,11 @@ export class VectorDB {
       this.table = null;
       this.semanticQueryCacheTable = null;
       this.db = null;
-      this.logWarn(
-        `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${err instanceof Error ? err.message : String(err)}`,
-      );
+      if (!isHotReloadRace) {
+        this.logWarn(
+          `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     });
     return this.initPromise;
   }
