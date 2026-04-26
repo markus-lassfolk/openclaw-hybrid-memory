@@ -9,6 +9,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
 import { isReasoningModel, requiresMaxCompletionTokens } from "./model-capabilities.js";
+import { extractBalancedArraySlice } from "../utils/llm-json-array.js";
 
 /** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
 function buildClassifyChatBody(
@@ -197,37 +198,6 @@ function preferMarkdownJsonFenceContent(s: string): string {
   return chunks[chunks.length - 1] ?? s;
 }
 
-/**
- * Extract the first top-level JSON array substring with bracket matching (respects strings).
- * Greedy `\\[[\\s\\S]*\\]` breaks when `]` appears inside string values or reasoning trails.
- */
-function extractTopLevelJsonArraySubstring(s: string): string | null {
-  const start = s.indexOf("[");
-  if (start < 0) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < s.length; i++) {
-    const ch = s.charAt(i);
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === "[") depth++;
-    else if (ch === "]") {
-      depth--;
-      if (depth === 0) return s.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
 const BATCH_OBJECT_ARRAY_KEYS = [
   "classifications",
   "results",
@@ -308,8 +278,7 @@ function parseBalancedBatchArrayFromText(text: string): unknown[] | null {
   while (searchFrom < t.length) {
     const relStart = t.indexOf("[", searchFrom);
     if (relStart < 0) return null;
-    const sliceFromBracket = t.slice(relStart);
-    const candidate = extractTopLevelJsonArraySubstring(sliceFromBracket);
+    const candidate = extractBalancedArraySlice(t, relStart);
     if (!candidate) {
       searchFrom = relStart + 1;
       continue;
