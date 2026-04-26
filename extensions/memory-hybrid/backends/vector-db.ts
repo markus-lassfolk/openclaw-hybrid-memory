@@ -257,10 +257,11 @@ export class VectorDB {
     // Note: this handler marks persistent failure (lanceInitFailed). Transient init errors
     // from hot-reload races are handled via close()+ensureInitialized() or resetTableForReindex().
     this.initPromise = this.doInitialize().catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
+      const e = err instanceof Error ? err : new Error(String(err));
+      const msg = e.message;
       const isHotReloadRace = msg.includes("concurrent re-registration") || msg.includes("initialization aborted");
       if (!isHotReloadRace) {
-        capturePluginError(err as Error, {
+        capturePluginError(e, {
           operation: "vector-db-init",
           subsystem: "vector",
         });
@@ -276,7 +277,7 @@ export class VectorDB {
       this.db = null;
       if (!isHotReloadRace) {
         this.logWarn(
-          `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${err instanceof Error ? err.message : String(err)}`,
+          `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${e.message}`,
         );
       }
     });
