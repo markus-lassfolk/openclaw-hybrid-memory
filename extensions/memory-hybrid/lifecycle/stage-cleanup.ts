@@ -27,7 +27,7 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
-import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import {
   type SubagentEndedEvent,
   findActiveTaskForSubagentEnd,
@@ -383,7 +383,7 @@ export function registerCleanupHandlers(
           action: "cleanup:active-task-write-skipped",
           outcome: "skipped",
           sessionId: api.context?.sessionKey,
-          context: { reason: writeResult.reason, taskLabel: completed?.label },
+          context: { reason: writeResult.reason, taskLabel: label },
         });
       } else {
         api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);

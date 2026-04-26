@@ -26,7 +26,7 @@ import type { ScopeFilter } from "../types/memory.js";
 import type { SearchResult } from "../types/memory.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
 import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
-import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";

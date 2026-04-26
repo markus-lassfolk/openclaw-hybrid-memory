@@ -363,14 +363,13 @@ export async function buildSessionObservabilityReport(
   const injectionEntries: SessionTimelineEntry[] = [...injectionAuditActions];
   const injectionDetail = injectionAuditActions[0]?.detail as Record<string, unknown> | undefined;
 
+  const budgetTokens = (injectionDetail?.budgetTokens as number) ?? 0;
   const injectionSummary: InjectionSummary = {
     totalChars: injectionEntries.reduce((s, e) => s + (e.description.length ?? 0), 0),
     totalTokensEstimate: Math.ceil(injectionEntries.reduce((s, e) => s + (e.description.length ?? 0), 0) / 4),
     blocksInjected: injectionEntries.length,
-    budgetTokens: (injectionDetail?.budgetTokens as number) ?? 0,
-    budgetUsedFraction: (injectionDetail?.budgetTokens as number)
-      ? Math.min(1, (injectionEntries.length * 200) / ((injectionDetail.budgetTokens as number) || 1))
-      : 0,
+    budgetTokens,
+    budgetUsedFraction: budgetTokens ? Math.min(1, (injectionEntries.length * 200) / (budgetTokens || 1)) : 0,
     prependContext: (injectionDetail?.prependContext as string) ?? undefined,
     entries: injectionEntries.slice(0, limit),
   };
