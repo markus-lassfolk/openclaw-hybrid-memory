@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractBalancedArraySlice,
   extractFirstJsonArraySubstring,
+  stripBracketContextPreamble,
   stripMarkdownCodeFence,
   tryParseFirstJsonArray,
 } from "../utils/llm-json-array.js";
@@ -71,5 +72,32 @@ describe("tryParseFirstJsonArray", () => {
 
   it("returns null when nothing parses as array", () => {
     expect(tryParseFirstJsonArray("[oops")).toBeNull();
+  });
+
+  // GitHub #1153 / #1154 (GlitchTip): model echoes tool/template placeholders instead of JSON
+  it("returns null for [[reply_to_current]] placeholder (no SyntaxError)", () => {
+    expect(tryParseFirstJsonArray("[[reply_to_current]]")).toBeNull();
+  });
+
+  it("returns null for truncated [[reply_to_c… placeholder", () => {
+    expect(tryParseFirstJsonArray("[[reply_to_c")).toBeNull();
+  });
+
+  it("finds a valid array after a non-JSON [[placeholder]] line", () => {
+    const raw = `[[reply_to_current]]
+["preference", "entity"]`;
+    expect(tryParseFirstJsonArray(raw)).toEqual(["preference", "entity"]);
+  });
+
+  // GitHub #1151 / #1152: greedy /\[[\s\S]*\]/ grabbed junk + broke JSON.parse; balanced slice + retry fixes this
+  it("finds valid labels after an invalid balanced bracket span", () => {
+    const raw = `[[not valid json inside]]
+["alpha", "beta"]`;
+    expect(tryParseFirstJsonArray(raw)).toEqual(["alpha", "beta"]);
+  });
+
+  it("strips [Context: …] preamble before JSON array (#1166)", () => {
+    expect(stripBracketContextPreamble(`[Context: Tool]\n["a"]`)).toBe(`["a"]`);
+    expect(tryParseFirstJsonArray(`[Context: Topics]\n["fact","entity"]`)).toEqual(["fact", "entity"]);
   });
 });

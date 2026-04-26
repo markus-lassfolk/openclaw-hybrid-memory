@@ -51,8 +51,8 @@ describe("parseBatchClassifyResponseContent (#1007)", () => {
     expect(parseBatchClassifyResponseContent(raw)).toEqual([row]);
   });
 
-  it("throws when no array can be recovered", () => {
-    expect(() => parseBatchClassifyResponseContent("just prose")).toThrow(/no JSON array/);
+  it("returns null when no array can be recovered (#1155–#1156)", () => {
+    expect(parseBatchClassifyResponseContent("just prose")).toBeNull();
   });
 
   it("parses lenient array when one row is missing action", () => {
@@ -89,12 +89,18 @@ describe("parseBatchClassifyResponseContent (#1007)", () => {
     expect(parseBatchClassifyResponseContent(raw)).toEqual([{ action: "NOOP", targetId: null, reason: "ok" }]);
   });
 
-  it("rejects lenient array where less than half have action", () => {
+  it("returns null when lenient array has too few rows with action", () => {
     const raw = JSON.stringify([
       { targetId: null, reason: "no action" },
       { targetId: null, reason: "also no action" },
       { action: "ADD", targetId: null, reason: "only one" },
     ]);
-    expect(() => parseBatchClassifyResponseContent(`${raw}`)).toThrow(/no JSON array/);
+    expect(parseBatchClassifyResponseContent(`${raw}`)).toBeNull();
+  });
+
+  it("parses batch array after a non-JSON [[placeholder]] line (#1155)", () => {
+    const inner = JSON.stringify([row, row]);
+    const raw = `[[reply_to_current]]\n${inner}`;
+    expect(parseBatchClassifyResponseContent(raw)).toEqual([row, row]);
   });
 });

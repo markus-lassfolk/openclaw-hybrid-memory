@@ -1158,6 +1158,13 @@ describe("withLLMRetry — non-retryable 400 (#1011)", () => {
     vi.useRealTimers();
   });
 
+  it("#1165: does not retry generic 400 unsupported operation (single attempt)", async () => {
+    const err = Object.assign(new Error("400 The requested operation is unsupported."), { status: 400 });
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow(/unsupported/i);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry 400 with empty body phrasing; enriches message with llmContext", async () => {
     const err = Object.assign(new Error("400 status code (no body)"), { status: 400 });
     const fn = vi.fn().mockRejectedValue(err);

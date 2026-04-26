@@ -3,7 +3,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { LLMRetryError, is401OrWrapped, is403Like, is404Like, is429OrWrapped, is500OrWrapped } from "../chat.js";
+import {
+  LLMRetryError,
+  is401OrWrapped,
+  is403Like,
+  is404Like,
+  is429OrWrapped,
+  is500OrWrapped,
+  isContextLengthError,
+} from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
 import { is403QuotaOrRateLimitLike } from "../llm-rate-limit-headers.js";
 import type { EmbeddingProvider } from "./types.js";
@@ -103,10 +111,13 @@ export class AsyncSemaphore {
  * OpenAI embedding models have a hard limit of 8192 tokens per input.
  * Using ~4 chars/token heuristic (consistent with estimateTokens in utils/text.ts),
  * we clamp inputs to this character ceiling before hitting the API.
- * Overshooting the estimate slightly is harmless; undershooting wastes a round trip.
+ * Use a conservative ~3 chars/token effective ratio so dense text (code, CJK, markup)
+ * still stays under the provider token count (#1161, #1164).
  */
 const OPENAI_EMBEDDING_MAX_TOKENS = 8192;
-const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 chars
+
+/** Exported for tests — conservative char ceiling before OpenAI embedding API (#1161, #1164). */
+export const OPENAI_EMBEDDING_INPUT_MAX_CHARS = Math.floor(OPENAI_EMBEDDING_MAX_TOKENS * 3); // ~24 576 chars
 
 /**
  * Truncate text to fit within the OpenAI embedding token limit.
@@ -114,8 +125,8 @@ const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 c
  * consistent across the codebase without adding a tokenizer dependency here.
  */
 export function truncateForEmbedding(text: string): string {
-  if (text.length <= OPENAI_EMBEDDING_MAX_CHARS) return text;
-  return text.slice(0, OPENAI_EMBEDDING_MAX_CHARS).trimEnd();
+  if (text.length <= OPENAI_EMBEDDING_INPUT_MAX_CHARS) return text;
+  return text.slice(0, OPENAI_EMBEDDING_INPUT_MAX_CHARS).trimEnd();
 }
 
 /** Hash text for cache key (prevents large text strings as Map keys). */
@@ -181,7 +192,8 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
     is429OrWrapped(err) ||
     is500OrWrapped(err) ||
     isOllamaCircuitBreakerOpen(err) ||
-    isOllamaConnectionFailure(err)
+    isOllamaConnectionFailure(err) ||
+    isContextLengthError(err)
   ) {
     return true;
   }
@@ -194,7 +206,8 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
         is429OrWrapped(c) ||
         is500OrWrapped(c) ||
         isOllamaCircuitBreakerOpen(c) ||
-        isOllamaConnectionFailure(c),
+        isOllamaConnectionFailure(c) ||
+        isContextLengthError(c),
     );
   }
   return false;

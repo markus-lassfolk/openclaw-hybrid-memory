@@ -257,10 +257,17 @@ export class VectorDB {
     // Note: this handler marks persistent failure (lanceInitFailed). Transient init errors
     // from hot-reload races are handled via close()+ensureInitialized() or resetTableForReindex().
     this.initPromise = this.doInitialize().catch((err) => {
-      capturePluginError(err as Error, {
-        operation: "vector-db-init",
-        subsystem: "vector",
-      });
+      const e = err instanceof Error ? err : new Error(String(err));
+      const msg = e.message;
+      const isHotReloadRace = msg.includes("concurrent re-registration") || msg.includes("initialization aborted");
+      if (!isHotReloadRace) {
+        capturePluginError(e, {
+          operation: "vector-db-init",
+          subsystem: "vector",
+        });
+      } else {
+        this.logWarn(`memory-hybrid: VectorDB init aborted during hot reload (benign): ${msg}`);
+      }
       this.initPromise = null;
       this.lanceDbAvailable = false;
       this.lanceInitFailed = true;
@@ -268,9 +275,11 @@ export class VectorDB {
       this.table = null;
       this.semanticQueryCacheTable = null;
       this.db = null;
-      this.logWarn(
-        `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${err instanceof Error ? err.message : String(err)}`,
-      );
+      if (!isHotReloadRace) {
+        this.logWarn(
+          `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${e.message}`,
+        );
+      }
     });
     return this.initPromise;
   }
@@ -1034,9 +1043,7 @@ export class VectorDB {
         if (!this.vectorDimMismatchLogged) {
           this.vectorDimMismatchLogged = true;
           this.logWarn(
-            `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. ` +
-              `Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details. ` +
-              `(Further mismatches in this session are silent; fix config and re-index.)`,
+            `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details. (Further mismatches in this session are silent; fix config and re-index.)`,
           );
         }
         return [];

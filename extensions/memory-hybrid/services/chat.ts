@@ -336,6 +336,18 @@ function isNonRetryableClient400(err: unknown): boolean {
   return false;
 }
 
+/** Gateway/proxy may return HTTP 400 with an empty body — transient, not a plugin bug (#1157). */
+function is400EmptyBodyGatewayError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /\b400\b.*\bno body\b/i.test(err.message);
+}
+
+/** Some Azure/Foundry deployments return 400 when chat params are not supported for the model (#1165). */
+function is400UnsupportedOperationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /\b400\b.*\bunsupported\b/i.test(err.message);
+}
+
 /**
  * Detect malformed Responses API reasoning-output sequencing errors, e.g.:
  * "Item 'rs_...' of type 'reasoning' was provided without its required following item."
@@ -472,7 +484,7 @@ export async function chatComplete(opts: {
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = (resp as any).choices[0]?.message;
+    const msg = resp.choices?.[0]?.message;
     const msgContent = msg?.content?.trim();
     if (msgContent) return msgContent;
     // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
@@ -509,7 +521,11 @@ export async function chatComplete(opts: {
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err) || // #302: OpenAI SDK InternalServerError has no numeric prefix
       isOllamaOOM(err) || // #387: Ollama OOM — model too large for available RAM, not a bug
-      isResponsesReasoningSequenceError(err); // #1034: malformed reasoning item sequence — retryable
+      isResponsesReasoningSequenceError(err) || // #1034: malformed reasoning item sequence — retryable
+      is400EmptyBodyGatewayError(error) ||
+      is400EmptyBodyGatewayError(err) || // #1157: 400 (no body) from gateway — do not GlitchTip
+      is400UnsupportedOperationError(error) ||
+      is400UnsupportedOperationError(err); // #1165: model/endpoint mismatch
     const isConfigError =
       err instanceof UnconfiguredProviderError ||
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
@@ -690,7 +706,9 @@ export async function withLLMRetry<T>(
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
           /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
-          isResponsesReasoningSequenceError(lastError); // #1034
+          isResponsesReasoningSequenceError(lastError) || // #1034
+          is400EmptyBodyGatewayError(lastError) || // #1157
+          is400UnsupportedOperationError(lastError); // #1165
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",

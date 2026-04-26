@@ -1304,7 +1304,7 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
     vi.clearAllMocks();
   });
 
-  it("#442: truncates text > 32768 chars before calling the API", async () => {
+  it("#442 / #1161: truncates long text before calling the embedding API", async () => {
     const vector = [0.1, 0.2, 0.3];
     const mockCreate = vi.fn().mockImplementation((_params: { input: string }) => {
       return Promise.resolve({ data: [{ embedding: vector }] });
@@ -1312,11 +1312,12 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
     const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
     const provider = new Embeddings(client, "text-embedding-3-small", 3);
 
-    const longText = "a".repeat(40000); // exceeds 32768 char limit
+    const { OPENAI_EMBEDDING_INPUT_MAX_CHARS } = await import("../services/embeddings/shared.js");
+    const longText = "a".repeat(OPENAI_EMBEDDING_INPUT_MAX_CHARS + 5000);
     await provider.embed(longText);
 
     const calledInput: string = mockCreate.mock.calls[0][0].input;
-    expect(calledInput.length).toBeLessThanOrEqual(32768);
+    expect(calledInput.length).toBeLessThanOrEqual(OPENAI_EMBEDDING_INPUT_MAX_CHARS);
   });
 
   it("#442: does not truncate text within the limit", async () => {
@@ -1334,7 +1335,7 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
     expect(calledInput).toBe(shortText);
   });
 
-  it("#442: truncates batch items > 32768 chars in embedBatch", async () => {
+  it("#442 / #1161: truncates long batch items in embedBatch", async () => {
     const vector = [0.1, 0.2, 0.3];
     const mockCreate = vi.fn().mockImplementation((params: { input: string[] }) => {
       return Promise.resolve({
@@ -1344,11 +1345,12 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
     const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
     const provider = new Embeddings(client, "text-embedding-3-small", 3);
 
-    const texts = ["a".repeat(40000), "short text"];
+    const { OPENAI_EMBEDDING_INPUT_MAX_CHARS } = await import("../services/embeddings/shared.js");
+    const texts = ["a".repeat(OPENAI_EMBEDDING_INPUT_MAX_CHARS + 5000), "short text"];
     await provider.embedBatch(texts);
 
     const calledBatch: string[] = mockCreate.mock.calls[0][0].input;
-    expect(calledBatch[0].length).toBeLessThanOrEqual(32768);
+    expect(calledBatch[0].length).toBeLessThanOrEqual(OPENAI_EMBEDDING_INPUT_MAX_CHARS);
     expect(calledBatch[1]).toBe("short text");
   });
 
@@ -1608,6 +1610,14 @@ describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
     expect(shouldSuppressEmbeddingError(Object.assign(new Error("401 Unauthorized"), { status: 401 }))).toBe(true);
     expect(shouldSuppressEmbeddingError(Object.assign(new Error("403 Forbidden"), { status: 403 }))).toBe(true);
     expect(shouldSuppressEmbeddingError(Object.assign(new Error("404 Not Found"), { status: 404 }))).toBe(true);
+  });
+
+  it("suppresses embedding context-length / oversize input errors (#1161, #1164)", () => {
+    expect(
+      shouldSuppressEmbeddingError(
+        new Error("400 This model's maximum context length is 8192 tokens, however you requested 9201 tokens"),
+      ),
+    ).toBe(true);
   });
 
   it("suppresses 429 rate limit errors", () => {

@@ -139,7 +139,7 @@ async function discoverCategoriesFromOther(
           }),
         { maxRetries: 2 },
       );
-      const content = resp.choices[0]?.message?.content?.trim() || "[]";
+      const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
       const labels = tryParseFirstJsonArray(content);
       if (!labels) continue;
       anyBatchSucceeded = true;
@@ -247,7 +247,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       { maxRetries: 2 },
     );
 
-    const content = resp.choices[0]?.message?.content?.trim() || "[]";
+    const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
     const parsed = tryParseFirstJsonArray(content);
     if (!parsed) return new Map();
 
@@ -355,14 +355,15 @@ async function runClassifyForCli(
   }
 
   const numBatches = Math.ceil(others.length / config.batchSize);
-  if (!progressReporter && numBatches > 0) {
+  let reporter = progressReporter;
+  if (!reporter && numBatches > 0) {
     const sink = { log: (m: string) => logger.info(m) };
-    progressReporter = createProgressReporter(sink, numBatches, "Classifying");
+    reporter = createProgressReporter(sink, numBatches, "Classifying");
   }
   let totalReclassified = 0;
   let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
-    progressReporter?.update(batchIndex + 1);
+    reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
     const results = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
@@ -372,7 +373,7 @@ async function runClassifyForCli(
     batchIndex++;
     if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
   }
-  progressReporter?.done();
+  reporter?.done();
 
   const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
   return { reclassified: totalReclassified, total: others.length, breakdown };
