@@ -28,7 +28,7 @@ import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";

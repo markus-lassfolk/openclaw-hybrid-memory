@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { buildSessionObservabilityReport } from "../services/session-observability.js";
-import type { AuditStore } from "../backends/audit-store.js";
+import type { AuditEventInput, AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 
@@ -12,35 +12,13 @@ import type { FactsDB } from "../backends/facts-db.js";
 // Minimal mock factories
 // ---------------------------------------------------------------------------
 
+type AuditRow = ReturnType<AuditStore["query"]>[number];
+
 function makeMockAuditStore(): Pick<AuditStore, "query" | "append"> {
-  const rows: Array<{
-    id: string;
-    timestamp: number;
-    agentId: string;
-    action: string;
-    target: string | null;
-    outcome: string;
-    durationMs: number | null;
-    error: string | null;
-    context: Record<string, unknown> | null;
-    sessionId: string | null;
-    model: string | null;
-    tokens: number | null;
-  }> = [];
+  const rows: AuditRow[] = [];
 
   return {
-    append(input: {
-      agentId: string;
-      action: string;
-      target?: string | null;
-      outcome: string;
-      durationMs?: number;
-      error?: string;
-      context?: Record<string, unknown>;
-      sessionId?: string;
-      model?: string;
-      tokens?: number;
-    }) {
+    append(input: AuditEventInput) {
       rows.push({
         id: `audit-${rows.length}`,
         timestamp: input.timestamp ?? Date.now(),
@@ -57,16 +35,7 @@ function makeMockAuditStore(): Pick<AuditStore, "query" | "append"> {
       });
       return `audit-${rows.length - 1}`;
     },
-    query(opts: {
-      sinceMs?: number;
-      untilMs?: number;
-      agentId?: string;
-      action?: string;
-      outcome?: string;
-      targetContains?: string;
-      sessionId?: string;
-      limit?: number;
-    }) {
+    query(opts: Parameters<AuditStore["query"]>[0]) {
       return rows.filter((r) => {
         if (opts.sessionId && r.sessionId !== opts.sessionId) return false;
         if (opts.agentId && r.agentId !== opts.agentId) return false;
@@ -78,7 +47,7 @@ function makeMockAuditStore(): Pick<AuditStore, "query" | "append"> {
   };
 }
 
-function makeMockFactsDb(): Pick<FactsDB, "search" | "count" | "getEpisodesBySession"> {
+function makeMockFactsDb(): Pick<FactsDB, "search" | "count"> {
   return {
     count() {
       return 0;
@@ -86,17 +55,13 @@ function makeMockFactsDb(): Pick<FactsDB, "search" | "count" | "getEpisodesBySes
     search() {
       return [];
     },
-    getEpisodesBySession(_sessionId: string, _limit: number) {
-      return [];
-    },
   } as unknown as FactsDB;
 }
 
-function makeMockEventLog(): Pick<EventLog, "append" | "list"> {
+function makeMockEventLog(): Pick<EventLog, "append"> {
   return {
-    append() {},
-    list() {
-      return [];
+    append() {
+      return "";
     },
   } as unknown as EventLog;
 }

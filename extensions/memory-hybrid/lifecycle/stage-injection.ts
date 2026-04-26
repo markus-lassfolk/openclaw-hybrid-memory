@@ -13,7 +13,7 @@ import { createRecallSpan, createRecallTimingLogger } from "../services/recall-t
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
-import { resolveAgentIdFromHookEvent } from "./hook-resolution-api.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
 const HEBBIAN_MAX_K = 8;

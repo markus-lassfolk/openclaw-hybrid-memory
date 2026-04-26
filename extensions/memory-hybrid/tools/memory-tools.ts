@@ -335,22 +335,26 @@ export function registerMemoryTools(
         ),
         source: Type.Optional(
           Type.String({
-            description: "Optional: constrain results to an exact fact source before ranking (e.g. conversation, ingest, reflection).",
+            description:
+              "Optional: constrain results to an exact fact source before ranking (e.g. conversation, ingest, reflection).",
           }),
         ),
         verificationTier: Type.Optional(
           Type.String({
-            description: "Optional: constrain results to verified facts of a given tier before ranking (e.g. critical).",
+            description:
+              "Optional: constrain results to verified facts of a given tier before ranking (e.g. critical).",
           }),
         ),
         validFromSec: Type.Optional(
           Type.Number({
-            description: "Optional: constrain results to facts whose valid_from is on/after this Unix timestamp before ranking.",
+            description:
+              "Optional: constrain results to facts whose valid_from is on/after this Unix timestamp before ranking.",
           }),
         ),
         validUntilSec: Type.Optional(
           Type.Number({
-            description: "Optional: constrain results to facts whose validity extends past this Unix timestamp before ranking.",
+            description:
+              "Optional: constrain results to facts whose validity extends past this Unix timestamp before ranking.",
           }),
         ),
         sourceSession: Type.Optional(
@@ -359,10 +363,13 @@ export function registerMemoryTools(
           }),
         ),
         retrievalMode: Type.Optional(
-          Type.Union([Type.Literal("interactive-recall"), Type.Literal("explicit-deep"), Type.Literal("constrained-recall")], {
-            description:
-              'Optional retrieval strategy selection. Use "constrained-recall" for filter → rank → hydrate searches inside a known boundary.',
-          }),
+          Type.Union(
+            [Type.Literal("interactive-recall"), Type.Literal("explicit-deep"), Type.Literal("constrained-recall")],
+            {
+              description:
+                'Optional retrieval strategy selection. Use "constrained-recall" for filter → rank → hydrate searches inside a known boundary.',
+            },
+          ),
         ),
         includeSuperseded: Type.Optional(
           Type.Boolean({
@@ -865,7 +872,8 @@ export function registerMemoryTools(
     const hasAdditionalConstrainedFilters = Boolean(
       category || source || verificationTier || validFromSec != null || validUntilSec != null || sourceSession,
     );
-    const shouldUseConstrainedMode = retrievalMode === "constrained-recall" || (!retrievalMode && hasAdditionalConstrainedFilters);
+    const shouldUseConstrainedMode =
+      retrievalMode === "constrained-recall" || (!retrievalMode && hasAdditionalConstrainedFilters);
     const effectiveMode = shouldUseConstrainedMode ? "constrained-recall" : retrievalMode;
     const constrainedFilters = shouldUseConstrainedMode
       ? {
@@ -922,7 +930,9 @@ export function registerMemoryTools(
         semanticWarning = vectorPrep.warning;
       }
       const queryExpander =
-        cfg.queryExpansion?.enabled && rrfStrategies.includes("semantic") ? new QueryExpander(cfg.queryExpansion, openai) : null;
+        cfg.queryExpansion?.enabled && rrfStrategies.includes("semantic")
+          ? new QueryExpander(cfg.queryExpansion, openai)
+          : null;
       const embedFn =
         queryVector != null
           ? (text: string) =>
@@ -932,7 +942,9 @@ export function registerMemoryTools(
         config: rrfConfig,
         ...(effectiveMode !== "interactive-recall" && effectivePolicy
           ? { policy: effectivePolicy }
-          : effectiveMode === "interactive-recall" ? { mode: effectiveMode as "interactive-recall" } : {}),
+          : effectiveMode === "interactive-recall"
+            ? { mode: effectiveMode as "interactive-recall" }
+            : {}),
         ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
         ...(constrainedFilters ? { constrainedFilters } : {}),
         includeSuperseded,
@@ -1080,7 +1092,8 @@ export function registerMemoryTools(
         mode: "constrained-recall" as const,
         contract: "filter → rank → hydrate",
         filterBasis: filterPairs,
-        rankBasis: "semantic rank inside the structured candidate set (with hydrated provenance/context in the final result)",
+        rankBasis:
+          "semantic rank inside the structured candidate set (with hydrated provenance/context in the final result)",
       };
     })();
     const retrievalExplanationText = retrievalExplanation
