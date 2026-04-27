@@ -70,6 +70,15 @@ const consecutiveFailures = new Map<string, number>();
 /** Returns true when the error is an ENOENT (file not found) OS error. */
 const isEnoent = (err: unknown): boolean => (err as NodeJS.ErrnoException).code === "ENOENT";
 
+/**
+ * Whether a basename under the OpenClaw sessions dir should be scanned for passive extraction.
+ * Excludes `.checkpoint.` sidecars (often a single multi‑MB JSON line — not chat transcripts)
+ * and `.deleted*` tombstones (same convention as procedure-extractor).
+ */
+export function isPassiveObserverTranscriptCandidate(basename: string): boolean {
+  return basename.endsWith(".jsonl") && !basename.startsWith(".deleted") && !basename.includes(".checkpoint.");
+}
+
 // ---------------------------------------------------------------------------
 // JSONL text extraction
 // ---------------------------------------------------------------------------
@@ -298,7 +307,7 @@ export async function runPassiveObserver(
   let filePaths: string[];
   try {
     filePaths = readdirSync(sessionsDir)
-      .filter((f) => f.endsWith(".jsonl"))
+      .filter(isPassiveObserverTranscriptCandidate)
       .sort() // deterministic ordering across OS/filesystems
       .map((f) => join(sessionsDir, f));
   } catch (err) {

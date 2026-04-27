@@ -25,6 +25,20 @@ No unreleased changes are documented here yet.
 
 ---
 
+## [2026.4.272] - 2026-04-27
+
+**Previous baseline:** [2026.4.271] (2026-04-27)
+
+### Release summary
+
+**2026.4.272** stops the **passive observer** from scanning OpenClaw **`*.checkpoint.*.jsonl`** session sidecars (large single-line JSON), which removes noisy **“skipping oversized JSONL line”** warnings and avoids pointless I/O. **`.deleted*`** session tombstones are ignored for the same scan list. Version **2026.4.272** is published across **`extensions/memory-hybrid/package.json`**, **`openclaw.plugin.json`**, **`packages/openclaw-hybrid-memory-install/package.json`**, and **`package-lock.json`**. Human-oriented upgrade notes: [`release-notes/release-notes-2026.4.272.md`](release-notes/release-notes-2026.4.272.md).
+
+### Fixed
+
+- **Passive observer:** Exclude **checkpoint** and **deleted** session JSONL basenames from the sessions-dir scan; unit tests for `isPassiveObserverTranscriptCandidate`.
+
+---
+
 ## [2026.4.271] - 2026-04-27
 
 **Previous baseline:** [2026.4.270] (2026-04-27)
@@ -1419,7 +1433,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.271...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.272...HEAD
+[2026.4.272]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.271...v2026.4.272
 [2026.4.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.270...v2026.4.271
 [2026.4.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.260...v2026.4.270
 [2026.4.260]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.141...v2026.4.260

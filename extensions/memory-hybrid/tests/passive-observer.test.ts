@@ -16,11 +16,39 @@ import {
   extractTextFromJsonlChunk,
   getCursorsPath,
   isIdentityFact,
+  isPassiveObserverTranscriptCandidate,
   loadCursors,
   parseObserverResponse,
   runPassiveObserver,
   saveCursors,
 } from "../services/passive-observer.js";
+
+// ---------------------------------------------------------------------------
+// 0. Session file eligibility (OpenClaw checkpoint sidecars)
+// ---------------------------------------------------------------------------
+
+describe("isPassiveObserverTranscriptCandidate", () => {
+  it("accepts normal session jsonl basenames", () => {
+    expect(isPassiveObserverTranscriptCandidate("01d6694a-aaea-473e-a97f-fcd76fb89644.jsonl")).toBe(true);
+    expect(isPassiveObserverTranscriptCandidate("s1.jsonl")).toBe(true);
+  });
+
+  it("rejects OpenClaw checkpoint sidecars", () => {
+    expect(
+      isPassiveObserverTranscriptCandidate(
+        "01d6694a-aaea-473e-a97f-fcd76fb89644.checkpoint.de0ef775-ae23-4c65-931f-b744f0d11862.jsonl",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects deleted tombstones", () => {
+    expect(isPassiveObserverTranscriptCandidate(".deleted-someid.jsonl")).toBe(false);
+  });
+
+  it("rejects non-jsonl", () => {
+    expect(isPassiveObserverTranscriptCandidate("readme.txt")).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // 1. JSONL text extraction tests
