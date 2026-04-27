@@ -742,6 +742,8 @@ export async function runVerifyForCli(
     const msg = e instanceof Error ? e.message : String(e);
     return msg.slice(0, 100).replace(/\s+/g, " ").trim();
   }
+  /** Azure Responses rejects max_output_tokens below 16; chat probes still work with a small cap. */
+  const VERIFY_LLM_PROBE_MAX_TOKENS = 64;
   /** Cache direct client per provider so we use the same client for each model of that provider. */
   const directClientCache = new Map<string, OpenAI | null>();
   function getDirectClient(provider: string): OpenAI | null {
@@ -768,15 +770,25 @@ export async function runVerifyForCli(
     // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/default/heavy.
     if (opts.testLlm && enabled && (hasOAuth || hasApi)) {
       const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
+      const wireApi = resolveWireApi(model);
+      // Some Azure SKUs only expose Responses; others reject non-default temperature on chat — probe must match.
+      const isResponsesOnlyModel =
+        wireApi === "responses" ||
+        (provider === "azure-foundry" && bareModel === "gpt-5.4-pro") ||
+        (provider === "azure-foundry" && /^o3-pro$/i.test(bareModel)) ||
+        (provider === "openai" && (bareModel === "gpt-5-codex" || bareModel === "codex"));
+
       if (hasOAuth && gatewayBaseUrl && gatewayToken) {
         try {
           const oauthClient = new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl });
           await chatComplete({
             model,
             content: "Reply with exactly: OK",
-            maxTokens: 10,
+            maxTokens: VERIFY_LLM_PROBE_MAX_TOKENS,
+            temperature: 1,
             openai: oauthClient,
             feature: CostFeature.verifyCliLlm,
+            ...(isResponsesOnlyModel ? { wireApi: "responses" as const } : {}),
           });
           oauthResult = true;
         } catch (e) {
@@ -790,12 +802,6 @@ export async function runVerifyForCli(
         }
       }
       if (hasApi) {
-        const wireApi = resolveWireApi(model);
-        const isResponsesOnlyModel =
-          wireApi === "responses" ||
-          (provider === "azure-foundry" && bareModel === "gpt-5.4-pro") ||
-          (provider === "openai" && (bareModel === "gpt-5-codex" || bareModel === "codex"));
-
         if (isResponsesOnlyModel) {
           const directClient = getDirectClient(provider);
           if (!directClient) {
@@ -806,7 +812,8 @@ export async function runVerifyForCli(
               await callResponsesApi(directClient, {
                 model: bareModel,
                 content: "Reply with exactly: OK",
-                maxTokens: 10,
+                maxTokens: VERIFY_LLM_PROBE_MAX_TOKENS,
+                temperature: 1,
               });
               apiResult = true;
               apiSkippedReason = undefined;
@@ -846,7 +853,8 @@ export async function runVerifyForCli(
               await chatComplete({
                 model: bareModel,
                 content: "Reply with exactly: OK",
-                maxTokens: 10,
+                maxTokens: VERIFY_LLM_PROBE_MAX_TOKENS,
+                temperature: 1,
                 openai: directClient,
                 feature: CostFeature.verifyCliLlm,
               });
