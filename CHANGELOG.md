@@ -25,6 +25,24 @@ No unreleased changes are documented here yet.
 
 ---
 
+## [2026.4.271] - 2026-04-27
+
+**Previous baseline:** [2026.4.270] (2026-04-27)
+
+### Release summary
+
+**2026.4.271** aligns **`hybrid-mem verify --test-llm`** with current **Azure Foundry Responses** and **chat** provider rules (token/output floors, temperature for chat probes, **`azure-foundry/o3-pro`** via Responses, shared routing for OAuth and API-key paths). **Dev dependencies** were refreshed via Dependabot (**#1169**). Version **2026.4.271** is published across **`extensions/memory-hybrid/package.json`**, **`openclaw.plugin.json`**, **`packages/openclaw-hybrid-memory-install/package.json`**, and **`package-lock.json`**. Human-oriented upgrade notes: [`release-notes/release-notes-2026.4.271.md`](release-notes/release-notes-2026.4.271.md).
+
+### Changed
+
+- **`hybrid-mem verify --test-llm`:** Probes use **Responses-appropriate** max output / caps and **chat-appropriate** temperature for Azure **`gpt-5.5`** SKUs; **`azure-foundry/o3-pro`** is exercised through **Responses**; OAuth and API-key paths share the same **Responses** routing where applicable.
+
+### Maintenance
+
+- **Dev dependencies:** Minor/patch group bump (**#1169**).
+
+---
+
 ## [2026.4.270] - 2026-04-27
 
 **Previous baseline:** [2026.4.260] (2026-04-26)
@@ -1401,7 +1419,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.270...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.271...HEAD
+[2026.4.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.270...v2026.4.271
 [2026.4.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.260...v2026.4.270
 [2026.4.260]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.141...v2026.4.260
 [2026.4.141]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.140...v2026.4.141
