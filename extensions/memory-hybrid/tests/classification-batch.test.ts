@@ -169,7 +169,7 @@ describe("classify completion API params (#1008)", () => {
     const arg = create.mock.calls[0][0] as Record<string, unknown>;
     expect(arg).toMatchObject({ model: "azure-foundry/gpt-5.4-nano", max_completion_tokens: 100 });
     expect(arg).not.toHaveProperty("max_tokens");
-    expect(arg.temperature).toBe(0);
+    expect(arg).not.toHaveProperty("temperature");
   });
 
   it("omits temperature for o-series reasoning model (single)", async () => {

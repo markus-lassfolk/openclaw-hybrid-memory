@@ -11,7 +11,7 @@
  */
 
 import type OpenAI from "openai";
-import { isReasoningModel } from "./model-capabilities.js";
+import { shouldOmitSamplingParams } from "./model-capabilities.js";
 
 export interface ResponsesCreateParams {
   model: string;
@@ -63,7 +63,7 @@ export function buildResponsesRequestBody(params: ResponsesCreateParams): Respon
   if (maxTokens != null) {
     body.max_output_tokens = maxTokens;
   }
-  if (!isReasoningModel(model) && temperature != null) {
+  if (!shouldOmitSamplingParams(model) && temperature != null) {
     body.temperature = temperature;
   }
   return body;
@@ -168,7 +168,7 @@ export function buildResponsesRequestFromChatBody(merged: Record<string, unknown
   if (maxTokens != null) {
     body.max_output_tokens = maxTokens;
   }
-  if (!isReasoningModel(model) && typeof merged.temperature === "number") {
+  if (!shouldOmitSamplingParams(model) && typeof merged.temperature === "number") {
     body.temperature = merged.temperature;
   }
   return body;

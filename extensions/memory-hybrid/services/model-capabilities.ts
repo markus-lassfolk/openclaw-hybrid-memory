@@ -266,6 +266,17 @@ export function isReasoningModel(model: string): boolean {
   return modelPathSegments(model).some((seg) => /^o[0-9]+(?:-[a-z]+)?$/.test(seg));
 }
 
+/**
+ * Models where chat.completions must not send custom `temperature` / `top_p` (omit entirely; default applies).
+ * - o-series: OpenAI reasoning models only accept default sampling.
+ * - gpt-5* on Azure Foundry/APIM: many SKUs return HTTP 400 if temperature ≠ 1; hybrid-mem verify probes use
+ *   temperature 1 for this reason (see cli/cmd-verify.ts). Reflection/distill used 0.2 and hit the same 400.
+ */
+export function shouldOmitSamplingParams(model: string): boolean {
+  if (isReasoningModel(model)) return true;
+  return modelPathSegments(model).some((seg) => /^gpt-5/i.test(seg));
+}
+
 /** OpenAI-compatible chat.completions token limit field for the given model id. */
 export function chatCompletionTokenParams(
   model: string,

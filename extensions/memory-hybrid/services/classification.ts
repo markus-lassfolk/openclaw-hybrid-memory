@@ -8,7 +8,7 @@ import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
-import { isReasoningModel, requiresMaxCompletionTokens } from "./model-capabilities.js";
+import { requiresMaxCompletionTokens, shouldOmitSamplingParams } from "./model-capabilities.js";
 import { extractBalancedArraySlice } from "../utils/llm-json-array.js";
 
 /** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
@@ -23,7 +23,7 @@ function buildClassifyChatBody(
     messages: [{ role: "user", content: userContent }],
     ...(useMaxCompletionTokens ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
   };
-  if (!isReasoningModel(model)) {
+  if (!shouldOmitSamplingParams(model)) {
     body.temperature = 0;
   }
   return body;

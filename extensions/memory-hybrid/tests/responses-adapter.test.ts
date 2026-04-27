@@ -31,13 +31,22 @@ describe("buildResponsesRequestBody", () => {
     expect(body.max_output_tokens).toBe(4000);
   });
 
-  it("includes temperature for non-reasoning models", () => {
+  it("includes temperature for non-reasoning, non-gpt5 models", () => {
+    const body = buildResponsesRequestBody({
+      model: "gpt-4o",
+      content: "test",
+      temperature: 0.5,
+    });
+    expect(body.temperature).toBe(0.5);
+  });
+
+  it("strips temperature for gpt-5 models", () => {
     const body = buildResponsesRequestBody({
       model: "gpt-5.4-pro",
       content: "test",
       temperature: 0.5,
     });
-    expect(body.temperature).toBe(0.5);
+    expect(body.temperature).toBeUndefined();
   });
 
   it("strips temperature for reasoning models (o3-pro)", () => {

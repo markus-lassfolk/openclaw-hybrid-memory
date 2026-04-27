@@ -13,8 +13,8 @@ import {
   type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
-  isReasoningModel,
   requiresMaxCompletionTokens,
+  shouldOmitSamplingParams,
   resolveWireApi,
 } from "./model-capabilities.js";
 import { callResponsesApi } from "./responses-adapter.js";
@@ -472,7 +472,7 @@ export async function chatComplete(opts: {
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
     };
-    if (!isReasoningModel(model)) {
+    if (!shouldOmitSamplingParams(model)) {
       body.temperature = temperature;
     }
     const doCreate = () =>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { requiresMaxCompletionTokens } from "../services/model-capabilities.js";
+import { requiresMaxCompletionTokens, shouldOmitSamplingParams } from "../services/model-capabilities.js";
 
 /**
  * These tests cover the `remapMaxTokensForOpenAI` token-param remapping logic
@@ -36,6 +36,20 @@ describe("remapMaxTokensForOpenAI token-param remapping", () => {
       expect(requiresMaxCompletionTokens("claude-3-5-sonnet-latest")).toBe(false);
       expect(requiresMaxCompletionTokens("openai/gpt-4o-mini")).toBe(false);
       expect(requiresMaxCompletionTokens("azure/gpt-4o")).toBe(false);
+    });
+  });
+
+  describe("shouldOmitSamplingParams", () => {
+    it("returns true for o-series and gpt-5* (any provider prefix)", () => {
+      expect(shouldOmitSamplingParams("o3")).toBe(true);
+      expect(shouldOmitSamplingParams("azure-foundry/o3-pro")).toBe(true);
+      expect(shouldOmitSamplingParams("gpt-5.5")).toBe(true);
+      expect(shouldOmitSamplingParams("azure-foundry/gpt-5.5")).toBe(true);
+      expect(shouldOmitSamplingParams("azure-foundry/gpt-5.4-pro")).toBe(true);
+    });
+    it("returns false for gpt-4* and non-5 chat models", () => {
+      expect(shouldOmitSamplingParams("gpt-4o")).toBe(false);
+      expect(shouldOmitSamplingParams("azure-foundry/gpt-4.1-mini")).toBe(false);
     });
   });
 });

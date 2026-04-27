@@ -11,7 +11,11 @@ import {
 } from "../config/parsers/core.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { isAzureOpenAiResourceEndpoint } from "../services/embeddings/shared.js";
-import { isReasoningModel, requiresMaxCompletionTokens, resolveWireApi } from "../services/model-capabilities.js";
+import {
+  requiresMaxCompletionTokens,
+  resolveWireApi,
+  shouldOmitSamplingParams,
+} from "../services/model-capabilities.js";
 import {
   type ResponsesApiResponse,
   buildResponsesRequestFromChatBody,
@@ -875,7 +879,7 @@ export function buildMultiProviderOpenAI(
 
   /**
    * Newer OpenAI models (o-series, gpt-5+, gpt-4.1*) use `max_completion_tokens` instead of `max_tokens`.
-   * Reasoning models (o1, o3, o4-*) also reject temperature/top_p — strip those params.
+   * Reasoning models (o1, o3, o4-*) and GPT-5 chat deployments (Azure) reject custom temperature/top_p — strip those params.
    * Applied for every routed provider (Azure Foundry, etc.), not only `openai/` — see model-capabilities.
    */
   function remapMaxTokensForOpenAI(body: Record<string, unknown>): Record<string, unknown> {
@@ -885,14 +889,13 @@ export function buildMultiProviderOpenAI(
       const { max_tokens, ...rest } = result;
       result = { ...rest, max_completion_tokens: max_tokens };
     }
-    if (isReasoningModel(modelId)) {
-      // Reasoning models only accept temperature=1 (the default); strip to avoid 400
+    if (shouldOmitSamplingParams(modelId)) {
       const { temperature, top_p, ...rest } = result as Record<string, unknown> & {
         temperature?: unknown;
         top_p?: unknown;
       };
       if (temperature !== undefined || top_p !== undefined) {
-        api.logger.debug?.(`memory-hybrid: stripped temperature/top_p for reasoning model ${modelId}`);
+        api.logger.debug?.(`memory-hybrid: stripped temperature/top_p for model ${modelId}`);
       }
       result = rest;
     }

@@ -25,6 +25,20 @@ No unreleased changes are documented here yet.
 
 ---
 
+## [2026.4.273] - 2026-04-27
+
+**Previous baseline:** [2026.4.272] (2026-04-27)
+
+### Release summary
+
+**2026.4.273** omits **`temperature`** / **`top_p`** on **chat.completions** and **Responses** requests for **gpt-5\*** models (in addition to **o-series** reasoning models), matching **Azure Foundry** / **APIM** behavior that returns HTTP 400 when non-default sampling is sent. **`shouldOmitSamplingParams`** centralizes detection; **`provider-router`**, **`chat`**, **`classification`**, and **`responses-adapter`** use it. Tests for classification and Responses bodies were updated accordingly. Version **2026.4.273** is published across **`extensions/memory-hybrid/package.json`**, **`openclaw.plugin.json`**, **`packages/openclaw-hybrid-memory-install/package.json`**, and **`package-lock.json`**. Human-oriented upgrade notes: [`release-notes/release-notes-2026.4.273.md`](release-notes/release-notes-2026.4.273.md).
+
+### Fixed
+
+- **LLM routing:** Avoid HTTP 400 from Azure chat deployments for **gpt-5\*** by stripping custom sampling params (same pattern as **o-series**).
+
+---
+
 ## [2026.4.272] - 2026-04-27
 
 **Previous baseline:** [2026.4.271] (2026-04-27)
@@ -1433,7 +1447,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.272...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.273...HEAD
+[2026.4.273]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.272...v2026.4.273
 [2026.4.272]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.271...v2026.4.272
 [2026.4.271]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.270...v2026.4.271
 [2026.4.270]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.260...v2026.4.270
