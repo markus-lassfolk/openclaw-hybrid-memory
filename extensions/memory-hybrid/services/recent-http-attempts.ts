@@ -66,9 +66,5 @@ export function formatRecentHttpAttemptsForRateLimitLog(): string {
   const top180 = formatTop(aggregateByOperationModel(w180), 6);
   const s60 = w60.length === 0 ? "0" : String(w60.length);
   const s180 = w180.length === 0 ? "0" : String(w180.length);
-  return (
-    `this-process traffic: last60s=${s60} attempt(s) [${top60 || "—"}]; ` +
-    `last180s=${s180} attempt(s) [${top180 || "—"}] ` +
-    `(same IP / subscription as other gateway jobs will share provider limits)`
-  );
+  return `this-process traffic: last60s=${s60} attempt(s) [${top60 || "—"}]; last180s=${s180} attempt(s) [${top180 || "—"}] (same IP / subscription as other gateway jobs will share provider limits)`;
 }

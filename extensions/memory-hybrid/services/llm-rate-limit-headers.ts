@@ -55,11 +55,14 @@ export function parseGoDurationToMs(input: string): number | undefined {
   let totalMs = 0;
   let matched = false;
   const re = /(\d+(?:\.\d+)?)\s*(ns|us|µs|ms|s|m|h)/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s)) !== null) {
+  let m: RegExpExecArray | null = re.exec(s);
+  while (m !== null) {
     matched = true;
     const val = Number.parseFloat(m[1]);
-    if (Number.isNaN(val)) continue;
+    if (Number.isNaN(val)) {
+      m = re.exec(s);
+      continue;
+    }
     const u = m[2].toLowerCase();
     if (u === "ns") totalMs += val / 1e6;
     else if (u === "us" || u === "µs") totalMs += val / 1e3;
@@ -67,6 +70,7 @@ export function parseGoDurationToMs(input: string): number | undefined {
     else if (u === "s") totalMs += val * 1000;
     else if (u === "m") totalMs += val * 60 * 1000;
     else if (u === "h") totalMs += val * 60 * 60 * 1000;
+    m = re.exec(s);
   }
   if (matched) return Math.max(0, Math.ceil(totalMs));
   return undefined;
@@ -160,8 +164,8 @@ export function inferRateLimitBucket(headers: HeaderBag | undefined): RateLimitL
   if (!headers) return "unknown";
   const remTok = getHeaderCaseInsensitive(headers, "x-ratelimit-remaining-tokens");
   const remReq = getHeaderCaseInsensitive(headers, "x-ratelimit-remaining-requests");
-  const tokNum = remTok != null ? Number.parseInt(String(remTok), 10) : NaN;
-  const reqNum = remReq != null ? Number.parseInt(String(remReq), 10) : NaN;
+  const tokNum = remTok != null ? Number.parseInt(String(remTok), 10) : Number.NaN;
+  const reqNum = remReq != null ? Number.parseInt(String(remReq), 10) : Number.NaN;
   const tok0 = Number.isFinite(tokNum) && tokNum === 0;
   const req0 = Number.isFinite(reqNum) && reqNum === 0;
   if (tok0 && req0) return "both";
@@ -194,7 +198,7 @@ export function formatProviderRateLimitHeaderSummary(err: unknown): string {
     const v = getHeaderCaseInsensitive(headers, name);
     if (v != null && String(v).trim() !== "") {
       const val = String(v).replace(/\s+/g, " ").trim();
-      parts.push(`${label}=${val.length > 56 ? val.slice(0, 53) + "..." : val}`);
+      parts.push(`${label}=${val.length > 56 ? `${val.slice(0, 53)}...` : val}`);
     }
   }
   const bucket = inferRateLimitBucket(headers);

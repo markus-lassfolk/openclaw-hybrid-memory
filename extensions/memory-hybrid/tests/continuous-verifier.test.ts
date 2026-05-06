@@ -175,9 +175,10 @@ describe("ContinuousVerifier.verifyFact", () => {
     const mockOpenAI = makeMockOpenAI("CONFIRMED – still accurate");
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
-    const _id = await store.verify("fact-1", "Server IP is 10.0.0.1", "agent");
+    await store.verify("fact-1", "Server IP is 10.0.0.1", "agent");
     const vf = await store.getVerified("fact-1");
-    const outcome = await verifier.verifyFact(vf!, ["The server is still running at 10.0.0.1"]);
+    if (!vf) throw new Error("expected verified fact");
+    const outcome = await verifier.verifyFact(vf, ["The server is still running at 10.0.0.1"]);
     expect(outcome).toBe("CONFIRMED");
   });
 
@@ -187,7 +188,8 @@ describe("ContinuousVerifier.verifyFact", () => {
 
     await store.verify("fact-2", "Server IP is 10.0.0.1", "agent");
     const vf = await store.getVerified("fact-2");
-    const outcome = await verifier.verifyFact(vf!, []);
+    if (!vf) throw new Error("expected verified fact");
+    const outcome = await verifier.verifyFact(vf, []);
     expect(outcome).toBe("STALE");
   });
 
@@ -197,7 +199,8 @@ describe("ContinuousVerifier.verifyFact", () => {
 
     await store.verify("fact-3", "Admin password reset", "user");
     const vf = await store.getVerified("fact-3");
-    const outcome = await verifier.verifyFact(vf!, []);
+    if (!vf) throw new Error("expected verified fact");
+    const outcome = await verifier.verifyFact(vf, []);
     expect(outcome).toBe("UNCERTAIN");
   });
 
@@ -209,7 +212,8 @@ describe("ContinuousVerifier.verifyFact", () => {
 
     await store.verify("fact-timeout", "Some fact", "agent");
     const vf = await store.getVerified("fact-timeout");
-    const outcome = await verifier.verifyFact(vf!, []);
+    if (!vf) throw new Error("expected verified fact");
+    const outcome = await verifier.verifyFact(vf, []);
     expect(outcome).toBe("UNCERTAIN");
   });
 
@@ -219,7 +223,8 @@ describe("ContinuousVerifier.verifyFact", () => {
 
     await store.verify("fact-err", "Some fact", "user");
     const vf = await store.getVerified("fact-err");
-    const outcome = await verifier.verifyFact(vf!, []);
+    if (!vf) throw new Error("expected verified fact");
+    const outcome = await verifier.verifyFact(vf, []);
     expect(outcome).toBe("UNCERTAIN");
   });
 });
