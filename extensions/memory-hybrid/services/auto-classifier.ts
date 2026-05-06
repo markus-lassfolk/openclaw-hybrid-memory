@@ -213,14 +213,14 @@ async function discoverCategoriesFromOther(
 
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
- * Returns a map of factId → newCategory.
+ * Returns a map of factId → newCategory and a success flag indicating whether the LLM call succeeded.
  */
 async function classifyBatch(
   openai: OpenAI,
   model: string,
   facts: { id: string; text: string }[],
   categories: readonly string[],
-): Promise<Map<string, string>> {
+): Promise<{ results: Map<string, string>; success: boolean }> {
   const catList = categories.filter((c) => c !== "other").join(", ");
   const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
 
@@ -249,7 +249,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
 
     const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
     const parsed = tryParseFirstJsonArray(content);
-    if (!parsed) return new Map();
+    if (!parsed) return { results: new Map(), success: true };
 
     const results: string[] = parsed as string[];
     const map = new Map<string, string>();
@@ -260,7 +260,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         map.set(facts[i].id, cat);
       }
     }
-    return map;
+    return { results: map, success: true };
   } catch (err) {
     const classifyErr = err instanceof Error ? err : new Error(String(err));
     // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
@@ -278,7 +278,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         subsystem: "classifier",
       });
     }
-    return new Map();
+    return { results: new Map(), success: false };
   }
 }
 
@@ -365,7 +365,7 @@ async function runClassifyForCli(
   for (let i = 0; i < others.length; i += config.batchSize) {
     reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const results = await classifyBatch(openai, classifyModel, batch, categories);
+    const { results } = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
@@ -437,14 +437,17 @@ async function runAutoClassify(
       text: e.text,
     }));
 
-    const results = await classifyBatch(openai, model, batch, categories);
+    const { results, success } = await classifyBatch(openai, model, batch, categories);
 
     const batchIds = batch.map((b) => b.id);
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
-    factsDb.markClassifyAttempt(batchIds);
+    // Only mark classify attempt if the LLM call succeeded
+    if (success) {
+      factsDb.markClassifyAttempt(batchIds);
+    }
 
     if (i + config.batchSize < others.length) {
       await new Promise((r) => setTimeout(r, 500));
