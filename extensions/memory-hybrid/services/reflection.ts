@@ -112,12 +112,18 @@ export async function loadReflectionDedupeCorpusVectors(
   logPrefix: string,
   captureOperation: string,
 ): Promise<(number[] | null)[]> {
-  const dim = vectorDb.getVectorDim();
+  const vdb = vectorDb as VectorDB & {
+    getVectorDim?: () => number;
+    getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
+  };
+  const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
   let byId = new Map<string, number[]>();
-  try {
-    byId = await vectorDb.getVectorsByFactIds(facts.map((f) => f.id));
-  } catch {
-    byId = new Map();
+  if (typeof vdb.getVectorsByFactIds === "function") {
+    try {
+      byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
+    } catch {
+      byId = new Map();
+    }
   }
 
   const result: (number[] | null)[] = new Array(facts.length);
@@ -132,7 +138,7 @@ export async function loadReflectionDedupeCorpusVectors(
       const cached = byId.get(f.id.toLowerCase());
       const modelOk =
         f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
-      const useCache = cached != null && cached.length === dim && modelOk;
+      const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
       if (useCache) {
         result[j] = normalizeVector(cached);
         lanceHits++;

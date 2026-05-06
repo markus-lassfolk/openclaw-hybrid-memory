@@ -499,7 +499,8 @@ export async function runDreamCycle(
     });
   }
 
-  const patternGateForRules = Math.max(patternsFound, countActivePatternFactsForMaintenance(factsDb));
+  const livePatternCountForRules = countActivePatternFactsForMaintenance(factsDb);
+  const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
 
   // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
   let rulesGenerated = 0;
@@ -526,7 +527,7 @@ export async function runDreamCycle(
     }
   } else if (v) {
     logger.info(
-      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${patternGateForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
+      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
     );
   }
 

@@ -21,7 +21,7 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 import type { ProvenanceService } from "./provenance.js";
-import { dotProductSimilarity, loadReflectionDedupeCorpusVectors, normalizeVector } from "./reflection.js";
+import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -147,7 +147,7 @@ export async function runConsolidate(
 
   logger.info(`memory-hybrid: consolidate — loading vectors for ${ids.length} facts (Lance index + embedding API)...`);
   const vectorResults = await loadReflectionDedupeCorpusVectors(
-    candidateFacts,
+    candidateFacts as MemoryEntry[],
     embeddings,
     vectorDb,
     logger,
