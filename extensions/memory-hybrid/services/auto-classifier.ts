@@ -10,11 +10,11 @@ import { dirname } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../config.js";
+import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
-import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -213,14 +213,14 @@ async function discoverCategoriesFromOther(
 
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
- * Returns a map of factId → newCategory.
+ * Returns a map of factId → newCategory and a success flag indicating whether the LLM call succeeded.
  */
 async function classifyBatch(
   openai: OpenAI,
   model: string,
   facts: { id: string; text: string }[],
   categories: readonly string[],
-): Promise<Map<string, string>> {
+): Promise<{ results: Map<string, string>; success: boolean }> {
   const catList = categories.filter((c) => c !== "other").join(", ");
   const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
 
@@ -249,7 +249,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
 
     const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
     const parsed = tryParseFirstJsonArray(content);
-    if (!parsed) return new Map();
+    if (!parsed) return { results: new Map(), success: false };
 
     const results: string[] = parsed as string[];
     const map = new Map<string, string>();
@@ -260,7 +260,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         map.set(facts[i].id, cat);
       }
     }
-    return map;
+    return { results: map, success: true };
   } catch (err) {
     const classifyErr = err instanceof Error ? err : new Error(String(err));
     // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
@@ -278,7 +278,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         subsystem: "classifier",
       });
     }
-    return new Map();
+    return { results: new Map(), success: false };
   }
 }
 
@@ -365,7 +365,7 @@ async function runClassifyForCli(
   for (let i = 0; i < others.length; i += config.batchSize) {
     reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const results = await classifyBatch(openai, classifyModel, batch, categories);
+    const { results } = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
@@ -412,31 +412,43 @@ async function runAutoClassify(
     await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
   }
 
-  // Get all "other" facts (after discovery some may have been reclassified)
-  const others = factsDb.getByCategory("other");
+  // Only classify "other" facts that haven't been attempted yet (or were re-ingested since last attempt).
+  const others = factsDb.getUnattemptedOtherFacts();
   if (others.length === 0) {
+    const totalOther = factsDb.getByCategory("other").length;
+    if (totalOther > 0) {
+      logger.info(
+        `memory-hybrid: auto-classify — ${totalOther} "other" facts exist but all were already attempted; skipping (new/changed facts will be retried)`,
+      );
+    }
     return { reclassified: 0, suggested: [] };
   }
 
-  logger.info(`memory-hybrid: auto-classify starting on ${others.length} "other" facts`);
+  const totalOther = factsDb.getByCategory("other").length;
+  logger.info(
+    `memory-hybrid: auto-classify starting on ${others.length} unattempted "other" facts (${totalOther} total "other")`,
+  );
 
   let totalReclassified = 0;
 
-  // Process in batches
   for (let i = 0; i < others.length; i += config.batchSize) {
     const batch = others.slice(i, i + config.batchSize).map((e) => ({
       id: e.id,
       text: e.text,
     }));
 
-    const results = await classifyBatch(openai, model, batch, categories);
+    const { results, success } = await classifyBatch(openai, model, batch, categories);
 
+    const batchIds = batch.map((b) => b.id);
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
+    // Only mark classify attempt if the LLM call succeeded
+    if (success) {
+      factsDb.markClassifyAttempt(batchIds);
+    }
 
-    // Small delay between batches to avoid rate limits
     if (i + config.batchSize < others.length) {
       await new Promise((r) => setTimeout(r, 500));
     }

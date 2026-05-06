@@ -125,10 +125,17 @@ describe("runReflection cost attribution", () => {
     const fact = makeEntry();
     const factsDb = {
       getRecentFacts: () => [fact],
+      getByCategory: () => [],
       store: async () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
       setEmbeddingModel: () => undefined,
+      getMaintenanceState: () => null,
+      setMaintenanceState: () => undefined,
     };
-    const vectorDb = { store: async () => undefined };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
     const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
     const openai = {
       chat: {
@@ -173,7 +180,11 @@ describe("runReflectionRules cost attribution", () => {
       store: async () => ({ id: "rule-1", text: "Always use functional patterns", category: "rule" }) as MemoryEntry,
       setEmbeddingModel: () => undefined,
     };
-    const vectorDb = { store: async () => undefined };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
     const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
     const openai = {
       chat: {
@@ -222,7 +233,11 @@ describe("runReflectionMeta cost attribution", () => {
       store: async () => ({ id: "meta-1", text: "Core meta-pattern", category: "pattern" }) as MemoryEntry,
       setEmbeddingModel: () => undefined,
     };
-    const vectorDb = { store: async () => undefined };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
     const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
     const openai = {
       chat: {

@@ -21,7 +21,7 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 import type { ProvenanceService } from "./provenance.js";
-import { dotProductSimilarity, normalizeVector } from "./reflection.js";
+import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -145,30 +145,16 @@ export async function runConsolidate(
   const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
   const ids = candidateFacts.map((f) => f.id);
 
-  logger.info(`memory-hybrid: consolidate — embedding ${ids.length} facts...`);
-  const vectors: number[][] = [];
-  for (let i = 0; i < ids.length; i += 20) {
-    const batch = ids.slice(i, i + 20);
-    for (const id of batch) {
-      const f = idToFact.get(id)!;
-      try {
-        const vec = await embeddings.embed(f.text);
-        vectors.push(normalizeVector(vec));
-      } catch (err) {
-        logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "consolidate-embed",
-            subsystem: "embeddings",
-            factId: id,
-          });
-        }
-        vectors.push([]);
-      }
-    }
-    if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
-  }
+  logger.info(`memory-hybrid: consolidate — loading vectors for ${ids.length} facts (Lance index + embedding API)...`);
+  const vectorResults = await loadReflectionDedupeCorpusVectors(
+    candidateFacts as MemoryEntry[],
+    embeddings,
+    vectorDb,
+    logger,
+    "memory-hybrid: consolidate",
+    "consolidate-embed",
+  );
+  const vectors = vectorResults.map((v) => (v === null ? [] : v));
 
   const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const edges: Array<[string, string]> = [];

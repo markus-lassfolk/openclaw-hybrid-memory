@@ -1109,6 +1109,12 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Contacts, organizations, NER mentions (#985–#987)
   migrateEntityLayerTables(db);
   migrateFactsEntityEnrichmentAt(db);
+
+  // Auto-classify skip-already-attempted
+  migrateClassifyAttemptColumn(db);
+
+  // Maintenance state KV for input-hash gating
+  migrateMaintenanceStateTable(db);
 }
 
 /** Track completion of NER/contact-org enrichment per fact (avoids re-LLM when zero entities). */
@@ -1126,6 +1132,32 @@ function migrateFactsEntityEnrichmentAt(db: DatabaseSync): void {
     WHERE entity_enrichment_at IS NULL
       AND EXISTS (SELECT 1 FROM fact_entity_mentions m WHERE m.fact_id = facts.id)
   `);
+}
+
+/**
+ * Generic key-value table for maintenance task state (e.g. input hashes).
+ * Allows tasks like reflection to skip LLM calls when their inputs haven't changed.
+ */
+function migrateMaintenanceStateTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS maintenance_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+}
+
+/**
+ * Track when auto-classify last attempted each fact.
+ * Facts that remain "other" after a classify attempt are skipped on the next run
+ * unless their text changed (new created_at > last_classify_attempt_at).
+ */
+function migrateClassifyAttemptColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "last_classify_attempt_at")) {
+    db.exec("ALTER TABLE facts ADD COLUMN last_classify_attempt_at INTEGER");
+  }
 }
 
 /** Supports SQL ORDER BY for trimToBudget without full in-memory sort of all facts (Issue #838). */

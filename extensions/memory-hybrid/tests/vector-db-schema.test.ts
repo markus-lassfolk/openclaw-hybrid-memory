@@ -16,6 +16,7 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
 }));
 
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -603,6 +604,63 @@ describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", 
     });
     expect(returned).toBe(mixedCase.toLowerCase());
     expect(await db.delete(mixedCase)).toBe(true);
+  });
+});
+
+describe("VectorDB getVectorsByFactIds", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-get-ids-test-"));
+    lanceDir = join(tmpDir, "lance");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns stored vectors keyed by lowercase UUID", async () => {
+    const dim = 4;
+    const db = new VectorDB(lanceDir, dim);
+    const id1 = randomUUID();
+    const id2 = randomUUID();
+    const missing = randomUUID();
+    await db.store({
+      text: "a",
+      vector: [0.1, 0.2, 0.3, 0.4],
+      importance: 0.5,
+      category: "pattern",
+      id: id1,
+    });
+    await db.store({
+      text: "b",
+      vector: [0.5, 0.6, 0.7, 0.8],
+      importance: 0.5,
+      category: "pattern",
+      id: id2,
+    });
+    const m = await db.getVectorsByFactIds([id1, id2.toUpperCase(), "not-a-valid-uuid", missing]);
+    expect(m.size).toBe(2);
+    const v1 = m.get(id1.toLowerCase())!;
+    expect(v1).toHaveLength(4);
+    expect(v1[0]).toBeCloseTo(0.1);
+    expect(v1[1]).toBeCloseTo(0.2);
+    expect(v1[2]).toBeCloseTo(0.3);
+    expect(v1[3]).toBeCloseTo(0.4);
+    expect(m.get(id2.toLowerCase())?.[0]).toBeCloseTo(0.5);
+    expect(m.has(missing.toLowerCase())).toBe(false);
+    db.close();
+  });
+
+  it("returns empty map when LanceDB is unavailable", async () => {
+    vi.clearAllMocks();
+    const connectSpy = vi.spyOn(lancedb, "connect").mockRejectedValue(new Error("simulated connect failure"));
+    const db = new VectorDB(join(tmpDir, "no-lance"), 3);
+    const m = await db.getVectorsByFactIds([randomUUID()]);
+    expect(m.size).toBe(0);
+    db.close();
+    connectSpy.mockRestore();
   });
 });
 

@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { mergeAgentHealthDashboard } from "../../../backends/agent-health-store.js";
 import { collectForgeState } from "../../../routes/dashboard-server.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { countActivePatternFactsForMaintenance } from "../../../services/reflection.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -192,6 +193,8 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
         const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;
         const backfillDonePath = memoryDir ? join(memoryDir, BACKFILL_DECAY_MARKER) : null;
 
+        let patternsStoredThisRun = 0;
+
         const steps: { name: string; run: () => Promise<void> }[] = [
           {
             name: "backfill-decay",
@@ -318,12 +321,21 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 model: reflectionConfig.model,
                 verbose,
               });
+              patternsStoredThisRun = r.patternsStored;
               log(`Reflect: ${r.patternsStored} patterns stored.`);
             },
           },
           {
             name: "reflect-rules",
             run: async () => {
+              const livePatterns = countActivePatternFactsForMaintenance(factsDb);
+              const patternGate = Math.max(patternsStoredThisRun, livePatterns);
+              if (patternGate < 3) {
+                log(
+                  `Reflect-rules: skipped (${patternsStoredThisRun} stored this run, ${livePatterns} live patterns; need ≥3).`,
+                );
+                return;
+              }
               const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
               log(`Reflect-rules: ${r.rulesStored} rules stored.`);
             },
@@ -331,6 +343,14 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "reflect-meta",
             run: async () => {
+              const livePatterns = countActivePatternFactsForMaintenance(factsDb);
+              const patternGate = Math.max(patternsStoredThisRun, livePatterns);
+              if (patternGate < 3) {
+                log(
+                  `Reflect-meta: skipped (${patternsStoredThisRun} stored this run, ${livePatterns} live patterns; need ≥3).`,
+                );
+                return;
+              }
               const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model, verbose });
               log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
             },

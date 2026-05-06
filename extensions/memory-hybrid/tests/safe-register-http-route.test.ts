@@ -9,15 +9,22 @@
  *   - When the gateway lacks `registerHttpRoute`, the wrapper warns instead of throwing
  */
 
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { describe, expect, it, vi } from "vitest";
-import type { HttpRequestHandler, HttpRouteOptions } from "../tools/http-route-types.js";
+import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
+import type {
+  HttpRequestHandler,
+  HttpRouteOptions,
+  RegisterHttpRouteGatewayParams,
+} from "../tools/http-route-types.js";
 import { createSafeRegisterHttpRoute, normalizeRoutePath } from "../tools/safe-register-http-route.js";
 
 interface RouteRegistration {
   path: string;
-  handler: HttpRequestHandler;
-  opts: HttpRouteOptions;
+  auth: "gateway" | "plugin";
+  match: string | undefined;
+  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 }
 
 function makeApi(opts: { withRegister?: boolean } = {}): {
@@ -33,8 +40,13 @@ function makeApi(opts: { withRegister?: boolean } = {}): {
     logger: { info: vi.fn(), warn, error, debug: vi.fn() },
     ...(opts.withRegister !== false
       ? {
-          registerHttpRoute: (path: string, handler: HttpRequestHandler, o: HttpRouteOptions) => {
-            routes.push({ path, handler, opts: o });
+          registerHttpRoute: (params: RegisterHttpRouteGatewayParams) => {
+            routes.push({
+              path: params.path,
+              auth: params.auth,
+              match: params.match,
+              handler: params.handler,
+            });
           },
         }
       : {}),
@@ -85,12 +97,36 @@ describe("normalizeRoutePath", () => {
 });
 
 describe("createSafeRegisterHttpRoute", () => {
-  it("forwards normalized paths to api.registerHttpRoute", () => {
+  it("forwards normalized paths to api.registerHttpRoute (object API + exact match)", () => {
     const { api, routes } = makeApi();
     const register = createSafeRegisterHttpRoute(api, api.logger, "test");
     register("/plugins/memory-dashboard/", noopHandler, noopOpts);
     expect(routes).toHaveLength(1);
     expect(routes[0].path).toBe("/plugins/memory-dashboard");
+    expect(routes[0].auth).toBe("gateway");
+    expect(routes[0].match).toBe("exact");
+  });
+
+  it("maps authenticated=false to auth plugin", () => {
+    const { api, routes } = makeApi();
+    const register = createSafeRegisterHttpRoute(api, api.logger, "test");
+    register("/plugins/foo", noopHandler, { authenticated: false });
+    expect(routes[0].auth).toBe("plugin");
+  });
+
+  it("adapts legacy handlers to Node req/res (round-trip body and status)", async () => {
+    const { api, routes } = makeApi();
+    const register = createSafeRegisterHttpRoute(api, api.logger, "test");
+    const legacy: HttpRequestHandler = async (req) => ({
+      status: 201,
+      headers: { "Content-Type": "text/plain" },
+      body: `seen:${req.url}`,
+    });
+    register("/plugins/x", legacy, noopOpts);
+    const res = await invokeNodeHttpRoute(routes[0].handler, { method: "GET", url: "/plugins/x?q=1", headers: {} });
+    expect(res.status).toBe(201);
+    expect(res.headers["Content-Type"]).toBe("text/plain");
+    expect(res.body).toBe("seen:/plugins/x?q=1");
   });
 
   it("rejects empty / non-string paths and logs an error (issue #1173 root cause)", () => {

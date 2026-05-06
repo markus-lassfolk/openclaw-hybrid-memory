@@ -83,6 +83,8 @@ export function parseVerificationOutcome(response: string): VerificationOutcome 
 const DEFAULT_MODEL = "openai/gpt-4.1-nano";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const RECENT_FACTS_DAYS = 90;
+const MAX_CONTEXT_PER_ENTITY = 20;
+const MAX_CONTEXT_CHARS_PER_FACT = 500;
 // Confidence assigned to facts the LLM determines are stale. Kept below 0.3
 // so that natural decay cycles will eventually remove them, while still
 // preventing immediate deletion (threshold is < 0.1). Previously 0.5, which
@@ -179,12 +181,19 @@ export class ContinuousVerifier {
       return result;
     }
 
+    if (due.length === 0) {
+      return result;
+    }
+
     const recentEntries = this.factsDb.getRecentFacts(RECENT_FACTS_DAYS);
     const recentByEntity = new Map<string, string[]>();
     for (const e of recentEntries) {
       const entity = e.entity?.toLowerCase() ?? "";
       if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
-      recentByEntity.get(entity)?.push(e.text);
+      const arr = recentByEntity.get(entity)!;
+      if (arr.length < MAX_CONTEXT_PER_ENTITY) {
+        arr.push(e.text.slice(0, MAX_CONTEXT_CHARS_PER_FACT));
+      }
     }
 
     this.onProgress?.(
@@ -198,6 +207,21 @@ export class ContinuousVerifier {
         const entity = underlying?.entity ?? null;
         const entityKey = entity?.toLowerCase() ?? "";
         const recentFacts = recentByEntity.get(entityKey) ?? [];
+
+        if (recentFacts.length === 0 && entityKey.length > 0) {
+          if (underlying) {
+            this.factsDb.addTag(underlying.id, "review-needed");
+          }
+          result.uncertain++;
+          const n = result.checked;
+          const total = due.length;
+          if (this.onProgress && (total <= 25 || n === 1 || n === total || n % 10 === 0)) {
+            this.onProgress(
+              `memory-hybrid: continuous-verification — ${n}/${total} (UNCERTAIN/no-context) fact=${fact.factId.slice(0, 8)}…`,
+            );
+          }
+          continue;
+        }
 
         let outcome: VerificationOutcome;
         try {

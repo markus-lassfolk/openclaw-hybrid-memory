@@ -1275,6 +1275,69 @@ export class VectorDB {
     }
   }
 
+  /**
+   * Decode a Lance `vector` column value into a plain number array (handles Arrow views).
+   */
+  private vectorColumnToNumbers(raw: unknown): number[] | null {
+    if (raw == null) return null;
+    if (Array.isArray(raw)) {
+      const out = raw.map((x) => Number(x));
+      return out.length > 0 ? out : null;
+    }
+    if (typeof (raw as { toArray?: unknown }).toArray === "function") {
+      return Array.from((raw as { toArray: () => ArrayLike<number> }).toArray() as ArrayLike<number>, (x) => Number(x));
+    }
+    if (typeof (raw as { toJSON?: unknown }).toJSON === "function") {
+      return Array.from((raw as { toJSON: () => ArrayLike<number> }).toJSON() as ArrayLike<number>, (x) => Number(x));
+    }
+    if (ArrayBuffer.isView(raw)) {
+      return Array.from(raw as unknown as ArrayLike<number>, (value: number) => Number(value));
+    }
+    return null;
+  }
+
+  /**
+   * Batch-load stored embedding vectors by fact id (`id` matches SQLite fact UUID).
+   * Used by reflection dedupe to avoid re-embedding the entire corpus each run.
+   * Map keys are lowercase UUIDs. Unknown ids and wrong-dimension vectors are omitted.
+   */
+  async getVectorsByFactIds(ids: string[]): Promise<Map<string, number[]>> {
+    const out = new Map<string, number[]>();
+    if (!this.lanceDbAvailable || ids.length === 0) return out;
+    try {
+      await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table || !this.schemaValid) return out;
+
+      const unique = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
+      const CHUNK = 300;
+      const acquired = this.acquireReader();
+      try {
+        const table = this.getTable();
+        for (let offset = 0; offset < unique.length; offset += CHUNK) {
+          const chunk = unique.slice(offset, offset + CHUNK);
+          const inList = chunk.map((id) => `'${this.escapeSqlString(id)}'`).join(", ");
+          const rows = await table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
+          for (const row of rows) {
+            const id = String((row as { id?: unknown }).id ?? "").toLowerCase();
+            if (!UUID_REGEX.test(id)) continue;
+            const vec = this.vectorColumnToNumbers((row as { vector?: unknown }).vector);
+            if (vec && vec.length === this.vectorDim) out.set(id, vec);
+          }
+        }
+      } finally {
+        this.releaseReader(acquired);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "vector-get-by-fact-ids",
+        severity: "info",
+        subsystem: "vector",
+      });
+      this.logWarn(`memory-hybrid: LanceDB getVectorsByFactIds failed: ${err}`);
+    }
+    return out;
+  }
+
   /** Optional checkpoint method for LanceDB optimization */
   async checkpoint?(): Promise<void> {
     // LanceDB doesn't have an explicit checkpoint API
