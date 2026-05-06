@@ -13,7 +13,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseCrossAgentLearningConfig } from "../config/parsers/features.js";
 import type { CrossAgentLearningConfig } from "../config/types/features.js";
 import { _testing } from "../index.js";
@@ -318,6 +318,72 @@ describe("runCrossAgentLearning — LLM mock", () => {
     const globalFacts = getCrossAgentFacts(db);
     expect(globalFacts).toHaveLength(1);
     expect(globalFacts[0]?.importance).toBeGreaterThan(0.7); // boosted
+  });
+
+  it("does not call logger.info for LLM batches when verbose is off", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (let i = 0; i < 5; i++) {
+      rawDb(db)
+        .prepare(
+          `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'pattern', 'agent', ?, 0.8, 0.7, 'test', ?, ?, 'stable')`,
+        )
+        .run(`agent-f-voff-${i}`, `Lesson ${i} for batch logging`, `agent-${i % 2}`, now, now);
+    }
+    const mockOpenAI = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: "[]" } }],
+          }),
+        },
+      },
+    };
+    const cfg: CrossAgentLearningConfig = {
+      enabled: true,
+      windowDays: 30,
+      batchSize: 2,
+      minSourceConfidence: 0.3,
+      model: "gpt-4o-mini",
+      runInNightlyCycle: true,
+    };
+    const info = vi.fn();
+    await runCrossAgentLearning(db, mockOpenAI as never, cfg, { info });
+    const batchLines = info.mock.calls.filter((c) => String(c[0]).includes("LLM batch"));
+    expect(batchLines).toHaveLength(0);
+  });
+
+  it("calls logger.info once per LLM batch when verbose is on", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (let i = 0; i < 5; i++) {
+      rawDb(db)
+        .prepare(
+          `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'pattern', 'agent', ?, 0.8, 0.7, 'test', ?, ?, 'stable')`,
+        )
+        .run(`agent-f-von-${i}`, `Lesson verbose ${i}`, "agent-x", now, now);
+    }
+    const mockOpenAI = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: "[]" } }],
+          }),
+        },
+      },
+    };
+    const cfg: CrossAgentLearningConfig = {
+      enabled: true,
+      windowDays: 30,
+      batchSize: 2,
+      minSourceConfidence: 0.3,
+      model: "gpt-4o-mini",
+      runInNightlyCycle: true,
+    };
+    const info = vi.fn();
+    await runCrossAgentLearning(db, mockOpenAI as never, cfg, { info }, { verbose: true });
+    const batchLines = info.mock.calls.filter((c) => String(c[0]).includes("LLM batch"));
+    expect(batchLines).toHaveLength(3);
   });
 
   it("skips duplicate facts in second run", async () => {

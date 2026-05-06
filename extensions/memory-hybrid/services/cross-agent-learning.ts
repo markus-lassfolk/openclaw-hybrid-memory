@@ -249,6 +249,7 @@ async function callLLMForGeneralisation(
  * @param openai     OpenAI client (multi-provider proxy).
  * @param cfg        Cross-agent learning config.
  * @param logger     Logger (warn-only needed).
+ * @param runOpts    When `verbose` is true, logs each LLM batch on `logger.info` (CLI / dream-cycle `--verbose`).
  * @returns          Summary report.
  */
 export async function runCrossAgentLearning(
@@ -256,6 +257,7 @@ export async function runCrossAgentLearning(
   openai: OpenAI,
   cfg: CrossAgentLearningConfig,
   logger: { warn?: (msg: string) => void; info?: (msg: string) => void } = {},
+  runOpts?: { verbose?: boolean },
 ): Promise<CrossAgentLearningResult> {
   const result: CrossAgentLearningResult = {
     agentsScanned: 0,
@@ -303,9 +305,11 @@ export async function runCrossAgentLearning(
     let batchIndex = 0;
     for (const batch of batches) {
       batchIndex++;
-      logger.info?.(
-        `memory-hybrid: cross-agent-learning — LLM batch ${batchIndex}/${batches.length} (${batch.length} lesson(s), model=${model})`,
-      );
+      if (runOpts?.verbose) {
+        logger.info?.(
+          `memory-hybrid: cross-agent-learning — LLM batch ${batchIndex}/${batches.length} (${batch.length} lesson(s), model=${model})`,
+        );
+      }
       try {
         const prompt = buildGeneralisePrompt(batch);
         const generalised = await callLLMForGeneralisation(openai, model, prompt, fallbackModels, logger);

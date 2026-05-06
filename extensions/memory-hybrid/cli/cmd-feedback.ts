@@ -395,16 +395,9 @@ export async function runCrossAgentLearningForCli(
   // Build OpenAI proxy
   const openai = ctx.openai;
 
-  const baseLog = ctx.logger ?? {};
-  const logger =
-    opts.verbose === true
-      ? {
-          ...baseLog,
-          info: baseLog.info ?? ((msg: string) => console.log(msg)),
-        }
-      : baseLog;
-
-  const result = await runCrossAgentLearning(factsDb, openai, caCfg, logger);
+  const result = await runCrossAgentLearning(factsDb, openai, caCfg, ctx.logger ?? {}, {
+    verbose: opts.verbose === true,
+  });
 
   // Record savings: each generalised pattern avoids re-learning by other agents
   if (result.generalisedStored > 0 && ctx.costTracker) {

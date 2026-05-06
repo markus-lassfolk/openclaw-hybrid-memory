@@ -1,12 +1,10 @@
 /**
  * Dream Cycle Service — Automated nightly reflection + pruning pipeline (Issue #143).
  *
- * Sequence:
- *  1. memory_prune (decay confidence + remove expired facts)
- *  2. Episodic consolidation (merge old event log entries into consolidated facts, DERIVED_FROM links)
- *  3. memory_reflect (synthesize patterns from recent facts)
- *  4. memory_reflect_rules (optional, if enough new patterns accumulated)
- *  5. Generate daily digest summary
+ * Sequence (verbose `step N:` numbers are assigned in runtime order so skipped optional phases do not leave gaps):
+ *  prune / decay / orphaned links → episodic consolidation + event log maintenance → reflection (patterns) →
+ *  optional reflect-rules (if enough patterns) → MEMORY_INDEX refresh → prune log tables → FTS5 optimize →
+ *  optional VACUUM → digest summary.
  *
  * Designed to be cheap ($0.003/night target) using a Flash-tier model.
  * Self-contained — does not require an active agent session.
@@ -320,7 +318,7 @@ export async function runEpisodicConsolidation(
 
 /**
  * Run the full nightly dream cycle:
- *  prune → episodic consolidation → reflect → reflect-rules (optional) → digest
+ *  prune → consolidation → reflect → optional reflect-rules → memory index → log prune → FTS5 → optional VACUUM → digest.
  */
 export async function runDreamCycle(
   factsDb: FactsDB,

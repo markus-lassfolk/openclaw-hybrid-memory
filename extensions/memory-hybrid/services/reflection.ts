@@ -218,7 +218,7 @@ export async function runReflection(
   const existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
     logger.info(
-      `memory-hybrid: reflection — embedding ${existingPatternFacts.length} existing pattern row(s) for dedupe (sequential API calls; rate limits may appear here)`,
+      `memory-hybrid: reflection — embedding ${existingPatternFacts.length} existing pattern row(s) for dedupe cosine check (API calls in batches of up to 20 with a short pause between batches; rate limits may appear here)`,
     );
     for (let i = 0; i < existingPatternFacts.length; i += 20) {
       const batch = existingPatternFacts.slice(i, i + 20);
@@ -448,7 +448,7 @@ export async function runReflectionRules(
   const existingVectors: (number[] | null)[] = [];
   if (existingRuleFacts.length > 0) {
     logger.info(
-      `memory-hybrid: reflect-rules — embedding ${existingRuleFacts.length} existing rule row(s) for dedupe (sequential API calls)`,
+      `memory-hybrid: reflect-rules — embedding ${existingRuleFacts.length} existing rule row(s) for dedupe cosine check (API calls in batches of up to 20 with a short pause between batches)`,
     );
     for (let i = 0; i < existingRuleFacts.length; i += 20) {
       const batch = existingRuleFacts.slice(i, i + 20);

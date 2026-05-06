@@ -417,6 +417,49 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
 // 9. ContinuousVerifier.runCycle — multiple facts
 // ---------------------------------------------------------------------------
 
+describe("ContinuousVerifier.runCycle — onProgress", () => {
+  it("calls onProgress for preamble and every fact when total due ≤25", async () => {
+    const onProgress = vi.fn();
+    const mockOpenAI = makeMockOpenAI("CONFIRMED");
+    const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never, { onProgress });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push(await store.verify(`f-prog-${i}`, `Fact ${i}`, "agent"));
+    }
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    for (const id of ids) {
+      db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
+    }
+    await verifier.runCycle();
+    expect(onProgress).toHaveBeenCalledTimes(4);
+    expect(String(onProgress.mock.calls[0][0])).toMatch(/3 fact\(s\) due/);
+    expect(String(onProgress.mock.calls[1][0])).toMatch(/1\/3/);
+    expect(String(onProgress.mock.calls[3][0])).toMatch(/3\/3/);
+  });
+
+  it("throttles per-fact onProgress when total due >25", async () => {
+    const onProgress = vi.fn();
+    const mockOpenAI = makeMockOpenAI("CONFIRMED");
+    const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never, { onProgress });
+    const ids: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      ids.push(await store.verify(`f-throttle-${i}`, `Fact row ${i}`, "agent"));
+    }
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    for (const id of ids) {
+      db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
+    }
+    await verifier.runCycle();
+    expect(onProgress).toHaveBeenCalledTimes(5);
+    expect(String(onProgress.mock.calls[0][0])).toMatch(/30 fact\(s\) due/);
+    const progressBodies = onProgress.mock.calls.slice(1).map((c) => String(c[0]));
+    expect(progressBodies.some((m) => m.includes("1/30"))).toBe(true);
+    expect(progressBodies.some((m) => m.includes("10/30"))).toBe(true);
+    expect(progressBodies.some((m) => m.includes("20/30"))).toBe(true);
+    expect(progressBodies.some((m) => m.includes("30/30"))).toBe(true);
+  });
+});
+
 describe("ContinuousVerifier.runCycle — multiple facts", () => {
   it("processes all due facts and aggregates counters correctly", async () => {
     let callCount = 0;

@@ -20,6 +20,7 @@ import {
   parseRetryAfterMs,
   withLLMRetry,
 } from "../services/chat.js";
+import { formatProviderRateLimitHeaderSummary, inferRateLimitBucket } from "../services/llm-rate-limit-headers.js";
 import { isReasoningModel, requiresMaxCompletionTokens, resolveWireApi } from "../services/model-capabilities.js";
 
 vi.mock("../services/error-reporter.js", () => ({
@@ -496,6 +497,57 @@ describe("parseGoDurationToMs / parseRetryAfterMs (OpenAI x-ratelimit-reset-* #9
 
   it("parses plain retry-after seconds only when the value is all digits", () => {
     expect(parseRetryAfterMs({ headers: { "retry-after": "1282" } })).toBe(1_282_000);
+  });
+});
+
+describe("formatProviderRateLimitHeaderSummary / inferRateLimitBucket", () => {
+  it("infers token bucket when remaining-tokens is 0", () => {
+    const headers = {
+      "x-ratelimit-remaining-tokens": "0",
+      "x-ratelimit-remaining-requests": "500",
+    };
+    expect(inferRateLimitBucket(headers)).toBe("tokens");
+  });
+
+  it("infers requests bucket when remaining-requests is 0", () => {
+    const headers = {
+      "x-ratelimit-remaining-requests": "0",
+      "x-ratelimit-remaining-tokens": "80000",
+    };
+    expect(inferRateLimitBucket(headers)).toBe("requests");
+  });
+
+  it("reads headers from nested response.headers", () => {
+    const err = Object.assign(new Error("429"), {
+      status: 429,
+      response: {
+        headers: {
+          "x-ratelimit-remaining-requests": "0",
+          "x-ratelimit-limit-requests": "500",
+          "x-request-id": "req-abc",
+        },
+      },
+    });
+    const summary = formatProviderRateLimitHeaderSummary(err);
+    expect(summary).toContain("reqRem=0");
+    expect(summary).toContain("reqLim=500");
+    expect(summary).toContain("reqId=req-abc");
+    expect(summary).toMatch(/request budget/i);
+  });
+
+  it("unwraps LLMRetryError cause for header summary", () => {
+    const inner = Object.assign(new Error("429"), {
+      response: {
+        headers: {
+          "x-ratelimit-remaining-tokens": "0",
+          "x-ratelimit-limit-tokens": "80000",
+        },
+      },
+    });
+    const wrapped = new LLMRetryError("fail", inner, 2);
+    const summary = formatProviderRateLimitHeaderSummary(wrapped);
+    expect(summary).toContain("tokRem=0");
+    expect(summary).toMatch(/token budget/i);
   });
 });
 
