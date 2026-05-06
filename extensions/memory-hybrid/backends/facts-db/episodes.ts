@@ -115,7 +115,7 @@ export function recordEpisode(
     id,
     category: "episode",
     event: input.event,
-    outcome: input.outcome,
+    outcome: storedEpisodeOutcomeToPublic(outcomeForInsert),
     timestamp,
     duration: input.duration,
     context: input.context,
