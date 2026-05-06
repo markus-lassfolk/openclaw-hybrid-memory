@@ -125,6 +125,7 @@ describe("runReflection cost attribution", () => {
     const fact = makeEntry();
     const factsDb = {
       getRecentFacts: () => [fact],
+      getByCategory: () => [],
       store: async () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
       setEmbeddingModel: () => undefined,
       getMaintenanceState: () => null,

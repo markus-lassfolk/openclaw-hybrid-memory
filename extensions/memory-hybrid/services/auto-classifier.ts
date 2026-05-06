@@ -10,11 +10,11 @@ import { dirname } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../config.js";
+import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
-import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -249,7 +249,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
 
     const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
     const parsed = tryParseFirstJsonArray(content);
-    if (!parsed) return { results: new Map(), success: true };
+    if (!parsed) return { results: new Map(), success: false };
 
     const results: string[] = parsed as string[];
     const map = new Map<string, string>();
