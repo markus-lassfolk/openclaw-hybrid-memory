@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { findPluginRoot } from "../utils/plugin-root.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { CredentialsDB } from "../backends/credentials-db.js";
@@ -174,7 +174,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       checkOpenClawVersion(api.version, api.logger);
 
       try {
-        const pluginRootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+        const pluginRootDir = findPluginRoot(import.meta.url);
         const skillOutcome = ensureHybridMemoryWorkspaceSkillIfMissing({
           pluginRootDir,
           mergedOpenclawConfig: loadOpenclawRootForWorkspace(),

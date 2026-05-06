@@ -16,10 +16,10 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
+import { findPluginRoot } from "../utils/plugin-root.js";
 
 import type { HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
@@ -928,7 +928,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   }
   const after = JSON.stringify(config, null, 2);
 
-  const pluginRootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const pluginRootDir = findPluginRoot(import.meta.url);
 
   if (opts.dryRun) {
     const skillPreview = installHybridMemoryWorkspaceSkill({
@@ -1080,7 +1080,7 @@ export function runUninstallForCli(
 
 export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
   const { cfg, logger } = ctx;
-  const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const extDir = findPluginRoot(import.meta.url);
   const { spawnSync } = await import("node:child_process");
   const version = requestedVersion?.trim() || "latest";
   try {

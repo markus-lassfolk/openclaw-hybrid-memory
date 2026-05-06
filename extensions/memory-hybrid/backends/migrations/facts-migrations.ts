@@ -1099,6 +1099,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Episodic memory (#781)
   migrateEpisodesTable(db);
+  // Legacy `episodes` CHECK (`failed` only) vs app enums (`failure` / `unknown`):
+  // `CREATE TABLE IF NOT EXISTS` does not upgrade CHECK. Insert-time normalization
+  // and read mapping live in `utils/sqlite-outcome-compat.ts` (used by `recordEpisode`).
 
   // Token budget trim: index-backed ordering (Issue #838)
   migrateTrimBudgetIndex(db);

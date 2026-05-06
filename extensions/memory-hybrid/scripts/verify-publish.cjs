@@ -14,6 +14,114 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 const requiredRuntimeDeps = ["@lancedb/lancedb"];
 let failed = false;
 
+// 0. Compiled runtime artifacts (issue #1171)
+// OpenClaw 2026.5.4+ rejects plugin packages whose `openclaw.extensions` point
+// at a TypeScript source file unless a matching compiled file exists.
+const distDir = path.join(root, "dist");
+const distIndexJs = path.join(distDir, "index.js");
+const distIndexDts = path.join(distDir, "index.d.ts");
+if (!fs.existsSync(distIndexJs)) {
+  console.error(
+    "FAIL: dist/index.js is missing - run `npm run build` (tsdown) before publish",
+  );
+  failed = true;
+} else if (!fs.existsSync(distIndexDts)) {
+  console.error(
+    "FAIL: dist/index.d.ts is missing - tsdown must emit declaration files (`dts: true` in tsdown.config.ts)",
+  );
+  failed = true;
+} else {
+  console.log("OK: dist/index.js and dist/index.d.ts exist");
+}
+
+// 0a. Plugin manifest: OpenClaw 2026.5+ requires contracts.tools before registerTool.
+const pluginManifestPath = path.join(root, "openclaw.plugin.json");
+if (!fs.existsSync(pluginManifestPath)) {
+  console.error("FAIL: openclaw.plugin.json is missing");
+  failed = true;
+} else {
+  try {
+    const pluginManifest = JSON.parse(fs.readFileSync(pluginManifestPath, "utf8"));
+    const tools = pluginManifest.contracts?.tools;
+    if (!Array.isArray(tools) || tools.length === 0) {
+      console.error(
+        "FAIL: openclaw.plugin.json must declare contracts.tools (non-empty array) for OpenClaw 2026.5+",
+      );
+      failed = true;
+    } else {
+      const bad = tools.filter((t) => typeof t !== "string" || !/^[a-zA-Z0-9_]+$/.test(t));
+      if (bad.length > 0) {
+        console.error("FAIL: contracts.tools entries must be non-empty alphanumeric/underscore strings:", bad);
+        failed = true;
+      } else {
+        console.log(`OK: openclaw.plugin.json declares contracts.tools (${tools.length} names)`);
+      }
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("FAIL: could not parse openclaw.plugin.json:", message);
+    failed = true;
+  }
+}
+
+const openclawExt = Array.isArray(pkg.openclaw?.extensions)
+  ? pkg.openclaw.extensions
+  : [];
+if (openclawExt.length === 0) {
+  console.error('FAIL: package.json#openclaw.extensions must list at least one entry');
+  failed = true;
+} else {
+  let extOk = true;
+  for (const rel of openclawExt) {
+    if (typeof rel !== "string" || !rel.endsWith(".js")) {
+      console.error(
+        `FAIL: package.json#openclaw.extensions entry "${rel}" must be a compiled .js file (issue #1171)`,
+      );
+      failed = true;
+      extOk = false;
+      continue;
+    }
+    const resolved = path.join(root, rel);
+    if (!fs.existsSync(resolved)) {
+      console.error(
+        `FAIL: package.json#openclaw.extensions entry "${rel}" does not exist on disk`,
+      );
+      failed = true;
+      extOk = false;
+    }
+  }
+  if (extOk) {
+    console.log("OK: package.json#openclaw.extensions points at existing compiled file(s)");
+  }
+}
+
+// `dist` must be in the published files list so the compiled runtime ships.
+if (!Array.isArray(pkg.files) || !pkg.files.includes("dist")) {
+  console.error(
+    'FAIL: "dist" must be listed in package.json#files so the compiled runtime is published',
+  );
+  failed = true;
+} else {
+  console.log('OK: "dist" is listed in package.json#files');
+}
+
+// 0b. Tightened openclaw peer range (issue #1172)
+// Defensive guard: prevent regressing back to an open-ended `openclaw` peer
+// range. Older versions of openclaw transitively pulled `@duckflux/core@^0.1.0`
+// which has no published 0.1.x line, breaking `npm install`.
+const openclawPeer = pkg.peerDependencies?.openclaw;
+if (typeof openclawPeer !== "string" || openclawPeer.trim().length === 0) {
+  console.error("FAIL: peerDependencies.openclaw is missing");
+  failed = true;
+} else if (!/<\s*2027/.test(openclawPeer)) {
+  console.error(
+    `FAIL: peerDependencies.openclaw must include an upper bound (e.g. "<2027") to prevent regressions like @duckflux/core ETARGET (issue #1172). Current: "${openclawPeer}"`,
+  );
+  failed = true;
+} else {
+  console.log(`OK: peerDependencies.openclaw is "${openclawPeer}" (has upper bound)`);
+}
+
 // 1. postinstall required for native deps
 if (!pkg.scripts?.postinstall) {
   console.error(
@@ -93,10 +201,20 @@ function npmExecutable() {
   const candidate = path.join(path.dirname(process.execPath), "npm.cmd");
   return fs.existsSync(candidate) ? candidate : "npm.cmd";
 }
+// Real `npm pack` runs prepack (build + shrinkwrap). Use `--ignore-scripts` so this
+// verifier stays side-effect-free for npm, then mirror prepack's shrinkwrap step so
+// the dry-run file list matches what publish would ship.
+let createdShrinkwrapForPackProbe = false;
 try {
+  execFileSync(process.execPath, [shrinkwrapScriptPath, "create"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  createdShrinkwrapForPackProbe = true;
   const stdout = execFileSync(
     npmExecutable(),
-    ["pack", "--dry-run", "--json", "--silent"],
+    ["pack", "--dry-run", "--json", "--silent", "--ignore-scripts"],
     {
       cwd: root,
       encoding: "utf8",
@@ -122,6 +240,17 @@ try {
   );
   failed = true;
   packCheckErrored = true;
+} finally {
+  if (createdShrinkwrapForPackProbe) {
+    try {
+      execFileSync(process.execPath, [shrinkwrapScriptPath, "clean"], {
+        cwd: root,
+        stdio: "pipe",
+      });
+    } catch {
+      /* best-effort cleanup after probe */
+    }
+  }
 }
 if (!packIncludesShrinkwrap && !packCheckErrored) {
   console.error(

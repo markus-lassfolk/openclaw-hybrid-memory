@@ -21,7 +21,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-No unreleased changes are documented here yet.
+---
+
+## [2026.5.60] - 2026-05-06
+
+**Previous baseline:** [2026.4.273] (2026-04-27) — last version published as a GitHub / npm release before this line of work.
+
+### Release summary
+
+**2026.5.60** is the **OpenClaw 2026.5.x readiness** release: it ships everything needed to run the hybrid-memory plugin on gateways that enforce compiled extension entries, tightened peers, HTTP route shape, **declared tool contracts**, and stricter CI—plus **SQLite compatibility** for older databases that used narrower `CHECK` constraints on outcomes. If you are on **2026.4.273** or earlier, upgrading to **2026.5.60** together with **OpenClaw `>=2026.5.0 <2027`** is the supported path. Human-oriented narrative: [`release-notes/release-notes-2026.5.60.md`](release-notes/release-notes-2026.5.60.md).
+
+### Added
+
+- **Build pipeline** (#1171): **`tsdown`** emits a multi-file ESM **`dist/`** tree; **`npm run build`** / **`npm run build:check`**; **`prepack`** builds then generates **`npm-shrinkwrap.json`**. Release and publish flows validate **`dist/index.js`** and types before publish.
+- **`contracts.tools` in `openclaw.plugin.json`** (#1180): full list of agent tool names required by OpenClaw **2026.5+** before `registerTool` succeeds; canonical list in **`contracts/agent-tool-names.ts`** with **`tests/agent-tool-contracts.test.ts`** to prevent manifest drift.
+- **`utils/plugin-root.ts`** (#1174): **`findPluginRoot`**, **`readPluginPackageJson`** (walk up to **`openclaw.plugin.json`**). Tests in **`tests/plugin-root.test.ts`**.
+- **`tools/safe-register-http-route.ts`** (#1173): validates and normalizes HTTP paths before **`registerHttpRoute`**; tests in **`tests/safe-register-http-route.test.ts`**.
+- **`utils/sqlite-outcome-compat.ts`** (#1178 / #1179): detects legacy SQLite DDL via **`sqlite_master`** and normalizes episode/audit **outcomes** at insert and read so older DBs do not hit **`CHECK` constraint failed`**. Tests in **`tests/sqlite-outcome-compat.test.ts`** (Node **22+** / **`node:sqlite`** in CI).
+- **CI `install-smoke`** (#1172): packs tarball, installs with pinned **`openclaw@>=2026.5.0 <2027`**, asserts clean tree (no **`@duckflux/core`** **`ETARGET`**), **`dist/index.js`** present, smoke-load on Node **22** and **24**.
+- **CI `publish-invariants`**: **`npm ci`** + **`npm run build`** before **`verify-publish.cjs`** so manifest checks always see a real **`dist/`**.
+- **`verify-publish.cjs`**: asserts **`openclaw.plugin.json`** has non-empty **`contracts.tools`**; **`npm pack --dry-run --ignore-scripts`** plus explicit shrinkwrap **create/clean** so pack listing checks do not rely on **`prepack`** during verify.
+
+### Changed
+
+- **`openclaw.extensions`** / **`runtimeExtensions`** (#1171): point at **`./dist/index.js`**; **`dist`** listed under **`package.json#files`**.
+- **`peerDependencies.openclaw`**: **`>=2026.5.0 <2027`** (#1172); **`MIN_OPENCLAW_VERSION`** **`2026.5.0`** and tests updated.
+- **Dashboard / public API routes** (#1173): register through **`createSafeRegisterHttpRoute`**; dashboard root **without** trailing slash.
+- **`versionInfo.ts`, `utils/prompt-loader.ts`, `setup/plugin-service.ts`, `cli/cmd-install.ts`, `cli/cmd-verify.ts`, `cli/cmd-config.ts`** (#1174): use **`findPluginRoot(import.meta.url)`** for plugin-root-relative paths when the runtime entry lives under **`dist/`**.
+- **`utils/plugin-root.ts`**: path joins use **`node:path`** **`join`** (review feedback).
+- **`extensions/memory-hybrid/package.json`**: Biome-friendly formatting for **`keywords`** and **`openclaw`** blocks.
+
+### Fixed
+
+- **#1171** — OpenClaw **2026.5.4+** rejected packages whose extension entry pointed at TypeScript without a matching build artifact.
+- **#1172** — **`npm install`** could fail with **`ETARGET`** for **`@duckflux/core@^0.1.0`** when peers resolved to an incompatible **`openclaw`** line.
+- **#1173** — Gateway **`http route registration missing path`** warnings from bad or empty route paths (especially dashboard root **`/`** handling).
+- **#1174** — **`package.json`** / manifest reads resolved to **`dist/`** instead of the real package root under compiled entrypoints.
+- **#1178** — **`recordEpisode`** / **`failure`** · **`unknown`** vs legacy **`episodes`** **`CHECK`** (**`failed`** only).
+- **#1179** — **`AuditStore.append`** with **`skipped`** vs legacy **`audit_log`** **`CHECK`** (no **`skipped`**).
+- **#1180** — Missing **`contracts.tools`** causing repeated **`plugin must declare contracts.tools before registering agent tools`** on OpenClaw **2026.5+**.
 
 ---
 

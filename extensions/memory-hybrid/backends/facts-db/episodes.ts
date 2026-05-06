@@ -7,6 +7,11 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { DecayClass } from "../../config.js";
 import type { Episode, EpisodeOutcome, ScopeFilter } from "../../types/memory.js";
+import {
+  episodeOutcomeForSqliteInsert,
+  episodesTableIsLegacyFailedOutcomeCheck,
+  storedEpisodeOutcomeToPublic,
+} from "../../utils/sqlite-outcome-compat.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { sanitizeFts5QueryForFacts } from "./fts-text.js";
@@ -18,7 +23,7 @@ export function rowToEpisode(row: Record<string, unknown>): Episode {
     id: row.id as string,
     category: "episode",
     event: row.event as string,
-    outcome: row.outcome as EpisodeOutcome,
+    outcome: storedEpisodeOutcomeToPublic(String(row.outcome ?? "")),
     timestamp: row.timestamp as number,
     duration: (row.duration as number) ?? undefined,
     context: (row.context as string) ?? undefined,
@@ -61,16 +66,24 @@ export function recordEpisode(
   const nowSec = Math.floor(Date.now() / 1000);
   const timestamp = input.timestamp ?? nowSec;
 
-  let importance = input.importance ?? 0.5;
-  if (input.outcome === "failure" && importance < 0.8) {
-    importance = 0.8;
-  }
-
   const decayClass = input.decayClass ?? "normal";
   const scope = input.scope ?? "global";
   const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
   const tags = input.tags ?? [];
   const relatedFactIds = input.relatedFactIds ?? [];
+  const legacyFailedOnly = episodesTableIsLegacyFailedOutcomeCheck(db);
+  const outcomeForInsert = episodeOutcomeForSqliteInsert(db, input.outcome);
+  const publicFromStored = storedEpisodeOutcomeToPublic(outcomeForInsert);
+  // Legacy CHECK stores both `failure` and `unknown` as `failed`. Re-read maps
+  // `failed` → `failure`, so callers cannot distinguish unknown after reload; keep
+  // the immediate return aligned with the caller's intent for `unknown`.
+  const returnedOutcome: EpisodeOutcome =
+    legacyFailedOnly && input.outcome === "unknown" ? "unknown" : publicFromStored;
+
+  let importance = input.importance ?? 0.5;
+  if (input.outcome === "failure" && importance < 0.8) {
+    importance = 0.8;
+  }
 
   const tx = createTransaction(db, () => {
     db.prepare(
@@ -79,7 +92,7 @@ export function recordEpisode(
     ).run(
       id,
       input.event,
-      input.outcome,
+      outcomeForInsert,
       timestamp,
       input.duration ?? null,
       input.context ?? null,
@@ -109,7 +122,7 @@ export function recordEpisode(
     id,
     category: "episode",
     event: input.event,
-    outcome: input.outcome,
+    outcome: returnedOutcome,
     timestamp,
     duration: input.duration,
     context: input.context,
@@ -158,9 +171,18 @@ export function searchEpisodes(
   }
 
   if (outcome && outcome.length > 0) {
-    const placeholders = outcome.map(() => "?").join(",");
+    const legacyFailed = episodesTableIsLegacyFailedOutcomeCheck(db);
+    const expanded = new Set<string>(outcome);
+    // Map `failure` → stored `failed` on legacy CHECK. Do not map `unknown` →
+    // `failed`: that would return rows that are semantically `failure` when the
+    // caller asked for unknown-only results (both values share `failed` in DB).
+    if (legacyFailed && outcome.includes("failure")) {
+      expanded.add("failed");
+    }
+    const list = [...expanded];
+    const placeholders = list.map(() => "?").join(",");
     conditions.push(`e.outcome IN (${placeholders})`);
-    params.push(...outcome);
+    params.push(...list);
   }
 
   if (since !== undefined) {

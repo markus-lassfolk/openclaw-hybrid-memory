@@ -9,9 +9,9 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
+import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   type ConfigMode,
   PRESET_OVERRIDES,
@@ -256,7 +256,7 @@ export function runConfigSetHelpForCli(_ctx: HandlerContext, key: string): Confi
     current === undefined ? "(not set)" : typeof current === "string" ? current : JSON.stringify(current);
   let desc = "";
   try {
-    const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const extDir = findPluginRoot(import.meta.url);
     const pluginPath = join(extDir, "openclaw.plugin.json");
     if (existsSync(pluginPath)) {
       const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as {

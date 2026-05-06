@@ -156,11 +156,22 @@ describe("DASHBOARD_PREFIX and DASHBOARD_PATHS", () => {
     expect(DASHBOARD_PREFIX).toBe("/plugins/memory-dashboard");
   });
 
-  it("DASHBOARD_PATHS.root is /", () => {
-    expect(DASHBOARD_PATHS.root).toBe("/");
+  it("DASHBOARD_PATHS.root is the empty string (issue #1173: no trailing slash)", () => {
+    // Concatenated with DASHBOARD_PREFIX this yields `/plugins/memory-dashboard`
+    // — without the trailing slash that the OpenClaw 2026.5.4+ gateway rejects
+    // as "missing path".
+    expect(DASHBOARD_PATHS.root).toBe("");
   });
 
   it("DASHBOARD_PATHS.healthApi is /api/health", () => {
     expect(DASHBOARD_PATHS.healthApi).toBe("/api/health");
+  });
+
+  it("registers the dashboard root without a trailing slash (issue #1173)", () => {
+    const { api, routes } = makeApi();
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
+    const paths = routes.map((r) => r.path);
+    expect(paths).toContain("/plugins/memory-dashboard");
+    expect(paths).not.toContain("/plugins/memory-dashboard/");
   });
 });
