@@ -66,17 +66,18 @@ export function recordEpisode(
   const nowSec = Math.floor(Date.now() / 1000);
   const timestamp = input.timestamp ?? nowSec;
 
-  let importance = input.importance ?? 0.5;
-  if (input.outcome === "failure" && importance < 0.8) {
-    importance = 0.8;
-  }
-
   const decayClass = input.decayClass ?? "normal";
   const scope = input.scope ?? "global";
   const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
   const tags = input.tags ?? [];
   const relatedFactIds = input.relatedFactIds ?? [];
   const outcomeForInsert = episodeOutcomeForSqliteInsert(db, input.outcome);
+  const finalOutcome = storedEpisodeOutcomeToPublic(outcomeForInsert);
+
+  let importance = input.importance ?? 0.5;
+  if (finalOutcome === "failure" && importance < 0.8) {
+    importance = 0.8;
+  }
 
   const tx = createTransaction(db, () => {
     db.prepare(
@@ -115,7 +116,7 @@ export function recordEpisode(
     id,
     category: "episode",
     event: input.event,
-    outcome: storedEpisodeOutcomeToPublic(outcomeForInsert),
+    outcome: finalOutcome,
     timestamp,
     duration: input.duration,
     context: input.context,
