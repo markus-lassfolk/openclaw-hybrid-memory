@@ -30,10 +30,15 @@ export function recordProviderHttpAttempt(meta: { operation?: string; model?: st
   pruneOlderThan(now - 180_000);
 }
 
-function countInWindow(windowMs: number): RecentHttpAttempt[] {
+/** Clears the in-process ring buffer (Vitest only). */
+export function resetRecentHttpAttemptsForTests(): void {
+  events.length = 0;
+}
+
+/** Read-only slice for diagnostics — must not mutate `events` (rate-limit logs may run back-to-back; pruning here broke the 180s window). */
+function eventsInWindow(windowMs: number): RecentHttpAttempt[] {
   const now = Date.now();
   const start = now - windowMs;
-  pruneOlderThan(start - 1);
   return events.filter((e) => e.t >= start);
 }
 
@@ -60,8 +65,8 @@ function formatTop(m: Map<string, number>, limit: number): string {
  * Summarize recent attempts for rate-limit log lines (this Node process only).
  */
 export function formatRecentHttpAttemptsForRateLimitLog(): string {
-  const w180 = countInWindow(180_000);
-  const w60 = countInWindow(60_000);
+  const w180 = eventsInWindow(180_000);
+  const w60 = eventsInWindow(60_000);
   const top60 = formatTop(aggregateByOperationModel(w60), 6);
   const top180 = formatTop(aggregateByOperationModel(w180), 6);
   const s60 = w60.length === 0 ? "0" : String(w60.length);
