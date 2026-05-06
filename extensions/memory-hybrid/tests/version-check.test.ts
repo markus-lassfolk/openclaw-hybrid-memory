@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { MIN_OPENCLAW_VERSION, checkOpenClawVersion, isVersionAtLeast, parseVersion } from "../utils/version-check.js";
 
 describe("MIN_OPENCLAW_VERSION", () => {
-  it("is 2026.3.8", () => {
-    expect(MIN_OPENCLAW_VERSION).toBe("2026.3.8");
+  it("is 2026.5.0 (issue #1172: peer range tightened to avoid duckflux ETARGET)", () => {
+    expect(MIN_OPENCLAW_VERSION).toBe("2026.5.0");
   });
 });
 
@@ -96,13 +96,13 @@ describe("checkOpenClawVersion", () => {
 
   it("does nothing when version meets the minimum", () => {
     const logger = { warn: vi.fn() };
-    checkOpenClawVersion("2026.3.8", logger);
+    checkOpenClawVersion("2026.5.0", logger);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("does nothing when version exceeds the minimum", () => {
     const logger = { warn: vi.fn() };
-    checkOpenClawVersion("2026.3.100", logger);
+    checkOpenClawVersion("2026.5.100", logger);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -111,7 +111,7 @@ describe("checkOpenClawVersion", () => {
     checkOpenClawVersion("2026.3.2", logger);
     expect(logger.warn).toHaveBeenCalledOnce();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("OpenClaw v2026.3.2 detected"));
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("minimum recommended is v2026.3.8"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("minimum recommended is v2026.5.0"));
   });
 
   it("warning message includes guidance about affected features", () => {
@@ -139,7 +139,7 @@ describe("checkOpenClawVersion", () => {
 
   it("accepts versions with leading v prefix", () => {
     const logger = { warn: vi.fn() };
-    checkOpenClawVersion("v2026.3.8", logger);
+    checkOpenClawVersion("v2026.5.0", logger);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 });

@@ -13,8 +13,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
+
+import { findPluginRoot } from "../utils/plugin-root.js";
 
 import type { CredentialType } from "../config.js";
 import {
@@ -200,7 +201,7 @@ export async function runVerifyForCli(
     // non-fatal: skip pruning config check if config can't be read
   }
 
-  const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const extDir = findPluginRoot(import.meta.url);
   const isBindingsError = (msg: string) =>
     /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(
       msg,

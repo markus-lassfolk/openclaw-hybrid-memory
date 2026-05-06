@@ -25,6 +25,38 @@ No unreleased changes are documented here yet.
 
 ---
 
+## [2026.5.50] - 2026-05-05
+
+**Previous baseline:** [2026.4.273] (2026-04-27)
+
+### Release summary
+
+**2026.5.50** restores compatibility with **OpenClaw 2026.5.4+** plugin validation and removes the `npm install` regressions reported by external integrators. The published tarball now ships a prebuilt **`dist/`** tree (compiled with **tsdown**), `openclaw.extensions` points at the compiled **`./dist/index.js`**, runtime reads of `package.json` walk up to the plugin root (so they work whether the entry is the TS source or the compiled bundle), the dashboard root path is registered without a trailing slash through a path-validating wrapper, and the `openclaw` peerDependency is tightened to `>=2026.5.0 <2027` with a CI smoke-install asserting the tree resolves cleanly. Human-oriented upgrade notes: [`release-notes/release-notes-2026.5.50.md`](release-notes/release-notes-2026.5.50.md).
+
+### Added
+
+- **Build pipeline** (#1171): `tsdown` now emits a multi-file ESM tree under `dist/` (preserves the source module structure so OpenClaw's plugin loader can introspect routes individually). New scripts: `npm run build`, `npm run build:check`. Added `prepack` chain that builds before generating `npm-shrinkwrap.json`.
+- **`utils/plugin-root.ts`** (#1174): walk-up resolver (`findPluginRoot`, `readPluginPackageJson`) anchored on `openclaw.plugin.json`. New unit tests in `tests/plugin-root.test.ts`.
+- **`tools/safe-register-http-route.ts`** (#1173): wrapper around `api.registerHttpRoute` that validates non-empty paths, normalizes trailing/leading slashes, and rejects empty paths with an actionable plugin-side error instead of letting the gateway emit a generic `http route registration missing path` warning. New unit tests in `tests/safe-register-http-route.test.ts`.
+- **CI install-smoke matrix** (#1172): `install-smoke` job in `.github/workflows/ci.yml` now packs, installs into a clean tmpdir against the tightened `openclaw` peer, asserts no `@duckflux/core` / `ETARGET` / required `UNMET` in the resolved tree, asserts `dist/index.js` ships, and smoke-loads the compiled entry on Node 22 and 24.
+
+### Changed
+
+- **`openclaw.extensions`** (#1171): now points at `./dist/index.js` and adds `runtimeExtensions` for explicitness with 2026.5.4+ validators. `dist` added to `package.json#files`.
+- **`peerDependencies.openclaw`** (#1172): tightened from `>=2026.3.8` to `>=2026.5.0 <2027`. `MIN_OPENCLAW_VERSION` and corresponding tests bumped to `2026.5.0`.
+- **Dashboard root path** (#1173): `DASHBOARD_PATHS.root` is now the empty string (so the registered path is `/plugins/memory-dashboard`, no trailing slash). All routes flow through `createSafeRegisterHttpRoute`.
+- **`versionInfo.ts`** (#1174): now reads `package.json` via `readPluginPackageJson(import.meta.url)` instead of `createRequire(import.meta.url); require("./package.json")`.
+- **`utils/prompt-loader.ts`, `setup/plugin-service.ts`, `cli/cmd-install.ts`, `cli/cmd-verify.ts`, `cli/cmd-config.ts`** (#1174): replaced `join(dirname(fileURLToPath(import.meta.url)), "..")` with `findPluginRoot(import.meta.url)` so `prompts/`, `skills/`, and `openclaw.plugin.json` paths resolve correctly when the entry is `dist/cli/foo.js`.
+
+### Fixed
+
+- **#1171** Plugin packages whose `openclaw.extensions` pointed at a TypeScript source were rejected by OpenClaw 2026.5.4+. The published tarball now ships `dist/index.js` and `dist/index.d.ts`.
+- **#1172** `npm install openclaw-hybrid-memory@latest` could fail with `ETARGET No matching version found for @duckflux/core@^0.1.0` when npm picked an intermediate `openclaw` version through the open-ended peer range. The new peer floor + CI smoke-install prevent regressions.
+- **#1173** OpenClaw 2026.5.4+ gateway emitted `[plugins] http route registration missing path (plugin=openclaw-hybrid-memory, source=.../dist/index.js)` due to the trailing slash in the dashboard root registration; paths now go through `createSafeRegisterHttpRoute` and the dashboard root is registered without a trailing slash.
+- **#1174** `versionInfo.ts` (and other modules that need plugin-relative paths) failed under bundling because `require("./package.json")` resolved to `dist/package.json`. Resolution now walks up to the directory containing `openclaw.plugin.json`.
+
+---
+
 ## [2026.4.273] - 2026-04-27
 
 **Previous baseline:** [2026.4.272] (2026-04-27)

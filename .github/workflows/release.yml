@@ -165,7 +165,9 @@ jobs:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-24-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --include=optional
+      - name: Build (tsdown -> dist/)
+        run: npm run build
       - name: Verify publish
         run: npm run verify:publish
       - name: Publish to NPM

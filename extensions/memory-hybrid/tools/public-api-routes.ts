@@ -7,6 +7,7 @@ import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
+import { type SafeRouteLogger, createSafeRegisterHttpRoute } from "./safe-register-http-route.js";
 
 export interface PublicApiRoutesContext {
   cfg: {
@@ -107,12 +108,13 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     authenticated: ctx.cfg.health.authenticated,
   };
 
-  const makeRoute = (path: string, handler: HttpRequestHandler) =>
-    (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
-      path,
-      handler,
-      routeOpts,
-    );
+  // Route paths flow through the safe wrapper so the OpenClaw 2026.5.4+
+  // gateway no longer emits "http route registration missing path" warnings
+  // (issue #1173): empty/whitespace paths are rejected with a clear error,
+  // and trailing slashes are normalized.
+  const logger = (api.logger ?? { warn: () => {} }) as SafeRouteLogger;
+  const register = createSafeRegisterHttpRoute(api, logger, "memory-public");
+  const makeRoute = (path: string, handler: HttpRequestHandler) => register(path, handler, routeOpts);
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.health}`, async () =>
     toJson(200, {
