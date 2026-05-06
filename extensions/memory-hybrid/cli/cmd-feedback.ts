@@ -400,7 +400,7 @@ export async function runCrossAgentLearningForCli(
     opts.verbose === true
       ? {
           ...baseLog,
-          info: (msg: string) => baseLog.info?.(msg) ?? console.log(msg),
+          info: baseLog.info ?? ((msg: string) => console.log(msg)),
         }
       : baseLog;
 

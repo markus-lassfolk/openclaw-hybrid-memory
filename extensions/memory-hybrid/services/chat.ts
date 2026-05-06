@@ -729,7 +729,7 @@ export async function withLLMRetry<T>(
         const modelId = opts?.llmContext?.model;
         const ctxTag = op || modelId ? ` [${[op, modelId].filter(Boolean).join(" · ")}]` : "";
         pluginLogger.warn(
-          `memory-hybrid: ${isQuota403 ? "Quota/rate limit (403)" : "Rate limited by provider"}${ctxTag} — retry ${attempt + 1}/${maxRetries + 1}, backing off ${delay}ms`,
+          `memory-hybrid: ${isQuota403 ? "Quota/rate limit (403)" : "Rate limited by provider"}${ctxTag} — retry ${attempt + 1}/${maxRetries}, backing off ${delay}ms`,
         );
       } else {
         delay = 3 ** attempt * 1000; // 1s, 3s, 9s
