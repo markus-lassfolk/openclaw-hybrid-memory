@@ -216,11 +216,6 @@ export async function runReflection(
     .getByCategory("pattern")
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingVectors: (number[] | null)[] = [];
-  if (opts.verbose && existingPatternFacts.length > 0) {
-    logger.info(
-      `memory-hybrid: reflection — dedupe: embedding ${existingPatternFacts.length} existing pattern row(s) for cosine similarity (batched, short pause between batches)`,
-    );
-  }
   if (existingPatternFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflection — embedding ${existingPatternFacts.length} existing pattern row(s) for dedupe (sequential API calls; rate limits may appear here)`,
@@ -451,11 +446,6 @@ export async function runReflectionRules(
     .getByCategory("rule")
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingVectors: (number[] | null)[] = [];
-  if (opts.verbose && existingRuleFacts.length > 0) {
-    logger.info(
-      `memory-hybrid: reflect-rules — dedupe: embedding ${existingRuleFacts.length} existing rule row(s) for cosine similarity`,
-    );
-  }
   if (existingRuleFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflect-rules — embedding ${existingRuleFacts.length} existing rule row(s) for dedupe (sequential API calls)`,
