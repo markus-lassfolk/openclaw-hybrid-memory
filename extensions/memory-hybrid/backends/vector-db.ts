@@ -1291,7 +1291,7 @@ export class VectorDB {
       return Array.from((raw as { toJSON: () => ArrayLike<number> }).toJSON() as ArrayLike<number>, (x) => Number(x));
     }
     if (ArrayBuffer.isView(raw)) {
-      return Array.from(raw as ArrayLike<number>, (value: number) => Number(value));
+      return Array.from(raw as unknown as ArrayLike<number>, (value: number) => Number(value));
     }
     return null;
   }

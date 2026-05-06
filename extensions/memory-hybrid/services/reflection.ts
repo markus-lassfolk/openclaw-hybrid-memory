@@ -122,7 +122,8 @@ async function loadReflectionDedupeCorpusVectors(
     for (let j = i; j < end; j++) {
       const f = facts[j]!;
       const cached = byId.get(f.id.toLowerCase());
-      const modelOk = f.embeddingModel == null || f.embeddingModel === embeddings.modelName;
+      const modelOk =
+        f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
       const useCache = cached != null && cached.length === dim && modelOk;
       if (useCache) {
         result[j] = normalizeVector(cached);
@@ -416,7 +417,9 @@ export async function runReflection(
     stored++;
   }
 
-  factsDb.setMaintenanceState("reflection_input_hash", inputHash);
+  if (!opts.dryRun) {
+    factsDb.setMaintenanceState("reflection_input_hash", inputHash);
+  }
   logger.info(
     `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
   );

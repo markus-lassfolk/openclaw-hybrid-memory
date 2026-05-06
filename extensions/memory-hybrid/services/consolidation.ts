@@ -146,12 +146,18 @@ export async function runConsolidate(
   const ids = candidateFacts.map((f) => f.id);
 
   logger.info(`memory-hybrid: consolidate — loading vectors for ${ids.length} facts (Lance index + embedding API)...`);
-  const dim = vectorDb.getVectorDim();
+  const vdb = vectorDb as VectorDB & {
+    getVectorDim?: () => number;
+    getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
+  };
+  const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
   let cachedVectors = new Map<string, number[]>();
-  try {
-    cachedVectors = await vectorDb.getVectorsByFactIds(ids);
-  } catch {
-    cachedVectors = new Map();
+  if (typeof vdb.getVectorsByFactIds === "function") {
+    try {
+      cachedVectors = await vdb.getVectorsByFactIds(ids);
+    } catch {
+      cachedVectors = new Map();
+    }
   }
   let lanceHits = 0;
   let apiEmbeds = 0;
@@ -160,10 +166,11 @@ export async function runConsolidate(
     const batch = ids.slice(i, i + 20);
     let hadApiEmbed = false;
     for (const id of batch) {
-      const f = idToFact.get(id)!;
+      const f = idToFact.get(id)! as MemoryEntry;
       const cached = cachedVectors.get(id.toLowerCase());
-      const modelOk = f.embeddingModel == null || f.embeddingModel === embeddings.modelName;
-      if (cached && cached.length === dim && modelOk) {
+      const modelOk =
+        f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
+      if (dim > 0 && cached && cached.length === dim && modelOk) {
         vectors.push(normalizeVector(cached));
         lanceHits++;
       } else {
