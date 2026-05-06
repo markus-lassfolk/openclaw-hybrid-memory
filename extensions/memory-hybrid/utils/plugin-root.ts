@@ -14,7 +14,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Marker file that uniquely identifies the plugin's package root. */
@@ -38,7 +38,7 @@ export function findPluginRoot(metaUrl: string): string {
   let current = dirname(startFile);
   // Hard upper bound to avoid pathological loops on malformed URLs.
   for (let i = 0; i < 64; i++) {
-    if (existsSync(`${current}/${PLUGIN_MANIFEST_FILENAME}`)) {
+    if (existsSync(join(current, PLUGIN_MANIFEST_FILENAME))) {
       rootCache.set(metaUrl, current);
       return current;
     }
@@ -68,7 +68,7 @@ export interface PluginPackageJson {
  */
 export function readPluginPackageJson(metaUrl: string): PluginPackageJson {
   const root = findPluginRoot(metaUrl);
-  const pkgPath = `${root}/package.json`;
+  const pkgPath = join(root, "package.json");
   const raw = readFileSync(pkgPath, "utf-8");
   const parsed = JSON.parse(raw) as PluginPackageJson;
   if (typeof parsed.version !== "string" || parsed.version.length === 0) {

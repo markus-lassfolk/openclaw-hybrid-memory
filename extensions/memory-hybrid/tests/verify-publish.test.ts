@@ -12,5 +12,6 @@ describe("verify-publish", () => {
     expect(content).toContain("requiredRuntimeDeps");
     expect(content).toContain("optionalDependencies");
     expect(content).toContain("peerDependencies");
+    expect(content).toContain("--ignore-scripts");
   });
 });

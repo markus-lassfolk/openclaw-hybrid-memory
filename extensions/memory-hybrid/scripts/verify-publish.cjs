@@ -171,10 +171,20 @@ function npmExecutable() {
   const candidate = path.join(path.dirname(process.execPath), "npm.cmd");
   return fs.existsSync(candidate) ? candidate : "npm.cmd";
 }
+// Real `npm pack` runs prepack (build + shrinkwrap). Use `--ignore-scripts` so this
+// verifier stays side-effect-free for npm, then mirror prepack's shrinkwrap step so
+// the dry-run file list matches what publish would ship.
+let createdShrinkwrapForPackProbe = false;
 try {
+  execFileSync(process.execPath, [shrinkwrapScriptPath, "create"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  createdShrinkwrapForPackProbe = true;
   const stdout = execFileSync(
     npmExecutable(),
-    ["pack", "--dry-run", "--json", "--silent"],
+    ["pack", "--dry-run", "--json", "--silent", "--ignore-scripts"],
     {
       cwd: root,
       encoding: "utf8",
@@ -200,6 +210,17 @@ try {
   );
   failed = true;
   packCheckErrored = true;
+} finally {
+  if (createdShrinkwrapForPackProbe) {
+    try {
+      execFileSync(process.execPath, [shrinkwrapScriptPath, "clean"], {
+        cwd: root,
+        stdio: "pipe",
+      });
+    } catch {
+      /* best-effort cleanup after probe */
+    }
+  }
 }
 if (!packIncludesShrinkwrap && !packCheckErrored) {
   console.error(
