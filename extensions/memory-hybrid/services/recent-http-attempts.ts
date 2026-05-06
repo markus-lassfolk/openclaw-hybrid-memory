@@ -60,8 +60,8 @@ function formatTop(m: Map<string, number>, limit: number): string {
  * Summarize recent attempts for rate-limit log lines (this Node process only).
  */
 export function formatRecentHttpAttemptsForRateLimitLog(): string {
-  const w60 = countInWindow(60_000);
   const w180 = countInWindow(180_000);
+  const w60 = countInWindow(60_000);
   const top60 = formatTop(aggregateByOperationModel(w60), 6);
   const top180 = formatTop(aggregateByOperationModel(w180), 6);
   const s60 = w60.length === 0 ? "0" : String(w60.length);
