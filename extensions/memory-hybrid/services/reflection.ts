@@ -236,7 +236,15 @@ export async function runReflection(
   }
 
   const factsBlock = factLines.join("\n");
-  const inputHash = createHash("sha256").update(`${windowDays}:${opts.model}:${factsBlock}`).digest("hex").slice(0, 16);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const existingPatternFacts = factsDb
+    .getByCategory("pattern")
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
+  const existingPatternsFingerprint = existingPatternFacts.map((f) => f.id).sort().join(",");
+  const inputHash = createHash("sha256")
+    .update(`${windowDays}:${opts.model}:${factsBlock}:${existingPatternsFingerprint}`)
+    .digest("hex")
+    .slice(0, 16);
   const prevHash = factsDb.getMaintenanceState("reflection_input_hash");
   if (prevHash === inputHash) {
     logger.info("memory-hybrid: reflection — input facts unchanged since last run, skipping LLM call");
@@ -293,11 +301,6 @@ export async function runReflection(
     }
   }
 
-  // Existing patterns (non-superseded, still valid) for dedupe
-  const nowSec = Math.floor(Date.now() / 1000);
-  const existingPatternFacts = factsDb
-    .getByCategory("pattern")
-    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   let existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
     logger.info(

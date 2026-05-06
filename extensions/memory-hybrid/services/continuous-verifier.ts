@@ -212,6 +212,7 @@ export class ContinuousVerifier {
           if (underlying) {
             this.factsDb.addTag(underlying.id, "review-needed");
           }
+          this.store.update(fact.id, fact.canonicalText, "system");
           result.uncertain++;
           const n = result.checked;
           const total = due.length;

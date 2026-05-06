@@ -192,6 +192,8 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
         const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;
         const backfillDonePath = memoryDir ? join(memoryDir, BACKFILL_DECAY_MARKER) : null;
 
+        let patternsStoredThisRun = 0;
+
         const steps: { name: string; run: () => Promise<void> }[] = [
           {
             name: "backfill-decay",
@@ -318,18 +320,15 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 model: reflectionConfig.model,
                 verbose,
               });
+              patternsStoredThisRun = r.patternsStored;
               log(`Reflect: ${r.patternsStored} patterns stored.`);
             },
           },
           {
             name: "reflect-rules",
             run: async () => {
-              const nowSec = Math.floor(Date.now() / 1000);
-              const patternCount = factsDb
-                .getByCategory("pattern")
-                .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec)).length;
-              if (patternCount < 3) {
-                log(`Reflect-rules: skipped (${patternCount} patterns in DB < 3 minimum).`);
+              if (patternsStoredThisRun < 3) {
+                log(`Reflect-rules: skipped (${patternsStoredThisRun} patterns stored this run < 3 minimum).`);
                 return;
               }
               const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
@@ -339,12 +338,8 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "reflect-meta",
             run: async () => {
-              const nowSec = Math.floor(Date.now() / 1000);
-              const patternCount = factsDb
-                .getByCategory("pattern")
-                .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec)).length;
-              if (patternCount < 3) {
-                log(`Reflect-meta: skipped (${patternCount} patterns in DB < 3 minimum).`);
+              if (patternsStoredThisRun < 3) {
+                log(`Reflect-meta: skipped (${patternsStoredThisRun} patterns stored this run < 3 minimum).`);
                 return;
               }
               const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model, verbose });
