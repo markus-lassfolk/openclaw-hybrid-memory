@@ -327,8 +327,12 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "reflect-rules",
             run: async () => {
-              if (patternsStoredThisRun < 3) {
-                log(`Reflect-rules: skipped (${patternsStoredThisRun} patterns stored this run < 3 minimum).`);
+              const nowSec = Math.floor(Date.now() / 1000);
+              const totalPatterns = factsDb
+                .getByCategory("pattern")
+                .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec)).length;
+              if (totalPatterns < 3) {
+                log(`Reflect-rules: skipped (${totalPatterns} total patterns in DB < 3 minimum).`);
                 return;
               }
               const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
@@ -338,8 +342,12 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "reflect-meta",
             run: async () => {
-              if (patternsStoredThisRun < 3) {
-                log(`Reflect-meta: skipped (${patternsStoredThisRun} patterns stored this run < 3 minimum).`);
+              const nowSec = Math.floor(Date.now() / 1000);
+              const totalPatterns = factsDb
+                .getByCategory("pattern")
+                .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec)).length;
+              if (totalPatterns < 3) {
+                log(`Reflect-meta: skipped (${totalPatterns} total patterns in DB < 3 minimum).`);
                 return;
               }
               const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model, verbose });
