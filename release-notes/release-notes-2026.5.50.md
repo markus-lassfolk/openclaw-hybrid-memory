@@ -1,5 +1,7 @@
 # Release Notes — OpenClaw Hybrid Memory 2026.5.50
 
+> **Note:** The published **2026.5.x** line is released as **[2026.5.60](release-notes-2026.5.60.md)** (includes additional fixes and **`contracts.tools`**). Prefer **`release-notes-2026.5.60.md`** for upgrade guidance.
+
 **Date:** 2026-05-05
 **Previous baseline:** 2026.4.273
 
