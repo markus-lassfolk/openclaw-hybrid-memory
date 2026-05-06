@@ -34,6 +34,36 @@ if (!fs.existsSync(distIndexJs)) {
   console.log("OK: dist/index.js and dist/index.d.ts exist");
 }
 
+// 0a. Plugin manifest: OpenClaw 2026.5+ requires contracts.tools before registerTool.
+const pluginManifestPath = path.join(root, "openclaw.plugin.json");
+if (!fs.existsSync(pluginManifestPath)) {
+  console.error("FAIL: openclaw.plugin.json is missing");
+  failed = true;
+} else {
+  try {
+    const pluginManifest = JSON.parse(fs.readFileSync(pluginManifestPath, "utf8"));
+    const tools = pluginManifest.contracts?.tools;
+    if (!Array.isArray(tools) || tools.length === 0) {
+      console.error(
+        "FAIL: openclaw.plugin.json must declare contracts.tools (non-empty array) for OpenClaw 2026.5+",
+      );
+      failed = true;
+    } else {
+      const bad = tools.filter((t) => typeof t !== "string" || !/^[a-zA-Z0-9_]+$/.test(t));
+      if (bad.length > 0) {
+        console.error("FAIL: contracts.tools entries must be non-empty alphanumeric/underscore strings:", bad);
+        failed = true;
+      } else {
+        console.log(`OK: openclaw.plugin.json declares contracts.tools (${tools.length} names)`);
+      }
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("FAIL: could not parse openclaw.plugin.json:", message);
+    failed = true;
+  }
+}
+
 const openclawExt = Array.isArray(pkg.openclaw?.extensions)
   ? pkg.openclaw.extensions
   : [];

@@ -3,6 +3,10 @@
  *
  * Registers all plugin tools with the OpenClaw API.
  * Extracted from index.ts to reduce main file size.
+ *
+ * OpenClaw 2026.5+ requires `openclaw.plugin.json#contracts.tools` to list every
+ * tool name before `registerTool` succeeds — keep in sync with
+ * `contracts/agent-tool-names.ts`.
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
