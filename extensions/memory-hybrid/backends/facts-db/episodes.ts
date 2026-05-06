@@ -7,6 +7,11 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { DecayClass } from "../../config.js";
 import type { Episode, EpisodeOutcome, ScopeFilter } from "../../types/memory.js";
+import {
+  episodeOutcomeForSqliteInsert,
+  episodesTableIsLegacyFailedOutcomeCheck,
+  storedEpisodeOutcomeToPublic,
+} from "../../utils/sqlite-outcome-compat.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { sanitizeFts5QueryForFacts } from "./fts-text.js";
@@ -18,7 +23,7 @@ export function rowToEpisode(row: Record<string, unknown>): Episode {
     id: row.id as string,
     category: "episode",
     event: row.event as string,
-    outcome: row.outcome as EpisodeOutcome,
+    outcome: storedEpisodeOutcomeToPublic(String(row.outcome ?? "")),
     timestamp: row.timestamp as number,
     duration: (row.duration as number) ?? undefined,
     context: (row.context as string) ?? undefined,
@@ -71,6 +76,7 @@ export function recordEpisode(
   const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
   const tags = input.tags ?? [];
   const relatedFactIds = input.relatedFactIds ?? [];
+  const outcomeForInsert = episodeOutcomeForSqliteInsert(db, input.outcome);
 
   const tx = createTransaction(db, () => {
     db.prepare(
@@ -79,7 +85,7 @@ export function recordEpisode(
     ).run(
       id,
       input.event,
-      input.outcome,
+      outcomeForInsert,
       timestamp,
       input.duration ?? null,
       input.context ?? null,
@@ -158,9 +164,20 @@ export function searchEpisodes(
   }
 
   if (outcome && outcome.length > 0) {
-    const placeholders = outcome.map(() => "?").join(",");
+    const legacyFailed = episodesTableIsLegacyFailedOutcomeCheck(db);
+    const expanded = new Set<string>(outcome);
+    if (legacyFailed) {
+      if (outcome.includes("failure")) {
+        expanded.add("failed");
+      }
+      if (outcome.includes("unknown")) {
+        expanded.add("failed");
+      }
+    }
+    const list = [...expanded];
+    const placeholders = list.map(() => "?").join(",");
     conditions.push(`e.outcome IN (${placeholders})`);
-    params.push(...outcome);
+    params.push(...list);
   }
 
   if (since !== undefined) {

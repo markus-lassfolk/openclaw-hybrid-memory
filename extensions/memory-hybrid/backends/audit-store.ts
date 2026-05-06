@@ -105,6 +105,9 @@ function scrubContext(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 export class AuditStore extends BaseSqliteStore {
+  /** Cached from `sqlite_master`: whether live `audit_log` CHECK includes `skipped`. */
+  private auditLogAllowsSkipped: boolean | undefined;
+
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
@@ -136,10 +139,30 @@ export class AuditStore extends BaseSqliteStore {
     return "audit-store";
   }
 
+  /**
+   * Legacy `audit_log` CHECK may be `('success','partial','failed')` without
+   * `skipped`. Map `skipped` → `failed` for inserts only (semantic: suppressed /
+   * no-op path, not a hard error).
+   */
+  private outcomeForAuditInsert(outcome: AuditOutcome): AuditOutcome {
+    if (outcome !== "skipped") {
+      return outcome;
+    }
+    if (this.auditLogAllowsSkipped === undefined) {
+      const row = this.liveDb
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audit_log'")
+        .get() as { sql?: string } | undefined;
+      const sql = typeof row?.sql === "string" ? row.sql : "";
+      this.auditLogAllowsSkipped = sql.includes("'skipped'");
+    }
+    return this.auditLogAllowsSkipped ? outcome : "failed";
+  }
+
   append(input: AuditEventInput): string {
     const id = randomUUID();
     const ts = input.timestamp ?? Date.now();
     const ctxJson = input.context != null ? JSON.stringify(scrubContext(input.context)) : null;
+    const outcome = this.outcomeForAuditInsert(input.outcome);
     this.liveDb
       .prepare(
         `INSERT INTO audit_log (id, timestamp, agent_id, action, target, outcome, duration_ms, error, context, session_id, model, tokens)
@@ -151,7 +174,7 @@ export class AuditStore extends BaseSqliteStore {
         input.agentId,
         input.action,
         input.target ?? null,
-        input.outcome,
+        outcome,
         input.durationMs ?? null,
         input.error ?? null,
         ctxJson,

@@ -21,7 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-No unreleased changes are documented here yet.
+### Fixed
+
+- **SQLite legacy CHECK drift:** `recordEpisode` now maps `failure` / `unknown` → `failed` when the live `episodes` table DDL (from `sqlite_master`) shows the legacy CHECK that only allows `failed` (not `failure`). `rowToEpisode` maps stored `failed` back to public `failure`. `searchEpisodes` outcome filters expand `failure` / `unknown` to match `failed` on those databases. **`AuditStore.append`** maps `skipped` → `failed` when `audit_log` omits `skipped` in its CHECK. See `utils/sqlite-outcome-compat.ts` and `tests/sqlite-outcome-compat.test.ts`.
 
 ---
 
