@@ -36,6 +36,14 @@ const REFLECTION_META_MIN_CHARS = 20;
 const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
 const REFLECTION_MAX_PATTERNS_FOR_META = 30;
 
+/** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
+export function countActivePatternFactsForMaintenance(factsDb: FactsDB): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return factsDb
+    .getByCategory("pattern")
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec)).length;
+}
+
 export interface ReflectionConfig {
   defaultWindow: number;
   minObservations: number;

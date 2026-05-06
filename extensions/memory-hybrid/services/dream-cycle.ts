@@ -20,7 +20,12 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
 import type { ProvenanceService } from "./provenance.js";
-import { type ReflectionConfig, runReflection, runReflectionRules } from "./reflection.js";
+import {
+  type ReflectionConfig,
+  countActivePatternFactsForMaintenance,
+  runReflection,
+  runReflectionRules,
+} from "./reflection.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -494,9 +499,11 @@ export async function runDreamCycle(
     });
   }
 
+  const patternGateForRules = Math.max(patternsFound, countActivePatternFactsForMaintenance(factsDb));
+
   // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
   let rulesGenerated = 0;
-  if (patternsFound >= MIN_PATTERNS_FOR_RULES) {
+  if (patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
     step("reflect-rules");
     try {
       const rulesResult = await runReflectionRules(
@@ -518,8 +525,9 @@ export async function runDreamCycle(
       });
     }
   } else if (v) {
+    const live = countActivePatternFactsForMaintenance(factsDb);
     logger.info(
-      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} patterns < ${MIN_PATTERNS_FOR_RULES} minimum)`,
+      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${live} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
     );
   }
 
