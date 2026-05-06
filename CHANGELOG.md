@@ -30,12 +30,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Maintenance observability**: `hybrid-mem dream-cycle --verbose` (and parent `-v`) forwards through WAL pre-flush, reflection, reflect-rules, MEMORY_INDEX refresh, continuous verification (`onProgress`, throttled), extract-implicit, cross-agent learning, and tool effectiveness; `run-all --verbose` passes through to extract-procedures and self-correction-run.
 - **Reflection progress logs** (always-on `info`): LLM completion line, dedupe embedding phase with success counts, new-candidate embedding phase, and a final summary (stored / duplicate skips / embed failures).
 - **Embedding rate-limit context**: OpenAI embedding `withLLMRetry` calls include `llmContext` so 429 backoff lines identify `memory-hybrid: embeddings.create` vs chat completions.
-- **Chat rate-limit detail**: `withLLMRetry` warns include operation label, model, and retry attempt index.
+- **Chat rate-limit detail**: `withLLMRetry` warns include operation label, model, and retry attempt index; optional provider **`x-ratelimit-*`** snapshot plus **60s / 180s** in-process attempt totals by operation/model (`recent-http-attempts`, read-only window counts).
 
 ### Changed
 
 - **`ContinuousVerifierOptions`**: exported; optional `onProgress` for long verification cycles.
 - **`runCrossAgentLearning` / CLI**: optional `verbose` with per-batch `info` logging when enabled.
+
+### Fixed
+
+- **Dream-cycle verbose steps**: runtime step ordinals so skipped optional phases do not leave gaps in `step N:` output.
+- **Reflection**: single dedupe-phase log line for patterns/rules (accurate “batched embeds” wording).
+- **Cross-agent learning**: per-batch `info` only when `verbose` is set (avoids noisy nightly logs).
 
 ### Notes
 

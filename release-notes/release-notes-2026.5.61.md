@@ -10,7 +10,8 @@ Anyone already on **2026.5.60** who wants clearer logs for **`hybrid-mem dream-c
 
 - **Dream cycle & wrappers**: `--verbose` / parent `-v` propagates through follow-up steps (continuous verification, extract-implicit, cross-agent learning, tool effectiveness); step labels and WAL flush summaries in-plugin.
 - **Reflection**: always-on **`info`** checkpoints after the LLM (candidate count), through **dedupe embedding** (success counts), and a **finished** summary (stored vs duplicates vs embed failures).
-- **Rate-limit lines**: chat retries show operation + model + attempt; embedding API retries are tagged **`memory-hybrid: embeddings.create`** (single and batch).
+- **Rate-limit lines**: chat retries show operation + model + attempt; embedding API retries are tagged **`memory-hybrid: embeddings.create`** (single and batch); backoff warns can include provider **`x-ratelimit-*`** hints and **60s / 180s** in-process attempt rollups (by operation/model) for RPM/TPM triage.
+- **Review polish**: dream-cycle verbose step numbering without gaps when optional steps skip; reflection dedupe logs consolidated; cross-agent batch logs gated behind **`--verbose`**.
 
 ## Install
 
