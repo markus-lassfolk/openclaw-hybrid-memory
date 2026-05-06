@@ -104,7 +104,7 @@ export function dotProductSimilarity(a: number[], b: number[]): number {
  * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
  * else call the embedding API. Batches API calls (20) with a short pause only when a batch used the API.
  */
-async function loadReflectionDedupeCorpusVectors(
+export async function loadReflectionDedupeCorpusVectors(
   facts: MemoryEntry[],
   embeddings: EmbeddingProvider,
   vectorDb: VectorDB,

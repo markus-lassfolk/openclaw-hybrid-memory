@@ -525,9 +525,8 @@ export async function runDreamCycle(
       });
     }
   } else if (v) {
-    const live = countActivePatternFactsForMaintenance(factsDb);
     logger.info(
-      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${live} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
+      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${patternGateForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
     );
   }
 

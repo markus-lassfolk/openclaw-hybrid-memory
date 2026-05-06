@@ -21,7 +21,7 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 import type { ProvenanceService } from "./provenance.js";
-import { dotProductSimilarity, normalizeVector } from "./reflection.js";
+import { dotProductSimilarity, loadReflectionDedupeCorpusVectors, normalizeVector } from "./reflection.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -146,58 +146,15 @@ export async function runConsolidate(
   const ids = candidateFacts.map((f) => f.id);
 
   logger.info(`memory-hybrid: consolidate — loading vectors for ${ids.length} facts (Lance index + embedding API)...`);
-  const vdb = vectorDb as VectorDB & {
-    getVectorDim?: () => number;
-    getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
-  };
-  const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
-  let cachedVectors = new Map<string, number[]>();
-  if (typeof vdb.getVectorsByFactIds === "function") {
-    try {
-      cachedVectors = await vdb.getVectorsByFactIds(ids);
-    } catch {
-      cachedVectors = new Map();
-    }
-  }
-  let lanceHits = 0;
-  let apiEmbeds = 0;
-  const vectors: number[][] = [];
-  for (let i = 0; i < ids.length; i += 20) {
-    const batch = ids.slice(i, i + 20);
-    let hadApiEmbed = false;
-    for (const id of batch) {
-      const f = idToFact.get(id)! as MemoryEntry;
-      const cached = cachedVectors.get(id.toLowerCase());
-      const modelOk =
-        f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
-      if (dim > 0 && cached && cached.length === dim && modelOk) {
-        vectors.push(normalizeVector(cached));
-        lanceHits++;
-      } else {
-        try {
-          const vec = await embeddings.embed(f.text);
-          vectors.push(normalizeVector(vec));
-          apiEmbeds++;
-          hadApiEmbed = true;
-        } catch (err) {
-          logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
-          if (!shouldSuppressEmbeddingError(err)) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "consolidate-embed",
-              subsystem: "embeddings",
-              factId: id,
-            });
-          }
-          vectors.push([]);
-          hadApiEmbed = true;
-        }
-      }
-    }
-    if (hadApiEmbed && i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
-  }
-  logger.info(
-    `memory-hybrid: consolidate — vectors: ${lanceHits} from Lance, ${apiEmbeds} from embedding API, ${vectors.filter((v) => v.length > 0).length}/${ids.length} valid`,
+  const vectorResults = await loadReflectionDedupeCorpusVectors(
+    candidateFacts,
+    embeddings,
+    vectorDb,
+    logger,
+    "memory-hybrid: consolidate",
+    "consolidate-embed",
   );
+  const vectors = vectorResults.map((v) => (v === null ? [] : v));
 
   const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const edges: Array<[string, string]> = [];
