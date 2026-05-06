@@ -162,6 +162,12 @@ export async function runReflection(
   const factsBlock = factLines.join("\n");
   const prompt = fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock });
 
+  if (opts.verbose) {
+    logger.info(
+      `memory-hybrid: reflection — LLM call (${prompt.length} chars, ${recentFacts.length} facts in window, model=${opts.model})`,
+    );
+  }
+
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -193,6 +199,10 @@ export async function runReflection(
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
+  logger.info(
+    `memory-hybrid: reflection — LLM completed successfully: ${uniqueNewPatterns.length} candidate pattern(s) after parse (next: embed prior patterns for dedupe, then each new pattern)`,
+  );
+
   if (opts.verbose) {
     logger.info(`memory-hybrid: reflection — extracted ${uniqueNewPatterns.length} patterns:`);
     for (const pattern of uniqueNewPatterns) {
@@ -207,6 +217,9 @@ export async function runReflection(
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
+    logger.info(
+      `memory-hybrid: reflection — embedding ${existingPatternFacts.length} existing pattern row(s) for dedupe cosine check (API calls in batches of up to 20 with a short pause between batches; rate limits may appear here)`,
+    );
     for (let i = 0; i < existingPatternFacts.length; i += 20) {
       const batch = existingPatternFacts.slice(i, i + 20);
       for (const f of batch) {
@@ -227,15 +240,28 @@ export async function runReflection(
       }
       if (i + 20 < existingPatternFacts.length) await new Promise((r) => setTimeout(r, 200));
     }
+    const dedupeOk = existingVectors.filter((v) => v !== null).length;
+    logger.info(
+      `memory-hybrid: reflection — dedupe corpus done: ${dedupeOk}/${existingPatternFacts.length} embedding(s) succeeded`,
+    );
+  } else {
+    logger.info("memory-hybrid: reflection — no existing pattern facts for dedupe; embedding new candidates only");
   }
 
+  logger.info(
+    `memory-hybrid: reflection — embedding ${uniqueNewPatterns.length} new candidate pattern(s) for duplicate check + storage`,
+  );
+
   let stored = 0;
+  let duplicatesSkipped = 0;
+  let newPatternEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const patternText of uniqueNewPatterns) {
     let vec: number[];
     try {
       vec = await embeddings.embed(patternText);
     } catch (err) {
+      newPatternEmbedFailures++;
       // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -256,6 +282,7 @@ export async function runReflection(
       }
     }
     if (isDuplicate) {
+      duplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflection — skipped duplicate: ${patternText.slice(0, 60)}...`);
       }
@@ -323,6 +350,10 @@ export async function runReflection(
     stored++;
   }
 
+  logger.info(
+    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
+  );
+
   return {
     factsAnalyzed: recentFacts.length,
     patternsExtracted: uniqueNewPatterns.length,
@@ -354,6 +385,11 @@ export async function runReflectionRules(
   }
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
+  if (opts.verbose) {
+    logger.info(
+      `memory-hybrid: reflect-rules — LLM call (${prompt.length} chars, ${patterns.length} patterns, model=${opts.model})`,
+    );
+  }
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -396,6 +432,10 @@ export async function runReflectionRules(
     return { rulesExtracted: rules.length, rulesStored: 0 };
   }
 
+  logger.info(
+    `memory-hybrid: reflect-rules — LLM completed successfully: ${uniqueRules.length} candidate rule(s) after parse (next: embed prior rules for dedupe, then each new rule)`,
+  );
+
   if (opts.verbose) {
     logger.info(`memory-hybrid: reflect-rules — extracted ${uniqueRules.length} rules:`);
     for (const rule of uniqueRules) {
@@ -406,32 +446,51 @@ export async function runReflectionRules(
     .getByCategory("rule")
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingVectors: (number[] | null)[] = [];
-  for (let i = 0; i < existingRuleFacts.length; i += 20) {
-    const batch = existingRuleFacts.slice(i, i + 20);
-    for (const f of batch) {
-      try {
-        existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
-      } catch (err) {
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "reflection-rules-embed-existing",
-            subsystem: "embeddings",
-            factId: f.id,
-          });
+  if (existingRuleFacts.length > 0) {
+    logger.info(
+      `memory-hybrid: reflect-rules — embedding ${existingRuleFacts.length} existing rule row(s) for dedupe cosine check (API calls in batches of up to 20 with a short pause between batches)`,
+    );
+    for (let i = 0; i < existingRuleFacts.length; i += 20) {
+      const batch = existingRuleFacts.slice(i, i + 20);
+      for (const f of batch) {
+        try {
+          existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
+        } catch (err) {
+          // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+          if (!shouldSuppressEmbeddingError(err)) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "reflection-rules-embed-existing",
+              subsystem: "embeddings",
+              factId: f.id,
+            });
+          }
+          existingVectors.push(null);
         }
-        existingVectors.push(null);
       }
+      if (i + 20 < existingRuleFacts.length) await new Promise((r) => setTimeout(r, 200));
     }
-    if (i + 20 < existingRuleFacts.length) await new Promise((r) => setTimeout(r, 200));
+    const dedupeOk = existingVectors.filter((v) => v !== null).length;
+    logger.info(
+      `memory-hybrid: reflect-rules — dedupe corpus done: ${dedupeOk}/${existingRuleFacts.length} embedding(s) succeeded`,
+    );
+  } else {
+    logger.info("memory-hybrid: reflect-rules — no existing rule facts for dedupe; embedding new candidates only");
   }
+
+  logger.info(
+    `memory-hybrid: reflect-rules — embedding ${uniqueRules.length} new candidate rule(s) for duplicate check + storage`,
+  );
+
   let stored = 0;
+  let rulesDuplicatesSkipped = 0;
+  let newRuleEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const ruleText of uniqueRules) {
     let vec: number[];
     try {
       vec = await embeddings.embed(ruleText);
     } catch (err) {
+      newRuleEmbedFailures++;
       // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -452,6 +511,7 @@ export async function runReflectionRules(
       }
     }
     if (isDuplicate) {
+      rulesDuplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-rules — skipped duplicate: ${ruleText.slice(0, 50)}...`);
       }
@@ -516,6 +576,11 @@ export async function runReflectionRules(
     existingVectors.push(normVec);
     stored++;
   }
+
+  logger.info(
+    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`,
+  );
+
   return { rulesExtracted: rules.length, rulesStored: stored };
 }
 
@@ -542,6 +607,11 @@ export async function runReflectionMeta(
   }
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock });
+  if (opts.verbose) {
+    logger.info(
+      `memory-hybrid: reflect-meta — LLM call (${prompt.length} chars, ${patterns.length} patterns, model=${opts.model})`,
+    );
+  }
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -584,6 +654,10 @@ export async function runReflectionMeta(
     return { metaExtracted: metas.length, metaStored: 0 };
   }
 
+  logger.info(
+    `memory-hybrid: reflect-meta — LLM completed successfully: ${uniqueMetas.length} candidate meta-pattern(s) after parse`,
+  );
+
   if (opts.verbose) {
     logger.info(`memory-hybrid: reflect-meta — extracted ${uniqueMetas.length} meta-patterns:`);
     for (const meta of uniqueMetas) {
@@ -596,32 +670,51 @@ export async function runReflectionMeta(
       (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
     );
   const existingVectors: (number[] | null)[] = [];
-  for (let i = 0; i < existingMetaFacts.length; i += 20) {
-    const batch = existingMetaFacts.slice(i, i + 20);
-    for (const f of batch) {
-      try {
-        existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
-      } catch (err) {
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "reflection-meta-embed-existing",
-            subsystem: "embeddings",
-            factId: f.id,
-          });
+  if (existingMetaFacts.length > 0) {
+    logger.info(
+      `memory-hybrid: reflect-meta — embedding ${existingMetaFacts.length} existing meta-pattern row(s) for dedupe`,
+    );
+    for (let i = 0; i < existingMetaFacts.length; i += 20) {
+      const batch = existingMetaFacts.slice(i, i + 20);
+      for (const f of batch) {
+        try {
+          existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
+        } catch (err) {
+          // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+          if (!shouldSuppressEmbeddingError(err)) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "reflection-meta-embed-existing",
+              subsystem: "embeddings",
+              factId: f.id,
+            });
+          }
+          existingVectors.push(null);
         }
-        existingVectors.push(null);
       }
+      if (i + 20 < existingMetaFacts.length) await new Promise((r) => setTimeout(r, 200));
     }
-    if (i + 20 < existingMetaFacts.length) await new Promise((r) => setTimeout(r, 200));
+    const dedupeOk = existingVectors.filter((v) => v !== null).length;
+    logger.info(
+      `memory-hybrid: reflect-meta — dedupe corpus done: ${dedupeOk}/${existingMetaFacts.length} embedding(s) succeeded`,
+    );
+  } else {
+    logger.info("memory-hybrid: reflect-meta — no existing meta-patterns for dedupe; embedding new candidates only");
   }
+
+  logger.info(
+    `memory-hybrid: reflect-meta — embedding ${uniqueMetas.length} new candidate meta-pattern(s) for duplicate check + storage`,
+  );
+
   let stored = 0;
+  let metaDuplicatesSkipped = 0;
+  let newMetaEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const metaText of uniqueMetas) {
     let vec: number[];
     try {
       vec = await embeddings.embed(metaText);
     } catch (err) {
+      newMetaEmbedFailures++;
       // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -642,6 +735,7 @@ export async function runReflectionMeta(
       }
     }
     if (isDuplicate) {
+      metaDuplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-meta — skipped duplicate: ${metaText.slice(0, 50)}...`);
       }
@@ -706,5 +800,10 @@ export async function runReflectionMeta(
     existingVectors.push(normVec);
     stored++;
   }
+
+  logger.info(
+    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total`,
+  );
+
   return { metaExtracted: metas.length, metaStored: stored };
 }

@@ -109,6 +109,7 @@ export async function runSelfCorrectionRunForCli(
     approve?: boolean;
     applyTools?: boolean;
     full?: boolean;
+    verbose?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
@@ -180,6 +181,9 @@ export async function runSelfCorrectionRunForCli(
         clearScanLock(SCAN_TYPE);
       }
       return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
+    }
+    if (opts.verbose) {
+      logger.info?.(`memory-hybrid: ${SCAN_TYPE} — ${incidents.length} incident(s); building LLM prompt…`);
     }
     const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
       incidents_json: JSON.stringify(incidents),

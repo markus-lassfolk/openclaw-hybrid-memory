@@ -23,6 +23,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.61] - 2026-05-07
+
+### Added
+
+- **Maintenance observability**: `hybrid-mem dream-cycle --verbose` (and parent `-v`) forwards through WAL pre-flush, reflection, reflect-rules, MEMORY_INDEX refresh, continuous verification (`onProgress`, throttled), extract-implicit, cross-agent learning, and tool effectiveness; `run-all --verbose` passes through to extract-procedures and self-correction-run.
+- **Reflection progress logs** (always-on `info`): LLM completion line, dedupe embedding phase with success counts, new-candidate embedding phase, and a final summary (stored / duplicate skips / embed failures).
+- **Embedding rate-limit context**: OpenAI embedding `withLLMRetry` calls include `llmContext` so 429 backoff lines identify `memory-hybrid: embeddings.create` vs chat completions.
+- **Chat rate-limit detail**: `withLLMRetry` warns include operation label, model, and retry attempt index.
+
+### Changed
+
+- **`ContinuousVerifierOptions`**: exported; optional `onProgress` for long verification cycles.
+- **`runCrossAgentLearning` / CLI**: optional `verbose` with per-batch `info` logging when enabled.
+
+### Notes
+
+- Human-oriented upgrade narrative for the **2026.5.x** line: still start from [`release-notes/release-notes-2026.5.61.md`](release-notes/release-notes-2026.5.61.md) (supersedes **2026.5.60** for “current published” pointers).
+
+---
+
 ## [2026.5.60] - 2026-05-06
 
 **Previous baseline:** [2026.4.273] (2026-04-27) — last version published as a GitHub / npm release before this line of work.

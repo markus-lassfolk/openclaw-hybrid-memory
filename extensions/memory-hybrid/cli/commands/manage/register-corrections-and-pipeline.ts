@@ -599,11 +599,13 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       .description(
         "Run nightly dream cycle: prune expired/decayed facts, consolidate old episodic events, reflect to extract patterns, optionally extract rules",
       )
+      .option("--verbose", "Detailed progress (reflection, memory index, WAL flush, nightly follow-up steps)")
       .action(
-        withExit(async () => {
+        withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           let res;
           try {
-            res = await runDreamCycle();
+            res = await runDreamCycle(verbose ? { verbose: true } : undefined);
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
@@ -628,9 +630,12 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.verification.enabled &&
             cfg.verification.continuousVerification
           ) {
+            if (verbose) {
+              console.log("[dream-cycle] Continuous verification (plugin logs show per-fact progress when --verbose)…");
+            }
             let verificationRes;
             try {
-              verificationRes = await runContinuousVerification();
+              verificationRes = await runContinuousVerification(verbose ? { verbose: true } : undefined);
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -648,8 +653,16 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
 
           // Extract implicit feedback signals as part of nightly cycle
           if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+            if (verbose) {
+              console.log("[dream-cycle] Extract implicit feedback…");
+            }
             try {
-              const implRes = await runExtractImplicitFeedback({ days: 3, dryRun: false, includeClosedLoop: false });
+              const implRes = await runExtractImplicitFeedback({
+                days: 3,
+                dryRun: false,
+                includeClosedLoop: false,
+                verbose,
+              });
               console.log(
                 `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`,
               );
@@ -663,6 +676,9 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
 
           // Closed-loop effectiveness analysis
           if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+            if (verbose) {
+              console.log("[dream-cycle] Closed-loop effectiveness (local analysis, no LLM)…");
+            }
             try {
               const clReport = runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true });
               console.log(
@@ -687,8 +703,11 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.crossAgentLearning?.enabled &&
             cfg.crossAgentLearning?.runInNightlyCycle !== false
           ) {
+            if (verbose) {
+              console.log("[dream-cycle] Cross-agent learning…");
+            }
             try {
-              const caRes = await runCrossAgentLearning();
+              const caRes = await runCrossAgentLearning(verbose ? { verbose: true } : undefined);
               console.log(
                 `Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`,
               );
@@ -708,7 +727,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.toolEffectiveness?.runInNightlyCycle !== false
           ) {
             try {
-              const teOutput = await runToolEffectiveness({});
+              const teOutput = await runToolEffectiveness({ verbose });
               if (teOutput && !teOutput.startsWith("No tool")) {
                 console.log(`Tool effectiveness: ${teOutput.split("\n")[0]}`);
               }
@@ -726,6 +745,9 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.costTracking?.enabled !== false &&
             cfg.costTracking?.pruneInNightlyCycle !== false
           ) {
+            if (verbose) {
+              console.log("[dream-cycle] Prune old cost log rows…");
+            }
             try {
               const pruned = pruneCostLog(cfg.costTracking?.retainDays);
               if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
@@ -1054,8 +1076,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   mem
     .command("cross-agent-learning")
     .description("Generalise agent-scoped lessons into global patterns (Issue #263 — Phase 2)")
+    .option("--verbose", "Log each LLM batch and use hybrid-mem -v for full plugin output")
     .action(
-      withExit(async () => {
+      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         if (!runCrossAgentLearning) {
           console.error("cross-agent-learning is not available in this context.");
           process.exitCode = 1;
@@ -1067,7 +1091,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         }
         let res;
         try {
-          res = await runCrossAgentLearning();
+          res = await runCrossAgentLearning(verbose ? { verbose: true } : undefined);
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",

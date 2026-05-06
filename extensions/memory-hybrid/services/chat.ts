@@ -8,7 +8,12 @@ import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
-import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
+import {
+  formatProviderRateLimitHeaderSummary,
+  is403QuotaOrRateLimitLike,
+  parseGoDurationToMs,
+  parseRetryAfterMs,
+} from "./llm-rate-limit-headers.js";
 import {
   type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
@@ -18,6 +23,7 @@ import {
   resolveWireApi,
 } from "./model-capabilities.js";
 import { callResponsesApi } from "./responses-adapter.js";
+import { recordProviderHttpAttempt, formatRecentHttpAttemptsForRateLimitLog } from "./recent-http-attempts.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
@@ -608,6 +614,10 @@ export async function withLLMRetry<T>(
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    recordProviderHttpAttempt({
+      operation: opts?.llmContext?.operation,
+      model: opts?.llmContext?.model,
+    });
     try {
       return await fn();
     } catch (err) {
@@ -725,8 +735,14 @@ export async function withLLMRetry<T>(
       if (is429 || isQuota403) {
         const retryAfterMs = parseRetryAfterMs(err);
         delay = retryAfterMs ?? 2 ** (attempt + 1) * 1000;
+        const op = opts?.llmContext?.operation;
+        const modelId = opts?.llmContext?.model;
+        const ctxTag = op || modelId ? ` [${[op, modelId].filter(Boolean).join(" · ")}]` : "";
+        const hdr = formatProviderRateLimitHeaderSummary(err);
+        const recent = formatRecentHttpAttemptsForRateLimitLog();
+        const attemptTotal = Math.max(1, maxRetries);
         pluginLogger.warn(
-          `memory-hybrid: ${isQuota403 ? "Quota/rate limit (403)" : "Rate limited by provider"} — backing off ${delay}ms`,
+          `memory-hybrid: ${isQuota403 ? "Quota/rate limit (403)" : "Rate limited by provider"}${ctxTag} — retry ${attempt + 1}/${attemptTotal}, backing off ${delay}ms | ${hdr} | ${recent} | rolling counts = outbound HTTP attempts in this process (not token usage); use tokRem/reqRem when headers exist.`,
         );
       } else {
         delay = 3 ** attempt * 1000; // 1s, 3s, 9s

@@ -1,5 +1,7 @@
 # Release notes — OpenClaw Hybrid Memory **2026.5.60**
 
+> **Newer build:** **[2026.5.61](release-notes-2026.5.61.md)** is the current **2026.5.x** follow-on (maintenance / reflection observability). This page still describes what first shipped in **2026.5.60**.
+
 **Release date:** 2026-05-06  
 **Previous published release (GitHub / npm):** **2026.4.273** (2026-04-27)
 
@@ -85,4 +87,4 @@ See **[CHANGELOG.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/b
 
 ## Earlier draft notes (2026.5.50)
 
-An internal **2026.5.50** changelog draft described the same packaging work before the version was advanced to **2026.5.60** for publication. **2026.5.60** is the single published **2026.5.x** target that also includes SQLite compat, **`contracts.tools`**, and CI/verify follow-ups.
+An internal **2026.5.50** changelog draft described the same packaging work before the version was advanced to **2026.5.60** for publication. **2026.5.60** established the **2026.5.x** baseline (SQLite compat, **`contracts.tools`**, CI/verify follow-ups). **2026.5.61** is the current patch on that line for maintenance and reflection observability—see **[release-notes-2026.5.61.md](release-notes-2026.5.61.md)**.

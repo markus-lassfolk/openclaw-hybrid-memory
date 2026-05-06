@@ -146,7 +146,10 @@ export class Embeddings implements EmbeddingProvider {
                 input,
                 ...(includeDims ? { dimensions: this.dimensions } : {}),
               }),
-            { maxRetries: 2 },
+            {
+              maxRetries: 2,
+              llmContext: { operation: "memory-hybrid: embeddings.create", model },
+            },
           );
           const vector = vectorFromEmbeddingResponse(resp, this.providerName, this.endpoint, model, "embed");
           if (this.cache.size >= EMBEDDING_CACHE_MAX) {
@@ -235,7 +238,13 @@ export class Embeddings implements EmbeddingProvider {
                   input: truncatedBatch,
                   ...(includeDimsBatch ? { dimensions: this.dimensions } : {}),
                 }),
-              { maxRetries: 2 },
+              {
+                maxRetries: 2,
+                llmContext: {
+                  operation: "memory-hybrid: embeddings.create (batch)",
+                  model,
+                },
+              },
             );
             succeededModel = model;
             this.modelName = model;

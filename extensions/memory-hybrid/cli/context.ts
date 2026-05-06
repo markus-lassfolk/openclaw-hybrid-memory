@@ -111,7 +111,12 @@ export type ManageContext = {
     skipped?: boolean;
   }>;
   runRecordDistill?: () => Promise<unknown>;
-  runExtractProcedures?: (opts: { days?: number; dryRun: boolean }) => Promise<unknown>;
+  runExtractProcedures?: (opts: {
+    days?: number;
+    dryRun: boolean;
+    verbose?: boolean;
+    full?: boolean;
+  }) => Promise<unknown>;
   runBuildLanguageKeywords: (opts: {
     model?: string;
     dryRun?: boolean;
@@ -157,6 +162,7 @@ export type ManageContext = {
     approve?: boolean;
     applyTools?: boolean;
     full?: boolean;
+    verbose?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
   runExport: (opts: {
     outputPath: string;
@@ -224,9 +230,13 @@ export type ManageContext = {
     verbose?: boolean;
   }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
-  runDreamCycle?: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
-  runContinuousVerification?: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
-  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runDreamCycle?: (opts?: { verbose?: boolean }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification?: (opts?: {
+    verbose?: boolean;
+  }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
+  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<
+    import("../cli/handlers.js").CrossAgentLearningCliResult
+  >;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;
