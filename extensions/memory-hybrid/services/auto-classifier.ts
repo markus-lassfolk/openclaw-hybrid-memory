@@ -412,17 +412,25 @@ async function runAutoClassify(
     await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
   }
 
-  // Get all "other" facts (after discovery some may have been reclassified)
-  const others = factsDb.getByCategory("other");
+  // Only classify "other" facts that haven't been attempted yet (or were re-ingested since last attempt).
+  const others = factsDb.getUnattemptedOtherFacts();
   if (others.length === 0) {
+    const totalOther = factsDb.getByCategory("other").length;
+    if (totalOther > 0) {
+      logger.info(
+        `memory-hybrid: auto-classify — ${totalOther} "other" facts exist but all were already attempted; skipping (new/changed facts will be retried)`,
+      );
+    }
     return { reclassified: 0, suggested: [] };
   }
 
-  logger.info(`memory-hybrid: auto-classify starting on ${others.length} "other" facts`);
+  const totalOther = factsDb.getByCategory("other").length;
+  logger.info(
+    `memory-hybrid: auto-classify starting on ${others.length} unattempted "other" facts (${totalOther} total "other")`,
+  );
 
   let totalReclassified = 0;
 
-  // Process in batches
   for (let i = 0; i < others.length; i += config.batchSize) {
     const batch = others.slice(i, i + config.batchSize).map((e) => ({
       id: e.id,
@@ -431,12 +439,13 @@ async function runAutoClassify(
 
     const results = await classifyBatch(openai, model, batch, categories);
 
+    const batchIds = batch.map((b) => b.id);
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
+    factsDb.markClassifyAttempt(batchIds);
 
-    // Small delay between batches to avoid rate limits
     if (i + config.batchSize < others.length) {
       await new Promise((r) => setTimeout(r, 500));
     }

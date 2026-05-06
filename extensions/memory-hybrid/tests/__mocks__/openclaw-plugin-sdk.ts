@@ -24,15 +24,15 @@ export type ClawdbotPluginApi = {
   };
   registerCli: (fn: (opts: { program: CliProgram }) => void, options?: { commands?: string[] }) => void;
   on: (event: string, handler: (ev: unknown) => void | Promise<void> | Promise<unknown>) => void;
-  /** Register an HTTP route with the OpenClaw gateway (v2026.3.8+). */
-  registerHttpRoute: (
-    path: string,
-    handler: (req: {
-      method: string;
-      url: string;
-      headers: Record<string, string>;
-    }) => Promise<{ status: number; headers?: Record<string, string>; body: string }>,
-    opts: { authenticated: boolean },
-  ) => void;
+  /** Register an HTTP route with the OpenClaw gateway (2026.5+ object API). */
+  registerHttpRoute: (params: {
+    path: string;
+    handler: (
+      req: import("node:http").IncomingMessage,
+      res: import("node:http").ServerResponse,
+    ) => void | Promise<void>;
+    auth: "gateway" | "plugin";
+    match?: "exact";
+  }) => void;
   [key: string]: unknown;
 };

@@ -13,12 +13,55 @@
  *   3. De-duplicates registrations that collapse to the same normalized path.
  *   4. Surfaces a clear, actionable plugin-side error instead of silently
  *      letting the gateway log a generic warning.
+ *
+ * OpenClaw 2026.5+ expects a single params object and a Node `(req, res)` handler.
+ * This wrapper keeps the legacy `(path, legacyHandler, opts)` call shape used
+ * by dashboard and public API modules and adapts handlers before registration.
  */
 
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
+import type {
+  HttpRequestHandler,
+  HttpRouteOptions,
+  RegisterHttpRouteGatewayAuth,
+  RegisterHttpRouteGatewayHandler,
+  RegisterHttpRouteGatewayParams,
+} from "./http-route-types.js";
 
 export type RegisterHttpRouteFn = (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void;
+
+type GatewayRegisterHttpRoute = (params: RegisterHttpRouteGatewayParams) => void;
+
+function incomingHeadersToRecord(headers: IncomingMessage["headers"]): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!headers || typeof headers !== "object") return out;
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    out[key] = Array.isArray(value) ? value.join(", ") : String(value);
+  }
+  return out;
+}
+
+function adaptLegacyHandlerToNode(legacy: HttpRequestHandler): RegisterHttpRouteGatewayHandler {
+  return async (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      const legacyReq = {
+        method: req.method ?? "GET",
+        url: req.url ?? "/",
+        headers: incomingHeadersToRecord(req.headers),
+      };
+      const result = await legacy(legacyReq);
+      res.writeHead(result.status, result.headers ?? {});
+      res.end(result.body);
+    } catch {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      }
+      res.end("Internal Server Error");
+    }
+  };
+}
 
 /** Lightweight logger surface compatible with the OpenClaw plugin logger. */
 export interface SafeRouteLogger {
@@ -62,7 +105,7 @@ export function createSafeRegisterHttpRoute(
   source: string,
 ): RegisterHttpRouteFn {
   const seen = new Set<string>();
-  const register = api.registerHttpRoute as RegisterHttpRouteFn | undefined;
+  const register = api.registerHttpRoute as GatewayRegisterHttpRoute | undefined;
 
   return (rawPath, handler, opts) => {
     const normalized = normalizeRoutePath(rawPath);
@@ -88,6 +131,12 @@ export function createSafeRegisterHttpRoute(
     }
     seen.add(normalized);
 
-    register(normalized, handler, opts);
+    const auth: RegisterHttpRouteGatewayAuth = opts.authenticated ? "gateway" : "plugin";
+    register({
+      path: normalized,
+      handler: adaptLegacyHandlerToNode(handler),
+      auth,
+      match: "exact",
+    });
   };
 }

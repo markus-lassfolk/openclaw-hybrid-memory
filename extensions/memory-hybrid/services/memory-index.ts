@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -299,6 +300,29 @@ function resolveOutputPath(options: Pick<MemoryIndexOptions, "workspaceRoot" | "
   return join(workspaceRoot, "MEMORY_INDEX.md");
 }
 
+/**
+ * Compute a stable content hash of the snapshot (ignores generatedAt which changes every run).
+ */
+function snapshotContentHash(snapshot: MemoryIndexSnapshot): string {
+  const { generatedAt: _, ...stable } = snapshot;
+  return createHash("sha256").update(JSON.stringify(stable)).digest("hex").slice(0, 16);
+}
+
+/** Path of the sidecar file that stores the last snapshot hash. */
+function hashSidecarPath(outputPath: string): string {
+  return `${outputPath.replace(/\.md$/i, "")}.hash`;
+}
+
+async function readPreviousHash(sidecarPath: string): Promise<string | null> {
+  try {
+    const raw = await readFile(sidecarPath, "utf-8");
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function writeMemoryIndex(
   factsDb: FactsDB,
   openai: OpenAI,
@@ -311,12 +335,31 @@ export async function writeMemoryIndex(
       `memory-hybrid: memory-index — snapshot: ${snapshot.clusters.length} clusters, ${snapshot.recentDecisions.length} recent decisions, ${snapshot.keyEntities.length} key entities, ${snapshot.recentPatterns.length} recent patterns/rules`,
     );
   }
+
+  const outputPath = resolveOutputPath(options);
+  const sidecar = hashSidecarPath(outputPath);
+  const currentHash = snapshotContentHash(snapshot);
+  const previousHash = await readPreviousHash(sidecar);
+
+  if (currentHash === previousHash) {
+    logger.info("memory-hybrid: memory-index — snapshot unchanged since last run, skipping LLM synthesis");
+    let existingContent: string | null = null;
+    try {
+      existingContent = await readFile(outputPath, "utf-8");
+    } catch {
+      // File missing — fall through to rebuild
+    }
+    if (existingContent) {
+      return { path: outputPath, content: existingContent, usedFallback: false };
+    }
+  }
+
   const llmMarkdown = await synthesizeMemoryIndex(snapshot, openai, options, logger);
   const content = llmMarkdown || renderMemoryIndexMarkdown(snapshot);
-  const outputPath = resolveOutputPath(options);
 
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, "utf-8");
+  await writeFile(sidecar, currentHash, "utf-8");
 
   logger.info(`memory-hybrid: memory-index — wrote ${outputPath}`);
 

@@ -7,8 +7,9 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { NarrativesDB } from "../backends/narratives-db.js";
+import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
+import type { RegisterHttpRouteGatewayParams } from "../tools/http-route-types.js";
 import {
-  type HttpRequestHandler,
   type HttpRouteOptions,
   PUBLIC_API_PATHS,
   PUBLIC_API_PREFIX,
@@ -17,7 +18,7 @@ import {
 
 interface RouteRegistration {
   path: string;
-  handler: HttpRequestHandler;
+  handler: RegisterHttpRouteGatewayParams["handler"];
   opts: HttpRouteOptions;
 }
 
@@ -39,8 +40,12 @@ describe("registerPublicApiRoutes", () => {
   function makeApi(): { api: ClawdbotPluginApi; routes: RouteRegistration[] } {
     const routes: RouteRegistration[] = [];
     const api = {
-      registerHttpRoute: (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => {
-        routes.push({ path, handler, opts });
+      registerHttpRoute: (params: RegisterHttpRouteGatewayParams) => {
+        routes.push({
+          path: params.path,
+          handler: params.handler,
+          opts: { authenticated: params.auth === "gateway" },
+        });
       },
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     } as unknown as ClawdbotPluginApi;
@@ -121,34 +126,52 @@ describe("registerPublicApiRoutes", () => {
     );
 
     const search = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}`)!;
-    const searchRes = await search.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}?q=demo&limit=5`));
+    const searchRes = await invokeNodeHttpRoute(
+      search.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}?q=demo&limit=5`),
+    );
     expect(searchRes.status).toBe(200);
     expect(JSON.parse(searchRes.body).count).toBeGreaterThanOrEqual(1);
 
     const timeline = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}`)!;
-    const timelineRes = await timeline.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}?limit=1`));
+    const timelineRes = await invokeNodeHttpRoute(
+      timeline.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}?limit=1`),
+    );
     expect(timelineRes.status).toBe(200);
     expect(JSON.parse(timelineRes.body).timeline).toHaveLength(1);
 
     const stats = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.stats}`)!;
-    const statsRes = await stats.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.stats}`));
+    const statsRes = await invokeNodeHttpRoute(stats.handler, fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.stats}`));
     expect(statsRes.status).toBe(200);
     expect(JSON.parse(statsRes.body).facts.active).toBeGreaterThanOrEqual(1);
 
     const exported = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`)!;
-    const exportRes = await exported.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`));
+    const exportRes = await invokeNodeHttpRoute(
+      exported.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
+    );
     expect(exportRes.status).toBe(200);
     expect(JSON.parse(exportRes.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
 
     const fact = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`)!;
-    const factRes = await fact.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${stored.id}`));
+    const factRes = await invokeNodeHttpRoute(
+      fact.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${stored.id}`),
+    );
     expect(factRes.status).toBe(200);
     expect(JSON.parse(factRes.body).id).toBe(stored.id);
 
-    const badSearchRes = await search.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}`));
+    const badSearchRes = await invokeNodeHttpRoute(
+      search.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}`),
+    );
     expect(badSearchRes.status).toBe(400);
 
-    const missingFactRes = await fact.handler(fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=missing`));
+    const missingFactRes = await invokeNodeHttpRoute(
+      fact.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=missing`),
+    );
     expect(missingFactRes.status).toBe(404);
   });
 
@@ -206,7 +229,8 @@ describe("registerPublicApiRoutes", () => {
     });
 
     const search = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}`)!;
-    const searchRes = await search.handler(
+    const searchRes = await invokeNodeHttpRoute(
+      search.handler,
       scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}?q=secret&limit=10`) as ReturnType<typeof fakeReq>,
     );
     expect(searchRes.status).toBe(200);
@@ -215,7 +239,8 @@ describe("registerPublicApiRoutes", () => {
     expect(searchBody.results.map((r: { entry: { id: string } }) => r.entry.id)).not.toContain(agentBFact.id);
 
     const timeline = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}`)!;
-    const timelineRes = await timeline.handler(
+    const timelineRes = await invokeNodeHttpRoute(
+      timeline.handler,
       scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}?limit=10`) as ReturnType<typeof fakeReq>,
     );
     expect(timelineRes.status).toBe(200);
@@ -225,7 +250,8 @@ describe("registerPublicApiRoutes", () => {
     expect(timelineIds).not.toContain(agentBFact.id);
 
     const exported = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`)!;
-    const exportRes = await exported.handler(
+    const exportRes = await invokeNodeHttpRoute(
+      exported.handler,
       scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`) as ReturnType<typeof fakeReq>,
     );
     expect(exportRes.status).toBe(200);
@@ -235,11 +261,13 @@ describe("registerPublicApiRoutes", () => {
     expect(exportIds).not.toContain(agentBFact.id);
 
     const fact = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`)!;
-    const allowedFact = await fact.handler(
+    const allowedFact = await invokeNodeHttpRoute(
+      fact.handler,
       scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${agentAFact.id}`) as ReturnType<typeof fakeReq>,
     );
     expect(allowedFact.status).toBe(200);
-    const deniedFact = await fact.handler(
+    const deniedFact = await invokeNodeHttpRoute(
+      fact.handler,
       scopedReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${agentBFact.id}`) as ReturnType<typeof fakeReq>,
     );
     expect(deniedFact.status).toBe(404);

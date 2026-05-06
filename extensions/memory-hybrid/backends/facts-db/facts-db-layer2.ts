@@ -12,9 +12,11 @@ import {
   getByCategory as getByCategoryImpl,
   getCount as getCountImpl,
   getRecentFacts as getRecentFactsImpl,
+  getUnattemptedOtherFacts as getUnattemptedOtherFactsImpl,
   listDirectives as listDirectivesImpl,
   listFactsByCategory as listFactsByCategoryImpl,
   listFacts as listFactsImpl,
+  markClassifyAttempt as markClassifyAttemptImpl,
   updateCategory as updateCategoryImpl,
 } from "./fact-read-queries.js";
 import { FactsDBLayer1 } from "./facts-db-layer1.js";
@@ -362,6 +364,37 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   updateCategory(id: string, category: string): boolean {
     return updateCategoryImpl(this.liveDb, id, category);
+  }
+
+  /**
+   * "other" facts not yet attempted by auto-classify, or re-ingested since the last attempt.
+   */
+  getUnattemptedOtherFacts(): MemoryEntry[] {
+    return getUnattemptedOtherFactsImpl(this.liveDb);
+  }
+
+  /** Stamp last_classify_attempt_at on a batch of facts. */
+  markClassifyAttempt(ids: string[]): void {
+    markClassifyAttemptImpl(this.liveDb, ids);
+  }
+
+  /** Read a maintenance state value by key. */
+  getMaintenanceState(key: string): string | null {
+    const row = this.liveDb.prepare("SELECT value FROM maintenance_state WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value ?? null;
+  }
+
+  /** Write a maintenance state value (upsert). */
+  setMaintenanceState(key: string, value: string): void {
+    this.liveDb
+      .prepare(
+        `INSERT INTO maintenance_state (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(key, value, Math.floor(Date.now() / 1000));
   }
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */

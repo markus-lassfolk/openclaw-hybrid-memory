@@ -20,10 +20,11 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { describe, expect, it } from "vitest";
 import { parseHealthConfig } from "../config/parsers/maintenance.js";
+import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
+import type { RegisterHttpRouteGatewayParams } from "../tools/http-route-types.js";
 import {
   DASHBOARD_PATHS,
   DASHBOARD_PREFIX,
-  type HttpRequestHandler,
   type HttpRouteOptions,
   registerDashboardHttpRoutes,
 } from "../tools/dashboard-routes.js";
@@ -34,15 +35,19 @@ import {
 
 interface RouteRegistration {
   path: string;
-  handler: HttpRequestHandler;
+  handler: RegisterHttpRouteGatewayParams["handler"];
   opts: HttpRouteOptions;
 }
 
 function makeApi(): { api: ClawdbotPluginApi; routes: RouteRegistration[] } {
   const routes: RouteRegistration[] = [];
   const api = {
-    registerHttpRoute: (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => {
-      routes.push({ path, handler, opts });
+    registerHttpRoute: (params: RegisterHttpRouteGatewayParams) => {
+      routes.push({
+        path: params.path,
+        handler: params.handler,
+        opts: { authenticated: params.auth === "gateway" },
+      });
     },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   } as unknown as ClawdbotPluginApi;
@@ -101,7 +106,7 @@ describe("registerDashboardHttpRoutes", () => {
     registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const rootRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`);
     expect(rootRoute).toBeDefined();
-    const response = await rootRoute?.handler(fakeReq());
+    const response = await invokeNodeHttpRoute(rootRoute!.handler, fakeReq());
     expect(response.status).toBe(200);
     expect(response.headers?.["Content-Type"]).toMatch(/text\/html/);
     expect(response.body).toContain("<!DOCTYPE html>");
@@ -112,7 +117,7 @@ describe("registerDashboardHttpRoutes", () => {
     registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const healthRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`);
     expect(healthRoute).toBeDefined();
-    const response = await healthRoute?.handler(fakeReq());
+    const response = await invokeNodeHttpRoute(healthRoute!.handler, fakeReq());
     expect(response.status).toBe(200);
     expect(response.headers?.["Content-Type"]).toMatch(/application\/json/);
     const body = JSON.parse(response.body) as { status: string; generatedAt: string };

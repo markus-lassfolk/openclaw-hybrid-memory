@@ -192,6 +192,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
         const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;
         const backfillDonePath = memoryDir ? join(memoryDir, BACKFILL_DECAY_MARKER) : null;
 
+        let lastReflectPatternsStored = 0;
         const steps: { name: string; run: () => Promise<void> }[] = [
           {
             name: "backfill-decay",
@@ -318,12 +319,17 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 model: reflectionConfig.model,
                 verbose,
               });
+              lastReflectPatternsStored = r.patternsStored;
               log(`Reflect: ${r.patternsStored} patterns stored.`);
             },
           },
           {
             name: "reflect-rules",
             run: async () => {
+              if (lastReflectPatternsStored < 3) {
+                log(`Reflect-rules: skipped (${lastReflectPatternsStored} patterns < 3 minimum).`);
+                return;
+              }
               const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
               log(`Reflect-rules: ${r.rulesStored} rules stored.`);
             },
@@ -331,6 +337,10 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "reflect-meta",
             run: async () => {
+              if (lastReflectPatternsStored < 3) {
+                log(`Reflect-meta: skipped (${lastReflectPatternsStored} patterns < 3 minimum).`);
+                return;
+              }
               const r = await runReflectionMeta({ dryRun: false, model: reflectionConfig.model, verbose });
               log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
             },

@@ -6,7 +6,8 @@
  * and idioms per language.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import {
@@ -387,6 +388,28 @@ export async function runBuildLanguageKeywords(
     return { ok: true, path: join(sqliteDir, LANG_FILE_NAME), topLanguages: ["en"], languagesAdded: 0 };
   }
 
+  const filePath = join(sqliteDir, LANG_FILE_NAME);
+  const langHash = createHash("sha256")
+    .update(JSON.stringify([...toTranslate].sort()))
+    .digest("hex")
+    .slice(0, 16);
+  try {
+    const existing = JSON.parse(readFileSync(filePath, "utf-8")) as {
+      topLanguages?: string[];
+      _langHash?: string;
+    };
+    if (existing._langHash === langHash) {
+      return {
+        ok: true,
+        path: filePath,
+        topLanguages: existing.topLanguages ?? topLanguages,
+        languagesAdded: 0,
+      };
+    }
+  } catch {
+    // File missing or malformed — proceed with full build
+  }
+
   const { translations, triggerStructures, extraction } = await generateIntentBasedLanguages(
     toTranslate.length > 0 ? toTranslate : ["en"],
     openai,
@@ -422,8 +445,7 @@ export async function runBuildLanguageKeywords(
   }
   reinforcementCategories.genericPoliteness = ["thanks", "thank you", "ok", "okay", "got it"];
 
-  const filePath = join(sqliteDir, LANG_FILE_NAME);
-  const data: LanguageKeywordsFile = {
+  const data: LanguageKeywordsFile & { _langHash?: string } = {
     version: 2,
     detectedAt: new Date().toISOString(),
     topLanguages: topLanguages.length > 0 ? topLanguages : ["en"],
@@ -433,6 +455,7 @@ export async function runBuildLanguageKeywords(
     directiveSignalsByCategory:
       Object.keys(directiveSignalsByCategory).length > 0 ? directiveSignalsByCategory : undefined,
     reinforcementCategories: Object.keys(reinforcementCategories).length > 0 ? reinforcementCategories : undefined,
+    _langHash: langHash,
   };
 
   if (opts.dryRun) {

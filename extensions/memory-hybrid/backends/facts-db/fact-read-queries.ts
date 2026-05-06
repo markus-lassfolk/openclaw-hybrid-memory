@@ -383,3 +383,29 @@ export function updateCategory(db: DatabaseSync, id: string, category: string): 
   const result = db.prepare("UPDATE facts SET category = ? WHERE id = ?").run(category, id);
   return result.changes > 0;
 }
+
+/**
+ * Return "other" facts that have not been classify-attempted yet, or whose
+ * created_at is newer than the last attempt (text was replaced / re-ingested).
+ */
+export function getUnattemptedOtherFacts(db: DatabaseSync): MemoryEntry[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM facts
+       WHERE category = 'other'
+         AND (last_classify_attempt_at IS NULL OR created_at > last_classify_attempt_at)
+       ORDER BY created_at DESC`,
+    )
+    .all() as Array<Record<string, unknown>>;
+  return rows.map((row) => rowToMemoryEntry(row));
+}
+
+/** Mark facts as having been attempted by the auto-classifier (batch). */
+export function markClassifyAttempt(db: DatabaseSync, ids: string[]): void {
+  if (ids.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  const stmt = db.prepare("UPDATE facts SET last_classify_attempt_at = ? WHERE id = ?");
+  for (const id of ids) {
+    stmt.run(now, id);
+  }
+}
