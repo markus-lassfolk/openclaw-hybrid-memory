@@ -228,8 +228,8 @@ interface CliContextServices {
     sources?: string[];
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
-  runDreamCycle: () => Promise<DreamCycleResult>;
-  runContinuousVerification: () => Promise<VerificationCycleResult>;
+  runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
+  runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -398,10 +398,23 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           schemaVersion: versionInfo.schemaVersion,
         }),
       ),
-    runDreamCycle: async () => {
+    runDreamCycle: async (opts?: { verbose?: boolean }) => {
+      const verbose = !!opts?.verbose;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
-      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "dream_cycle_consolidation");
+      if (verbose) {
+        pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
+      }
+      const flush = await runPreConsolidationFlush(
+        { wal, factsDb, vectorDb, embeddings },
+        api.logger,
+        "dream_cycle_consolidation",
+      );
+      if (verbose) {
+        pluginLogger.info(
+          `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped})`,
+        );
+      }
       return runDreamCycle(
         factsDb,
         vectorDb,
@@ -421,18 +434,27 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
           logRetentionDays: cfg.nightlyCycle.logRetentionDays,
           vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
+          verbose,
         },
         logSink,
         provenanceService,
       );
     },
-    runContinuousVerification: async () => {
+    runContinuousVerification: async (opts?: { verbose?: boolean }) => {
       if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
         return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
       }
+      const verbose = !!opts?.verbose;
       return runVerificationCycle(verificationStore, factsDb, openai, {
         cycleDays: cfg.verification.cycleDays,
         verificationModel: cfg.verification.verificationModel,
+        ...(verbose
+          ? {
+              onProgress: (message: string) => {
+                pluginLogger.info(message);
+              },
+            }
+          : {}),
       });
     },
     runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
@@ -847,7 +869,7 @@ function createHybridMemCliContext(
     runExtractDirectives: (opts) => handlers.runExtractDirectivesForCli(handlerCtx, opts),
     runExtractReinforcement: (opts) => handlers.runExtractReinforcementForCli(handlerCtx, opts),
     runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
-    runCrossAgentLearning: () => handlers.runCrossAgentLearningForCli(handlerCtx),
+    runCrossAgentLearning: (opts) => handlers.runCrossAgentLearningForCli(handlerCtx, opts),
     runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
     runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
     pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),

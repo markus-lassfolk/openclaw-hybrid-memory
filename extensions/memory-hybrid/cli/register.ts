@@ -178,8 +178,10 @@ export type HybridMemCliContext = {
     metaStored: number;
   }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
-  runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
-  runContinuousVerification: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
+  runDreamCycle: (opts?: { verbose?: boolean }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification: (opts?: {
+    verbose?: boolean;
+  }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -223,6 +225,7 @@ export type HybridMemCliContext = {
     approve?: boolean;
     applyTools?: boolean;
     full?: boolean;
+    verbose?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
   runAnalyzeFeedbackPhrases: (opts: {
     days?: number;
@@ -301,7 +304,9 @@ export type HybridMemCliContext = {
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
-  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<
+    import("../cli/handlers.js").CrossAgentLearningCliResult
+  >;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;

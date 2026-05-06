@@ -374,7 +374,10 @@ export interface CrossAgentLearningCliResult {
 /**
  * Run cross-agent learning: scan peer agent databases and generalise shared lessons.
  */
-export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<CrossAgentLearningCliResult> {
+export async function runCrossAgentLearningForCli(
+  ctx: HandlerContext,
+  opts: { verbose?: boolean } = {},
+): Promise<CrossAgentLearningCliResult> {
   const { factsDb, cfg } = ctx;
   const caCfg = cfg.crossAgentLearning;
 
@@ -392,7 +395,16 @@ export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<
   // Build OpenAI proxy
   const openai = ctx.openai;
 
-  const result = await runCrossAgentLearning(factsDb, openai, caCfg, ctx.logger ?? {});
+  const baseLog = ctx.logger ?? {};
+  const logger =
+    opts.verbose === true
+      ? {
+          ...baseLog,
+          info: (msg: string) => baseLog.info?.(msg) ?? console.log(msg),
+        }
+      : baseLog;
+
+  const result = await runCrossAgentLearning(factsDb, openai, caCfg, logger);
 
   // Record savings: each generalised pattern avoids re-learning by other agents
   if (result.generalisedStored > 0 && ctx.costTracker) {
@@ -417,13 +429,17 @@ export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<
  */
 export async function runToolEffectivenessForCli(
   ctx: HandlerContext,
-  _opts: { verbose?: boolean } = {},
+  opts: { verbose?: boolean } = {},
 ): Promise<string> {
   const { cfg } = ctx;
   const teCfg = cfg.toolEffectiveness;
 
   if (teCfg?.enabled === false) {
     return "Tool effectiveness scoring is disabled (toolEffectiveness.enabled = false).";
+  }
+
+  if (opts.verbose) {
+    (ctx.logger?.info ?? console.log)("memory-hybrid: tool-effectiveness — computing scores from workflow traces…");
   }
 
   // Derive the workflow store DB path from the sqlite path

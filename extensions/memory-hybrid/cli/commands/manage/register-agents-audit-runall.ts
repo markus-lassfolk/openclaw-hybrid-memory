@@ -292,7 +292,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "extract-procedures (7 days)",
                   run: async () => {
-                    await runExtractProcedures({ days: 7, dryRun: false });
+                    await runExtractProcedures({ days: 7, dryRun: false, verbose });
                     log("Extract procedures done.");
                   },
                 },
@@ -365,7 +365,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "self-correction-run",
             run: async () => {
-              await runSelfCorrectionRun({ dryRun: false });
+              await runSelfCorrectionRun({ dryRun: false, verbose });
               log("Self-correction run done.");
             },
           },

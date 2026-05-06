@@ -53,6 +53,8 @@ export interface DreamCycleConfig {
    * Default: true.
    */
   vacuumOnCycle: boolean;
+  /** When true, log episodic consolidation / reflection / memory-index detail (CLI `--verbose`). */
+  verbose?: boolean;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -169,6 +171,7 @@ export async function runEpisodicConsolidation(
   eventLog: EventLog,
   consolidateAfterDays: number,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
+  verbose?: boolean,
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
@@ -176,6 +179,11 @@ export async function runEpisodicConsolidation(
   }
 
   const groups = groupEventsByEntity(events);
+  if (verbose) {
+    logger.info(
+      `memory-hybrid: dream-cycle — episodic consolidation: ${events.length} unconsolidated event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d)`,
+    );
+  }
   let factsCreated = 0;
   let eventsConsolidated = 0;
   const ephemeralSourceFactIds: string[] = [];
@@ -341,8 +349,13 @@ export async function runDreamCycle(
   }
 
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
+  const v = !!config.verbose;
+  const step = (n: number, label: string) => {
+    if (v) logger.info(`memory-hybrid: dream-cycle — step ${n}: ${label}`);
+  };
 
   // ── Step 1: Prune ────────────────────────────────────────────────────────
+  step(1, "prune / decay / orphaned links");
   let factsPruned = 0;
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
@@ -388,6 +401,7 @@ export async function runDreamCycle(
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
+  step(2, "episodic consolidation + event log maintenance");
   if (eventLog) {
     try {
       const consolidationResult = await runEpisodicConsolidation(
@@ -395,6 +409,7 @@ export async function runDreamCycle(
         eventLog,
         config.consolidateAfterDays,
         logger,
+        v,
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
@@ -405,6 +420,8 @@ export async function runDreamCycle(
         subsystem: "event-log",
       });
     }
+  } else if (v) {
+    logger.info("memory-hybrid: dream-cycle — no event log: skipping episodic consolidation");
   }
 
   // ── Step 2b: Archive stale event log entries ─────────────────────────────
@@ -444,6 +461,7 @@ export async function runDreamCycle(
   }
 
   // ── Step 3: Reflect ───────────────────────────────────────────────────────
+  step(3, "reflection (patterns)");
   let patternsFound = 0;
   const reflectionConfig: ReflectionConfig = {
     enabled: true,
@@ -462,6 +480,7 @@ export async function runDreamCycle(
         dryRun: false,
         model: config.model,
         fallbackModels: config.fallbackModels ?? [],
+        verbose: v,
       },
       logger,
       provenanceService,
@@ -479,13 +498,14 @@ export async function runDreamCycle(
   // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
   let rulesGenerated = 0;
   if (patternsFound >= MIN_PATTERNS_FOR_RULES) {
+    step(4, "reflect-rules");
     try {
       const rulesResult = await runReflectionRules(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [] },
+        { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [], verbose: v },
         logger,
         provenanceService,
       );
@@ -498,9 +518,14 @@ export async function runDreamCycle(
         subsystem: "reflection",
       });
     }
+  } else if (v) {
+    logger.info(
+      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} patterns < ${MIN_PATTERNS_FOR_RULES} minimum)`,
+    );
   }
 
   // ── Step 4b: Refresh memory awareness index ─────────────────────────────
+  step(5, "MEMORY_INDEX.md refresh");
   try {
     await writeMemoryIndex(
       factsDb,
@@ -509,6 +534,7 @@ export async function runDreamCycle(
         model: config.model,
         fallbackModels: config.fallbackModels ?? [],
         recentWindowDays: config.reflectWindowDays,
+        verbose: v,
       },
       logger,
     );
@@ -521,6 +547,7 @@ export async function runDreamCycle(
   }
 
   // ── Step 5: Prune log tables ─────────────────────────────────────────────
+  step(6, "prune operational log tables (recall/reinforcement/trajectories)");
   let logRowsPruned = 0;
   if (config.logRetentionDays > 0) {
     try {
@@ -540,6 +567,7 @@ export async function runDreamCycle(
   }
 
   // ── Step 5b: FTS5 optimize ───────────────────────────────────────────────
+  step(7, "FTS5 optimize (facts search)");
   try {
     factsDb.optimizeFts();
     logger.info("memory-hybrid: dream-cycle — FTS5 index optimized");
@@ -554,6 +582,7 @@ export async function runDreamCycle(
   // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
   let vacuumRan = false;
   if (config.vacuumOnCycle) {
+    step(8, "VACUUM + WAL checkpoint");
     try {
       factsDb.vacuumAndCheckpoint();
       vacuumRan = true;

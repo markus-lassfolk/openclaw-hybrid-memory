@@ -29,6 +29,8 @@ interface MemoryIndexOptions {
   model?: string;
   fallbackModels?: string[];
   recentWindowDays?: number;
+  /** Extra progress lines via `logger.info` (e.g. dream-cycle `--verbose`). */
+  verbose?: boolean;
 }
 
 interface MemoryIndexResult {
@@ -242,7 +244,7 @@ function sanitizeIndexMarkdown(content: string): string {
 async function synthesizeMemoryIndex(
   snapshot: MemoryIndexSnapshot,
   openai: OpenAI,
-  options: Pick<MemoryIndexOptions, "model" | "fallbackModels">,
+  options: Pick<MemoryIndexOptions, "model" | "fallbackModels" | "verbose">,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<string | null> {
   if (!options.model) return null;
@@ -251,6 +253,12 @@ async function synthesizeMemoryIndex(
     generated_at: snapshot.generatedAt,
     memory_snapshot: JSON.stringify(snapshot, null, 2),
   });
+
+  if (options.verbose) {
+    logger.info(
+      `memory-hybrid: memory-index — LLM synthesis (${prompt.length} chars in prompt, primary model=${options.model})`,
+    );
+  }
 
   try {
     const response = await chatCompleteWithRetry({
@@ -298,6 +306,11 @@ export async function writeMemoryIndex(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<MemoryIndexResult> {
   const snapshot = buildMemoryIndexSnapshot(factsDb, options);
+  if (options.verbose) {
+    logger.info(
+      `memory-hybrid: memory-index — snapshot: ${snapshot.clusters.length} clusters, ${snapshot.recentDecisions.length} recent decisions, ${snapshot.keyEntities.length} key entities, ${snapshot.recentPatterns.length} recent patterns/rules`,
+    );
+  }
   const llmMarkdown = await synthesizeMemoryIndex(snapshot, openai, options, logger);
   const content = llmMarkdown || renderMemoryIndexMarkdown(snapshot);
   const outputPath = resolveOutputPath(options);

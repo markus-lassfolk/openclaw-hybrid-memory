@@ -255,7 +255,7 @@ export async function runCrossAgentLearning(
   factsDb: FactsDB,
   openai: OpenAI,
   cfg: CrossAgentLearningConfig,
-  logger: { warn?: (msg: string) => void } = {},
+  logger: { warn?: (msg: string) => void; info?: (msg: string) => void } = {},
 ): Promise<CrossAgentLearningResult> {
   const result: CrossAgentLearningResult = {
     agentsScanned: 0,
@@ -300,7 +300,12 @@ export async function runCrossAgentLearning(
     const model = cfg.model ?? "gpt-4o-mini";
     const fallbackModels = cfg.fallbackModels ?? [];
 
+    let batchIndex = 0;
     for (const batch of batches) {
+      batchIndex++;
+      logger.info?.(
+        `memory-hybrid: cross-agent-learning — LLM batch ${batchIndex}/${batches.length} (${batch.length} lesson(s), model=${model})`,
+      );
       try {
         const prompt = buildGeneralisePrompt(batch);
         const generalised = await callLLMForGeneralisation(openai, model, prompt, fallbackModels, logger);

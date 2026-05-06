@@ -28,13 +28,18 @@ export interface VerificationCycleResult {
   errors: number;
 }
 
-interface ContinuousVerifierOptions {
+export interface ContinuousVerifierOptions {
   /** Days between verification cycle runs (default: 30). */
   cycleDays?: number;
   /** Model to use for LLM verification calls (default: 'openai/gpt-4.1-nano'). */
   verificationModel?: string;
   /** Per-fact LLM timeout in ms (default: 15000). */
   timeoutMs?: number;
+  /**
+   * Progress hook for long cycles (e.g. `hybrid-mem dream-cycle --verbose`).
+   * Throttled when many facts are due: first, last, every 10th, and all when ≤25 due.
+   */
+  onProgress?: (message: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +96,7 @@ export class ContinuousVerifier {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly cycleDays: number | undefined;
+  private readonly onProgress?: (message: string) => void;
   private lastRunDate: number | null = null;
 
   constructor(store: VerificationStore, factsDb: FactsDB, openai: OpenAI, options?: ContinuousVerifierOptions) {
@@ -100,6 +106,7 @@ export class ContinuousVerifier {
     this.model = options?.verificationModel ?? DEFAULT_MODEL;
     this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.cycleDays = options?.cycleDays;
+    this.onProgress = options?.onProgress;
   }
 
   /**
@@ -180,6 +187,10 @@ export class ContinuousVerifier {
       recentByEntity.get(entity)?.push(e.text);
     }
 
+    this.onProgress?.(
+      `memory-hybrid: continuous-verification — ${due.length} fact(s) due, ${recentEntries.length} recent facts loaded for context`,
+    );
+
     for (const fact of due) {
       result.checked++;
       try {
@@ -215,6 +226,14 @@ export class ContinuousVerifier {
             this.factsDb.addTag(underlying.id, "review-needed");
           }
           result.uncertain++;
+        }
+
+        const n = result.checked;
+        const total = due.length;
+        if (this.onProgress && (total <= 25 || n === 1 || n === total || n % 10 === 0)) {
+          this.onProgress(
+            `memory-hybrid: continuous-verification — ${n}/${total} (${outcome}) fact=${fact.factId.slice(0, 8)}…`,
+          );
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
