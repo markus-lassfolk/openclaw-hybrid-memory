@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { isValidCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { estimateTokensForDisplay } from "../../utils/text.js";
 import { buildClassificationFtsOrClause } from "./fact-queries.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
@@ -405,7 +406,10 @@ export function markClassifyAttempt(db: DatabaseSync, ids: string[]): void {
   if (ids.length === 0) return;
   const now = Math.floor(Date.now() / 1000);
   const stmt = db.prepare("UPDATE facts SET last_classify_attempt_at = ? WHERE id = ?");
-  for (const id of ids) {
-    stmt.run(now, id);
-  }
+  const run = (): void => {
+    for (const id of ids) {
+      stmt.run(now, id);
+    }
+  };
+  createTransaction(db, run)();
 }

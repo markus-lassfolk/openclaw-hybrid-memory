@@ -359,7 +359,12 @@ export async function writeMemoryIndex(
 
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, "utf-8");
-  await writeFile(sidecar, currentHash, "utf-8");
+  // Only advance the snapshot hash sidecar after successful LLM synthesis. If we
+  // persist the hash on deterministic fallback, a transient LLM outage would skip
+  // future synthesis attempts while the snapshot stays unchanged.
+  if (llmMarkdown) {
+    await writeFile(sidecar, currentHash, "utf-8");
+  }
 
   logger.info(`memory-hybrid: memory-index — wrote ${outputPath}`);
 

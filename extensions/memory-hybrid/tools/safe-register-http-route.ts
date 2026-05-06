@@ -21,6 +21,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { capturePluginError } from "../services/error-reporter.js";
 import type {
   HttpRequestHandler,
   HttpRouteOptions,
@@ -43,7 +44,11 @@ function incomingHeadersToRecord(headers: IncomingMessage["headers"]): Record<st
   return out;
 }
 
-function adaptLegacyHandlerToNode(legacy: HttpRequestHandler): RegisterHttpRouteGatewayHandler {
+function adaptLegacyHandlerToNode(
+  legacy: HttpRequestHandler,
+  logger: SafeRouteLogger,
+  source: string,
+): RegisterHttpRouteGatewayHandler {
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const legacyReq = {
@@ -54,7 +59,14 @@ function adaptLegacyHandlerToNode(legacy: HttpRequestHandler): RegisterHttpRoute
       const result = await legacy(legacyReq);
       res.writeHead(result.status, result.headers ?? {});
       res.end(result.body);
-    } catch {
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      capturePluginError(e, {
+        operation: "http-legacy-route-handler",
+        subsystem: "memory-hybrid-http",
+        metadata: { source },
+      });
+      (logger.error ?? logger.warn).call(logger, `${source}: HTTP route handler error: ${e.message}`);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
       }
@@ -134,7 +146,7 @@ export function createSafeRegisterHttpRoute(
     const auth: RegisterHttpRouteGatewayAuth = opts.authenticated ? "gateway" : "plugin";
     register({
       path: normalized,
-      handler: adaptLegacyHandlerToNode(handler),
+      handler: adaptLegacyHandlerToNode(handler, logger, source),
       auth,
       match: "exact",
     });

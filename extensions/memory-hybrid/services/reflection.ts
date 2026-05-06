@@ -240,7 +240,10 @@ export async function runReflection(
   const existingPatternFacts = factsDb
     .getByCategory("pattern")
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const existingPatternsFingerprint = existingPatternFacts.map((f) => f.id).sort().join(",");
+  const existingPatternsFingerprint = existingPatternFacts
+    .map((f) => f.id)
+    .sort()
+    .join(",");
   const inputHash = createHash("sha256")
     .update(`${windowDays}:${opts.model}:${factsBlock}:${existingPatternsFingerprint}`)
     .digest("hex")
@@ -287,6 +290,9 @@ export async function runReflection(
 
   if (uniqueNewPatterns.length === 0) {
     logger.info("memory-hybrid: reflection — 0 patterns extracted from LLM");
+    if (!opts.dryRun) {
+      factsDb.setMaintenanceState("reflection_input_hash", inputHash);
+    }
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
