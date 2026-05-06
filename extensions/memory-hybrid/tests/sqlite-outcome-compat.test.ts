@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuditStore } from "../backends/audit-store.js";
-import { recordEpisode, rowToEpisode } from "../backends/facts-db/episodes.js";
+import { recordEpisode, rowToEpisode, searchEpisodes } from "../backends/facts-db/episodes.js";
 import {
   _resetEpisodesOutcomeCompatCacheForTests,
   episodeOutcomeForSqliteInsert,
@@ -73,6 +73,26 @@ describe("sqlite-outcome-compat — episodes", () => {
     expect(row.outcome).toBe("failed");
     const full = db.prepare("SELECT * FROM episodes WHERE id = ?").get(ep.id) as Record<string, unknown>;
     expect(rowToEpisode(full).outcome).toBe("failure");
+  });
+
+  it("recordEpisode preserves unknown in return on legacy CHECK (stored as failed)", () => {
+    const db = new DatabaseSync(":memory:");
+    createLegacyEpisodesSchema(db);
+    const ep = recordEpisode(db, { event: "ambiguous", outcome: "unknown" });
+    expect(ep.outcome).toBe("unknown");
+    const row = db.prepare("SELECT outcome FROM episodes WHERE id = ?").get(ep.id) as { outcome: string };
+    expect(row.outcome).toBe("failed");
+  });
+
+  it("searchEpisodes unknown filter does not include legacy failed rows (avoids mixing with failure)", () => {
+    const db = new DatabaseSync(":memory:");
+    createLegacyEpisodesSchema(db);
+    recordEpisode(db, { event: "fail", outcome: "failure" });
+    recordEpisode(db, { event: "unk", outcome: "unknown" });
+    expect(searchEpisodes(db, { outcome: ["unknown"], limit: 20 })).toHaveLength(0);
+    const failures = searchEpisodes(db, { outcome: ["failure"], limit: 20 });
+    expect(failures).toHaveLength(2);
+    expect(failures.every((e) => e.outcome === "failure")).toBe(true);
   });
 
   it("current-style CHECK stores failure verbatim", () => {

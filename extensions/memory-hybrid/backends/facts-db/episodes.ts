@@ -71,11 +71,17 @@ export function recordEpisode(
   const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
   const tags = input.tags ?? [];
   const relatedFactIds = input.relatedFactIds ?? [];
+  const legacyFailedOnly = episodesTableIsLegacyFailedOutcomeCheck(db);
   const outcomeForInsert = episodeOutcomeForSqliteInsert(db, input.outcome);
-  const finalOutcome = storedEpisodeOutcomeToPublic(outcomeForInsert);
+  const publicFromStored = storedEpisodeOutcomeToPublic(outcomeForInsert);
+  // Legacy CHECK stores both `failure` and `unknown` as `failed`. Re-read maps
+  // `failed` → `failure`, so callers cannot distinguish unknown after reload; keep
+  // the immediate return aligned with the caller's intent for `unknown`.
+  const returnedOutcome: EpisodeOutcome =
+    legacyFailedOnly && input.outcome === "unknown" ? "unknown" : publicFromStored;
 
   let importance = input.importance ?? 0.5;
-  if (finalOutcome === "failure" && importance < 0.8) {
+  if (input.outcome === "failure" && importance < 0.8) {
     importance = 0.8;
   }
 
@@ -116,7 +122,7 @@ export function recordEpisode(
     id,
     category: "episode",
     event: input.event,
-    outcome: finalOutcome,
+    outcome: returnedOutcome,
     timestamp,
     duration: input.duration,
     context: input.context,
@@ -167,13 +173,11 @@ export function searchEpisodes(
   if (outcome && outcome.length > 0) {
     const legacyFailed = episodesTableIsLegacyFailedOutcomeCheck(db);
     const expanded = new Set<string>(outcome);
-    if (legacyFailed) {
-      if (outcome.includes("failure")) {
-        expanded.add("failed");
-      }
-      if (outcome.includes("unknown")) {
-        expanded.add("failed");
-      }
+    // Map `failure` → stored `failed` on legacy CHECK. Do not map `unknown` →
+    // `failed`: that would return rows that are semantically `failure` when the
+    // caller asked for unknown-only results (both values share `failed` in DB).
+    if (legacyFailed && outcome.includes("failure")) {
+      expanded.add("failed");
     }
     const list = [...expanded];
     const placeholders = list.map(() => "?").join(",");
