@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
-import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
+import type { EventLogConfig, PathConfig, StoreConfig, StoreSourceProfile, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
   ActiveTaskProjectionConfig,
@@ -74,12 +74,47 @@ export function resolveEnvVars(value: string): string {
   });
 }
 
+function parseStoreSourceProfile(raw: unknown): StoreSourceProfile | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  const onDuplicate =
+    obj.onDuplicate === "skip" || obj.onDuplicate === "boost" || obj.onDuplicate === "merge" || obj.onDuplicate === "store"
+      ? obj.onDuplicate
+      : undefined;
+  return {
+    vectorThreshold:
+      typeof obj.vectorThreshold === "number" && obj.vectorThreshold > 0 && obj.vectorThreshold <= 1
+        ? obj.vectorThreshold
+        : undefined,
+    lexicalJaccard:
+      typeof obj.lexicalJaccard === "number" && obj.lexicalJaccard > 0 && obj.lexicalJaccard <= 1
+        ? obj.lexicalJaccard
+        : undefined,
+    maxPerDay: typeof obj.maxPerDay === "number" && obj.maxPerDay > 0 ? Math.floor(obj.maxPerDay) : undefined,
+    onDuplicate,
+    boostBy: typeof obj.boostBy === "number" && obj.boostBy > 0 ? Math.min(1, obj.boostBy) : undefined,
+  };
+}
+
+function parseSourceProfiles(raw: unknown): Record<string, StoreSourceProfile> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, StoreSourceProfile> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!key.trim()) continue;
+    const parsed = parseStoreSourceProfile(value);
+    if (parsed) out[key.trim()] = parsed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function parseStoreConfig(cfg: Record<string, unknown>): StoreConfig {
   const storeRaw = cfg.store as Record<string, unknown> | undefined;
   return {
     fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
     classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : undefined,
+    sourceProfiles: parseSourceProfiles(storeRaw?.sourceProfiles),
+    defaultProfile: parseStoreSourceProfile(storeRaw?.defaultProfile),
   };
 }
 

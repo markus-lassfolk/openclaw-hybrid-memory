@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import type { StoreConfig } from "../../config.js";
 import type { MemoryEntry, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
@@ -16,6 +17,7 @@ import {
   deleteFact,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
+  statsDailyWrites as statsDailyWritesImpl,
   storeFact,
 } from "./crud.js";
 import { verifyFts5Support } from "./db-connection.js";
@@ -73,9 +75,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
   protected readonly dbPath: string;
   protected readonly fuzzyDedupe: boolean;
+  protected readonly storeConfig?: StoreConfig;
   protected readonly supersededTextsCacheMgr = new SupersededTextsCache(5 * 60_000);
 
-  constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
+  constructor(dbPath: string, options?: { fuzzyDedupe?: boolean; storeConfig?: StoreConfig }) {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
 
@@ -108,6 +111,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     this.dbPath = dbPath;
     tryRestrictSqliteDbFileMode(dbPath);
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
+    this.storeConfig = options?.storeConfig;
 
     bootstrapFactsCoreSchema(this.liveDb);
 
@@ -210,6 +214,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       {
         db: this.liveDb,
         fuzzyDedupe: this.fuzzyDedupe,
+        storeConfig: this.storeConfig,
         getById: (id) => this.getById(id),
         invalidateSupersededCache: () => {
           this.supersededTextsCacheMgr.invalidate();
@@ -217,6 +222,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       },
       entry,
     );
+  }
+
+  statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number }> {
+    return statsDailyWritesImpl(this.liveDb);
   }
 
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */

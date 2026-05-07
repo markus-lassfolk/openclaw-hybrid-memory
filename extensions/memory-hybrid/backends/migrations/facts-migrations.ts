@@ -1022,6 +1022,19 @@ function migrateEpisodesTable(db: DatabaseSync): void {
  * Call this once after opening the database and creating the base schema
  * (facts table, FTS5 table, triggers, and basic indexes).
  */
+/** Per-source daily write counters for source profile quotas (Issue #1194). */
+function migrateDailyWritesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_writes (
+      source TEXT NOT NULL,
+      day TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      dropped INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (source, day)
+    )
+  `);
+}
+
 /** Add provenance_json column (Issue #1195 safe-first step). Does NOT migrate existing DERIVED_FROM links. */
 function migrateProvenanceJsonColumn(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
@@ -1083,6 +1096,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Provenance and verification
   migrateProvenanceColumns(db);
   migrateProvenanceJsonColumn(db);
+  migrateDailyWritesTable(db);
   migrateVerifiedFactsTable(db);
 
   // Reinforcement log and count type migration

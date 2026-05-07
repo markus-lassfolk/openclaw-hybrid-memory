@@ -4,10 +4,11 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import { type DecayClass, type MemoryCategory, TTL_DEFAULTS } from "../../config.js";
+import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
 /** Input shape for `FactsDB.store` / `storeFact`. */
@@ -67,22 +68,63 @@ export function getDuplicateIdByNormalizedHash(db: DatabaseSync, text: string): 
 export type StoreFactContext = {
   db: DatabaseSync;
   fuzzyDedupe: boolean;
+  storeConfig?: StoreConfig;
   getById: (id: string) => MemoryEntry | null;
   invalidateSupersededCache: () => void;
 };
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryEntry {
   validateStoreEntryInput(entry);
-  if (ctx.fuzzyDedupe) {
+  const sourceForPolicy = entry.source ?? "conversation";
+  const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
+  const nowSec = Math.floor(Date.now() / 1000);
+  const day = new Date(nowSec * 1000).toISOString().slice(0, 10);
+
+  if (profile.maxPerDay != null) {
+    const quotaRow = ctx.db
+      .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
+      .get(sourceForPolicy, day) as { count: number } | undefined;
+    if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
+      ctx.db
+        .prepare(
+          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+        )
+        .run(sourceForPolicy, day);
+      const existingId = getDuplicateIdByNormalizedHash(ctx.db, entry.text);
+      const existing = existingId ? ctx.getById(existingId) : null;
+      if (existing) return existing;
+      throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
+    }
+  }
+
+  if (ctx.fuzzyDedupe && profile.onDuplicate !== "store") {
     const existingId = getDuplicateIdByNormalizedHash(ctx.db, entry.text);
     if (existingId) {
       const existing = ctx.getById(existingId);
-      if (existing) return existing;
+      if (existing) {
+        if (profile.onDuplicate === "boost") {
+          ctx.db
+            .prepare(
+              "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, importance = min(1.0, importance + ?) WHERE id = ?",
+            )
+            .run(profile.boostBy, existing.id);
+          return ctx.getById(existing.id) ?? existing;
+        }
+        if (profile.onDuplicate === "merge") {
+          const mergedText = existing.text.includes(entry.text)
+            ? existing.text
+            : `${existing.text}
+${entry.text}`.slice(0, 4000);
+          ctx.db.prepare("UPDATE facts SET text = ? WHERE id = ?").run(mergedText, existing.id);
+          return ctx.getById(existing.id) ?? existing;
+        }
+        return existing;
+      }
     }
   }
 
   const id = randomUUID();
-  const nowSec = Math.floor(Date.now() / 1000);
 
   const decayClass =
     entry.decayClass || classifyDecay(entry.entity ?? null, entry.key ?? null, entry.value ?? null, entry.text);
@@ -179,6 +221,14 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       );
   });
   tx();
+  if (profile.maxPerDay != null) {
+    ctx.db
+      .prepare(
+        `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
+         ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
+      )
+      .run(sourceForPolicy, day);
+  }
   if (supersedesId) {
     ctx.invalidateSupersededCache();
   }
@@ -236,4 +286,11 @@ export function hasDuplicateText(db: DatabaseSync, fuzzyDedupe: boolean, text: s
   if (exact) return true;
   if (fuzzyDedupe && getDuplicateIdByNormalizedHash(db, text) !== null) return true;
   return false;
+}
+
+
+export function statsDailyWrites(db: DatabaseSync): Array<{ source: string; day: string; count: number; dropped: number }> {
+  return db
+    .prepare("SELECT source, day, count, dropped FROM daily_writes ORDER BY day DESC, source ASC LIMIT 100")
+    .all() as Array<{ source: string; day: string; count: number; dropped: number }>;
 }

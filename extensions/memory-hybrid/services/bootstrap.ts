@@ -57,6 +57,7 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
     try {
       factsDb = new FactsDB(resolvedSqlitePath, {
         fuzzyDedupe: cfg.store.fuzzyDedupe,
+        storeConfig: cfg.store,
       });
     } catch (err) {
       api.logger.error(`memory-hybrid: core bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
