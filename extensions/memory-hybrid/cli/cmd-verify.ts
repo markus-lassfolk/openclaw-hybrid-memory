@@ -28,6 +28,7 @@ import {
 import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
+import { readGuardTimestampMs } from "../services/cron-guard.js";
 import {
   type EmbeddingConfig,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
@@ -37,7 +38,6 @@ import {
 } from "../services/embeddings.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { readGuardTimestampMs } from "../services/cron-guard.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
@@ -1214,6 +1214,17 @@ export async function runVerifyForCli(
     return null;
   }
 
+  /** Prefer the newer of runner state and persistent guard file (state can lag after restart). */
+  function effectiveCronLastRunMs(job: {
+    state?: { lastRunAtMs?: number };
+    lastRunGuardMs?: number | null;
+  }): number | null {
+    const stateMs = typeof job.state?.lastRunAtMs === "number" ? job.state.lastRunAtMs : null;
+    const guardMs = typeof job.lastRunGuardMs === "number" ? job.lastRunGuardMs : null;
+    if (stateMs != null && guardMs != null) return Math.max(stateMs, guardMs);
+    return stateMs ?? guardMs;
+  }
+
   // Helper function to format job status display
   function formatJobStatus(job: JobInfo, label: string, indent: string, log: (msg: string) => void): void {
     const isFeatureGated = job.featureGateDisabled === true;
@@ -1224,12 +1235,14 @@ export async function runVerifyForCli(
 
     if (job.scheduleExpr) parts.push(job.scheduleExpr);
 
-    if (job.state?.lastRunAtMs) {
-      const lastStatus = job.state.lastStatus ?? "unknown";
-      const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
-      parts.push(lastRun);
-    } else if (job.lastRunGuardMs) {
-      parts.push(`last: ${relativeTime(job.lastRunGuardMs)} (guard)`);
+    const stateMs = typeof job.state?.lastRunAtMs === "number" ? job.state.lastRunAtMs : null;
+    const lastMs = effectiveCronLastRunMs(job);
+    if (lastMs != null) {
+      if (stateMs != null && lastMs === stateMs) {
+        parts.push(`last: ${relativeTime(lastMs)} (${job.state?.lastStatus ?? "unknown"})`);
+      } else {
+        parts.push(`last: ${relativeTime(lastMs)} (guard)`);
+      }
     } else {
       parts.push("last: never");
     }
@@ -1237,8 +1250,6 @@ export async function runVerifyForCli(
     if (job.state?.nextRunAtMs) {
       parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
     }
-
-    const lastMs = job.state?.lastRunAtMs ?? job.lastRunGuardMs ?? null;
     const interval = approxIntervalMs(job.scheduleExpr ?? null);
     let stale = false;
     if (job.enabled && interval) {
@@ -1248,7 +1259,7 @@ export async function runVerifyForCli(
     const note = isFeatureGated
       ? "  (disabled by feature gate; will re-enable when feature turns on)"
       : stale
-        ? "  ⚠ overdue"
+        ? `  ${WARN_LINE} overdue`
         : "";
 
     log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}  ${parts.join("  ")}${note}`);
@@ -1566,7 +1577,7 @@ export async function runVerifyForCli(
   // Surface overdue / never-run cron jobs as warnings so the summary mentions them even when health checks pass.
   for (const [key, job] of allJobs) {
     if (!job.enabled) continue;
-    const lastMs = job.state?.lastRunAtMs ?? job.lastRunGuardMs ?? null;
+    const lastMs = effectiveCronLastRunMs(job);
     const interval = approxIntervalMs(job.scheduleExpr ?? null);
     if (interval && (lastMs == null || Date.now() - lastMs > interval * 1.5)) {
       warnings.push(
