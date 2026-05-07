@@ -263,10 +263,10 @@ export async function runEpisodicConsolidation(
       // 'SKIP:no_text' is clearly not a real fact UUID — no UUID-based query will match it.
       try {
         eventLog.markConsolidated(
-          groupEvents.map((e) => e.id),
+          cappedGroupEvents.map((e) => e.id),
           "SKIP:no_text",
         );
-        eventsConsolidated += groupEvents.length;
+        eventsConsolidated += cappedGroupEvents.length;
       } catch (err) {
         logger.warn(`memory-hybrid: dream-cycle — failed to mark no-text events as consolidated: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -343,11 +343,11 @@ export async function runEpisodicConsolidation(
     // Mark all events in the group as consolidated into the new fact
     try {
       eventLog.markConsolidated(
-        groupEvents.map((e) => e.id),
+        cappedGroupEvents.map((e) => e.id),
         consolidatedFact.id,
       );
       factsCreated++;
-      eventsConsolidated += groupEvents.length;
+      eventsConsolidated += cappedGroupEvents.length;
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to mark events as consolidated: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -365,7 +365,7 @@ export async function runEpisodicConsolidation(
     }
 
     logger.info(
-      `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
+      `memory-hybrid: dream-cycle — consolidated ${cappedGroupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
     );
   }
 
