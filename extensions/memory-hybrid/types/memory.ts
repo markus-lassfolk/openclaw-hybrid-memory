@@ -71,6 +71,11 @@ export type MemoryEntry = {
   /** Array of user praise quotes that reinforced this fact. */
   reinforcedQuotes?: string[] | null;
   /**
+   * Structured provenance JSON stored on the fact row itself (Issue #1195).
+   * E.g. { "sourceFactIds": ["..."], "consolidatedAt": 1700000000, "method": "dream-cycle" }
+   */
+  provenanceJson?: string | null;
+  /**
    * Future-date decay freeze: epoch seconds until which confidence decay is paused.
    * Set when the fact text contains a future date (reminder, deadline, event).
    * Null = no freeze (normal decay applies).

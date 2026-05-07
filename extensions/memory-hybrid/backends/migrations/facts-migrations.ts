@@ -1022,6 +1022,16 @@ function migrateEpisodesTable(db: DatabaseSync): void {
  * Call this once after opening the database and creating the base schema
  * (facts table, FTS5 table, triggers, and basic indexes).
  */
+/** Add provenance_json column (Issue #1195 safe-first step). Does NOT migrate existing DERIVED_FROM links. */
+function migrateProvenanceJsonColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "provenance_json")) return;
+  db.exec("ALTER TABLE facts ADD COLUMN provenance_json TEXT");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_facts_provenance_json ON facts(provenance_json) WHERE provenance_json IS NOT NULL",
+  );
+}
+
 export function runFactsMigrations(db: DatabaseSync): void {
   // Column migrations (depend on base facts table existing)
   migrateDecayColumns(db);
@@ -1072,6 +1082,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Provenance and verification
   migrateProvenanceColumns(db);
+  migrateProvenanceJsonColumn(db);
   migrateVerifiedFactsTable(db);
 
   // Reinforcement log and count type migration
