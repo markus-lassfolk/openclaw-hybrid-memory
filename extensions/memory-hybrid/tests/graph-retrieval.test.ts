@@ -854,6 +854,29 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(cResults[0].hopCount).toBe(1); // shortest path preferred
   });
 
+  it("bounds real CTE expansion through a synthetic high-degree hub", () => {
+    const seed = storeFact("Seed for bounded graph");
+    const hub = storeFact("[consolidated from 10000 events] session_start; session_end");
+    const semantic = storeFact("Useful semantic neighbour");
+    db.createLink(seed.id, hub.id, "RELATED_TO", 1.0);
+    for (let i = 0; i < 600; i++) {
+      const heartbeat = storeFact(i % 2 === 0 ? "session_start" : "session_end");
+      db.createLink(hub.id, heartbeat.id, "DERIVED_FROM", 1.0);
+    }
+    db.createLink(hub.id, semantic.id, "RELATED_TO", 1.0);
+
+    const seedEntry = db.getById(seed.id)!;
+    const result = expandGraph(db, [{ factId: seed.id, score: 1.0, entry: seedEntry }], {
+      maxDepth: 3,
+      maxExpandedResults: 50,
+    });
+
+    expect(result.length).toBeLessThanOrEqual(51); // direct seed + maxExpandedResults
+    expect(result.some((r) => r.entry.text === "session_start" || r.entry.text === "session_end")).toBe(false);
+    expect(result.some((r) => r.factId === hub.id)).toBe(true);
+    expect(result.some((r) => r.factId === semantic.id)).toBe(false);
+  });
+
   it("incoming links are traversed bidirectionally in real DB", () => {
     const factA = storeFact("Target");
     const factB = storeFact("Source that points to target");

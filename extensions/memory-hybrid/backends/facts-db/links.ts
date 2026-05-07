@@ -170,7 +170,11 @@ export function expandGraphWithCTE(
   db: DatabaseSync,
   seedFactIds: string[],
   maxDepth: number,
-  options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
+  options?: {
+    asOf?: number;
+    scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+    hubDegreeCap?: number | null;
+  },
 ): Array<{
   factId: string;
   seedId: string;
@@ -188,6 +192,15 @@ export function expandGraphWithCTE(
 
   const asOf = options?.asOf ?? null;
   const scopeFilter = options?.scopeFilter;
+  const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
+  const hubGuardSql =
+    hubDegreeCap == null
+      ? ""
+      : `AND (
+          SELECT COUNT(*) FROM memory_links d
+          WHERE (d.source_fact_id = ge.fact_id OR d.target_fact_id = ge.fact_id)
+            AND d.link_type != 'CONTRADICTS'
+        ) <= ?`;
   let factJoinOut = "";
   let factWhereOut = "";
   let factJoinIn = "";
@@ -259,6 +272,7 @@ export function expandGraphWithCTE(
         AND ml.link_type != 'CONTRADICTS'
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
+        ${hubGuardSql}
         ${factWhereOut}
 
       UNION ALL
@@ -287,6 +301,7 @@ export function expandGraphWithCTE(
         AND ml.link_type != 'CONTRADICTS'
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
+        ${hubGuardSql}
         ${factWhereIn}
     ),
     -- Aggregate to find shortest path to each node
@@ -309,9 +324,18 @@ export function expandGraphWithCTE(
     ORDER BY hop_count ASC, fact_id ASC
   `;
 
+  const hubParams = hubDegreeCap == null ? [] : [hubDegreeCap];
   const rows = db
     .prepare(query)
-    .all(JSON.stringify(seedFactIds), maxDepth, ...filterParamsOut, maxDepth, ...filterParamsIn) as Array<{
+    .all(
+      JSON.stringify(seedFactIds),
+      maxDepth,
+      ...hubParams,
+      ...filterParamsOut,
+      maxDepth,
+      ...hubParams,
+      ...filterParamsIn,
+    ) as Array<{
     fact_id: string;
     seed_id: string;
     hop_count: number;

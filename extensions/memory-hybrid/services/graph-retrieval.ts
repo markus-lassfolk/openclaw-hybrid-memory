@@ -67,7 +67,11 @@ export interface GraphFactLookup {
   expandGraphWithCTE?(
     seedFactIds: string[],
     maxDepth: number,
-    options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
+    options?: {
+      asOf?: number;
+      scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+      hubDegreeCap?: number | null;
+    },
   ): Array<{ factId: string; seedId: string; hopCount: number; path: string }>;
 }
 
@@ -158,10 +162,12 @@ export function filterTraversableLinks<
 >(links: T[]): T[] {
   const traversable = links.filter((link) => link.linkType !== "CONTRADICTS");
   if (traversable.length <= HUB_GUARD_MAX_LINKS_PER_NODE) return traversable;
-  const sorted = [...traversable].sort((a, b) => {
-    const da = a.linkType === "DERIVED_FROM" ? 1 : 0;
-    const db = b.linkType === "DERIVED_FROM" ? 1 : 0;
-    if (da !== db) return da - db;
+
+  // High-degree DERIVED_FROM fanout is usually provenance/event lineage. Do not let it swamp
+  // recall expansion; keep semantic/non-provenance links from the hub instead.
+  const nonProvenance = traversable.filter((link) => link.linkType !== "DERIVED_FROM");
+  const candidates = nonProvenance.length > 0 ? nonProvenance : traversable;
+  const sorted = [...candidates].sort((a, b) => {
     const ds = (b.strength ?? 0) - (a.strength ?? 0);
     if (ds !== 0) return ds;
     const endA = a.targetFactId ?? a.sourceFactId ?? "";
@@ -236,6 +242,7 @@ export function expandGraph(
     const expansionRows = factsDb.expandGraphWithCTE(seedIds, maxDepth, {
       asOf,
       scopeFilter: cteScopeFilter,
+      hubDegreeCap: HUB_GUARD_MAX_LINKS_PER_NODE,
     });
 
     // Pre-fetch all links for nodes that appear in paths to avoid N+1 queries
