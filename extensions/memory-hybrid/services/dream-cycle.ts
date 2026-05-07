@@ -227,7 +227,6 @@ export async function runEpisodicConsolidation(
     );
   }
   let factsCreated = 0;
-  const ephemeralSourceFactIds: string[] = [];
 
   for (const [entity, groupEvents] of groups) {
     if (groupEvents.length === 0) continue;
@@ -372,12 +371,6 @@ export async function runEpisodicConsolidation(
     logger.info(
       `memory-hybrid: dream-cycle — consolidated ${cappedGroupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
     );
-  }
-
-  // Delete only the ephemeral source facts created during this consolidation.
-  // DERIVED_FROM links to them are preserved by design (see delete() in facts-db.ts).
-  for (const id of ephemeralSourceFactIds) {
-    factsDb.delete(id);
   }
 
   return { eventsConsolidated, factsCreated };
