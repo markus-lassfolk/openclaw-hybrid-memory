@@ -214,3 +214,86 @@ Optional `autoRecall.recallTiming` (`off` | `basic` | `verbose`) — see [INTERA
 ## Credits
 
 Design lineage and a full list of extensions in this repo: [CREDITS-AND-ATTRIBUTION.md](../../docs/CREDITS-AND-ATTRIBUTION.md). Based on [Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory) (Clawdboss.ai).
+
+
+## Operator health audit
+
+Run a one-shot store health report with:
+
+```bash
+openclaw hybrid-mem audit health
+openclaw hybrid-mem audit health --json
+openclaw hybrid-mem audit health --strict
+```
+
+The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits non-zero when warnings are present. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
+
+## Weekly pending digest (#1197)
+
+Render an at-a-glance backlog of approve/decline/defer actions across persona proposals,
+procedure promotions, tool proposals, crystallization proposals, and verified facts:
+
+```bash
+openclaw hybrid-mem digest pending --since 7d --format md
+openclaw hybrid-mem digest pending --since 7d --format json --out /tmp/pending.json
+```
+
+The JSON payload is versioned (`schemaVersion: 1`) and surfaces:
+
+- `personaProposals.pendingEntries[].evidence` — top supporting fact ids and total count derived
+  from the proposal's `evidenceSessions` join against `facts.provenance_session`.
+- `procedures.newThisWeek` — count of procedures whose `last_validated` timestamp falls within
+  the lookback window, alongside the existing `validatedNotPromoted` backlog.
+- Approve / decline / defer commands per entry so the operator can act without leaving the digest.
+
+The installer registers `hybrid-mem:weekly-pending-digest` (Mondays 08:00) and respects
+`digest.weekly.delivery.{ mode, chatId }` to optionally announce the rendered markdown body to a
+Telegram channel. Full schema and rationale: [docs/pending-digest.md](docs/pending-digest.md).
+
+## Maintenance log format & analyzer
+
+Hybrid-memory maintenance cron jobs write structured run artifacts under:
+
+```text
+$HOME/.openclaw/logs/cron-hybrid-mem/YYYYMMDD/
+  <job>-<timestamp>-<pid>.log
+  <job>-<timestamp>-<pid>.exit.txt
+```
+
+Each `.exit.txt` file contains one line per step:
+
+```text
+2026-05-07T02:10:21Z prune exit=0
+2026-05-07T02:11:02Z distill exit=1
+```
+
+Use the analyzer to classify failures, persist regression history, emit an operator digest, and optionally report plugin/orchestration bugs through the existing GlitchTip path:
+
+```bash
+openclaw hybrid-mem analyze-maintenance-logs --since 24h --digest md
+openclaw hybrid-mem analyze-maintenance-logs --since 7d --format json --out /tmp/maintenance-findings.json
+openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --strict
+```
+
+Rules are data-driven in [`services/maintenance-rules.json`](services/maintenance-rules.json), so operators can inspect or extend classifications without changing analyzer code. Findings are persisted in `maintenance-findings.db` table `maintenance_finding`, enabling week-over-week trend output for `--since 7d` / `--trend` runs.
+
+The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the nightly chain and announce the rendered digest to the operator.
+
+### Auto-fix whitelist (#1199)
+
+`--auto-fix` applies **only** safe, idempotent actions implemented in [`services/maintenance-auto-fix.ts`](services/maintenance-auto-fix.ts):
+
+- **Stale scan lock files**: when a finding includes a `*.lock` absolute path and the recorded PID is not running, the lock file is removed.
+- **Retry-once marker**: for transient LLM / network rules, the finding is annotated (`auto-fixed-retry-once`) so the next cron tick can retry — **no** extra shell commands are executed.
+
+Add **`--auto-fix-all`** together with `--auto-fix` to opt into heavier remediation (still scoped to the maintenance analyzer):
+
+- **Vacuum-on-busy**: when at least two `SQLITE_BUSY` / “database is locked” findings fall within the configured persistence window (historical rows in `maintenance-findings.db` plus the current batch), runs `VACUUM` + WAL checkpoint on the open facts DB and invokes `openclaw hybrid-mem vectordb-optimize`.
+- **Re-embed vectorless**: when an `embedding-auth` rule matches in the current batch, runs `openclaw hybrid-mem reembed-vectorless --limit 200 --apply` once (useful after credentials were fixed).
+
+Override the CLI binary with `OPENCLAW_BIN` if `openclaw` is not on `PATH`.
+
+### Resolved-issue suppression
+
+[`services/maintenance-resolved.json`](services/maintenance-resolved.json) maps **finding fingerprints** to `{ resolvedInVersion, note }`. When the log’s parsed `pluginVersion` is `>= resolvedInVersion` (dotted numeric comparison), matching findings are dropped from the analyzer output to cut noise after a release fix.
+

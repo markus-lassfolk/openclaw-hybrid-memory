@@ -1,7 +1,7 @@
 /**
  * Procedural memory: procedures table CRUD (#782) (Issue #954 split).
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
@@ -9,6 +9,99 @@ import type { ProcedureEntry, ScopeFilter } from "../../types/memory.js";
 import { recordEpisode } from "./episodes.js";
 import { sanitizeFts5QueryForFacts } from "./fts-text.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
+
+export type ProcedurePromotionBlockReason =
+  | "duplicate_skill"
+  | "low_recall"
+  | "missing_anchor"
+  | "awaiting_approval"
+  | "unknown";
+
+export type ProcedureTriageRow = {
+  id: string;
+  title: string;
+  validatedAt: number | null;
+  promotionBlockReason: ProcedurePromotionBlockReason;
+  lastRecall: number | null;
+  successCount: number;
+  confidence: number;
+  skillPath: string | null;
+};
+
+export type ProcedureTriageSummary = {
+  total: number;
+  byReason: Record<ProcedurePromotionBlockReason, number>;
+  topReason: ProcedurePromotionBlockReason | null;
+};
+
+export type ProcedureTriageReport = {
+  rows: ProcedureTriageRow[];
+  summary: ProcedureTriageSummary;
+};
+
+const PROCEDURE_BLOCK_REASONS: ProcedurePromotionBlockReason[] = [
+  "duplicate_skill",
+  "low_recall",
+  "missing_anchor",
+  "awaiting_approval",
+  "unknown",
+];
+
+function summarizeProcedureTriage(rows: ProcedureTriageRow[]): ProcedureTriageSummary {
+  const byReason = Object.fromEntries(PROCEDURE_BLOCK_REASONS.map((reason) => [reason, 0])) as Record<
+    ProcedurePromotionBlockReason,
+    number
+  >;
+  for (const row of rows) byReason[row.promotionBlockReason] = (byReason[row.promotionBlockReason] ?? 0) + 1;
+  const top = Object.entries(byReason)
+    .filter(([, count]) => count > 0)
+    .sort(
+      (a, b) =>
+        b[1] - a[1] ||
+        PROCEDURE_BLOCK_REASONS.indexOf(a[0] as ProcedurePromotionBlockReason) -
+          PROCEDURE_BLOCK_REASONS.indexOf(b[0] as ProcedurePromotionBlockReason),
+    )[0];
+  return { total: rows.length, byReason, topReason: top ? (top[0] as ProcedurePromotionBlockReason) : null };
+}
+
+function slugForProcedure(taskPattern: string): string {
+  const base = taskPattern
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+  const hash = createHash("sha1").update(taskPattern).digest("hex").slice(0, 8);
+  return `${base || "procedure"}-${hash}`;
+}
+
+function hasRecipeAnchor(recipeJson: string | null | undefined): boolean {
+  if (!recipeJson || recipeJson.trim() === "") return false;
+  try {
+    const parsed = JSON.parse(recipeJson) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return false;
+    return parsed.some((step) => {
+      if (step == null || typeof step !== "object") return false;
+      const s = step as Record<string, unknown>;
+      return typeof s.tool === "string" && s.tool.trim().length > 0;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function procedureBlockReason(
+  row: ProcedureEntry,
+  duplicateSlugs: Set<string>,
+  validationThreshold: number,
+): ProcedurePromotionBlockReason {
+  if (row.skillPath != null && row.skillPath.trim() !== "") return "duplicate_skill";
+  if (duplicateSlugs.has(slugForProcedure(row.taskPattern))) return "duplicate_skill";
+  if (!hasRecipeAnchor(row.recipeJson)) return "missing_anchor";
+  if (row.successCount < validationThreshold) return "low_recall";
+  if (row.confidence < 0.5) return "low_recall";
+  if (row.successCount >= validationThreshold && row.promotedToSkill !== 1) return "awaiting_approval";
+  return "unknown";
+}
 
 // ---------- Procedural memory: procedures table CRUD ----------
 
@@ -836,12 +929,61 @@ export function getProceduresReadyForSkill(
   return rows.map((r) => procedureRowToEntry(db, r));
 }
 
-/** Mark procedure as promoted to skill (skill_path set). */
+/** Mark procedure as promoted to skill (skill_path set). Idempotent for already-promoted rows. */
 export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: string): boolean {
+  const existing = getProcedureById(db, id);
+  if (!existing) return false;
+  const finalPath = existing.skillPath && existing.skillPath.trim() !== "" ? existing.skillPath : skillPath;
   const result = db
     .prepare("UPDATE procedures SET promoted_to_skill = 1, skill_path = ?, updated_at = ? WHERE id = ?")
-    .run(skillPath, Math.floor(Date.now() / 1000), id);
+    .run(finalPath, Math.floor(Date.now() / 1000), id);
   return result.changes > 0;
+}
+
+export function triageProcedures(
+  db: DatabaseSync,
+  options: { status?: "validated" | "all"; notPromoted?: boolean; limit?: number; validationThreshold?: number } = {},
+): ProcedureTriageReport {
+  const status = options.status ?? "validated";
+  const notPromoted = options.notPromoted ?? true;
+  const limit = Math.max(1, Math.min(10_000, Math.floor(options.limit ?? 100)));
+  const validationThreshold = Math.max(1, Math.floor(options.validationThreshold ?? 3));
+  const clauses: string[] = [];
+  if (status === "validated") clauses.push("last_validated IS NOT NULL");
+  if (notPromoted) clauses.push("promoted_to_skill = 0");
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(
+      `SELECT * FROM procedures ${where}
+       ORDER BY COALESCE(last_validated, updated_at, created_at) DESC, id ASC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<Record<string, unknown>>;
+  const procedures = rows.map((r) => procedureRowToEntry(db, r));
+
+  const promotedRows = db
+    .prepare("SELECT task_pattern, skill_path FROM procedures WHERE promoted_to_skill = 1 OR skill_path IS NOT NULL")
+    .all() as Array<{ task_pattern: string; skill_path: string | null }>;
+  const duplicateSlugs = new Set<string>();
+  for (const promoted of promotedRows) {
+    duplicateSlugs.add(slugForProcedure(promoted.task_pattern));
+    if (promoted.skill_path) {
+      const leaf = promoted.skill_path.split(/[\/]/).filter(Boolean).pop();
+      if (leaf) duplicateSlugs.add(leaf);
+    }
+  }
+
+  const triageRows = procedures.map((proc) => ({
+    id: proc.id,
+    title: proc.taskPattern,
+    validatedAt: proc.lastValidated,
+    promotionBlockReason: procedureBlockReason(proc, duplicateSlugs, validationThreshold),
+    lastRecall: proc.lastReinforcedAt ?? (proc.sourceSessions ? proc.lastValidated : null),
+    successCount: proc.successCount,
+    confidence: proc.confidence,
+    skillPath: proc.skillPath,
+  }));
+  return { rows: triageRows, summary: summarizeProcedureTriage(triageRows) };
 }
 
 /** Procedures that are past TTL (last_validated older than ttl_days). For revalidation/decay. */
@@ -917,6 +1059,23 @@ export function proceduresValidatedCount(db: DatabaseSync): number {
   } catch (err) {
     capturePluginError(err as Error, {
       operation: "count-procedures-validated",
+      severity: "info",
+      subsystem: "facts",
+    });
+    return 0;
+  }
+}
+
+/** Count procedures whose `last_validated` timestamp is >= sinceSec. */
+export function proceduresValidatedSince(db: DatabaseSync, sinceSec: number): number {
+  try {
+    const row = db
+      .prepare("SELECT COUNT(*) as cnt FROM procedures WHERE last_validated IS NOT NULL AND last_validated >= ?")
+      .get(sinceSec) as { cnt: number };
+    return row?.cnt ?? 0;
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: "count-procedures-validated-since",
       severity: "info",
       subsystem: "facts",
     });

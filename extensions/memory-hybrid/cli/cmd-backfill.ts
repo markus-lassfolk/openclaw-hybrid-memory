@@ -272,7 +272,7 @@ export async function runBackfillForCli(
   for (const fact of allCandidates) {
     if (limit > 0 && stored >= limit) break;
     progress.update(processed + 1);
-    if (factsDb.hasDuplicate(fact.text)) {
+    if (factsDb.hasDuplicate(fact.text, `backfill:${fact.source}`)) {
       skipped++;
       processed++;
       continue;
@@ -662,7 +662,7 @@ export async function runIngestFilesForCli(
   let stored = 0;
   let skipped = 0;
   for (const fact of allFacts) {
-    if (factsDb.hasDuplicate(fact.text)) {
+    if (factsDb.hasDuplicate(fact.text, "ingest")) {
       skipped++;
       continue;
     }

@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { DECAY_CLASSES } from "../../config.js";
 import { isValidCategory } from "../../config.js";
+import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stopwords.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { searchFts } from "../../services/fts-search.js";
 import { parseTags } from "../../utils/tags.js";
@@ -13,7 +14,7 @@ import { estimateTokensForDisplay } from "../../utils/text.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
 /** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
-export const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold"]);
+export const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold", "structural"]);
 export const DECAY_CLASS_FILTER = new Set<string>(DECAY_CLASSES);
 
 export function statsBreakdown(db: DatabaseSync): Record<string, number> {
@@ -62,6 +63,308 @@ export function statsBreakdownByCategory(db: DatabaseSync): Record<string, numbe
     stats[row.category || "other"] = row.cnt;
   }
   return stats;
+}
+
+export type CategoryAuditRow = {
+  category: string;
+  count: number;
+  examples: string[];
+};
+
+export type CategoryAuditReport = {
+  configured: string[];
+  inMemory: CategoryAuditRow[];
+  unknown: CategoryAuditRow[];
+  configuredOnly: string[];
+  hasDrift: boolean;
+};
+
+export type RemapCategoryReport = {
+  from: string;
+  to: string;
+  apply: boolean;
+  matched: number;
+  activeMatched: number;
+  changed: number;
+};
+
+export type ProposedCategoryRow = {
+  /** Suggested label (the part after `category-suggested:`). */
+  label: string;
+  /** Number of active facts tagged with this suggestion. */
+  count: number;
+  /** Up to N example fact ids. */
+  examples: string[];
+};
+
+export type TopEntityRow = {
+  entity: string;
+  count: number;
+};
+
+export type CleanEntityStopwordsReport = {
+  apply: boolean;
+  stopWords: string[];
+  matched: number;
+  activeMatched: number;
+  changed: number;
+  examples: Array<{ id: string; entity: string }>;
+};
+
+export type VectorlessFactRow = {
+  id: string;
+  text: string;
+  source: string;
+  category: string;
+  createdAt: number;
+};
+
+export type VectorlessBySourceRow = {
+  source: string;
+  count: number;
+};
+
+function vectorlessWhereClause(): string {
+  return `f.superseded_at IS NULL
+     AND (f.expires_at IS NULL OR f.expires_at > ?)
+     AND COALESCE(f.key, '') = ''
+     AND COALESCE(f.value, '') = ''
+     AND NOT EXISTS (
+       SELECT 1 FROM fact_embeddings e
+       WHERE e.fact_id = f.id AND e.variant = 'canonical'
+     )`;
+}
+
+export function countVectorlessActiveFacts(db: DatabaseSync, source?: string): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const params: SQLInputValue[] = [nowSec];
+  let where = vectorlessWhereClause();
+  if (source != null && source !== "") {
+    where += " AND f.source = ?";
+    params.push(source);
+  }
+  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM facts f WHERE ${where}`).get(...params) as
+    | { cnt: number }
+    | undefined;
+  return Number(row?.cnt ?? 0);
+}
+
+export function vectorlessActiveFactsBySource(db: DatabaseSync, limit = 20): VectorlessBySourceRow[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(f.source, ''), 'unknown') AS source, COUNT(*) AS cnt
+       FROM facts f
+       WHERE ${vectorlessWhereClause()}
+       GROUP BY COALESCE(NULLIF(f.source, ''), 'unknown')
+       ORDER BY cnt DESC, source COLLATE NOCASE ASC
+       LIMIT ?`,
+    )
+    .all(nowSec, Math.max(1, Math.min(100, Math.floor(limit)))) as Array<{ source: string; cnt: number }>;
+  return rows.map((row) => ({ source: row.source, count: Number(row.cnt ?? 0) }));
+}
+
+export function listVectorlessActiveFacts(
+  db: DatabaseSync,
+  options: { limit?: number; source?: string } = {},
+): VectorlessFactRow[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const params: SQLInputValue[] = [nowSec];
+  let where = vectorlessWhereClause();
+  if (options.source != null && options.source !== "") {
+    where += " AND f.source = ?";
+    params.push(options.source);
+  }
+  params.push(Math.max(1, Math.min(10_000, Math.floor(options.limit ?? 100))));
+  const rows = db
+    .prepare(
+      `SELECT f.id, f.text, COALESCE(NULLIF(f.source, ''), 'unknown') AS source,
+              COALESCE(f.category, 'other') AS category, f.created_at
+       FROM facts f
+       WHERE ${where}
+       ORDER BY f.created_at ASC, f.rowid ASC
+       LIMIT ?`,
+    )
+    .all(...params) as Array<{ id: string; text: string; source: string; category: string; created_at: number }>;
+  return rows.map((row) => ({
+    id: row.id,
+    text: row.text,
+    source: row.source,
+    category: row.category,
+    createdAt: Number(row.created_at ?? 0),
+  }));
+}
+
+export function auditCategories(
+  db: DatabaseSync,
+  configuredCategories: readonly string[],
+  exampleLimit = 5,
+): CategoryAuditReport {
+  const configured = [...new Set(configuredCategories)].sort();
+  const configuredSet = new Set(configured);
+  const rows = db
+    .prepare(
+      "SELECT COALESCE(category, 'other') as category, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY category ORDER BY category",
+    )
+    .all() as Array<{ category: string; cnt: number }>;
+
+  const inMemory: CategoryAuditRow[] = rows.map((row) => {
+    const examples = db
+      .prepare(
+        "SELECT id FROM facts WHERE COALESCE(category, 'other') = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?",
+      )
+      .all(row.category || "other", Math.max(0, exampleLimit)) as Array<{ id: string }>;
+    return {
+      category: row.category || "other",
+      count: row.cnt,
+      examples: examples.map((e) => e.id),
+    };
+  });
+
+  const inMemorySet = new Set(inMemory.map((r) => r.category));
+  const unknown = inMemory.filter((row) => !configuredSet.has(row.category));
+  const configuredOnly = configured.filter((category) => !inMemorySet.has(category));
+  return {
+    configured,
+    inMemory,
+    unknown,
+    configuredOnly,
+    hasDrift: unknown.length > 0,
+  };
+}
+
+export function remapCategory(db: DatabaseSync, from: string, to: string, apply = false): RemapCategoryReport {
+  const normalizedFrom = from.trim();
+  const normalizedTo = to.trim();
+  const matchedRow = db.prepare("SELECT COUNT(*) as cnt FROM facts WHERE category = ?").get(normalizedFrom) as {
+    cnt: number;
+  };
+  const activeMatchedRow = db
+    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE category = ? AND superseded_at IS NULL")
+    .get(normalizedFrom) as { cnt: number };
+  const matched = matchedRow?.cnt ?? 0;
+  const activeMatched = activeMatchedRow?.cnt ?? 0;
+  let changed = 0;
+  if (apply && matched > 0) {
+    const result = db.prepare("UPDATE facts SET category = ? WHERE category = ?").run(normalizedTo, normalizedFrom);
+    changed = Number(result.changes);
+  }
+  return {
+    from: normalizedFrom,
+    to: normalizedTo,
+    apply,
+    matched,
+    activeMatched,
+    changed,
+  };
+}
+
+/**
+ * List "category-suggested:<label>" tags emitted by the auto-classifier (#1188).
+ *
+ * The auto-classifier never invents a configured category; if the LLM proposes a label
+ * not in the configured set, it tags the fact with `category-suggested:<label>` and keeps
+ * the fact in `category=other`. This helper aggregates those tags so operators can
+ * surface (and optionally promote/remap) common suggestions via the
+ * `categories propose` CLI.
+ */
+export function proposedCategories(db: DatabaseSync, exampleLimit = 5): ProposedCategoryRow[] {
+  const limit = Math.max(0, Math.min(50, Math.floor(exampleLimit)));
+  const rows = db
+    .prepare(
+      `SELECT id, tags FROM facts
+       WHERE superseded_at IS NULL
+         AND tags IS NOT NULL
+         AND (',' || tags || ',') LIKE '%,category-suggested:%'`,
+    )
+    .all() as Array<{ id: string; tags: string | null }>;
+  const map = new Map<string, { count: number; examples: string[] }>();
+  for (const row of rows) {
+    const tags = (row.tags ?? "").split(",");
+    for (const raw of tags) {
+      const tag = raw.trim();
+      if (!tag.startsWith("category-suggested:")) continue;
+      const label = tag.slice("category-suggested:".length).trim();
+      if (!label) continue;
+      let entry = map.get(label);
+      if (!entry) {
+        entry = { count: 0, examples: [] };
+        map.set(label, entry);
+      }
+      entry.count++;
+      if (entry.examples.length < limit) entry.examples.push(row.id);
+    }
+  }
+  return [...map.entries()]
+    .map(([label, { count, examples }]) => ({ label, count, examples }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+export function topEntities(db: DatabaseSync, limit = 10): TopEntityRow[] {
+  const rows = db
+    .prepare(
+      `SELECT entity, COUNT(*) as cnt FROM facts
+       WHERE entity IS NOT NULL AND entity != '' AND superseded_at IS NULL
+       GROUP BY entity ORDER BY cnt DESC, entity COLLATE NOCASE ASC LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(100, Math.floor(limit)))) as Array<{ entity: string; cnt: number }>;
+  return rows.map((row) => ({ entity: row.entity, count: row.cnt }));
+}
+
+export function topEntitiesFiltered(
+  db: DatabaseSync,
+  limit = 10,
+  extraStopWords: readonly string[] = [],
+): TopEntityRow[] {
+  const scanLimit = Math.max(50, Math.max(1, Math.min(100, Math.floor(limit))) * 10);
+  const rows = db
+    .prepare(
+      `SELECT entity, COUNT(*) as cnt FROM facts
+       WHERE entity IS NOT NULL AND entity != '' AND superseded_at IS NULL
+       GROUP BY entity ORDER BY cnt DESC, entity COLLATE NOCASE ASC LIMIT ?`,
+    )
+    .all(scanLimit) as Array<{ entity: string; cnt: number }>;
+  return rows
+    .filter((row) => !isEntityStopWord(row.entity, extraStopWords))
+    .slice(0, Math.max(1, Math.min(100, Math.floor(limit))))
+    .map((row) => ({ entity: row.entity, count: row.cnt }));
+}
+
+export function cleanEntityStopwords(
+  db: DatabaseSync,
+  options: { apply?: boolean; stopWords?: readonly string[]; exampleLimit?: number } = {},
+): CleanEntityStopwordsReport {
+  const apply = options.apply === true;
+  const stopWords = [...(options.stopWords ?? [])];
+  const rows = db
+    .prepare(
+      `SELECT id, entity, superseded_at FROM facts
+       WHERE entity IS NOT NULL AND entity != ''
+       ORDER BY created_at DESC, rowid DESC`,
+    )
+    .all() as Array<{ id: string; entity: string; superseded_at: number | null }>;
+  const matchedRows = rows.filter((row) => isEntityStopWord(row.entity, stopWords));
+  const activeMatchedRows = matchedRows.filter((row) => row.superseded_at == null);
+  let changed = 0;
+  if (apply && matchedRows.length > 0) {
+    const ids = matchedRows.map((row) => row.id);
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = db.prepare(`UPDATE facts SET entity = NULL WHERE id IN (${placeholders})`).run(...chunk);
+      changed += Number(result.changes);
+    }
+  }
+  const exampleLimit = Math.max(0, Math.min(50, Math.floor(options.exampleLimit ?? 10)));
+  return {
+    apply,
+    stopWords,
+    matched: matchedRows.length,
+    activeMatched: activeMatchedRows.length,
+    changed,
+    examples: activeMatchedRows.slice(0, exampleLimit).map((row) => ({ id: row.id, entity: row.entity })),
+  };
 }
 
 export function statsBreakdownByDecayClass(db: DatabaseSync): Record<string, number> {
@@ -229,16 +532,18 @@ export function estimateStoredTokensByTier(db: DatabaseSync): {
   hot: number;
   warm: number;
   cold: number;
+  structural: number;
 } {
   const rows = db
     .prepare(`SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`)
     .all() as Array<{ tier: string; summary: string | null; text: string }>;
-  const out = { hot: 0, warm: 0, cold: 0 };
+  const out = { hot: 0, warm: 0, cold: 0, structural: 0 };
   for (const r of rows) {
     const tok = estimateTokensForDisplay(r.summary || r.text);
     const t = r.tier || "warm";
     if (t === "hot") out.hot += tok;
     else if (t === "cold") out.cold += tok;
+    else if (t === "structural") out.structural += tok;
     else out.warm += tok;
   }
   return out;

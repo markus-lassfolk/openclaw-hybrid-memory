@@ -13,6 +13,21 @@ import { capturePluginError } from "./error-reporter.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 
+/** Per-procedure result returned by {@link generateAutoSkillForProcedure}. */
+export type GenerateAutoSkillResult =
+  | { ok: false; reason: "not-found" | "validation-pending" | "write-failed"; error?: string }
+  | {
+      ok: true;
+      /** True when the procedure was already promoted before this call (no-op). */
+      alreadyPromoted: boolean;
+      /** Absolute path to the generated SKILL.md (existing path on idempotent calls). */
+      skillPath: string;
+      /** Skill path stored on the procedure row (relative to workspace). */
+      relativePath: string;
+      /** Whether the writes were skipped because dryRun=true. */
+      dryRun: boolean;
+    };
+
 function ensureUniqueSlug(basePath: string, slug: string): string {
   let candidate = slug;
   let n = 0;
@@ -129,8 +144,13 @@ ${stepsMd}
     }
 
     const relativePath = join(options.skillsAutoPath, slug);
-    factsDb.markProcedurePromoted(proc.id, relativePath);
-    paths.push(skillPath);
+    const promoted = factsDb.markProcedurePromoted(proc.id, relativePath);
+    const promotedProcedure = promoted ? factsDb.getProcedureById(proc.id) : null;
+    paths.push(
+      promotedProcedure?.skillPath && promotedProcedure.skillPath === relativePath
+        ? skillPath
+        : (promotedProcedure?.skillPath ?? skillPath),
+    );
     logger.info(`procedure-skill-generator: generated ${skillPath}`);
   }
 
@@ -140,4 +160,122 @@ ${stepsMd}
     dryRun,
     paths,
   };
+}
+
+/**
+ * Promote a single procedure by id (#1191). The output is idempotent:
+ *   - If the procedure has already been promoted, return `alreadyPromoted: true` with
+ *     the existing skill path and do not rewrite SKILL.md / recipe.json.
+ *   - If not yet promoted, generate the skill files and call `markProcedurePromoted`.
+ *
+ * `validationThreshold` is honored when `requireValidation` is true (default), matching
+ * the safeguard used by the batch path. Call sites can pass `requireValidation: false`
+ * for operator-driven promotions.
+ */
+export function generateAutoSkillForProcedure(
+  factsDb: FactsDB,
+  options: GenerateAutoSkillsOptions & { procedureId: string; requireValidation?: boolean },
+  logger: { info: (s: string) => void; warn: (s: string) => void },
+): GenerateAutoSkillResult {
+  const dryRun = options.dryRun ?? false;
+  const requireValidation = options.requireValidation !== false;
+  const proc = factsDb.getProcedureById(options.procedureId);
+  if (!proc) return { ok: false, reason: "not-found" };
+
+  const basePath = options.skillsAutoPath.startsWith("/")
+    ? options.skillsAutoPath
+    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), options.skillsAutoPath);
+
+  if (proc.skillPath && proc.promotedToSkill) {
+    const absoluteExisting = proc.skillPath.startsWith("/")
+      ? proc.skillPath
+      : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), proc.skillPath);
+    return {
+      ok: true,
+      alreadyPromoted: true,
+      skillPath: join(absoluteExisting, "SKILL.md"),
+      relativePath: proc.skillPath,
+      dryRun,
+    };
+  }
+
+  if (requireValidation && proc.successCount < options.validationThreshold) {
+    return { ok: false, reason: "validation-pending" };
+  }
+
+  const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
+  const skillDir = join(basePath, slug);
+  const skillPath = join(skillDir, "SKILL.md");
+  const recipePath = join(skillDir, "recipe.json");
+  const relativePath = join(options.skillsAutoPath, slug);
+
+  if (dryRun) {
+    logger.info(`[dry-run] Would generate skill: ${skillPath}`);
+    return { ok: true, alreadyPromoted: false, skillPath, relativePath, dryRun: true };
+  }
+
+  try {
+    mkdirSync(skillDir, { recursive: true });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "procedure-skill-generator",
+      operation: "promote-mkdir",
+    });
+    return { ok: false, reason: "write-failed", error: String(err) };
+  }
+
+  let recipe: unknown;
+  try {
+    recipe = JSON.parse(proc.recipeJson);
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: "promote-parse-recipe",
+      severity: "info",
+      subsystem: "procedures",
+    });
+    recipe = [];
+  }
+  const steps = Array.isArray(recipe) ? recipe : [];
+  const lastValidatedStr = proc.lastValidated
+    ? new Date(proc.lastValidated * 1000).toISOString().slice(0, 10)
+    : "never";
+  const stepsMd = Array.isArray(steps)
+    ? (steps as Array<{ tool?: string; args?: Record<string, unknown>; summary?: string }>)
+        .map((s, i) => {
+          const args = s.args && Object.keys(s.args).length > 0 ? ` ${JSON.stringify(s.args)}` : "";
+          return `${i + 1}. **${s.tool || "step"}**${args}${s.summary ? ` — ${s.summary}` : ""}`;
+        })
+        .join("\n")
+    : "See recipe.json";
+
+  const skillMd = `# ${slug.replace(/-/g, " ")}
+
+Auto-generated procedure (procedural memory). Last validated: ${lastValidatedStr}. Confidence: ${(proc.confidence * 100).toFixed(0)}%.
+
+## Task
+${proc.taskPattern}
+
+## Steps (last time this worked)
+${stepsMd}
+
+## Metadata
+- Source procedure id: \`${proc.id}\`
+- Success count: ${proc.successCount}
+- Do not store secrets in procedures; use credential references only.
+`;
+
+  try {
+    writeFileSync(skillPath, skillMd, "utf-8");
+    writeFileSync(recipePath, JSON.stringify(steps, null, 2), "utf-8");
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "procedure-skill-generator",
+      operation: "promote-write",
+    });
+    return { ok: false, reason: "write-failed", error: String(err) };
+  }
+
+  factsDb.markProcedurePromoted(proc.id, relativePath);
+  logger.info(`procedure-skill-generator: promoted ${proc.id} → ${skillPath}`);
+  return { ok: true, alreadyPromoted: false, skillPath, relativePath, dryRun: false };
 }

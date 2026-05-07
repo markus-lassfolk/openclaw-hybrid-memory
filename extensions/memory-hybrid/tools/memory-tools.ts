@@ -950,6 +950,8 @@ export function registerMemoryTools(
         includeSuperseded,
         scopeFilter,
         asOf: asOfSec ?? undefined,
+        graphHubDegreeCap: cfg.graph.hubDegreeCap,
+        graphHubScorePenalty: cfg.graph.hubScorePenalty,
         aliasDb: cfg.aliases?.enabled ? aliasDb : null,
         clustersConfig: cfg.clusters,
         embeddingRegistry: embeddingRegistry ?? null,
@@ -1047,11 +1049,13 @@ export function registerMemoryTools(
       for (const r of results) {
         originalBackendMap.set(r.entry.id, r.backend);
       }
-      const expanded = expandGraph(factsDb, seedInputs, {
+      const { results: expanded } = expandGraph(factsDb, seedInputs, {
         maxDepth: depth,
         maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
         scopeFilter: scopeFilter ?? undefined,
         asOf: asOfSec ?? undefined,
+        hubDegreeCap: cfg.graph.hubDegreeCap,
+        hubScorePenalty: cfg.graph.hubScorePenalty,
       });
 
       // Re-build results from expanded output (preserves scores and dedup).
@@ -1070,7 +1074,9 @@ export function registerMemoryTools(
     } else if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
       // Legacy flat-score graph traversal (backward compatible, no path annotation).
       const initialIds = new Set(results.map((r) => r.entry.id));
-      const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth);
+      const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth, {
+        hubDegreeCap: cfg.graph.hubDegreeCap,
+      });
       const extraIds = connectedIds.filter((id) => !initialIds.has(id));
       const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
       for (const id of extraIds) {
@@ -1605,7 +1611,7 @@ export function registerMemoryTools(
             }
           };
 
-          if (factsDb.hasDuplicate(textToStore)) {
+          if (factsDb.hasDuplicate(textToStore, "conversation")) {
             return {
               content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },
@@ -2234,7 +2240,9 @@ export function registerMemoryTools(
           // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
           if (cfg.graph.enabled) {
             const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
-            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel)
+            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel, {
+              stopWords: cfg.entityExtraction.stopWords,
+            })
               .then(({ mentions, detectedLang }) => {
                 factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
               })

@@ -8,6 +8,7 @@ import type OpenAI from "openai";
 
 import type { EntityMentionLabel } from "../backends/facts-db/entity-layer.js";
 import { normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
+import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { withLLMRetry } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
@@ -30,6 +31,10 @@ export function detectFactTextLanguage(text: string): string {
   if (t.length < 10) return "und";
   const code = franc(t);
   return code === "und" ? "und" : code;
+}
+
+export function isEntityStopWord(surface: string, extraStopWords: readonly string[] = []): boolean {
+  return isConfiguredEntityStopWord(surface, extraStopWords);
 }
 
 type LlmMention = {
@@ -113,6 +118,7 @@ export async function extractEntityMentionsWithLlm(
   text: string,
   openai: OpenAI,
   model: string,
+  options?: { stopWords?: readonly string[] },
 ): Promise<{ mentions: ExtractedMention[]; detectedLang: string }> {
   const detectedLang = detectFactTextLanguage(text);
   const trimmed = text.trim();
@@ -156,7 +162,7 @@ ${body}`;
       const lab = String(m.label ?? "").toUpperCase();
       if (lab !== "PERSON" && lab !== "ORG") continue;
       const surface = String(m.text ?? "").trim();
-      if (surface.length < 2) continue;
+      if (surface.length < 2 || isEntityStopWord(surface, options?.stopWords)) continue;
 
       const start = typeof m.start === "number" ? m.start : 0;
       const end = typeof m.end === "number" ? m.end : start + surface.length;

@@ -1698,6 +1698,7 @@ export async function runVerifyForCli(
               "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
               "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
             },
+            digestWeeklyDelivery: cfg.digest.weekly.delivery,
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));

@@ -79,7 +79,14 @@ import {
 } from "./services/rrf-fusion.js";
 import { registerHybridMemCliMetadataOnly, registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { versionInfo } from "./versionInfo.js";
-export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
+export type {
+  GraphExpandedResult,
+  GraphExpansionStats,
+  GraphFactLookup,
+  GraphRetrievalOptions,
+  LinkPathStep,
+} from "./services/graph-retrieval.js";
+export { DEFAULT_GRAPH_HUB_DEGREE_CAP, resolveGraphHubDegreeCap } from "./services/graph-retrieval.js";
 import { findShortestPath, formatPath, resolveInput } from "./services/shortest-path.js";
 export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
 import {

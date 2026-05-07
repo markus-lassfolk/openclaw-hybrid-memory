@@ -8,7 +8,7 @@
  *  3. Send a batch to the LLM with the cross-agent-generalize prompt.
  *  4. For each generalised lesson, store a new global fact (category="pattern",
  *     scope="global", source="cross-agent-learning", importance boosted +0.1).
- *  5. Link new global fact → source agent facts via DERIVED_FROM.
+ *  5. Record source agent fact ids in provenance_json on the global fact.
  *  6. Return a report.
  */
 
@@ -30,7 +30,7 @@ interface CrossAgentLearningResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
-  linksCreated: number;
+  provenanceRecorded: number;
   skippedDuplicates: number;
   errors: number;
   newFacts: Array<{ id: string; text: string; agentSources: string[] }>;
@@ -139,19 +139,18 @@ function agentFactAlreadyGeneralised(factsDb: FactsDB, agentFactId: string): boo
   if (!db) return false;
 
   try {
-    const link = db
+    const row = db
       .prepare(
-        `SELECT ml.id
-         FROM memory_links ml
-         JOIN facts f ON f.id = ml.source_fact_id
-         WHERE ml.target_fact_id = ?
-           AND ml.link_type = 'DERIVED_FROM'
-           AND f.source = ?
-           AND f.scope = 'global'
+        `SELECT id
+         FROM facts
+         WHERE source = ?
+           AND scope = 'global'
+           AND superseded_at IS NULL
+           AND provenance_json LIKE ?
          LIMIT 1`,
       )
-      .get(agentFactId, CROSS_AGENT_SOURCE) as { id: string } | undefined;
-    return !!link;
+      .get(CROSS_AGENT_SOURCE, `%${agentFactId}%`) as { id: string } | undefined;
+    return !!row;
   } catch {
     return false;
   }
@@ -263,7 +262,7 @@ export async function runCrossAgentLearning(
     agentsScanned: 0,
     lessonsConsidered: 0,
     generalisedStored: 0,
-    linksCreated: 0,
+    provenanceRecorded: 0,
     skippedDuplicates: 0,
     errors: 0,
     newFacts: [],
@@ -345,6 +344,18 @@ export async function runCrossAgentLearning(
             source: CROSS_AGENT_SOURCE,
             tags: [CROSS_AGENT_TAG, "*", ...sourceAgentIds.slice(0, 3)],
             summary: lesson.rationale?.slice(0, 200) ?? null,
+            provenanceJson: JSON.stringify({
+              method: CROSS_AGENT_SOURCE,
+              consolidatedAt: Math.floor(Date.now() / 1000),
+              sourceFactIds: sourceFacts.map((sourceFact) => sourceFact.factId),
+              sourceFacts: sourceFacts.map((sourceFact) => ({
+                id: sourceFact.factId,
+                text: sourceFact.text.slice(0, 300),
+                source: "agent",
+                category: sourceFact.category,
+                agentId: sourceFact.agentId,
+              })),
+            }),
           });
 
           result.generalisedStored++;
@@ -354,15 +365,7 @@ export async function runCrossAgentLearning(
             agentSources: sourceAgentIds,
           });
 
-          // Link new global fact → source agent facts via DERIVED_FROM
-          for (const sourceFact of sourceFacts) {
-            try {
-              factsDb.createLink(newFact.id, sourceFact.factId, "DERIVED_FROM", 0.8);
-              result.linksCreated++;
-            } catch {
-              // Non-fatal: link already exists or fact deleted
-            }
-          }
+          result.provenanceRecorded += sourceFacts.length;
         }
       } catch (batchErr) {
         result.errors++;

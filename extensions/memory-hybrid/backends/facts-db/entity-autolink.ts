@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry } from "../../types/memory.js";
 import { updateConfidence } from "./contradictions.js";
+import { filterEntityStopWords } from "../../utils/entity-stopwords.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import type { MemoryLinkType } from "./types.js";
 
@@ -21,7 +22,7 @@ export function getKnownEntities(db: DatabaseSync): string[] {
   const rows = db
     .prepare("SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL")
     .all() as Array<{ entity: string }>;
-  const list = rows.map((r) => r.entity);
+  const list = filterEntityStopWords(rows.map((r) => r.entity));
   knownEntitiesCacheByDb.set(db, { list, time: now });
   return list;
 }

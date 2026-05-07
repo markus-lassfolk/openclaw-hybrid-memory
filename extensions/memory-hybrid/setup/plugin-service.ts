@@ -465,6 +465,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               workflowStore,
               narrativesDb,
               provenanceService,
+              graphHubDegreeCap: cfg.graph.hubDegreeCap,
+              graphHubScorePenalty: cfg.graph.hubScorePenalty,
             },
             cfg.dashboard.port,
           );

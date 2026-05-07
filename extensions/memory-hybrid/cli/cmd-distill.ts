@@ -457,7 +457,7 @@ export async function runDistillForCli(
         }
         continue;
       }
-      if (factsDb.hasDuplicate(fact.text)) {
+      if (factsDb.hasDuplicate(fact.text, "distillation")) {
         skipped++;
         continue;
       }

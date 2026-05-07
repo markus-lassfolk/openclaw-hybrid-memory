@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import type { StoreConfig } from "../../config.js";
 import type { MemoryEntry, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
@@ -16,6 +17,7 @@ import {
   deleteFact,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
+  statsDailyWrites as statsDailyWritesImpl,
   storeFact,
 } from "./crud.js";
 import { verifyFts5Support } from "./db-connection.js";
@@ -30,19 +32,25 @@ import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
   expandGraphWithCTE as expandGraphWithCTEHelper,
+  type GraphConnectedStats,
   getConnectedFactIds as getConnectedFactIdsHelper,
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
+  refreshFactDegrees as refreshFactDegreesHelper,
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
 } from "./links.js";
 import {
   logRecall as logRecallImpl,
   pruneRecallLog as pruneRecallLogImpl,
+  retierFacts as retierFactsImpl,
   runCompaction as runCompactionImpl,
   setFactTier,
   setPreserveTags as setPreserveTagsImpl,
   setPreserveUntil as setPreserveUntilImpl,
   trimToBudget as trimToBudgetImpl,
+  type RetierReport,
+  type TieringCounts,
+  type TieringOptions,
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
@@ -73,9 +81,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
   protected readonly dbPath: string;
   protected readonly fuzzyDedupe: boolean;
+  protected readonly storeConfig?: StoreConfig;
   protected readonly supersededTextsCacheMgr = new SupersededTextsCache(5 * 60_000);
 
-  constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
+  constructor(dbPath: string, options?: { fuzzyDedupe?: boolean; storeConfig?: StoreConfig }) {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
 
@@ -108,6 +117,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     this.dbPath = dbPath;
     tryRestrictSqliteDbFileMode(dbPath);
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
+    this.storeConfig = options?.storeConfig;
 
     bootstrapFactsCoreSchema(this.liveDb);
 
@@ -205,18 +215,27 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return estimateStorageBytesOnDisk(this.dbPath);
   }
 
-  store(entry: StoreFactInput): MemoryEntry {
+  store(
+    entry: StoreFactInput,
+    options?: { vectorCandidates?: ReadonlyArray<{ id: string; score: number }> },
+  ): MemoryEntry {
     return storeFact(
       {
         db: this.liveDb,
         fuzzyDedupe: this.fuzzyDedupe,
+        storeConfig: this.storeConfig,
         getById: (id) => this.getById(id),
         invalidateSupersededCache: () => {
           this.supersededTextsCacheMgr.invalidate();
         },
+        vectorCandidates: options?.vectorCandidates,
       },
       entry,
     );
+  }
+
+  statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {
+    return statsDailyWritesImpl(this.liveDb);
   }
 
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
@@ -270,17 +289,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return setFactTier(this.liveDb, id, tier);
   }
 
-  /** Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
-  runCompaction(opts: {
-    inactivePreferenceDays: number;
-    hotMaxTokens: number;
-    hotMaxFacts: number;
-  }): {
-    hot: number;
-    warm: number;
-    cold: number;
-  } {
+  /** Compaction — retier facts by structural shape, salience, and inactivity. */
+  runCompaction(opts: TieringOptions): RetierReport {
     return runCompactionImpl(this.liveDb, opts);
+  }
+
+  /** Retier facts with optional dry-run support for operator CLI migrations. */
+  retier(opts: TieringOptions, apply = true): RetierReport {
+    return retierFactsImpl(this.liveDb, opts, apply);
   }
 
   /**
@@ -419,9 +435,9 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return deleteFact(this.liveDb, id);
   }
 
-  /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
-  hasDuplicate(text: string): boolean {
-    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text);
+  /** Exact match or dedupe policy would block a new insert (per-source if `source` set; global probe if omitted, #1202). */
+  hasDuplicate(text: string, source?: string): boolean {
+    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source);
   }
 
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
@@ -436,6 +452,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       this.invalidateSupersededCache();
     }
     return result.changes > 0;
+  }
+
+  /**
+   * Invalidate cached superseded-text snapshots after supersede-equivalent SQL on `liveDb`
+   * (e.g. maintenance running inside an explicit transaction where {@link supersede} is not used).
+   */
+  invalidateSupersededTextsCache(): void {
+    this.invalidateSupersededCache();
   }
 
   /** Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
@@ -511,8 +535,12 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    * CONTRADICTS links are excluded from traversal — they would otherwise pollute graph-based recall
    * with unrelated contradicted facts and cause traversal explosion when a fact has many contradictions.
    */
-  getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
-    return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth);
+  getConnectedFactIds(
+    factIds: string[],
+    maxDepth: number,
+    options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats },
+  ): string[] {
+    return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth, options);
   }
 
   /**
@@ -529,6 +557,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     options?: {
       asOf?: number;
       scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+      hubDegreeCap?: number | null;
     },
   ): Array<{
     factId: string;
@@ -537,6 +566,15 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     path: string;
   }> {
     return expandGraphWithCTEHelper(this.liveDb, seedFactIds, maxDepth, options);
+  }
+
+  /**
+   * Refresh denormalized `out_degree` / `in_degree` columns on `facts` (#1192). The dream-cycle
+   * calls this once per night so the BFS hub guard avoids running `COUNT(*) FROM memory_links`
+   * on every traversal.
+   */
+  refreshFactDegrees(): { updated: number } {
+    return refreshFactDegreesHelper(this.liveDb);
   }
 
   /** Invalidate superseded texts cache (called after supersede operations). */

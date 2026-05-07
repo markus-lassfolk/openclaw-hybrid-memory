@@ -11,6 +11,9 @@
 
 import type { DatabaseSync } from "node:sqlite";
 
+/** SQLite lock acquisition: IMMEDIATE reserves a write lock at BEGIN (serializes quota + insert). */
+export type SqliteTransactionBeginMode = "DEFERRED" | "IMMEDIATE";
+
 /**
  * Wraps a function in a SQLite BEGIN / COMMIT / ROLLBACK block.
  * Mirrors the semantics of better-sqlite3's `db.transaction(fn)` helper.
@@ -27,7 +30,11 @@ import type { DatabaseSync } from "node:sqlite";
 
 let savepointCounter = 0;
 
-export function createTransaction<T extends unknown[], R>(db: DatabaseSync, fn: (...args: T) => R): (...args: T) => R {
+export function createTransaction<T extends unknown[], R>(
+  db: DatabaseSync,
+  fn: (...args: T) => R,
+  beginMode: SqliteTransactionBeginMode = "DEFERRED",
+): (...args: T) => R {
   return (...args: T): R => {
     const isNested = db.isTransaction;
     const savepointName = isNested ? `sp_${++savepointCounter}` : null;
@@ -35,7 +42,7 @@ export function createTransaction<T extends unknown[], R>(db: DatabaseSync, fn: 
     if (isNested) {
       db.exec(`SAVEPOINT ${savepointName}`);
     } else {
-      db.exec("BEGIN");
+      db.exec(beginMode === "IMMEDIATE" ? "BEGIN IMMEDIATE" : "BEGIN");
     }
 
     try {

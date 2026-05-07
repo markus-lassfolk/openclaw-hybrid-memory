@@ -18,7 +18,7 @@ Each fact is assigned one of nine decay classes. The class determines **TTL** (t
 |-------|-----|--------------------|-----------------|
 | **permanent** | Never expires | N/A | Decisions, conventions, name/email/architecture, "always use X" |
 | **durable** | ~3 months | Yes | Important context, durable rules |
-| **normal** | 2 weeks | Yes | Default facts, active projects |
+| **normal** | 90 days | Yes | Default facts, active projects, implicit-feedback trajectory lessons (#1186) |
 | **short** | 2 days | No | Short-term context, recently used |
 | **ephemeral** | 4 hours | No | Quick scratchpad data |
 | **stable** | 90 days (Legacy) | Yes | General long-lived facts |

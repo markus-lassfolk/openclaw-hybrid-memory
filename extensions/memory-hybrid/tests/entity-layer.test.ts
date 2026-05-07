@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import { escapeLikeLiteralForBackslashEscape, normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
-import { detectFactTextLanguage } from "../services/entity-enrichment.js";
+import { detectFactTextLanguage, isEntityStopWord } from "../services/entity-enrichment.js";
 
 describe("normalizeEntityKey", () => {
   it("lowercases and collapses whitespace", () => {
@@ -20,6 +20,16 @@ describe("normalizeEntityKey", () => {
 describe("escapeLikeLiteralForBackslashEscape", () => {
   it("escapes LIKE wildcards and backslashes for ESCAPE '\\'", () => {
     expect(escapeLikeLiteralForBackslashEscape("a%b_c\\d")).toBe("a\\%b\\_c\\\\d");
+  });
+});
+
+describe("entity enrichment stop words", () => {
+  it("filters generic common-noun pseudo-entities", () => {
+    expect(isEntityStopWord("User")).toBe(true);
+    expect(isEntityStopWord("Credentials")).toBe(true);
+    expect(isEntityStopWord("convention")).toBe(true);
+    expect(isEntityStopWord("Home Assistant")).toBe(false);
+    expect(isEntityStopWord("Acme Corporation")).toBe(false);
   });
 });
 

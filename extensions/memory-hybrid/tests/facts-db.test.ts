@@ -57,6 +57,31 @@ describe("FactsDB.store", () => {
     expect(entry.decayClass).toBe("permanent");
   });
 
+  it("stores source and importance-aware decay defaults", () => {
+    const auto = db.store({
+      text: "transient capture without keywords",
+      category: "fact",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "auto-capture",
+    });
+    expect(auto.decayClass).toBe("normal");
+    expect(auto.expiresAt).not.toBeNull();
+
+    const low = db.store({
+      text: "low value observation without keywords",
+      category: "other",
+      importance: 0.2,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    expect(low.decayClass).toBe("short");
+  });
+
   it("respects explicit decay class", () => {
     const entry = db.store({
       text: "temporary note",
@@ -651,7 +676,22 @@ describe("FactsDB tiering", () => {
     expect(hotFact?.tier).toBe("hot");
   });
 
-  it("runCompaction moves completed tasks (decision) to COLD", () => {
+  it("runCompaction returns changed and examined counts", () => {
+    db.store({
+      text: "Compaction report fact",
+      category: "fact",
+      importance: 0.5,
+      entity: "compaction-report",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const report = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(report.examined).toBeGreaterThanOrEqual(1);
+    expect(report.changed).toBeGreaterThanOrEqual(0);
+  });
+
+  it("runCompaction no longer moves fresh decisions to COLD by category alone", () => {
     const task = db.store({
       text: "Decided to use SQLite",
       category: "decision",
@@ -663,8 +703,133 @@ describe("FactsDB tiering", () => {
     });
     expect(db.getById(task.id)?.tier).toBe("warm");
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
-    const coldFact = db.getById(task.id);
-    expect(coldFact?.tier).toBe("cold");
+    const fact = db.getById(task.id);
+    expect(fact?.tier).not.toBe("cold");
+  });
+
+  it("runCompaction moves key/value facts to STRUCTURAL", () => {
+    const fact = db.store({
+      text: "User email is test@example.com",
+      category: "fact",
+      entity: "User",
+      key: "email",
+      value: "test@example.com",
+      importance: 0.6,
+      source: "test",
+    });
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(db.getById(fact.id)?.tier).toBe("structural");
+  });
+
+  it("runCompaction does not tier permanent-decay facts as STRUCTURAL without key/value", () => {
+    const fact = db.store({
+      text: "Seed edict without kv",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "seed:test",
+      decayClass: "permanent",
+    });
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(db.getById(fact.id)?.tier).not.toBe("structural");
+  });
+
+  it("list and dashboard filters include STRUCTURAL tier facts", () => {
+    const fact = db.store({
+      text: "User phone is +46700000000",
+      category: "person",
+      entity: "User",
+      key: "phone",
+      value: "+46700000000",
+      importance: 0.6,
+      source: "test",
+    });
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(db.list(10, { tier: "structural" }).some((row) => row.id === fact.id)).toBe(true);
+    const dashboard = db.listForDashboard({ limit: 10, offset: 0, tier: "structural" });
+    expect(dashboard.total).toBeGreaterThanOrEqual(1);
+    expect(dashboard.facts.some((row) => row.id === fact.id)).toBe(true);
+  });
+
+  it("runCompaction promotes recently recalled facts to HOT within budget", () => {
+    const fact = db.store({
+      text: "Frequently recalled operational runbook",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    for (let i = 0; i < 3; i++) db.refreshAccessedFacts([fact.id]);
+
+    const counts = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(counts.hot).toBeGreaterThanOrEqual(1);
+    expect(db.getById(fact.id)?.tier).toBe("hot");
+  });
+
+  it("runCompaction moves only inactive unrecalled facts to COLD", () => {
+    const oldUnrecalled = db.store({
+      text: "Old unrecalled fact",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const oldRecalled = db.store({
+      text: "Old but recalled fact",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const oldSec = Math.floor(Date.now() / 1000) - 45 * 86400;
+    const raw = db.getRawDb();
+    raw
+      .prepare(
+        "UPDATE facts SET created_at = ?, last_confirmed_at = ?, last_accessed = NULL, recall_count = 0, access_count = 0 WHERE id = ?",
+      )
+      .run(oldSec, oldSec, oldUnrecalled.id);
+    raw
+      .prepare(
+        "UPDATE facts SET created_at = ?, last_confirmed_at = ?, last_accessed = ?, recall_count = 1, access_count = 1 WHERE id = ?",
+      )
+      .run(oldSec, oldSec, oldSec, oldRecalled.id);
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50, coldAfterInactivityDays: 30 });
+
+    expect(db.getById(oldUnrecalled.id)?.tier).toBe("cold");
+    expect(db.getById(oldRecalled.id)?.tier).toBe("warm");
+  });
+
+  it("retier dry-run reports changes without mutating tiers", () => {
+    const fact = db.store({
+      text: "Project key is abc123",
+      category: "project",
+      entity: "Project",
+      key: "code",
+      value: "abc123",
+      importance: 0.6,
+      source: "test",
+    });
+
+    const report = db.retier({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 }, false);
+
+    expect(report.apply).toBe(false);
+    expect(report.structural).toBeGreaterThanOrEqual(1);
+    expect(report.changed).toBeGreaterThanOrEqual(1);
+    expect(db.getById(fact.id)?.tier).toBe("warm");
   });
 
   it("runCompaction moves inactive hot preferences to WARM", () => {
@@ -677,17 +842,83 @@ describe("FactsDB tiering", () => {
       value: null,
       source: "test",
     });
+    const oldSec = Math.floor(Date.now() / 1000) - 14 * 86400;
+    db.getRawDb()
+      .prepare(
+        "UPDATE facts SET created_at = ?, last_confirmed_at = ?, last_accessed = ?, recall_count = 0, access_count = 0 WHERE id = ?",
+      )
+      .run(oldSec, oldSec, oldSec, pref.id);
     db.setTier(pref.id, "hot");
     expect(db.getById(pref.id)?.tier).toBe("hot");
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
     const warmFact = db.getById(pref.id);
     expect(warmFact?.tier).toBe("warm");
   });
+
+  it("runCompaction keeps hot facts with high access_count (matches promotion criteria)", () => {
+    const salient = db.store({
+      text: "Often-recalled operational fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.setTier(salient.id, "hot");
+    for (let i = 0; i < 10; i++) {
+      db.refreshAccessedFacts([salient.id]);
+    }
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(db.getById(salient.id)?.tier).toBe("hot");
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(db.getById(salient.id)?.tier).toBe("hot");
+  });
 });
 
 // ---------------------------------------------------------------------------
 // Fuzzy deduplication
 // ---------------------------------------------------------------------------
+
+describe("FactsDB daily write quota accounting", () => {
+  it("tracks quota drops before returning quota exceeded", () => {
+    const limited = new FactsDB(join(tmpDir, "quota.db"), {
+      storeConfig: {
+        fuzzyDedupe: false,
+        sourceProfiles: {
+          quota_source: { maxPerDay: 1 },
+        },
+      },
+    });
+    try {
+      limited.store({
+        text: "First quota fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "quota_source",
+      });
+      expect(() =>
+        limited.store({
+          text: "Second quota fact",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "quota_source",
+        }),
+      ).toThrow(/daily write quota exceeded/);
+      const row = limited.statsDailyWrites().find((r) => r.source === "quota_source");
+      expect(row?.count).toBe(1);
+      expect(row?.dropped).toBe(1);
+    } finally {
+      limited.close();
+    }
+  });
+});
 
 describe("FactsDB fuzzy deduplication", () => {
   let dedupeDb: InstanceType<typeof FactsDB>;
@@ -723,7 +954,7 @@ describe("FactsDB fuzzy deduplication", () => {
       value: null,
       source: "test",
     });
-    expect(dedupeDb.hasDuplicate("hello world")).toBe(true);
+    expect(dedupeDb.hasDuplicate("hello world", "test")).toBe(true);
   });
 
   it("store skips duplicate when fuzzyDedupe is on", () => {
@@ -1517,6 +1748,62 @@ describe("FactsDB.statsBreakdownByCategory", () => {
   });
 });
 
+describe("FactsDB category drift audit/remap", () => {
+  it("reports unknown in-memory categories with examples", () => {
+    const entry = db.store({
+      text: "Legacy monitoring fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("monitoring", entry.id);
+
+    const report = db.auditCategories(["preference", "fact", "other"], 3);
+
+    expect(report.hasDrift).toBe(true);
+    expect(report.unknown).toEqual([
+      expect.objectContaining({ category: "monitoring", count: 1, examples: [entry.id] }),
+    ]);
+    expect(report.configuredOnly).toContain("preference");
+  });
+
+  it("remaps drifted categories without manual SQL and makes dashboard filters agree", () => {
+    const entry = db.store({
+      text: "Legacy ops status fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("ops_status", entry.id);
+
+    expect(db.listForDashboard({ limit: 10, offset: 0, category: "ops_status" }).total).toBe(0);
+
+    const dryRun = db.remapCategory("ops_status", "fact", false);
+    expect(dryRun).toEqual({
+      from: "ops_status",
+      to: "fact",
+      apply: false,
+      matched: 1,
+      activeMatched: 1,
+      changed: 0,
+    });
+    expect(db.getById(entry.id)?.category).toBe("ops_status");
+
+    const applied = db.remapCategory("ops_status", "fact", true);
+    expect(applied.changed).toBe(1);
+    expect(db.getById(entry.id)?.category).toBe("fact");
+    const dashboard = db.listForDashboard({ limit: 10, offset: 0, category: "fact" });
+    expect(dashboard.total).toBe(1);
+    expect(dashboard.facts[0]?.id).toBe(entry.id);
+  });
+});
+
 describe("FactsDB.proceduresCount / proceduresValidatedCount / proceduresPromotedCount", () => {
   it("returns counts from procedures table", () => {
     const total = db.proceduresCount();
@@ -1847,6 +2134,24 @@ describe("FactsDB.findSimilarForClassification", () => {
 // ---------------------------------------------------------------------------
 
 describe("FactsDB.countExpired", () => {
+  it("cleans stopword entities and reports filtered top entities", () => {
+    for (let i = 0; i < 3; i++)
+      db.store({ text: `u${i}`, entity: "User", category: "fact", importance: 0.5, source: "conversation" });
+    for (let i = 0; i < 2; i++)
+      db.store({ text: `c${i}`, entity: "Credentials", category: "fact", importance: 0.5, source: "conversation" });
+    db.store({ text: "conv", entity: "convention", category: "fact", importance: 0.5, source: "conversation" });
+    for (let i = 0; i < 4; i++)
+      db.store({ text: `d${i}`, entity: "Doris", category: "fact", importance: 0.5, source: "conversation" });
+    expect(db.topEntities(4).map((row) => row.entity)).toEqual(["Doris", "User", "Credentials", "convention"]);
+    expect(db.topEntitiesFiltered(4).map((row) => row.entity)).toEqual(["Doris"]);
+    const dry = db.cleanEntityStopwords({ apply: false, exampleLimit: 5 });
+    expect(dry.activeMatched).toBe(6);
+    expect(dry.changed).toBe(0);
+    const applied = db.cleanEntityStopwords({ apply: true, exampleLimit: 5 });
+    expect(applied.changed).toBe(6);
+    expect(db.topEntities(4).map((row) => row.entity)).toEqual(["Doris"]);
+  });
+
   it("counts expired facts", () => {
     db.store({
       text: "Expired",
@@ -1870,6 +2175,59 @@ describe("FactsDB.countExpired", () => {
     });
     expect(db.countExpired()).toBe(1);
   });
+});
+
+it("dry-runs and applies source/importance/recall decay reclassification", () => {
+  const now = Math.floor(Date.now() / 1000);
+  const old = now - 120 * 86_400;
+  const noisy = db.store({
+    text: "old auto capture",
+    category: "fact",
+    importance: 0.5,
+    entity: null,
+    key: null,
+    value: null,
+    source: "auto-capture",
+    decayClass: "stable",
+  });
+  const stale = db.store({
+    text: "old unrecalled low value note",
+    category: "other",
+    importance: 0.2,
+    entity: null,
+    key: null,
+    value: null,
+    source: "conversation",
+    decayClass: "normal",
+  });
+  const recalled = db.store({
+    text: "recalled useful note",
+    category: "fact",
+    importance: 0.5,
+    entity: null,
+    key: null,
+    value: null,
+    source: "conversation",
+    decayClass: "normal",
+  });
+  db.getRawDb().prepare("UPDATE facts SET recall_count = ? WHERE id = ?").run(0, noisy.id);
+  db.getRawDb()
+    .prepare("UPDATE facts SET created_at = ?, last_confirmed_at = ?, recall_count = ? WHERE id = ?")
+    .run(old, old, 0, stale.id);
+  db.getRawDb().prepare("UPDATE facts SET recall_count = ?, access_count = ? WHERE id = ?").run(3, 3, recalled.id);
+
+  const dry = db.reclassifyDecayClasses({ apply: false, nowSec: now, inactiveDays: 90, promoteRecallCount: 3 });
+  expect(dry.changed).toBeGreaterThanOrEqual(3);
+  expect(dry.changes["stable->normal"]).toBeGreaterThanOrEqual(1);
+  expect(dry.changes["normal->short"]).toBeGreaterThanOrEqual(1);
+  expect(dry.changes["normal->durable"]).toBeGreaterThanOrEqual(1);
+  expect(db.getById(noisy.id)?.decayClass).toBe("stable");
+
+  const applied = db.reclassifyDecayClasses({ apply: true, nowSec: now, inactiveDays: 90, promoteRecallCount: 3 });
+  expect(applied.changed).toBe(dry.changed);
+  expect(db.getById(noisy.id)?.decayClass).toBe("normal");
+  expect(db.getById(stale.id)?.decayClass).toBe("short");
+  expect(db.getById(recalled.id)?.decayClass).toBe("durable");
 });
 
 describe("FactsDB.backfillDecayClasses", () => {
@@ -2535,6 +2893,17 @@ describe("FactsDB.statsReflection", () => {
       source: "conversation",
     });
 
+    db.store({
+      text: "Legacy implicit-feedback trajectory signal",
+      category: "pattern",
+      importance: 0.6,
+      entity: null,
+      key: null,
+      value: null,
+      source: "implicit-feedback",
+      tags: ["trajectory"],
+    });
+
     const stats = db.statsReflection();
     expect(stats.reflectionPatternsCount).toBe(2);
     expect(stats.reflectionRulesCount).toBe(1);
@@ -2733,7 +3102,7 @@ describe("FactsDB new decay classes (#237)", () => {
     expect(retrieved?.decayClass).toBe(dc);
   });
 
-  it("normal decay class has 2-week TTL", () => {
+  it("normal decay class has 90-day TTL (#1186/#1189)", () => {
     const entry = db.store({
       text: "Normal decay fact",
       category: "fact",
@@ -2744,12 +3113,12 @@ describe("FactsDB new decay classes (#237)", () => {
       source: "test",
       decayClass: "normal",
     });
-    const twoWeeksSec = 14 * 24 * 3600;
+    const ninetyDaysSec = 90 * 24 * 3600;
     const nowSec = Math.floor(Date.now() / 1000);
     expect(entry.expiresAt).toBeDefined();
     expect(entry.expiresAt).not.toBeNull();
-    // expires_at should be roughly now + 2 weeks (within 60s tolerance)
-    expect(Math.abs(entry.expiresAt! - (nowSec + twoWeeksSec))).toBeLessThan(60);
+    // expires_at should be roughly now + 90 days (within 60s tolerance)
+    expect(Math.abs(entry.expiresAt! - (nowSec + ninetyDaysSec))).toBeLessThan(60);
   });
 
   it("permanent decay class never expires", () => {
@@ -3003,5 +3372,271 @@ describe("FactsDB Episodes", () => {
       const after = db.episodesCount();
       expect(after).toBeGreaterThanOrEqual(before + 2);
     });
+  });
+});
+
+describe("Issue #1191 vectorless facts and procedure triage", () => {
+  it("counts active non-kv facts without canonical embeddings and breaks them down by source", () => {
+    const embedded = db.store({
+      text: "embedded fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.storeEmbedding(embedded.id, "test-model", "canonical", new Float32Array([1, 0, 0, 0]), 4);
+
+    const vectorlessA = db.store({
+      text: "needs vector A",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "distillation",
+    });
+    db.store({
+      text: "needs vector B",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "distillation",
+    });
+    db.store({
+      text: "kv pointer intentionally excluded",
+      category: "technical",
+      importance: 0.5,
+      entity: "credential",
+      key: "service",
+      value: "ref",
+      source: "credential-migration",
+    });
+    const superseded = db.store({
+      text: "superseded vectorless excluded",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const replacement = db.store({
+      text: "replacement",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      supersedesId: superseded.id,
+    });
+    db.storeEmbedding(replacement.id, "test-model", "canonical", new Float32Array([0, 1, 0, 0]), 4);
+
+    expect(db.countVectorlessActiveFacts()).toBe(3);
+    expect(db.countVectorlessActiveFacts("distillation")).toBe(2);
+    expect(db.vectorlessActiveFactsBySource(5)).toEqual([
+      { source: "distillation", count: 2 },
+      { source: "conversation", count: 1 },
+    ]);
+    expect(db.listVectorlessActiveFacts({ limit: 1, source: "distillation" })[0]?.id).toBe(vectorlessA.id);
+  });
+
+  it("triages validated-not-promoted procedures with deterministic block reasons", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const recipe = JSON.stringify([{ tool: "exec", args: { command: "true" } }]);
+    db.upsertProcedure({
+      taskPattern: "duplicate existing skill",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    const promoted = db.upsertProcedure({
+      taskPattern: "duplicate existing skill",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    expect(db.markProcedurePromoted(promoted.id, "skills/auto/duplicate-existing-skill")).not.toBeNull();
+
+    db.upsertProcedure({
+      taskPattern: "missing recipe anchor",
+      recipeJson: JSON.stringify([]),
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    db.upsertProcedure({
+      taskPattern: "low recall procedure",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 1,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    db.upsertProcedure({
+      taskPattern: "awaiting approval procedure",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+
+    const report = db.triageProcedures({ status: "validated", notPromoted: true, validationThreshold: 3, limit: 20 });
+    const byTitle = new Map(report.rows.map((row) => [row.title, row.promotionBlockReason]));
+    expect(byTitle.get("duplicate existing skill")).toBe("duplicate_skill");
+    expect(byTitle.get("missing recipe anchor")).toBe("missing_anchor");
+    expect(byTitle.get("low recall procedure")).toBe("low_recall");
+    expect(byTitle.get("awaiting approval procedure")).toBe("awaiting_approval");
+    expect(report.summary.total).toBe(4);
+    expect(report.summary.byReason.awaiting_approval).toBe(1);
+  });
+
+  it("markProcedurePromoted is idempotent and preserves existing skill path", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "idempotent promotion",
+      recipeJson: JSON.stringify([{ tool: "exec" }]),
+      procedureType: "positive",
+      successCount: 3,
+      lastValidated: Math.floor(Date.now() / 1000),
+      confidence: 0.8,
+    });
+    const first = db.markProcedurePromoted(proc.id, "skills/auto/original");
+    const second = db.markProcedurePromoted(proc.id, "skills/auto/replacement");
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    const promoted = db.getProcedureById(proc.id);
+    expect(promoted?.skillPath).toBe("skills/auto/original");
+    expect(promoted?.promotedToSkill).toBe(1);
+  });
+});
+
+describe("FactsDB lifecycle-aware entity decay helpers", () => {
+  it("does not emit null lifecycle pattern buckets for broad SQL matches", () => {
+    db.store({
+      text: "Malformed PR entity",
+      category: "fact",
+      importance: 0.5,
+      entity: "PR #abc",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const report = db.lifecycleEntityReport(20);
+    expect(report.rows.some((row) => row.entity === "PR #abc")).toBe(false);
+    expect(Object.keys(report.totals)).not.toContain("null");
+  });
+
+  it("reports PR/Issue/Sprint entities with decay coverage", () => {
+    db.store({
+      text: "PR work",
+      category: "fact",
+      importance: 0.5,
+      entity: "PR #1142",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Issue work",
+      category: "fact",
+      importance: 0.5,
+      entity: "Issue #845",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Sprint work",
+      category: "fact",
+      importance: 0.5,
+      entity: "Sprint 2026-04",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Regular entity",
+      category: "fact",
+      importance: 0.5,
+      entity: "Villa Polly",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const report = db.lifecycleEntityReport(20);
+    expect(report.rows.map((r) => r.entity)).toEqual(
+      expect.arrayContaining(["PR #1142", "Issue #845", "Sprint 2026-04"]),
+    );
+    expect(report.rows.some((r) => r.entity === "Villa Polly")).toBe(false);
+    expect(report.rows.every((r) => r.decayClass !== "stable")).toBe(true);
+  });
+
+  it("bulk-updates expires_at and decay_class for glob-matched entities", () => {
+    const pr = db.store({
+      text: "review feedback",
+      category: "fact",
+      importance: 0.9,
+      entity: "PR #1137",
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable",
+    });
+    const issue = db.store({
+      text: "issue tracking",
+      category: "fact",
+      importance: 0.9,
+      entity: "Issue #845",
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable",
+    });
+    const other = db.store({
+      text: "other entity",
+      category: "fact",
+      importance: 0.9,
+      entity: "Villa Polly",
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable",
+    });
+    const now = Math.floor(Date.now() / 1000);
+
+    const dry = db.expireBySourcePattern({
+      pattern: "PR #*",
+      ttlDays: 60,
+      decayClass: "short",
+      apply: false,
+      nowSec: now,
+    });
+    expect(dry.matched).toBe(1);
+    expect(dry.changed).toBe(1);
+    expect(db.getById(pr.id)?.decayClass).toBe("stable");
+
+    const applied = db.expireBySourcePattern({
+      pattern: "PR #*",
+      ttlDays: 60,
+      decayClass: "short",
+      apply: true,
+      nowSec: now,
+    });
+    expect(applied.changed).toBe(1);
+    expect(db.getById(pr.id)?.decayClass).toBe("short");
+    expect(db.getById(pr.id)?.expiresAt).toBe(now + 60 * 24 * 3600);
+    expect(db.getById(issue.id)?.decayClass).toBe("stable");
+    expect(db.getById(other.id)?.decayClass).toBe("stable");
   });
 });

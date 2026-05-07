@@ -103,6 +103,43 @@ describe("runFactsMigrations", () => {
     runFactsMigrations(db);
     expect(tableExists("memory_links")).toBe(true);
   });
+  it("migrates DERIVED_FROM memory_links into facts.provenance_json and deletes graph rows", () => {
+    runFactsMigrations(db);
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.7, 'consolidation', ?, ?, 'stable')`,
+    ).run("derived", "Derived fact", now, now);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.5, 'conversation', ?, ?, 'stable')`,
+    ).run("source-a", "Source A", now, now);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.5, 'conversation', ?, ?, 'stable')`,
+    ).run("source-b", "Source B", now, now);
+    db.prepare(
+      `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
+       VALUES ('l1', 'derived', 'source-a', 'DERIVED_FROM', 1.0, ?),
+              ('l2', 'derived', 'source-b', 'DERIVED_FROM', 1.0, ?),
+              ('l3', 'derived', 'source-a', 'RELATED_TO', 0.7, ?)`,
+    ).run(now, now, now);
+
+    runFactsMigrations(db);
+
+    const row = db.prepare("SELECT provenance_json FROM facts WHERE id = 'derived'").get() as {
+      provenance_json: string;
+    };
+    const provenance = JSON.parse(row.provenance_json);
+    expect(provenance.sourceFactIds.sort()).toEqual(["source-a", "source-b"]);
+    expect(provenance.sourceFacts).toHaveLength(2);
+    expect(provenance.migratedFromMemoryLinksAt).toBeTypeOf("number");
+
+    const counts = db
+      .prepare("SELECT link_type, COUNT(*) AS count FROM memory_links GROUP BY link_type")
+      .all() as Array<{ link_type: string; count: number }>;
+    expect(counts).toEqual([{ link_type: "RELATED_TO", count: 1 }]);
+  });
 
   it("creates the contradictions table", () => {
     runFactsMigrations(db);
@@ -188,5 +225,55 @@ describe("runFactsMigrations", () => {
   it("creates the embedding_meta table", () => {
     runFactsMigrations(db);
     expect(tableExists("embedding_meta")).toBe(true);
+  });
+
+  it("memory_links shrinks by ≥3× after representative DERIVED_FROM migration (#1195)", () => {
+    runFactsMigrations(db);
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.5, 'consolidation', ?, ?, 'stable')`,
+    ).run("hub", "Consolidated hub", now, now);
+    const sourceIds: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const id = `src-${i}`;
+      sourceIds.push(id);
+      db.prepare(
+        `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+         VALUES (?, ?, 'fact', 0.4, 'conversation', ?, ?, 'stable')`,
+      ).run(id, `Source ${i}`, now, now);
+    }
+    // Mix DERIVED_FROM (the bulk that should be migrated into provenance_json) with a few
+    // RELATED_TO edges that must be preserved.
+    const insertLink = db.prepare(
+      `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    sourceIds.forEach((src, i) => {
+      insertLink.run(`derived-${i}`, "hub", src, "DERIVED_FROM", 1.0, now);
+    });
+    insertLink.run("rel-1", "hub", "src-0", "RELATED_TO", 0.5, now);
+    insertLink.run("rel-2", "hub", "src-1", "RELATED_TO", 0.6, now);
+
+    const before = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
+    expect(before.cnt).toBe(32);
+
+    runFactsMigrations(db);
+
+    const after = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
+    expect(after.cnt).toBe(2);
+    expect(before.cnt / Math.max(1, after.cnt)).toBeGreaterThanOrEqual(3);
+
+    const remaining = db
+      .prepare("SELECT link_type, COUNT(*) AS count FROM memory_links GROUP BY link_type")
+      .all() as Array<{ link_type: string; count: number }>;
+    expect(remaining).toEqual([{ link_type: "RELATED_TO", count: 2 }]);
+
+    const provenance = JSON.parse(
+      (db.prepare("SELECT provenance_json FROM facts WHERE id = 'hub'").get() as { provenance_json: string })
+        .provenance_json,
+    );
+    expect(Array.isArray(provenance.sourceFactIds)).toBe(true);
+    expect(provenance.sourceFactIds.length).toBe(sourceIds.length);
   });
 });

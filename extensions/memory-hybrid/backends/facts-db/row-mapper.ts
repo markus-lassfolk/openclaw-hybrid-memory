@@ -49,6 +49,7 @@ export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
     extractionConfidence: (row.extraction_confidence as number) ?? null,
     reinforcedCount: (row.reinforced_count as number) ?? 0,
     lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
+    provenanceJson: (row.provenance_json as string) ?? null,
     reinforcedQuotes: (() => {
       const raw = row.reinforced_quotes as string | null;
       if (!raw) return null;

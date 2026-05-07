@@ -203,20 +203,27 @@ export function getByIds(
 export function getRecentFacts(
   db: DatabaseSync,
   days: number,
-  options?: { excludeCategories?: string[] },
+  options?: { excludeCategories?: string[]; excludeTags?: string[] },
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const windowStartSec = nowSec - Math.max(1, Math.min(90, days)) * 86400;
   const exclude = options?.excludeCategories ?? ["pattern", "rule"];
+  // Implicit-feedback trajectory lessons are stored as `category=technical` with
+  // `tags=[implicit-feedback,...]` (issue #1186) — exclude them from reflection
+  // input so they don't dominate the LLM context with paraphrase noise.
+  const excludeTags = options?.excludeTags ?? ["implicit-feedback"];
   const placeholders = exclude.map(() => "?").join(",");
+  const tagPredicates = excludeTags.map(() => "(',' || COALESCE(tags,'') || ',') NOT LIKE ?").join(" AND ");
+  const tagClause = excludeTags.length > 0 ? ` AND ${tagPredicates}` : "";
+  const tagParams = excludeTags.map((t) => `%,${t},%`);
   const rows = db
     .prepare(
       `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL
          AND (COALESCE(source_date, created_at) >= ?)
-         AND category NOT IN (${placeholders})
+         AND category NOT IN (${placeholders})${tagClause}
          ORDER BY COALESCE(source_date, created_at) DESC`,
     )
-    .all(nowSec, windowStartSec, ...exclude) as Array<Record<string, unknown>>;
+    .all(nowSec, windowStartSec, ...exclude, ...tagParams) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));
 }
 

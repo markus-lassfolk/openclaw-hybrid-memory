@@ -63,6 +63,10 @@ interface DashboardContext {
   narrativesDb?: NarrativesDB | null;
   /** Provenance service for fact-to-source tracing. */
   provenanceService?: ProvenanceService | null;
+  /** Mirrors `graph.hubDegreeCap` for dashboard graph recall (Issue #1192). */
+  graphHubDegreeCap?: number | null;
+  /** Mirrors `graph.hubScorePenalty` for dashboard graph recall (#1192). */
+  graphHubScorePenalty?: number | null;
 }
 
 interface MemoryStats {
@@ -1444,7 +1448,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/graph/recall") {
       try {
         const q = searchParams.get("query") ?? searchParams.get("q") ?? "";
-        const body = JSON.stringify(collectGraphRecallPayload(ctx.factsDb, q));
+        const body = JSON.stringify(collectGraphRecallPayload(ctx.factsDb, q, ctx.graphHubDegreeCap));
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {
@@ -1534,7 +1538,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         // Use the public FactsDB.list() API with filters for the dashboard facts endpoint
         const categoryFilter = searchParams.get("category") || undefined;
         const entityFilter = searchParams.get("entity") || undefined;
-        const allFacts = ctx.factsDb.list(limit, { category: categoryFilter, entity: entityFilter });
+        // #1187: honor `?tier=hot|warm|cold|structural` so operators can drill into a single tier
+        // from the dashboard. Invalid tiers are dropped server-side by `listFacts`.
+        const tierFilter = searchParams.get("tier") || undefined;
+        const allFacts = ctx.factsDb.list(limit, { category: categoryFilter, entity: entityFilter, tier: tierFilter });
         const verifiedFactIds = new Set<string>();
         try {
           if (ctx.verificationStore) {
@@ -1634,6 +1641,75 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         };
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(f));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/facts/:id/provenance — #1195: resolve `provenance_json.sourceEventIds`
+    // into a structured panel payload (id, eventType, occurredAt, text snippet) instead of
+    // dumping the JSON blob into the dashboard. Falls back to raw JSON when the event log is
+    // unavailable so the UI can still render *something*.
+    if (req.method === "GET" && /^\/api\/viewer\/facts\/[^/]+\/provenance$/.test(pathname)) {
+      const factId = pathname.replace(/^\/api\/viewer\/facts\/([^/]+)\/provenance$/, "$1");
+      try {
+        const fact = ctx.factsDb.getById(factId);
+        if (!fact) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Fact not found" }));
+          return;
+        }
+        const raw = fact.provenanceJson ?? null;
+        let parsed: {
+          method?: string;
+          consolidatedAt?: number;
+          sourceEventIds?: string[];
+          sourceEvents?: unknown[];
+        } | null = null;
+        if (raw) {
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            parsed = null;
+          }
+        }
+        const events: Array<{
+          id: string;
+          eventType?: string | null;
+          occurredAt?: number | null;
+          textPreview?: string | null;
+        }> = [];
+        if (parsed && Array.isArray(parsed.sourceEvents)) {
+          for (const ev of parsed.sourceEvents) {
+            if (!ev || typeof ev !== "object") continue;
+            const e = ev as Record<string, unknown>;
+            const id = typeof e.id === "string" ? e.id : null;
+            if (!id) continue;
+            events.push({
+              id,
+              eventType: typeof e.eventType === "string" ? e.eventType : null,
+              occurredAt: typeof e.timestamp === "number" ? e.timestamp : null,
+              textPreview: typeof e.text === "string" ? e.text.slice(0, 200) : null,
+            });
+          }
+        } else if (parsed && Array.isArray(parsed.sourceEventIds)) {
+          for (const id of parsed.sourceEventIds) {
+            if (typeof id !== "string") continue;
+            events.push({ id, eventType: null, occurredAt: null, textPreview: null });
+          }
+        }
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(
+          JSON.stringify({
+            factId: fact.id,
+            method: parsed?.method ?? null,
+            consolidatedAt: parsed?.consolidatedAt ?? null,
+            events,
+            raw: parsed ?? null,
+          }),
+        );
       } catch (err: unknown) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));

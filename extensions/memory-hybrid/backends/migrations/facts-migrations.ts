@@ -1022,6 +1022,134 @@ function migrateEpisodesTable(db: DatabaseSync): void {
  * Call this once after opening the database and creating the base schema
  * (facts table, FTS5 table, triggers, and basic indexes).
  */
+/** Per-source daily write counters for source profile quotas (Issue #1194). */
+function migrateDailyWritesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_writes (
+      source TEXT NOT NULL,
+      day TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      dropped INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (source, day)
+    )
+  `);
+  // #1194: distinguish quota-rejected writes (`dropped`) from quota-evicted writes
+  // (`evicted`) so dashboards / audit-health can show the difference between "we
+  // refused to write because of overflow" and "we wrote, but evicted a stale fact".
+  const cols = db.prepare("PRAGMA table_info(daily_writes)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "evicted")) {
+    db.exec("ALTER TABLE daily_writes ADD COLUMN evicted INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+/** Add provenance_json column (Issue #1195). */
+function migrateProvenanceJsonColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "provenance_json")) {
+    db.exec("ALTER TABLE facts ADD COLUMN provenance_json TEXT");
+  }
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_facts_provenance_json ON facts(provenance_json) WHERE provenance_json IS NOT NULL",
+  );
+}
+
+function parseMigrationProvenance(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeStringList(existing: unknown, additions: string[]): string[] {
+  const current = Array.isArray(existing) ? existing.filter((v): v is string => typeof v === "string") : [];
+  return [...new Set([...current, ...additions])];
+}
+
+/**
+ * Move legacy DERIVED_FROM provenance out of graph links into facts.provenance_json.
+ * memory_links is now reserved for semantic graph edges only (#1195).
+ */
+function migrateDerivedFromLinksToProvenanceJson(db: DatabaseSync): void {
+  const linkTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_links'").get();
+  if (!linkTable) return;
+
+  const rows = db
+    .prepare(
+      `SELECT
+         ml.source_fact_id AS fact_id,
+         ml.target_fact_id AS source_fact_id,
+         sf.text AS source_text,
+         sf.source AS source_source,
+         sf.category AS source_category
+       FROM memory_links ml
+       LEFT JOIN facts sf ON sf.id = ml.target_fact_id
+       WHERE ml.link_type = 'DERIVED_FROM'
+       ORDER BY ml.created_at ASC, ml.id ASC`,
+    )
+    .all() as Array<{
+    fact_id: string;
+    source_fact_id: string;
+    source_text: string | null;
+    source_source: string | null;
+    source_category: string | null;
+  }>;
+
+  if (rows.length === 0) return;
+
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const arr = grouped.get(row.fact_id) ?? [];
+    arr.push(row);
+    grouped.set(row.fact_id, arr);
+  }
+
+  const selectFact = db.prepare("SELECT provenance_json FROM facts WHERE id = ?");
+  const updateFact = db.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?");
+  const now = Math.floor(Date.now() / 1000);
+
+  const tx = createTransaction(db, () => {
+    for (const [factId, group] of grouped) {
+      const fact = selectFact.get(factId) as { provenance_json: string | null } | undefined;
+      if (!fact) continue;
+      const provenance = parseMigrationProvenance(fact.provenance_json);
+      const sourceFactIds = mergeStringList(
+        provenance.sourceFactIds,
+        group.map((r) => r.source_fact_id).filter((id) => typeof id === "string" && id.length > 0),
+      );
+      const existingSourceFacts = Array.isArray(provenance.sourceFacts)
+        ? provenance.sourceFacts.filter((v): v is Record<string, unknown> => v !== null && typeof v === "object")
+        : [];
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const source of existingSourceFacts) {
+        if (typeof source.id === "string") byId.set(source.id, source);
+      }
+      for (const source of group) {
+        byId.set(source.source_fact_id, {
+          ...byId.get(source.source_fact_id),
+          id: source.source_fact_id,
+          text: source.source_text ?? undefined,
+          source: source.source_source ?? undefined,
+          category: source.source_category ?? undefined,
+        });
+      }
+      const next = {
+        ...provenance,
+        method: typeof provenance.method === "string" ? provenance.method : "derived-from-migration",
+        migratedFromMemoryLinksAt:
+          typeof provenance.migratedFromMemoryLinksAt === "number" ? provenance.migratedFromMemoryLinksAt : now,
+        sourceFactIds,
+        sourceFacts: [...byId.values()],
+      };
+      updateFact.run(JSON.stringify(next), factId);
+    }
+    db.prepare("DELETE FROM memory_links WHERE link_type = 'DERIVED_FROM'").run();
+  });
+  tx();
+}
+
 export function runFactsMigrations(db: DatabaseSync): void {
   // Column migrations (depend on base facts table existing)
   migrateDecayColumns(db);
@@ -1072,6 +1200,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Provenance and verification
   migrateProvenanceColumns(db);
+  migrateProvenanceJsonColumn(db);
+  migrateDerivedFromLinksToProvenanceJson(db);
+  migrateDailyWritesTable(db);
   migrateVerifiedFactsTable(db);
 
   // Reinforcement log and count type migration
@@ -1115,6 +1246,46 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Maintenance state KV for input-hash gating
   migrateMaintenanceStateTable(db);
+
+  // Audit-health storage growth samples (Issue #1193)
+  migrateStorageGrowthHistoryTable(db);
+
+  // Denormalized degree columns for hub guard (#1192)
+  migrateFactDegreeColumns(db);
+}
+
+/**
+ * #1192: denormalized `out_degree` / `in_degree` columns on `facts` so the hub guard does
+ * not run a per-traversal `COUNT(*) FROM memory_links` (which is O(n) per BFS step on stores
+ * with millions of edges). The columns are refreshed by the dream-cycle's existing pass —
+ * see `services/dream-cycle.ts`.
+ */
+function migrateFactDegreeColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const have = new Set(cols.map((c) => c.name));
+  if (!have.has("out_degree")) {
+    db.exec("ALTER TABLE facts ADD COLUMN out_degree INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!have.has("in_degree")) {
+    db.exec("ALTER TABLE facts ADD COLUMN in_degree INTEGER NOT NULL DEFAULT 0");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_out_degree ON facts(out_degree)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_in_degree ON facts(in_degree)");
+}
+
+/** Weekly audit-health: snapshot SQLite/Lance sizes and link/fact counts for growth trends. */
+function migrateStorageGrowthHistoryTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS storage_growth_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recorded_at INTEGER NOT NULL,
+      sqlite_bytes INTEGER,
+      lance_bytes INTEGER,
+      link_count INTEGER,
+      fact_count INTEGER NOT NULL
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_storage_growth_recorded ON storage_growth_history(recorded_at DESC)`);
 }
 
 /** Track completion of NER/contact-org enrichment per fact (avoids re-LLM when zero entities). */

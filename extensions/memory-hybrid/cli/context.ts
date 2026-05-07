@@ -98,7 +98,15 @@ export type ManageContext = {
     breakdown?: Record<string, number>;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
-  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  runCompaction: (opts?: { apply?: boolean }) => Promise<{
+    hot: number;
+    warm: number;
+    cold: number;
+    structural: number;
+    changed?: number;
+    examined?: number;
+    apply?: boolean;
+  }>;
   runDistill?: (
     opts: { dryRun: boolean; days?: number; verbose?: boolean },
     sink: { log: (s: string) => void; warn: (s: string) => void },

@@ -101,4 +101,30 @@ describe("facts-db links module", () => {
     const ids = getConnectedFactIds(db, ["a"], 3).sort();
     expect(ids).toEqual(["a", "b"]);
   });
+
+  it("hubDegreeCap null disables high-degree hub skipping (explicit null is not coerced to 500)", () => {
+    db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE memory_links (
+        id TEXT PRIMARY KEY,
+        source_fact_id TEXT NOT NULL,
+        target_fact_id TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        strength REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    createLink(db, "s", "hub", "RELATED_TO", 1);
+    for (let i = 0; i < 501; i++) {
+      createLink(db, "hub", `leaf${i}`, "RELATED_TO", 0.5);
+    }
+    createLink(db, "hub", "target", "RELATED_TO", 1);
+
+    const capped = getConnectedFactIds(db, ["s"], 4);
+    const uncapped = getConnectedFactIds(db, ["s"], 4, { hubDegreeCap: null });
+
+    expect(capped.includes("target")).toBe(false);
+    expect(uncapped.includes("target")).toBe(true);
+  });
 });

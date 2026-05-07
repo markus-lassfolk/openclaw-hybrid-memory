@@ -36,6 +36,15 @@ interface HealthReport {
   staleFacts: number;
   avgLinksPerFact: number;
   totalLinks: number;
+  /**
+   * #1195: link-type histogram split between graph edges (`memory_links`) and JSON-backed
+   * provenance (`facts.provenance_json`). The legacy histogram only counted `memory_links`,
+   * which under-reported the real edge count after DERIVED_FROM was migrated into JSON.
+   */
+  linkTypeHistogram: {
+    graph: Record<string, number>;
+    provenance: { sourceEvents: number; factsWithProvenance: number };
+  };
   retrievalHitRate7d: number;
   topClusters: Array<{ id: string; label: string; factCount: number }>;
   unresolvedContradictions: number;
@@ -170,6 +179,41 @@ export async function buildHealthReport(
     .get(nowSec, nowSec, nowSec, nowSec) as { cnt: number };
   const totalLinks = linksRow.cnt;
 
+  // #1195: per-link-type breakdown (graph table) + provenance count (JSON column).
+  const linkTypeRows = db
+    .prepare("SELECT link_type AS linkType, COUNT(*) AS cnt FROM memory_links GROUP BY link_type")
+    .all() as Array<{ linkType: string; cnt: number }>;
+  const graphLinkHistogram: Record<string, number> = {};
+  for (const row of linkTypeRows) {
+    graphLinkHistogram[row.linkType] = Number(row.cnt ?? 0);
+  }
+  const provenanceFactsRow = db.prepare("SELECT COUNT(*) AS cnt FROM facts WHERE provenance_json IS NOT NULL").get() as
+    | { cnt: number }
+    | undefined;
+  // Best-effort: count `sourceEventIds` lengths via JSON helpers; falls back to fact count when
+  // json_each is unavailable (older sqlite builds).
+  let provenanceSourceEvents = 0;
+  try {
+    const jsonRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(json_array_length(json_extract(provenance_json, '$.sourceEventIds'))), 0) AS cnt
+         FROM facts
+         WHERE provenance_json IS NOT NULL
+           AND json_extract(provenance_json, '$.sourceEventIds') IS NOT NULL`,
+      )
+      .get() as { cnt: number } | undefined;
+    provenanceSourceEvents = Number(jsonRow?.cnt ?? 0);
+  } catch {
+    provenanceSourceEvents = Number(provenanceFactsRow?.cnt ?? 0);
+  }
+  const linkTypeHistogram = {
+    graph: graphLinkHistogram,
+    provenance: {
+      sourceEvents: provenanceSourceEvents,
+      factsWithProvenance: Number(provenanceFactsRow?.cnt ?? 0),
+    },
+  };
+
   // Avg links per active fact
   const avgLinksPerFact = activeFacts > 0 ? Math.round((totalLinks * 2 * 1000) / activeFacts) / 1000 : 0;
 
@@ -238,6 +282,7 @@ export async function buildHealthReport(
     staleFacts,
     avgLinksPerFact,
     totalLinks,
+    linkTypeHistogram,
     retrievalHitRate7d,
     topClusters,
     unresolvedContradictions,
@@ -286,6 +331,14 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
             `Unresolved contradictions: ${report.unresolvedContradictions}`,
             "",
             `Links: ${report.totalLinks} total, ${report.avgLinksPerFact.toFixed(2)} avg per active fact`,
+            `Link types (graph): ${
+              Object.keys(report.linkTypeHistogram.graph).length === 0
+                ? "none"
+                : Object.entries(report.linkTypeHistogram.graph)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(", ")
+            }`,
+            `Provenance (JSON): ${report.linkTypeHistogram.provenance.factsWithProvenance} facts cover ${report.linkTypeHistogram.provenance.sourceEvents} source events (#1195)`,
             "",
             `Categories: ${Object.entries(report.categoryDistribution)
               .map(([k, v]) => `${k}=${v}`)

@@ -115,34 +115,36 @@ describe("extractStructuredFields — preference-over patterns", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractStructuredFields — convention rules", () => {
-  it("matches 'always' rule", () => {
+  // #1190: "convention" is on the entity stopword list, so the heuristic extractor
+  // no longer surfaces it as an entity. The rule's key/value still flow through.
+  it("matches 'always' rule (entity nulled by stopword filter)", () => {
     const r = extractStructuredFields("always use semicolons in TypeScript", "decision");
-    expect(r.entity).toBe("convention");
+    expect(r.entity).toBeNull();
     expect(r.key).toContain("use semicolons");
     expect(r.value).toBe("always");
   });
 
   it("matches 'never' rule", () => {
     const r = extractStructuredFields("never commit directly to main branch", "decision");
-    expect(r.entity).toBe("convention");
+    expect(r.entity).toBeNull();
     expect(r.value).toBe("never");
   });
 
   it("matches 'must' rule", () => {
     const r = extractStructuredFields("must run tests before merging", "decision");
-    expect(r.entity).toBe("convention");
+    expect(r.entity).toBeNull();
     expect(r.value).toBe("always");
   });
 
   it("matches Swedish 'alltid' (always)", () => {
     const r = extractStructuredFields("alltid använda semicolons", "decision");
-    expect(r.entity).toBe("convention");
+    expect(r.entity).toBeNull();
     expect(r.value).toBe("always");
   });
 
   it("matches Swedish 'aldrig' (never)", () => {
     const r = extractStructuredFields("aldrig pusha till main", "decision");
-    expect(r.entity).toBe("convention");
+    expect(r.entity).toBeNull();
     expect(r.value).toBe("never");
   });
 });
@@ -152,30 +154,31 @@ describe("extractStructuredFields — convention rules", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractStructuredFields — possessive constructs", () => {
-  it('matches "User\'s ... is ..." pattern', () => {
+  // #1190: "User"/"user" is on the entity stopword list. Key/value still flow through.
+  it('matches "User\'s ... is ..." pattern (entity nulled)', () => {
     const r = extractStructuredFields("User's preferred editor is VS Code", "preference");
-    expect(r.entity).toBe("User");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("preferred editor");
     expect(r.value).toBe("VS Code");
   });
 
-  it("matches 'My ... is ...' pattern", () => {
+  it("matches 'My ... is ...' pattern (entity nulled)", () => {
     const r = extractStructuredFields("My favorite language is TypeScript", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("favorite language");
     expect(r.value).toBe("TypeScript");
   });
 
-  it("matches Swedish 'mitt ... är ...' pattern", () => {
+  it("matches Swedish 'mitt ... är ...' pattern (entity nulled)", () => {
     const r = extractStructuredFields("mitt favoritspråk är TypeScript", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("favoritspråk");
     expect(r.value).toBe("TypeScript");
   });
 
-  it("matches Swedish 'min ... är ...' pattern", () => {
+  it("matches Swedish 'min ... är ...' pattern (entity nulled)", () => {
     const r = extractStructuredFields("min editor är VS Code", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("editor");
     expect(r.value).toBe("VS Code");
   });
@@ -186,23 +189,24 @@ describe("extractStructuredFields — possessive constructs", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractStructuredFields — English preference verbs", () => {
-  it("matches 'I prefer' pattern", () => {
+  // #1190: "user" is on the entity stopword list — entity is nulled but key/value remain.
+  it("matches 'I prefer' pattern (entity nulled)", () => {
     const r = extractStructuredFields("I prefer dark mode when coding", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("prefer");
     expect(r.value).toBe("dark mode when coding");
   });
 
-  it("matches 'I like' pattern", () => {
+  it("matches 'I like' pattern (entity nulled)", () => {
     const r = extractStructuredFields("I like short commit messages", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("like");
   });
 
-  it("matches 'I use' pattern (without over/instead-of to avoid choiceMatch)", () => {
+  it("matches 'I use' pattern (without over/instead-of to avoid choiceMatch) (entity nulled)", () => {
     // "I use Bun" without "instead of/over" skips choiceMatch and hits preferMatch
     const r = extractStructuredFields("I use dark mode", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("use");
     expect(r.value).toBe("dark mode");
   });
@@ -213,16 +217,16 @@ describe("extractStructuredFields — English preference verbs", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractStructuredFields — Swedish preference verbs", () => {
-  it("matches 'jag föredrar' pattern", () => {
+  it("matches 'jag föredrar' pattern (entity nulled)", () => {
     const r = extractStructuredFields("jag föredrar mörkt läge", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("föredrar");
     expect(r.value).toBe("mörkt läge");
   });
 
-  it("matches 'jag gillar' pattern", () => {
+  it("matches 'jag gillar' pattern (entity nulled)", () => {
     const r = extractStructuredFields("jag gillar TypeScript", "preference");
-    expect(r.entity).toBe("user");
+    expect(r.entity).toBeNull();
     expect(r.key).toBe("gillar");
   });
 });
@@ -292,5 +296,37 @@ describe("extractStructuredFields — no-match fallback", () => {
   it("handles empty string", () => {
     const r = extractStructuredFields("", "fact");
     expect(r).toEqual({ entity: null, key: null, value: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1190: Entity stop-word integration — extractStructuredFields should never emit
+// "User"/"user"/"convention"/"credentials" as an entity value.
+// ---------------------------------------------------------------------------
+
+describe("extractStructuredFields — entity stop-word filter (#1190)", () => {
+  it("never returns 'User' as an entity for 'User's X is Y' constructs", () => {
+    const r = extractStructuredFields("User's preferred editor is VS Code", "preference");
+    expect(r.entity).toBeNull();
+  });
+
+  it("never returns 'user' as an entity for 'My X is Y' constructs", () => {
+    const r = extractStructuredFields("My favorite editor is VS Code", "preference");
+    expect(r.entity).toBeNull();
+  });
+
+  it("never returns 'convention' as an entity for 'always X' rules", () => {
+    const r = extractStructuredFields("always use semicolons", "decision");
+    expect(r.entity).toBeNull();
+  });
+
+  it("respects extra stopwords passed by caller", () => {
+    const r = extractStructuredFields("Acme works on the project", "entity", { extraEntityStopWords: ["acme"] });
+    expect(r.entity).toBeNull();
+  });
+
+  it("does not strip legitimate entities like 'decision' (not on stopword list)", () => {
+    const r = extractStructuredFields("decided to use Vitest", "decision");
+    expect(r.entity).toBe("decision");
   });
 });

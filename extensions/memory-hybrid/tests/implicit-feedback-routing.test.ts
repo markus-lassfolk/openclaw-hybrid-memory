@@ -3,7 +3,7 @@
  *
  * Covers:
  *   - Positive signals route to reinforcement pipeline (reinforceFact)
- *   - Negative signals route to self-correction pipeline (pattern facts)
+ *   - Negative signals route to self-correction pipeline (technical implicit_feedback_signal facts)
  *   - Routing is suppressed when feedToReinforcement / feedToSelfCorrection are false
  *   - CLI command 'extract-implicit' is registered in ManageContext
  */
@@ -12,7 +12,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type HandlerContext, runExtractImplicitFeedbackForCli } from "../cli/handlers.js";
+import {
+  cleanupImplicitFeedbackDuplicates,
+  type HandlerContext,
+  runExtractImplicitFeedbackForCli,
+} from "../cli/handlers.js";
 import type { ManageContext } from "../cli/manage.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { _testing } from "../index.js";
@@ -230,10 +234,10 @@ describe("implicit feedback routing — positive → reinforcement", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — negative signals → self-correction pattern facts
+// Tests — negative signals → self-correction signal facts
 // ---------------------------------------------------------------------------
 
-describe("implicit feedback routing — negative → pattern facts", () => {
+describe("implicit feedback routing — negative → implicit_feedback_signal", () => {
   let tmpDir: string;
   let sessionsDir: string;
 
@@ -247,7 +251,7 @@ describe("implicit feedback routing — negative → pattern facts", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("stores pattern facts tagged [implicit-feedback, negative] when feedToSelfCorrection=true", async () => {
+  it("stores technical implicit_feedback_signal facts tagged [implicit-feedback, negative] when feedToSelfCorrection=true", async () => {
     const db = makeDb(tmpDir);
     writeNegativeSession(sessionsDir, "2026-01-01-session.jsonl");
 
@@ -265,15 +269,17 @@ describe("implicit feedback routing — negative → pattern facts", () => {
 
     expect(result.negativeCount).toBeGreaterThan(0);
 
-    // Verify pattern facts with implicit-feedback + negative tags were stored.
+    // Verify technical signal facts with implicit-feedback + negative tags were stored.
     const negFacts = rawDb(db).prepare(`SELECT * FROM facts WHERE source = 'implicit-feedback'`).all() as Array<{
       category: string;
+      key: string | null;
       tags: string;
     }>;
 
     expect(negFacts.length).toBeGreaterThan(0);
     for (const fact of negFacts) {
-      expect(fact.category).toBe("pattern");
+      expect(fact.category).toBe("technical");
+      expect(fact.key).toBe("implicit_feedback_signal");
       // Tags are stored as comma-separated strings (not JSON).
       const tags = (fact.tags ?? "").split(",").map((t: string) => t.trim());
       expect(tags).toContain("implicit-feedback");
@@ -281,7 +287,152 @@ describe("implicit feedback routing — negative → pattern facts", () => {
     }
   });
 
-  it("does NOT store implicit-feedback pattern facts when feedToSelfCorrection=false", async () => {
+  it("collapses historical near-duplicate implicit-feedback facts", () => {
+    const db = makeDb(tmpDir);
+    const first = db.store({
+      text: "User satisfaction increases when the agent provides concrete next steps",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    const duplicate = db.store({
+      text: "User satisfaction improves when the agent provides concrete next steps",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+
+    const result = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.7, limit: 100 });
+
+    expect(result.collapsed).toBe(1);
+    const rows = rawDb(db)
+      .prepare("SELECT id, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id IN (?, ?)")
+      .all(first.id, duplicate.id) as Array<{ id: string; supersededBy: string | null; supersededAt: number | null }>;
+    const canonical = rows.find((row) => row.supersededAt == null);
+    const superseded = rows.find((row) => row.supersededAt != null);
+    expect(canonical).toBeDefined();
+    expect(superseded?.supersededBy).toBe(canonical?.id);
+    expect(superseded?.supersededAt).toBeTypeOf("number");
+  });
+
+  it("supports dry-run collapse without superseding historical duplicates", () => {
+    const db = makeDb(tmpDir);
+    const first = db.store({
+      text: "User satisfaction increases when the agent provides concrete next steps",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    const duplicate = db.store({
+      text: "User satisfaction improves when the agent provides concrete next steps",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "implicit-feedback",
+      tags: ["trajectory"],
+    });
+
+    const result = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.7, limit: 100, dryRun: true });
+
+    expect(result.collapsed).toBe(1);
+    const rows = rawDb(db)
+      .prepare("SELECT id, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id IN (?, ?)")
+      .all(first.id, duplicate.id) as Array<{ id: string; supersededBy: string | null; supersededAt: number | null }>;
+    expect(rows.every((row) => row.supersededAt == null)).toBe(true);
+    expect(rows.every((row) => row.supersededBy == null)).toBe(true);
+  });
+
+  it("collapses legacy pattern-shaped trajectory rows into canonical implicit-feedback signals", () => {
+    const db = makeDb(tmpDir);
+    const canonical = db.store({
+      text: "Validate dispatched tasks return complete structured evidence",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    const legacyPattern = db.store({
+      text: "Validate that each dispatched task returns complete structured evidence",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "implicit-feedback",
+      tags: ["trajectory"],
+    });
+
+    const result = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.7, limit: 100 });
+
+    expect(result.collapsed).toBe(1);
+    const row = rawDb(db)
+      .prepare("SELECT category, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id = ?")
+      .get(legacyPattern.id) as { category: string; supersededBy: string | null; supersededAt: number | null };
+    expect(row.category).toBe("pattern");
+    expect(row.supersededBy).toBe(canonical.id);
+    expect(row.supersededAt).toBeTypeOf("number");
+  });
+
+  it("collapses legacy category=pattern implicit-feedback rows when includeLegacy=true", () => {
+    const db = makeDb(tmpDir);
+    const sharedText = '[Implicit correction] "legacy pattern row exact match"';
+    const canonical = db.store({
+      text: sharedText,
+      category: "technical",
+      importance: 0.5,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: sharedText.slice(0, 200),
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "negative", "correction"],
+      decayClass: "normal",
+    });
+    // Raw text must differ from canonical or store() dedupes to a single row (exact text / hash path).
+    const legacyText = `${sharedText}\u2003`;
+    const legacyPattern = db.store({
+      text: legacyText,
+      category: "pattern",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: legacyText.slice(0, 200),
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "negative", "correction"],
+    });
+
+    const withoutLegacy = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.8, limit: 100 });
+    expect(withoutLegacy.collapsed).toBe(0);
+
+    const withLegacy = cleanupImplicitFeedbackDuplicates(db, {
+      threshold: 0.8,
+      limit: 100,
+      includeLegacy: true,
+    });
+    expect(withLegacy.collapsed).toBe(1);
+    const row = rawDb(db)
+      .prepare("SELECT superseded_by as supersededBy FROM facts WHERE id = ?")
+      .get(legacyPattern.id) as { supersededBy: string | null };
+    expect(row.supersededBy).toBe(canonical.id);
+  });
+
+  it("does NOT store implicit-feedback signal facts when feedToSelfCorrection=false", async () => {
     const db = makeDb(tmpDir);
     writeNegativeSession(sessionsDir, "2026-01-01-session.jsonl");
 

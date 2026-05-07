@@ -5,6 +5,7 @@
 
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -545,25 +546,75 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
     .option("--verbose", "Log each meta-pattern as it is extracted")
+    .option("--collapse-implicit-feedback", "Collapse near-duplicate implicit-feedback trajectory signals")
+    .option(
+      "--include-legacy",
+      "With --collapse-implicit-feedback, also collapse legacy category=pattern implicit-feedback rows",
+    )
+    .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.8")
+    .option("--limit <n>", "Maximum implicit-feedback rows to scan per page", "1000")
     .action(
-      withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
-        const dryRun = !!opts?.dryRun;
-        const model = opts?.model ?? reflectionConfig.model;
-        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-        let res;
-        try {
-          res = await runReflectionMeta({ dryRun, model, verbose });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "reflect-meta",
-          });
-          throw err;
-        }
-        console.log(
-          `Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`,
-        );
-      }),
+      withExit(
+        async (
+          opts?: {
+            dryRun?: boolean;
+            model?: string;
+            verbose?: boolean;
+            collapseImplicitFeedback?: boolean;
+            includeLegacy?: boolean;
+            threshold?: string;
+            limit?: string;
+          },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const dryRun = !!opts?.dryRun;
+          const model = opts?.model ?? reflectionConfig.model;
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          if (opts?.collapseImplicitFeedback) {
+            const thresholdRaw = opts?.threshold ? Number.parseFloat(opts.threshold) : 0.8;
+            const threshold =
+              Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 1 ? thresholdRaw : 0.8;
+            const limitRaw = opts?.limit ? Number.parseInt(opts.limit, 10) : 1000;
+            const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(10000, Math.floor(limitRaw)) : 1000;
+            let afterRowid = 0;
+            let scanned = 0;
+            let collapsed = 0;
+            let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
+            for (;;) {
+              const res = cleanupImplicitFeedbackDuplicates(factsDb, {
+                threshold,
+                limit,
+                afterRowid,
+                dryRun,
+                seedCanonical: carryCanonical,
+                includeLegacy: opts?.includeLegacy === true,
+              });
+              scanned += res.scanned;
+              collapsed += res.collapsed;
+              carryCanonical = res.carryCanonical;
+              if (res.scanned < limit || res.resumeAfterRowid == null) break;
+              afterRowid = res.resumeAfterRowid;
+            }
+            console.log(
+              `Implicit-feedback collapse complete: scanned ${scanned}, collapsed ${collapsed} ${dryRun ? "(dry-run)" : ""}`,
+            );
+            return;
+          }
+          let res;
+          try {
+            res = await runReflectionMeta({ dryRun, model, verbose });
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "reflect-meta",
+            });
+            throw err;
+          }
+          console.log(
+            `Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`,
+          );
+        },
+      ),
     );
 
   if (runReflectIdentity) {
@@ -1129,7 +1180,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         console.log(`  Agents scanned: ${res.agentsScanned}`);
         console.log(`  Lessons considered: ${res.lessonsConsidered}`);
         console.log(`  Generalised stored: ${res.generalisedStored}`);
-        console.log(`  Links created: ${res.linksCreated}`);
+        console.log(`  Provenance sources recorded: ${res.provenanceRecorded}`);
         console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
         if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
       }),

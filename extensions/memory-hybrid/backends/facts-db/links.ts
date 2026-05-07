@@ -12,6 +12,9 @@ export function createLink(
   linkType: MemoryLinkType,
   strength = 1.0,
 ): string {
+  if ((linkType as string) === "DERIVED_FROM") {
+    throw new Error("DERIVED_FROM provenance is stored on facts.provenance_json, not memory_links");
+  }
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
@@ -99,46 +102,123 @@ export function getLinksTo(
   }));
 }
 
-export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDepth: number): string[] {
+/** Optional out-params for hub-guard observability (Issue #1192). */
+export type GraphConnectedStats = {
+  nodesConsidered: number;
+  nodesSkipped: number;
+  hubsSkipped: number;
+};
+
+/**
+ * Refresh denormalized `out_degree` / `in_degree` columns on `facts` (#1192). Counts only
+ * traversable links — `CONTRADICTS` and `DERIVED_FROM` are excluded so the values match
+ * what the BFS hub guard uses. Called from the dream-cycle so the per-traversal `COUNT(*)`
+ * fallback path is rarely hit on warm stores.
+ *
+ * Returns the number of facts whose degree was updated (rows in `facts`).
+ */
+export function refreshFactDegrees(db: DatabaseSync): { updated: number } {
+  const tx = createTransaction(db, () => {
+    db.exec(`
+      UPDATE facts SET
+        out_degree = COALESCE(
+          (SELECT COUNT(*) FROM memory_links ml
+           WHERE ml.source_fact_id = facts.id
+             AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')),
+          0
+        ),
+        in_degree = COALESCE(
+          (SELECT COUNT(*) FROM memory_links ml
+           WHERE ml.target_fact_id = facts.id
+             AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')),
+          0
+        )
+    `);
+  });
+  tx();
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number } | undefined;
+  return { updated: Number(row?.cnt ?? 0) };
+}
+
+export function getConnectedFactIds(
+  db: DatabaseSync,
+  factIds: string[],
+  maxDepth: number,
+  options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats },
+): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
 
-  // Use SQLite's recursive CTE for efficient graph traversal
-  // This replaces the iterative N+1 query pattern with a single query
-  // UNION ALL is used to prevent tuple deduplication during traversal;
-  // final DISTINCT ensures each node appears once in the result
-  const query = `
-    WITH RECURSIVE graph_traversal(fact_id, depth) AS (
-      -- Base case: start with seed facts at depth 0
-      SELECT value AS fact_id, 0 AS depth
-      FROM json_each(?)
+  // `null` means no cap; only fall back to 500 when the option is omitted (`undefined`).
+  const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
+  const stats = options?.stats;
+  const seen = new Set(factIds);
+  let frontier = [...factIds];
 
-      UNION ALL
+  const outStmt = db.prepare(
+    `SELECT target_fact_id AS id FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
+  );
+  const inStmt = db.prepare(
+    `SELECT source_fact_id AS id FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
+  );
+  // #1192: prefer the denormalized columns when present (refreshed by the dream-cycle).
+  // Falls back to the legacy COUNT(*) path when columns are missing or zero (which can
+  // happen on a brand-new store before the first dream-cycle has run).
+  const denormDegreeStmt = db.prepare(
+    `SELECT COALESCE(out_degree, 0) + COALESCE(in_degree, 0) AS degree FROM facts WHERE id = ? LIMIT 1`,
+  );
+  const fallbackDegreeStmt = db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+       (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) AS degree`,
+  );
+  const degreeCache = new Map<string, number>();
+  const degreeOf = (id: string): number => {
+    const cached = degreeCache.get(id);
+    if (cached != null) return cached;
+    let degree = 0;
+    try {
+      const row = denormDegreeStmt.get(id) as { degree: number } | undefined;
+      degree = Number(row?.degree ?? 0);
+    } catch {
+      degree = 0;
+    }
+    if (degree === 0) {
+      const row = fallbackDegreeStmt.get(id, id) as { degree: number } | undefined;
+      degree = Number(row?.degree ?? 0);
+    }
+    degreeCache.set(id, degree);
+    return degree;
+  };
 
-      -- Recursive case (outgoing links)
-      SELECT
-        ml.target_fact_id AS fact_id,
-        gt.depth + 1 AS depth
-      FROM graph_traversal gt
-      JOIN memory_links ml ON ml.source_fact_id = gt.fact_id
-      WHERE gt.depth < ?
-        AND ml.link_type != 'CONTRADICTS'
+  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+    const nextFrontier: string[] = [];
+    for (const id of frontier) {
+      const degree = degreeOf(id);
+      if (hubDegreeCap != null && degree > hubDegreeCap) {
+        if (stats) {
+          stats.hubsSkipped += 1;
+          stats.nodesSkipped += degree;
+        }
+        continue;
+      }
+      // No hub cap: `degree` is in+out combined; each directional query uses that as LIMIT so every
+      // neighbour in that direction is eligible (never truncates). With hub cap, +1 avoids edge truncation.
+      const limit = hubDegreeCap == null ? Math.max(degree, 1) : Math.max(hubDegreeCap + 1, 1);
+      const neighbours = [
+        ...(outStmt.all(id, limit) as Array<{ id: string }>),
+        ...(inStmt.all(id, limit) as Array<{ id: string }>),
+      ];
+      if (stats) stats.nodesConsidered += neighbours.length;
+      for (const row of neighbours) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        nextFrontier.push(row.id);
+      }
+    }
+    frontier = nextFrontier;
+  }
 
-      UNION ALL
-
-      -- Recursive case (incoming links)
-      SELECT
-        ml.source_fact_id AS fact_id,
-        gt.depth + 1 AS depth
-      FROM graph_traversal gt
-      JOIN memory_links ml ON ml.target_fact_id = gt.fact_id
-      WHERE gt.depth < ?
-        AND ml.link_type != 'CONTRADICTS'
-    )
-    SELECT DISTINCT fact_id FROM graph_traversal
-  `;
-
-  const rows = db.prepare(query).all(JSON.stringify(factIds), maxDepth, maxDepth) as Array<{ fact_id: string }>;
-  return rows.map((r) => r.fact_id);
+  return [...seen];
 }
 
 /**
@@ -154,7 +234,11 @@ export function expandGraphWithCTE(
   db: DatabaseSync,
   seedFactIds: string[],
   maxDepth: number,
-  options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
+  options?: {
+    asOf?: number;
+    scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+    hubDegreeCap?: number | null;
+  },
 ): Array<{
   factId: string;
   seedId: string;
@@ -172,6 +256,7 @@ export function expandGraphWithCTE(
 
   const asOf = options?.asOf ?? null;
   const scopeFilter = options?.scopeFilter;
+  const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
   let factJoinOut = "";
   let factWhereOut = "";
   let factJoinIn = "";
@@ -198,8 +283,42 @@ export function expandGraphWithCTE(
     factWhereIn = baseWhere;
   }
 
-  // Use recursive CTE to traverse the graph in a single query
-  // We track: current node, seed that originated this path, hop count, and JSON path
+  // Use recursive CTE to traverse the graph in a single query.
+  // We track: current node, seed that originated this path, hop count, and JSON path.
+  // #1192: prefer the denormalized `out_degree`/`in_degree` columns on `facts` (refreshed by the
+  // dream-cycle) so the per-traversal `COUNT(*)` (O(edges) per hop) is avoided. The COALESCE
+  // fallback ensures correctness on stores whose dream-cycle has not yet refreshed the columns
+  // (or for legacy data with NULL/zero degrees) by checking `> 0` and only then short-circuiting.
+  // Hub degree cap applies to the neighbor being entered (outgoing → `ml.target_fact_id`, incoming →
+  // `ml.source_fact_id`), matching `getConnectedFactIds` which skips expanding from overloaded nodes.
+  const degreeCheckOut =
+    hubDegreeCap == null
+      ? ""
+      : `AND (
+        SELECT
+          CASE WHEN facts.out_degree IS NOT NULL AND facts.in_degree IS NOT NULL
+            THEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0))
+            ELSE (
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.target_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+            )
+          END
+        FROM facts WHERE id = ml.target_fact_id
+      ) <= ?`;
+  const degreeCheckIn =
+    hubDegreeCap == null
+      ? ""
+      : `AND (
+        SELECT
+          CASE WHEN facts.out_degree IS NOT NULL AND facts.in_degree IS NOT NULL
+            THEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0))
+            ELSE (
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.target_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+            )
+          END
+        FROM facts WHERE id = ml.source_fact_id
+      ) <= ?`;
   const query = `
     WITH RECURSIVE graph_expansion(
       fact_id,
@@ -240,9 +359,10 @@ export function expandGraphWithCTE(
       ${factJoinOut}
       WHERE
         ge.hop_count < ?
-        AND ml.link_type != 'CONTRADICTS'
+        AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
+        ${degreeCheckOut}
         ${factWhereOut}
 
       UNION ALL
@@ -268,9 +388,10 @@ export function expandGraphWithCTE(
       ${factJoinIn}
       WHERE
         ge.hop_count < ?
-        AND ml.link_type != 'CONTRADICTS'
+        AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
+        ${degreeCheckIn}
         ${factWhereIn}
     ),
     -- Aggregate to find shortest path to each node
@@ -293,9 +414,18 @@ export function expandGraphWithCTE(
     ORDER BY hop_count ASC, fact_id ASC
   `;
 
+  const hubParams = hubDegreeCap == null ? [] : [hubDegreeCap, hubDegreeCap];
   const rows = db
     .prepare(query)
-    .all(JSON.stringify(seedFactIds), maxDepth, ...filterParamsOut, maxDepth, ...filterParamsIn) as Array<{
+    .all(
+      JSON.stringify(seedFactIds),
+      maxDepth,
+      ...hubParams.slice(0, 1),
+      ...filterParamsOut,
+      maxDepth,
+      ...hubParams.slice(1, 2),
+      ...filterParamsIn,
+    ) as Array<{
     fact_id: string;
     seed_id: string;
     hop_count: number;

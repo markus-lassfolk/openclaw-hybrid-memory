@@ -12,9 +12,8 @@ export function pruneOrphanedLinks(db: DatabaseSync): number {
   const result = db
     .prepare(
       `DELETE FROM memory_links
-         WHERE (NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = memory_links.source_fact_id)
-            OR NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = memory_links.target_fact_id))
-           AND link_type != 'DERIVED_FROM'`,
+         WHERE NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = memory_links.source_fact_id)
+            OR NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = memory_links.target_fact_id)`,
     )
     .run();
   return Number(result.changes ?? 0);

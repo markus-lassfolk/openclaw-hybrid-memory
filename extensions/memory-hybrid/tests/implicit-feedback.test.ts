@@ -31,6 +31,10 @@ const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   feedToReinforcement: true,
   feedToSelfCorrection: true,
   trajectoryLLMAnalysis: false,
+  maxLessonsPerDay: 50,
+  lessonDedupeJaccard: 0.8,
+  autoCleanup: true,
+  cleanupLimit: 1000,
 };
 
 // ---------------------------------------------------------------------------

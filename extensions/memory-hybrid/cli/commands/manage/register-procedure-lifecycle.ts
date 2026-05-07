@@ -9,6 +9,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -37,6 +38,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
   const procedureCmd = mem
     .command("procedure")
     .description("Show procedure details (versions, failures, avoidance notes)");
+  procedureCmd.alias?.("procedures");
   procedureCmd
     .command("show <id>")
     .description("Show all versions and failure history for a procedure")
@@ -109,6 +111,52 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     );
 
   procedureCmd
+    .command("triage")
+    .description("Triage procedures that are validated but not promoted")
+    .option("--status <status>", "Filter by status: validated or all", "validated")
+    .option("--not-promoted", "Only include procedures not promoted to skills")
+    .option("--limit <n>", "Maximum number to show", "50")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { status?: string; notPromoted?: boolean; limit?: string; json?: boolean }) => {
+        const status = opts?.status === "all" ? "all" : "validated";
+        const limit = Number.parseInt(opts?.limit ?? "50", 10);
+        if (!Number.isFinite(limit) || limit < 1) {
+          console.error("error: --limit must be a positive integer");
+          process.exitCode = 1;
+          return;
+        }
+        const report = factsDb.triageProcedures({
+          status,
+          notPromoted: opts?.notPromoted !== false,
+          limit,
+          validationThreshold: cfg.procedures.validationThreshold,
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(
+          `Procedures triage: ${report.summary.total} blocked${report.summary.topReason ? ` by ${report.summary.topReason}` : ""}`,
+        );
+        const reasonSummary = Object.entries(report.summary.byReason)
+          .filter(([, count]) => count > 0)
+          .map(([reason, count]) => `${reason}=${count}`)
+          .join(", ");
+        if (reasonSummary) console.log(`Reasons: ${reasonSummary}`);
+        if (report.rows.length === 0) return;
+        console.log("id | title | validated_at | promotion_block_reason | last_recall");
+        for (const row of report.rows) {
+          const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
+          const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
+          console.log(
+            `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${row.promotionBlockReason} | ${lastRecall}`,
+          );
+        }
+      }),
+    );
+
+  procedureCmd
     .command("list")
     .description("List all procedures (optionally filtered by type)")
     .option("--type <type>", "Filter by type: positive, negative, or all (default: all)")
@@ -128,6 +176,64 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             `  [${p.id.slice(0, 8)}] ${p.procedureType.padEnd(8)} ${rate.padEnd(6)} ${ver} "${p.taskPattern.slice(0, 60)}"`,
           );
         }
+      }),
+    );
+
+  // #1191: per-id procedure promote — sister to batch `generate-auto-skills`. Idempotent: a
+  // second call on a promoted procedure prints the existing skill path and exits 0.
+  procedureCmd
+    .command("promote <id>")
+    .description("Promote a single procedure to skills/auto/<slug> (idempotent)")
+    .option("--dry-run", "Print what would happen without writing files")
+    .option("--force", "Skip the validationThreshold safeguard")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (id: string, opts?: { dryRun?: boolean; force?: boolean; json?: boolean }) => {
+        const result = generateAutoSkillForProcedure(
+          factsDb,
+          {
+            skillsAutoPath: cfg.procedures.skillsAutoPath,
+            validationThreshold: cfg.procedures.validationThreshold,
+            skillTTLDays: cfg.procedures.skillTTLDays,
+            procedureId: id,
+            dryRun: opts?.dryRun === true,
+            requireValidation: opts?.force !== true,
+          },
+          { info: (s) => console.log(s), warn: (s) => console.warn(s) },
+        );
+
+        if (opts?.json) {
+          console.log(JSON.stringify({ id, ...result }, null, 2));
+          if (!result.ok) process.exitCode = 1;
+          return;
+        }
+
+        if (!result.ok) {
+          if (result.reason === "not-found") {
+            console.error(`error: procedure not found: ${id}`);
+          } else if (result.reason === "validation-pending") {
+            console.error(
+              `error: procedure ${id} has not reached validationThreshold=${cfg.procedures.validationThreshold}; pass --force to override`,
+            );
+          } else {
+            console.error(`error: failed to promote ${id}: ${result.error ?? "unknown error"}`);
+          }
+          process.exitCode = 1;
+          return;
+        }
+
+        if (result.alreadyPromoted) {
+          console.log(`Procedure ${id} already promoted (no-op).`);
+          console.log(`  Skill: ${result.skillPath}`);
+          return;
+        }
+
+        if (result.dryRun) {
+          console.log(`[dry-run] would promote ${id} → ${result.skillPath}`);
+          return;
+        }
+
+        console.log(`Promoted ${id} → ${result.skillPath}`);
       }),
     );
 

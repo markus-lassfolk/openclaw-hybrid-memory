@@ -3,6 +3,8 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { GraphConnectedStats } from "../backends/facts-db/links.js";
+import { expandGraph, resolveGraphHubDegreeCap, type GraphExpansionStats } from "../services/graph-retrieval.js";
 
 interface MemoryGraphNode {
   id: string;
@@ -10,6 +12,16 @@ interface MemoryGraphNode {
   category: string;
   importance: number;
   decayClass: string;
+  provenance?: unknown;
+}
+
+function parseProvenance(raw: string | null): unknown | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 interface MemoryGraphEdge {
@@ -27,6 +39,13 @@ interface GraphPayload {
 
 interface GraphRecallPayload extends GraphPayload {
   activated: string[];
+  /** Hub-guard observability for recall graph (Issue #1192). */
+  graphHubGuard?: {
+    configuredCap: number | null | undefined;
+    effectiveCap: number | null;
+    connected: GraphConnectedStats;
+    expansion: GraphExpansionStats;
+  };
 }
 
 export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: number): GraphPayload {
@@ -36,7 +55,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   const db = factsDb.getRawDb();
   const rows = db
     .prepare(
-      "SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
+      "SELECT id, text, category, importance, decay_class, provenance_json FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
     )
     .all(nowSec, cutoff, capped) as Array<{
     id: string;
@@ -44,6 +63,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     category: string;
     importance: number;
     decay_class: string | null;
+    provenance_json: string | null;
   }>;
   const idSet = new Set(rows.map((r) => r.id));
   const allEdges = factsDb.getAllEdges(12000);
@@ -54,6 +74,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     category: r.category,
     importance: r.importance,
     decayClass: r.decay_class ?? "stable",
+    provenance: parseProvenance(r.provenance_json),
   }));
   return {
     generatedAt: new Date().toISOString(),
@@ -67,7 +88,23 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   };
 }
 
-export function collectGraphRecallPayload(factsDb: FactsDB, query: string): GraphRecallPayload {
+function collectDashboardConnectedIds(
+  factsDb: FactsDB,
+  seeds: string[],
+  maxDepth: number,
+  hubDegreeCap: number | null | undefined,
+  stats?: GraphConnectedStats,
+): string[] {
+  if (seeds.length === 0) return [];
+  const cap = hubDegreeCap === undefined ? 500 : hubDegreeCap;
+  return factsDb.getConnectedFactIds(seeds, maxDepth, { hubDegreeCap: cap, stats });
+}
+
+export function collectGraphRecallPayload(
+  factsDb: FactsDB,
+  query: string,
+  hubDegreeCap?: number | null,
+): GraphRecallPayload {
   const q = query.trim();
   if (!q) {
     return { generatedAt: new Date().toISOString(), nodes: [], edges: [], activated: [] };
@@ -78,8 +115,14 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
     diversityWeight: 1,
   });
   const seeds = results.map((r) => r.entry.id);
-  const expanded = new Set<string>(factsDb.getConnectedFactIds(seeds, 3));
-  const ids = [...expanded].slice(0, 2000);
+  const connected: GraphConnectedStats = { nodesConsidered: 0, nodesSkipped: 0, hubsSkipped: 0 };
+  const ids = collectDashboardConnectedIds(factsDb, seeds, 3, hubDegreeCap, connected).slice(0, 2000);
+  const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
+  const { stats: expansion } = expandGraph(factsDb, seedInputs, {
+    maxDepth: 3,
+    maxExpandedResults: 20,
+    hubDegreeCap,
+  });
   const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
   for (const id of ids) {
@@ -91,6 +134,7 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
       category: f.category,
       importance: f.importance,
       decayClass: f.decayClass ?? "stable",
+      provenance: parseProvenance(f.provenanceJson ?? null),
     });
   }
   const nodeIdSet = new Set(nodes.map((n) => n.id));
@@ -106,6 +150,12 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
       strength: e.strength,
     })),
     activated: seeds,
+    graphHubGuard: {
+      configuredCap: hubDegreeCap,
+      effectiveCap: resolveGraphHubDegreeCap(hubDegreeCap),
+      connected,
+      expansion,
+    },
   };
 }
 
@@ -140,7 +190,7 @@ export function getGraphExplorerHtml(): string {
 <div id="detail" class="panel" style="margin:8px;display:none"></div>
 <svg id="graph"></svg>
 <script>
-const LINK_COLORS = { SUPERSEDES:'#ef4444', RELATED_TO:'#6b7280', PART_OF:'#3b82f6', CAUSED_BY:'#a855f7', DEPENDS_ON:'#f97316', INSTANCE_OF:'#22c55e', CONTRADICTS:'#f43f5e', DERIVED_FROM:'#94a3b8' };
+const LINK_COLORS = { SUPERSEDES:'#ef4444', RELATED_TO:'#6b7280', PART_OF:'#3b82f6', CAUSED_BY:'#a855f7', DEPENDS_ON:'#f97316', INSTANCE_OF:'#22c55e', CONTRADICTS:'#f43f5e' };
 const CAT_COLORS = { fact:'#3b82f6', preference:'#22c55e', decision:'#eab308', entity:'#a855f7', episode:'#c084fc', procedure:'#f97316', pattern:'#14b8a6', rule:'#f59e0b', other:'#64748b' };
 
 let sim, svg, link, node, pulse;
@@ -207,7 +257,7 @@ function buildGraph(data) {
     .on('click', (e, d) => {
       const el = document.getElementById('detail');
       el.style.display = 'block';
-      el.textContent = d.label;
+      el.textContent = d.provenance ? d.label + '\n\nProvenance: ' + JSON.stringify(d.provenance, null, 2) : d.label;
     });
 
   pulse = new Set((data.activated || []).filter(Boolean));

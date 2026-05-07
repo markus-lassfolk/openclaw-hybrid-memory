@@ -22,6 +22,9 @@ import {
 import { FactsDBLayer1 } from "./facts-db-layer1.js";
 import {
   backfillDecayClasses as backfillDecayClassesImpl,
+  expireBySourcePattern as expireBySourcePatternImpl,
+  lifecycleEntityReport as lifecycleEntityReportImpl,
+  reclassifyDecayClasses as reclassifyDecayClassesImpl,
   confirmFact as confirmFactImpl,
   decayConfidence as decayConfidenceImpl,
   promoteScope as promoteScopeImpl,
@@ -40,6 +43,7 @@ import {
   getProceduresForAudit as getProceduresForAuditImpl,
   getProceduresReadyForSkill as getProceduresReadyForSkillImpl,
   getStaleProcedures as getStaleProceduresImpl,
+  triageProcedures as triageProceduresImpl,
   listProcedures as listProceduresImpl,
   listProceduresUpdatedInLastNDays as listProceduresUpdatedInLastNDaysImpl,
   markProcedurePromoted as markProcedurePromotedImpl,
@@ -47,6 +51,7 @@ import {
   proceduresCount as proceduresCountImpl,
   proceduresPromotedCount as proceduresPromotedCountImpl,
   proceduresValidatedCount as proceduresValidatedCountImpl,
+  proceduresValidatedSince as proceduresValidatedSinceImpl,
   recordProcedureFailure as recordProcedureFailureImpl,
   recordProcedureSuccess as recordProcedureSuccessImpl,
   searchProcedures as searchProceduresImpl,
@@ -62,36 +67,46 @@ import {
 } from "./reinforcement.js";
 import { getSupersededTextsSnapshot } from "./search.js";
 import {
+  cleanEntityStopwords as cleanEntityStopwordsImpl,
   countExpiredFacts as countExpiredFactsImpl,
   countFacts as countFactsImpl,
   directivesCount as directivesCountImpl,
   entityCount as entityCountImpl,
+  countVectorlessActiveFacts as countVectorlessActiveFactsImpl,
   estimateStoredTokensByTier as estimateStoredTokensByTierImpl,
   estimateStoredTokens as estimateStoredTokensImpl,
+  listVectorlessActiveFacts as listVectorlessActiveFactsImpl,
   linksCount as linksCountImpl,
   listForDashboard as listForDashboardImpl,
   metaPatternsCount as metaPatternsCountImpl,
+  auditCategories as auditCategoriesImpl,
+  proposedCategories as proposedCategoriesImpl,
+  remapCategory as remapCategoryImpl,
   statsBreakdownByCategory as statsBreakdownByCategoryImpl,
   statsBreakdownByDecayClass as statsBreakdownByDecayClassImpl,
   statsBreakdownBySource as statsBreakdownBySourceImpl,
   statsBreakdownByTier as statsBreakdownByTierImpl,
   statsBreakdown as statsBreakdownImpl,
+  topEntities as topEntitiesImpl,
+  topEntitiesFiltered as topEntitiesFilteredImpl,
   uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
+  vectorlessActiveFactsBySource as vectorlessActiveFactsBySourceImpl,
 } from "./stats.js";
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
 
 export class FactsDBLayer2 extends FactsDBLayer1 {
-  /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
-  getRecentFacts(days: number, options?: { excludeCategories?: string[] }): MemoryEntry[] {
+  /**
+   * Get facts from the last N days (for reflection).
+   * Excludes `pattern`/`rule` categories and `implicit-feedback`-tagged facts by default
+   * so trajectory paraphrases (#1186) do not pollute reflection input.
+   * More efficient than getAll+filter.
+   */
+  getRecentFacts(days: number, options?: { excludeCategories?: string[]; excludeTags?: string[] }): MemoryEntry[] {
     return getRecentFactsImpl(this.liveDb, days, options);
   }
 
   /** Get all non-expired facts (for reflection). Optional point-in-time / include superseded. Optional scope filter. */
-  getAll(options?: {
-    includeSuperseded?: boolean;
-    asOf?: number;
-    scopeFilter?: ScopeFilter | null;
-  }): MemoryEntry[] {
+  getAll(options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry[] {
     return getAllImpl(this.liveDb, options);
   }
 
@@ -296,6 +311,38 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return uniqueMemoryCategoriesImpl(this.liveDb);
   }
 
+  /** Compare configured categories with active categories present in facts. */
+  auditCategories(configuredCategories: readonly string[], exampleLimit = 5): ReturnType<typeof auditCategoriesImpl> {
+    return auditCategoriesImpl(this.liveDb, configuredCategories, exampleLimit);
+  }
+
+  /** Bulk-remap facts from one category to another; dry-run unless apply=true. */
+  remapCategory(from: string, to: string, apply = false): ReturnType<typeof remapCategoryImpl> {
+    return remapCategoryImpl(this.liveDb, from, to, apply);
+  }
+
+  /**
+   * List `category-suggested:<label>` tags emitted by the auto-classifier (#1188).
+   * Use to surface promotable LLM suggestions via `categories propose`.
+   */
+  proposedCategories(exampleLimit = 5): ReturnType<typeof proposedCategoriesImpl> {
+    return proposedCategoriesImpl(this.liveDb, exampleLimit);
+  }
+
+  countVectorlessActiveFacts(source?: string): number {
+    return countVectorlessActiveFactsImpl(this.liveDb, source);
+  }
+
+  vectorlessActiveFactsBySource(limit = 20): ReturnType<typeof vectorlessActiveFactsBySourceImpl> {
+    return vectorlessActiveFactsBySourceImpl(this.liveDb, limit);
+  }
+
+  listVectorlessActiveFacts(
+    options?: Parameters<typeof listVectorlessActiveFactsImpl>[1],
+  ): ReturnType<typeof listVectorlessActiveFactsImpl> {
+    return listVectorlessActiveFactsImpl(this.liveDb, options);
+  }
+
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
   getProceduresForAudit(limit = 5): ReturnType<typeof getProceduresForAuditImpl> {
     return getProceduresForAuditImpl(this.liveDb, limit);
@@ -309,6 +356,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Count of procedures with last_validated set (validated at least once). */
   proceduresValidatedCount(): number {
     return proceduresValidatedCountImpl(this.liveDb);
+  }
+
+  /** Count of procedures whose last_validated is >= sinceSec (e.g., for "new this week" digest metrics). */
+  proceduresValidatedSince(sinceSec: number): number {
+    return proceduresValidatedSinceImpl(this.liveDb, sinceSec);
   }
 
   /** Count of procedures promoted to skill (promoted_to_skill = 1). */
@@ -336,6 +388,20 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return entityCountImpl(this.liveDb);
   }
 
+  topEntities(limit = 10): ReturnType<typeof topEntitiesImpl> {
+    return topEntitiesImpl(this.liveDb, limit);
+  }
+
+  topEntitiesFiltered(limit = 10, extraStopWords: readonly string[] = []): ReturnType<typeof topEntitiesFilteredImpl> {
+    return topEntitiesFilteredImpl(this.liveDb, limit, extraStopWords);
+  }
+
+  cleanEntityStopwords(
+    options?: Parameters<typeof cleanEntityStopwordsImpl>[1],
+  ): ReturnType<typeof cleanEntityStopwordsImpl> {
+    return cleanEntityStopwordsImpl(this.liveDb, options);
+  }
+
   /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */
   estimateStoredTokens(): number {
     return estimateStoredTokensImpl(this.liveDb);
@@ -352,6 +418,22 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   backfillDecayClasses(): Record<string, number> {
     return backfillDecayClassesImpl(this.liveDb);
+  }
+
+  reclassifyDecayClasses(
+    options?: Parameters<typeof reclassifyDecayClassesImpl>[1],
+  ): ReturnType<typeof reclassifyDecayClassesImpl> {
+    return reclassifyDecayClassesImpl(this.liveDb, options);
+  }
+
+  lifecycleEntityReport(limit?: number): ReturnType<typeof lifecycleEntityReportImpl> {
+    return lifecycleEntityReportImpl(this.liveDb, limit);
+  }
+
+  expireBySourcePattern(
+    options: Parameters<typeof expireBySourcePatternImpl>[1],
+  ): ReturnType<typeof expireBySourcePatternImpl> {
+    return expireBySourcePatternImpl(this.liveDb, options);
   }
 
   getByCategory(category: string): MemoryEntry[] {
@@ -483,6 +565,10 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   markProcedurePromoted(id: string, skillPath: string): boolean {
     return markProcedurePromotedImpl(this.liveDb, id, skillPath);
+  }
+
+  triageProcedures(options?: Parameters<typeof triageProceduresImpl>[1]): ReturnType<typeof triageProceduresImpl> {
+    return triageProceduresImpl(this.liveDb, options);
   }
 
   getStaleProcedures(ttlDays: number, limit = 100): ProcedureEntry[] {

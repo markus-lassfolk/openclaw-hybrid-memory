@@ -44,6 +44,8 @@ export type NightlyCycleConfig = {
   eventLogArchivePath?: string;
   /** Legacy: max age for unconsolidated event log entries before deletion (default: 90). */
   maxUnconsolidatedAgeDays: number;
+  /** Maximum events to merge into one consolidated fact (default: 200). */
+  maxEventsPerConsolidation: number;
   /**
    * Retention window in days for log tables (recall_log, reinforcement_log, feedback_trajectories).
    * Rows older than this are deleted during the dream cycle. Set to 0 to disable log pruning.
@@ -56,6 +58,27 @@ export type NightlyCycleConfig = {
    * Default: true.
    */
   vacuumOnCycle: boolean;
+  /**
+   * When true, run the source-/importance-aware decay reclassifier as part of the
+   * nightly cycle (#1189). Without this, the only way to reclassify legacy
+   * `decay_class=stable` entries was the manual `decay reclassify --apply` CLI.
+   * Default: true.
+   */
+  reclassifyDecayOnCycle: boolean;
+  /** Inactivity threshold (days) used by the recall-based demotion path. Default: 90. */
+  reclassifyInactiveDays: number;
+  /** Recall count required to promote a fact to a longer-lived class. Default: 3. */
+  reclassifyPromoteRecallCount: number;
+  /**
+   * When set, only these `event_log.event_type` values are eligible for episodic consolidation,
+   * after the built-in deny list is applied (#1185). Omit for no allow restriction.
+   */
+  consolidationEventTypeAllow?: string[];
+  /**
+   * Extra `event_type` values to exclude from consolidation (merged with built-in session/
+   * heartbeat/transport deny list). Default: none.
+   */
+  consolidationEventTypeDeny?: string[];
 };
 
 /** Memory health dashboard configuration (Issue #148). */

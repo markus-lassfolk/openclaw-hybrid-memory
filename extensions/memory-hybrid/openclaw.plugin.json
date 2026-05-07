@@ -484,6 +484,26 @@
       "label": "Strengthen on recall",
       "help": "When true, strengthen RELATED_TO links between facts recalled together (default false; Phase 1 baseline off)"
     },
+    "graph.hubDegreeCap": {
+      "label": "Graph hub degree cap",
+      "help": "Skip traversing nodes above this total degree and cap per-hop fanout (default 500; null disables — not recommended)"
+    },
+    "graph.hubScorePenalty": {
+      "label": "Graph hub score penalty",
+      "help": "Optional alternative to skip mode (#1192): when set in (0,1), nodes whose degree exceeds the cap are still traversed but descendants' scores are multiplied by (1 - penalty) per hub hop. Default null (skip mode)."
+    },
+    "digest.weekly.delivery.mode": {
+      "label": "Weekly digest delivery",
+      "help": "How the weekly pending-review digest is delivered: system (default gateway announce), telegram (requires chatId), or none (#1197)"
+    },
+    "digest.weekly.delivery.chatId": {
+      "label": "Weekly digest Telegram chat",
+      "help": "When delivery.mode is telegram, destination chat id or handle for the gateway"
+    },
+    "lifecycle.adapters.github.enabled": {
+      "label": "GitHub lifecycle adapter",
+      "help": "Phase 2 stub — leave disabled until syncLifecycleFromGitHub is wired (#1196)"
+    },
     "procedures.enabled": {
       "label": "Procedural memory",
       "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills"
@@ -925,6 +945,69 @@
           "classifyModel": {
             "type": "string",
             "description": "Model for classify-before-write. When unset, uses nano-tier default; set explicitly if that model often wraps JSON in prose or markdown so batch classification stays on the fast path"
+          },
+          "sourceProfiles": {
+            "type": "object",
+            "description": "Per-source dedupe and daily write quotas. Keys are exact fact source strings or glob patterns (e.g. seed:*, implicit-feedback).",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "vectorThreshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "lexicalJaccard": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "maxPerDay": {
+                  "type": "number",
+                  "minimum": 1
+                },
+                "onDuplicate": {
+                  "type": "string",
+                  "enum": ["skip", "boost", "merge", "store"]
+                },
+                "boostBy": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          },
+          "defaultProfile": {
+            "type": "object",
+            "description": "Fallback store profile when no sourceProfiles entry matches.",
+            "additionalProperties": false,
+            "properties": {
+              "vectorThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "lexicalJaccard": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "maxPerDay": {
+                "type": "number",
+                "minimum": 1
+              },
+              "onDuplicate": {
+                "type": "string",
+                "enum": ["skip", "boost", "merge", "store"]
+              },
+              "boostBy": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
           }
         }
       },
@@ -1279,6 +1362,59 @@
         },
         "description": "Identity reflection layer — synthesize persona-level insights from reflection outputs"
       },
+      "digest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "weekly": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "delivery": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["telegram", "system", "none"],
+                    "description": "Weekly pending-review digest delivery: system (default) uses gateway announce; telegram requires chatId; none disables delivery"
+                  },
+                  "chatId": {
+                    "type": "string",
+                    "description": "Destination when mode is telegram"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Pending-review digest delivery for weekly cron (#1197)"
+      },
+      "lifecycle": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "adapters": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "github": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Enable GitHub lifecycle sync (Phase 2 — not implemented in this release)"
+                  },
+                  "repo": { "type": "string" },
+                  "tokenRef": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "description": "Lifecycle adapters — GitHub stub (#1196)"
+      },
       "graph": {
         "type": "object",
         "additionalProperties": false,
@@ -1312,6 +1448,11 @@
           "strengthenOnRecall": {
             "type": "boolean",
             "description": "Strengthen RELATED_TO links when facts are recalled together (default: false)"
+          },
+          "hubDegreeCap": {
+            "type": ["number", "null"],
+            "minimum": 1,
+            "description": "Hub guard: skip nodes above this total link degree and cap per-hop traversable fanout (default: 500; null disables)"
           }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
@@ -1451,6 +1592,24 @@
           "hotMaxFacts": {
             "type": "number",
             "description": "Cap HOT tier facts when promoting (default: 50)"
+          },
+          "coldAfterInactivityDays": {
+            "type": "number",
+            "description": "Days without access/recall before a fact is eligible for COLD (default: 30)"
+          },
+          "hotMinAccessCount": {
+            "type": "number",
+            "description": "Minimum recall or access count in the hot window for HOT promotion (default: 3)"
+          },
+          "hotAccessWindowDays": {
+            "type": "number",
+            "description": "Recency window (days) for hotMinAccessCount / recent access (default: 7; 0 = no window)"
+          },
+          "hotPreferenceImportance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum importance for preference-category facts to stay HOT when recently accessed (default: 0.7)"
           }
         },
         "description": "Dynamic memory tiering: hot/warm/cold"
@@ -1523,6 +1682,19 @@
           },
           "maxUnconsolidatedAgeDays": {
             "type": "number"
+          },
+          "maxEventsPerConsolidation": {
+            "type": "number"
+          },
+          "consolidationEventTypeAllow": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional allow-list of event_log.event_type values for episodic consolidation (#1185)"
+          },
+          "consolidationEventTypeDeny": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Extra event_type deny list merged with built-in session/heartbeat filter (#1185)"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
@@ -1723,6 +1895,22 @@
           },
           "terseResponseRatio": {
             "type": "number"
+          },
+          "maxLessonsPerDay": {
+            "type": "number",
+            "description": "Cap on trajectory lesson facts stored per calendar day (implicit feedback extract)"
+          },
+          "lessonDedupeJaccard": {
+            "type": "number",
+            "description": "Jaccard similarity threshold for near-duplicate lesson detection and cleanup (0–1)"
+          },
+          "autoCleanup": {
+            "type": "boolean",
+            "description": "Run near-duplicate collapse for implicit-feedback trajectory lessons after extract"
+          },
+          "cleanupLimit": {
+            "type": "number",
+            "description": "Max rows scanned per cleanup pass (and per sliding window round)"
           }
         },
         "description": "Implicit feedback detection and routing"

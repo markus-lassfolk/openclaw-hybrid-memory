@@ -298,7 +298,7 @@ export async function runSelfCorrectionRunForCli(
         const obj =
           typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
         const text = (obj.text ?? "").trim();
-        if (!text || factsDb.hasDuplicate(text)) continue;
+        if (!text || factsDb.hasDuplicate(text, "self-correction")) continue;
         let vector: number[] | null = null;
         if (scCfg.semanticDedup || !opts.dryRun) {
           try {

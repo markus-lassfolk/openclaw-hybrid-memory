@@ -202,7 +202,15 @@ interface CliContextServices {
     total: number;
     breakdown?: Record<string, number>;
   }>;
-  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  runCompaction: (opts?: { apply?: boolean }) => Promise<{
+    hot: number;
+    warm: number;
+    cold: number;
+    structural: number;
+    changed?: number;
+    examined?: number;
+    apply?: boolean;
+  }>;
   runBuildLanguageKeywords: (opts: {
     model?: string;
     dryRun?: boolean;
@@ -378,13 +386,24 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       }
       return result;
     },
-    runCompaction: () =>
+    runCompaction: (opts?: { apply?: boolean }) =>
       Promise.resolve(
-        factsDb.runCompaction({
-          inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
-          hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
-          hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
-        }),
+        factsDb.retier(
+          {
+            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+            coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
+            hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
+            hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
+            hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
+            hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
+            hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
+            structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
+            structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
+          },
+          opts?.apply !== false,
+        ),
       ),
     runBuildLanguageKeywords: (opts) =>
       runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
@@ -433,9 +452,17 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          maxEventsPerConsolidation: cfg.nightlyCycle.maxEventsPerConsolidation,
           logRetentionDays: cfg.nightlyCycle.logRetentionDays,
           vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
+          reclassifyDecayOnCycle: cfg.nightlyCycle.reclassifyDecayOnCycle,
+          reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
+          reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
           verbose,
+          episodicConsolidationEventTypes: {
+            allow: cfg.nightlyCycle.consolidationEventTypeAllow,
+            deny: cfg.nightlyCycle.consolidationEventTypeDeny,
+          },
         },
         logSink,
         provenanceService,

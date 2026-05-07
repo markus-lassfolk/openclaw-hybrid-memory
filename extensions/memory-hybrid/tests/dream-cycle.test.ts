@@ -27,6 +27,8 @@ import {
   groupEventsByEntity,
   runDreamCycle,
   runEpisodicConsolidation,
+  shouldSkipEpisodicConsolidation,
+  shouldSkipEpisodicConsolidationByEventType,
 } from "../services/dream-cycle.js";
 
 const { FactsDB, EventLog } = _testing;
@@ -226,6 +228,40 @@ describe("groupEventsByEntity", () => {
     expect(groups.has("Bob")).toBe(false);
   });
 
+  it("caller pre-filters lifecycle heartbeat noise before grouping", () => {
+    const events = [
+      makeEntry({ content: { text: "heartbeat" } }),
+      makeEntry({ content: { text: "session_start" } }),
+      makeEntry({ content: { text: "session_end" } }),
+      makeEntry({ content: { text: "transport_connect" } }),
+      makeEntry({ content: { text: "transport_disconnect" } }),
+      makeEntry({ entities: ["Alice"], content: { text: "real work happened" } }),
+      makeEntry({ content: { text: "unattributed useful event" } }),
+    ];
+
+    const groups = groupEventsByEntity(events.filter((e) => !shouldSkipEpisodicConsolidation(e)));
+
+    expect(groups.get("Alice")).toHaveLength(1);
+    expect(groups.get("__default__")).toHaveLength(1);
+    expect(groups.get("__default__")?.[0]?.content.text).toBe("unattributed useful event");
+  });
+
+  it("excludes session_start by raw eventType before grouping (#1185)", () => {
+    const events = [
+      makeEntry({
+        eventType: "session_start",
+        content: { text: "Important preference that is not matched by text patterns" },
+      }),
+      makeEntry({ entities: ["Alice"], content: { text: "real work" } }),
+    ];
+    const filtered = events.filter(
+      (e) => !shouldSkipEpisodicConsolidation(e) && !shouldSkipEpisodicConsolidationByEventType(e),
+    );
+    const groups = groupEventsByEntity(filtered);
+    expect(groups.get("Alice")).toHaveLength(1);
+    expect(groups.size).toBe(1);
+  });
+
   it("returns empty map for empty input", () => {
     const groups = groupEventsByEntity([]);
     expect(groups.size).toBe(0);
@@ -280,7 +316,7 @@ describe("runEpisodicConsolidation", () => {
     expect(result.factsCreated).toBe(1); // Both go into __default__ group
   });
 
-  it("creates DERIVED_FROM links for consolidated events", async () => {
+  it("stores JSON provenance instead of DERIVED_FROM links for consolidated events", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({
       sessionId: "s1",
@@ -299,10 +335,15 @@ describe("runEpisodicConsolidation", () => {
     expect(consolidated).toBeDefined();
     expect(consolidated?.decayClass).toBe("durable");
 
-    // Check DERIVED_FROM links from consolidated fact
+    const provenance = JSON.parse(consolidated?.provenanceJson ?? "{}");
+    expect(provenance.method).toBe("dream-cycle");
+    expect(provenance.sourceEventIds).toHaveLength(1);
+    expect(provenance.sourceEvents[0].text).toBe("Fact about Alice");
+
+    // Issue #1195: dream-cycle no longer creates graph edges for append-only provenance.
     const links = factsDb.getLinksFrom(consolidated?.id);
     const derivedLinks = links.filter((l) => l.linkType === "DERIVED_FROM");
-    expect(derivedLinks.length).toBeGreaterThanOrEqual(1);
+    expect(derivedLinks).toHaveLength(0);
   });
 
   it("marks events as consolidated in the event log", async () => {
@@ -331,6 +372,65 @@ describe("runEpisodicConsolidation", () => {
     expect(result.factsCreated).toBe(0);
   });
 
+  it("skips lifecycle-like transport noise instead of consolidating it", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "action_taken",
+      content: { text: "session_start" },
+    });
+    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "action_taken", content: { text: "session_end" } });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+
+    expect(result.eventsConsolidated).toBe(2);
+    expect(result.factsCreated).toBe(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
+
+  it("skips session_start eventType even when body text is innocuous (#1185)", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "session_start",
+      content: { text: "User shared a durable preference" },
+    });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Actually consolidatable" },
+    });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(result.eventsConsolidated).toBe(2);
+    expect(result.factsCreated).toBe(1);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(1);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
+
+  it("skips oversized default groups instead of creating DERIVED_FROM mega-hubs", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    for (let i = 0; i < 4; i++) {
+      eventLog.append({
+        sessionId: "s1",
+        timestamp: oldTs,
+        eventType: "fact_learned",
+        content: { text: `Default group event ${i}` },
+      });
+    }
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger, false, 3);
+
+    expect(result.eventsConsolidated).toBe(4);
+    expect(result.factsCreated).toBe(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
+
   it("groups events by entity into separate consolidated facts", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({
@@ -351,6 +451,29 @@ describe("runEpisodicConsolidation", () => {
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
     expect(result.eventsConsolidated).toBe(2);
     expect(result.factsCreated).toBe(2); // One per entity group
+  });
+
+  it("marks excess entity group events as consolidated to prevent reappearance", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    // Create 5 events for Alice, exceeding the cap of 3
+    for (let i = 0; i < 5; i++) {
+      eventLog.append({
+        sessionId: "s1",
+        timestamp: oldTs,
+        eventType: "fact_learned",
+        content: { text: `Alice event ${i}` },
+        entities: ["Alice"],
+      });
+    }
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger, false, 3);
+
+    // All 5 events should be marked as consolidated (3 processed + 2 excess marked as skipped)
+    expect(result.eventsConsolidated).toBe(5);
+    // Only 1 consolidated fact created for the first 3 events
+    expect(result.factsCreated).toBe(1);
+    // No unconsolidated events should remain
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
   });
 });
 
@@ -613,6 +736,7 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.pruneMode).toBe("both");
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(7);
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
+    expect(cfg.nightlyCycle.maxEventsPerConsolidation).toBe(200);
   });
 
   it("honors nightlyCycle.enabled when set to true", () => {
@@ -633,6 +757,7 @@ describe("NightlyCycleConfig parsing", () => {
         pruneMode: "expired",
         consolidateAfterDays: 3,
         maxUnconsolidatedAgeDays: 30,
+        maxEventsPerConsolidation: 42,
       },
     });
     expect(cfg.nightlyCycle.schedule).toBe("30 2 * * *");
@@ -640,6 +765,7 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.pruneMode).toBe("expired");
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(3);
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(30);
+    expect(cfg.nightlyCycle.maxEventsPerConsolidation).toBe(42);
   });
 
   it("clamps reflectWindowDays to max 90", () => {
@@ -671,6 +797,18 @@ describe("NightlyCycleConfig parsing", () => {
     });
     expect(cfg.nightlyCycle.logRetentionDays).toBe(60);
     expect(cfg.nightlyCycle.vacuumOnCycle).toBe(false);
+  });
+
+  it("parses consolidationEventTypeAllow and consolidationEventTypeDeny (#1185)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...minimalConfig,
+      nightlyCycle: {
+        consolidationEventTypeAllow: ["fact_learned", "  correction  "],
+        consolidationEventTypeDeny: ["custom_noise"],
+      },
+    });
+    expect(cfg.nightlyCycle.consolidationEventTypeAllow).toEqual(["fact_learned", "correction"]);
+    expect(cfg.nightlyCycle.consolidationEventTypeDeny).toEqual(["custom_noise"]);
   });
 
   it("accepts logRetentionDays=0 to disable log pruning (Issue #573)", () => {

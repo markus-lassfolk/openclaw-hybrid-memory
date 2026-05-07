@@ -51,8 +51,8 @@ describe("TTL_DEFAULTS", () => {
     expect(TTL_DEFAULTS.durable).toBe(90 * 24 * 3600);
   });
 
-  it("normal is 2 weeks in seconds", () => {
-    expect(TTL_DEFAULTS.normal).toBe(14 * 24 * 3600);
+  it("normal is 90 days in seconds (#1186/#1189: aligned with trajectory TTL)", () => {
+    expect(TTL_DEFAULTS.normal).toBe(90 * 24 * 3600);
   });
 
   it("short is 2 days in seconds", () => {
@@ -223,6 +223,10 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.memoryTiering.compactionOnSessionEnd).toBe(true);
     expect(result.memoryTiering.inactivePreferenceDays).toBe(7);
     expect(result.memoryTiering.hotMaxFacts).toBe(50);
+    expect(result.memoryTiering.coldAfterInactivityDays).toBe(30);
+    expect(result.memoryTiering.hotMinAccessCount).toBe(3);
+    expect(result.memoryTiering.hotAccessWindowDays).toBe(7);
+    expect(result.memoryTiering.hotPreferenceImportance).toBe(0.7);
   });
 
   it("throws on missing embedding (model required when provider defaults to ollama)", () => {
@@ -1860,5 +1864,15 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.mode).toBe("custom"); // overrides local preset (graph.enabled true)
       expect(result.graph.enabled).toBe(true);
     });
+  });
+});
+
+describe("entityExtraction config", () => {
+  it("parses configurable entity stop words", () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "onnx", model: "bge-m3", dimensions: 1024 },
+      entityExtraction: { stopWords: ["Runbook", "Credentials", "Runbook"] },
+    });
+    expect(cfg.entityExtraction.stopWords).toEqual(["Runbook", "Credentials"]);
   });
 });

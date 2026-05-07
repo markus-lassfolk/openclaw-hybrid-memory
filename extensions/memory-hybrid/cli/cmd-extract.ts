@@ -266,7 +266,7 @@ export async function runExtractDirectivesForCli(
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
-          if (factsDb.hasDuplicate(incident.extractedRule)) continue;
+          if (factsDb.hasDuplicate(incident.extractedRule, `directive:${incident.sessionFile}`)) continue;
           const category = incident.categories.includes("preference")
             ? "preference"
             : incident.categories.includes("absolute_rule")
@@ -490,7 +490,7 @@ export async function runExtractReinforcementForCli(
                 ? (c as { text?: string; entity?: string; key?: string; tags?: string[] })
                 : { text: String(c) };
             const text = (obj.text ?? "").trim();
-            if (!text || factsDb.hasDuplicate(text)) continue;
+            if (!text || factsDb.hasDuplicate(text, "reinforcement-analysis")) continue;
             let vector: number[] | null = null;
             try {
               vector = await embeddings.embed(text);
@@ -1091,7 +1091,7 @@ export async function runExtractDailyForCli(
         );
         continue;
       }
-      if (factsDb.hasDuplicate(trimmed)) continue;
+      if (factsDb.hasDuplicate(trimmed, `daily-scan:${dateStr}`)) continue;
       const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
       const storePayload = {
         text: trimmed,

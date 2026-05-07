@@ -11,7 +11,7 @@
  */
 
 import type OpenAI from "openai";
-import type { EventLog, EventLogEntry } from "../backends/event-log.js";
+import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory } from "../types/memory.js";
@@ -46,6 +46,8 @@ export interface DreamCycleConfig {
   eventLogArchivePath: string;
   /** Delete unconsolidated event log entries older than this many days. */
   maxUnconsolidatedAgeDays: number;
+  /** Maximum events to merge into one consolidated fact. Default: 200. */
+  maxEventsPerConsolidation: number;
   /**
    * Retention window for log tables (recall_log, reinforcement_log, feedback_trajectories).
    * Rows older than this many days are deleted. 0 = disabled. Default: 30.
@@ -56,8 +58,27 @@ export interface DreamCycleConfig {
    * Default: true.
    */
   vacuumOnCycle: boolean;
+  /**
+   * When true, run the source-/importance-aware decay reclassifier (#1189) as part of the
+   * nightly cycle. Defaults to true; operators can opt out by setting it to false.
+   */
+  reclassifyDecayOnCycle?: boolean;
+  /** Inactivity threshold in days for the recall-based demotion path. Default: 90. */
+  reclassifyInactiveDays?: number;
+  /** Recall count required to promote a fact to a longer-lived class. Default: 3. */
+  reclassifyPromoteRecallCount?: number;
   /** When true, log episodic consolidation / reflection / memory-index detail (CLI `--verbose`). */
   verbose?: boolean;
+  /**
+   * Episodic consolidation filter on `event.eventType` (#1185). Built-in deny list always includes
+   * session/heartbeat/transport lifecycle types unless removed via config.
+   */
+  episodicConsolidationEventTypes?: {
+    /** When non-empty, only these event types are eligible (after deny). */
+    allow?: string[];
+    /** Extra types to treat as noise (merged with built-in deny list). */
+    deny?: string[];
+  };
 }
 
 /** Result returned by a single dream cycle run. */
@@ -80,6 +101,8 @@ export interface DreamCycleResult {
   logRowsPruned: number;
   /** True when VACUUM + checkpoint was executed (Issue #573). */
   vacuumRan: boolean;
+  /** Number of facts re-tiered by the source-/importance-aware reclassifier (#1189). */
+  decayReclassified: number;
   /** Human-readable summary of the cycle. */
   digestSummary: string;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
@@ -88,6 +111,51 @@ export interface DreamCycleResult {
 
 // Minimum patterns stored in one cycle before we also run reflect-rules.
 const MIN_PATTERNS_FOR_RULES = 3;
+export const DEFAULT_MAX_EVENTS_PER_CONSOLIDATION = 200;
+const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
+  "heartbeat",
+  "session_end",
+  "session_start",
+  "transport_connect",
+  "transport_disconnect",
+]);
+
+/** Default deny list for `event.eventType` during episodic consolidation (#1185). */
+export const DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY: ReadonlySet<EventType> = new Set([
+  "session_start",
+  "session_end",
+  "heartbeat",
+  "transport_connect",
+  "transport_disconnect",
+]);
+
+export type EpisodicConsolidationEventTypeFilter = {
+  allow?: string[];
+  deny?: string[];
+};
+
+function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): Set<string> {
+  const s = new Set<string>(DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY);
+  for (const x of filter?.deny ?? []) {
+    if (typeof x === "string" && x.trim().length > 0) s.add(x.trim());
+  }
+  return s;
+}
+
+/**
+ * True when this event should not be merged into consolidated facts based on `eventType`
+ * (allow/deny lists). Text-pattern skipping remains in {@link shouldSkipEpisodicConsolidation}.
+ */
+export function shouldSkipEpisodicConsolidationByEventType(
+  event: EventLogEntry,
+  filter?: EpisodicConsolidationEventTypeFilter | null,
+): boolean {
+  const deny = episodicDenySet(filter);
+  if (deny.has(event.eventType)) return true;
+  const allow = filter?.allow?.map((x) => x.trim()).filter((x) => x.length > 0);
+  if (allow && allow.length > 0 && !allow.includes(event.eventType)) return true;
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Episodic consolidation helpers (exported for testing)
@@ -114,6 +182,8 @@ export function extractEventText(event: EventLogEntry): string {
 /**
  * Group event log entries by their primary entity.
  * Events with no entities are grouped under the "__default__" key.
+ * Callers should omit lifecycle/noise events (e.g. via `shouldSkipEpisodicConsolidation` and
+ * `shouldSkipEpisodicConsolidationByEventType`) before calling.
  */
 export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventLogEntry[]> {
   const groups = new Map<string, EventLogEntry[]>();
@@ -123,6 +193,14 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
     groups.get(primaryEntity)?.push(event);
   }
   return groups;
+}
+
+export function shouldSkipEpisodicConsolidation(event: EventLogEntry): boolean {
+  const text = extractEventText(event).toLowerCase();
+  for (const pattern of SKIP_CONSOLIDATION_TEXT_PATTERNS) {
+    if (text.includes(pattern)) return true;
+  }
+  return false;
 }
 
 /**
@@ -139,10 +217,14 @@ export function buildDigestSummary(counts: {
   rulesGenerated: number;
   logRowsPruned?: number;
   vacuumRan?: boolean;
+  decayReclassified?: number;
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
   if (counts.factsDecayed > 0) parts.push(`${counts.factsDecayed} facts decayed`);
+  if (counts.decayReclassified && counts.decayReclassified > 0) {
+    parts.push(`${counts.decayReclassified} facts re-tiered`);
+  }
   if (counts.linksPruned && counts.linksPruned > 0) parts.push(`${counts.linksPruned} orphaned links removed`);
   if (counts.eventsConsolidated > 0) {
     parts.push(`${counts.eventsConsolidated} events consolidated into ${counts.factsCreated} facts`);
@@ -163,11 +245,11 @@ export function buildDigestSummary(counts: {
  * Run episodic consolidation:
  *  1. Fetch unconsolidated event log entries older than consolidateAfterDays.
  *  2. Group by primary entity.
- *  3. For each group, create a consolidated fact.
- *  4. For each source event, create a short-lived "episodic source" fact and a
- *     DERIVED_FROM link pointing from the consolidated fact to the source fact.
- *  5. Mark all events as consolidated in the event log.
- *  6. Prune the immediately-expired source facts (DERIVED_FROM links remain for provenance).
+ *  3. For each group, create a consolidated fact with structured provenance_json.
+ *  4. Mark all events as consolidated in the event log.
+ *
+ * Historical versions created one DERIVED_FROM graph edge per source event; new
+ * consolidations keep that lineage on the fact row to avoid provenance mega-hubs.
  */
 export async function runEpisodicConsolidation(
   factsDb: FactsDB,
@@ -175,37 +257,103 @@ export async function runEpisodicConsolidation(
   consolidateAfterDays: number,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   verbose?: boolean,
+  maxEventsPerConsolidation = DEFAULT_MAX_EVENTS_PER_CONSOLIDATION,
+  eventTypeFilter?: EpisodicConsolidationEventTypeFilter | null,
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
     return { eventsConsolidated: 0, factsCreated: 0 };
   }
 
-  const groups = groupEventsByEntity(events);
+  let eventsConsolidated = 0;
+  const skippedTextEvents = events.filter(shouldSkipEpisodicConsolidation);
+  if (skippedTextEvents.length > 0) {
+    try {
+      eventLog.markConsolidated(
+        skippedTextEvents.map((e) => e.id),
+        "SKIP:lifecycle_event",
+      );
+      eventsConsolidated += skippedTextEvents.length;
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — failed to mark lifecycle events as skipped: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-mark-lifecycle-skip",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  const afterTextSkip = events.filter((event) => !shouldSkipEpisodicConsolidation(event));
+  const skippedTypeEvents = afterTextSkip.filter((e) => shouldSkipEpisodicConsolidationByEventType(e, eventTypeFilter));
+  if (skippedTypeEvents.length > 0) {
+    try {
+      eventLog.markConsolidated(
+        skippedTypeEvents.map((e) => e.id),
+        "SKIP:event_type_filter",
+      );
+      eventsConsolidated += skippedTypeEvents.length;
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — failed to mark event-type-filtered events as skipped: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-mark-event-type-skip",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  const consolidatableEvents = afterTextSkip.filter(
+    (event) => !shouldSkipEpisodicConsolidationByEventType(event, eventTypeFilter),
+  );
+  if (consolidatableEvents.length === 0) {
+    return { eventsConsolidated, factsCreated: 0 };
+  }
+
+  const groups = groupEventsByEntity(consolidatableEvents);
   if (verbose) {
     logger.info(
-      `memory-hybrid: dream-cycle — episodic consolidation: ${events.length} unconsolidated event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d)`,
+      `memory-hybrid: dream-cycle — episodic consolidation: ${consolidatableEvents.length} consolidatable event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d); skipped ${skippedTextEvents.length} text-pattern noise + ${skippedTypeEvents.length} eventType-filtered`,
     );
   }
   let factsCreated = 0;
-  let eventsConsolidated = 0;
-  const ephemeralSourceFactIds: string[] = [];
 
   for (const [entity, groupEvents] of groups) {
     if (groupEvents.length === 0) continue;
 
+    if (entity === "__default__" && groupEvents.length > maxEventsPerConsolidation) {
+      try {
+        eventLog.markConsolidated(
+          groupEvents.map((e) => e.id),
+          "SKIP:default_group_cap",
+        );
+        eventsConsolidated += groupEvents.length;
+        logger.info(
+          `memory-hybrid: dream-cycle — skipped ${groupEvents.length} unattributed event(s): default group exceeds maxEventsPerConsolidation=${maxEventsPerConsolidation}`,
+        );
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to mark capped default group as skipped: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-mark-default-cap-skip",
+          subsystem: "event-log",
+        });
+      }
+      continue;
+    }
+
+    const cappedGroupEvents = groupEvents.slice(0, maxEventsPerConsolidation);
+    const excessEvents = groupEvents.slice(maxEventsPerConsolidation);
+
     // Collect text from all events in this group
-    const eventTexts = groupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);
+    const eventTexts = cappedGroupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
       // Mark events as consolidated with a namespaced skip sentinel to prevent re-processing.
       // 'SKIP:no_text' is clearly not a real fact UUID — no UUID-based query will match it.
       try {
         eventLog.markConsolidated(
-          groupEvents.map((e) => e.id),
+          cappedGroupEvents.map((e) => e.id),
           "SKIP:no_text",
         );
-        eventsConsolidated += groupEvents.length;
+        eventsConsolidated += cappedGroupEvents.length;
       } catch (err) {
         logger.warn(`memory-hybrid: dream-cycle — failed to mark no-text events as consolidated: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -223,7 +371,19 @@ export async function runEpisodicConsolidation(
         ? eventTexts[0]
         : `[consolidated from ${eventTexts.length} events${entityLabel ? ` about ${entityLabel}` : ""}] ${eventTexts.slice(0, 5).join("; ")}`;
 
-    // Create the consolidated fact
+    const consolidatedAt = Math.floor(Date.now() / 1000);
+    const sourceEvents = cappedGroupEvents.map((event) => ({
+      id: event.id,
+      eventType: event.eventType,
+      timestamp: event.timestamp,
+      sessionId: event.sessionId,
+      text: extractEventText(event).slice(0, 300),
+    }));
+
+    // Create the consolidated fact. Issue #1195: store dream-cycle provenance on
+    // the fact row instead of creating one DERIVED_FROM graph edge per event.
+    // Historical DERIVED_FROM rows are left untouched by this forward migration;
+    // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact;
     try {
       consolidatedFact = factsDb.store({
@@ -237,6 +397,12 @@ export async function runEpisodicConsolidation(
         decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         tags: ["dream-cycle", "consolidated"],
         extractionMethod: "consolidation",
+        provenanceJson: JSON.stringify({
+          method: "dream-cycle",
+          consolidatedAt,
+          sourceEventIds: sourceEvents.map((event) => event.id),
+          sourceEvents,
+        }),
       });
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
@@ -247,46 +413,33 @@ export async function runEpisodicConsolidation(
       continue;
     }
 
-    // For each event, create a minimal ephemeral source fact and a DERIVED_FROM link.
-    // The source facts expire immediately; DERIVED_FROM links persist as provenance.
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (const event of groupEvents) {
-      const srcText = extractEventText(event);
-      if (srcText.length < 3) continue;
-
-      try {
-        const srcFact = factsDb.store({
-          text: srcText.slice(0, 300),
-          category: "fact" as MemoryCategory,
-          importance: 0.1,
-          entity: entityLabel,
-          key: "episodic_source",
-          value: event.eventType,
-          source: "dream-cycle-src",
-          decayClass: "checkpoint",
-          expiresAt: nowSec - 1, // Immediately expired — will be pruned right away
-          confidence: 0.5,
-        });
-        ephemeralSourceFactIds.push(srcFact.id);
-        // consolidated_fact -DERIVED_FROM-> source_fact (provenance)
-        factsDb.createLink(consolidatedFact.id, srcFact.id, "DERIVED_FROM", 1.0);
-      } catch (err) {
-        logger.warn(`memory-hybrid: dream-cycle — failed to create source fact for event ${event.id}: ${err}`);
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "dream-cycle-src-fact",
-          subsystem: "facts-db",
-        });
-      }
-    }
-
     // Mark all events in the group as consolidated into the new fact
     try {
       eventLog.markConsolidated(
-        groupEvents.map((e) => e.id),
+        cappedGroupEvents.map((e) => e.id),
         consolidatedFact.id,
       );
       factsCreated++;
-      eventsConsolidated += groupEvents.length;
+      eventsConsolidated += cappedGroupEvents.length;
+
+      if (excessEvents.length > 0) {
+        try {
+          eventLog.markConsolidated(
+            excessEvents.map((e) => e.id),
+            "SKIP:entity_group_cap",
+          );
+          eventsConsolidated += excessEvents.length;
+          logger.info(
+            `memory-hybrid: dream-cycle — skipped ${excessEvents.length} excess event(s) for entity "${entity}": exceeds maxEventsPerConsolidation=${maxEventsPerConsolidation}`,
+          );
+        } catch (err) {
+          logger.warn(`memory-hybrid: dream-cycle — failed to mark excess entity group events as skipped: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "dream-cycle-mark-entity-cap-skip",
+            subsystem: "event-log",
+          });
+        }
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to mark events as consolidated: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -304,14 +457,8 @@ export async function runEpisodicConsolidation(
     }
 
     logger.info(
-      `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
+      `memory-hybrid: dream-cycle — consolidated ${cappedGroupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
     );
-  }
-
-  // Delete only the ephemeral source facts created during this consolidation.
-  // DERIVED_FROM links to them are preserved by design (see delete() in facts-db.ts).
-  for (const id of ephemeralSourceFactIds) {
-    factsDb.delete(id);
   }
 
   return { eventsConsolidated, factsCreated };
@@ -346,6 +493,7 @@ export async function runDreamCycle(
       rulesGenerated: 0,
       logRowsPruned: 0,
       vacuumRan: false,
+      decayReclassified: 0,
       digestSummary: "Dream cycle disabled.",
       skipped: true,
     };
@@ -402,6 +550,54 @@ export async function runDreamCycle(
     });
   }
 
+  // ── Step 1c: Decay reclassify (#1189) ────────────────────────────────────
+  // Source-/importance-aware reclassifier. Without this nightly hook, the
+  // reclassifier only ran when an operator manually invoked the CLI, which
+  // meant `decay_class=stable` accumulated and prune found nothing.
+  let decayReclassified = 0;
+  if (config.reclassifyDecayOnCycle !== false) {
+    step("decay reclassify (source/importance/recall)");
+    try {
+      const report = factsDb.reclassifyDecayClasses({
+        apply: true,
+        inactiveDays: config.reclassifyInactiveDays ?? 90,
+        promoteRecallCount: config.reclassifyPromoteRecallCount ?? 3,
+      });
+      decayReclassified = report.changed;
+      if (decayReclassified > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — decay reclassify: ${decayReclassified} facts re-tiered (scanned ${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-reclassify-decay",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
+  // ── Step 1d: Refresh denormalized graph degrees (#1192) ──────────────────
+  // Without this, every BFS hop runs `COUNT(*) FROM memory_links` against the same node, which
+  // is O(edges) per call. A single nightly refresh keeps reads cheap while still adapting to
+  // graph changes within a day.
+  if (typeof (factsDb as { refreshFactDegrees?: () => unknown }).refreshFactDegrees === "function") {
+    step("refresh fact degrees");
+    try {
+      const result = (factsDb as { refreshFactDegrees: () => { updated: number } }).refreshFactDegrees();
+      if (v) {
+        logger.info(`memory-hybrid: dream-cycle — refreshed fact degrees for ${result.updated} facts`);
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — refreshFactDegrees failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-refresh-degrees",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
@@ -414,6 +610,8 @@ export async function runDreamCycle(
         config.consolidateAfterDays,
         logger,
         v,
+        config.maxEventsPerConsolidation,
+        config.episodicConsolidationEventTypes ?? null,
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
@@ -614,6 +812,7 @@ export async function runDreamCycle(
     rulesGenerated,
     logRowsPruned,
     vacuumRan,
+    decayReclassified,
   });
 
   logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
@@ -628,6 +827,7 @@ export async function runDreamCycle(
     rulesGenerated,
     logRowsPruned,
     vacuumRan,
+    decayReclassified,
     digestSummary,
     skipped: false,
   };

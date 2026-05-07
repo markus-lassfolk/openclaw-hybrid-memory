@@ -10,10 +10,15 @@ import { registerManageCorrectionsAndPipeline } from "./manage/register-correcti
 import { registerManageCouncil } from "./manage/register-council.js";
 import { registerManageCredentialsAndScope } from "./manage/register-credentials-scope.js";
 import { registerManageProcedureAndLifecycle } from "./manage/register-procedure-lifecycle.js";
+import { registerManageDigest } from "./manage/register-digest.js";
+import { registerExpireBySourceCommands, registerLifecycleSyncCommands } from "./manage/register-lifecycle.js";
+import { registerAnalyzeMaintenanceLogsCommand } from "./manage/register-analyze-maintenance-logs.js";
 import { registerManageStorageAndStats } from "./manage/register-storage-and-stats.js";
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
   const b = buildManageBindings(ctx);
+  registerExpireBySourceCommands(mem, b);
+  registerLifecycleSyncCommands(mem, b);
   registerManageAgentsAuditRunall(mem, b);
   registerManageStorageAndStats(mem, b);
   registerManageBudgetAndProposals(mem, b);
@@ -21,4 +26,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageCredentialsAndScope(mem, b);
   registerManageProcedureAndLifecycle(mem, b);
   registerManageCouncil(mem, b);
+  registerManageDigest(mem, b);
+  registerAnalyzeMaintenanceLogsCommand(mem, b);
 }

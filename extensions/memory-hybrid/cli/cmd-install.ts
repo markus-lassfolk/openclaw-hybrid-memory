@@ -21,8 +21,9 @@ import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
 import { findPluginRoot } from "../utils/plugin-root.js";
 
-import type { HybridMemoryConfig } from "../config.js";
+import type { DigestWeeklyDeliveryConfig, HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
 import { buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -374,6 +375,66 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
+
+  // Sunday 05:00 | weekly-audit-health | audit health --strict --json
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`,
+    sessionTarget: "isolated",
+    name: "weekly-audit-health",
+    schedule: { kind: "cron", expr: "0 5 * * 0" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-audit-health", {
+      preamble:
+        "Weekly operator health audit. Run in strict mode, summarize warnings/remediation, and alert the user if the command exits non-zero.",
+      steps: [{ name: "audit-health", cmd: "openclaw hybrid-mem audit health --strict --json" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
+  // Daily 03:30 | maintenance-log-analyzer | analyze maintenance logs after nightly chain
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`,
+    sessionTarget: "isolated",
+    name: "maintenance-log-analyzer",
+    schedule: { kind: "cron", expr: "30 3 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("maintenance-log-analyzer", {
+      preamble:
+        "Analyze hybrid-memory maintenance logs from the last 24h, report plugin/orchestration failures to GlitchTip if configured, and render a digest for the operator.",
+      steps: [
+        {
+          name: "analyze-maintenance-logs",
+          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md",
+        },
+      ],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
+
+  // Monday 08:00 | weekly-pending-digest | digest pending --since 7d --format md
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`,
+    sessionTarget: "isolated",
+    name: "weekly-pending-digest",
+    schedule: { kind: "cron", expr: "0 8 * * 1" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-pending-digest", {
+      preamble:
+        "Weekly pending-review digest. Render the digest and summarize any pending approve/decline/defer actions for the operator.",
+      steps: [{ name: "digest-pending", cmd: "openclaw hybrid-mem digest pending --since 7d --format md" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
@@ -411,7 +472,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
-  // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
+  // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay → reembed-vectorless
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`,
     sessionTarget: "isolated",
@@ -425,6 +486,7 @@ const MAINTENANCE_CRON_JOBS: Array<
         { name: "consolidate", cmd: "openclaw hybrid-mem consolidate --threshold 0.92" },
         { name: "build-languages", cmd: "openclaw hybrid-mem build-languages" },
         { name: "backfill-decay", cmd: "openclaw hybrid-mem backfill-decay" },
+        { name: "reembed-vectorless", cmd: "openclaw hybrid-mem reembed-vectorless --limit 1000 --apply" },
         { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 500 --verbose" },
       ],
     }),
@@ -474,6 +536,30 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: 3 * 60 * 60 * 1000,
     featureGate: "sensorSweep.enabled",
   },
+  // Daily 04:00 | daily-lifecycle-sync — GitHub lifecycle adapter Phase 2 (#1196).
+  // Cron job is installed disabled by default; enable when `lifecycle.adapters.github.enabled` is true.
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}daily-lifecycle-sync`,
+    sessionTarget: "isolated",
+    name: "daily-lifecycle-sync",
+    schedule: { kind: "cron", expr: "0 4 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("daily-lifecycle-sync", {
+      preamble:
+        "GitHub lifecycle sync (#1196). Reads lifecycle.adapters.github.{repos,onMerged,onClosed,onOpen} and updates expires_at/decay_class on facts whose entity matches PR #N or Issue #N.",
+      steps: [
+        {
+          name: "lifecycle-sync-github",
+          cmd: "openclaw hybrid-mem lifecycle sync github",
+        },
+      ],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: false,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+    featureGate: "lifecycle.adapters.github.enabled",
+  },
 ];
 
 /**
@@ -495,10 +581,22 @@ function resolveCronJobModel(
  * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
  * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
  * If the def has minIntervalMs, prepends a guard prefix to the message to prevent re-runs on gateway restart (#304). */
+function resolveWeeklyPendingDigestDelivery(del?: DigestWeeklyDeliveryConfig): Record<string, unknown> {
+  const mode = del?.mode ?? "system";
+  if (mode === "none") return { mode: "none" };
+  if (mode === "telegram") {
+    const chatId = del?.chatId?.trim();
+    if (!chatId) return { mode: "announce" };
+    return { mode: "announce", channel: "telegram", chatId };
+  }
+  return { mode: "announce" };
+}
+
 function resolveCronJob(
   def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number },
   pluginConfig: CronModelConfig | undefined,
   agentPrimary: string | undefined,
+  digestWeeklyDelivery?: DigestWeeklyDeliveryConfig,
 ): Record<string, unknown> {
   const { modelTier, channel: _channel, minIntervalMs, featureGate: _featureGate, ...rest } = def;
   const tier = modelTier ?? "default";
@@ -510,7 +608,13 @@ function resolveCronJob(
   }
   const pluginJobId = rest.pluginJobId;
   const stableId = typeof pluginJobId === "string" && pluginJobId.trim().length > 0 ? pluginJobId.trim() : undefined;
-  return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery: { mode: "none" as const } };
+  const delivery =
+    stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`
+      ? resolveWeeklyPendingDigestDelivery(digestWeeklyDelivery)
+      : stableId === `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`
+        ? { mode: "announce" as const }
+        : { mode: "none" as const };
+  return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery };
 }
 
 function hasIsolatedCronSessionTarget(job: Record<string, unknown>): boolean {
@@ -533,10 +637,18 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
     /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`]: (j) =>
     /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) =>
+    /weekly-pending-digest|pending digest/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`]: (j) =>
+    /maintenance-log-analyzer|analyze-maintenance-logs/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>
     /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`]: (j) => /nightly-dream-cycle|dream.cycle/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`]: (j) => /sensor-sweep|sensor sweep/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}daily-lifecycle-sync`]: (j) =>
+    /daily-lifecycle-sync|lifecycle sync/i.test(String(j.name ?? "")),
 };
 
 /**
@@ -544,6 +656,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
  * Never re-enables jobs the user has disabled unless reEnableDisabled is true (callers should pass false to honor disabled jobs).
  * scheduleOverrides: optional map pluginJobId -> cron expr.
  * messageOverrides: optional map pluginJobId -> cron job message string.
+ * digestWeeklyDelivery: optional parsed digest.weekly.delivery for the weekly-pending-digest job (#1197).
  */
 export function ensureMaintenanceCronJobs(
   openclawDir: string,
@@ -554,6 +667,7 @@ export function ensureMaintenanceCronJobs(
     scheduleOverrides?: Record<string, string>;
     messageOverrides?: Record<string, string>;
     featureGates?: Record<string, boolean>;
+    digestWeeklyDelivery?: DigestWeeklyDeliveryConfig;
   } = {},
 ): { added: string[]; normalized: string[] } {
   const {
@@ -562,6 +676,7 @@ export function ensureMaintenanceCronJobs(
     scheduleOverrides,
     messageOverrides,
     featureGates,
+    digestWeeklyDelivery,
   } = options;
   const added: string[] = [];
   const normalized: string[] = [];
@@ -616,13 +731,23 @@ export function ensureMaintenanceCronJobs(
       jobsChanged = true;
     }
     if (!existing) {
-      const job = resolveCronJob(def, pluginConfig, agentPrimary) as Record<string, unknown>;
+      const job = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];
       jobsArr.push(job);
       jobsChanged = true;
       added.push(name);
     } else {
+      if (digestWeeklyDelivery && id === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`) {
+        const desired = resolveWeeklyPendingDigestDelivery(digestWeeklyDelivery);
+        const cur = JSON.stringify(existing.delivery ?? {});
+        const next = JSON.stringify(desired);
+        if (cur !== next) {
+          existing.delivery = desired;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+      }
       if (normalizeExisting) {
         if (typeof existing.schedule === "string") {
           existing.schedule = { kind: "cron", expr: scheduleExpr ?? existing.schedule };
@@ -673,7 +798,13 @@ export function ensureMaintenanceCronJobs(
         }
         // Fix delivery: "announce" + channel "system" or "last" requires WhatsApp target (E.164); maintenance jobs don't need delivery.
         const d = existing.delivery as { mode?: string; channel?: string } | undefined;
-        if (d && d.mode === "announce" && (d.channel === "system" || d.channel === "last")) {
+        if (
+          id !== `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest` &&
+          id !== `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer` &&
+          d &&
+          d.mode === "announce" &&
+          (d.channel === "system" || d.channel === "last")
+        ) {
           existing.delivery = { mode: "none" };
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
@@ -1058,6 +1189,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
           "nightlyCycle.enabled": (dreamCycleRaw?.enabled as boolean | undefined) === true,
         },
+        digestWeeklyDelivery: parseDigestWeeklyDeliveryOnly(getPluginEntryConfig(config) ?? {}),
       });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
@@ -1197,6 +1329,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
         "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
         "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
       },
+      digestWeeklyDelivery: cfg.digest.weekly.delivery,
     });
     if (added.length > 0 || normalized.length > 0) {
       logger?.info?.(

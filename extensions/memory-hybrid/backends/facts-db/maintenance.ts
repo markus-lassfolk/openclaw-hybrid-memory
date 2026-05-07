@@ -29,89 +29,289 @@ export function setFactTier(db: DatabaseSync, id: string, tier: MemoryTier): boo
   return result.changes > 0;
 }
 
-export function runCompaction(
-  db: DatabaseSync,
-  opts: {
-    inactivePreferenceDays: number;
-    hotMaxTokens: number;
-    hotMaxFacts: number;
-  },
-): {
+export type TieringOptions = {
+  inactivePreferenceDays: number;
+  hotMaxTokens: number;
+  hotMaxFacts: number;
+  coldAfterInactivityDays?: number;
+  hotMinAccessCount?: number;
+  hotAccessWindowDays?: number;
+  hotPreferenceImportance?: number;
+  /**
+   * #1187: Top-N facts by recall_count over the last `windowDays` are forced into the hot tier.
+   * Set `topN` to 0 to disable this rule. Defaults to {windowDays: 7, topN: 20}.
+   */
+  hotByRecallWindowDays?: number;
+  hotByRecallTopN?: number;
+  /**
+   * #1187: Treat schematic categories (entity/person/place/project) as structural even when
+   * the facts have only `key` (no `value`). Default: true.
+   */
+  structuralByCategoryEnabled?: boolean;
+  /**
+   * #1187: Treat `decay_class='permanent'` facts as structural (kept indexable but out of the
+   * recall ranking). Default: false to preserve the original behavior.
+   */
+  structuralPermanentEnabled?: boolean;
+};
+
+export type TieringCounts = {
   hot: number;
   warm: number;
   cold: number;
-} {
+  structural: number;
+};
+
+export type RetierReport = TieringCounts & {
+  apply: boolean;
+  examined: number;
+  changed: number;
+};
+
+type TierCandidate = {
+  id: string;
+  tier: MemoryTier;
+  text: string;
+  summary: string | null;
+  category: MemoryCategory | null;
+  importance: number;
+  key: string | null;
+  value: string | null;
+  decay_class: DecayClass | null;
+  tags: string | null;
+  recall_count: number;
+  access_count: number;
+  created_at: number;
+  last_accessed: number | null;
+  last_confirmed_at: number | null;
+  preserve_until: number | null;
+  preserve_tags: string | null;
+};
+
+function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions> {
+  return {
+    inactivePreferenceDays: opts.inactivePreferenceDays,
+    hotMaxTokens: opts.hotMaxTokens,
+    hotMaxFacts: opts.hotMaxFacts,
+    coldAfterInactivityDays: opts.coldAfterInactivityDays ?? 30,
+    hotMinAccessCount: opts.hotMinAccessCount ?? 3,
+    hotAccessWindowDays: opts.hotAccessWindowDays ?? 7,
+    hotPreferenceImportance: opts.hotPreferenceImportance ?? 0.7,
+    hotByRecallWindowDays: opts.hotByRecallWindowDays ?? 7,
+    hotByRecallTopN: opts.hotByRecallTopN ?? 20,
+    structuralByCategoryEnabled: opts.structuralByCategoryEnabled ?? true,
+    structuralPermanentEnabled: opts.structuralPermanentEnabled ?? false,
+  };
+}
+
+function hasTag(tagsStr: string | null, tag: string): boolean {
+  return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+}
+
+/** JSON-array parsing for `facts.preserve_tags` (tiering + trim). */
+function parsePreserveTags(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+const STRUCTURAL_CATEGORIES = new Set(["entity", "person", "place", "project"]);
+
+function isStructuralCandidate(row: TierCandidate, opts?: Required<TieringOptions>): boolean {
+  if (row.key === "implicit_feedback_signal") return false;
+  const hasKv = row.key != null && row.key.trim() !== "" && row.value != null && row.value.trim() !== "";
+  if (hasKv) return true;
+  // #1187: schematic facts (entity/person/place/project with a non-empty key) are structural
+  // even if they don't carry a `value`, so dashboards can surface them via `?tier=structural`.
+  if (
+    opts?.structuralByCategoryEnabled &&
+    row.category != null &&
+    STRUCTURAL_CATEGORIES.has(row.category) &&
+    row.key != null &&
+    row.key.trim() !== ""
+  ) {
+    return true;
+  }
+  // #1187: `decay_class='permanent'` rows can be tiered to structural to keep them out of
+  // semantic recall ranking while remaining indexable. Off by default; enable when you have
+  // a separate ranker that respects the structural tier.
+  if (opts?.structuralPermanentEnabled && row.decay_class === "permanent") return true;
+  return false;
+}
+
+function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
+  const preserveTags = parsePreserveTags(row.preserve_tags);
+  return (
+    (row.preserve_until != null && row.preserve_until > nowSec) ||
+    preserveTags.length > 0 ||
+    preserveTagsColumnExcludesFromTrimSql(row.preserve_tags) ||
+    hasTag(row.tags, "edict") ||
+    hasTag(row.tags, "blocker")
+  );
+}
+
+function isHotCandidate(
+  row: TierCandidate,
+  nowSec: number,
+  opts: Required<TieringOptions>,
+  flags?: { ignoreStructuralBlock?: boolean; hotByRecallIds?: ReadonlySet<string> },
+): boolean {
+  if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row, opts)) return false;
+  if (hasTag(row.tags, "blocker")) return true;
+  if (flags?.hotByRecallIds?.has(row.id)) return true;
+  if (["decision", "pattern", "rule"].includes(row.category ?? "")) return false;
+  if (row.preserve_until != null && row.preserve_until > nowSec) return true;
+  const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+  const hotWindowCutoff = nowSec - opts.hotAccessWindowDays * 86400;
+  const recentlyAccessed = opts.hotAccessWindowDays === 0 || lastAccess >= hotWindowCutoff;
+  const accessScore = Math.max(row.recall_count ?? 0, row.access_count ?? 0);
+  if (recentlyAccessed && accessScore >= opts.hotMinAccessCount) return true;
+  if (row.category === "preference" && row.importance >= opts.hotPreferenceImportance) {
+    const preferenceCutoff = nowSec - opts.inactivePreferenceDays * 86400;
+    const preferenceRecentlyAccessed = opts.inactivePreferenceDays === 0 || lastAccess >= preferenceCutoff;
+    if (preferenceRecentlyAccessed) return true;
+  }
+  return false;
+}
+
+function isColdCandidate(
+  row: TierCandidate,
+  nowSec: number,
+  opts: Required<TieringOptions>,
+  flags?: { hotByRecallIds?: ReadonlySet<string> },
+): boolean {
+  if (isStructuralCandidate(row, opts)) return false;
+  if (row.category === "preference") return false;
+  if (isHotCandidate(row, nowSec, opts, flags)) return false;
+  if (isPinnedTierCandidate(row, nowSec)) return false;
+  const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+  const coldCutoff = nowSec - opts.coldAfterInactivityDays * 86400;
+  return lastAccess < coldCutoff && (row.recall_count ?? 0) === 0 && (row.access_count ?? 0) === 0;
+}
+
+function chooseTier(
+  row: TierCandidate,
+  nowSec: number,
+  opts: Required<TieringOptions>,
+  flags?: { hotByRecallIds?: ReadonlySet<string> },
+): MemoryTier {
+  if (isPinnedTierCandidate(row, nowSec)) {
+    if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true, hotByRecallIds: flags?.hotByRecallIds })) {
+      return "hot";
+    }
+    return "warm";
+  }
+  // Key+value (and other structural) candidates use the structural slice before generic hot/warm/cold.
+  if (isStructuralCandidate(row, opts)) return "structural";
+  if (isHotCandidate(row, nowSec, opts, flags)) return "hot";
+  if (isColdCandidate(row, nowSec, opts, flags)) return "cold";
+  return "warm";
+}
+
+/**
+ * #1187: Compute the set of fact ids that are top-N by `recall_count` over the last
+ * `windowDays`. We approximate "in-window" by requiring `last_accessed >= cutoff`. When
+ * topN is 0 the rule is disabled.
+ */
+function computeHotByRecallIds(
+  rows: readonly TierCandidate[],
+  nowSec: number,
+  opts: Required<TieringOptions>,
+): Set<string> {
+  if (opts.hotByRecallTopN <= 0) return new Set();
+  const cutoff = opts.hotByRecallWindowDays > 0 ? nowSec - opts.hotByRecallWindowDays * 86400 : 0;
+  const eligible = rows
+    .filter((row) => {
+      const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+      const recall = row.recall_count ?? 0;
+      return recall > 0 && lastAccess >= cutoff;
+    })
+    .sort((a, b) => {
+      const bRecall = b.recall_count ?? 0;
+      const aRecall = a.recall_count ?? 0;
+      if (bRecall !== aRecall) return bRecall - aRecall;
+      const bAccess = b.last_accessed ?? b.last_confirmed_at ?? b.created_at;
+      const aAccess = a.last_accessed ?? a.last_confirmed_at ?? a.created_at;
+      return bAccess - aAccess;
+    })
+    .slice(0, opts.hotByRecallTopN);
+  return new Set(eligible.map((row) => row.id));
+}
+
+export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true): RetierReport {
+  const normalized = normalizeTieringOptions(opts);
   const nowSec = Math.floor(Date.now() / 1000);
-  const inactiveCutoff = nowSec - opts.inactivePreferenceDays * 86400;
-  const counts = { hot: 0, warm: 0, cold: 0 };
-
-  const taskRows = db
+  const rows = db
     .prepare(
-      `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (category = 'decision' OR (',' || COALESCE(tags,'') || ',') LIKE '%,task,%')
-         AND (tier IS NULL OR tier != 'cold')`,
+      `SELECT id, COALESCE(tier, 'warm') as tier, text, summary, category, importance, key, value, decay_class, tags,
+              COALESCE(recall_count, 0) as recall_count, COALESCE(access_count, 0) as access_count,
+              created_at, last_accessed, last_confirmed_at, preserve_until, preserve_tags
+         FROM facts
+         WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
     )
-    .all(nowSec) as Array<{ id: string }>;
-  for (const { id } of taskRows) {
-    if (setFactTier(db, id, "cold")) counts.cold++;
-  }
+    .all(nowSec) as TierCandidate[];
 
-  const prefRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND category = 'preference' AND COALESCE(last_accessed, last_confirmed_at, created_at) < ?
-         AND tier = 'hot'`,
-    )
-    .all(nowSec, inactiveCutoff) as Array<{ id: string }>;
-  for (const { id } of prefRows) {
-    if (setFactTier(db, id, "warm")) counts.warm++;
-  }
+  const hotByRecallIds = computeHotByRecallIds(rows, nowSec, normalized);
+  const desired = rows.map((row) => ({
+    id: row.id,
+    from: row.tier,
+    to: chooseTier(row, nowSec, normalized, { hotByRecallIds }),
+  }));
 
-  const existingHotBlockerRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'`,
-    )
-    .all(nowSec) as Array<{ id: string }>;
-  const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
-
-  const blockerRows = db
-    .prepare(
-      `SELECT id, text, summary FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
-         AND (tier IS NULL OR tier != 'hot')`,
-    )
-    .all(nowSec) as Array<{
-    id: string;
-    text: string;
-    summary: string | null;
-  }>;
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
+  const hotDesired = desired
+    .filter((d) => d.to === "hot")
+    .map((d) => rowsById.get(d.id) as TierCandidate)
+    .sort((a, b) => {
+      const bScore = Math.max(b.recall_count ?? 0, b.access_count ?? 0);
+      const aScore = Math.max(a.recall_count ?? 0, a.access_count ?? 0);
+      if (bScore !== aScore) return bScore - aScore;
+      if (b.importance !== a.importance) return b.importance - a.importance;
+      const bAccess = b.last_accessed ?? b.last_confirmed_at ?? b.created_at;
+      const aAccess = a.last_accessed ?? a.last_confirmed_at ?? a.created_at;
+      return bAccess - aAccess;
+    });
+  const keepHot = new Set<string>();
   let hotTokens = 0;
-  const hotIds: string[] = [];
-  for (const row of blockerRows) {
-    if (hotIds.length >= opts.hotMaxFacts) break;
-    const len = (row.summary || row.text).length;
-    const tokens = Math.ceil(len / 4);
-    if (hotTokens + tokens > opts.hotMaxTokens) continue;
+  for (const row of hotDesired) {
+    if (keepHot.size >= normalized.hotMaxFacts) break;
+    const tokens = Math.ceil((row.summary || row.text).length / 4);
+    if (hotTokens + tokens > normalized.hotMaxTokens) continue;
     hotTokens += tokens;
-    hotIds.push(row.id);
+    keepHot.add(row.id);
   }
-  for (const id of hotIds) {
-    allBlockerIdSet.add(id);
-    if (setFactTier(db, id, "hot")) counts.hot++;
-  }
-
-  const hotRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-    )
-    .all(nowSec) as Array<{ id: string }>;
-  for (const { id } of hotRows) {
-    if (allBlockerIdSet.has(id)) continue;
-    if (setFactTier(db, id, "warm")) counts.warm++;
+  for (const d of desired) {
+    if (d.to === "hot" && !keepHot.has(d.id)) d.to = "warm";
   }
 
+  const counts: RetierReport = { apply, examined: rows.length, changed: 0, hot: 0, warm: 0, cold: 0, structural: 0 };
+  for (const d of desired) {
+    if (d.to === "hot") counts.hot++;
+    else if (d.to === "warm") counts.warm++;
+    else if (d.to === "cold") counts.cold++;
+    else if (d.to === "structural") counts.structural++;
+    if (d.from !== d.to) counts.changed++;
+  }
+
+  if (!apply || counts.changed === 0) return counts;
+
+  const update = db.prepare("UPDATE facts SET tier = ? WHERE id = ?");
+  const tx = createTransaction(db, () => {
+    for (const d of desired) {
+      if (d.from !== d.to) update.run(d.to, d.id);
+    }
+  });
+  tx();
   return counts;
+}
+
+export function runCompaction(db: DatabaseSync, opts: TieringOptions): RetierReport {
+  const report = retierFacts(db, opts, true);
+  return report;
 }
 
 export function trimToBudget(
@@ -159,20 +359,6 @@ export function trimToBudget(
     tags: string | null;
     is_verified: number;
   }>;
-
-  const parsePreserveTags = (raw: string | null): string[] => {
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const hasTag = (tagsStr: string | null, tag: string): boolean => {
-    return parseTags(tagsStr).includes(tag.toLowerCase().trim());
-  };
 
   const p0: Array<{ id: string; text: string }> = [];
   const preserved: Array<{ id: string; reason: string }> = [];
@@ -513,30 +699,331 @@ export function restoreCheckpoint(db: DatabaseSync): {
   }
 }
 
-export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
+export type LifecycleEntityReportRow = {
+  pattern: "pr" | "issue" | "sprint";
+  entity: string;
+  count: number;
+  activeCount: number;
+  decayClass: string;
+  expiresAt: number | null;
+};
+
+export type LifecycleEntityReport = {
+  rows: LifecycleEntityReportRow[];
+  totals: Record<string, number>;
+};
+
+export type ExpireBySourcePatternReport = {
+  pattern: string;
+  apply: boolean;
+  matched: number;
+  changed: number;
+  decayClass: DecayClass;
+  ttlDays: number;
+  expiresAt: number;
+};
+
+function lifecycleEntityPattern(entity: string | null): "pr" | "issue" | "sprint" | null {
+  if (!entity) return null;
+  if (/^(?:pr|pull request)\s*#?\d+$/i.test(entity)) return "pr";
+  if (/^issue\s*#?\d+$/i.test(entity)) return "issue";
+  if (/^sprint\b/i.test(entity)) return "sprint";
+  return null;
+}
+
+export function lifecycleEntityReport(db: DatabaseSync, limit = 100): LifecycleEntityReport {
   const rows = db
-    .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
-    .all() as Array<{
-    rowid: number;
+    .prepare(
+      `SELECT entity, COALESCE(decay_class, 'normal') AS decay_class, expires_at,
+              COUNT(*) AS cnt,
+              SUM(CASE WHEN superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) THEN 1 ELSE 0 END) AS active_cnt
+         FROM facts
+        WHERE entity IS NOT NULL
+          AND TRIM(entity) != ''
+          AND (
+            entity GLOB 'PR #*' OR
+            entity GLOB 'pr #*' OR
+            entity GLOB 'Issue #*' OR
+            entity GLOB 'issue #*' OR
+            entity GLOB 'Sprint *' OR
+            entity GLOB 'sprint *' OR
+            entity GLOB 'Pull Request #*' OR
+            entity GLOB 'pull request #*'
+          )
+        GROUP BY entity, COALESCE(decay_class, 'normal'), expires_at
+        ORDER BY cnt DESC, entity COLLATE NOCASE ASC
+        LIMIT ?`,
+    )
+    .all(Math.floor(Date.now() / 1000), Math.max(1, Math.min(500, Math.floor(limit)))) as Array<{
     entity: string;
-    key: string;
-    value: string;
+    decay_class: string;
+    expires_at: number | null;
+    cnt: number;
+    active_cnt: number;
+  }>;
+  const filtered = rows
+    .map((row) => {
+      const pattern = lifecycleEntityPattern(row.entity);
+      if (pattern === null) return null;
+      return {
+        pattern,
+        entity: row.entity,
+        count: Number(row.cnt ?? 0),
+        activeCount: Number(row.active_cnt ?? 0),
+        decayClass: row.decay_class,
+        expiresAt: row.expires_at == null ? null : Number(row.expires_at),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+  const totals = filtered.reduce(
+    (acc, row) => {
+      acc[row.pattern] = (acc[row.pattern] ?? 0) + row.count;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+  return { rows: filtered, totals };
+}
+
+function globToSqlLike(pattern: string): string {
+  return pattern
+    .replace(/[~%_]/g, (m) => `~${m}`)
+    .replace(/\*/g, "%")
+    .replace(/\?/g, "_");
+}
+
+export function expireBySourcePattern(
+  db: DatabaseSync,
+  options: {
+    pattern: string;
+    ttlDays: number;
+    decayClass?: DecayClass;
+    apply?: boolean;
+    nowSec?: number;
+  },
+): ExpireBySourcePatternReport {
+  const pattern = options.pattern.trim();
+  const ttlDays = Math.max(1, Math.floor(options.ttlDays));
+  const decayClass = options.decayClass ?? "short";
+  const apply = options.apply === true;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const expiresAt = nowSec + ttlDays * 24 * 3600;
+  const like = globToSqlLike(pattern);
+  const matched = Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM facts
+            WHERE entity LIKE ? ESCAPE '~'
+              AND superseded_at IS NULL`,
+        )
+        .get(like) as { cnt: number } | undefined
+    )?.cnt ?? 0,
+  );
+  const changed = Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM facts
+            WHERE entity LIKE ? ESCAPE '~'
+              AND superseded_at IS NULL
+              AND (COALESCE(decay_class, 'normal') != ? OR COALESCE(expires_at, 0) != ?)`,
+        )
+        .get(like, decayClass, expiresAt) as { cnt: number } | undefined
+    )?.cnt ?? 0,
+  );
+  if (apply && changed > 0) {
+    db.prepare(
+      `UPDATE facts
+          SET decay_class = ?, expires_at = ?
+        WHERE entity LIKE ? ESCAPE '~'
+          AND superseded_at IS NULL
+          AND (COALESCE(decay_class, 'normal') != ? OR COALESCE(expires_at, 0) != ?)`,
+    ).run(decayClass, expiresAt, like, decayClass, expiresAt);
+  }
+  return { pattern, apply, matched, changed, decayClass, ttlDays, expiresAt };
+}
+
+export type DecayReclassifyOptions = {
+  apply?: boolean;
+  stableOnly?: boolean;
+  limit?: number;
+  nowSec?: number;
+  inactiveDays?: number;
+  promoteRecallCount?: number;
+};
+
+export type DecayReclassifyReport = {
+  apply: boolean;
+  scanned: number;
+  changed: number;
+  before: Record<string, number>;
+  after: Record<string, number>;
+  changes: Record<string, number>;
+  stablePermanentBefore: number;
+  stablePermanentAfter: number;
+  stablePermanentRatioBefore: number;
+  stablePermanentRatioAfter: number;
+};
+
+function incrementCount(counts: Record<string, number>, key: string, delta = 1): void {
+  counts[key] = (counts[key] ?? 0) + delta;
+  if (counts[key] === 0) delete counts[key];
+}
+
+function decayDistribution(db: DatabaseSync): Record<string, number> {
+  const rows = db
+    .prepare(
+      "SELECT COALESCE(decay_class, 'normal') as decay_class, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY COALESCE(decay_class, 'normal')",
+    )
+    .all() as Array<{ decay_class: string; cnt: number }>;
+  const out: Record<string, number> = {};
+  for (const row of rows) out[row.decay_class] = row.cnt;
+  return out;
+}
+
+function stablePermanentStats(counts: Record<string, number>): { count: number; ratio: number } {
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const count = (counts.stable ?? 0) + (counts.permanent ?? 0);
+  return { count, ratio: total > 0 ? count / total : 0 };
+}
+
+function reinforcedDecayClass(
+  base: DecayClass,
+  row: {
+    category: string | null;
+    source: string | null;
+    created_at: number;
+    last_accessed: number | null;
+    recall_count: number | null;
+    access_count: number | null;
+  },
+  opts: Required<Pick<DecayReclassifyOptions, "nowSec" | "inactiveDays" | "promoteRecallCount">>,
+): DecayClass {
+  const recallCount = row.recall_count ?? 0;
+  const accessCount = row.access_count ?? 0;
+  const lastAccessed = row.last_accessed ?? 0;
+  const lastUse = Math.max(lastAccessed, row.created_at);
+  const ageSeconds = Math.max(0, opts.nowSec - row.created_at);
+  const inactiveSeconds = Math.max(0, opts.nowSec - lastUse);
+  const protectedCategory = ["rule", "edict"].includes((row.category ?? "").toLowerCase());
+  const seedSource = (row.source ?? "").toLowerCase().startsWith("seed:");
+
+  if (recallCount >= opts.promoteRecallCount || accessCount >= opts.promoteRecallCount) {
+    if (["short", "normal", "active"].includes(base)) return "durable";
+    if (["session", "checkpoint", "ephemeral"].includes(base)) return "normal";
+  }
+
+  if (!protectedCategory && !seedSource && base !== "permanent" && recallCount === 0 && accessCount === 0) {
+    if (ageSeconds >= opts.inactiveDays * 86_400 && inactiveSeconds >= opts.inactiveDays * 86_400) return "short";
+  }
+
+  return base;
+}
+
+export function reclassifyDecayClasses(db: DatabaseSync, options: DecayReclassifyOptions = {}): DecayReclassifyReport {
+  const apply = options.apply === true;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const inactiveDays = options.inactiveDays ?? 90;
+  const promoteRecallCount = options.promoteRecallCount ?? 3;
+  const stableOnly = options.stableOnly === true;
+  const limit = options.limit != null && options.limit > 0 ? Math.floor(options.limit) : null;
+  const where = stableOnly ? "WHERE superseded_at IS NULL AND decay_class = 'stable'" : "WHERE superseded_at IS NULL";
+  const sql = `SELECT rowid, entity, key, value, text, source, category, importance, decay_class, created_at, last_accessed, recall_count, access_count FROM facts ${where} ORDER BY created_at ASC${limit ? ` LIMIT ${limit}` : ""}`;
+  const rows = db.prepare(sql).all() as Array<{
+    rowid: number;
+    entity: string | null;
+    key: string | null;
+    value: string | null;
     text: string;
+    source: string | null;
+    category: string | null;
+    importance: number | null;
+    decay_class: DecayClass;
+    created_at: number;
+    last_accessed: number | null;
+    recall_count: number | null;
+    access_count: number | null;
   }>;
 
-  const nowSec = Math.floor(Date.now() / 1000);
+  const before = decayDistribution(db);
+  const after = { ...before };
+  const changes: Record<string, number> = {};
+  let changed = 0;
   const update = db.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
 
-  const counts: Record<string, number> = {};
-  const tx = createTransaction(db, () => {
+  const run = () => {
     for (const row of rows) {
-      const dc = classifyDecay(row.entity, row.key, row.value, row.text);
-      if (dc === "stable") continue;
-      const exp = calculateExpiry(dc, nowSec);
-      update.run(dc, exp, row.rowid);
-      counts[dc] = (counts[dc] || 0) + 1;
+      const base = classifyDecay(row.entity, row.key, row.value, row.text, {
+        source: row.source,
+        category: row.category,
+        importance: row.importance,
+      });
+      const next = reinforcedDecayClass(base, row, { nowSec, inactiveDays, promoteRecallCount });
+      const current = row.decay_class ?? "normal";
+      if (next === current) continue;
+      changed++;
+      incrementCount(after, current, -1);
+      incrementCount(after, next, 1);
+      incrementCount(changes, `${current}->${next}`);
+      if (apply) update.run(next, calculateExpiry(next, nowSec), row.rowid);
     }
-  });
-  tx();
+  };
+
+  if (apply) createTransaction(db, run)();
+  else run();
+
+  const beforeStats = stablePermanentStats(before);
+  const afterStats = stablePermanentStats(after);
+  return {
+    apply,
+    scanned: rows.length,
+    changed,
+    before,
+    after,
+    changes,
+    stablePermanentBefore: beforeStats.count,
+    stablePermanentAfter: afterStats.count,
+    stablePermanentRatioBefore: beforeStats.ratio,
+    stablePermanentRatioAfter: afterStats.ratio,
+  };
+}
+
+export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      "SELECT rowid, entity, key, value, text, source, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND decay_class = 'stable' ORDER BY created_at ASC",
+    )
+    .all() as Array<{
+    rowid: number;
+    entity: string | null;
+    key: string | null;
+    value: string | null;
+    text: string;
+    source: string | null;
+    category: string | null;
+    importance: number | null;
+    decay_class: DecayClass;
+  }>;
+
+  const counts: Record<string, number> = {};
+  const update = db.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
+
+  const run = () => {
+    for (const row of rows) {
+      const next = classifyDecay(row.entity, row.key, row.value, row.text, {
+        source: row.source,
+        category: row.category,
+        importance: row.importance,
+      });
+      const current = row.decay_class ?? "normal";
+      if (next === current) continue;
+      counts[next] = (counts[next] ?? 0) + 1;
+      update.run(next, calculateExpiry(next, nowSec), row.rowid);
+    }
+  };
+
+  createTransaction(db, run)();
   return counts;
 }

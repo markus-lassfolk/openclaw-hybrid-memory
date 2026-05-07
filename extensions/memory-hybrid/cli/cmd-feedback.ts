@@ -28,9 +28,264 @@ import {
   generateMonthlyReport,
 } from "../services/tool-effectiveness.js";
 import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
+
+const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
+
+/** Comma-safe tag predicate for trajectory lesson rows (avoids substring false positives). */
+const SQL_TRAJECTORY_LESSON_TAGS = `(
+  (',' || COALESCE(tags,'') || ',') LIKE '%,implicit-feedback,%'
+  AND (',' || COALESCE(tags,'') || ',') LIKE '%,trajectory,%'
+  AND (',' || COALESCE(tags,'') || ',') LIKE '%,feedback,%'
+)`;
+
+/**
+ * Modern key + legacy rows: null-key trajectory lessons, including older pattern-shaped rows that only
+ * carried a trajectory tag (no implicit-feedback/feedback tag triple). Negative self-correction rows
+ * are excluded via the `negative` tag.
+ */
+export const SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER = `(
+  key = 'implicit_feedback_signal'
+  OR (
+    (key IS NULL OR TRIM(COALESCE(key, '')) = '')
+    AND source = 'implicit-feedback'
+    AND (',' || COALESCE(tags,'') || ',') NOT LIKE '%,negative,%'
+    AND (
+      (${SQL_TRAJECTORY_LESSON_TAGS})
+      OR (
+        (category = 'pattern' OR category = 'technical')
+        AND (',' || COALESCE(tags,'') || ',') LIKE '%,trajectory,%'
+      )
+    )
+  )
+)`;
+
+const LESSON_DEDUPE_STOPWORDS = new Set([
+  "and",
+  "are",
+  "each",
+  "for",
+  "from",
+  "has",
+  "have",
+  "into",
+  "that",
+  "the",
+  "then",
+  "this",
+  "when",
+  "with",
+]);
+
+function normalizeLessonToken(token: string): string {
+  let normalized = token.trim();
+  if (normalized.endsWith("ed") && normalized.length > 5) {
+    normalized = normalized.slice(0, -2);
+  } else if (normalized.endsWith("ies") && normalized.length > 5) {
+    normalized = `${normalized.slice(0, -3)}y`;
+  } else if (normalized.endsWith("es") && normalized.length > 4) {
+    normalized = normalized.slice(0, -2);
+  } else if (normalized.endsWith("s") && normalized.length > 4) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function normalizeLessonTokens(text: string): Set<string> {
+  const out = new Set<string>();
+  const rawTokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9åäö]+/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+  for (const raw of rawTokens) {
+    if (LESSON_DEDUPE_STOPWORDS.has(raw)) continue;
+    let stem = normalizeLessonToken(raw);
+    if (!stem || stem.length < 2) continue;
+    if (LESSON_DEDUPE_STOPWORDS.has(stem) && stem !== raw) {
+      stem = raw;
+    }
+    if (LESSON_DEDUPE_STOPWORDS.has(stem)) continue;
+    out.add(stem);
+  }
+  return out;
+}
+
+function tokenJaccard(a: string, b: string): number {
+  const left = normalizeLessonTokens(a);
+  const right = normalizeLessonTokens(b);
+  if (left.size === 0 || right.size === 0) return 0;
+  let intersection = 0;
+  for (const token of left) {
+    if (right.has(token)) intersection++;
+  }
+  return intersection / (left.size + right.size - intersection);
+}
+
+function getImplicitFeedbackLessonsStoredToday(rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>): number {
+  if (!rawDb) return 0;
+  const startOfDaySec = Math.floor(Date.now() / 86400000) * 86400;
+  const row = rawDb
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER} AND created_at >= ? AND superseded_at IS NULL`,
+    )
+    .get(startOfDaySec) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
+}
+
+function findSimilarImplicitFeedbackLesson(
+  rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>,
+  lesson: string,
+  threshold: number,
+): string | null {
+  if (!rawDb) return null;
+  const prefix = lesson.trim().slice(0, 80);
+  const rows = rawDb
+    .prepare(
+      `SELECT id, text FROM facts
+       WHERE source = 'implicit-feedback'
+         AND superseded_at IS NULL
+         AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
+       ORDER BY created_at DESC
+       LIMIT 500`,
+    )
+    .all() as Array<{ id: string; text: string }>;
+  for (const row of rows) {
+    if (row.text === lesson || (prefix.length >= 20 && row.text.startsWith(prefix))) return row.id;
+    if (tokenJaccard(row.text, lesson) >= threshold) return row.id;
+  }
+  return null;
+}
+
+function markImplicitFeedbackLessonRecalled(
+  rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>,
+  factId: string,
+): void {
+  const nowSec = Math.floor(Date.now() / 1000);
+  rawDb
+    ?.prepare(
+      "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+    )
+    .run(nowSec, nowSec, factId);
+}
+
+/** Rows matching this OR-branch are legacy implicit-feedback bloat (category=pattern). Use with --include-legacy collapse. */
+export const SQL_IMPLICIT_LEGACY_PATTERN_ROWS = `(category = 'pattern' AND source = 'implicit-feedback')`;
+
+function buildImplicitFeedbackCleanupFilter(includeLegacy: boolean): string {
+  if (includeLegacy) {
+    return `(${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER} OR ${SQL_IMPLICIT_LEGACY_PATTERN_ROWS})`;
+  }
+  return SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER;
+}
+
+export function cleanupImplicitFeedbackDuplicates(
+  factsDb: FactsDB,
+  opts: {
+    threshold?: number;
+    limit?: number;
+    afterRowid?: number;
+    /** When true, report collapsible rows without superseding/reinforcing. */
+    dryRun?: boolean;
+    /** Leaders from prior paging batches so near-duplicates across windows still collapse. */
+    seedCanonical?: ReadonlyArray<{ id: string; text: string }>;
+    /** When true, also collapse legacy `category=pattern` implicit-feedback rows into canonical signals. */
+    includeLegacy?: boolean;
+  } = {},
+): {
+  scanned: number;
+  collapsed: number;
+  resumeAfterRowid: number | null;
+  carryCanonical: Array<{ id: string; text: string }>;
+} {
+  const rawDb = factsDb.getRawDb();
+  if (!rawDb) {
+    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+  }
+  const threshold = opts.threshold ?? 0.8;
+  const limit = opts.limit ?? 1000;
+  if (limit <= 0) {
+    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+  }
+  const afterRowid = opts.afterRowid ?? 0;
+  const dryRun = opts.dryRun === true;
+  const rowFilter = buildImplicitFeedbackCleanupFilter(opts.includeLegacy === true);
+  const rows = rawDb
+    .prepare(
+      `SELECT rowid as rowid, id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
+       FROM facts
+       WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND ${rowFilter}
+         AND (@afterRowid = 0 OR rowid > @afterRowid)
+       ORDER BY rowid ASC
+       LIMIT @limit`,
+    )
+    .all({ "@afterRowid": afterRowid, "@limit": limit }) as Array<{
+    rowid: number;
+    id: string;
+    text: string;
+    recallCount: number;
+    accessCount: number;
+    createdAt: number;
+  }>;
+  let collapsed = 0;
+  const CANONICAL_WINDOW_SIZE = Math.min(20_000, Math.max(2000, limit * 8));
+  const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
+    .slice(-CANONICAL_WINDOW_SIZE)
+    .map((c) => ({ id: c.id, text: c.text }));
+  const nowSec = Math.floor(Date.now() / 1000);
+  const reinforce = rawDb.prepare(
+    "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+  );
+  const supersedeStmt = rawDb.prepare(
+    "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
+  );
+  let supersededAny = false;
+  const scanRows = () => {
+    for (const row of rows) {
+      const match = canonical.find(
+        (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
+      );
+      if (!match) {
+        canonical.push({ id: row.id, text: row.text });
+        continue;
+      }
+      if (dryRun) {
+        collapsed++;
+        continue;
+      }
+      const sup = supersedeStmt.run(nowSec, match.id, nowSec, row.id);
+      if ((sup.changes ?? 0) <= 0) continue;
+      supersededAny = true;
+      reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+      collapsed++;
+    }
+  };
+  if (dryRun) {
+    scanRows();
+  } else {
+    rawDb.prepare("BEGIN").run();
+    try {
+      scanRows();
+      rawDb.prepare("COMMIT").run();
+    } catch (err) {
+      rawDb.prepare("ROLLBACK").run();
+      throw err;
+    }
+  }
+  if (supersededAny) {
+    factsDb.invalidateSupersededTextsCache();
+  }
+  const lastRow = rows[rows.length - 1];
+  return {
+    scanned: rows.length,
+    collapsed,
+    resumeAfterRowid: lastRow ? lastRow.rowid : null,
+    carryCanonical: canonical.slice(-CANONICAL_WINDOW_SIZE).map((c) => ({ id: c.id, text: c.text })),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // extract-implicit-feedback
@@ -39,7 +294,7 @@ import type { HandlerContext } from "./handlers.js";
 /**
  * Extract implicit feedback signals from recent sessions.
  * Signals are routed to the reinforcement pipeline (positive) or stored as
- * pattern facts for self-correction (negative). Trajectories and closed-loop
+ * technical implicit_feedback_signal facts for self-correction (negative). Trajectories and closed-loop
  * analysis are run as subsequent phases when not disabled.
  */
 export async function runExtractImplicitFeedbackForCli(
@@ -73,6 +328,10 @@ export async function runExtractImplicitFeedbackForCli(
     terseResponseRatio: 0.4,
     feedToReinforcement: true,
     feedToSelfCorrection: true,
+    maxLessonsPerDay: 50,
+    lessonDedupeJaccard: 0.8,
+    autoCleanup: true,
+    cleanupLimit: 1000,
   };
 
   if (implicitCfg.enabled === false) {
@@ -102,6 +361,13 @@ export async function runExtractImplicitFeedbackForCli(
     const sessionFile = basename(filePath);
     const turns = parseSessionTurns(lines);
     if (turns.length < 3) continue;
+
+    /**
+     * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
+     * file; each store path re-reads `getImplicitFeedbackLessonsStoredToday` before quota-gated writes
+     * so counts stay accurate after earlier phases in the same file.
+     */
+    let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
 
     // Phase 1: Extract implicit signals
     const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
@@ -187,25 +453,35 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // Route negative signals to self-correction pipeline as pattern facts
+    // Route negative signals to self-correction as technical implicit_feedback_signal facts (same dedupe/quota as trajectory lessons).
     if (!opts.dryRun && implicitCfg.feedToSelfCorrection !== false && signals.length > 0) {
       const minConf = implicitCfg.minConfidence ?? 0.5;
+      const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+      const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
         try {
+          lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
           const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
-          if (!factsDb.hasDuplicate(text)) {
-            factsDb.store({
-              text,
-              category: "pattern",
-              importance: Math.max(0.3, sig.confidence * 0.6),
-              entity: null,
-              key: null,
-              value: text.slice(0, 200),
-              source: "implicit-feedback",
-              tags: ["implicit-feedback", "negative", sig.type],
-            });
+          const similarId = rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, text, lessonDedupeJaccard) : null;
+          if (similarId) {
+            if (rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+            continue;
           }
+          if (factsDb.hasDuplicate(text, "implicit-feedback")) continue;
+          if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
+          factsDb.store({
+            text,
+            category: "technical",
+            importance: Math.max(0.3, sig.confidence * 0.6),
+            entity: null,
+            key: "implicit_feedback_signal",
+            value: text.slice(0, 200),
+            source: "implicit-feedback",
+            tags: ["implicit-feedback", "negative", sig.type],
+            decayClass: "normal",
+          });
+          lessonsStoredTodaySession++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "runExtractImplicitFeedbackForCli:feed-self-correction",
@@ -283,20 +559,35 @@ export async function runExtractImplicitFeedbackForCli(
               row.tools_used,
               row.turn_count,
             );
-            // Store lessons as PATTERN_FACT entries in factsDb
+            // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
+            const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+            const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
             for (const lesson of traj.lessonsExtracted) {
-              if (!lesson.trim() || factsDb.hasDuplicate(lesson)) continue;
+              lessonsStoredTodaySession = rawDb
+                ? getImplicitFeedbackLessonsStoredToday(rawDb)
+                : lessonsStoredTodaySession;
+              const trimmedLesson = lesson.trim();
+              if (!trimmedLesson) continue;
+              const similarId =
+                rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
+              if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
+                if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+                continue;
+              }
+              if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
               try {
                 factsDb.store({
-                  text: lesson,
-                  category: "pattern",
-                  importance: 0.6,
+                  text: trimmedLesson,
+                  category: "technical",
+                  importance: 0.5,
                   entity: null,
-                  key: null,
-                  value: lesson.slice(0, 200),
+                  key: "implicit_feedback_signal",
+                  value: trimmedLesson.slice(0, 200),
                   source: "implicit-feedback",
-                  tags: ["trajectory", "feedback"],
+                  tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
+                  decayClass: "normal",
                 });
+                lessonsStoredTodaySession++;
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   operation: "runExtractImplicitFeedbackForCli:store-lesson",
@@ -320,6 +611,37 @@ export async function runExtractImplicitFeedbackForCli(
           subsystem: "implicit-feedback",
         });
       }
+    }
+  }
+
+  if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
+    try {
+      const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
+      const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
+      let afterRowid = 0;
+      let totalCollapsed = 0;
+      let carryCanonical: Array<{ id: string; text: string }> | undefined;
+      for (;;) {
+        const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
+          threshold,
+          limit: cleanupLimit,
+          afterRowid,
+          seedCanonical: carryCanonical,
+        });
+        totalCollapsed += cleanup.collapsed;
+        carryCanonical = cleanup.carryCanonical;
+        if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
+        afterRowid = cleanup.resumeAfterRowid;
+      }
+      if (opts.verbose && totalCollapsed > 0) {
+        logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:cleanup-duplicates",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
     }
   }
 
@@ -366,7 +688,7 @@ export interface CrossAgentLearningCliResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
-  linksCreated: number;
+  provenanceRecorded: number;
   skippedDuplicates: number;
   errors: number;
 }
@@ -386,7 +708,7 @@ export async function runCrossAgentLearningForCli(
       agentsScanned: 0,
       lessonsConsidered: 0,
       generalisedStored: 0,
-      linksCreated: 0,
+      provenanceRecorded: 0,
       skippedDuplicates: 0,
       errors: 0,
     };

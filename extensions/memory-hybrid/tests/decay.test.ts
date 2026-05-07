@@ -99,8 +99,44 @@ describe("classifyDecay — English keys (regression)", () => {
     expect(classifyDecay(null, "preflight_check", null, "ok")).toBe("checkpoint");
   });
 
-  it("null key, generic text → stable", () => {
-    expect(classifyDecay(null, null, null, "some random info")).toBe("stable");
+  it("null key, generic text → normal", () => {
+    expect(classifyDecay(null, null, null, "some random info")).toBe("normal");
+  });
+});
+
+describe("classifyDecay — source/category/importance defaults (#1189)", () => {
+  beforeEach(async () => {
+    setKeywordsPath("");
+    await clearKeywordCache();
+  });
+
+  it("uses source-aware TTL-bearing defaults for noisy captures", () => {
+    expect(classifyDecay(null, null, null, "observed a transient user interaction", { source: "auto-capture" })).toBe(
+      "normal",
+    );
+    expect(classifyDecay(null, null, null, "trajectory lesson", { source: "implicit-feedback" })).toBe("normal");
+    expect(classifyDecay(null, null, null, "raw dream source event", { source: "dream-cycle-src" })).toBe("checkpoint");
+  });
+
+  it("uses category-aware distillation and seed defaults", () => {
+    expect(classifyDecay(null, null, null, "distilled rule", { source: "distillation", category: "rule" })).toBe(
+      "durable",
+    );
+    expect(classifyDecay(null, null, null, "distilled observation", { source: "distillation", category: "fact" })).toBe(
+      "normal",
+    );
+    expect(classifyDecay(null, null, null, "seeded rule", { source: "seed:bootstrap", category: "rule" })).toBe(
+      "permanent",
+    );
+    expect(classifyDecay(null, null, null, "seeded pattern", { source: "seed:bootstrap", category: "pattern" })).toBe(
+      "durable",
+    );
+  });
+
+  it("uses importance-weighted TTL fallback when source/category is not decisive", () => {
+    expect(classifyDecay(null, null, null, "low value observation", { importance: 0.2 })).toBe("short");
+    expect(classifyDecay(null, null, null, "medium value observation", { importance: 0.6 })).toBe("normal");
+    expect(classifyDecay(null, null, null, "important observation", { importance: 0.9 })).toBe("stable");
   });
 });
 
