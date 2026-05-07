@@ -227,3 +227,33 @@ openclaw hybrid-mem audit health --strict
 ```
 
 The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits non-zero when warnings are present. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
+
+## Maintenance log format & analyzer
+
+Hybrid-memory maintenance cron jobs write structured run artifacts under:
+
+```text
+$HOME/.openclaw/logs/cron-hybrid-mem/YYYYMMDD/
+  <job>-<timestamp>-<pid>.log
+  <job>-<timestamp>-<pid>.exit.txt
+```
+
+Each `.exit.txt` file contains one line per step:
+
+```text
+2026-05-07T02:10:21Z prune exit=0
+2026-05-07T02:11:02Z distill exit=1
+```
+
+Use the analyzer to classify failures, persist regression history, emit an operator digest, and optionally report plugin/orchestration bugs through the existing GlitchTip path:
+
+```bash
+openclaw hybrid-mem analyze-maintenance-logs --since 24h --digest md
+openclaw hybrid-mem analyze-maintenance-logs --since 7d --format json --out /tmp/maintenance-findings.json
+openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --strict
+```
+
+Rules are data-driven in [`services/maintenance-rules.json`](services/maintenance-rules.json), so operators can inspect or extend classifications without changing analyzer code. Findings are persisted in `maintenance-findings.db` table `maintenance_finding`, enabling week-over-week trend output for `--since 7d` / `--trend` runs.
+
+The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the nightly chain and announce the rendered digest to the operator.
+

@@ -1,420 +1,149 @@
 /**
- * CLI registration for `manage analyze-maintenance-logs` command (Issue #1199).
- *
- * Reads OpenClaw cron job run logs and classifies failures.
- * Outputs structured report to stdout or file.
- *
- * Classification categories:
- *   network       — DNS/connection/timeout failures
- *   auth          — credential/token expiry
- *   rate_limit    — API throttling
- *   disk_full     — ENOSPC / disk space issues
- *   config_error  — missing/wrong config keys
- *   dependency    — module/plugin not loaded
- *   oom           — out-of-memory
- *   unknown       — unclassified
- *
- * Each failure is tagged with: severity (critical/high/medium/low/info),
- * first_seen, last_seen, count, suggested_fix.
+ * CLI registration for maintenance log analyzer (Issue #1199).
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { stdin } from "node:process";
 
-import { capturePluginError } from "../../../services/error-reporter.js";
+import {
+  analyzeMaintenanceSteps,
+  buildMaintenanceAnalysisReport,
+  collectMaintenanceSteps,
+  persistMaintenanceFindings,
+  reportGlitchTipFindings,
+  shouldMaintenanceStrictFail,
+  writeMaintenanceAnalysisOutput,
+  type MaintenanceLogStep,
+} from "../../../services/maintenance-log-analyzer.js";
 import { type Chainable, withExit } from "../../shared.js";
-import { type AnalyzedRun, parseCronRunLog } from "./maintenance-log-parse.js";
 import type { ManageBindings } from "./bindings.js";
 
-interface FailureGroup {
-  category: string;
-  severity: "critical" | "high" | "medium" | "low" | "info";
-  jobName: string;
-  count: number;
-  firstSeen: number;
-  lastSeen: number;
-  messages: string[];
-  suggestedFix: string;
-}
-
-interface AnalyzeResult {
-  generatedAt: string;
-  totalRuns: number;
-  success: number;
-  failure: number;
-  skipped: number;
-  failureGroups: FailureGroup[];
-  findingsPath?: string;
-  summaryMd: string;
-}
-
-function classifyError(
-  errorMsg: string,
-  jobName: string,
-): {
-  category: string;
-  severity: "critical" | "high" | "medium" | "low" | "info";
-  suggestedFix: string;
-} {
-  const lower = errorMsg.toLowerCase();
-
-  if (/dns|getaddrinfo|name or service not known|connection refused|etimedout|ECONNREFUSED|ENOTFOUND/i.test(lower)) {
-    return {
-      category: "network",
-      severity: "high",
-      suggestedFix: "Check network connectivity and DNS resolution for the affected service.",
-    };
-  }
-  if (/401|403|unauthorized|forbidden|token.*expired|credential.*invalid|auth.*fail/i.test(lower)) {
-    return {
-      category: "auth",
-      severity: "high",
-      suggestedFix: "Refresh credentials or re-authenticate the affected service.",
-    };
-  }
-  if (/429|rate.limit|throttl|RateLimit|too many requests/i.test(lower)) {
-    return {
-      category: "rate_limit",
-      severity: "medium",
-      suggestedFix: "Reduce cron frequency or add exponential backoff to the job.",
-    };
-  }
-  if (/enospc|disk.full|no space left|disk space/i.test(lower)) {
-    return {
-      category: "disk_full",
-      severity: "critical",
-      suggestedFix: "Free up disk space or increase storage allocation.",
-    };
-  }
-  if (/config|configuration|missing.*key|cannot.*read.*config|envalid/i.test(lower)) {
-    return {
-      category: "config_error",
-      severity: "high",
-      suggestedFix: "Review and fix the configuration for this job.",
-    };
-  }
-  if (/cannot find module|modulenotfounderror|plugin.*not.*found|extension.*not.*loaded/i.test(lower)) {
-    return {
-      category: "dependency",
-      severity: "high",
-      suggestedFix: "Ensure the required plugin/module is installed and loaded before this job runs.",
-    };
-  }
-  if (/heap|out of memory|oom|fatal error.*memory/i.test(lower)) {
-    return {
-      category: "oom",
-      severity: "critical",
-      suggestedFix: "Increase memory limits or reduce job scope/data size.",
-    };
-  }
-  if (/gateway.*timeout|504|504 gateway timeout|upstream.*timeout/i.test(lower)) {
-    return {
-      category: "network",
-      severity: "high",
-      suggestedFix: "The upstream service timed out. Check if the service is healthy and responsive.",
-    };
-  }
-  if (/health|unhealthy|failed health/i.test(lower) && jobName.toLowerCase().includes("health")) {
-    return {
-      category: "health_check",
-      severity: "info",
-      suggestedFix: "Run 'openclaw health' to inspect the full health report.",
-    };
-  }
-  return {
-    category: "unknown",
-    severity: "low",
-    suggestedFix: "Inspect the job logs for details. Consider escalating to the maintainer.",
-  };
-}
-
-function parseSinceMs(value?: string): number {
-  if (!value) return 24 * 3600 * 1000;
-  const m = value.trim().match(/^(\d+)([dhw])?$/i);
-  if (!m) return 24 * 3600 * 1000;
-  const n = Number.parseInt(m[1], 10);
-  const unit = (m[2] ?? "h").toLowerCase();
-  if (unit === "d") return n * 24 * 3600 * 1000;
-  if (unit === "w") return n * 7 * 24 * 3600 * 1000;
-  return n * 3600 * 1000;
-}
-
-function collectExitLogs(root: string, since?: string): string {
-  if (!existsSync(root)) return "";
-  const cutoff = Date.now() - parseSinceMs(since);
-  const chunks: string[] = [];
-  for (const day of readdirSync(root)) {
-    const dayPath = join(root, day);
-    if (!existsSync(dayPath) || !statSync(dayPath).isDirectory()) continue;
-    for (const file of readdirSync(dayPath)) {
-      if (!file.endsWith(".exit.txt")) continue;
-      const exitPath = join(dayPath, file);
-      if (statSync(exitPath).mtimeMs < cutoff) continue;
-      const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
-      const exitContent = readFileSync(exitPath, "utf-8");
-      const logContent = existsSync(logPath) ? readFileSync(logPath, "utf-8") : "";
-      const job = file.replace(/-[0-9]{8}T.*$/, "").replace(/\.exit\.txt$/, "");
-      for (const line of exitContent.split("\n")) {
-        const m = line.match(/^(\S+)\s+(\S+)\s+exit=(\d+)/);
-        if (!m) continue;
-        const [, iso, step, exitRaw] = m;
-        const exitCode = Number.parseInt(exitRaw, 10);
-        const status = exitCode === 0 ? "completed" : "failed";
-        const excerpt = logContent
-          .split("\n")
-          .filter((l) => /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module/i.test(l))
-          .slice(-5)
-          .join("; ");
-        chunks.push(`${iso} ${job}/${step} ${status} exit=${exitCode} ${excerpt}`.trim());
-      }
-    }
-  }
-  return chunks.join("\n");
+interface AnalyzeMaintenanceLogOpts {
+  root?: string;
+  since?: string;
+  autoFix?: boolean;
+  glitchtip?: boolean;
+  digest?: string;
+  format?: string;
+  out?: string;
+  strict?: boolean;
+  persist?: string;
+  noPersist?: boolean;
+  trend?: boolean;
 }
 
 async function readStdinIfPiped(): Promise<string> {
   if (stdin.isTTY) return "";
   const chunks: Buffer[] = [];
-  for await (const chunk of stdin) {
-    chunks.push(Buffer.from(chunk));
-  }
+  for await (const chunk of stdin) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-function persistMaintenanceFindings(dbPath: string, result: AnalyzeResult): void {
-  mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS maintenance_finding (
-        id TEXT PRIMARY KEY,
-        occurred_at INTEGER NOT NULL,
-        job TEXT NOT NULL,
-        step TEXT,
-        exit_code INTEGER,
-        classification TEXT NOT NULL,
-        fingerprint TEXT NOT NULL,
-        log_excerpt TEXT,
-        action_taken TEXT,
-        created_at INTEGER NOT NULL
-      )
-    `);
-    const now = Math.floor(Date.now() / 1000);
-    const stmt = db.prepare(
-      `INSERT OR IGNORE INTO maintenance_finding
-       (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, action_taken, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const group of result.failureGroups) {
-      const fingerprint = `${group.category}:${group.jobName}:${group.messages[0] ?? ""}`.slice(0, 180);
-      const id = Buffer.from(fingerprint).toString("base64url").slice(0, 64);
-      stmt.run(
-        id,
-        group.lastSeen,
-        group.jobName,
-        null,
-        null,
-        group.category,
-        fingerprint,
-        group.messages[0] ?? null,
-        "reported",
-        now,
-      );
-    }
-  } finally {
-    db.close();
-  }
+function stepsFromPipedExitLog(content: string): MaintenanceLogStep[] {
+  const now = Math.floor(Date.now() / 1000);
+  const logContent = content;
+  return content
+    .split("\n")
+    .map((line, idx) => ({ line, idx }))
+    .filter(({ line }) => /\bexit=\d+\b/.test(line))
+    .map(({ line, idx }) => {
+      const m = line.match(/^(\S+)\s+(?:(\S+)\/)?(\S+)\s+(?:completed|failed)?\s*exit=(\d+)\b/);
+      const iso = m?.[1] ?? new Date(now * 1000).toISOString();
+      const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
+      return {
+        occurredAt: Number.isFinite(occurredAt) ? occurredAt : now + idx,
+        iso,
+        job: m?.[2] ?? "stdin",
+        step: m?.[3] ?? `line-${idx + 1}`,
+        exitCode: Number.parseInt(m?.[4] ?? "1", 10),
+        exitPath: "stdin",
+        logPath: "stdin",
+        logContent,
+        line,
+      };
+    });
 }
 
-function buildAnalyzedResult(logs: string): AnalyzeResult {
-  const runs = parseCronRunLog(logs);
+export async function runAnalyzeMaintenanceLogs(
+  opts: AnalyzeMaintenanceLogOpts | undefined,
+  b: ManageBindings,
+): Promise<void> {
+  const since = opts?.since ?? "24h";
+  const format = opts?.digest ?? opts?.format ?? "md";
+  const outPath = opts?.out ?? "-";
+  const root = opts?.root ?? join(homedir(), ".openclaw", "logs", "cron-hybrid-mem");
+  const findingsPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
 
-  const failures = runs.filter((r) => r.status === "failure");
-  const success = runs.filter((r) => r.status === "success").length;
-  const skipped = runs.filter((r) => r.status === "skipped").length;
-
-  // Group failures
-  const groups = new Map<string, FailureGroup>();
-
-  for (const run of failures) {
-    const errMsg = run.error ?? "unknown error";
-    const { category, severity, suggestedFix } = classifyError(errMsg, run.jobName);
-    const key = `${category}::${run.jobName}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        category,
-        severity,
-        jobName: run.jobName,
-        count: 0,
-        firstSeen: run.finishedAt,
-        lastSeen: run.finishedAt,
-        messages: [],
-        suggestedFix,
-      });
-    }
-    const g = groups.get(key)!;
-    g.count++;
-    g.firstSeen = Math.min(g.firstSeen, run.finishedAt);
-    g.lastSeen = Math.max(g.lastSeen, run.finishedAt);
-    if (!g.messages.includes(errMsg)) g.messages.push(errMsg);
+  let steps: MaintenanceLogStep[] = [];
+  if (opts?.root || existsSync(root)) {
+    steps = collectMaintenanceSteps(root, since);
+  }
+  if (steps.length === 0) {
+    const piped = await readStdinIfPiped();
+    if (piped.trim()) steps = stepsFromPipedExitLog(piped);
   }
 
-  const sortedGroups = [...groups.values()].sort((a, b) => {
-    const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-    return sevOrder[a.severity] - sevOrder[b.severity] || b.count - a.count;
+  let findings = analyzeMaintenanceSteps(steps);
+  if (opts?.glitchtip) findings = reportGlitchTipFindings(findings);
+
+  if (opts?.autoFix) {
+    findings = findings.map((f) =>
+      f.actionTaken === "retry-once"
+        ? {
+            ...f,
+            actionTaken: "reported" as const,
+            suggestedAction: `${f.suggestedAction} Auto-fix dry-run: retry-once is recorded but not executed by this safe analyzer pass.`,
+          }
+        : f,
+    );
+  }
+
+  if (findings.length > 0 && opts?.noPersist !== true) {
+    mkdirSync(dirname(findingsPath), { recursive: true });
+    persistMaintenanceFindings(findingsPath, findings);
+  }
+
+  const report = buildMaintenanceAnalysisReport({
+    root,
+    since,
+    steps,
+    findings,
+    findingsPath: findings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
+    includeTrend: opts?.trend === true || since.endsWith("d") || since.endsWith("w"),
   });
+  writeMaintenanceAnalysisOutput(report, format, outPath);
 
-  const summaryMd = [
-    `# Maintenance Log Analysis — ${new Date().toISOString().split("T")[0]}`,
-    "",
-    `Total runs: ${runs.length} | Success: ${success} | Failures: ${failures.length} | Skipped: ${skipped}`,
-    "",
-    ...sortedGroups.flatMap((g) => [
-      `## ${g.category.toUpperCase()} — ${g.jobName} (${g.count}x, ${g.severity})`,
-      "",
-      `First seen: ${new Date(g.firstSeen * 1000).toISOString()}`,
-      `Last seen:  ${new Date(g.lastSeen * 1000).toISOString()}`,
-      "",
-      `**Suggested fix:** ${g.suggestedFix}`,
-      "",
-      `Errors (${g.messages.length} unique):`,
-      ...g.messages.slice(0, 5).map((m) => `> \`${m}\``),
-      g.messages.length > 5 ? `> … and ${g.messages.length - 5} more` : null,
-      "",
-    ]),
-    failures.length === 0 ? "_No failures detected._" : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return {
-    generatedAt: new Date().toISOString(),
-    totalRuns: runs.length,
-    success,
-    failure: failures.length,
-    skipped,
-    failureGroups: sortedGroups,
-    summaryMd,
-  };
+  if (opts?.strict && shouldMaintenanceStrictFail(findings)) process.exitCode = 1;
 }
 
-export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBindings): void {
-  const cmd = mem
-    .command("analyze-maintenance-logs")
-    .description(
-      "Classify and report on cron-job failures from stdin or a log file (Issue #1199). " +
-        "Reads from --file <path> or pipes content from 'openclaw gateway logs'.",
-    );
-
-  cmd
-    .command("run")
-    .description("Analyze log output and print a failure report")
-    .option("--file <path>", "Path to a log file to analyze (default: read from stdin)")
+function addAnalyzeOptions(cmd: Chainable): Chainable {
+  return cmd
     .option("--root <path>", "Root cron-hybrid-mem log directory containing YYYYMMDD/*.exit.txt")
     .option("--since <duration>", "Lookback for --root scans, e.g. 24h, 7d (default: 24h)")
+    .option("--auto-fix", "Record safe idempotent remediation intent; does not run unsafe shell actions")
+    .option("--glitchtip", "Report plugin-bug/orchestration-bug findings via existing error reporter")
     .option("--digest <fmt>", "Alias for --format, md or json")
-    .option("--strict", "Exit non-zero when failures are found")
-    .option("--auto-fix", "Reserved for safe idempotent remediation; currently report-only")
-    .option("--dry-run", "Do not write the maintenance findings database even if --write-findings is set (report-only)")
-    .option(
-      "--write-findings",
-      "Persist failure groups to SQLite (default: stdout/json report only, no maintenance-findings.db)",
-    )
-    .option(
-      "--persist <path>",
-      "SQLite path when using --write-findings (default: <memory-dir>/maintenance-findings.db)",
-    )
-    .option("--glitchtip", "Report plugin/orchestration-like findings via existing error reporter")
     .option("--format <fmt>", "Output format: md (default) or json")
     .option("--out <path>", "Output file path, or '-' for stdout (default: -)")
-    .action(
-      withExit(
-        async (opts?: {
-          file?: string;
-          root?: string;
-          since?: string;
-          digest?: string;
-          strict?: boolean;
-          autoFix?: boolean;
-          dryRun?: boolean;
-          writeFindings?: boolean;
-          persist?: string;
-          glitchtip?: boolean;
-          format?: string;
-          out?: string;
-        }) => {
-          const format = opts?.digest ?? opts?.format ?? "md";
-          const outPath = opts?.out ?? "-";
+    .option("--strict", "Exit non-zero for plugin-bug, orchestration-bug, provider-auth, or env-misconfig findings")
+    .option(
+      "--persist <path>",
+      "SQLite path for maintenance_finding rows (default: <memory-dir>/maintenance-findings.db)",
+    )
+    .option("--no-persist", "Do not write maintenance_finding rows")
+    .option("--trend", "Include week-over-week trend from persisted findings");
+}
 
-          let logContent = "";
-          if (opts?.file) {
-            if (!existsSync(opts.file)) {
-              console.error(`error: file not found: ${opts.file}`);
-              process.exitCode = 1;
-              return;
-            }
-            logContent = readFileSync(opts.file, "utf-8");
-          } else if (opts?.root) {
-            logContent = collectExitLogs(opts.root, opts.since);
-          } else {
-            logContent = await readStdinIfPiped();
-          }
-
-          const result = buildAnalyzedResult(logContent);
-
-          if (result.totalRuns === 0) {
-            console.log(
-              "# Maintenance Log Analysis\n\nNo cron run entries detected in the input. " +
-                "Pipe gateway logs:\n  openclaw gateway logs | openclaw hybrid-mem manage analyze-maintenance-logs run",
-            );
-            if (opts?.strict) process.exitCode = 1;
-            return;
-          }
-
-          const persistAllowed = opts?.writeFindings === true && opts?.dryRun !== true;
-          if (result.failureGroups.length > 0 && persistAllowed) {
-            const persistPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
-            persistMaintenanceFindings(persistPath, result);
-            result.findingsPath = persistPath;
-          }
-
-          if (opts?.glitchtip) {
-            for (const group of result.failureGroups) {
-              if (group.category === "dependency" || group.category === "unknown") {
-                capturePluginError(new Error(`maintenance-log ${group.category}: ${group.jobName}`), {
-                  operation: "analyze-maintenance-logs",
-                  subsystem: "maintenance",
-                  severity: group.severity,
-                });
-              }
-            }
-          }
-
-          if (opts?.autoFix) {
-            result.summaryMd += "\n\n_Auto-fix requested; no unsafe remediation was executed in this pass._";
-          }
-
-          if (opts?.strict && result.failure > 0) process.exitCode = 1;
-
-          if (format === "json") {
-            const out = JSON.stringify(result, null, 2);
-            if (outPath === "-") {
-              process.stdout.write(out + "\n");
-            } else {
-              writeFileSync(outPath, out, "utf-8");
-              console.log(`Written: ${outPath}`);
-            }
-          } else {
-            if (outPath === "-") {
-              process.stdout.write(result.summaryMd + "\n");
-            } else {
-              writeFileSync(outPath, result.summaryMd, "utf-8");
-              console.log(`Written: ${outPath}`);
-            }
-          }
-        },
-      ),
-    );
+export function registerAnalyzeMaintenanceLogsCommand(mem: Chainable, b: ManageBindings): void {
+  const parent = mem
+    .command("analyze-maintenance-logs")
+    .description("Classify hybrid-memory maintenance cron logs (Issue #1199).");
+  addAnalyzeOptions(parent).action(
+    withExit(async (opts?: AnalyzeMaintenanceLogOpts) => runAnalyzeMaintenanceLogs(opts, b)),
+  );
+  addAnalyzeOptions(
+    parent.command("run").description("Compatibility subcommand: analyze logs and emit a digest/report"),
+  ).action(withExit(async (opts?: AnalyzeMaintenanceLogOpts) => runAnalyzeMaintenanceLogs(opts, b)));
 }

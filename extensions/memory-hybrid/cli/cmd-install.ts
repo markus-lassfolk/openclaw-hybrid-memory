@@ -393,6 +393,29 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Daily 03:30 | maintenance-log-analyzer | analyze maintenance logs after nightly chain
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`,
+    sessionTarget: "isolated",
+    name: "maintenance-log-analyzer",
+    schedule: { kind: "cron", expr: "30 3 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("maintenance-log-analyzer", {
+      preamble:
+        "Analyze hybrid-memory maintenance logs from the last 24h, report plugin/orchestration failures to GlitchTip if configured, and render a digest for the operator.",
+      steps: [
+        {
+          name: "analyze-maintenance-logs",
+          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md",
+        },
+      ],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
+
   // Monday 08:00 | weekly-pending-digest | digest pending --since 7d --format md
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`,
@@ -549,7 +572,8 @@ function resolveCronJob(
   const pluginJobId = rest.pluginJobId;
   const stableId = typeof pluginJobId === "string" && pluginJobId.trim().length > 0 ? pluginJobId.trim() : undefined;
   const delivery =
-    stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`
+    stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest` ||
+    stableId === `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`
       ? { mode: "announce" as const }
       : { mode: "none" as const };
   return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery };
@@ -578,6 +602,8 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) =>
     /weekly-pending-digest|pending digest/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`]: (j) =>
+    /maintenance-log-analyzer|analyze-maintenance-logs/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>
     /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),

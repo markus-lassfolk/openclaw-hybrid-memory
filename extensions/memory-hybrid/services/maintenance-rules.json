@@ -1,0 +1,82 @@
+[
+  {
+    "id": "node-version-misconfig",
+    "pattern": "Node\\.js v22\\.\\d+\\+ is required",
+    "classification": "env-misconfig",
+    "defaultAction": "escalate-user",
+    "severity": "high",
+    "suggestedAction": "Install or activate a supported Node.js v22+ runtime before running hybrid-memory maintenance."
+  },
+  {
+    "id": "llm-rate-limit",
+    "pattern": "429|TooManyRequests|RateLimit|too many requests|rate limit",
+    "classification": "transient-llm",
+    "defaultAction": "retry-once",
+    "severity": "medium",
+    "suggestedAction": "Retry once after a short backoff; if it repeats, reduce concurrency or move the job to a lower-traffic window."
+  },
+  {
+    "id": "gateway-network",
+    "pattern": "ECONNREFUSED|ECONNRESET|ETIMEDOUT|gateway.*timeout|504 Gateway Timeout|upstream.*timeout",
+    "classification": "transient-network",
+    "defaultAction": "retry-once",
+    "severity": "medium",
+    "suggestedAction": "Retry once; if it repeats, check gateway health and WebSocket/RPC availability."
+  },
+  {
+    "id": "embedding-auth",
+    "pattern": "EmbeddingError.*(401|Unauthorized)|(401|Unauthorized).*EmbeddingError|401 Unauthorized|Unauthorized",
+    "classification": "provider-auth",
+    "defaultAction": "escalate-user",
+    "severity": "high",
+    "suggestedAction": "Verify provider credentials and endpoint configuration before retrying embedding or LLM work."
+  },
+  {
+    "id": "disk-full",
+    "pattern": "disk full|ENOSPC|no space left|disk space",
+    "classification": "env-misconfig",
+    "defaultAction": "escalate-user-urgent",
+    "severity": "critical",
+    "suggestedAction": "Free disk space or expand storage immediately, then rerun failed maintenance."
+  },
+  {
+    "id": "sqlite-busy",
+    "pattern": "SQLITE_BUSY|database is locked",
+    "classification": "infra",
+    "defaultAction": "retry-once",
+    "severity": "medium",
+    "suggestedAction": "Retry once; if it persists, schedule VACUUM/vector optimization during an idle window."
+  },
+  {
+    "id": "plugin-type-error",
+    "pattern": "Cannot find module|TypeError|ReferenceError|ModuleNotFoundError",
+    "classification": "plugin-bug",
+    "defaultAction": "glitchtip+digest",
+    "severity": "high",
+    "suggestedAction": "Report to GlitchTip with fingerprint and inspect the stack trace for a plugin regression."
+  },
+  {
+    "id": "smoke-timeout",
+    "pattern": "timeout 124|killed.*60s|exit=124",
+    "classification": "smoke-only",
+    "defaultAction": "informational",
+    "severity": "info",
+    "suggestedAction": "Record as smoke timeout; do not escalate unless it repeats."
+  },
+  {
+    "id": "agent-stopped-early",
+    "pattern": "agent stopped early|stopped early",
+    "classification": "orchestration-bug",
+    "defaultAction": "glitchtip+digest",
+    "severity": "high",
+    "suggestedAction": "Report to GlitchTip and inspect cron agent orchestration; this can hide real maintenance failures."
+  },
+  {
+    "id": "guard-not-updated",
+    "pattern": "guard not updated|guard.*not.*success|success.*guard.*missing",
+    "classification": "orchestration-bug",
+    "defaultAction": "glitchtip+digest",
+    "severity": "high",
+    "suggestedAction": "Report to GlitchTip and recreate/repair the guard only after confirming the job actually succeeded."
+  }
+]
