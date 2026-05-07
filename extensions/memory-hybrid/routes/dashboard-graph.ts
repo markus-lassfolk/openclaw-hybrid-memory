@@ -74,10 +74,16 @@ function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDept
   for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
     const next: string[] = [];
     for (const id of frontier) {
-      const links = [...factsDb.getLinksFrom(id), ...factsDb.getLinksTo(id)];
-      const traversable = filterTraversableLinks(links);
-      for (const link of traversable) {
-        const other = "targetFactId" in link ? link.targetFactId : link.sourceFactId;
+      const outLinks = filterTraversableLinks(factsDb.getLinksFrom(id));
+      const inLinks = filterTraversableLinks(factsDb.getLinksTo(id));
+      for (const link of outLinks) {
+        const other = link.targetFactId;
+        if (seen.has(other)) continue;
+        seen.add(other);
+        next.push(other);
+      }
+      for (const link of inLinks) {
+        const other = link.sourceFactId;
         if (seen.has(other)) continue;
         seen.add(other);
         next.push(other);

@@ -114,7 +114,7 @@ export function cleanupImplicitFeedbackDuplicates(
     .prepare(
       `SELECT id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
        FROM facts
-       WHERE source = 'implicit-feedback' AND superseded_at IS NULL
+       WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND superseded_at IS NULL
        ORDER BY created_at ASC, rowid ASC
        LIMIT ?`,
     )
