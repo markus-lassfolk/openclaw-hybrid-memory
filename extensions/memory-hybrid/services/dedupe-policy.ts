@@ -47,11 +47,27 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
   const base = { ...DEFAULT_PROFILE, ...normalizeProfile("<default>", store.defaultProfile) };
   const profiles = store.sourceProfiles ?? {};
 
-  if (profiles[sourceKey]) return { ...base, ...normalizeProfile(sourceKey, profiles[sourceKey]) };
+  if (profiles[sourceKey]) {
+    const normalized = normalizeProfile(sourceKey, profiles[sourceKey]);
+    const merged = { ...base, ...normalized };
+    // If user configured a source-specific profile without explicit onDuplicate, default to "store"
+    if (normalized.onDuplicate === undefined) {
+      merged.onDuplicate = "store";
+    }
+    return merged;
+  }
 
   for (const [pattern, profile] of Object.entries(profiles)) {
     if (!pattern.includes("*")) continue;
-    if (globToRegExp(pattern).test(sourceKey)) return { ...base, ...normalizeProfile(pattern, profile) };
+    if (globToRegExp(pattern).test(sourceKey)) {
+      const normalized = normalizeProfile(pattern, profile);
+      const merged = { ...base, ...normalized };
+      // If user configured a glob profile without explicit onDuplicate, default to "store"
+      if (normalized.onDuplicate === undefined) {
+        merged.onDuplicate = "store";
+      }
+      return merged;
+    }
   }
 
   return base;
