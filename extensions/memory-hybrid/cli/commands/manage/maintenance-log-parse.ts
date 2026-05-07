@@ -50,6 +50,8 @@ export function parseCronRunLog(content: string): AnalyzedRun[] {
       const { jobName, step } = parseJobStepFromCronRest(rest);
       const exitM = line.match(/exit=(\d+)\b/);
       const exitParsed = exitM ? Number(exitM[1]) : undefined;
+      const durationM = line.match(/(?:took|duration[:\s=]+)(\d+)\s*ms\b/i);
+      const durationParsed = durationM ? Number(durationM[1]) : 0;
       currentRun = {
         jobName,
         step,
@@ -65,7 +67,7 @@ export function parseCronRunLog(content: string): AnalyzedRun[] {
                 ? "failure"
                 : "success",
         exitCode: exitParsed,
-        durationMs: 0,
+        durationMs: durationParsed,
       };
       // Do not scan this same line for excerpt keywords — free-form tails may mention "failed"/"error".
       continue;

@@ -232,8 +232,25 @@ export function expandGraphWithCTE(
 
   // Use recursive CTE to traverse the graph in a single query
   // We track: current node, seed that originated this path, hop count, and JSON path
+  const degreeJoin = hubDegreeCap == null ? "" : "LEFT JOIN node_degrees nd ON nd.fact_id = ge.fact_id";
+  const degreeCheck = hubDegreeCap == null ? "" : "AND (nd.degree IS NULL OR nd.degree <= ?)";
   const query = `
-    WITH RECURSIVE graph_expansion(
+    WITH RECURSIVE ${
+      hubDegreeCap == null
+        ? ""
+        : `node_degrees AS (
+      SELECT
+        fact_id,
+        COUNT(*) AS degree
+      FROM (
+        SELECT source_fact_id AS fact_id FROM memory_links WHERE link_type != 'CONTRADICTS'
+        UNION ALL
+        SELECT target_fact_id AS fact_id FROM memory_links WHERE link_type != 'CONTRADICTS'
+      )
+      GROUP BY fact_id
+    ),
+    `
+    }graph_expansion(
       fact_id,
       seed_id,
       hop_count,
@@ -268,6 +285,7 @@ export function expandGraphWithCTE(
         ) AS path_json,
         ge.visited_ids || ml.target_fact_id || ',' AS visited_ids
       FROM graph_expansion ge
+      ${degreeJoin}
       JOIN memory_links ml ON ml.source_fact_id = ge.fact_id
       ${factJoinOut}
       WHERE
@@ -275,7 +293,7 @@ export function expandGraphWithCTE(
         AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
-        ${hubGuardSql}
+        ${degreeCheck}
         ${factWhereOut}
 
       UNION ALL
@@ -297,6 +315,7 @@ export function expandGraphWithCTE(
         ) AS path_json,
         ge.visited_ids || ml.source_fact_id || ',' AS visited_ids
       FROM graph_expansion ge
+      ${degreeJoin}
       JOIN memory_links ml ON ml.target_fact_id = ge.fact_id
       ${factJoinIn}
       WHERE
@@ -304,7 +323,7 @@ export function expandGraphWithCTE(
         AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
-        ${hubGuardSql}
+        ${degreeCheck}
         ${factWhereIn}
     ),
     -- Aggregate to find shortest path to each node
@@ -327,16 +346,17 @@ export function expandGraphWithCTE(
     ORDER BY hop_count ASC, fact_id ASC
   `;
 
-  const hubParams = hubDegreeCap == null ? [] : [hubDegreeCap];
+  const hubParams = hubDegreeCap == null ? [] : [hubDegreeCap, hubDegreeCap];
+  // console.log('CTE Query:', query);
   const rows = db
     .prepare(query)
     .all(
       JSON.stringify(seedFactIds),
       maxDepth,
-      ...hubParams,
+      ...hubParams.slice(0, 1),
       ...filterParamsOut,
       maxDepth,
-      ...hubParams,
+      ...hubParams.slice(1, 2),
       ...filterParamsIn,
     ) as Array<{
     fact_id: string;
