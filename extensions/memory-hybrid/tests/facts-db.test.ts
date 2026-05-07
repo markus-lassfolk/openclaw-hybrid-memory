@@ -57,6 +57,31 @@ describe("FactsDB.store", () => {
     expect(entry.decayClass).toBe("permanent");
   });
 
+  it("stores source and importance-aware decay defaults", () => {
+    const auto = db.store({
+      text: "transient capture without keywords",
+      category: "fact",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "auto-capture",
+    });
+    expect(auto.decayClass).toBe("normal");
+    expect(auto.expiresAt).not.toBeNull();
+
+    const low = db.store({
+      text: "low value observation without keywords",
+      category: "other",
+      importance: 0.2,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    expect(low.decayClass).toBe("short");
+  });
+
   it("respects explicit decay class", () => {
     const entry = db.store({
       text: "temporary note",
@@ -2062,6 +2087,59 @@ describe("FactsDB.countExpired", () => {
     });
     expect(db.countExpired()).toBe(1);
   });
+});
+
+it("dry-runs and applies source/importance/recall decay reclassification", () => {
+  const now = Math.floor(Date.now() / 1000);
+  const old = now - 120 * 86_400;
+  const noisy = db.store({
+    text: "old auto capture",
+    category: "fact",
+    importance: 0.5,
+    entity: null,
+    key: null,
+    value: null,
+    source: "auto-capture",
+    decayClass: "stable",
+  });
+  const stale = db.store({
+    text: "old unrecalled low value note",
+    category: "other",
+    importance: 0.2,
+    entity: null,
+    key: null,
+    value: null,
+    source: "conversation",
+    decayClass: "normal",
+  });
+  const recalled = db.store({
+    text: "recalled useful note",
+    category: "fact",
+    importance: 0.5,
+    entity: null,
+    key: null,
+    value: null,
+    source: "conversation",
+    decayClass: "normal",
+  });
+  db.getRawDb().prepare("UPDATE facts SET recall_count = ? WHERE id = ?").run(0, noisy.id);
+  db.getRawDb()
+    .prepare("UPDATE facts SET created_at = ?, last_confirmed_at = ?, recall_count = ? WHERE id = ?")
+    .run(old, old, 0, stale.id);
+  db.getRawDb().prepare("UPDATE facts SET recall_count = ?, access_count = ? WHERE id = ?").run(3, 3, recalled.id);
+
+  const dry = db.reclassifyDecayClasses({ apply: false, nowSec: now, inactiveDays: 90, promoteRecallCount: 3 });
+  expect(dry.changed).toBeGreaterThanOrEqual(3);
+  expect(dry.changes["stable->normal"]).toBeGreaterThanOrEqual(1);
+  expect(dry.changes["normal->short"]).toBeGreaterThanOrEqual(1);
+  expect(dry.changes["normal->durable"]).toBeGreaterThanOrEqual(1);
+  expect(db.getById(noisy.id)?.decayClass).toBe("stable");
+
+  const applied = db.reclassifyDecayClasses({ apply: true, nowSec: now, inactiveDays: 90, promoteRecallCount: 3 });
+  expect(applied.changed).toBe(dry.changed);
+  expect(db.getById(noisy.id)?.decayClass).toBe("normal");
+  expect(db.getById(stale.id)?.decayClass).toBe("short");
+  expect(db.getById(recalled.id)?.decayClass).toBe("durable");
 });
 
 describe("FactsDB.backfillDecayClasses", () => {

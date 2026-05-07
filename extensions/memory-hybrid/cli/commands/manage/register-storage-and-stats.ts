@@ -541,13 +541,84 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   mem
     .command("backfill-decay")
-    .description("Backfill decayAt for facts missing it (one-time migration)")
+    .description("Backfill legacy stable decay classes (compat alias for decay reclassify --stable-only --apply)")
     .action(
       withExit(async () => {
         const updated = factsDb.backfillDecay();
         const total = Object.values(updated).reduce((a, b) => a + b, 0);
         console.log(`Backfilled decayAt for ${total} facts.`);
       }),
+    );
+
+  const decayCommand = mem.command("decay").description("Inspect and repair decay-class TTL hygiene");
+
+  decayCommand
+    .command("reclassify")
+    .description(
+      "Reclassify decay classes using source/category/importance and recall/access signals (dry-run by default)",
+    )
+    .option("--apply", "Apply changes; default is dry-run")
+    .option("--stable-only", "Only scan active facts currently marked stable")
+    .option("--limit <n>", "Maximum facts to scan")
+    .option("--inactive-days <n>", "Demote unrecalled/unaccessed facts older than N days to short", "90")
+    .option("--promote-recall-count <n>", "Promote TTL-bearing facts recalled/accessed at least N times", "3")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(
+        async (opts?: {
+          apply?: boolean;
+          stableOnly?: boolean;
+          limit?: string;
+          inactiveDays?: string;
+          promoteRecallCount?: string;
+          json?: boolean;
+        }) => {
+          const limit = opts?.limit != null ? Number.parseInt(opts.limit, 10) : undefined;
+          const inactiveDays = Number.parseInt(opts?.inactiveDays ?? "90", 10);
+          const promoteRecallCount = Number.parseInt(opts?.promoteRecallCount ?? "3", 10);
+          if (limit != null && (!Number.isFinite(limit) || limit <= 0)) {
+            console.error("error: --limit must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          if (!Number.isFinite(inactiveDays) || inactiveDays < 1) {
+            console.error("error: --inactive-days must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          if (!Number.isFinite(promoteRecallCount) || promoteRecallCount < 1) {
+            console.error("error: --promote-recall-count must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          const report = factsDb.reclassifyDecayClasses({
+            apply: opts?.apply === true,
+            stableOnly: opts?.stableOnly === true,
+            limit,
+            inactiveDays,
+            promoteRecallCount,
+          });
+          if (opts?.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+          console.log(
+            `Decay reclassify ${report.apply ? "applied" : "dry-run"}: scanned ${report.scanned}, changed ${report.changed}`,
+          );
+          console.log(
+            `Stable+permanent before: ${report.stablePermanentBefore} (${pct(report.stablePermanentRatioBefore)})`,
+          );
+          console.log(
+            `Stable+permanent after: ${report.stablePermanentAfter} (${pct(report.stablePermanentRatioAfter)})`,
+          );
+          if (Object.keys(report.changes).length > 0) {
+            console.log("Transitions:");
+            for (const [transition, count] of Object.entries(report.changes)) console.log(`  ${transition}: ${count}`);
+          }
+          if (!report.apply) console.log("Dry-run only. Re-run with --apply to update decay_class/expires_at.");
+        },
+      ),
     );
 
   mem

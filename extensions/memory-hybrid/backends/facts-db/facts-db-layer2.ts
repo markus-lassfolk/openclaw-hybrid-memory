@@ -22,6 +22,7 @@ import {
 import { FactsDBLayer1 } from "./facts-db-layer1.js";
 import {
   backfillDecayClasses as backfillDecayClassesImpl,
+  reclassifyDecayClasses as reclassifyDecayClassesImpl,
   confirmFact as confirmFactImpl,
   decayConfidence as decayConfidenceImpl,
   promoteScope as promoteScopeImpl,
@@ -364,6 +365,12 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   backfillDecayClasses(): Record<string, number> {
     return backfillDecayClassesImpl(this.liveDb);
+  }
+
+  reclassifyDecayClasses(
+    options?: Parameters<typeof reclassifyDecayClassesImpl>[1],
+  ): ReturnType<typeof reclassifyDecayClassesImpl> {
+    return reclassifyDecayClassesImpl(this.liveDb, options);
   }
 
   getByCategory(category: string): MemoryEntry[] {

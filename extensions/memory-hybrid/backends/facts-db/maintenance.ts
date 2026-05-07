@@ -626,30 +626,157 @@ export function restoreCheckpoint(db: DatabaseSync): {
   }
 }
 
-export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
+export type DecayReclassifyOptions = {
+  apply?: boolean;
+  stableOnly?: boolean;
+  limit?: number;
+  nowSec?: number;
+  inactiveDays?: number;
+  promoteRecallCount?: number;
+};
+
+export type DecayReclassifyReport = {
+  apply: boolean;
+  scanned: number;
+  changed: number;
+  before: Record<string, number>;
+  after: Record<string, number>;
+  changes: Record<string, number>;
+  stablePermanentBefore: number;
+  stablePermanentAfter: number;
+  stablePermanentRatioBefore: number;
+  stablePermanentRatioAfter: number;
+};
+
+function incrementCount(counts: Record<string, number>, key: string, delta = 1): void {
+  counts[key] = (counts[key] ?? 0) + delta;
+  if (counts[key] === 0) delete counts[key];
+}
+
+function decayDistribution(db: DatabaseSync): Record<string, number> {
   const rows = db
-    .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
-    .all() as Array<{
+    .prepare(
+      "SELECT COALESCE(decay_class, 'normal') as decay_class, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY decay_class",
+    )
+    .all() as Array<{ decay_class: string; cnt: number }>;
+  const out: Record<string, number> = {};
+  for (const row of rows) out[row.decay_class] = row.cnt;
+  return out;
+}
+
+function stablePermanentStats(counts: Record<string, number>): { count: number; ratio: number } {
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const count = (counts.stable ?? 0) + (counts.permanent ?? 0);
+  return { count, ratio: total > 0 ? count / total : 0 };
+}
+
+function reinforcedDecayClass(
+  base: DecayClass,
+  row: {
+    category: string | null;
+    source: string | null;
+    created_at: number;
+    last_accessed_at: number | null;
+    recall_count: number | null;
+    access_count: number | null;
+  },
+  opts: Required<Pick<DecayReclassifyOptions, "nowSec" | "inactiveDays" | "promoteRecallCount">>,
+): DecayClass {
+  const recallCount = row.recall_count ?? 0;
+  const accessCount = row.access_count ?? 0;
+  const lastAccessed = row.last_accessed_at ?? 0;
+  const lastUse = Math.max(lastAccessed, row.created_at);
+  const ageSeconds = Math.max(0, opts.nowSec - row.created_at);
+  const inactiveSeconds = Math.max(0, opts.nowSec - lastUse);
+  const protectedCategory = ["rule", "edict"].includes((row.category ?? "").toLowerCase());
+  const seedSource = (row.source ?? "").toLowerCase().startsWith("seed:");
+
+  if (recallCount >= opts.promoteRecallCount || accessCount >= opts.promoteRecallCount) {
+    if (["short", "normal", "active"].includes(base)) return "durable";
+    if (["session", "checkpoint", "ephemeral"].includes(base)) return "normal";
+  }
+
+  if (!protectedCategory && !seedSource && base !== "permanent" && recallCount === 0 && accessCount === 0) {
+    if (ageSeconds >= opts.inactiveDays * 86_400 && inactiveSeconds >= opts.inactiveDays * 86_400) return "short";
+  }
+
+  return base;
+}
+
+export function reclassifyDecayClasses(db: DatabaseSync, options: DecayReclassifyOptions = {}): DecayReclassifyReport {
+  const apply = options.apply === true;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const inactiveDays = options.inactiveDays ?? 90;
+  const promoteRecallCount = options.promoteRecallCount ?? 3;
+  const stableOnly = options.stableOnly === true;
+  const limit = options.limit != null && options.limit > 0 ? Math.floor(options.limit) : null;
+  const where = stableOnly ? "WHERE superseded_at IS NULL AND decay_class = 'stable'" : "WHERE superseded_at IS NULL";
+  const sql = `SELECT rowid, entity, key, value, text, source, category, importance, decay_class, created_at, last_accessed_at, recall_count, access_count FROM facts ${where} ORDER BY created_at ASC${limit ? ` LIMIT ${limit}` : ""}`;
+  const rows = db.prepare(sql).all() as Array<{
     rowid: number;
-    entity: string;
-    key: string;
-    value: string;
+    entity: string | null;
+    key: string | null;
+    value: string | null;
     text: string;
+    source: string | null;
+    category: string | null;
+    importance: number | null;
+    decay_class: DecayClass;
+    created_at: number;
+    last_accessed_at: number | null;
+    recall_count: number | null;
+    access_count: number | null;
   }>;
 
-  const nowSec = Math.floor(Date.now() / 1000);
+  const before = decayDistribution(db);
+  const after = { ...before };
+  const changes: Record<string, number> = {};
+  let changed = 0;
   const update = db.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
 
-  const counts: Record<string, number> = {};
-  const tx = createTransaction(db, () => {
+  const run = () => {
     for (const row of rows) {
-      const dc = classifyDecay(row.entity, row.key, row.value, row.text);
-      if (dc === "stable") continue;
-      const exp = calculateExpiry(dc, nowSec);
-      update.run(dc, exp, row.rowid);
-      counts[dc] = (counts[dc] || 0) + 1;
+      const base = classifyDecay(row.entity, row.key, row.value, row.text, {
+        source: row.source,
+        category: row.category,
+        importance: row.importance,
+      });
+      const next = reinforcedDecayClass(base, row, { nowSec, inactiveDays, promoteRecallCount });
+      const current = row.decay_class ?? "normal";
+      if (next === current) continue;
+      changed++;
+      incrementCount(after, current, -1);
+      incrementCount(after, next, 1);
+      incrementCount(changes, `${current}->${next}`);
+      if (apply) update.run(next, calculateExpiry(next, nowSec), row.rowid);
     }
-  });
-  tx();
+  };
+
+  if (apply) createTransaction(db, run)();
+  else run();
+
+  const beforeStats = stablePermanentStats(before);
+  const afterStats = stablePermanentStats(after);
+  return {
+    apply,
+    scanned: rows.length,
+    changed,
+    before,
+    after,
+    changes,
+    stablePermanentBefore: beforeStats.count,
+    stablePermanentAfter: afterStats.count,
+    stablePermanentRatioBefore: beforeStats.ratio,
+    stablePermanentRatioAfter: afterStats.ratio,
+  };
+}
+
+export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
+  const report = reclassifyDecayClasses(db, { apply: true, stableOnly: true });
+  const counts: Record<string, number> = {};
+  for (const [transition, count] of Object.entries(report.changes)) {
+    const [, to] = transition.split("->");
+    if (to) counts[to] = (counts[to] ?? 0) + count;
+  }
   return counts;
 }

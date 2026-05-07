@@ -122,15 +122,16 @@ ${entry.text}`.slice(0, 4000);
 
   const id = randomUUID();
 
-  const decayClass =
-    entry.decayClass || classifyDecay(entry.entity ?? null, entry.key ?? null, entry.value ?? null, entry.text);
-  const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
   const importance = entry.importance ?? 0.5;
   const why = entry.why ?? null;
   const entity = entry.entity ?? null;
   const key = entry.key ?? null;
   const value = entry.value ?? null;
   const source = entry.source ?? "conversation";
+  const category = entry.category ?? "other";
+  const decayClass =
+    entry.decayClass || classifyDecay(entity, key, value, entry.text, { source, category, importance });
+  const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
   const confidence = entry.confidence ?? 1.0;
   const summary = entry.summary ?? null;
   const embeddingModel = entry.embeddingModel ?? null;
@@ -191,7 +192,7 @@ ${entry.text}`.slice(0, 4000);
           id,
           entry.text,
           why,
-          entry.category,
+          category,
           importance,
           entity,
           key,
