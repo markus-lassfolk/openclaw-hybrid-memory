@@ -18,7 +18,8 @@
  * first_seen, last_seen, count, suggested_fix.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { stdin } from "node:process";
 
 import { type Chainable, withExit } from "../../shared.js";
@@ -37,6 +38,9 @@ interface FailureGroup {
 
 interface AnalyzedRun {
   jobName: string;
+  step?: string;
+  exitCode?: number;
+  logPath?: string;
   status: "success" | "failure" | "skipped";
   finishedAt: number;
   durationMs: number;
@@ -133,6 +137,47 @@ function classifyError(
   };
 }
 
+
+function parseSinceMs(value?: string): number {
+  if (!value) return 24 * 3600 * 1000;
+  const m = value.trim().match(/^(\d+)([dhw])?$/i);
+  if (!m) return 24 * 3600 * 1000;
+  const n = Number.parseInt(m[1], 10);
+  const unit = (m[2] ?? "h").toLowerCase();
+  if (unit === "d") return n * 24 * 3600 * 1000;
+  if (unit === "w") return n * 7 * 24 * 3600 * 1000;
+  return n * 3600 * 1000;
+}
+
+function collectExitLogs(root: string, since?: string): string {
+  if (!existsSync(root)) return "";
+  const cutoff = Date.now() - parseSinceMs(since);
+  const chunks: string[] = [];
+  for (const day of readdirSync(root)) {
+    const dayPath = join(root, day);
+    if (!existsSync(dayPath) || !statSync(dayPath).isDirectory()) continue;
+    for (const file of readdirSync(dayPath)) {
+      if (!file.endsWith(".exit.txt")) continue;
+      const exitPath = join(dayPath, file);
+      if (statSync(exitPath).mtimeMs < cutoff) continue;
+      const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+      const exitContent = readFileSync(exitPath, "utf-8");
+      const logContent = existsSync(logPath) ? readFileSync(logPath, "utf-8") : "";
+      const job = file.replace(/-[0-9]{8}T.*$/, "").replace(/\.exit\.txt$/, "");
+      for (const line of exitContent.split("\n")) {
+        const m = line.match(/^(\S+)\s+(\S+)\s+exit=(\d+)/);
+        if (!m) continue;
+        const [, iso, step, exitRaw] = m;
+        const exitCode = Number.parseInt(exitRaw, 10);
+        const status = exitCode === 0 ? "completed" : "failed";
+        const excerpt = logContent.split("\n").filter((l) => /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module/i.test(l)).slice(-5).join("; ");
+        chunks.push(`${iso} ${job}/${step} ${status} exit=${exitCode} ${excerpt}`.trim());
+      }
+    }
+  }
+  return chunks.join("\n");
+}
+
 function parseCronRunLog(content: string): AnalyzedRun[] {
   const runs: AnalyzedRun[] = [];
   // Each run is a JSON object on a single line, or a structured block.
@@ -150,7 +195,9 @@ function parseCronRunLog(content: string): AnalyzedRun[] {
       currentRun = {
         jobName: startMatch[2].trim(),
         finishedAt: new Date(startMatch[1]).getTime() / 1000,
-        status: "success",
+        status: /exit=(?!0\b)\d+|failed/i.test(line) ? "failure" : "success",
+        step: startMatch[2].includes("/") ? startMatch[2].split("/").pop()?.split(/\s+/)[0] : undefined,
+        exitCode: Number(line.match(/exit=(\d+)/)?.[1] ?? 0),
         durationMs: 0,
       };
     }
@@ -266,11 +313,17 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageB
     .command("run")
     .description("Analyze log output and print a failure report")
     .option("--file <path>", "Path to a log file to analyze (default: read from stdin)")
+    .option("--root <path>", "Root cron-hybrid-mem log directory containing YYYYMMDD/*.exit.txt")
+    .option("--since <duration>", "Lookback for --root scans, e.g. 24h, 7d (default: 24h)")
+    .option("--digest <fmt>", "Alias for --format, md or json")
+    .option("--strict", "Exit non-zero when failures are found")
+    .option("--auto-fix", "Reserved for safe idempotent remediation; currently report-only")
+    .option("--dry-run", "Show intended actions without mutating state (default behavior)")
     .option("--format <fmt>", "Output format: md (default) or json")
     .option("--out <path>", "Output file path, or '-' for stdout (default: -)")
     .action(
-      withExit(async (opts?: { file?: string; format?: string; out?: string }) => {
-        const format = opts?.format ?? "md";
+      withExit(async (opts?: { file?: string; root?: string; since?: string; digest?: string; strict?: boolean; autoFix?: boolean; dryRun?: boolean; format?: string; out?: string }) => {
+        const format = opts?.digest ?? opts?.format ?? "md";
         const outPath = opts?.out ?? "-";
 
         let logContent = "";
@@ -281,6 +334,8 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageB
             return;
           }
           logContent = readFileSync(opts.file, "utf-8");
+        } else if (opts?.root) {
+          logContent = collectExitLogs(opts.root, opts.since);
         } else {
           logContent = await readStdinIfPiped();
         }
@@ -292,8 +347,15 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageB
             "# Maintenance Log Analysis\n\nNo cron run entries detected in the input. " +
               "Pipe gateway logs:\n  openclaw gateway logs | openclaw hybrid-mem manage analyze-maintenance-logs run",
           );
+          if (opts?.strict) process.exitCode = 1;
           return;
         }
+
+        if (opts?.autoFix) {
+          result.summaryMd += "\n\n_Auto-fix requested; no unsafe remediation was executed in this pass._";
+        }
+
+        if (opts?.strict && result.failure > 0) process.exitCode = 1;
 
         if (format === "json") {
           const out = JSON.stringify(result, null, 2);

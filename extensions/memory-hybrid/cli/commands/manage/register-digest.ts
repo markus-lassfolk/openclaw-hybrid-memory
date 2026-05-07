@@ -30,17 +30,32 @@ function relativeTime(epochSec: number): string {
   return `${months}mo ago`;
 }
 
+function parseSinceDays(value?: string): number {
+  if (!value) return 7;
+  const m = value.trim().match(/^(\d+)([dhw])?$/i);
+  if (!m) return 7;
+  const n = Number.parseInt(m[1], 10);
+  const unit = (m[2] ?? "d").toLowerCase();
+  if (unit === "h") return Math.max(1, Math.ceil(n / 24));
+  if (unit === "w") return n * 7;
+  return n;
+}
+
 function buildDigestReport(
   b: ManageBindings,
   proposalsDb: ProposalsDB | null,
+  opts?: { since?: string },
 ): {
   md: string;
   json: Record<string, unknown>;
 } {
   const { factsDb, cfg } = b;
+  const sinceDays = parseSinceDays(opts?.since);
+  const sinceSec = Math.floor(Date.now() / 1000) - sinceDays * 24 * 3600;
 
   // 1. Persona proposals
-  const personaPending = proposalsDb?.list({ status: "pending" }) ?? [];
+  const personaPendingAll = proposalsDb?.list({ status: "pending" }) ?? [];
+  const personaPending = personaPendingAll.filter((p) => p.createdAt >= sinceSec);
   const personaApproved = proposalsDb?.list({ status: "approved" }) ?? [];
   const personaRejected = proposalsDb?.list({ status: "rejected" }) ?? [];
   const personaExpired = proposalsDb?.list({ status: "expired" }) ?? [];
@@ -50,6 +65,7 @@ function buildDigestReport(
   const proceduresValidated = factsDb.proceduresValidatedCount();
   const proceduresPromoted = factsDb.proceduresPromotedCount();
   const validatedNotPromoted = Math.max(0, proceduresValidated - proceduresPromoted);
+  const verifiedPendingReview = factsDb.countVerifiedFacts?.() ?? 0;
 
   // 3. Tool proposals
   let toolProposed = 0;
@@ -160,13 +176,22 @@ function buildDigestReport(
   });
 
   const md = [
-    `# Pending Digest — ${new Date().toISOString().split("T")[0]}`,
+    `# Pending Digest — last ${sinceDays}d — ${new Date().toISOString().split("T")[0]}`,
     "",
     ...sections.flatMap((s) => [`## ${s.heading}`, "", s.body, "", `> ${s.badge}`, ""]),
   ].join("\n");
 
   const json = {
+    schemaVersion: 1,
     generatedAt: new Date().toISOString(),
+    sinceDays,
+    pendingReview: {
+      persona: personaPending.length,
+      procedures: validatedNotPromoted,
+      tools: toolProposed,
+      crystallization: crystalPending,
+      verified: verifiedPendingReview,
+    },
     procedures: {
       total: proceduresTotal,
       validated: proceduresValidated,
@@ -197,6 +222,7 @@ function buildDigestReport(
       approved: crystalApproved,
       rejected: crystalRejected,
     },
+    verifiedFacts: { pendingReview: verifiedPendingReview },
   };
 
   return { md, json };
@@ -223,14 +249,15 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
   digest
     .command("pending")
     .description("Show pending backlogs: procedures, persona proposals, tool proposals, crystallization.")
+    .option("--since <duration>", "Lookback window, e.g. 7d, 24h, 2w (default: 7d)")
     .option("--format <fmt>", "Output format: md or json (default: md)")
     .option("--out <path>", "Output file path, or '-' for stdout (default: -)")
     .action(
-      withExit(async (opts?: { format?: string; out?: string }) => {
+      withExit(async (opts?: { since?: string; format?: string; out?: string }) => {
         const format = opts?.format ?? "md";
         const outPath = opts?.out ?? "-";
 
-        const { md, json } = buildDigestReport(b, proposalsDb);
+        const { md, json } = buildDigestReport(b, proposalsDb, { since: opts?.since });
 
         if (format === "json") {
           const output = JSON.stringify(json, null, 2);
