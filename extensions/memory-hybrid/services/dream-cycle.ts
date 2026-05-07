@@ -46,6 +46,8 @@ export interface DreamCycleConfig {
   eventLogArchivePath: string;
   /** Delete unconsolidated event log entries older than this many days. */
   maxUnconsolidatedAgeDays: number;
+  /** Maximum events to merge into one consolidated fact. Default: 200. */
+  maxEventsPerConsolidation: number;
   /**
    * Retention window for log tables (recall_log, reinforcement_log, feedback_trajectories).
    * Rows older than this many days are deleted. 0 = disabled. Default: 30.
@@ -88,6 +90,14 @@ export interface DreamCycleResult {
 
 // Minimum patterns stored in one cycle before we also run reflect-rules.
 const MIN_PATTERNS_FOR_RULES = 3;
+export const DEFAULT_MAX_EVENTS_PER_CONSOLIDATION = 200;
+const SKIP_CONSOLIDATION_EVENT_TYPES = new Set([
+  "heartbeat",
+  "session_end",
+  "session_start",
+  "transport_connect",
+  "transport_disconnect",
+]);
 
 // ---------------------------------------------------------------------------
 // Episodic consolidation helpers (exported for testing)
@@ -123,6 +133,12 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
     groups.get(primaryEntity)?.push(event);
   }
   return groups;
+}
+
+export function shouldSkipEpisodicConsolidation(event: EventLogEntry): boolean {
+  if (SKIP_CONSOLIDATION_EVENT_TYPES.has(event.eventType)) return true;
+  const text = extractEventText(event).toLowerCase();
+  return SKIP_CONSOLIDATION_EVENT_TYPES.has(text);
 }
 
 /**
@@ -175,27 +191,72 @@ export async function runEpisodicConsolidation(
   consolidateAfterDays: number,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   verbose?: boolean,
+  maxEventsPerConsolidation = DEFAULT_MAX_EVENTS_PER_CONSOLIDATION,
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
     return { eventsConsolidated: 0, factsCreated: 0 };
   }
 
-  const groups = groupEventsByEntity(events);
+  let eventsConsolidated = 0;
+  const skippedEvents = events.filter(shouldSkipEpisodicConsolidation);
+  if (skippedEvents.length > 0) {
+    try {
+      eventLog.markConsolidated(
+        skippedEvents.map((e) => e.id),
+        "SKIP:lifecycle_event",
+      );
+      eventsConsolidated += skippedEvents.length;
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — failed to mark lifecycle events as skipped: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-mark-lifecycle-skip",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  const consolidatableEvents = events.filter((event) => !shouldSkipEpisodicConsolidation(event));
+  if (consolidatableEvents.length === 0) {
+    return { eventsConsolidated, factsCreated: 0 };
+  }
+
+  const groups = groupEventsByEntity(consolidatableEvents);
   if (verbose) {
     logger.info(
-      `memory-hybrid: dream-cycle — episodic consolidation: ${events.length} unconsolidated event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d)`,
+      `memory-hybrid: dream-cycle — episodic consolidation: ${consolidatableEvents.length} consolidatable event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d); skipped ${skippedEvents.length} lifecycle/noise event(s)`,
     );
   }
   let factsCreated = 0;
-  let eventsConsolidated = 0;
   const ephemeralSourceFactIds: string[] = [];
 
   for (const [entity, groupEvents] of groups) {
     if (groupEvents.length === 0) continue;
 
+    if (entity === "__default__" && groupEvents.length > maxEventsPerConsolidation) {
+      try {
+        eventLog.markConsolidated(
+          groupEvents.map((e) => e.id),
+          "SKIP:default_group_cap",
+        );
+        eventsConsolidated += groupEvents.length;
+        logger.info(
+          `memory-hybrid: dream-cycle — skipped ${groupEvents.length} unattributed event(s): default group exceeds maxEventsPerConsolidation=${maxEventsPerConsolidation}`,
+        );
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to mark capped default group as skipped: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-mark-default-cap-skip",
+          subsystem: "event-log",
+        });
+      }
+      continue;
+    }
+
+    const cappedGroupEvents = groupEvents.slice(0, maxEventsPerConsolidation);
+
     // Collect text from all events in this group
-    const eventTexts = groupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);
+    const eventTexts = cappedGroupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
       // Mark events as consolidated with a namespaced skip sentinel to prevent re-processing.
@@ -250,7 +311,7 @@ export async function runEpisodicConsolidation(
     // For each event, create a minimal ephemeral source fact and a DERIVED_FROM link.
     // The source facts expire immediately; DERIVED_FROM links persist as provenance.
     const nowSec = Math.floor(Date.now() / 1000);
-    for (const event of groupEvents) {
+    for (const event of cappedGroupEvents) {
       const srcText = extractEventText(event);
       if (srcText.length < 3) continue;
 
@@ -414,6 +475,7 @@ export async function runDreamCycle(
         config.consolidateAfterDays,
         logger,
         v,
+        config.maxEventsPerConsolidation,
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
