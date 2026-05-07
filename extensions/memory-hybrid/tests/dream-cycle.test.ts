@@ -226,6 +226,24 @@ describe("groupEventsByEntity", () => {
     expect(groups.has("Bob")).toBe(false);
   });
 
+  it("filters lifecycle heartbeat noise before grouping", () => {
+    const events = [
+      makeEntry({ content: { text: "heartbeat" } }),
+      makeEntry({ content: { text: "session_start" } }),
+      makeEntry({ content: { text: "session_end" } }),
+      makeEntry({ content: { text: "transport_connect" } }),
+      makeEntry({ content: { text: "transport_disconnect" } }),
+      makeEntry({ entities: ["Alice"], content: { text: "real work happened" } }),
+      makeEntry({ content: { text: "unattributed useful event" } }),
+    ];
+
+    const groups = groupEventsByEntity(events);
+
+    expect(groups.get("Alice")).toHaveLength(1);
+    expect(groups.get("__default__")).toHaveLength(1);
+    expect(groups.get("__default__")?.[0]?.content.text).toBe("unattributed useful event");
+  });
+
   it("returns empty map for empty input", () => {
     const groups = groupEventsByEntity([]);
     expect(groups.size).toBe(0);
