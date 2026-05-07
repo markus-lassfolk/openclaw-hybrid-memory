@@ -92,20 +92,33 @@ describe("pending digest delivery via cron config (#1197)", () => {
       evidenceSessions: [sessionId],
     });
 
-    const raw = (factsDb as unknown as { getRawDb: () => { prepare: (sql: string) => any } }).getRawDb();
     const now = Math.floor(Date.now() / 1000);
-    raw
-      .prepare(
-        `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, expires_at, confidence, provenance_session)
-         VALUES (?, ?, 'preference', 0.9, 'reflection', ?, 'durable', ?, 0.9, ?)`,
-      )
-      .run("ev-fact-1", "Operator prefers concise milestone updates.", now, now + 86400 * 30, sessionId);
-    raw
-      .prepare(
-        `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, expires_at, confidence, provenance_session)
-         VALUES (?, ?, 'preference', 0.7, 'reflection', ?, 'durable', ?, 0.8, ?)`,
-      )
-      .run("ev-fact-2", "Operator dislikes verbose updates.", now, now + 86400 * 30, sessionId);
+    const f1 = factsDb.store({
+      text: "Operator prefers concise milestone updates.",
+      category: "preference",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "durable",
+      expiresAt: now + 86400 * 30,
+      confidence: 0.9,
+      provenanceSession: sessionId,
+    });
+    factsDb.store({
+      text: "Operator dislikes verbose updates.",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+      decayClass: "durable",
+      expiresAt: now + 86400 * 30,
+      confidence: 0.8,
+      provenanceSession: sessionId,
+    });
 
     factsDb.upsertProcedure({
       taskPattern: "Validate procedure within window",
@@ -125,11 +138,11 @@ describe("pending digest delivery via cron config (#1197)", () => {
 
     expect(report.procedures.newThisWeek).toBeGreaterThanOrEqual(1);
     expect(report.personaProposals.pendingEntries[0]?.evidence.facts).toBe(2);
-    expect(report.personaProposals.pendingEntries[0]?.evidence.topFactIds).toContain("ev-fact-1");
+    expect(report.personaProposals.pendingEntries[0]?.evidence.topFactIds).toContain(f1.id);
 
     const body = renderPendingReviewDigestMarkdown(report);
     expect(body).toContain("Evidence: 2 fact(s)");
-    expect(body).toContain("ev-fact-1");
+    expect(body).toContain(f1.id);
     expect(body).toMatch(/new this week/);
 
     type TelegramDelivery = { chatId: string; markdown: string };

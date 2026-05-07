@@ -29,7 +29,7 @@
     "classification": "provider-auth",
     "defaultAction": "escalate-user",
     "severity": "high",
-    "suggestedAction": "Verify provider credentials and endpoint configuration before retrying embedding or LLM work."
+    "suggestedAction": "Verify provider credentials and endpoint configuration before retrying embedding or LLM work. After auth is fixed, `analyze-maintenance-logs --auto-fix --auto-fix-all` can run `hybrid-mem reembed-vectorless --limit 200 --apply` once for this batch."
   },
   {
     "id": "disk-full",
@@ -45,7 +45,7 @@
     "classification": "infra",
     "defaultAction": "retry-once",
     "severity": "medium",
-    "suggestedAction": "Retry once; if it persists, schedule VACUUM/vector optimization during an idle window."
+    "suggestedAction": "Retry once; if it persists, schedule VACUUM/vector optimization during an idle window. With persisted history, `analyze-maintenance-logs --auto-fix --auto-fix-all` can run VACUUM + `hybrid-mem vectordb-optimize` after repeated SQLITE_BUSY in a 24h window."
   },
   {
     "id": "plugin-type-error",

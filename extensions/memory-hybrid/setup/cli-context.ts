@@ -459,6 +459,10 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
           reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
           verbose,
+          episodicConsolidationEventTypes: {
+            allow: cfg.nightlyCycle.consolidationEventTypeAllow,
+            deny: cfg.nightlyCycle.consolidationEventTypeDeny,
+          },
         },
         logSink,
         provenanceService,

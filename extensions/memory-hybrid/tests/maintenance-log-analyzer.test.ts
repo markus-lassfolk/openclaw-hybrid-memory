@@ -3,18 +3,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { _testing } from "../index.js";
+
+const { FactsDB } = _testing;
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(() => "event-1"),
 }));
 
 import { capturePluginError } from "../services/error-reporter.js";
-import { applyMaintenanceAutoFix, clearStaleLock } from "../services/maintenance-auto-fix.js";
+import {
+  applyHeavyMaintenanceAutoFixes,
+  applyMaintenanceAutoFix,
+  clearStaleLock,
+} from "../services/maintenance-auto-fix.js";
 import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
   classifyMaintenanceFailure,
   collectMaintenanceSteps,
+  countPersistedSqliteBusySince,
   maintenanceRules,
   persistMaintenanceFindings,
   pluginVersionGte,
@@ -239,5 +247,110 @@ describe("maintenance log analyzer", () => {
     });
     expect(fixed.actionTaken).toBe("auto-fixed-clear-stale-lock");
     expect(existsSync(stalePath)).toBe(false);
+  });
+
+  it("countPersistedSqliteBusySince counts SQLITE_BUSY rows in window (#1199)", () => {
+    const dbPath = join(tmpRoot(), "busy-count.db");
+    const now = Math.floor(Date.now() / 1000);
+    persistMaintenanceFindings(dbPath, [
+      {
+        id: "b1",
+        occurredAt: now - 120,
+        job: "j",
+        step: "s",
+        exitCode: 1,
+        classification: "infra",
+        ruleId: "sqlite-busy",
+        fingerprint: "fp1",
+        logExcerpt: "SQLITE_BUSY database is locked",
+        logPath: "/tmp/x.log",
+        pluginVersion: null,
+        actionTaken: "retry-once",
+        suggestedAction: "retry",
+        severity: "medium",
+      },
+    ]);
+    expect(countPersistedSqliteBusySince(dbPath, now - 3600)).toBe(1);
+    expect(countPersistedSqliteBusySince(dbPath, now)).toBe(0);
+  });
+
+  it("applyHeavyMaintenanceAutoFixes runs vacuum + CLI hooks when SQLITE_BUSY repeats (#1199)", () => {
+    const dir = tmpRoot();
+    const dbPath = join(dir, "facts.db");
+    const findingsPath = join(dir, "maint.db");
+    const factsDb = new FactsDB(dbPath);
+    const now = Math.floor(Date.now() / 1000);
+    persistMaintenanceFindings(findingsPath, [
+      {
+        id: "old",
+        occurredAt: now - 4000,
+        job: "j",
+        step: "s",
+        exitCode: 1,
+        classification: "infra",
+        ruleId: "sqlite-busy",
+        fingerprint: "fp-old",
+        logExcerpt: "SQLITE_BUSY",
+        logPath: "/tmp/old.log",
+        pluginVersion: null,
+        actionTaken: "retry-once",
+        suggestedAction: "retry",
+        severity: "medium",
+      },
+    ]);
+
+    const calls: string[][] = [];
+    const findings = [
+      {
+        id: "new",
+        occurredAt: now,
+        job: "j",
+        step: "s",
+        exitCode: 1,
+        classification: "infra" as const,
+        ruleId: "sqlite-busy",
+        fingerprint: "fp-new",
+        logExcerpt: "SQLITE_BUSY",
+        logPath: "/tmp/new.log",
+        pluginVersion: null,
+        actionTaken: "retry-once" as const,
+        suggestedAction: "retry",
+        severity: "medium" as const,
+      },
+    ];
+
+    const out = applyHeavyMaintenanceAutoFixes({
+      findings,
+      findingsDbPath: findingsPath,
+      factsDb,
+      sqliteBusyWindowSec: 86_400,
+      spawnOpenclaw: (args) => {
+        calls.push(args);
+        return { status: 0 };
+      },
+    });
+
+    expect(out[0]?.actionTaken).toBe("auto-fixed-vacuum-on-busy");
+    expect(calls.some((c) => c[0] === "hybrid-mem" && c[1] === "vectordb-optimize")).toBe(true);
+
+    const outEmbed = applyHeavyMaintenanceAutoFixes({
+      findings: [
+        {
+          ...findings[0],
+          ruleId: "embedding-auth",
+          classification: "provider-auth",
+        },
+      ],
+      findingsDbPath: join(dir, "empty.db"),
+      factsDb,
+      spawnOpenclaw: (args) => {
+        calls.push(args);
+        return { status: 0 };
+      },
+    });
+    expect(outEmbed[0]?.actionTaken).toBe("auto-fixed-reembed-vectorless");
+    expect(calls.some((c) => c.includes("reembed-vectorless") && c.includes("--limit"))).toBe(true);
+
+    factsDb.close();
   });
 });

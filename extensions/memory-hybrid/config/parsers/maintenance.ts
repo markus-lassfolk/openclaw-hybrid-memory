@@ -32,6 +32,12 @@ export function parseVerificationConfig(cfg: Record<string, unknown>): Verificat
   };
 }
 
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim());
+  return out.length > 0 ? out : undefined;
+}
+
 export function parseProvenanceConfig(cfg: Record<string, unknown>): ProvenanceConfig {
   const provRaw = cfg.provenance as Record<string, unknown> | undefined;
   return {
@@ -98,6 +104,8 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
       typeof nightlyCycleRaw?.eventLogArchivePath === "string" && nightlyCycleRaw.eventLogArchivePath.trim().length > 0
         ? nightlyCycleRaw.eventLogArchivePath.trim()
         : undefined,
+    consolidationEventTypeAllow: parseStringList(nightlyCycleRaw?.consolidationEventTypeAllow),
+    consolidationEventTypeDeny: parseStringList(nightlyCycleRaw?.consolidationEventTypeDeny),
   };
 }
 

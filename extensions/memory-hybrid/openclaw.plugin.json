@@ -1685,6 +1685,16 @@
           },
           "maxEventsPerConsolidation": {
             "type": "number"
+          },
+          "consolidationEventTypeAllow": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional allow-list of event_log.event_type values for episodic consolidation (#1185)"
+          },
+          "consolidationEventTypeDeny": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Extra event_type deny list merged with built-in session/heartbeat filter (#1185)"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"

@@ -1,11 +1,16 @@
 /**
  * Whitelisted safe auto-fix actions for maintenance log analyzer (Issue #1199).
- * Unsafe actions (vacuum-on-busy, reembed, purge) stay report-only — see README.
+ * Use `--auto-fix` for lock clear + retry-once. Add `--auto-fix-all` for vacuum-on-busy
+ * (after repeated SQLITE_BUSY in the persistence window) and reembed-vectorless when
+ * embedding-auth findings are present.
  */
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 
-import type { MaintenanceFinding } from "./maintenance-log-analyzer.js";
+import { vacuumAndCheckpoint } from "../backends/facts-db/housekeeping.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import { spawnSync } from "../utils/process-runner.js";
+import { countPersistedSqliteBusySince, type MaintenanceFinding } from "./maintenance-log-analyzer.js";
 
 const LOCK_PATH_RE = /(\/[^\s"']+\.lock)/g;
 
@@ -73,4 +78,87 @@ export function applyMaintenanceAutoFix(finding: MaintenanceFinding): Maintenanc
   }
 
   return finding;
+}
+
+export type HeavyMaintenanceAutoFixOptions = {
+  findings: MaintenanceFinding[];
+  findingsDbPath: string;
+  factsDb: FactsDB;
+  /** Seconds to look back for repeated SQLITE_BUSY in maintenance_finding. Default: 86400. */
+  sqliteBusyWindowSec?: number;
+  /**
+   * Invokes the OpenClaw CLI (e.g. `openclaw hybrid-mem …`). First element of args must be `hybrid-mem`.
+   * Override in tests.
+   */
+  spawnOpenclaw?: (args: string[]) => { status: number | null; stderr?: string };
+};
+
+function defaultSpawnOpenclaw(args: string[]): { status: number | null; stderr?: string } {
+  const bin = process.env.OPENCLAW_BIN?.trim() || "openclaw";
+  const r = spawnSync(bin, args, { encoding: "utf-8" });
+  return { status: r.status, stderr: r.stderr ? String(r.stderr) : undefined };
+}
+
+/**
+ * Heavy / shell-touching fixes enabled only with `--auto-fix-all` (#1199).
+ * Call after {@link applyMaintenanceAutoFix} on each row.
+ */
+export function applyHeavyMaintenanceAutoFixes(opts: HeavyMaintenanceAutoFixOptions): MaintenanceFinding[] {
+  const spawn = opts.spawnOpenclaw ?? defaultSpawnOpenclaw;
+  let out = opts.findings;
+  const windowSec = opts.sqliteBusyWindowSec ?? 86400;
+  const sinceSec = Math.floor(Date.now() / 1000) - windowSec;
+
+  const historical = countPersistedSqliteBusySince(opts.findingsDbPath, sinceSec);
+  const busyThisBatch = opts.findings.filter((f) => f.ruleId === "sqlite-busy").length;
+
+  if (busyThisBatch > 0 && historical + busyThisBatch >= 2) {
+    let vacuumOk = false;
+    try {
+      vacuumAndCheckpoint(opts.factsDb.getRawDb());
+      vacuumOk = true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      out = out.map((f) =>
+        f.ruleId === "sqlite-busy"
+          ? {
+              ...f,
+              suggestedAction: `${f.suggestedAction} [auto-fix-all: VACUUM failed — ${msg}]`,
+            }
+          : f,
+      );
+    }
+    if (vacuumOk) {
+      const opt = spawn(["hybrid-mem", "vectordb-optimize"]);
+      const extra =
+        opt.status === 0
+          ? " Ran VACUUM+wcheckpoint + vectordb-optimize."
+          : ` VACUUM ok; vectordb-optimize exit=${opt.status}${opt.stderr ? ` (${opt.stderr.slice(0, 200)})` : ""}.`;
+      out = out.map((f) =>
+        f.ruleId === "sqlite-busy"
+          ? {
+              ...f,
+              actionTaken: "auto-fixed-vacuum-on-busy",
+              suggestedAction: `${f.suggestedAction} [auto-fix-all:${extra}]`,
+            }
+          : f,
+      );
+    }
+  }
+
+  if (opts.findings.some((f) => f.ruleId === "embedding-auth")) {
+    const r = spawn(["hybrid-mem", "reembed-vectorless", "--limit", "200", "--apply"]);
+    const ok = r.status === 0;
+    out = out.map((f) =>
+      f.ruleId === "embedding-auth"
+        ? {
+            ...f,
+            actionTaken: ok ? "auto-fixed-reembed-vectorless" : f.actionTaken,
+            suggestedAction: `${f.suggestedAction} [auto-fix-all: reembed-vectorless --limit 200 exit=${r.status}${ok ? "" : ` ${r.stderr?.slice(0, 200) ?? ""}`}]`,
+          }
+        : f,
+    );
+  }
+
+  return out;
 }

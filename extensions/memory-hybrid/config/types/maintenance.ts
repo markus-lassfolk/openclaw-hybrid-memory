@@ -69,6 +69,16 @@ export type NightlyCycleConfig = {
   reclassifyInactiveDays: number;
   /** Recall count required to promote a fact to a longer-lived class. Default: 3. */
   reclassifyPromoteRecallCount: number;
+  /**
+   * When set, only these `event_log.event_type` values are eligible for episodic consolidation,
+   * after the built-in deny list is applied (#1185). Omit for no allow restriction.
+   */
+  consolidationEventTypeAllow?: string[];
+  /**
+   * Extra `event_type` values to exclude from consolidation (merged with built-in session/
+   * heartbeat/transport deny list). Default: none.
+   */
+  consolidationEventTypeDeny?: string[];
 };
 
 /** Memory health dashboard configuration (Issue #148). */

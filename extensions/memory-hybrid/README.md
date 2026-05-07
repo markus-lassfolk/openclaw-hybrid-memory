@@ -286,7 +286,12 @@ The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the n
 - **Stale scan lock files**: when a finding includes a `*.lock` absolute path and the recorded PID is not running, the lock file is removed.
 - **Retry-once marker**: for transient LLM / network rules, the finding is annotated (`auto-fixed-retry-once`) so the next cron tick can retry — **no** extra shell commands are executed.
 
-Vacuum-on-busy, re-embed, purge guards, and similar heavy fixes stay **report-only**; follow the textual suggestions manually.
+Add **`--auto-fix-all`** together with `--auto-fix` to opt into heavier remediation (still scoped to the maintenance analyzer):
+
+- **Vacuum-on-busy**: when at least two `SQLITE_BUSY` / “database is locked” findings fall within the configured persistence window (historical rows in `maintenance-findings.db` plus the current batch), runs `VACUUM` + WAL checkpoint on the open facts DB and invokes `openclaw hybrid-mem vectordb-optimize`.
+- **Re-embed vectorless**: when an `embedding-auth` rule matches in the current batch, runs `openclaw hybrid-mem reembed-vectorless --limit 200 --apply` once (useful after credentials were fixed).
+
+Override the CLI binary with `OPENCLAW_BIN` if `openclaw` is not on `PATH`.
 
 ### Resolved-issue suppression
 

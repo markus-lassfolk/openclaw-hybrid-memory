@@ -28,6 +28,7 @@ import {
   runDreamCycle,
   runEpisodicConsolidation,
   shouldSkipEpisodicConsolidation,
+  shouldSkipEpisodicConsolidationByEventType,
 } from "../services/dream-cycle.js";
 
 const { FactsDB, EventLog } = _testing;
@@ -245,6 +246,22 @@ describe("groupEventsByEntity", () => {
     expect(groups.get("__default__")?.[0]?.content.text).toBe("unattributed useful event");
   });
 
+  it("excludes session_start by raw eventType before grouping (#1185)", () => {
+    const events = [
+      makeEntry({
+        eventType: "session_start",
+        content: { text: "Important preference that is not matched by text patterns" },
+      }),
+      makeEntry({ entities: ["Alice"], content: { text: "real work" } }),
+    ];
+    const filtered = events.filter(
+      (e) => !shouldSkipEpisodicConsolidation(e) && !shouldSkipEpisodicConsolidationByEventType(e),
+    );
+    const groups = groupEventsByEntity(filtered);
+    expect(groups.get("Alice")).toHaveLength(1);
+    expect(groups.size).toBe(1);
+  });
+
   it("returns empty map for empty input", () => {
     const groups = groupEventsByEntity([]);
     expect(groups.size).toBe(0);
@@ -370,6 +387,28 @@ describe("runEpisodicConsolidation", () => {
     expect(result.eventsConsolidated).toBe(2);
     expect(result.factsCreated).toBe(0);
     expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
+
+  it("skips session_start eventType even when body text is innocuous (#1185)", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "session_start",
+      content: { text: "User shared a durable preference" },
+    });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Actually consolidatable" },
+    });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(result.eventsConsolidated).toBe(2);
+    expect(result.factsCreated).toBe(1);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(1);
     expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
   });
 
@@ -758,6 +797,18 @@ describe("NightlyCycleConfig parsing", () => {
     });
     expect(cfg.nightlyCycle.logRetentionDays).toBe(60);
     expect(cfg.nightlyCycle.vacuumOnCycle).toBe(false);
+  });
+
+  it("parses consolidationEventTypeAllow and consolidationEventTypeDeny (#1185)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...minimalConfig,
+      nightlyCycle: {
+        consolidationEventTypeAllow: ["fact_learned", "  correction  "],
+        consolidationEventTypeDeny: ["custom_noise"],
+      },
+    });
+    expect(cfg.nightlyCycle.consolidationEventTypeAllow).toEqual(["fact_learned", "correction"]);
+    expect(cfg.nightlyCycle.consolidationEventTypeDeny).toEqual(["custom_noise"]);
   });
 
   it("accepts logRetentionDays=0 to disable log pruning (Issue #573)", () => {

@@ -101,6 +101,10 @@ describe("pending review digest (#1197)", () => {
     expect(report.generatedAt).toBe("2026-05-07T00:00:00.000Z");
     expect(report.pendingReview).toMatchObject({ persona: 1, procedures: 1, tools: 1, crystallization: 1 });
     expect(report.personaProposals.pendingEntries[0]).toHaveProperty("approveCommand");
+    expect(report.personaProposals.pendingEntries[0]).toMatchObject({
+      evidence: { topFactIds: [], facts: 0 },
+    });
+    expect(report.procedures.newThisWeek).toBeGreaterThanOrEqual(1);
     expect(report.toolProposals.proposedEntries[0]).toHaveProperty("declineCommand");
     expect(report.crystallization.pendingEntries[0]).toHaveProperty("approveCommand");
 

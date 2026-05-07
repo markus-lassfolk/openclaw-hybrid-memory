@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { stdin } from "node:process";
 
-import { applyMaintenanceAutoFix } from "../../../services/maintenance-auto-fix.js";
+import { applyHeavyMaintenanceAutoFixes, applyMaintenanceAutoFix } from "../../../services/maintenance-auto-fix.js";
 import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
@@ -25,6 +25,7 @@ interface AnalyzeMaintenanceLogOpts {
   root?: string;
   since?: string;
   autoFix?: boolean;
+  autoFixAll?: boolean;
   glitchtip?: boolean;
   digest?: string;
   format?: string;
@@ -91,6 +92,13 @@ export async function runAnalyzeMaintenanceLogs(
 
   if (opts?.autoFix) {
     findings = findings.map((f) => applyMaintenanceAutoFix(f));
+    if (opts.autoFixAll) {
+      findings = applyHeavyMaintenanceAutoFixes({
+        findings,
+        findingsDbPath: findingsPath,
+        factsDb: b.factsDb,
+      });
+    }
   }
 
   if (findings.length > 0 && opts?.noPersist !== true) {
@@ -118,6 +126,10 @@ function addAnalyzeOptions(cmd: Chainable): Chainable {
     .option(
       "--auto-fix",
       "Apply whitelisted safe fixes (clear stale .lock with dead PID; mark retry-once). No shell exec for unsafe actions.",
+    )
+    .option(
+      "--auto-fix-all",
+      "With --auto-fix: also run VACUUM + vectordb-optimize after repeated SQLITE_BUSY in the persistence window, and reembed-vectorless --limit 200 --apply when embedding-auth findings are present.",
     )
     .option("--glitchtip", "Report plugin-bug/orchestration-bug findings via existing error reporter")
     .option("--digest <fmt>", "Alias for --format, md or json")

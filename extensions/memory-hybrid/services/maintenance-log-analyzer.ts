@@ -62,7 +62,9 @@ export interface MaintenanceFinding {
     | "reported"
     | "reported-glitchtip"
     | "auto-fixed-clear-stale-lock"
-    | "auto-fixed-retry-once";
+    | "auto-fixed-retry-once"
+    | "auto-fixed-vacuum-on-busy"
+    | "auto-fixed-reembed-vectorless";
   suggestedAction: string;
   severity: MaintenanceRule["severity"];
   glitchtipEventId?: string;
@@ -326,6 +328,29 @@ ${step.logContent}`;
   }
   const resolved = opts?.resolvedFingerprints ?? loadMaintenanceResolvedMap();
   return filterResolvedMaintenanceFindings(findings, resolved);
+}
+
+/** Count persisted rows that look like SQLITE_BUSY / locked DB (for vacuum-on-busy repeat detection, #1199). */
+export function countPersistedSqliteBusySince(dbPath: string, sinceSec: number): number {
+  if (!existsSync(dbPath)) return 0;
+  const db = new DatabaseSync(dbPath);
+  try {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM maintenance_finding
+         WHERE occurred_at >= ?
+           AND (
+             IFNULL(log_excerpt, '') LIKE '%SQLITE_BUSY%'
+             OR LOWER(IFNULL(log_excerpt, '')) LIKE '%database is locked%'
+           )`,
+      )
+      .get(sinceSec) as { c: number };
+    return Number(row?.c ?? 0);
+  } catch {
+    return 0;
+  } finally {
+    db.close();
+  }
 }
 
 export function persistMaintenanceFindings(dbPath: string, findings: MaintenanceFinding[]): void {
