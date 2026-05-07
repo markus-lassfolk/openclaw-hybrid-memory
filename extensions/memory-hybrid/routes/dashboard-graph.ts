@@ -11,6 +11,16 @@ interface MemoryGraphNode {
   category: string;
   importance: number;
   decayClass: string;
+  provenance?: unknown;
+}
+
+function parseProvenance(raw: string | null): unknown | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 interface MemoryGraphEdge {
@@ -37,7 +47,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   const db = factsDb.getRawDb();
   const rows = db
     .prepare(
-      "SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
+      "SELECT id, text, category, importance, decay_class, provenance_json FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
     )
     .all(nowSec, cutoff, capped) as Array<{
     id: string;
@@ -45,6 +55,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     category: string;
     importance: number;
     decay_class: string | null;
+    provenance_json: string | null;
   }>;
   const idSet = new Set(rows.map((r) => r.id));
   const allEdges = factsDb.getAllEdges(12000);
@@ -55,6 +66,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     category: r.category,
     importance: r.importance,
     decayClass: r.decay_class ?? "stable",
+    provenance: parseProvenance(r.provenance_json),
   }));
   return {
     generatedAt: new Date().toISOString(),
@@ -96,6 +108,7 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
       category: f.category,
       importance: f.importance,
       decayClass: f.decayClass ?? "stable",
+      provenance: parseProvenance(f.provenanceJson ?? null),
     });
   }
   const nodeIdSet = new Set(nodes.map((n) => n.id));
@@ -145,7 +158,7 @@ export function getGraphExplorerHtml(): string {
 <div id="detail" class="panel" style="margin:8px;display:none"></div>
 <svg id="graph"></svg>
 <script>
-const LINK_COLORS = { SUPERSEDES:'#ef4444', RELATED_TO:'#6b7280', PART_OF:'#3b82f6', CAUSED_BY:'#a855f7', DEPENDS_ON:'#f97316', INSTANCE_OF:'#22c55e', CONTRADICTS:'#f43f5e', DERIVED_FROM:'#94a3b8' };
+const LINK_COLORS = { SUPERSEDES:'#ef4444', RELATED_TO:'#6b7280', PART_OF:'#3b82f6', CAUSED_BY:'#a855f7', DEPENDS_ON:'#f97316', INSTANCE_OF:'#22c55e', CONTRADICTS:'#f43f5e' };
 const CAT_COLORS = { fact:'#3b82f6', preference:'#22c55e', decision:'#eab308', entity:'#a855f7', episode:'#c084fc', procedure:'#f97316', pattern:'#14b8a6', rule:'#f59e0b', other:'#64748b' };
 
 let sim, svg, link, node, pulse;
@@ -212,7 +225,7 @@ function buildGraph(data) {
     .on('click', (e, d) => {
       const el = document.getElementById('detail');
       el.style.display = 'block';
-      el.textContent = d.label;
+      el.textContent = d.provenance ? d.label + '\n\nProvenance: ' + JSON.stringify(d.provenance, null, 2) : d.label;
     });
 
   pulse = new Set((data.activated || []).filter(Boolean));

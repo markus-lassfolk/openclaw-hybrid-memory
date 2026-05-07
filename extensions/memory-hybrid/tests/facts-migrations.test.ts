@@ -103,6 +103,43 @@ describe("runFactsMigrations", () => {
     runFactsMigrations(db);
     expect(tableExists("memory_links")).toBe(true);
   });
+  it("migrates DERIVED_FROM memory_links into facts.provenance_json and deletes graph rows", () => {
+    runFactsMigrations(db);
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.7, 'consolidation', ?, ?, 'stable')`,
+    ).run("derived", "Derived fact", now, now);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.5, 'conversation', ?, ?, 'stable')`,
+    ).run("source-a", "Source A", now, now);
+    db.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'fact', 0.5, 'conversation', ?, ?, 'stable')`,
+    ).run("source-b", "Source B", now, now);
+    db.prepare(
+      `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
+       VALUES ('l1', 'derived', 'source-a', 'DERIVED_FROM', 1.0, ?),
+              ('l2', 'derived', 'source-b', 'DERIVED_FROM', 1.0, ?),
+              ('l3', 'derived', 'source-a', 'RELATED_TO', 0.7, ?)`,
+    ).run(now, now, now);
+
+    runFactsMigrations(db);
+
+    const row = db.prepare("SELECT provenance_json FROM facts WHERE id = 'derived'").get() as {
+      provenance_json: string;
+    };
+    const provenance = JSON.parse(row.provenance_json);
+    expect(provenance.sourceFactIds.sort()).toEqual(["source-a", "source-b"]);
+    expect(provenance.sourceFacts).toHaveLength(2);
+    expect(provenance.migratedFromMemoryLinksAt).toBeTypeOf("number");
+
+    const counts = db
+      .prepare("SELECT link_type, COUNT(*) AS count FROM memory_links GROUP BY link_type")
+      .all() as Array<{ link_type: string; count: number }>;
+    expect(counts).toEqual([{ link_type: "RELATED_TO", count: 1 }]);
+  });
 
   it("creates the contradictions table", () => {
     runFactsMigrations(db);

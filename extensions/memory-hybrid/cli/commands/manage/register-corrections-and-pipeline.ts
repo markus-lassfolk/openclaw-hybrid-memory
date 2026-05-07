@@ -1174,7 +1174,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         console.log(`  Agents scanned: ${res.agentsScanned}`);
         console.log(`  Lessons considered: ${res.lessonsConsidered}`);
         console.log(`  Generalised stored: ${res.generalisedStored}`);
-        console.log(`  Links created: ${res.linksCreated}`);
+        console.log(`  Provenance sources recorded: ${res.provenanceRecorded}`);
         console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
         if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
       }),

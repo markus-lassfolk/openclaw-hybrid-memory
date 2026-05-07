@@ -861,7 +861,11 @@ describe("Integration: expandGraph with real FactsDB", () => {
     db.createLink(seed.id, hub.id, "RELATED_TO", 1.0);
     for (let i = 0; i < 600; i++) {
       const heartbeat = storeFact(i % 2 === 0 ? "session_start" : "session_end");
-      db.createLink(hub.id, heartbeat.id, "DERIVED_FROM", 1.0);
+      db.getRawDb()
+        .prepare(
+          "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1.0, strftime('%s','now'))",
+        )
+        .run(`legacy-${i}`, hub.id, heartbeat.id);
     }
     db.createLink(hub.id, semantic.id, "RELATED_TO", 1.0);
 
@@ -874,14 +878,14 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(result.length).toBeLessThanOrEqual(51); // direct seed + maxExpandedResults
     expect(result.some((r) => r.entry.text === "session_start" || r.entry.text === "session_end")).toBe(false);
     expect(result.some((r) => r.factId === hub.id)).toBe(true);
-    expect(result.some((r) => r.factId === semantic.id)).toBe(false);
+    expect(result.some((r) => r.factId === semantic.id)).toBe(true);
   });
 
-  it("incoming links are traversed bidirectionally in real DB", () => {
+  it("incoming semantic links are traversed bidirectionally in real DB", () => {
     const factA = storeFact("Target");
     const factB = storeFact("Source that points to target");
     // B→A (incoming to A)
-    db.createLink(factB.id, factA.id, "DERIVED_FROM", 0.8);
+    db.createLink(factB.id, factA.id, "RELATED_TO", 0.8);
 
     const aEntry = db.getById(factA.id)!;
     const result = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {

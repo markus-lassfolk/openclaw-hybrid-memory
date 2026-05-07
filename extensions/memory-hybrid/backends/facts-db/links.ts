@@ -12,6 +12,9 @@ export function createLink(
   linkType: MemoryLinkType,
   strength = 1.0,
 ): string {
+  if ((linkType as string) === "DERIVED_FROM") {
+    throw new Error("DERIVED_FROM provenance is stored on facts.provenance_json, not memory_links");
+  }
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
@@ -113,15 +116,15 @@ export function getConnectedFactIds(
   let frontier = [...factIds];
 
   const outStmt = db.prepare(
-    `SELECT target_fact_id AS id FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS' ORDER BY strength DESC, created_at DESC LIMIT ?`,
+    `SELECT target_fact_id AS id FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
   );
   const inStmt = db.prepare(
-    `SELECT source_fact_id AS id FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS' ORDER BY strength DESC, created_at DESC LIMIT ?`,
+    `SELECT source_fact_id AS id FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
   );
   const degreeStmt = db.prepare(
     `SELECT
-       (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS') +
-       (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS') AS degree`,
+       (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+       (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) AS degree`,
   );
   const degreeCache = new Map<string, number>();
   const degreeOf = (id: string): number => {
@@ -199,7 +202,7 @@ export function expandGraphWithCTE(
       : `AND (
           SELECT COUNT(*) FROM memory_links d
           WHERE (d.source_fact_id = ge.fact_id OR d.target_fact_id = ge.fact_id)
-            AND d.link_type != 'CONTRADICTS'
+            AND d.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         ) <= ?`;
   let factJoinOut = "";
   let factWhereOut = "";
@@ -269,7 +272,7 @@ export function expandGraphWithCTE(
       ${factJoinOut}
       WHERE
         ge.hop_count < ?
-        AND ml.link_type != 'CONTRADICTS'
+        AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
         ${hubGuardSql}
@@ -298,7 +301,7 @@ export function expandGraphWithCTE(
       ${factJoinIn}
       WHERE
         ge.hop_count < ?
-        AND ml.link_type != 'CONTRADICTS'
+        AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
         ${hubGuardSql}

@@ -248,6 +248,17 @@ export async function runConsolidate(
       tags: mergedTags.length > 0 ? mergedTags : undefined,
       extractionMethod: "consolidation",
       extractionConfidence: BATCH_STORE_IMPORTANCE,
+      provenanceJson: JSON.stringify({
+        method: "consolidation",
+        consolidatedAt: Math.floor(Date.now() / 1000),
+        sourceFactIds: clusterIds,
+        sourceFacts: clusterFacts.map((sourceFact) => ({
+          id: sourceFact.id,
+          text: sourceFact.text.slice(0, 300),
+          source: sourceFact.source,
+          category: sourceFact.category,
+        })),
+      }),
     });
     if (provenanceService && consolidationRunId) {
       try {
@@ -291,10 +302,7 @@ export async function runConsolidate(
         });
       }
     }
-    // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
-    for (const id of clusterIds) {
-      factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
-    }
+    // Source lineage is stored on facts.provenance_json. memory_links is reserved for semantic edges.
     if (provenanceService) {
       for (const sourceFact of clusterFacts) {
         try {

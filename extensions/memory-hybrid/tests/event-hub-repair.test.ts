@@ -52,7 +52,11 @@ describe("event-hub repair", () => {
     });
     for (let i = 0; i < 4; i++) {
       const src = storeFact(i % 2 === 0 ? "session_start" : "session_end", { source: "dream-cycle" });
-      db.createLink(hub.id, src.id, "DERIVED_FROM", 1);
+      raw()
+        .prepare(
+          "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1, strftime('%s','now'))",
+        )
+        .run(`derived-${src.id}`, hub.id, src.id);
     }
 
     const report = repairEventHubs(raw(), { threshold: 3, apply: false });
@@ -78,10 +82,18 @@ describe("event-hub repair", () => {
     for (let i = 0; i < 4; i++) {
       const src = storeFact(i % 2 === 0 ? "session_start" : "session_end", { source: "dream-cycle" });
       sourceIds.push(src.id);
-      db.createLink(hub.id, src.id, "DERIVED_FROM", 1);
+      raw()
+        .prepare(
+          "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1, strftime('%s','now'))",
+        )
+        .run(`derived-${src.id}`, hub.id, src.id);
     }
     db.createLink(hub.id, semantic.id, "RELATED_TO", 1);
-    db.createLink(lowVolume.id, smallDerived.id, "DERIVED_FROM", 1);
+    raw()
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1, strftime('%s','now'))",
+      )
+      .run("derived-low-volume", lowVolume.id, smallDerived.id);
 
     const report = repairEventHubs(raw(), { threshold: 3, apply: true });
 
@@ -105,7 +117,11 @@ describe("event-hub repair", () => {
     const hub = storeFact("[consolidated from 4 events] important deployment decisions", { source: "manual-import" });
     for (let i = 0; i < 4; i++) {
       const src = storeFact(`real source ${i}`, { source: "manual-import" });
-      db.createLink(hub.id, src.id, "DERIVED_FROM", 1);
+      raw()
+        .prepare(
+          "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1, strftime('%s','now'))",
+        )
+        .run(`derived-${src.id}`, hub.id, src.id);
     }
 
     expect(findEventHubRepairCandidates(raw(), 3)).toHaveLength(0);

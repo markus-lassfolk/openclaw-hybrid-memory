@@ -655,7 +655,7 @@ export interface CrossAgentLearningCliResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
-  linksCreated: number;
+  provenanceRecorded: number;
   skippedDuplicates: number;
   errors: number;
 }
@@ -675,7 +675,7 @@ export async function runCrossAgentLearningForCli(
       agentsScanned: 0,
       lessonsConsidered: 0,
       generalisedStored: 0,
-      linksCreated: 0,
+      provenanceRecorded: 0,
       skippedDuplicates: 0,
       errors: 0,
     };
