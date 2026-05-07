@@ -76,11 +76,13 @@ function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDept
     const next: string[] = [];
     for (const id of frontier) {
       const links = [...factsDb.getLinksFrom(id), ...factsDb.getLinksTo(id)];
-      const traversable = links.length > DASHBOARD_MAX_LINKS_PER_NODE
-        ? links.filter((link) => link.linkType !== "DERIVED_FROM").slice(0, DASHBOARD_MAX_LINKS_PER_NODE)
-        : links;
+      const traversable =
+        links.length > DASHBOARD_MAX_LINKS_PER_NODE
+          ? links
+              .filter((link) => link.linkType !== "CONTRADICTS" && link.linkType !== "DERIVED_FROM")
+              .slice(0, DASHBOARD_MAX_LINKS_PER_NODE)
+          : links.filter((link) => link.linkType !== "CONTRADICTS");
       for (const link of traversable) {
-        if (link.linkType === "CONTRADICTS") continue;
         const other = "targetFactId" in link ? link.targetFactId : link.sourceFactId;
         if (seen.has(other)) continue;
         seen.add(other);

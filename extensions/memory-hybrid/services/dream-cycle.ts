@@ -91,7 +91,7 @@ export interface DreamCycleResult {
 // Minimum patterns stored in one cycle before we also run reflect-rules.
 const MIN_PATTERNS_FOR_RULES = 3;
 export const DEFAULT_MAX_EVENTS_PER_CONSOLIDATION = 200;
-const SKIP_CONSOLIDATION_EVENT_TYPES = new Set([
+const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
   "heartbeat",
   "session_end",
   "session_start",
@@ -136,9 +136,8 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
 }
 
 export function shouldSkipEpisodicConsolidation(event: EventLogEntry): boolean {
-  if (SKIP_CONSOLIDATION_EVENT_TYPES.has(event.eventType)) return true;
   const text = extractEventText(event).toLowerCase();
-  return SKIP_CONSOLIDATION_EVENT_TYPES.has(text);
+  return SKIP_CONSOLIDATION_TEXT_PATTERNS.has(text);
 }
 
 /**

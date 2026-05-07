@@ -641,7 +641,6 @@ describe("expandGraph: various link types", () => {
     expect(bResult?.linkPath[0].linkType).toBe(linkType);
   });
 
-
   it("does not expand through high-degree DERIVED_FROM provenance hubs", () => {
     const seed = makeEntry("seed");
     const semantic = makeEntry("semantic");
@@ -668,7 +667,6 @@ describe("expandGraph: various link types", () => {
     expect(result.some((r) => r.factId.startsWith("src-"))).toBe(false);
     expect(result.some((r) => r.factId === "semantic")).toBe(true);
   });
-
 });
 
 // ---------------------------------------------------------------------------

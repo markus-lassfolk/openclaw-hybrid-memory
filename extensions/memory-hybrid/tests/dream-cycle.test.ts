@@ -331,10 +331,14 @@ describe("runEpisodicConsolidation", () => {
     expect(result.factsCreated).toBe(0);
   });
 
-
   it("skips lifecycle-like transport noise instead of consolidating it", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "action_taken", content: { text: "session_start" } });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "action_taken",
+      content: { text: "session_start" },
+    });
     eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "action_taken", content: { text: "session_end" } });
 
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
