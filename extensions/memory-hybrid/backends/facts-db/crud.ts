@@ -112,6 +112,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
     }
     const existing = ctx.getById(dedupe.existingId);
     if (existing) return existing;
+    throw new Error(
+      `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
+    );
   }
 
   if (dedupe.action === "boost") {
@@ -122,6 +125,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       .run(dedupe.boostBy, dedupe.existingId);
     const boosted = ctx.getById(dedupe.existingId);
     if (boosted) return boosted;
+    throw new Error(
+      `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
+    );
   }
 
   if (dedupe.action === "merge") {
@@ -136,6 +142,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
         .run(mergedText, mergedHash, existing.id);
       return ctx.getById(existing.id) ?? existing;
     }
+    throw new Error(
+      `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
+    );
   }
 
   const id = randomUUID();
@@ -190,7 +199,6 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const adjustedExpiresAt =
     decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
   const beginMode: SqliteTransactionBeginMode = profile.maxPerDay != null ? "IMMEDIATE" : "DEFERRED";
-  let quotaExceededSource: string | null = null;
   let evictedFactId: string | null = null;
   const tx = createTransaction(
     ctx.db,
@@ -227,24 +235,10 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
                 .run(sourceForPolicy, day);
               // Fall through to the INSERT path below (do not return).
             } else {
-              quotaExceededSource = sourceForPolicy;
-              ctx.db
-                .prepare(
-                  `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
-                   ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-                )
-                .run(sourceForPolicy, day);
-              return;
+              throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
             }
           } else {
-            quotaExceededSource = sourceForPolicy;
-            ctx.db
-              .prepare(
-                `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
-                 ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-              )
-              .run(sourceForPolicy, day);
-            return;
+            throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
           }
         }
       }
@@ -305,9 +299,6 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
     beginMode,
   );
   tx();
-  if (quotaExceededSource) {
-    throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
-  }
   if (supersedesId || evictedFactId) {
     ctx.invalidateSupersededCache();
   }
