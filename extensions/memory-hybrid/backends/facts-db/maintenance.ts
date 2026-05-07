@@ -111,7 +111,6 @@ function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
   return (
     (row.preserve_until != null && row.preserve_until > nowSec) ||
     preserveTags.length > 0 ||
-    preserveTagsColumnExcludesFromTrimSql(row.preserve_tags) ||
     hasTierTag(row.tags, "edict") ||
     hasTierTag(row.tags, "blocker")
   );
@@ -677,7 +676,7 @@ function reinforcedDecayClass(
     category: string | null;
     source: string | null;
     created_at: number;
-    last_accessed_at: number | null;
+    last_accessed: number | null;
     recall_count: number | null;
     access_count: number | null;
   },
@@ -685,7 +684,7 @@ function reinforcedDecayClass(
 ): DecayClass {
   const recallCount = row.recall_count ?? 0;
   const accessCount = row.access_count ?? 0;
-  const lastAccessed = row.last_accessed_at ?? 0;
+  const lastAccessed = row.last_accessed ?? 0;
   const lastUse = Math.max(lastAccessed, row.created_at);
   const ageSeconds = Math.max(0, opts.nowSec - row.created_at);
   const inactiveSeconds = Math.max(0, opts.nowSec - lastUse);
@@ -712,7 +711,7 @@ export function reclassifyDecayClasses(db: DatabaseSync, options: DecayReclassif
   const stableOnly = options.stableOnly === true;
   const limit = options.limit != null && options.limit > 0 ? Math.floor(options.limit) : null;
   const where = stableOnly ? "WHERE superseded_at IS NULL AND decay_class = 'stable'" : "WHERE superseded_at IS NULL";
-  const sql = `SELECT rowid, entity, key, value, text, source, category, importance, decay_class, created_at, last_accessed_at, recall_count, access_count FROM facts ${where} ORDER BY created_at ASC${limit ? ` LIMIT ${limit}` : ""}`;
+  const sql = `SELECT rowid, entity, key, value, text, source, category, importance, decay_class, created_at, last_accessed, recall_count, access_count FROM facts ${where} ORDER BY created_at ASC${limit ? ` LIMIT ${limit}` : ""}`;
   const rows = db.prepare(sql).all() as Array<{
     rowid: number;
     entity: string | null;
@@ -724,7 +723,7 @@ export function reclassifyDecayClasses(db: DatabaseSync, options: DecayReclassif
     importance: number | null;
     decay_class: DecayClass;
     created_at: number;
-    last_accessed_at: number | null;
+    last_accessed: number | null;
     recall_count: number | null;
     access_count: number | null;
   }>;

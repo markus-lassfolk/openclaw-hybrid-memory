@@ -243,12 +243,16 @@ ${entry.text}`.slice(0, 4000);
     tx();
   } catch (err) {
     if (err instanceof StoreQuotaExceededError) {
-      ctx.db
-        .prepare(
-          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+      try {
+        ctx.db
+          .prepare(
+            `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
            ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-        )
-        .run(err.sourceForPolicy, day);
+          )
+          .run(err.sourceForPolicy, day);
+      } catch {
+        // Ignore drop-tracking failures; preserve original quota-exceeded error
+      }
       throw new Error(`memory-hybrid: daily write quota exceeded for source ${err.sourceForPolicy}`);
     }
     throw err;
