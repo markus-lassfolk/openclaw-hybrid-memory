@@ -11,7 +11,7 @@
  */
 
 import type OpenAI from "openai";
-import type { EventLog, EventLogEntry } from "../backends/event-log.js";
+import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory } from "../types/memory.js";
@@ -69,6 +69,16 @@ export interface DreamCycleConfig {
   reclassifyPromoteRecallCount?: number;
   /** When true, log episodic consolidation / reflection / memory-index detail (CLI `--verbose`). */
   verbose?: boolean;
+  /**
+   * Episodic consolidation filter on `event.eventType` (#1185). Built-in deny list always includes
+   * session/heartbeat/transport lifecycle types unless removed via config.
+   */
+  episodicConsolidationEventTypes?: {
+    /** When non-empty, only these event types are eligible (after deny). */
+    allow?: string[];
+    /** Extra types to treat as noise (merged with built-in deny list). */
+    deny?: string[];
+  };
 }
 
 /** Result returned by a single dream cycle run. */
@@ -110,6 +120,43 @@ const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
   "transport_disconnect",
 ]);
 
+/** Default deny list for `event.eventType` during episodic consolidation (#1185). */
+export const DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY: ReadonlySet<EventType> = new Set([
+  "session_start",
+  "session_end",
+  "heartbeat",
+  "transport_connect",
+  "transport_disconnect",
+]);
+
+export type EpisodicConsolidationEventTypeFilter = {
+  allow?: string[];
+  deny?: string[];
+};
+
+function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): Set<string> {
+  const s = new Set<string>(DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY);
+  for (const x of filter?.deny ?? []) {
+    if (typeof x === "string" && x.trim().length > 0) s.add(x.trim());
+  }
+  return s;
+}
+
+/**
+ * True when this event should not be merged into consolidated facts based on `eventType`
+ * (allow/deny lists). Text-pattern skipping remains in {@link shouldSkipEpisodicConsolidation}.
+ */
+export function shouldSkipEpisodicConsolidationByEventType(
+  event: EventLogEntry,
+  filter?: EpisodicConsolidationEventTypeFilter | null,
+): boolean {
+  const deny = episodicDenySet(filter);
+  if (deny.has(event.eventType)) return true;
+  const allow = filter?.allow?.map((x) => x.trim()).filter((x) => x.length > 0);
+  if (allow && allow.length > 0 && !allow.includes(event.eventType)) return true;
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Episodic consolidation helpers (exported for testing)
 // ---------------------------------------------------------------------------
@@ -135,7 +182,8 @@ export function extractEventText(event: EventLogEntry): string {
 /**
  * Group event log entries by their primary entity.
  * Events with no entities are grouped under the "__default__" key.
- * Callers should omit lifecycle/noise events (e.g. via `shouldSkipEpisodicConsolidation`) before calling.
+ * Callers should omit lifecycle/noise events (e.g. via `shouldSkipEpisodicConsolidation` and
+ * `shouldSkipEpisodicConsolidationByEventType`) before calling.
  */
 export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventLogEntry[]> {
   const groups = new Map<string, EventLogEntry[]>();
@@ -210,6 +258,7 @@ export async function runEpisodicConsolidation(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   verbose?: boolean,
   maxEventsPerConsolidation = DEFAULT_MAX_EVENTS_PER_CONSOLIDATION,
+  eventTypeFilter?: EpisodicConsolidationEventTypeFilter | null,
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
@@ -217,14 +266,14 @@ export async function runEpisodicConsolidation(
   }
 
   let eventsConsolidated = 0;
-  const skippedEvents = events.filter(shouldSkipEpisodicConsolidation);
-  if (skippedEvents.length > 0) {
+  const skippedTextEvents = events.filter(shouldSkipEpisodicConsolidation);
+  if (skippedTextEvents.length > 0) {
     try {
       eventLog.markConsolidated(
-        skippedEvents.map((e) => e.id),
+        skippedTextEvents.map((e) => e.id),
         "SKIP:lifecycle_event",
       );
-      eventsConsolidated += skippedEvents.length;
+      eventsConsolidated += skippedTextEvents.length;
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to mark lifecycle events as skipped: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -234,7 +283,27 @@ export async function runEpisodicConsolidation(
     }
   }
 
-  const consolidatableEvents = events.filter((event) => !shouldSkipEpisodicConsolidation(event));
+  const afterTextSkip = events.filter((event) => !shouldSkipEpisodicConsolidation(event));
+  const skippedTypeEvents = afterTextSkip.filter((e) => shouldSkipEpisodicConsolidationByEventType(e, eventTypeFilter));
+  if (skippedTypeEvents.length > 0) {
+    try {
+      eventLog.markConsolidated(
+        skippedTypeEvents.map((e) => e.id),
+        "SKIP:event_type_filter",
+      );
+      eventsConsolidated += skippedTypeEvents.length;
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — failed to mark event-type-filtered events as skipped: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-mark-event-type-skip",
+        subsystem: "event-log",
+      });
+    }
+  }
+
+  const consolidatableEvents = afterTextSkip.filter(
+    (event) => !shouldSkipEpisodicConsolidationByEventType(event, eventTypeFilter),
+  );
   if (consolidatableEvents.length === 0) {
     return { eventsConsolidated, factsCreated: 0 };
   }
@@ -242,7 +311,7 @@ export async function runEpisodicConsolidation(
   const groups = groupEventsByEntity(consolidatableEvents);
   if (verbose) {
     logger.info(
-      `memory-hybrid: dream-cycle — episodic consolidation: ${consolidatableEvents.length} consolidatable event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d); skipped ${skippedEvents.length} lifecycle/noise event(s)`,
+      `memory-hybrid: dream-cycle — episodic consolidation: ${consolidatableEvents.length} consolidatable event(s) in ${groups.size} entity group(s) (≥${consolidateAfterDays}d); skipped ${skippedTextEvents.length} text-pattern noise + ${skippedTypeEvents.length} eventType-filtered`,
     );
   }
   let factsCreated = 0;
@@ -542,6 +611,7 @@ export async function runDreamCycle(
         logger,
         v,
         config.maxEventsPerConsolidation,
+        config.episodicConsolidationEventTypes ?? null,
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
