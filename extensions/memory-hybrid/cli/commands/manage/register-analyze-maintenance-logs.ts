@@ -19,7 +19,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { stdin } from "node:process";
 
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -173,36 +173,17 @@ function parseCronRunLog(content: string): AnalyzedRun[] {
   return runs;
 }
 
-function parseJobsJson(baseDir: string): Record<
-  string,
-  {
-    name?: string;
-    lastRunAtMs?: number;
-    enabled?: boolean;
+async function readStdinIfPiped(): Promise<string> {
+  if (stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of stdin) {
+    chunks.push(Buffer.from(chunk));
   }
-> {
-  const path = join(baseDir, ".openclaw", "cron", "jobs.json");
-  if (!existsSync(path)) return {};
-  try {
-    const raw = readFileSync(path, "utf-8");
-    const jobs = JSON.parse(raw);
-    if (Array.isArray(jobs)) {
-      const m = {} as Record<string, unknown>;
-      for (const j of jobs) {
-        if (j?.id || j?.name) m[String(j.id ?? j.name)] = j;
-      }
-      return m as Record<string, { name?: string; lastRunAtMs?: number; enabled?: boolean }>;
-    }
-    return {};
-  } catch {
-    return {};
-  }
+  return Buffer.concat(chunks).toString("utf-8");
 }
 
-function buildAnalyzedResult(b: ManageBindings, logs: string): AnalyzeResult {
-  const { cfg } = b;
+function buildAnalyzedResult(logs: string): AnalyzeResult {
   const runs = parseCronRunLog(logs);
-  const jobsMeta = parseJobsJson(dirname(cfg.sqlitePath));
 
   const failures = runs.filter((r) => r.status === "failure");
   const success = runs.filter((r) => r.status === "success").length;
@@ -273,9 +254,7 @@ function buildAnalyzedResult(b: ManageBindings, logs: string): AnalyzeResult {
   };
 }
 
-export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBindings): void {
-  const { cfg } = b;
-
+export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageBindings): void {
   const cmd = mem
     .command("analyze-maintenance-logs")
     .description(
@@ -303,12 +282,10 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
           }
           logContent = readFileSync(opts.file, "utf-8");
         } else {
-          // Try reading from stdin (non-empty)
-          // commander passes args after --; in this case we read directly
-          logContent = ""; // will show "no content" message below
+          logContent = await readStdinIfPiped();
         }
 
-        const result = buildAnalyzedResult(b, logContent);
+        const result = buildAnalyzedResult(logContent);
 
         if (result.totalRuns === 0) {
           console.log(

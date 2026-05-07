@@ -42,13 +42,24 @@ const SQL_TRAJECTORY_LESSON_TAGS = `(
   AND (',' || COALESCE(tags,'') || ',') LIKE '%,feedback,%'
 )`;
 
-/** Modern key + legacy pre-migration rows (null key, lesson tag shape; excludes pattern/negative facts). */
+/**
+ * Modern key + legacy rows: null-key trajectory lessons, including older pattern-shaped rows that only
+ * carried a trajectory tag (no implicit-feedback/feedback tag triple). Negative self-correction rows
+ * are excluded via the `negative` tag.
+ */
 export const SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER = `(
   key = 'implicit_feedback_signal'
   OR (
     (key IS NULL OR TRIM(COALESCE(key, '')) = '')
-    AND category != 'pattern'
-    AND ${SQL_TRAJECTORY_LESSON_TAGS}
+    AND source = 'implicit-feedback'
+    AND (',' || COALESCE(tags,'') || ',') NOT LIKE '%,negative,%'
+    AND (
+      (${SQL_TRAJECTORY_LESSON_TAGS})
+      OR (
+        (category = 'pattern' OR category = 'technical')
+        AND (',' || COALESCE(tags,'') || ',') LIKE '%,trajectory,%'
+      )
+    )
   )
 )`;
 
@@ -122,13 +133,28 @@ function markImplicitFeedbackLessonRecalled(
 
 export function cleanupImplicitFeedbackDuplicates(
   factsDb: FactsDB,
-  opts: { threshold?: number; limit?: number; afterRowid?: number } = {},
-): { scanned: number; collapsed: number; resumeAfterRowid: number | null } {
+  opts: {
+    threshold?: number;
+    limit?: number;
+    afterRowid?: number;
+    /** Leaders from prior paging batches so near-duplicates across windows still collapse. */
+    seedCanonical?: ReadonlyArray<{ id: string; text: string }>;
+  } = {},
+): {
+  scanned: number;
+  collapsed: number;
+  resumeAfterRowid: number | null;
+  carryCanonical: Array<{ id: string; text: string }>;
+} {
   const rawDb = factsDb.getRawDb();
-  if (!rawDb) return { scanned: 0, collapsed: 0, resumeAfterRowid: null };
+  if (!rawDb) {
+    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+  }
   const threshold = opts.threshold ?? 0.8;
   const limit = opts.limit ?? 1000;
-  if (limit <= 0) return { scanned: 0, collapsed: 0, resumeAfterRowid: null };
+  if (limit <= 0) {
+    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+  }
   const afterRowid = opts.afterRowid ?? 0;
   const rows = rawDb
     .prepare(
@@ -148,7 +174,10 @@ export function cleanupImplicitFeedbackDuplicates(
     createdAt: number;
   }>;
   let collapsed = 0;
-  const canonical: Array<{ id: string; text: string }> = [];
+  const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])].map((c) => ({
+    id: c.id,
+    text: c.text,
+  }));
   const nowSec = Math.floor(Date.now() / 1000);
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
@@ -164,7 +193,7 @@ export function cleanupImplicitFeedbackDuplicates(
         continue;
       }
       if (!factsDb.supersede(row.id, match.id)) continue;
-      reinforce.run(Math.max(1, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+      reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
       collapsed++;
     }
     rawDb.prepare("COMMIT").run();
@@ -177,6 +206,7 @@ export function cleanupImplicitFeedbackDuplicates(
     scanned: rows.length,
     collapsed,
     resumeAfterRowid: lastRow ? lastRow.rowid : null,
+    carryCanonical: canonical.map((c) => ({ id: c.id, text: c.text })),
   };
 }
 
@@ -493,16 +523,18 @@ export async function runExtractImplicitFeedbackForCli(
       const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
       let afterRowid = 0;
       let totalCollapsed = 0;
+      let carryCanonical: Array<{ id: string; text: string }> | undefined;
       for (let round = 0; round < 8; round++) {
         const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
           threshold,
           limit: cleanupLimit,
           afterRowid,
+          seedCanonical: carryCanonical,
         });
         totalCollapsed += cleanup.collapsed;
+        carryCanonical = cleanup.carryCanonical;
         if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
         afterRowid = cleanup.resumeAfterRowid;
-        if (cleanup.collapsed > 0) break;
       }
       if (opts.verbose && totalCollapsed > 0) {
         logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
