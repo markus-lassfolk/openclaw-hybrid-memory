@@ -184,6 +184,10 @@ export async function runExtractImplicitFeedbackForCli(
     terseResponseRatio: 0.4,
     feedToReinforcement: true,
     feedToSelfCorrection: true,
+    maxLessonsPerDay: 50,
+    lessonDedupeJaccard: 0.8,
+    autoCleanup: true,
+    cleanupLimit: 1000,
   };
 
   if (implicitCfg.enabled === false) {

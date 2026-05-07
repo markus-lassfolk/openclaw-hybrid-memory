@@ -292,10 +292,9 @@ describe("implicit feedback routing — negative → pattern facts", () => {
       category: "technical",
       importance: 0.7,
       entity: null,
-      key: null,
+      key: "implicit_feedback_signal",
       value: null,
       source: "implicit-feedback",
-      key: "implicit_feedback_signal",
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
     const duplicate = db.store({
@@ -303,10 +302,9 @@ describe("implicit feedback routing — negative → pattern facts", () => {
       category: "technical",
       importance: 0.7,
       entity: null,
-      key: null,
+      key: "implicit_feedback_signal",
       value: null,
       source: "implicit-feedback",
-      key: "implicit_feedback_signal",
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
 
