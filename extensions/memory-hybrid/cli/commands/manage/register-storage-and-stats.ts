@@ -166,9 +166,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const lanceAbs = Math.abs(lanceDelta);
           const lanceDen = Math.max(sqlCount, lanceCount, 1);
           const lanceDeltaSignificant = lanceAbs > 100 && lanceAbs / lanceDen > 0.05;
-          const canonicalDelta = activeFacts - canonicalEmbeddings;
+          const totalFacts = activeFacts + supersededFacts;
+          const canonicalDelta = totalFacts - canonicalEmbeddings;
           const canonicalAbs = Math.abs(canonicalDelta);
-          const canonicalDen = Math.max(activeFacts, canonicalEmbeddings, 1);
+          const canonicalDen = Math.max(totalFacts, canonicalEmbeddings, 1);
           const canonicalDeltaSignificant = canonicalAbs > 100 && canonicalAbs / canonicalDen > 0.05;
 
           console.log("=== Memory Statistics (rich) ===");
@@ -185,7 +186,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           );
           if (lanceDeltaSignificant || canonicalDeltaSignificant) {
             console.log(
-              `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); active facts ${activeFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}; embedding rows may include superseded facts). Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
+              `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); total facts ${totalFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}). Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
             );
           }
           console.log("");
