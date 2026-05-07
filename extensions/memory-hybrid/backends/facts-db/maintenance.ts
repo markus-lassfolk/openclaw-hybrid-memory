@@ -97,6 +97,17 @@ export function runCompaction(
     .all(nowSec) as Array<{ id: string }>;
   const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
 
+  const existingHotStructuralRows = db
+    .prepare(
+      `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
+         AND (key IS NULL OR key != 'implicit_feedback_signal')`,
+    )
+    .all(nowSec) as Array<{ id: string }>;
+  for (const { id } of existingHotStructuralRows) {
+    allBlockerIdSet.add(id);
+  }
+
   const blockerRows = db
     .prepare(
       `SELECT id, text, summary FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
