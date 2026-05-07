@@ -229,6 +229,7 @@ function buildAnalyzedResult(b: ManageBindings, logs: string): AnalyzeResult {
     }
     const g = groups.get(key)!;
     g.count++;
+    g.firstSeen = Math.min(g.firstSeen, run.finishedAt);
     g.lastSeen = Math.max(g.lastSeen, run.finishedAt);
     if (!g.messages.includes(errMsg)) g.messages.push(errMsg);
   }
