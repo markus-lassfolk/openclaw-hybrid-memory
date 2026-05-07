@@ -296,8 +296,8 @@ export function expandGraphWithCTE(
       ? ""
       : `AND (
         SELECT
-          CASE WHEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0)) > 0
-            THEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0))
+          CASE WHEN facts.out_degree IS NOT NULL AND facts.in_degree IS NOT NULL
+            THEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0))
             ELSE (
               (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
               (SELECT COUNT(*) FROM memory_links sub WHERE sub.target_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
@@ -310,8 +310,8 @@ export function expandGraphWithCTE(
       ? ""
       : `AND (
         SELECT
-          CASE WHEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0)) > 0
-            THEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0))
+          CASE WHEN facts.out_degree IS NOT NULL AND facts.in_degree IS NOT NULL
+            THEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0))
             ELSE (
               (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
               (SELECT COUNT(*) FROM memory_links sub WHERE sub.target_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
