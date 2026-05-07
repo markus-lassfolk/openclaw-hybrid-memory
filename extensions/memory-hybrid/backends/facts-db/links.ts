@@ -196,14 +196,6 @@ export function expandGraphWithCTE(
   const asOf = options?.asOf ?? null;
   const scopeFilter = options?.scopeFilter;
   const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
-  const hubGuardSql =
-    hubDegreeCap == null
-      ? ""
-      : `AND (
-          SELECT COUNT(*) FROM memory_links d
-          WHERE (d.source_fact_id = ge.fact_id OR d.target_fact_id = ge.fact_id)
-            AND d.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
-        ) <= ?`;
   let factJoinOut = "";
   let factWhereOut = "";
   let factJoinIn = "";
@@ -243,9 +235,9 @@ export function expandGraphWithCTE(
         fact_id,
         COUNT(*) AS degree
       FROM (
-        SELECT source_fact_id AS fact_id FROM memory_links WHERE link_type != 'CONTRADICTS'
+        SELECT target_fact_id AS fact_id FROM memory_links WHERE link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         UNION ALL
-        SELECT target_fact_id AS fact_id FROM memory_links WHERE link_type != 'CONTRADICTS'
+        SELECT source_fact_id AS fact_id FROM memory_links WHERE link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
       )
       GROUP BY fact_id
     ),

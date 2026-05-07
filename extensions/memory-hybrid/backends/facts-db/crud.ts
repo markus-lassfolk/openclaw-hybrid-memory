@@ -91,7 +91,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
 
   // Resolve normalized-hash duplicates before daily quota: boost/merge/skip only UPDATE or
   // return and do not consume an insert quota slot.
-  if (profile.onDuplicate !== "store") {
+  if (profile.onDuplicate !== "store" && ctx.fuzzyDedupe) {
     const existingId = getDuplicateIdByNormalizedHash(ctx.db, entry.text);
     if (existingId) {
       const existing = ctx.getById(existingId);
