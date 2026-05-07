@@ -101,6 +101,8 @@ function parsePreserveTags(raw: string | null): string[] {
 
 function isStructuralCandidate(row: TierCandidate): boolean {
   if (row.key === "implicit_feedback_signal") return false;
+  // Structural tier is only for explicit key/value rows. `decay_class === "permanent"` does not
+  // imply structural — permanent edicts/rules/preferences without key+value stay hot/warm/cold.
   return row.key != null && row.key.trim() !== "" && row.value != null && row.value.trim() !== "";
 }
 

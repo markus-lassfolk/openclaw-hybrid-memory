@@ -723,6 +723,21 @@ describe("FactsDB tiering", () => {
     expect(db.getById(fact.id)?.tier).toBe("structural");
   });
 
+  it("runCompaction does not tier permanent-decay facts as STRUCTURAL without key/value", () => {
+    const fact = db.store({
+      text: "Seed edict without kv",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "seed:test",
+      decayClass: "permanent",
+    });
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(db.getById(fact.id)?.tier).not.toBe("structural");
+  });
+
   it("list and dashboard filters include STRUCTURAL tier facts", () => {
     const fact = db.store({
       text: "User phone is +46700000000",
