@@ -614,6 +614,145 @@ export function restoreCheckpoint(db: DatabaseSync): {
   }
 }
 
+export type LifecycleEntityReportRow = {
+  pattern: "pr" | "issue" | "sprint";
+  entity: string;
+  count: number;
+  activeCount: number;
+  decayClass: string;
+  expiresAt: number | null;
+};
+
+export type LifecycleEntityReport = {
+  rows: LifecycleEntityReportRow[];
+  totals: Record<string, number>;
+};
+
+export type ExpireBySourcePatternReport = {
+  pattern: string;
+  apply: boolean;
+  matched: number;
+  changed: number;
+  decayClass: DecayClass;
+  ttlDays: number;
+  expiresAt: number;
+};
+
+function lifecycleEntityPattern(entity: string | null): "pr" | "issue" | "sprint" | null {
+  if (!entity) return null;
+  if (/^(?:pr|pull request)\s*#?\d+$/i.test(entity)) return "pr";
+  if (/^issue\s*#?\d+$/i.test(entity)) return "issue";
+  if (/^sprint\b/i.test(entity)) return "sprint";
+  return null;
+}
+
+export function lifecycleEntityReport(db: DatabaseSync, limit = 100): LifecycleEntityReport {
+  const rows = db
+    .prepare(
+      `SELECT entity, COALESCE(decay_class, 'normal') AS decay_class, expires_at,
+              COUNT(*) AS cnt,
+              SUM(CASE WHEN superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) THEN 1 ELSE 0 END) AS active_cnt
+         FROM facts
+        WHERE entity IS NOT NULL
+          AND TRIM(entity) != ''
+          AND (
+            entity GLOB 'PR #*' OR
+            entity GLOB 'pr #*' OR
+            entity GLOB 'Issue #*' OR
+            entity GLOB 'issue #*' OR
+            entity GLOB 'Sprint *' OR
+            entity GLOB 'sprint *' OR
+            entity GLOB 'Pull Request #*' OR
+            entity GLOB 'pull request #*'
+          )
+        GROUP BY entity, COALESCE(decay_class, 'normal'), expires_at
+        ORDER BY cnt DESC, entity COLLATE NOCASE ASC
+        LIMIT ?`,
+    )
+    .all(Math.floor(Date.now() / 1000), Math.max(1, Math.min(500, Math.floor(limit)))) as Array<{
+    entity: string;
+    decay_class: string;
+    expires_at: number | null;
+    cnt: number;
+    active_cnt: number;
+  }>;
+  const filtered = rows.map((row) => ({
+    pattern: lifecycleEntityPattern(row.entity) as "pr" | "issue" | "sprint",
+    entity: row.entity,
+    count: Number(row.cnt ?? 0),
+    activeCount: Number(row.active_cnt ?? 0),
+    decayClass: row.decay_class,
+    expiresAt: row.expires_at == null ? null : Number(row.expires_at),
+  }));
+  const totals = filtered.reduce(
+    (acc, row) => {
+      acc[row.pattern] = (acc[row.pattern] ?? 0) + row.count;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+  return { rows: filtered, totals };
+}
+
+function globToSqlLike(pattern: string): string {
+  return pattern
+    .replace(/[~%_]/g, (m) => `~${m}`)
+    .replace(/\*/g, "%")
+    .replace(/\?/g, "_");
+}
+
+export function expireBySourcePattern(
+  db: DatabaseSync,
+  options: {
+    pattern: string;
+    ttlDays: number;
+    decayClass?: DecayClass;
+    apply?: boolean;
+    nowSec?: number;
+  },
+): ExpireBySourcePatternReport {
+  const pattern = options.pattern.trim();
+  const ttlDays = Math.max(1, Math.floor(options.ttlDays));
+  const decayClass = options.decayClass ?? "short";
+  const apply = options.apply === true;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const expiresAt = nowSec + ttlDays * 24 * 3600;
+  const like = globToSqlLike(pattern);
+  const matched = Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM facts
+            WHERE entity LIKE ? ESCAPE '~'
+              AND superseded_at IS NULL`,
+        )
+        .get(like) as { cnt: number } | undefined
+    )?.cnt ?? 0,
+  );
+  const changed = Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM facts
+            WHERE entity LIKE ? ESCAPE '~'
+              AND superseded_at IS NULL
+              AND (COALESCE(decay_class, 'normal') != ? OR COALESCE(expires_at, 0) != ?)`,
+        )
+        .get(like, decayClass, expiresAt) as { cnt: number } | undefined
+    )?.cnt ?? 0,
+  );
+  if (apply && changed > 0) {
+    db.prepare(
+      `UPDATE facts
+          SET decay_class = ?, expires_at = ?
+        WHERE entity LIKE ? ESCAPE '~'
+          AND superseded_at IS NULL
+          AND (COALESCE(decay_class, 'normal') != ? OR COALESCE(expires_at, 0) != ?)`,
+    ).run(decayClass, expiresAt, like, decayClass, expiresAt);
+  }
+  return { pattern, apply, matched, changed, decayClass, ttlDays, expiresAt };
+}
+
 export type DecayReclassifyOptions = {
   apply?: boolean;
   stableOnly?: boolean;

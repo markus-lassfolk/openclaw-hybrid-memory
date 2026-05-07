@@ -3447,3 +3447,109 @@ describe("Issue #1191 vectorless facts and procedure triage", () => {
     expect(second?.promotedToSkill).toBe(1);
   });
 });
+
+describe("FactsDB lifecycle-aware entity decay helpers", () => {
+  it("reports PR/Issue/Sprint entities with decay coverage", () => {
+    db.store({
+      text: "PR work",
+      category: "fact",
+      importance: 0.5,
+      entity: "PR #1142",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Issue work",
+      category: "fact",
+      importance: 0.5,
+      entity: "Issue #845",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Sprint work",
+      category: "fact",
+      importance: 0.5,
+      entity: "Sprint 2026-04",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Regular entity",
+      category: "fact",
+      importance: 0.5,
+      entity: "Villa Polly",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const report = db.lifecycleEntityReport(20);
+    expect(report.rows.map((r) => r.entity)).toEqual(
+      expect.arrayContaining(["PR #1142", "Issue #845", "Sprint 2026-04"]),
+    );
+    expect(report.rows.some((r) => r.entity === "Villa Polly")).toBe(false);
+    expect(report.rows.every((r) => r.decayClass !== "stable")).toBe(true);
+  });
+
+  it("bulk-updates expires_at and decay_class for glob-matched entities", () => {
+    const pr = db.store({
+      text: "review feedback",
+      category: "fact",
+      importance: 0.9,
+      entity: "PR #1137",
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable",
+    });
+    const issue = db.store({
+      text: "issue tracking",
+      category: "fact",
+      importance: 0.9,
+      entity: "Issue #845",
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable",
+    });
+    const other = db.store({
+      text: "other entity",
+      category: "fact",
+      importance: 0.9,
+      entity: "Villa Polly",
+      key: null,
+      value: null,
+      source: "conversation",
+      decayClass: "stable",
+    });
+    const now = Math.floor(Date.now() / 1000);
+
+    const dry = db.expireBySourcePattern({
+      pattern: "PR #*",
+      ttlDays: 60,
+      decayClass: "short",
+      apply: false,
+      nowSec: now,
+    });
+    expect(dry.matched).toBe(1);
+    expect(dry.changed).toBe(1);
+    expect(db.getById(pr.id)?.decayClass).toBe("stable");
+
+    const applied = db.expireBySourcePattern({
+      pattern: "PR #*",
+      ttlDays: 60,
+      decayClass: "short",
+      apply: true,
+      nowSec: now,
+    });
+    expect(applied.changed).toBe(1);
+    expect(db.getById(pr.id)?.decayClass).toBe("short");
+    expect(db.getById(pr.id)?.expiresAt).toBe(now + 60 * 24 * 3600);
+    expect(db.getById(issue.id)?.decayClass).toBe("stable");
+    expect(db.getById(other.id)?.decayClass).toBe("stable");
+  });
+});

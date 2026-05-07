@@ -22,6 +22,8 @@ import {
 import { FactsDBLayer1 } from "./facts-db-layer1.js";
 import {
   backfillDecayClasses as backfillDecayClassesImpl,
+  expireBySourcePattern as expireBySourcePatternImpl,
+  lifecycleEntityReport as lifecycleEntityReportImpl,
   reclassifyDecayClasses as reclassifyDecayClassesImpl,
   confirmFact as confirmFactImpl,
   decayConfidence as decayConfidenceImpl,
@@ -402,6 +404,16 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     options?: Parameters<typeof reclassifyDecayClassesImpl>[1],
   ): ReturnType<typeof reclassifyDecayClassesImpl> {
     return reclassifyDecayClassesImpl(this.liveDb, options);
+  }
+
+  lifecycleEntityReport(limit?: number): ReturnType<typeof lifecycleEntityReportImpl> {
+    return lifecycleEntityReportImpl(this.liveDb, limit);
+  }
+
+  expireBySourcePattern(
+    options: Parameters<typeof expireBySourcePatternImpl>[1],
+  ): ReturnType<typeof expireBySourcePatternImpl> {
+    return expireBySourcePatternImpl(this.liveDb, options);
   }
 
   getByCategory(category: string): MemoryEntry[] {
