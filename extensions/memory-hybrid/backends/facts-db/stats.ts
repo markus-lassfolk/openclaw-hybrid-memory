@@ -13,7 +13,7 @@ import { estimateTokensForDisplay } from "../../utils/text.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
 /** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
-export const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold"]);
+export const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold", "structural"]);
 export const DECAY_CLASS_FILTER = new Set<string>(DECAY_CLASSES);
 
 export function statsBreakdown(db: DatabaseSync): Record<string, number> {
@@ -229,16 +229,18 @@ export function estimateStoredTokensByTier(db: DatabaseSync): {
   hot: number;
   warm: number;
   cold: number;
+  structural: number;
 } {
   const rows = db
     .prepare(`SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`)
     .all() as Array<{ tier: string; summary: string | null; text: string }>;
-  const out = { hot: 0, warm: 0, cold: 0 };
+  const out = { hot: 0, warm: 0, cold: 0, structural: 0 };
   for (const r of rows) {
     const tok = estimateTokensForDisplay(r.summary || r.text);
     const t = r.tier || "warm";
     if (t === "hot") out.hot += tok;
     else if (t === "cold") out.cold += tok;
+    else if (t === "structural") out.structural += tok;
     else out.warm += tok;
   }
   return out;

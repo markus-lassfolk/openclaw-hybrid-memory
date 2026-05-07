@@ -29,128 +29,187 @@ export function setFactTier(db: DatabaseSync, id: string, tier: MemoryTier): boo
   return result.changes > 0;
 }
 
-export function runCompaction(
-  db: DatabaseSync,
-  opts: {
-    inactivePreferenceDays: number;
-    hotMaxTokens: number;
-    hotMaxFacts: number;
-  },
-): {
+export type TieringOptions = {
+  inactivePreferenceDays: number;
+  hotMaxTokens: number;
+  hotMaxFacts: number;
+  coldAfterInactivityDays?: number;
+  hotMinAccessCount?: number;
+  hotAccessWindowDays?: number;
+  hotPreferenceImportance?: number;
+};
+
+export type TieringCounts = {
   hot: number;
   warm: number;
   cold: number;
   structural: number;
-} {
+};
+
+export type RetierReport = TieringCounts & {
+  apply: boolean;
+  examined: number;
+  changed: number;
+};
+
+type TierCandidate = {
+  id: string;
+  tier: MemoryTier;
+  text: string;
+  summary: string | null;
+  category: MemoryCategory | null;
+  importance: number;
+  key: string | null;
+  value: string | null;
+  decay_class: DecayClass | null;
+  tags: string | null;
+  recall_count: number;
+  access_count: number;
+  created_at: number;
+  last_accessed: number | null;
+  last_confirmed_at: number | null;
+  preserve_until: number | null;
+  preserve_tags: string | null;
+};
+
+function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions> {
+  return {
+    inactivePreferenceDays: opts.inactivePreferenceDays,
+    hotMaxTokens: opts.hotMaxTokens,
+    hotMaxFacts: opts.hotMaxFacts,
+    coldAfterInactivityDays: opts.coldAfterInactivityDays ?? 30,
+    hotMinAccessCount: opts.hotMinAccessCount ?? 3,
+    hotAccessWindowDays: opts.hotAccessWindowDays ?? 7,
+    hotPreferenceImportance: opts.hotPreferenceImportance ?? 0.7,
+  };
+}
+
+function hasTierTag(tagsStr: string | null, tag: string): boolean {
+  return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+}
+
+function parsePreserveTagsForTiering(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function isStructuralCandidate(row: TierCandidate): boolean {
+  if (row.key === "implicit_feedback_signal") return false;
+  return (
+    (row.key != null && row.key.trim() !== "") ||
+    (row.value != null && row.value.trim() !== "") ||
+    row.decay_class === "permanent"
+  );
+}
+
+function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
+  const preserveTags = parsePreserveTagsForTiering(row.preserve_tags);
+  return (
+    (row.preserve_until != null && row.preserve_until > nowSec) ||
+    preserveTags.length > 0 ||
+    preserveTagsColumnExcludesFromTrimSql(row.preserve_tags) ||
+    hasTierTag(row.tags, "edict") ||
+    hasTierTag(row.tags, "blocker")
+  );
+}
+
+function isHotCandidate(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): boolean {
+  if (isStructuralCandidate(row)) return false;
+  if (["decision", "pattern", "rule"].includes(row.category ?? "")) return false;
+  if (hasTierTag(row.tags, "blocker")) return true;
+  if (row.preserve_until != null && row.preserve_until > nowSec) return true;
+  const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+  const hotWindowCutoff = nowSec - opts.hotAccessWindowDays * 86400;
+  const recentlyAccessed = opts.hotAccessWindowDays === 0 || lastAccess >= hotWindowCutoff;
+  const accessScore = Math.max(row.recall_count ?? 0, row.access_count ?? 0);
+  if (recentlyAccessed && accessScore >= opts.hotMinAccessCount) return true;
+  if (row.category === "preference" && row.importance >= opts.hotPreferenceImportance && recentlyAccessed) return true;
+  return false;
+}
+
+function isColdCandidate(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): boolean {
+  if (isStructuralCandidate(row)) return false;
+  if (row.category === "preference") return false;
+  if (isHotCandidate(row, nowSec, opts)) return false;
+  if (isPinnedTierCandidate(row, nowSec)) return false;
+  const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+  const coldCutoff = nowSec - opts.coldAfterInactivityDays * 86400;
+  return lastAccess < coldCutoff && (row.recall_count ?? 0) === 0 && (row.access_count ?? 0) === 0;
+}
+
+function chooseTier(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): MemoryTier {
+  if (isStructuralCandidate(row)) return "structural";
+  if (isHotCandidate(row, nowSec, opts)) return "hot";
+  if (isColdCandidate(row, nowSec, opts)) return "cold";
+  return "warm";
+}
+
+export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true): RetierReport {
+  const normalized = normalizeTieringOptions(opts);
   const nowSec = Math.floor(Date.now() / 1000);
-  const inactiveCutoff = nowSec - opts.inactivePreferenceDays * 86400;
-  const counts = { hot: 0, warm: 0, cold: 0, structural: 0 };
-
-  const structuralRows = db
+  const rows = db
     .prepare(
-      `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
-         AND (key IS NULL OR key != 'implicit_feedback_signal')
-         AND (tier IS NULL OR (tier != 'structural' AND tier != 'hot'))`,
+      `SELECT id, COALESCE(tier, 'warm') as tier, text, summary, category, importance, key, value, decay_class, tags,
+              COALESCE(recall_count, 0) as recall_count, COALESCE(access_count, 0) as access_count,
+              created_at, last_accessed, last_confirmed_at, preserve_until, preserve_tags
+         FROM facts
+         WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
     )
-    .all(nowSec) as Array<{ id: string }>;
-  for (const { id } of structuralRows) {
-    if (setFactTier(db, id, "structural")) counts.structural++;
-  }
+    .all(nowSec) as TierCandidate[];
 
-  const taskRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (category = 'decision' OR (',' || COALESCE(tags,'') || ',') LIKE '%,task,%')
-         AND NOT (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
-         AND (tier IS NULL OR (tier != 'cold' AND tier != 'structural'))`,
-    )
-    .all(nowSec) as Array<{ id: string }>;
-  for (const { id } of taskRows) {
-    if (setFactTier(db, id, "cold")) counts.cold++;
-  }
+  const desired = rows.map((row) => ({ id: row.id, from: row.tier, to: chooseTier(row, nowSec, normalized) }));
 
-  const prefRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND category = 'preference' AND COALESCE(last_accessed, last_confirmed_at, created_at) < ?
-         AND tier = 'hot'`,
-    )
-    .all(nowSec, inactiveCutoff) as Array<{ id: string }>;
-  for (const { id } of prefRows) {
-    if (setFactTier(db, id, "warm")) counts.warm++;
-  }
-
-  // Same eligibility as `blockerRows` (minus tier != 'hot') so hot facts promoted via
-  // recall/access are not demoted and re-promoted every compaction cycle.
-  const existingHotBlockerRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (
-           (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
-           OR COALESCE(recall_count, 0) >= 10
-           OR COALESCE(access_count, 0) >= 10
-         )
-         AND category NOT IN ('decision', 'pattern', 'rule')
-         AND NOT (COALESCE(key, '') != '' OR COALESCE(value, '') != '')`,
-    )
-    .all(nowSec) as Array<{ id: string }>;
-  const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
-
-  const existingHotStructuralRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
-         AND (key IS NULL OR key != 'implicit_feedback_signal')`,
-    )
-    .all(nowSec) as Array<{ id: string }>;
-  for (const { id } of existingHotStructuralRows) {
-    allBlockerIdSet.add(id);
-  }
-
-  const blockerRows = db
-    .prepare(
-      `SELECT id, text, summary FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (
-           (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
-           OR COALESCE(recall_count, 0) >= 10
-           OR COALESCE(access_count, 0) >= 10
-         )
-         AND category NOT IN ('decision', 'pattern', 'rule')
-         AND NOT (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
-         AND (tier IS NULL OR tier != 'hot')`,
-    )
-    .all(nowSec) as Array<{
-    id: string;
-    text: string;
-    summary: string | null;
-  }>;
+  const hotDesired = desired
+    .filter((d) => d.to === "hot")
+    .map((d) => rows.find((row) => row.id === d.id) as TierCandidate)
+    .sort((a, b) => {
+      const bScore = Math.max(b.recall_count ?? 0, b.access_count ?? 0);
+      const aScore = Math.max(a.recall_count ?? 0, a.access_count ?? 0);
+      if (bScore !== aScore) return bScore - aScore;
+      if (b.importance !== a.importance) return b.importance - a.importance;
+      const bAccess = b.last_accessed ?? b.last_confirmed_at ?? b.created_at;
+      const aAccess = a.last_accessed ?? a.last_confirmed_at ?? a.created_at;
+      return bAccess - aAccess;
+    });
+  const keepHot = new Set<string>();
   let hotTokens = 0;
-  const hotIds: string[] = [];
-  for (const row of blockerRows) {
-    if (hotIds.length >= opts.hotMaxFacts) break;
-    const len = (row.summary || row.text).length;
-    const tokens = Math.ceil(len / 4);
-    if (hotTokens + tokens > opts.hotMaxTokens) continue;
+  for (const row of hotDesired) {
+    if (keepHot.size >= normalized.hotMaxFacts) break;
+    const tokens = Math.ceil((row.summary || row.text).length / 4);
+    if (hotTokens + tokens > normalized.hotMaxTokens) continue;
     hotTokens += tokens;
-    hotIds.push(row.id);
+    keepHot.add(row.id);
   }
-  for (const id of hotIds) {
-    allBlockerIdSet.add(id);
-    if (setFactTier(db, id, "hot")) counts.hot++;
-  }
-
-  const hotRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-    )
-    .all(nowSec) as Array<{ id: string }>;
-  for (const { id } of hotRows) {
-    if (allBlockerIdSet.has(id)) continue;
-    if (setFactTier(db, id, "warm")) counts.warm++;
+  for (const d of desired) {
+    if (d.to === "hot" && !keepHot.has(d.id)) d.to = "warm";
   }
 
+  const counts: RetierReport = { apply, examined: rows.length, changed: 0, hot: 0, warm: 0, cold: 0, structural: 0 };
+  for (const d of desired) {
+    counts[d.to]++;
+    if (d.from !== d.to) counts.changed++;
+  }
+
+  if (!apply || counts.changed === 0) return counts;
+
+  const update = db.prepare("UPDATE facts SET tier = ? WHERE id = ?");
+  const tx = createTransaction(db, () => {
+    for (const d of desired) {
+      if (d.from !== d.to) update.run(d.to, d.id);
+    }
+  });
+  tx();
   return counts;
+}
+
+export function runCompaction(db: DatabaseSync, opts: TieringOptions): TieringCounts {
+  const report = retierFacts(db, opts, true);
+  return { hot: report.hot, warm: report.warm, cold: report.cold, structural: report.structural };
 }
 
 export function trimToBudget(

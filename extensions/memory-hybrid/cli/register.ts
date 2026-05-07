@@ -192,7 +192,15 @@ export type HybridMemCliContext = {
     breakdown?: Record<string, number>;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
-  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  runCompaction: (opts?: { apply?: boolean }) => Promise<{
+    hot: number;
+    warm: number;
+    cold: number;
+    structural: number;
+    changed?: number;
+    examined?: number;
+    apply?: boolean;
+  }>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;

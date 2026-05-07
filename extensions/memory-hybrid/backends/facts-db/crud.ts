@@ -100,9 +100,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
             ? existing.text
             : `${existing.text}
 ${entry.text}`.slice(0, 4000);
-          ctx.db
-            .prepare("UPDATE facts SET text = ? WHERE id = ?")
-            .run(mergedText, existing.id);
+          ctx.db.prepare("UPDATE facts SET text = ? WHERE id = ?").run(mergedText, existing.id);
           return ctx.getById(existing.id) ?? existing;
         }
         return existing;

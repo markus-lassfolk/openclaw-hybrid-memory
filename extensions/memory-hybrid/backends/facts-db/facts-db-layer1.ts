@@ -40,11 +40,15 @@ import {
 import {
   logRecall as logRecallImpl,
   pruneRecallLog as pruneRecallLogImpl,
+  retierFacts as retierFactsImpl,
   runCompaction as runCompactionImpl,
   setFactTier,
   setPreserveTags as setPreserveTagsImpl,
   setPreserveUntil as setPreserveUntilImpl,
   trimToBudget as trimToBudgetImpl,
+  type RetierReport,
+  type TieringCounts,
+  type TieringOptions,
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
@@ -279,17 +283,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return setFactTier(this.liveDb, id, tier);
   }
 
-  /** Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
-  runCompaction(opts: {
-    inactivePreferenceDays: number;
-    hotMaxTokens: number;
-    hotMaxFacts: number;
-  }): {
-    hot: number;
-    warm: number;
-    cold: number;
-  } {
+  /** Compaction — retier facts by structural shape, salience, and inactivity. */
+  runCompaction(opts: TieringOptions): TieringCounts {
     return runCompactionImpl(this.liveDb, opts);
+  }
+
+  /** Retier facts with optional dry-run support for operator CLI migrations. */
+  retier(opts: TieringOptions, apply = true): RetierReport {
+    return retierFactsImpl(this.liveDb, opts, apply);
   }
 
   /**

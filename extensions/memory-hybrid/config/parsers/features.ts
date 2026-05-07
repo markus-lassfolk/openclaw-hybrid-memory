@@ -145,6 +145,22 @@ export function parseMemoryTieringConfig(cfg: Record<string, unknown>): MemoryTi
         : 7,
     hotMaxFacts:
       typeof tierRaw?.hotMaxFacts === "number" && tierRaw.hotMaxFacts > 0 ? Math.floor(tierRaw.hotMaxFacts) : 50,
+    coldAfterInactivityDays:
+      typeof tierRaw?.coldAfterInactivityDays === "number" && tierRaw.coldAfterInactivityDays >= 0
+        ? Math.floor(tierRaw.coldAfterInactivityDays)
+        : 30,
+    hotMinAccessCount:
+      typeof tierRaw?.hotMinAccessCount === "number" && tierRaw.hotMinAccessCount > 0
+        ? Math.floor(tierRaw.hotMinAccessCount)
+        : 3,
+    hotAccessWindowDays:
+      typeof tierRaw?.hotAccessWindowDays === "number" && tierRaw.hotAccessWindowDays >= 0
+        ? Math.floor(tierRaw.hotAccessWindowDays)
+        : 7,
+    hotPreferenceImportance:
+      typeof tierRaw?.hotPreferenceImportance === "number" && tierRaw.hotPreferenceImportance >= 0
+        ? Math.min(1, tierRaw.hotPreferenceImportance)
+        : 0.7,
   };
 }
 

@@ -223,6 +223,10 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.memoryTiering.compactionOnSessionEnd).toBe(true);
     expect(result.memoryTiering.inactivePreferenceDays).toBe(7);
     expect(result.memoryTiering.hotMaxFacts).toBe(50);
+    expect(result.memoryTiering.coldAfterInactivityDays).toBe(30);
+    expect(result.memoryTiering.hotMinAccessCount).toBe(3);
+    expect(result.memoryTiering.hotAccessWindowDays).toBe(7);
+    expect(result.memoryTiering.hotPreferenceImportance).toBe(0.7);
   });
 
   it("throws on missing embedding (model required when provider defaults to ollama)", () => {

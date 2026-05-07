@@ -651,7 +651,7 @@ describe("FactsDB tiering", () => {
     expect(hotFact?.tier).toBe("hot");
   });
 
-  it("runCompaction moves completed tasks (decision) to COLD", () => {
+  it("runCompaction no longer moves fresh decisions to COLD by category alone", () => {
     const task = db.store({
       text: "Decided to use SQLite",
       category: "decision",
@@ -663,8 +663,8 @@ describe("FactsDB tiering", () => {
     });
     expect(db.getById(task.id)?.tier).toBe("warm");
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
-    const coldFact = db.getById(task.id);
-    expect(coldFact?.tier).toBe("cold");
+    const fact = db.getById(task.id);
+    expect(fact?.tier).not.toBe("cold");
   });
 
   it("runCompaction moves key/value facts to STRUCTURAL", () => {
@@ -683,6 +683,100 @@ describe("FactsDB tiering", () => {
     expect(db.getById(fact.id)?.tier).toBe("structural");
   });
 
+  it("list and dashboard filters include STRUCTURAL tier facts", () => {
+    const fact = db.store({
+      text: "User phone is +46700000000",
+      category: "person",
+      entity: "User",
+      key: "phone",
+      value: "+46700000000",
+      importance: 0.6,
+      source: "test",
+    });
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(db.list(10, { tier: "structural" }).some((row) => row.id === fact.id)).toBe(true);
+    const dashboard = db.listForDashboard({ limit: 10, offset: 0, tier: "structural" });
+    expect(dashboard.total).toBeGreaterThanOrEqual(1);
+    expect(dashboard.facts.some((row) => row.id === fact.id)).toBe(true);
+  });
+
+  it("runCompaction promotes recently recalled facts to HOT within budget", () => {
+    const fact = db.store({
+      text: "Frequently recalled operational runbook",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    for (let i = 0; i < 3; i++) db.refreshAccessedFacts([fact.id]);
+
+    const counts = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(counts.hot).toBeGreaterThanOrEqual(1);
+    expect(db.getById(fact.id)?.tier).toBe("hot");
+  });
+
+  it("runCompaction moves only inactive unrecalled facts to COLD", () => {
+    const oldUnrecalled = db.store({
+      text: "Old unrecalled fact",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const oldRecalled = db.store({
+      text: "Old but recalled fact",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const oldSec = Math.floor(Date.now() / 1000) - 45 * 86400;
+    const raw = db.getRawDb();
+    raw
+      .prepare(
+        "UPDATE facts SET created_at = ?, last_confirmed_at = ?, last_accessed = NULL, recall_count = 0, access_count = 0 WHERE id = ?",
+      )
+      .run(oldSec, oldSec, oldUnrecalled.id);
+    raw
+      .prepare(
+        "UPDATE facts SET created_at = ?, last_confirmed_at = ?, last_accessed = ?, recall_count = 1, access_count = 1 WHERE id = ?",
+      )
+      .run(oldSec, oldSec, oldSec, oldRecalled.id);
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50, coldAfterInactivityDays: 30 });
+
+    expect(db.getById(oldUnrecalled.id)?.tier).toBe("cold");
+    expect(db.getById(oldRecalled.id)?.tier).toBe("warm");
+  });
+
+  it("retier dry-run reports changes without mutating tiers", () => {
+    const fact = db.store({
+      text: "Project key is abc123",
+      category: "project",
+      entity: "Project",
+      key: "code",
+      value: "abc123",
+      importance: 0.6,
+      source: "test",
+    });
+
+    const report = db.retier({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 }, false);
+
+    expect(report.apply).toBe(false);
+    expect(report.structural).toBeGreaterThanOrEqual(1);
+    expect(report.changed).toBeGreaterThanOrEqual(1);
+    expect(db.getById(fact.id)?.tier).toBe("warm");
+  });
+
   it("runCompaction moves inactive hot preferences to WARM", () => {
     const pref = db.store({
       text: "User prefers TypeScript",
@@ -693,6 +787,12 @@ describe("FactsDB tiering", () => {
       value: null,
       source: "test",
     });
+    const oldSec = Math.floor(Date.now() / 1000) - 14 * 86400;
+    db.getRawDb()
+      .prepare(
+        "UPDATE facts SET created_at = ?, last_confirmed_at = ?, last_accessed = ?, recall_count = 0, access_count = 0 WHERE id = ?",
+      )
+      .run(oldSec, oldSec, oldSec, pref.id);
     db.setTier(pref.id, "hot");
     expect(db.getById(pref.id)?.tier).toBe("hot");
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });

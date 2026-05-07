@@ -66,7 +66,7 @@ export type IngestConfig = {
   overlap: number;
 };
 
-/** Dynamic memory tiering (hot/warm/cold). */
+/** Dynamic memory tiering (hot/warm/cold/structural). */
 export type MemoryTieringConfig = {
   enabled: boolean;
   /** Max tokens for HOT tier always loaded at session start (default: 2000). */
@@ -75,8 +75,16 @@ export type MemoryTieringConfig = {
   compactionOnSessionEnd: boolean;
   /** Days without access to treat preference as inactive -> warm (default: 7). */
   inactivePreferenceDays: number;
-  /** Cap HOT tier to this many facts when promoting blockers (default: 50). */
+  /** Cap HOT tier to this many facts when promoting blockers/recently recalled facts (default: 50). */
   hotMaxFacts: number;
+  /** Days of inactivity before unrecalled/unpinned facts are moved to COLD (default: 30). */
+  coldAfterInactivityDays: number;
+  /** Recall/access threshold for HOT promotion within the recent access window (default: 3). */
+  hotMinAccessCount: number;
+  /** Recent access window for HOT promotion, in days (default: 7). */
+  hotAccessWindowDays: number;
+  /** Importance threshold for recently accessed preferences to be HOT candidates (default: 0.7). */
+  hotPreferenceImportance: number;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */

@@ -145,12 +145,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   mem
     .command("compact")
-    .description("Run tier compaction: completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT")
+    .description("Retier facts by structural shape, salience, and inactivity")
+    .option("--dry-run", "Preview tier changes without mutating facts")
     .action(
-      withExit(async () => {
+      withExit(async (opts?: { dryRun?: boolean }) => {
         let counts;
         try {
-          counts = await runCompaction();
+          counts = await runCompaction({ apply: opts?.dryRun !== true });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
@@ -158,7 +159,26 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           });
           throw err;
         }
-        console.log(`Tier compaction: hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
+        const mode = opts?.dryRun ? "dry-run" : "apply";
+        const changed = counts.changed == null ? "" : ` changed=${counts.changed}/${counts.examined ?? "?"}`;
+        console.log(
+          `Tier compaction (${mode}): hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} structural=${counts.structural}${changed}`,
+        );
+      }),
+    );
+
+  mem
+    .command("retier")
+    .description("Preview or apply memory tier migration using current tiering rules")
+    .option("--apply", "Apply mutations. Omit for dry-run")
+    .action(
+      withExit(async (opts?: { apply?: boolean }) => {
+        const report = await runCompaction({ apply: opts?.apply === true });
+        const mode = opts?.apply ? "apply" : "dry-run";
+        console.log(
+          `Retier (${mode}): examined=${report.examined ?? "?"} changed=${report.changed ?? "?"} hot=${report.hot} warm=${report.warm} cold=${report.cold} structural=${report.structural}`,
+        );
+        if (!opts?.apply) console.log("Dry-run only. Re-run with --apply to mutate fact tiers.");
       }),
     );
 
