@@ -84,11 +84,11 @@ function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions>
   };
 }
 
-function hasTierTag(tagsStr: string | null, tag: string): boolean {
+function hasTag(tagsStr: string | null, tag: string): boolean {
   return parseTags(tagsStr).includes(tag.toLowerCase().trim());
 }
 
-function parsePreserveTagsForTiering(raw: string | null): string[] {
+function parsePreserveTags(raw: string | null): string[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -107,12 +107,12 @@ function isStructuralCandidate(row: TierCandidate): boolean {
 }
 
 function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
-  const preserveTags = parsePreserveTagsForTiering(row.preserve_tags);
+  const preserveTags = parsePreserveTags(row.preserve_tags);
   return (
     (row.preserve_until != null && row.preserve_until > nowSec) ||
     preserveTags.length > 0 ||
-    hasTierTag(row.tags, "edict") ||
-    hasTierTag(row.tags, "blocker")
+    hasTag(row.tags, "edict") ||
+    hasTag(row.tags, "blocker")
   );
 }
 
@@ -123,8 +123,8 @@ function isHotCandidate(
   flags?: { ignoreStructuralBlock?: boolean },
 ): boolean {
   if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row)) return false;
+  if (hasTag(row.tags, "blocker")) return true;
   if (["decision", "pattern", "rule"].includes(row.category ?? "")) return false;
-  if (hasTierTag(row.tags, "blocker")) return true;
   if (row.preserve_until != null && row.preserve_until > nowSec) return true;
   const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
   const hotWindowCutoff = nowSec - opts.hotAccessWindowDays * 86400;
@@ -272,20 +272,6 @@ export function trimToBudget(
     tags: string | null;
     is_verified: number;
   }>;
-
-  const parsePreserveTags = (raw: string | null): string[] => {
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const hasTag = (tagsStr: string | null, tag: string): boolean => {
-    return parseTags(tagsStr).includes(tag.toLowerCase().trim());
-  };
 
   const p0: Array<{ id: string; text: string }> = [];
   const preserved: Array<{ id: string; reason: string }> = [];
