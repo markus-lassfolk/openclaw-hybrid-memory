@@ -140,7 +140,10 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
 
 export function shouldSkipEpisodicConsolidation(event: EventLogEntry): boolean {
   const text = extractEventText(event).toLowerCase();
-  return SKIP_CONSOLIDATION_TEXT_PATTERNS.has(text);
+  for (const pattern of SKIP_CONSOLIDATION_TEXT_PATTERNS) {
+    if (text.includes(pattern)) return true;
+  }
+  return false;
 }
 
 /**
