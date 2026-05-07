@@ -163,22 +163,31 @@ export function getConnectedFactIds(
   // #1192: prefer the denormalized columns when present (refreshed by the dream-cycle).
   // Falls back to the legacy COUNT(*) path when columns are missing or zero (which can
   // happen on a brand-new store before the first dream-cycle has run).
-  const denormDegreeStmt = db.prepare(
-    `SELECT COALESCE(out_degree, 0) + COALESCE(in_degree, 0) AS degree FROM facts WHERE id = ? LIMIT 1`,
-  );
+  // `prepare` fails if `facts` does not exist (e.g. minimal in-memory tests); skip denorm then.
+  let denormDegreeStmt: ReturnType<DatabaseSync["prepare"]> | null = null;
+  try {
+    denormDegreeStmt = db.prepare(
+      `SELECT COALESCE(out_degree, 0) + COALESCE(in_degree, 0) AS degree FROM facts WHERE id = ? LIMIT 1`,
+    );
+  } catch {
+    denormDegreeStmt = null;
+  }
   const fallbackDegreeStmt = db.prepare(
     `SELECT
        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) AS degree`,
   );
   const degreeCache = new Map<string, number>();
+  const liveDegreeCache = new Map<string, number>();
   const degreeOf = (id: string): number => {
     const cached = degreeCache.get(id);
     if (cached != null) return cached;
     let degree = 0;
     try {
-      const row = denormDegreeStmt.get(id) as { degree: number } | undefined;
-      degree = Number(row?.degree ?? 0);
+      if (denormDegreeStmt) {
+        const row = denormDegreeStmt.get(id) as { degree: number } | undefined;
+        degree = Number(row?.degree ?? 0);
+      }
     } catch {
       degree = 0;
     }
@@ -187,6 +196,15 @@ export function getConnectedFactIds(
       degree = Number(row?.degree ?? 0);
     }
     degreeCache.set(id, degree);
+    return degree;
+  };
+  /** Live in+out traversable edge count — safe for sizing SQL LIMIT when hub cap is off (see #1192). */
+  const liveCombinedDegree = (id: string): number => {
+    const cached = liveDegreeCache.get(id);
+    if (cached != null) return cached;
+    const row = fallbackDegreeStmt.get(id, id) as { degree: number } | undefined;
+    const degree = Number(row?.degree ?? 0);
+    liveDegreeCache.set(id, degree);
     return degree;
   };
 
@@ -201,9 +219,10 @@ export function getConnectedFactIds(
         }
         continue;
       }
-      // No hub cap: `degree` is in+out combined; each directional query uses that as LIMIT so every
-      // neighbour in that direction is eligible (never truncates). With hub cap, +1 avoids edge truncation.
-      const limit = hubDegreeCap == null ? Math.max(degree, 1) : Math.max(hubDegreeCap + 1, 1);
+      // No hub cap: size LIMIT from live edge counts. Denormalized totals can lag dream-cycle
+      // refreshes; using them here could truncate neighbours even though `out+in` is a valid upper
+      // bound per direction when fresh. With hub cap, +1 avoids edge truncation vs the skip threshold.
+      const limit = hubDegreeCap == null ? Math.max(liveCombinedDegree(id), 1) : Math.max(hubDegreeCap + 1, 1);
       const neighbours = [
         ...(outStmt.all(id, limit) as Array<{ id: string }>),
         ...(inStmt.all(id, limit) as Array<{ id: string }>),
