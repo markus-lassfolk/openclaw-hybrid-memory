@@ -224,6 +224,14 @@ export type ImplicitFeedbackConfig = {
   feedToSelfCorrection: boolean;
   /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
   trajectoryLLMAnalysis: boolean;
+  /** Maximum implicit-feedback lessons to store per UTC day (default: 50). */
+  maxLessonsPerDay: number;
+  /** Token-Jaccard threshold for implicit-feedback lesson near-duplicate suppression (default: 0.8). */
+  lessonDedupeJaccard: number;
+  /** Collapse historical near-duplicate implicit-feedback facts after extraction (default: true). */
+  autoCleanup: boolean;
+  /** Maximum historical implicit-feedback facts to scan per cleanup run (default: 1000). */
+  cleanupLimit: number;
 };
 
 /** Frustration signal weights override (Issue #263 — Phase 1). */

@@ -32,6 +32,111 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 
+
+const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
+
+function normalizeLessonTokens(text: string): Set<string> {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9åäö]+/gi, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+  return new Set(normalized);
+}
+
+function tokenJaccard(a: string, b: string): number {
+  const left = normalizeLessonTokens(a);
+  const right = normalizeLessonTokens(b);
+  if (left.size === 0 || right.size === 0) return 0;
+  let intersection = 0;
+  for (const token of left) {
+    if (right.has(token)) intersection++;
+  }
+  return intersection / (left.size + right.size - intersection);
+}
+
+function getImplicitFeedbackLessonsStoredToday(rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>): number {
+  if (!rawDb) return 0;
+  const startOfDaySec = Math.floor(Date.now() / 86400000) * 86400;
+  const row = rawDb
+    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND created_at >= ? AND superseded_at IS NULL")
+    .get(startOfDaySec) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
+}
+
+function findSimilarImplicitFeedbackLesson(
+  rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>,
+  lesson: string,
+  threshold: number,
+): string | null {
+  if (!rawDb) return null;
+  const prefix = lesson.trim().slice(0, 80);
+  const rows = rawDb
+    .prepare(
+      `SELECT id, text FROM facts
+       WHERE source = 'implicit-feedback'
+         AND superseded_at IS NULL
+         AND (tags LIKE '%implicit-feedback%' OR tags LIKE '%trajectory%')
+       ORDER BY created_at DESC
+       LIMIT 500`,
+    )
+    .all() as Array<{ id: string; text: string }>;
+  for (const row of rows) {
+    if (row.text === lesson || (prefix.length >= 20 && row.text.startsWith(prefix))) return row.id;
+    if (tokenJaccard(row.text, lesson) >= threshold) return row.id;
+  }
+  return null;
+}
+
+function markImplicitFeedbackLessonRecalled(rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>, factId: string): void {
+  const nowSec = Math.floor(Date.now() / 1000);
+  rawDb
+    ?.prepare(
+      "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+    )
+    .run(nowSec, nowSec, factId);
+}
+
+export function cleanupImplicitFeedbackDuplicates(
+  rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>,
+  opts: { threshold?: number; limit?: number } = {},
+): { scanned: number; collapsed: number } {
+  if (!rawDb) return { scanned: 0, collapsed: 0 };
+  const threshold = opts.threshold ?? 0.8;
+  const limit = opts.limit ?? 1000;
+  if (limit <= 0) return { scanned: 0, collapsed: 0 };
+  const rows = rawDb
+    .prepare(
+      `SELECT id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
+       FROM facts
+       WHERE source = 'implicit-feedback' AND superseded_at IS NULL
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{ id: string; text: string; recallCount: number; accessCount: number; createdAt: number }>;
+  let collapsed = 0;
+  const canonical: Array<{ id: string; text: string }> = [];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const supersede = rawDb.prepare(
+    "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
+  );
+  const reinforce = rawDb.prepare(
+    "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+  );
+  for (const row of rows) {
+    const match = canonical.find((candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold);
+    if (!match) {
+      canonical.push({ id: row.id, text: row.text });
+      continue;
+    }
+    supersede.run(nowSec, match.id, nowSec, row.id);
+    reinforce.run(Math.max(1, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+    collapsed++;
+  }
+  return { scanned: rows.length, collapsed };
+}
+
 // ---------------------------------------------------------------------------
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
@@ -283,20 +388,32 @@ export async function runExtractImplicitFeedbackForCli(
               row.tools_used,
               row.turn_count,
             );
-            // Store lessons as PATTERN_FACT entries in factsDb
+            // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
+            let lessonsStoredToday = getImplicitFeedbackLessonsStoredToday(rawDb);
+            const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+            const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
             for (const lesson of traj.lessonsExtracted) {
-              if (!lesson.trim() || factsDb.hasDuplicate(lesson)) continue;
+              const trimmedLesson = lesson.trim();
+              if (!trimmedLesson) continue;
+              const similarId = findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard);
+              if (similarId || factsDb.hasDuplicate(trimmedLesson)) {
+                if (similarId) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+                continue;
+              }
+              if (maxLessonsPerDay > 0 && lessonsStoredToday >= maxLessonsPerDay) continue;
               try {
                 factsDb.store({
-                  text: lesson,
-                  category: "pattern",
-                  importance: 0.6,
+                  text: trimmedLesson,
+                  category: "technical",
+                  importance: 0.5,
                   entity: null,
-                  key: null,
-                  value: lesson.slice(0, 200),
+                  key: "implicit_feedback_signal",
+                  value: trimmedLesson.slice(0, 200),
                   source: "implicit-feedback",
-                  tags: ["trajectory", "feedback"],
+                  tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
+                  decayClass: "normal",
                 });
+                lessonsStoredToday++;
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   operation: "runExtractImplicitFeedbackForCli:store-lesson",
@@ -320,6 +437,24 @@ export async function runExtractImplicitFeedbackForCli(
           subsystem: "implicit-feedback",
         });
       }
+    }
+  }
+
+  if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
+    try {
+      const cleanup = cleanupImplicitFeedbackDuplicates(rawDb, {
+        threshold: implicitCfg.lessonDedupeJaccard ?? 0.8,
+        limit: implicitCfg.cleanupLimit ?? 1000,
+      });
+      if (opts.verbose && cleanup.collapsed > 0) {
+        logger?.info?.(`Implicit-feedback cleanup: collapsed ${cleanup.collapsed}/${cleanup.scanned} near-duplicate signal fact(s)`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:cleanup-duplicates",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
     }
   }
 
