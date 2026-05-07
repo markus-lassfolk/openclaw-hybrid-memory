@@ -41,6 +41,7 @@ import {
   getProceduresForAudit as getProceduresForAuditImpl,
   getProceduresReadyForSkill as getProceduresReadyForSkillImpl,
   getStaleProcedures as getStaleProceduresImpl,
+  triageProcedures as triageProceduresImpl,
   listProcedures as listProceduresImpl,
   listProceduresUpdatedInLastNDays as listProceduresUpdatedInLastNDaysImpl,
   markProcedurePromoted as markProcedurePromotedImpl,
@@ -68,8 +69,10 @@ import {
   countFacts as countFactsImpl,
   directivesCount as directivesCountImpl,
   entityCount as entityCountImpl,
+  countVectorlessActiveFacts as countVectorlessActiveFactsImpl,
   estimateStoredTokensByTier as estimateStoredTokensByTierImpl,
   estimateStoredTokens as estimateStoredTokensImpl,
+  listVectorlessActiveFacts as listVectorlessActiveFactsImpl,
   linksCount as linksCountImpl,
   listForDashboard as listForDashboardImpl,
   metaPatternsCount as metaPatternsCountImpl,
@@ -83,6 +86,7 @@ import {
   topEntities as topEntitiesImpl,
   topEntitiesFiltered as topEntitiesFilteredImpl,
   uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
+  vectorlessActiveFactsBySource as vectorlessActiveFactsBySourceImpl,
 } from "./stats.js";
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
 
@@ -93,11 +97,7 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   }
 
   /** Get all non-expired facts (for reflection). Optional point-in-time / include superseded. Optional scope filter. */
-  getAll(options?: {
-    includeSuperseded?: boolean;
-    asOf?: number;
-    scopeFilter?: ScopeFilter | null;
-  }): MemoryEntry[] {
+  getAll(options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry[] {
     return getAllImpl(this.liveDb, options);
   }
 
@@ -312,6 +312,20 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return remapCategoryImpl(this.liveDb, from, to, apply);
   }
 
+  countVectorlessActiveFacts(source?: string): number {
+    return countVectorlessActiveFactsImpl(this.liveDb, source);
+  }
+
+  vectorlessActiveFactsBySource(limit = 20): ReturnType<typeof vectorlessActiveFactsBySourceImpl> {
+    return vectorlessActiveFactsBySourceImpl(this.liveDb, limit);
+  }
+
+  listVectorlessActiveFacts(
+    options?: Parameters<typeof listVectorlessActiveFactsImpl>[1],
+  ): ReturnType<typeof listVectorlessActiveFactsImpl> {
+    return listVectorlessActiveFactsImpl(this.liveDb, options);
+  }
+
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
   getProceduresForAudit(limit = 5): ReturnType<typeof getProceduresForAuditImpl> {
     return getProceduresForAuditImpl(this.liveDb, limit);
@@ -517,8 +531,12 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return getProceduresReadyForSkillImpl(this.liveDb, validationThreshold, limit);
   }
 
-  markProcedurePromoted(id: string, skillPath: string): boolean {
+  markProcedurePromoted(id: string, skillPath: string): ProcedureEntry | null {
     return markProcedurePromotedImpl(this.liveDb, id, skillPath);
+  }
+
+  triageProcedures(options?: Parameters<typeof triageProceduresImpl>[1]): ReturnType<typeof triageProceduresImpl> {
+    return triageProceduresImpl(this.liveDb, options);
   }
 
   getStaleProcedures(ttlDays: number, limit = 100): ProcedureEntry[] {

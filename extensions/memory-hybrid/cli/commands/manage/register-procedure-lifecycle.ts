@@ -37,6 +37,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
   const procedureCmd = mem
     .command("procedure")
     .description("Show procedure details (versions, failures, avoidance notes)");
+  procedureCmd.alias?.("procedures");
   procedureCmd
     .command("show <id>")
     .description("Show all versions and failure history for a procedure")
@@ -104,6 +105,52 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           }
         } else {
           console.log("\n  No failures recorded.");
+        }
+      }),
+    );
+
+  procedureCmd
+    .command("triage")
+    .description("Triage procedures that are validated but not promoted")
+    .option("--status <status>", "Filter by status: validated or all", "validated")
+    .option("--not-promoted", "Only include procedures not promoted to skills")
+    .option("--limit <n>", "Maximum number to show", "50")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { status?: string; notPromoted?: boolean; limit?: string; json?: boolean }) => {
+        const status = opts?.status === "all" ? "all" : "validated";
+        const limit = Number.parseInt(opts?.limit ?? "50", 10);
+        if (!Number.isFinite(limit) || limit < 1) {
+          console.error("error: --limit must be a positive integer");
+          process.exitCode = 1;
+          return;
+        }
+        const report = factsDb.triageProcedures({
+          status,
+          notPromoted: opts?.notPromoted !== false,
+          limit,
+          validationThreshold: cfg.procedures.validationThreshold,
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(
+          `Procedures triage: ${report.summary.total} blocked${report.summary.topReason ? ` by ${report.summary.topReason}` : ""}`,
+        );
+        const reasonSummary = Object.entries(report.summary.byReason)
+          .filter(([, count]) => count > 0)
+          .map(([reason, count]) => `${reason}=${count}`)
+          .join(", ");
+        if (reasonSummary) console.log(`Reasons: ${reasonSummary}`);
+        if (report.rows.length === 0) return;
+        console.log("id | title | validated_at | promotion_block_reason | last_recall");
+        for (const row of report.rows) {
+          const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
+          const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
+          console.log(
+            `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${row.promotionBlockReason} | ${lastRecall}`,
+          );
         }
       }),
     );

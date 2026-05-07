@@ -129,8 +129,10 @@ ${stepsMd}
     }
 
     const relativePath = join(options.skillsAutoPath, slug);
-    factsDb.markProcedurePromoted(proc.id, relativePath);
-    paths.push(skillPath);
+    const promoted = factsDb.markProcedurePromoted(proc.id, relativePath);
+    paths.push(
+      promoted?.skillPath && promoted.skillPath === relativePath ? skillPath : (promoted?.skillPath ?? skillPath),
+    );
     logger.info(`procedure-skill-generator: generated ${skillPath}`);
   }
 

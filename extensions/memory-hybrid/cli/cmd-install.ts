@@ -411,7 +411,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
-  // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
+  // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay → reembed-vectorless
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`,
     sessionTarget: "isolated",
@@ -425,6 +425,7 @@ const MAINTENANCE_CRON_JOBS: Array<
         { name: "consolidate", cmd: "openclaw hybrid-mem consolidate --threshold 0.92" },
         { name: "build-languages", cmd: "openclaw hybrid-mem build-languages" },
         { name: "backfill-decay", cmd: "openclaw hybrid-mem backfill-decay" },
+        { name: "reembed-vectorless", cmd: "openclaw hybrid-mem reembed-vectorless --limit 1000 --apply" },
         { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 500 --verbose" },
       ],
     }),

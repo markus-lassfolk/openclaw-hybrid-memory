@@ -41,8 +41,16 @@ function entryMatchesHybridSearchFilters(
 type AuditHealthReport = {
   activeFacts: number;
   canonicalEmbeddings: number;
-  vectorlessApprox: number;
-  procedures: { total: number; validated: number; promoted: number; validatedNotPromoted: number };
+  vectorless: number;
+  vectorlessBySource: Array<{ source: string; count: number }>;
+  procedures: {
+    total: number;
+    validated: number;
+    promoted: number;
+    validatedNotPromoted: number;
+    blocked: number;
+    topBlockReason: string | null;
+  };
   tiers: Record<string, number>;
   decay: Record<string, number>;
   categories: { configured: string[]; present: string[]; unknown: string[] };
@@ -79,7 +87,9 @@ function buildAuditHealthReport(
   const unknown = present.filter((category: string) => !configuredSet.has(category));
   const sources = factsDb.statsBySource();
   const implicitFeedbackTrajectorySignals = countImplicitFeedbackTrajectorySignals(factsDb);
-  const vectorlessApprox = Math.max(0, activeFacts - canonicalEmbeddings);
+  const vectorless = factsDb.countVectorlessActiveFacts();
+  const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(10);
+  const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
   const warnings: string[] = [];
   if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
   if ((tiers.structural ?? 0) === 0)
@@ -87,13 +97,24 @@ function buildAuditHealthReport(
   if (activeFacts > 0 && (decay.stable ?? 0) / activeFacts > 0.5)
     warnings.push("More than half of active facts are stable/no-expiry.");
   if (unknown.length > 0) warnings.push(`Categories present in DB but not configured: ${unknown.join(", ")}`);
-  if (vectorlessApprox > 0) warnings.push(`${vectorlessApprox} active fact(s) may be missing canonical embeddings.`);
-  if (validated - promoted > 0) warnings.push(`${validated - promoted} validated procedure(s) are not promoted.`);
+  if (vectorless > 0) warnings.push(`${vectorless} active non-kv fact(s) are missing canonical embeddings.`);
+  if (procedureTriage.summary.total > 0)
+    warnings.push(
+      `${procedureTriage.summary.total} validated procedure(s) are not promoted (top reason: ${procedureTriage.summary.topReason ?? "unknown"}).`,
+    );
   return {
     activeFacts,
     canonicalEmbeddings,
-    vectorlessApprox,
-    procedures: { total: procedures, validated, promoted, validatedNotPromoted: Math.max(0, validated - promoted) },
+    vectorless,
+    vectorlessBySource,
+    procedures: {
+      total: procedures,
+      validated,
+      promoted,
+      validatedNotPromoted: Math.max(0, validated - promoted),
+      blocked: procedureTriage.summary.total,
+      topBlockReason: procedureTriage.summary.topReason,
+    },
     tiers,
     decay,
     categories: { configured, present, unknown },
@@ -108,9 +129,12 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log("");
   console.log(`Active facts: ${report.activeFacts}`);
   console.log(`Canonical embeddings: ${report.canonicalEmbeddings}`);
-  console.log(`Vectorless approximation: ${report.vectorlessApprox}`);
+  console.log(`Vectorless active non-kv facts: ${report.vectorless}`);
+  if (report.vectorlessBySource.length > 0) {
+    console.log(`Vectorless by source: ${report.vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`);
+  }
   console.log(
-    `Procedures: ${report.procedures.total} (validated: ${report.procedures.validated}, promoted: ${report.procedures.promoted}, validated-not-promoted: ${report.procedures.validatedNotPromoted})`,
+    `Procedures: ${report.procedures.total} (validated: ${report.procedures.validated}, promoted: ${report.procedures.promoted}, blocked: ${report.procedures.blocked}${report.procedures.topBlockReason ? ` by ${report.procedures.topBlockReason}` : ""})`,
   );
   console.log(`Tiers: ${JSON.stringify(report.tiers)}`);
   console.log(`Decay: ${JSON.stringify(report.decay)}`);
@@ -267,6 +291,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const activeFacts = factsDb.getCount();
           const supersededFacts = factsDb.countSupersededFacts();
           const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
+          const vectorless = factsDb.countVectorlessActiveFacts();
+          const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(5);
+          const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
           const unresolvedContradictions = factsDb.contradictionsCount();
           const verifiedFacts = factsDb.countVerifiedFacts();
           const activity = factsDb.recentActivity();
@@ -297,6 +324,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(
             `Total vectors (LanceDB): ${lanceCount} (canonical embeddings in SQLite: ${canonicalEmbeddings})`,
           );
+          console.log(`Vectorless active non-kv facts: ${vectorless}`);
+          if (vectorlessBySource.length > 0) {
+            console.log(`Vectorless by source: ${vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`);
+          }
           if (lanceDeltaSignificant || canonicalDeltaSignificant) {
             console.log(
               `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); total facts ${totalFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}). Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
@@ -305,7 +336,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log("");
           const proceduresNote = procedures === 0 ? " (run extract-procedures to populate)" : "";
           console.log(
-            `Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted})${proceduresNote}`,
+            `Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted}, blocked: ${procedureTriage.summary.total}${procedureTriage.summary.topReason ? ` by ${procedureTriage.summary.topReason}` : ""})${proceduresNote}`,
           );
           console.log(
             `Pending review (proposals/procedures/tools/crystal/verified): ${proposalsPending}/${Math.max(0, proceduresValidated - proceduresPromoted)}/0/0/${verifiedFacts}`,
@@ -459,6 +490,114 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           );
         }
       }),
+    );
+
+  mem
+    .command("reembed-vectorless")
+    .description("Embed active non-kv facts that lack canonical embeddings (dry-run by default)")
+    .option("--limit <n>", "Maximum vectorless facts to process", "100")
+    .option("--source <s>", "Only process facts from this source")
+    .option("--apply", "Actually embed and write LanceDB/fact_embeddings rows; default is dry-run")
+    .option("--batch-size <n>", "Embedding batch size", "40")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(
+        async (opts?: { limit?: string; source?: string; apply?: boolean; batchSize?: string; json?: boolean }) => {
+          const limit = Number.parseInt(opts?.limit ?? "100", 10);
+          const batchSize = Number.parseInt(opts?.batchSize ?? "40", 10);
+          if (!Number.isFinite(limit) || limit < 1) {
+            console.error("error: --limit must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          if (!Number.isFinite(batchSize) || batchSize < 1) {
+            console.error("error: --batch-size must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          const before = factsDb.countVectorlessActiveFacts(opts?.source);
+          const candidates = factsDb.listVectorlessActiveFacts({ limit, source: opts?.source });
+          const errors: string[] = [];
+          let embedded = 0;
+          let skipped = 0;
+          if (opts?.apply) {
+            for (let offset = 0; offset < candidates.length; offset += batchSize) {
+              const batch = candidates.slice(offset, offset + batchSize);
+              let vectors: (number[] | null)[];
+              try {
+                vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
+              } catch (err) {
+                vectors = [];
+                for (const fact of batch) {
+                  try {
+                    vectors.push(await embeddings.embed(fact.text));
+                  } catch (singleErr) {
+                    errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
+                    vectors.push(null);
+                  }
+                }
+              }
+              for (let i = 0; i < batch.length; i++) {
+                const fact = batch[i];
+                const vec = vectors[i];
+                if (!vec || vec.length === 0) {
+                  skipped++;
+                  continue;
+                }
+                try {
+                  try {
+                    await vectorDb.delete(fact.id);
+                  } catch {
+                    // Missing Lance row is the normal case for vectorless repair.
+                  }
+                  await vectorDb.store({
+                    id: fact.id,
+                    text: fact.text,
+                    vector: vec,
+                    importance: 0.5,
+                    category: fact.category,
+                  });
+                  factsDb.storeEmbedding(fact.id, embeddings.modelName, "canonical", new Float32Array(vec), vec.length);
+                  factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+                  embedded++;
+                } catch (err) {
+                  errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
+                  skipped++;
+                }
+              }
+            }
+          }
+          const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
+          const report = {
+            apply: opts?.apply === true,
+            source: opts?.source ?? null,
+            before,
+            considered: candidates.length,
+            embedded,
+            skipped,
+            errors,
+            after,
+          };
+          if (opts?.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(
+            `Reembed vectorless ${report.apply ? "applied" : "dry-run"}: before ${before}, candidates ${candidates.length}, embedded ${embedded}, skipped ${skipped}, after ${after}`,
+          );
+          if (candidates.length > 0 && !opts?.apply) {
+            console.log("Examples:");
+            for (const fact of candidates.slice(0, 10)) {
+              console.log(`  ${fact.id}  ${fact.source}  ${fact.text.slice(0, 80).replace(/\s+/g, " ")}`);
+            }
+            console.log("Dry-run only. Re-run with --apply to write embeddings.");
+          }
+          if (errors.length > 0) {
+            console.warn(`Errors: ${errors.length}`);
+            for (const err of errors.slice(0, 10)) console.warn(`  - ${err}`);
+          }
+        },
+      ),
     );
 
   mem

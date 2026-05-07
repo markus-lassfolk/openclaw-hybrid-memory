@@ -102,6 +102,90 @@ export type CleanEntityStopwordsReport = {
   examples: Array<{ id: string; entity: string }>;
 };
 
+export type VectorlessFactRow = {
+  id: string;
+  text: string;
+  source: string;
+  category: string;
+  createdAt: number;
+};
+
+export type VectorlessBySourceRow = {
+  source: string;
+  count: number;
+};
+
+function vectorlessWhereClause(): string {
+  return `f.superseded_at IS NULL
+     AND (f.expires_at IS NULL OR f.expires_at > ?)
+     AND COALESCE(f.key, '') = ''
+     AND COALESCE(f.value, '') = ''
+     AND NOT EXISTS (
+       SELECT 1 FROM fact_embeddings e
+       WHERE e.fact_id = f.id AND e.variant = 'canonical'
+     )`;
+}
+
+export function countVectorlessActiveFacts(db: DatabaseSync, source?: string): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const params: SQLInputValue[] = [nowSec];
+  let where = vectorlessWhereClause();
+  if (source != null && source !== "") {
+    where += " AND f.source = ?";
+    params.push(source);
+  }
+  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM facts f WHERE ${where}`).get(...params) as
+    | { cnt: number }
+    | undefined;
+  return Number(row?.cnt ?? 0);
+}
+
+export function vectorlessActiveFactsBySource(db: DatabaseSync, limit = 20): VectorlessBySourceRow[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(f.source, ''), 'unknown') AS source, COUNT(*) AS cnt
+       FROM facts f
+       WHERE ${vectorlessWhereClause()}
+       GROUP BY COALESCE(NULLIF(f.source, ''), 'unknown')
+       ORDER BY cnt DESC, source COLLATE NOCASE ASC
+       LIMIT ?`,
+    )
+    .all(nowSec, Math.max(1, Math.min(100, Math.floor(limit)))) as Array<{ source: string; cnt: number }>;
+  return rows.map((row) => ({ source: row.source, count: Number(row.cnt ?? 0) }));
+}
+
+export function listVectorlessActiveFacts(
+  db: DatabaseSync,
+  options: { limit?: number; source?: string } = {},
+): VectorlessFactRow[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const params: SQLInputValue[] = [nowSec];
+  let where = vectorlessWhereClause();
+  if (options.source != null && options.source !== "") {
+    where += " AND f.source = ?";
+    params.push(options.source);
+  }
+  params.push(Math.max(1, Math.min(10_000, Math.floor(options.limit ?? 100))));
+  const rows = db
+    .prepare(
+      `SELECT f.id, f.text, COALESCE(NULLIF(f.source, ''), 'unknown') AS source,
+              COALESCE(f.category, 'other') AS category, f.created_at
+       FROM facts f
+       WHERE ${where}
+       ORDER BY f.created_at ASC, f.rowid ASC
+       LIMIT ?`,
+    )
+    .all(...params) as Array<{ id: string; text: string; source: string; category: string; created_at: number }>;
+  return rows.map((row) => ({
+    id: row.id,
+    text: row.text,
+    source: row.source,
+    category: row.category,
+    createdAt: Number(row.created_at ?? 0),
+  }));
+}
+
 export function auditCategories(
   db: DatabaseSync,
   configuredCategories: readonly string[],

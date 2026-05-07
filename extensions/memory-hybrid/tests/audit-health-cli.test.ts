@@ -18,6 +18,8 @@ describe("audit-health CLI support", () => {
 
     expect(db.getCount()).toBeGreaterThanOrEqual(1);
     expect(db.countCanonicalEmbeddings()).toBeGreaterThanOrEqual(0);
+    expect(db.countVectorlessActiveFacts()).toBeGreaterThanOrEqual(1);
+    expect(db.vectorlessActiveFactsBySource()[0]).toMatchObject({ source: "test", count: expect.any(Number) });
     expect(db.statsBreakdownByTier()).toBeTypeOf("object");
     expect(db.statsBreakdownByDecayClass()).toBeTypeOf("object");
     expect(db.uniqueMemoryCategories()).toContain("technical");

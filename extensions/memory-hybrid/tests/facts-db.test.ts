@@ -3304,3 +3304,146 @@ describe("FactsDB Episodes", () => {
     });
   });
 });
+
+describe("Issue #1191 vectorless facts and procedure triage", () => {
+  it("counts active non-kv facts without canonical embeddings and breaks them down by source", () => {
+    const embedded = db.store({
+      text: "embedded fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.storeEmbedding(embedded.id, "test-model", "canonical", new Float32Array([1, 0, 0, 0]), 4);
+
+    const vectorlessA = db.store({
+      text: "needs vector A",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "distillation",
+    });
+    db.store({
+      text: "needs vector B",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "distillation",
+    });
+    db.store({
+      text: "kv pointer intentionally excluded",
+      category: "technical",
+      importance: 0.5,
+      entity: "credential",
+      key: "service",
+      value: "ref",
+      source: "credential-migration",
+    });
+    const superseded = db.store({
+      text: "superseded vectorless excluded",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const replacement = db.store({
+      text: "replacement",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      supersedesId: superseded.id,
+    });
+    db.storeEmbedding(replacement.id, "test-model", "canonical", new Float32Array([0, 1, 0, 0]), 4);
+
+    expect(db.countVectorlessActiveFacts()).toBe(3);
+    expect(db.countVectorlessActiveFacts("distillation")).toBe(2);
+    expect(db.vectorlessActiveFactsBySource(5)).toEqual([
+      { source: "distillation", count: 2 },
+      { source: "conversation", count: 1 },
+    ]);
+    expect(db.listVectorlessActiveFacts({ limit: 1, source: "distillation" })[0]?.id).toBe(vectorlessA.id);
+  });
+
+  it("triages validated-not-promoted procedures with deterministic block reasons", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const recipe = JSON.stringify([{ tool: "exec", args: { command: "true" } }]);
+    db.upsertProcedure({
+      taskPattern: "duplicate existing skill",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    const promoted = db.upsertProcedure({
+      taskPattern: "duplicate existing skill",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    expect(db.markProcedurePromoted(promoted.id, "skills/auto/duplicate-existing-skill")).not.toBeNull();
+
+    db.upsertProcedure({
+      taskPattern: "missing recipe anchor",
+      recipeJson: JSON.stringify([]),
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    db.upsertProcedure({
+      taskPattern: "low recall procedure",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 1,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+    db.upsertProcedure({
+      taskPattern: "awaiting approval procedure",
+      recipeJson: recipe,
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: now,
+      confidence: 0.9,
+    });
+
+    const report = db.triageProcedures({ status: "validated", notPromoted: true, validationThreshold: 3, limit: 20 });
+    const byTitle = new Map(report.rows.map((row) => [row.title, row.promotionBlockReason]));
+    expect(byTitle.get("duplicate existing skill")).toBe("duplicate_skill");
+    expect(byTitle.get("missing recipe anchor")).toBe("missing_anchor");
+    expect(byTitle.get("low recall procedure")).toBe("low_recall");
+    expect(byTitle.get("awaiting approval procedure")).toBe("awaiting_approval");
+    expect(report.summary.total).toBe(4);
+    expect(report.summary.byReason.awaiting_approval).toBe(1);
+  });
+
+  it("markProcedurePromoted is idempotent and preserves existing skill path", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "idempotent promotion",
+      recipeJson: JSON.stringify([{ tool: "exec" }]),
+      procedureType: "positive",
+      successCount: 3,
+      lastValidated: Math.floor(Date.now() / 1000),
+      confidence: 0.8,
+    });
+    const first = db.markProcedurePromoted(proc.id, "skills/auto/original");
+    const second = db.markProcedurePromoted(proc.id, "skills/auto/replacement");
+    expect(first?.skillPath).toBe("skills/auto/original");
+    expect(second?.skillPath).toBe("skills/auto/original");
+    expect(second?.promotedToSkill).toBe(1);
+  });
+});
