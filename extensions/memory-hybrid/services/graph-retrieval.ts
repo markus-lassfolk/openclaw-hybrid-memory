@@ -71,17 +71,32 @@ export interface GraphFactLookup {
   ): Array<{ factId: string; seedId: string; hopCount: number; path: string }>;
 }
 
-function ctePathMatchesHubGuards(factsDb: GraphFactLookup, path: LinkPathStep[]): boolean {
+function ctePathMatchesHubGuards(
+  factsDb: GraphFactLookup,
+  path: LinkPathStep[],
+  linksCache: Map<
+    string,
+    { from: ReturnType<GraphFactLookup["getLinksFrom"]>; to: ReturnType<GraphFactLookup["getLinksTo"]> }
+  >,
+): boolean {
   for (const step of path) {
     const fromId = step.fromFactId;
     const toId = step.toFactId;
-    const outOk = filterTraversableLinks(factsDb.getLinksFrom(fromId)).some(
+
+    let cached = linksCache.get(fromId);
+    if (!cached) {
+      cached = {
+        from: factsDb.getLinksFrom(fromId),
+        to: factsDb.getLinksTo(fromId),
+      };
+      linksCache.set(fromId, cached);
+    }
+
+    const outOk = filterTraversableLinks(cached.from).some(
       (l) => l.targetFactId === toId && l.linkType === step.linkType,
     );
     if (outOk) continue;
-    const inOk = filterTraversableLinks(factsDb.getLinksTo(fromId)).some(
-      (l) => l.sourceFactId === toId && l.linkType === step.linkType,
-    );
+    const inOk = filterTraversableLinks(cached.to).some((l) => l.sourceFactId === toId && l.linkType === step.linkType);
     if (!inOk) return false;
   }
   return true;
@@ -182,15 +197,45 @@ export function expandGraph(
       asOf,
       scopeFilter: cteScopeFilter,
     });
-    for (const row of expansionRows) {
+
+    // Pre-fetch all links for nodes that appear in paths to avoid N+1 queries
+    const nodesInPaths = new Set<string>();
+    const parsedPaths = new Map<number, LinkPathStep[]>();
+
+    for (let i = 0; i < expansionRows.length; i++) {
+      const row = expansionRows[i];
       if (row.hopCount === 0) continue;
-      let linkPath: LinkPathStep[];
       try {
-        linkPath = JSON.parse(row.path) as LinkPathStep[];
+        const linkPath = JSON.parse(row.path) as LinkPathStep[];
+        parsedPaths.set(i, linkPath);
+        for (const step of linkPath) {
+          nodesInPaths.add(step.fromFactId);
+        }
       } catch {
-        continue;
+        // Skip invalid paths
       }
-      if (!ctePathMatchesHubGuards(factsDb, linkPath)) continue;
+    }
+
+    // Batch-fetch all links for nodes in paths
+    const linksCache = new Map<
+      string,
+      { from: ReturnType<GraphFactLookup["getLinksFrom"]>; to: ReturnType<GraphFactLookup["getLinksTo"]> }
+    >();
+    for (const nodeId of nodesInPaths) {
+      linksCache.set(nodeId, {
+        from: factsDb.getLinksFrom(nodeId),
+        to: factsDb.getLinksTo(nodeId),
+      });
+    }
+
+    for (let i = 0; i < expansionRows.length; i++) {
+      const row = expansionRows[i];
+      if (row.hopCount === 0) continue;
+
+      const linkPath = parsedPaths.get(i);
+      if (!linkPath) continue;
+
+      if (!ctePathMatchesHubGuards(factsDb, linkPath, linksCache)) continue;
 
       const entry = factsDb.getById(row.factId, getByIdOpts);
       if (!entry) continue;
