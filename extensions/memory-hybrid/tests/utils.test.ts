@@ -313,9 +313,15 @@ describe("classifyDecay", () => {
     expect(classifyDecay(null, "preflight_check", null, "")).toBe("checkpoint");
   });
 
-  it("defaults to stable when no patterns match", () => {
-    expect(classifyDecay(null, null, null, "general information")).toBe("stable");
-    expect(classifyDecay("user", "color", "blue", "user likes blue")).toBe("stable");
+  it("defaults general facts to normal so they age out unless reinforced", () => {
+    expect(classifyDecay(null, null, null, "general information")).toBe("normal");
+    expect(classifyDecay("user", "color", "blue", "user likes blue")).toBe("normal");
+  });
+
+  it("uses normal decay for time-bound work entities", () => {
+    expect(classifyDecay("PR #1142", null, null, "review feedback for PR #1142")).toBe("normal");
+    expect(classifyDecay("Issue #1189", null, null, "decay default issue")).toBe("normal");
+    expect(classifyDecay("Sprint 2026-05", null, null, "current sprint plan")).toBe("normal");
   });
 });
 

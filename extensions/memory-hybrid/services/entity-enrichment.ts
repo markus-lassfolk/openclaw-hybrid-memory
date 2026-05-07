@@ -14,6 +14,14 @@ import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const MIN_CHARS = 24;
 const MAX_CHARS = 8000;
+const ENTITY_STOP_WORDS = new Set([
+  "agent",
+  "assistant",
+  "convention",
+  "credentials",
+  "system",
+  "user",
+]);
 
 export type ExtractedMention = {
   label: EntityMentionLabel;
@@ -30,6 +38,11 @@ export function detectFactTextLanguage(text: string): string {
   if (t.length < 10) return "und";
   const code = franc(t);
   return code === "und" ? "und" : code;
+}
+
+export function isEntityStopWord(surface: string): boolean {
+  const normalized = normalizeEntityKey(surface);
+  return ENTITY_STOP_WORDS.has(normalized);
 }
 
 type LlmMention = {
@@ -156,7 +169,7 @@ ${body}`;
       const lab = String(m.label ?? "").toUpperCase();
       if (lab !== "PERSON" && lab !== "ORG") continue;
       const surface = String(m.text ?? "").trim();
-      if (surface.length < 2) continue;
+      if (surface.length < 2 || isEntityStopWord(surface)) continue;
 
       const start = typeof m.start === "number" ? m.start : 0;
       const end = typeof m.end === "number" ? m.end : start + surface.length;

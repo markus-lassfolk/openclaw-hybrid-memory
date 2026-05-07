@@ -31,9 +31,13 @@ export function classifyDecay(
   const textLower = text.toLowerCase();
   const entityLower = (entity || "").toLowerCase();
 
+  if (/^(?:pr|pull request|issue)\s*#?\d+$/i.test(entity || "")) return "normal";
+  if (/^sprint\b/i.test(entity || "")) return "normal";
+
   if (getDecayPermanentKeys().some((k) => keyLower.includes(k))) return "permanent";
   if (getDecayPermanentRegex().test(textLower)) return "permanent";
   if (entityLower && getDecayPermanentEntities().some((e) => entityLower === e)) return "permanent";
+
 
   if (getDecaySessionKeys().some((k) => keyLower.includes(k))) return "session";
   if (getDecaySessionRegex().test(textLower)) return "session";
@@ -43,5 +47,5 @@ export function classifyDecay(
 
   if (getDecayCheckpointKeys().some((k) => keyLower.includes(k))) return "checkpoint";
 
-  return "stable";
+  return "normal";
 }
