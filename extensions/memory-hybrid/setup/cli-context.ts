@@ -26,6 +26,7 @@ import {
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runConsolidate } from "../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../services/continuous-verifier.js";
+import { readGuardTimestampMs } from "../services/cron-guard.js";
 import { type DreamCycleResult, runDreamCycle } from "../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -604,6 +605,52 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         /* ignore */
       }
       return { sqliteBytes, lanceBytes };
+    },
+    getCronJobsStatus: () => {
+      const owHome =
+        process.env.OPENCLAW_HOME?.trim() || join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".openclaw");
+      const cronStorePath = join(owHome, "cron", "jobs.json");
+      if (!existsSync(cronStorePath)) return [];
+      let store: { jobs?: unknown[] };
+      try {
+        store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "stats-read-jobs-json",
+          severity: "info",
+          subsystem: "cli",
+        });
+        return [];
+      }
+      if (!Array.isArray(store.jobs)) return [];
+      const out: Array<{
+        name: string;
+        pluginJobId: string;
+        enabled: boolean;
+        scheduleExpr: string | null;
+        lastRunAtMs: number | null;
+      }> = [];
+      for (const j of store.jobs as Array<Record<string, unknown>>) {
+        if (!j || typeof j !== "object") continue;
+        const pluginJobId = typeof j.pluginJobId === "string" ? j.pluginJobId : "";
+        if (!pluginJobId.startsWith("hybrid-mem:")) continue;
+        const sched = j.schedule as { expr?: string } | string | undefined;
+        const scheduleExpr = typeof sched === "string" ? sched : typeof sched?.expr === "string" ? sched.expr : null;
+        const state = (typeof j.state === "object" && j.state !== null ? j.state : {}) as Record<string, unknown>;
+        const stateLast = typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : null;
+        const jobName = typeof j.name === "string" ? j.name : pluginJobId;
+        const guardMs = readGuardTimestampMs(jobName.replace(/\s+/g, "-"), owHome);
+        const lastRunAtMs =
+          stateLast != null && guardMs != null ? Math.max(stateLast, guardMs) : (stateLast ?? guardMs);
+        out.push({
+          name: jobName,
+          pluginJobId,
+          enabled: j.enabled !== false,
+          scheduleExpr,
+          lastRunAtMs,
+        });
+      }
+      return out;
     },
   };
 }

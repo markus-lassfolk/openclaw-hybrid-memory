@@ -341,6 +341,19 @@ export function setPreserveTags(
   return getById(id);
 }
 
+/** Same row filter as `pruneExpired` DELETE on `facts` (for CLI `--verbose` preview). */
+export function listExpiredFactIdsPendingPrune(db: DatabaseSync): string[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+         AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all({ "@now": nowSec }) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
 export function pruneExpired(db: DatabaseSync): number {
   const nowSec = Math.floor(Date.now() / 1000);
   db.prepare(

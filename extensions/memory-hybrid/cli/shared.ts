@@ -93,3 +93,18 @@ export function acquireScanSlot(
 export function clearScanLock(scanType: string): void {
   SCAN_IN_PROGRESS.delete(scanType);
 }
+
+/**
+ * Approximate run interval for "stale" detection per cron expression.
+ * Returns interval in milliseconds, or null if not recognized.
+ */
+export function approxIntervalMs(cron?: string | null): number | null {
+  if (!cron) return null;
+  const t = cron.trim();
+  if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
+  if (/^\d+\s+\d+\s+\*\s+\*\s+[0-7]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
+  if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
+  const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
+  if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
+  return null;
+}

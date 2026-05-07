@@ -55,12 +55,15 @@ import {
 import { FactsDBLayer2 } from "./facts-db-layer2.js";
 import {
   countBySource as countBySourceImpl,
+  countSupersededFacts as countSupersededFactsImpl,
+  countVerifiedFacts as countVerifiedFactsImpl,
   findSessionFactsForPromotion as findSessionFactsForPromotionImpl,
   languageKeywordsCount as languageKeywordsCountImpl,
   optimizeFts as optimizeFtsImpl,
   pruneLogTables as pruneLogTablesImpl,
   pruneOrphanedLinks as pruneOrphanedLinksImpl,
   pruneScopedFacts as pruneScopedFactsImpl,
+  recentActivity as recentActivityImpl,
   scopeStats as scopeStatsImpl,
   selfCorrectionIncidentsCount as selfCorrectionIncidentsCountImpl,
   statsBySource as statsBySourceImpl,
@@ -209,6 +212,21 @@ export class FactsDB extends FactsDBLayer2 {
 
   contradictionsCount(): number {
     return contradictionsCountImpl(this.liveDb);
+  }
+
+  /** Number of facts with `superseded_at IS NOT NULL`. */
+  countSupersededFacts(): number {
+    return countSupersededFactsImpl(this.liveDb);
+  }
+
+  /** Number of rows in `verified_facts` (0 when verification disabled / table absent). */
+  countVerifiedFacts(): number {
+    return countVerifiedFactsImpl(this.liveDb);
+  }
+
+  /** Recent ingestion activity: last 24h / 7d / 30d, plus newest/oldest active timestamps. */
+  recentActivity(): ReturnType<typeof recentActivityImpl> {
+    return recentActivityImpl(this.liveDb);
   }
 
   // ---------------------------------------------------------------------------

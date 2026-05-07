@@ -25,6 +25,7 @@ import {
   confirmFact as confirmFactImpl,
   decayConfidence as decayConfidenceImpl,
   promoteScope as promoteScopeImpl,
+  listExpiredFactIdsPendingPrune as listExpiredFactIdsPendingPruneImpl,
   pruneExpired as pruneExpiredImpl,
   pruneSessionScope as pruneSessionScopeImpl,
   restoreCheckpoint as restoreCheckpointImpl,
@@ -142,6 +143,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   count(): number {
     return countFactsImpl(this.liveDb);
+  }
+
+  /** Fact ids that `pruneExpired()` would delete (same filter as the DELETE). */
+  listExpiredFactIdsPendingPrune(): string[] {
+    return listExpiredFactIdsPendingPruneImpl(this.liveDb);
   }
 
   pruneExpired(): number {

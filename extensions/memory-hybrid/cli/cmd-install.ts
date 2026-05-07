@@ -24,6 +24,7 @@ import { findPluginRoot } from "../utils/plugin-root.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
+import { buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
@@ -290,15 +291,24 @@ const MIN_INTERVAL_MS: Record<string, number> = {
 const MAINTENANCE_CRON_JOBS: Array<
   Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
 > = [
-  // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
+  // Daily 02:00 | nightly-memory-sweep | prune → distill → extract-daily → resolve-contradictions → enrich
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}nightly-distill`,
     sessionTarget: "isolated",
     name: "nightly-memory-sweep",
     schedule: { kind: "cron", expr: "0 2 * * *" },
     channel: "system",
-    message:
-      "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\n5. openclaw hybrid-mem enrich-entities --limit 200\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3. Check if graph is enabled (config graph.enabled === true) before step 5. If graph is disabled, skip step 5. Exit 0 if all steps skipped. Step 5 backfills PERSON/ORG extraction for facts missing mentions (uses LLM). Report counts.",
+    message: buildHybridMemCronTaskMessage("nightly-memory-sweep", {
+      preamble:
+        "Nightly memory maintenance (5 steps). CONFIG: If distill.enabled is false, replace the distill and extract-daily hm_step lines with no-ops, e.g. hm_step \"distill-skipped\" bash -c 'echo distill disabled; exit 0' and hm_step \"extract-daily-skipped\" bash -c 'echo extract-daily skipped; exit 0'. If graph.enabled is false, replace enrich-entities with hm_step \"enrich-skipped\" bash -c 'echo graph disabled; exit 0'. Report counts in your reply.",
+      steps: [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+        { name: "distill", cmd: "openclaw hybrid-mem distill --days 1 --verbose" },
+        { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --days 7 --verbose" },
+        { name: "resolve-contradictions", cmd: "openclaw hybrid-mem resolve-contradictions --verbose" },
+        { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 200 --verbose" },
+      ],
+    }),
     isolated: true,
     modelTier: "default",
     enabled: true,
@@ -311,8 +321,11 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "self-correction-analysis",
     schedule: { kind: "cron", expr: "30 2 * * *" },
     channel: "system",
-    message:
-      "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.",
+    message: buildHybridMemCronTaskMessage("self-correction-analysis", {
+      preamble:
+        "Self-correction analysis. If selfCorrection is disabled in hybrid-memory config, reply that the job was skipped and do not update the guard file.",
+      steps: [{ name: "self-correction-run", cmd: "openclaw hybrid-mem self-correction-run --verbose" }],
+    }),
     isolated: true,
     modelTier: "heavy",
     enabled: true,
@@ -325,8 +338,15 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "weekly-reflection",
     schedule: { kind: "cron", expr: "0 3 * * 0" },
     channel: "system",
-    message:
-      "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.",
+    message: buildHybridMemCronTaskMessage("weekly-reflection", {
+      preamble:
+        "Weekly reflection pipeline. If reflection.enabled is false, skip the script and reply disabled; do not update the guard file.",
+      steps: [
+        { name: "reflect", cmd: "openclaw hybrid-mem reflect --verbose" },
+        { name: "reflect-rules", cmd: "openclaw hybrid-mem reflect-rules --verbose" },
+        { name: "reflect-meta", cmd: "openclaw hybrid-mem reflect-meta --verbose" },
+      ],
+    }),
     isolated: true,
     modelTier: "default",
     enabled: true,
@@ -339,8 +359,16 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "weekly-extract-procedures",
     schedule: { kind: "cron", expr: "0 4 * * 0" },
     channel: "system",
-    message:
-      "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.",
+    message: buildHybridMemCronTaskMessage("weekly-extract-procedures", {
+      preamble:
+        "Weekly extraction pipeline. If a feature is disabled in config, replace that hm_step with a no-op that logs the skip and exits 0.",
+      steps: [
+        { name: "extract-procedures", cmd: "openclaw hybrid-mem extract-procedures --days 7 --verbose" },
+        { name: "extract-directives", cmd: "openclaw hybrid-mem extract-directives --days 7 --verbose" },
+        { name: "extract-reinforcement", cmd: "openclaw hybrid-mem extract-reinforcement --days 7 --verbose" },
+        { name: "generate-auto-skills", cmd: "openclaw hybrid-mem generate-auto-skills --verbose" },
+      ],
+    }),
     isolated: true,
     modelTier: "nano",
     enabled: true,
@@ -353,8 +381,14 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "weekly-deep-maintenance",
     schedule: { kind: "cron", expr: "0 4 * * 6" },
     channel: "system",
-    message:
-      "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem vectordb-optimize\n3. openclaw hybrid-mem scope promote\nReport counts for each step.",
+    message: buildHybridMemCronTaskMessage("weekly-deep-maintenance", {
+      preamble: "Weekly deep maintenance. Report counts for each step in your reply.",
+      steps: [
+        { name: "compact", cmd: "openclaw hybrid-mem compact" },
+        { name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize" },
+        { name: "scope-promote", cmd: "openclaw hybrid-mem scope promote" },
+      ],
+    }),
     isolated: true,
     modelTier: "heavy",
     enabled: true,
@@ -367,8 +401,11 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "weekly-persona-proposals",
     schedule: { kind: "cron", expr: "0 10 * * 0" },
     channel: "system",
-    message:
-      "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.",
+    message: buildHybridMemCronTaskMessage("weekly-persona-proposals", {
+      preamble:
+        "Generate persona proposals from recent reflection. If personaProposals is disabled, skip and do not update the guard file. If there are pending proposals after a successful run, notify the user in this system channel with a concise summary.",
+      steps: [{ name: "generate-proposals", cmd: "openclaw hybrid-mem generate-proposals --verbose" }],
+    }),
     isolated: true,
     modelTier: "heavy",
     enabled: true,
@@ -381,8 +418,16 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "monthly-consolidation",
     schedule: { kind: "cron", expr: "0 5 1 * *" },
     channel: "system",
-    message:
-      "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\n4. openclaw hybrid-mem enrich-entities --limit 500\nCheck if graph is enabled (config graph.enabled === true) before step 4. If graph is disabled, skip step 4. Report what was merged, languages detected, and enrichment counts.",
+    message: buildHybridMemCronTaskMessage("monthly-consolidation", {
+      preamble:
+        "Monthly consolidation. If graph.enabled is false, replace enrich-entities with a no-op hm_step that logs graph disabled and exits 0.",
+      steps: [
+        { name: "consolidate", cmd: "openclaw hybrid-mem consolidate --threshold 0.92" },
+        { name: "build-languages", cmd: "openclaw hybrid-mem build-languages" },
+        { name: "backfill-decay", cmd: "openclaw hybrid-mem backfill-decay" },
+        { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 500 --verbose" },
+      ],
+    }),
     isolated: true,
     modelTier: "heavy",
     enabled: true,
@@ -396,8 +441,11 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "nightly-dream-cycle",
     schedule: { kind: "cron", expr: "45 2 * * *" },
     channel: "system",
-    message:
-      "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.",
+    message: buildHybridMemCronTaskMessage("nightly-dream-cycle", {
+      preamble:
+        "Nightly dream cycle (single CLI). If nightlyCycle.enabled is false, skip and do not update the guard file. Report counts: facts pruned, events consolidated, patterns found, rules generated.",
+      steps: [{ name: "dream-cycle", cmd: "openclaw hybrid-mem dream-cycle --verbose" }],
+    }),
     isolated: true,
     modelTier: "default",
     enabled: true,
@@ -412,8 +460,14 @@ const MAINTENANCE_CRON_JOBS: Array<
     name: "sensor-sweep",
     schedule: { kind: "cron", expr: "0 */4 * * *" },
     channel: "system",
-    message:
-      "Run sensor sweep data collection (no LLM):\n1. openclaw hybrid-mem sensor-sweep --tier 1\n2. openclaw hybrid-mem sensor-sweep --tier 2\nCheck if sensorSweep.enabled is true in config before running. Exit 0 if disabled. Report events written and skipped per sensor.",
+    message: buildHybridMemCronTaskMessage("sensor-sweep", {
+      preamble:
+        "Sensor sweep (no LLM). If sensorSweep.enabled is false, skip and do not update the guard file. Report events written and skipped per sensor.",
+      steps: [
+        { name: "sensor-sweep-tier-1", cmd: "openclaw hybrid-mem sensor-sweep --tier 1" },
+        { name: "sensor-sweep-tier-2", cmd: "openclaw hybrid-mem sensor-sweep --tier 2" },
+      ],
+    }),
     isolated: true,
     modelTier: "nano",
     enabled: true,
@@ -516,6 +570,15 @@ export function ensureMaintenanceCronJobs(
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
+  try {
+    mkdirSync(join(openclawDir, "logs", "cron-hybrid-mem"), { recursive: true });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "ensureMaintenanceCronJobs:mkdir-cron-logs",
+      severity: "info",
+    });
+  }
   const store: { jobs?: unknown[] } = existsSync(cronStorePath)
     ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
     : {};

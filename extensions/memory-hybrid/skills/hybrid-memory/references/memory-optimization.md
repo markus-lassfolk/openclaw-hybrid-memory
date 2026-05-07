@@ -56,11 +56,11 @@ If the user prefers **explicit** steps or `run-all` is too heavy, use this **can
 
 ### A. Nightly-style sweep (session + daily files + contradictions)
 
-1. `openclaw hybrid-mem prune`
-2. `openclaw hybrid-mem distill --days 3` (adjust window as needed; `--all` for big backfill)
-3. `openclaw hybrid-mem extract-daily` (as configured)
-4. `openclaw hybrid-mem resolve-contradictions`
-5. `openclaw hybrid-mem enrich-entities --limit 200` (backfill PERSON/ORG rows for facts still missing them; uses LLM when graph is on)
+1. `openclaw hybrid-mem prune` (add `--verbose` for id list when useful)
+2. `openclaw hybrid-mem distill --days 3` (packaged cron uses `--days 1`; adjust window as needed; `--all` for big backfill; `--verbose` in cron)
+3. `openclaw hybrid-mem extract-daily` (as configured; cron uses `--days 7 --verbose`)
+4. `openclaw hybrid-mem resolve-contradictions` (`--verbose` in cron)
+5. `openclaw hybrid-mem enrich-entities --limit 200` (backfill PERSON/ORG rows for facts still missing them; uses LLM when graph is on; `--verbose` in cron)
 
 ### B. Self-correction (after distill if you want fresh incidents)
 
@@ -107,11 +107,11 @@ If the user prefers **explicit** steps or `run-all` is too heavy, use this **can
 
 ## 5. Cron schedule (what runs automatically)
 
-If **`openclaw hybrid-mem install`** / **`verify --fix`** has been run, jobs in `~/.openclaw/cron/jobs.json` mirror roughly:
+If **`openclaw hybrid-mem install`** / **`verify --fix`** has been run, jobs in `~/.openclaw/cron/jobs.json` mirror roughly. Default messages embed a **bash harness**: per-step `tee` to `HM_LOG`, `HM_EXIT` lines with exit codes, and logs under `~/.openclaw/logs/cron-hybrid-mem/` (created on install).
 
 | When | Bundle |
 | --- | --- |
-| Daily 02:00 | prune → distill → extract-daily → resolve-contradictions → enrich-entities |
+| Daily 02:00 | prune → distill (1d in cron) → extract-daily → resolve-contradictions → enrich-entities |
 | Daily 02:30 | self-correction-run |
 | Daily 02:45 | dream-cycle (gated) |
 | Weekly | reflection, procedure pipeline, compact/scope, proposals |

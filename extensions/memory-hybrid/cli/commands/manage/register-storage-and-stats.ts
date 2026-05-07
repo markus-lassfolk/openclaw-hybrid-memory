@@ -11,7 +11,9 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
-import { type Chainable, withExit } from "../../shared.js";
+import { getEnv } from "../../../utils/env-manager.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
@@ -150,14 +152,43 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const selfCorrectionCount = factsDb.selfCorrectionIncidentsCount();
           const languageKeywordsCount = factsDb.languageKeywordsCount();
 
+          const activeFacts = factsDb.getCount();
+          const supersededFacts = factsDb.countSupersededFacts();
+          const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
+          const unresolvedContradictions = factsDb.contradictionsCount();
+          const verifiedFacts = factsDb.countVerifiedFacts();
+          const activity = factsDb.recentActivity();
+          const decayBreakdown = factsDb.statsBreakdownByDecayClass();
+          const sourceBreakdown = factsDb.statsBySource();
+          const cronJobs = extras.getCronJobsStatus?.() ?? [];
+
+          const lanceDelta = sqlCount - lanceCount;
+          const lanceAbs = Math.abs(lanceDelta);
+          const lanceDen = Math.max(sqlCount, lanceCount, 1);
+          const lanceDeltaSignificant = lanceAbs > 100 && lanceAbs / lanceDen > 0.05;
+          const totalFacts = sqlCount;
+          const canonicalDelta = totalFacts - canonicalEmbeddings;
+          const canonicalAbs = Math.abs(canonicalDelta);
+          const canonicalDen = Math.max(totalFacts, canonicalEmbeddings, 1);
+          const canonicalDeltaSignificant = canonicalAbs > 100 && canonicalAbs / canonicalDen > 0.05;
+
           console.log("=== Memory Statistics (rich) ===");
           console.log(`Schema version: ${versionInfo.schemaVersion}`);
           console.log(`Plugin version: ${versionInfo.pluginVersion}`);
           console.log(`Memory Manager: ${versionInfo.memoryManagerVersion}`);
           console.log("");
           console.log(`Total facts (SQLite): ${sqlCount}`);
-          console.log(`Total vectors (LanceDB): ${lanceCount}`);
-          console.log(`Expired (prunable): ${expired}`);
+          console.log(
+            `Active facts: ${activeFacts}; superseded: ${supersededFacts}; expired pending prune: ${expired}`,
+          );
+          console.log(
+            `Total vectors (LanceDB): ${lanceCount} (canonical embeddings in SQLite: ${canonicalEmbeddings})`,
+          );
+          if (lanceDeltaSignificant || canonicalDeltaSignificant) {
+            console.log(
+              `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); total facts ${totalFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}). Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
+            );
+          }
           console.log("");
           const proceduresNote = procedures === 0 ? " (run extract-procedures to populate)" : "";
           console.log(
@@ -170,6 +201,16 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Reflection (patterns/rules): ${reflectionPatternsCount}/${reflectionRulesCount}`);
           console.log(`Self-correction incidents: ${selfCorrectionCount}`);
           console.log(`Language keywords: ${languageKeywordsCount}`);
+          if (unresolvedContradictions > 0) {
+            console.log(
+              `Contradictions (unresolved): ${unresolvedContradictions} — run 'openclaw hybrid-mem resolve-contradictions'`,
+            );
+          } else {
+            console.log("Contradictions (unresolved): 0");
+          }
+          if (ctx.cfg.verification?.enabled) {
+            console.log(`Verified facts: ${verifiedFacts}`);
+          }
           console.log("");
           console.log(`Graph (links/entities): ${links}/${entities}`);
           console.log(
@@ -191,16 +232,74 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Categories in memory: ${uniqueInMemory.length} [${uniqueInMemory.slice(0, 3).join(", ")}...]`);
           console.log("");
           console.log(
-            `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
+            `Breakdown by tier: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
+          const decayParts = Object.entries(decayBreakdown)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ");
+          if (decayParts) console.log(`Breakdown by decay: ${decayParts}`);
+          const topSources = Object.entries(sourceBreakdown)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5);
+          if (topSources.length > 0) {
+            console.log(
+              `Top sources (active): ${topSources.map(([s, c]) => `${s}=${c}`).join(", ")} (of ${
+                Object.keys(sourceBreakdown).length
+              } sources)`,
+            );
+          }
           console.log("");
-          if (timestamps.distill) console.log(`Last distill: ${timestamps.distill}`);
-          if (timestamps.reflect) console.log(`Last reflect: ${timestamps.reflect}`);
-          if (timestamps.compact) console.log(`Last compact: ${timestamps.compact}`);
-          if (timestamps.distill || timestamps.reflect || timestamps.compact) console.log("");
+          const oldestDays =
+            activity.oldestActiveCreatedAtSec != null
+              ? Math.max(0, Math.floor((Date.now() / 1000 - activity.oldestActiveCreatedAtSec) / 86400))
+              : null;
+          const newestAgeMin =
+            activity.newestCreatedAtSec != null
+              ? Math.max(0, Math.floor((Date.now() / 1000 - activity.newestCreatedAtSec) / 60))
+              : null;
+          console.log(
+            `Recent activity: ${activity.last24h} new in 24h, ${activity.last7d} in 7d, ${activity.last30d} in 30d`,
+          );
+          if (newestAgeMin != null && oldestDays != null) {
+            console.log(`  Newest fact: ${newestAgeMin} min ago. Oldest active: ${oldestDays} days old.`);
+          }
+          console.log("");
+          console.log(`Last distill: ${timestamps.distill ?? "(never)"}`);
+          console.log(`Last reflect: ${timestamps.reflect ?? "(never)"}`);
+          console.log(`Last compact: ${timestamps.compact ?? "(never)"}`);
+          console.log("");
           if (sizes.sqliteBytes != null) console.log(`SQLite size: ${(sizes.sqliteBytes / 1024 / 1024).toFixed(2)} MB`);
           if (sizes.lanceBytes != null) console.log(`LanceDB size: ${(sizes.lanceBytes / 1024 / 1024).toFixed(2)} MB`);
+          if (sizes.sqliteBytes != null && activeFacts > 0) {
+            const bytesPerFact = sizes.sqliteBytes / activeFacts;
+            console.log(`SQLite bytes per active fact: ${bytesPerFact.toFixed(0)}`);
+          }
           if (sizes.sqliteBytes != null || sizes.lanceBytes != null) console.log("");
+          if (cronJobs.length > 0) {
+            const nowMs = Date.now();
+            const dayMs = 86_400_000;
+            const hourMs = 3_600_000;
+            const noEmojiCron = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
+            const staleLabel = noEmojiCron ? "[WARN] stale" : "⚠ stale";
+            const fmtStaleWindow = (ms: number) =>
+              ms >= dayMs ? `${Math.max(1, Math.round(ms / dayMs))}d` : `${Math.max(1, Math.round(ms / hourMs))}h`;
+            console.log(`Cron jobs (hybrid-mem:*): ${cronJobs.length}`);
+            for (const j of cronJobs) {
+              const status = j.enabled ? "enabled " : "disabled";
+              const sched = j.scheduleExpr ?? "(no schedule)";
+              const last =
+                j.lastRunAtMs != null ? `last ${Math.floor((nowMs - j.lastRunAtMs) / 3600000)}h ago` : "last (never)";
+              const interval = approxIntervalMs(j.scheduleExpr);
+              const stale = j.enabled && interval && (j.lastRunAtMs == null || nowMs - j.lastRunAtMs > interval * 1.5);
+              const staleNote =
+                stale && interval != null
+                  ? ` overdue (no run in >${fmtStaleWindow(interval * 1.5)} vs ~${fmtStaleWindow(interval)} schedule)`
+                  : "";
+              const tail = stale ? ` ${staleLabel}${staleNote}` : "";
+              console.log(`  ${status} ${j.name.padEnd(30)} ${sched.padEnd(14)} ${last}${tail}`);
+            }
+            console.log("");
+          }
         } else if (efficiency) {
           const byTier = breakdown;
           const bySource = factsDb.statsBySource();
@@ -230,9 +329,20 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
   mem
     .command("prune")
     .description("Remove expired facts (decayed past threshold)")
+    .option("--verbose", "List fact ids that will be removed before pruning")
     .action(
-      withExit(async () => {
+      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         const before = factsDb.count();
+        if (verbose) {
+          const pending = factsDb.listExpiredFactIdsPendingPrune();
+          if (pending.length > 0) {
+            console.log("Fact ids to prune (--verbose):");
+            for (const id of pending) console.log(`  ${id}`);
+          } else {
+            console.log("No expired facts pending prune (--verbose).");
+          }
+        }
         const pruned = factsDb.prune();
         const after = factsDb.count();
         console.log(`Pruned ${pruned} expired facts. Before: ${before}, After: ${after}`);
@@ -698,13 +808,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--list-types", "Print allowed --type values and exit")
     .action(
       withExit(
-        async (opts?: {
-          type?: string;
-          limit?: string;
-          order?: string;
-          json?: boolean;
-          listTypes?: boolean;
-        }) => {
+        async (opts?: { type?: string; limit?: string; order?: string; json?: boolean; listTypes?: boolean }) => {
           if (opts?.listTypes) {
             for (const t of listDumpTypeAliases()) console.log(t);
             return;

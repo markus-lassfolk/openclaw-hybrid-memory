@@ -332,18 +332,21 @@ Steps through pending persona proposals and the latest correction report. For ea
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **8 jobs** (tiering, scope promote, persona proposals, dream cycle, and others; see table below).
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
+
+Default job **messages** embed a **bash harness**: one foreground shell (`set -euo pipefail`, `set -x`), per-step `hm_step` that **tees** to `HM_LOG` and appends `exit=<code>` lines to `HM_EXIT`, plus log headers (`HM_JOB`, `RUN_ID`, `openclaw --version`). Logs default to `~/.openclaw/logs/cron-hybrid-mem/` (fallback: `/tmp/openclaw-cron-hybrid-mem-$USER` if that directory is not writable). The message instructs the agent **not** to update the guard file after a failed step and to paste `HM_EXIT` in the reply.
 
 | Job (pluginJobId) | Schedule | Purpose |
 |-------------------|----------|---------|
-| `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 3 → extract-daily → resolve-contradictions. |
-| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** self-correction-run. Exit 0 if selfCorrection disabled. |
-| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** dream-cycle (prune → consolidate → reflect). Requires nightlyCycle.enabled. Exit 0 if disabled. |
-| `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect → reflect-rules → reflect-meta. Requires reflection.enabled. |
-| `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills. |
-| `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → scope promote. |
-| `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** generate-proposals (persona proposals from reflection). Requires personaProposals enabled. |
-| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay. |
+| `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 1 → extract-daily (7d) → resolve-contradictions → enrich-entities (see config skips in message). |
+| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** `self-correction-run --verbose`. Skip if selfCorrection disabled. |
+| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** `dream-cycle --verbose`. Requires nightlyCycle.enabled. |
+| `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect / reflect-rules / reflect-meta (each `--verbose`). Requires reflection.enabled. |
+| `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills (each `--verbose` where supported). |
+| `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → vectordb-optimize → scope promote. |
+| `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** `generate-proposals --verbose`. Requires personaProposals enabled. |
+| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit 500. |
+| `hybrid-mem:sensor-sweep` | every 4h (configurable) | **sensor-sweep:** tier 1 + tier 2. Requires sensorSweep.enabled. |
 
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
 - **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.
