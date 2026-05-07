@@ -24,6 +24,8 @@ describe("audit-health CLI support", () => {
     expect(db.statsBreakdownByDecayClass()).toBeTypeOf("object");
     expect(db.uniqueMemoryCategories()).toContain("technical");
     expect(db.statsBySource().test).toBeGreaterThanOrEqual(1);
+    const triage = db.triageProcedures({ status: "validated", notPromoted: true });
+    expect(triage.summary).toHaveProperty("byReason");
     expect(db.getById(fact.id)?.text).toBe("Audit health fact");
     db.close();
   });

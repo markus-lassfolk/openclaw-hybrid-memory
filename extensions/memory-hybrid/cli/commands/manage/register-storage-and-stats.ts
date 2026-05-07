@@ -14,6 +14,7 @@ import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -39,6 +40,9 @@ function entryMatchesHybridSearchFilters(
 }
 
 type AuditHealthReport = {
+  schemaVersion: 1;
+  generatedAt: string;
+  ok: boolean;
   activeFacts: number;
   canonicalEmbeddings: number;
   vectorless: number;
@@ -51,12 +55,18 @@ type AuditHealthReport = {
     blocked: number;
     topBlockReason: string | null;
   };
+  graphHubs: Array<{ id: string; outDegree: number; textPreview: string | null; overCap: boolean }>;
+  structuralEligibleWarmFacts: number;
+  patternBloat: { implicitFeedbackPatterns: number };
+  entityStopwordMatches: Array<{ entity: string; count: number }>;
+  storage: { sqliteBytes: number | null; walBytes: number | null; shmBytes: number | null };
   tiers: Record<string, number>;
   decay: Record<string, number>;
   categories: { configured: string[]; present: string[]; unknown: string[] };
   sources: Record<string, number>;
   implicitFeedbackTrajectorySignals: number;
   warnings: string[];
+  remediation: string[];
 };
 
 function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb"]): number {
@@ -73,6 +83,8 @@ function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb
 function buildAuditHealthReport(
   factsDb: ManageBindings["factsDb"],
   getMemoryCategories: () => readonly string[],
+  entityStopWords: readonly string[] = [],
+  graphHubDegreeCap = 500,
 ): AuditHealthReport {
   const activeFacts = factsDb.getCount();
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
@@ -90,6 +102,61 @@ function buildAuditHealthReport(
   const vectorless = factsDb.countVectorlessActiveFacts();
   const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(10);
   const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
+  const raw = factsDb.getRawDb?.();
+  const graphHubs = raw
+    ? (
+        raw
+          .prepare(
+            `SELECT ml.source_fact_id AS id, COUNT(*) AS cnt, SUBSTR(f.text, 1, 120) AS text_preview
+             FROM memory_links ml
+             LEFT JOIN facts f ON f.id = ml.source_fact_id
+            WHERE ml.link_type != 'CONTRADICTS'
+            GROUP BY ml.source_fact_id
+            ORDER BY cnt DESC
+            LIMIT 10`,
+          )
+          .all() as Array<{ id: string; cnt: number; text_preview: string | null }>
+      ).map((row) => ({
+        id: row.id,
+        outDegree: Number(row.cnt ?? 0),
+        textPreview: row.text_preview ?? null,
+        overCap: Number(row.cnt ?? 0) > graphHubDegreeCap,
+      }))
+    : [];
+  const structuralEligibleWarmFacts = raw
+    ? Number(
+        (
+          raw
+            .prepare(
+              `SELECT COUNT(*) AS cnt FROM facts
+              WHERE superseded_at IS NULL
+                AND (expires_at IS NULL OR expires_at > ?)
+                AND COALESCE(key, '') != ''
+                AND COALESCE(tier, 'warm') = 'warm'`,
+            )
+            .get(Math.floor(Date.now() / 1000)) as { cnt: number } | undefined
+        )?.cnt ?? 0,
+      )
+    : 0;
+  const implicitFeedbackPatterns = raw
+    ? Number(
+        (
+          raw
+            .prepare(
+              `SELECT COUNT(*) AS cnt FROM facts
+              WHERE superseded_at IS NULL
+                AND category = 'pattern'
+                AND source = 'implicit-feedback'`,
+            )
+            .get() as { cnt: number } | undefined
+        )?.cnt ?? 0,
+      )
+    : 0;
+  const entityStopwordMatches = factsDb
+    .topEntities(50)
+    .filter((row) => isEntityStopWord(row.entity, entityStopWords))
+    .slice(0, 10);
+  const storageBytes = factsDb.estimateStorageBytes?.();
   const warnings: string[] = [];
   if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
   if ((tiers.structural ?? 0) === 0)
@@ -97,12 +164,41 @@ function buildAuditHealthReport(
   if (activeFacts > 0 && (decay.stable ?? 0) / activeFacts > 0.5)
     warnings.push("More than half of active facts are stable/no-expiry.");
   if (unknown.length > 0) warnings.push(`Categories present in DB but not configured: ${unknown.join(", ")}`);
+  if (graphHubs.some((hub) => hub.overCap))
+    warnings.push(
+      `${graphHubs.filter((hub) => hub.overCap).length} graph hub(s) exceed degree cap ${graphHubDegreeCap}.`,
+    );
+  if (structuralEligibleWarmFacts > 100)
+    warnings.push(`${structuralEligibleWarmFacts} key-bearing fact(s) are still warm instead of structural.`);
+  if (implicitFeedbackPatterns > 1000)
+    warnings.push(`${implicitFeedbackPatterns} implicit-feedback pattern fact(s) may indicate pattern bloat.`);
+  if (entityStopwordMatches.length > 0)
+    warnings.push(
+      `Top entities include stop-word-like labels: ${entityStopwordMatches.map((row) => row.entity).join(", ")}.`,
+    );
   if (vectorless > 0) warnings.push(`${vectorless} active non-kv fact(s) are missing canonical embeddings.`);
   if (procedureTriage.summary.total > 0)
     warnings.push(
       `${procedureTriage.summary.total} validated procedure(s) are not promoted (top reason: ${procedureTriage.summary.topReason ?? "unknown"}).`,
     );
+  const remediation: string[] = [];
+  if ((tiers.hot ?? 0) === 0 || (tiers.structural ?? 0) === 0 || structuralEligibleWarmFacts > 0)
+    remediation.push("Run `openclaw hybrid-mem retier --apply`.");
+  if (graphHubs.some((hub) => hub.overCap))
+    remediation.push(
+      "Run `openclaw hybrid-mem graph repair --collapse-event-hubs --apply` and keep graph hub guards enabled.",
+    );
+  if (unknown.length > 0)
+    remediation.push("Run `openclaw hybrid-mem categories audit`, then `categories remap --apply` where appropriate.");
+  if (vectorless > 0) remediation.push("Run `openclaw hybrid-mem reembed-vectorless --apply`.");
+  if (procedureTriage.summary.total > 0)
+    remediation.push(
+      "Run `openclaw hybrid-mem procedures triage --not-promoted` and `generate-auto-skills` where appropriate.",
+    );
   return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    ok: warnings.length === 0,
     activeFacts,
     canonicalEmbeddings,
     vectorless,
@@ -115,18 +211,31 @@ function buildAuditHealthReport(
       blocked: procedureTriage.summary.total,
       topBlockReason: procedureTriage.summary.topReason,
     },
+    graphHubs,
+    structuralEligibleWarmFacts,
+    patternBloat: { implicitFeedbackPatterns },
+    entityStopwordMatches,
+    storage: {
+      sqliteBytes: storageBytes?.sqliteBytes ?? null,
+      walBytes: storageBytes?.walBytes ?? null,
+      shmBytes: storageBytes?.shmBytes ?? null,
+    },
     tiers,
     decay,
     categories: { configured, present, unknown },
     sources,
     implicitFeedbackTrajectorySignals,
     warnings,
+    remediation,
   };
 }
 
 function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log("# Hybrid-memory audit health");
   console.log("");
+  console.log(`Status: ${report.ok ? "ok" : "warning"}`);
+  console.log(`Generated: ${report.generatedAt}`);
+  console.log(`Schema version: ${report.schemaVersion}`);
   console.log(`Active facts: ${report.activeFacts}`);
   console.log(`Canonical embeddings: ${report.canonicalEmbeddings}`);
   console.log(`Vectorless active non-kv facts: ${report.vectorless}`);
@@ -141,14 +250,36 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log(
     `Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.join(", ") : "none"}`,
   );
+  console.log(`Graph hubs over cap: ${report.graphHubs.filter((hub) => hub.overCap).length}`);
+  if (report.graphHubs.length > 0) {
+    console.log(
+      `Top graph hubs: ${report.graphHubs
+        .slice(0, 3)
+        .map((hub) => `${hub.id.slice(0, 8)}=${hub.outDegree}`)
+        .join(", ")}`,
+    );
+  }
+  console.log(`Structural-eligible warm facts: ${report.structuralEligibleWarmFacts}`);
+  console.log(`Implicit-feedback pattern facts: ${report.patternBloat.implicitFeedbackPatterns}`);
+  if (report.entityStopwordMatches.length > 0) {
+    console.log(
+      `Entity stop-word matches: ${report.entityStopwordMatches.map((row) => `${row.entity}=${row.count}`).join(", ")}`,
+    );
+  }
+  if (report.storage.sqliteBytes != null) console.log(`SQLite bytes: ${report.storage.sqliteBytes}`);
   console.log(`Implicit-feedback trajectory signals: ${report.implicitFeedbackTrajectorySignals}`);
   console.log("");
   if (report.warnings.length === 0) {
     console.log("Warnings: none");
-    return;
+  } else {
+    console.log("Warnings:");
+    for (const warning of report.warnings) console.log(`- ${warning}`);
   }
-  console.log("Warnings:");
-  for (const warning of report.warnings) console.log(`- ${warning}`);
+  if (report.remediation.length > 0) {
+    console.log("");
+    console.log("Remediation:");
+    for (const hint of report.remediation) console.log(`- ${hint}`);
+  }
 }
 
 export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings): void {
@@ -1143,20 +1274,30 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       }),
     );
 
+  const runAuditHealth = async (opts?: { json?: boolean; strict?: boolean }) => {
+    const report = buildAuditHealthReport(factsDb, getMemoryCategories);
+    if (opts?.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printAuditHealthMarkdown(report);
+    }
+    if (opts?.strict && !report.ok) process.exitCode = 2;
+  };
+
   mem
     .command("audit-health")
     .description("One-shot non-destructive hybrid-memory health report (JSON or markdown)")
-    .option("--json", "Emit JSON instead of markdown")
-    .action(
-      withExit(async (opts?: { json?: boolean }) => {
-        const report = buildAuditHealthReport(factsDb, getMemoryCategories);
-        if (opts?.json) {
-          console.log(JSON.stringify(report, null, 2));
-        } else {
-          printAuditHealthMarkdown(report);
-        }
-      }),
-    );
+    .option("--json", "Emit versioned JSON instead of markdown")
+    .option("--strict", "Exit non-zero when warnings are present")
+    .action(withExit(runAuditHealth));
+
+  const audit = mem.command("audit").description("Audit hybrid-memory health and maintenance state");
+  audit
+    .command("health")
+    .description("One-shot non-destructive hybrid-memory health report (JSON or markdown)")
+    .option("--json", "Emit versioned JSON instead of markdown")
+    .option("--strict", "Exit non-zero when warnings are present")
+    .action(withExit(runAuditHealth));
 
   const categoriesCommand = mem
     .command("categories")

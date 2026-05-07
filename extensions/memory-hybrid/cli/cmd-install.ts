@@ -374,6 +374,25 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
+
+  // Sunday 05:00 | weekly-audit-health | audit health --strict --json
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`,
+    sessionTarget: "isolated",
+    name: "weekly-audit-health",
+    schedule: { kind: "cron", expr: "0 5 * * 0" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-audit-health", {
+      preamble:
+        "Weekly operator health audit. Run in strict mode, summarize warnings/remediation, and alert the user if the command exits non-zero.",
+      steps: [{ name: "audit-health", cmd: "openclaw hybrid-mem audit health --strict --json" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
@@ -534,6 +553,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
     /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`]: (j) =>
     /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>
     /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),

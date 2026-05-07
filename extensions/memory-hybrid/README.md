@@ -214,3 +214,16 @@ Optional `autoRecall.recallTiming` (`off` | `basic` | `verbose`) — see [INTERA
 ## Credits
 
 Design lineage and a full list of extensions in this repo: [CREDITS-AND-ATTRIBUTION.md](../../docs/CREDITS-AND-ATTRIBUTION.md). Based on [Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory) (Clawdboss.ai).
+
+
+## Operator health audit
+
+Run a one-shot store health report with:
+
+```bash
+openclaw hybrid-mem audit health
+openclaw hybrid-mem audit health --json
+openclaw hybrid-mem audit health --strict
+```
+
+The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits non-zero when warnings are present. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
