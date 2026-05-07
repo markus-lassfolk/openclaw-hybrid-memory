@@ -71,6 +71,27 @@ export interface GraphFactLookup {
   ): Array<{ factId: string; seedId: string; hopCount: number; path: string }>;
 }
 
+type GetByIdOpts = { asOf?: number; scopeFilter?: unknown };
+
+/** Keep only links whose far endpoint is visible under the same scope/asOf as graph expansion. */
+function filterLinksByEndpointScope(
+  factsDb: GraphFactLookup,
+  fromLinks: ReturnType<GraphFactLookup["getLinksFrom"]>,
+  toLinks: ReturnType<GraphFactLookup["getLinksTo"]>,
+  scopeOpts?: GetByIdOpts,
+): {
+  from: ReturnType<GraphFactLookup["getLinksFrom"]>;
+  to: ReturnType<GraphFactLookup["getLinksTo"]>;
+} {
+  if (!scopeOpts || (scopeOpts.scopeFilter == null && scopeOpts.asOf == null)) {
+    return { from: fromLinks, to: toLinks };
+  }
+  return {
+    from: fromLinks.filter((l) => factsDb.getById(l.targetFactId, scopeOpts) != null),
+    to: toLinks.filter((l) => factsDb.getById(l.sourceFactId, scopeOpts) != null),
+  };
+}
+
 function ctePathMatchesHubGuards(
   factsDb: GraphFactLookup,
   path: LinkPathStep[],
@@ -78,6 +99,7 @@ function ctePathMatchesHubGuards(
     string,
     { from: ReturnType<GraphFactLookup["getLinksFrom"]>; to: ReturnType<GraphFactLookup["getLinksTo"]> }
   >,
+  scopeOpts?: GetByIdOpts,
 ): boolean {
   for (const step of path) {
     const fromId = step.fromFactId;
@@ -85,10 +107,9 @@ function ctePathMatchesHubGuards(
 
     let cached = linksCache.get(fromId);
     if (!cached) {
-      cached = {
-        from: factsDb.getLinksFrom(fromId),
-        to: factsDb.getLinksTo(fromId),
-      };
+      const rawFrom = factsDb.getLinksFrom(fromId);
+      const rawTo = factsDb.getLinksTo(fromId);
+      cached = filterLinksByEndpointScope(factsDb, rawFrom, rawTo, scopeOpts);
       linksCache.set(fromId, cached);
     }
 
@@ -239,10 +260,10 @@ export function expandGraph(
       { from: ReturnType<GraphFactLookup["getLinksFrom"]>; to: ReturnType<GraphFactLookup["getLinksTo"]> }
     >();
     for (const nodeId of nodesInPaths) {
-      linksCache.set(nodeId, {
-        from: factsDb.getLinksFrom(nodeId),
-        to: factsDb.getLinksTo(nodeId),
-      });
+      const rawFrom = factsDb.getLinksFrom(nodeId);
+      const rawTo = factsDb.getLinksTo(nodeId);
+      const scoped = filterLinksByEndpointScope(factsDb, rawFrom, rawTo, getByIdOpts);
+      linksCache.set(nodeId, scoped);
     }
 
     for (let i = 0; i < expansionRows.length; i++) {
@@ -252,7 +273,7 @@ export function expandGraph(
       const linkPath = parsedPaths.get(i);
       if (!linkPath) continue;
 
-      if (!ctePathMatchesHubGuards(factsDb, linkPath, linksCache)) continue;
+      if (!ctePathMatchesHubGuards(factsDb, linkPath, linksCache, getByIdOpts)) continue;
 
       const entry = factsDb.getById(row.factId, getByIdOpts);
       if (!entry) continue;

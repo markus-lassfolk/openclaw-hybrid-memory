@@ -117,8 +117,13 @@ function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
   );
 }
 
-function isHotCandidate(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): boolean {
-  if (isStructuralCandidate(row)) return false;
+function isHotCandidate(
+  row: TierCandidate,
+  nowSec: number,
+  opts: Required<TieringOptions>,
+  flags?: { ignoreStructuralBlock?: boolean },
+): boolean {
+  if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row)) return false;
   if (["decision", "pattern", "rule"].includes(row.category ?? "")) return false;
   if (hasTierTag(row.tags, "blocker")) return true;
   if (row.preserve_until != null && row.preserve_until > nowSec) return true;
@@ -146,6 +151,10 @@ function isColdCandidate(row: TierCandidate, nowSec: number, opts: Required<Tier
 }
 
 function chooseTier(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): MemoryTier {
+  if (isPinnedTierCandidate(row, nowSec)) {
+    if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true })) return "hot";
+    return "warm";
+  }
   if (isStructuralCandidate(row)) return "structural";
   if (isHotCandidate(row, nowSec, opts)) return "hot";
   if (isColdCandidate(row, nowSec, opts)) return "cold";

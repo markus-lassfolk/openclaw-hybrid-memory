@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
-import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
@@ -54,6 +54,15 @@ export function validateStoreEntryInput(
   const imp = entry.importance ?? 0.5;
   if (!Number.isFinite(imp) || imp < 0 || imp > 1) {
     throw new Error("memory-hybrid: importance must be a number in [0, 1]");
+  }
+}
+
+class StoreQuotaExceededError extends Error {
+  readonly sourceForPolicy: string;
+  constructor(sourceForPolicy: string) {
+    super("store quota exceeded");
+    this.name = "StoreQuotaExceededError";
+    this.sourceForPolicy = sourceForPolicy;
   }
 }
 
@@ -111,21 +120,6 @@ ${entry.text}`.slice(0, 4000);
     }
   }
 
-  if (profile.maxPerDay != null) {
-    const quotaRow = ctx.db
-      .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
-      .get(sourceForPolicy, day) as { count: number } | undefined;
-    if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
-      ctx.db
-        .prepare(
-          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
-           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-        )
-        .run(sourceForPolicy, day);
-      throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
-    }
-  }
-
   const id = randomUUID();
 
   const decayClass =
@@ -176,61 +170,88 @@ ${entry.text}`.slice(0, 4000);
   const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
   const adjustedExpiresAt =
     decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
-  const tx = createTransaction(ctx.db, () => {
-    ctx.db
-      .prepare(
-        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags, provenance_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        entry.text,
-        why,
-        entry.category,
-        importance,
-        entity,
-        key,
-        value,
-        source,
-        nowSec,
-        decayClass,
-        adjustedExpiresAt,
-        nowSec,
-        confidence,
-        summary,
-        embeddingModel,
-        normHash,
-        sourceDate,
-        tagsStr,
-        validFrom,
-        validUntil,
-        supersedesId,
-        tier,
-        scope,
-        scopeTarget,
-        procedureType,
-        successCount,
-        lastValidated,
-        sourceSessionsStr,
-        decayFreezeUntil,
-        provenanceSession,
-        sourceTurn,
-        extractionMethod,
-        extractionConfidence,
-        preserveUntil,
-        preserveTagsStr,
-        provenanceJson,
-      );
-    if (profile.maxPerDay != null) {
+  const beginMode: SqliteTransactionBeginMode = profile.maxPerDay != null ? "IMMEDIATE" : "DEFERRED";
+  const tx = createTransaction(
+    ctx.db,
+    () => {
+      if (profile.maxPerDay != null) {
+        const quotaRow = ctx.db
+          .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
+          .get(sourceForPolicy, day) as { count: number } | undefined;
+        if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
+          throw new StoreQuotaExceededError(sourceForPolicy);
+        }
+      }
       ctx.db
         .prepare(
-          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
-           ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
+          `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags, provenance_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(sourceForPolicy, day);
+        .run(
+          id,
+          entry.text,
+          why,
+          entry.category,
+          importance,
+          entity,
+          key,
+          value,
+          source,
+          nowSec,
+          decayClass,
+          adjustedExpiresAt,
+          nowSec,
+          confidence,
+          summary,
+          embeddingModel,
+          normHash,
+          sourceDate,
+          tagsStr,
+          validFrom,
+          validUntil,
+          supersedesId,
+          tier,
+          scope,
+          scopeTarget,
+          procedureType,
+          successCount,
+          lastValidated,
+          sourceSessionsStr,
+          decayFreezeUntil,
+          provenanceSession,
+          sourceTurn,
+          extractionMethod,
+          extractionConfidence,
+          preserveUntil,
+          preserveTagsStr,
+          provenanceJson,
+        );
+      // Count bump is in the same IMMEDIATE transaction as the facts INSERT when maxPerDay is set.
+      if (profile.maxPerDay != null) {
+        ctx.db
+          .prepare(
+            `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
+           ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
+          )
+          .run(sourceForPolicy, day);
+      }
+    },
+    beginMode,
+  );
+  try {
+    tx();
+  } catch (err) {
+    if (err instanceof StoreQuotaExceededError) {
+      ctx.db
+        .prepare(
+          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+        )
+        .run(err.sourceForPolicy, day);
+      throw new Error(`memory-hybrid: daily write quota exceeded for source ${err.sourceForPolicy}`);
     }
-  });
-  tx();
+    throw err;
+  }
   if (supersedesId) {
     ctx.invalidateSupersededCache();
   }
