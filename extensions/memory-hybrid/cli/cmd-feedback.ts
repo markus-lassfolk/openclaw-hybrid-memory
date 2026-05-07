@@ -82,10 +82,15 @@ const LESSON_DEDUPE_STOPWORDS = new Set([
 
 function normalizeLessonToken(token: string): string {
   let normalized = token.trim();
-  if (normalized.endsWith("ies") && normalized.length > 5) normalized = `${normalized.slice(0, -3)}y`;
-  else if (normalized.endsWith("es") && normalized.length > 4) normalized = normalized.slice(0, -2);
-  else if (normalized.endsWith("s") && normalized.length > 4) normalized = normalized.slice(0, -1);
-  if (normalized.endsWith("ed") && normalized.length > 5) normalized = normalized.slice(0, -2);
+  if (normalized.endsWith("ed") && normalized.length > 5) {
+    normalized = normalized.slice(0, -2);
+  } else if (normalized.endsWith("ies") && normalized.length > 5) {
+    normalized = `${normalized.slice(0, -3)}y`;
+  } else if (normalized.endsWith("es") && normalized.length > 4) {
+    normalized = normalized.slice(0, -2);
+  } else if (normalized.endsWith("s") && normalized.length > 4) {
+    normalized = normalized.slice(0, -1);
+  }
   return normalized;
 }
 

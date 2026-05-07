@@ -191,7 +191,10 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
 
   const counts: RetierReport = { apply, examined: rows.length, changed: 0, hot: 0, warm: 0, cold: 0, structural: 0 };
   for (const d of desired) {
-    counts[d.to]++;
+    if (d.to === "hot") counts.hot++;
+    else if (d.to === "warm") counts.warm++;
+    else if (d.to === "cold") counts.cold++;
+    else if (d.to === "structural") counts.structural++;
     if (d.from !== d.to) counts.changed++;
   }
 
