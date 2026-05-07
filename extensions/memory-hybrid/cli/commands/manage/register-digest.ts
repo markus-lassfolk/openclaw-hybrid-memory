@@ -39,8 +39,6 @@ function buildDigestReport(
 } {
   const { factsDb, cfg } = b;
 
-  const now = Math.floor(Date.now() / 1000);
-
   // 1. Persona proposals
   const personaPending = proposalsDb?.list({ status: "pending" }) ?? [];
   const personaApproved = proposalsDb?.list({ status: "approved" }) ?? [];

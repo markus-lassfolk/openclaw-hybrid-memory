@@ -97,7 +97,6 @@ function findSimilarImplicitFeedbackLesson(
        WHERE source = 'implicit-feedback'
          AND superseded_at IS NULL
          AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
-         AND ${SQL_TRAJECTORY_LESSON_TAGS}
        ORDER BY created_at DESC
        LIMIT 500`,
     )
