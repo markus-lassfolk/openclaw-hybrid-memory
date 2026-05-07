@@ -166,7 +166,7 @@ export function remapCategory(db: DatabaseSync, from: string, to: string, apply 
   };
 }
 
-export function topEntities(db: DatabaseSync, limit = 10, extraStopWords: readonly string[] = []): TopEntityRow[] {
+export function topEntities(db: DatabaseSync, limit = 10): TopEntityRow[] {
   const rows = db
     .prepare(
       `SELECT entity, COUNT(*) as cnt FROM facts
