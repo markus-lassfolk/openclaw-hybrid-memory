@@ -107,7 +107,8 @@ export function getConnectedFactIds(
 ): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
 
-  const hubDegreeCap = options?.hubDegreeCap ?? 500;
+  // `null` means no cap; only fall back to 500 when the option is omitted (`undefined`).
+  const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
   const seen = new Set(factIds);
   let frontier = [...factIds];
 

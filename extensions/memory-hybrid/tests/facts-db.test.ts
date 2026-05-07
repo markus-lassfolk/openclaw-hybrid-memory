@@ -699,6 +699,26 @@ describe("FactsDB tiering", () => {
     const warmFact = db.getById(pref.id);
     expect(warmFact?.tier).toBe("warm");
   });
+
+  it("runCompaction keeps hot facts with high access_count (matches promotion criteria)", () => {
+    const salient = db.store({
+      text: "Often-recalled operational fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.setTier(salient.id, "hot");
+    for (let i = 0; i < 10; i++) {
+      db.refreshAccessedFacts([salient.id]);
+    }
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(db.getById(salient.id)?.tier).toBe("hot");
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(db.getById(salient.id)?.tier).toBe("hot");
+  });
 });
 
 // ---------------------------------------------------------------------------

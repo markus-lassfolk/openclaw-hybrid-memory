@@ -81,10 +81,18 @@ export function runCompaction(
     if (setFactTier(db, id, "warm")) counts.warm++;
   }
 
+  // Same eligibility as `blockerRows` (minus tier != 'hot') so hot facts promoted via
+  // recall/access are not demoted and re-promoted every compaction cycle.
   const existingHotBlockerRows = db
     .prepare(
       `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'`,
+         AND (
+           (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
+           OR COALESCE(recall_count, 0) >= 10
+           OR COALESCE(access_count, 0) >= 10
+         )
+         AND category NOT IN ('decision', 'pattern', 'rule')
+         AND NOT (COALESCE(key, '') != '' OR COALESCE(value, '') != '')`,
     )
     .all(nowSec) as Array<{ id: string }>;
   const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
