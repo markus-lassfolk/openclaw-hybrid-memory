@@ -284,7 +284,19 @@ export async function runEpisodicConsolidation(
         ? eventTexts[0]
         : `[consolidated from ${eventTexts.length} events${entityLabel ? ` about ${entityLabel}` : ""}] ${eventTexts.slice(0, 5).join("; ")}`;
 
-    // Create the consolidated fact
+    const consolidatedAt = Math.floor(Date.now() / 1000);
+    const sourceEvents = cappedGroupEvents.map((event) => ({
+      id: event.id,
+      eventType: event.eventType,
+      timestamp: event.timestamp,
+      sessionId: event.sessionId,
+      text: extractEventText(event).slice(0, 300),
+    }));
+
+    // Create the consolidated fact. Issue #1195: store dream-cycle provenance on
+    // the fact row instead of creating one DERIVED_FROM graph edge per event.
+    // Historical DERIVED_FROM rows are left untouched by this forward migration;
+    // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact;
     try {
       consolidatedFact = factsDb.store({
@@ -298,6 +310,12 @@ export async function runEpisodicConsolidation(
         decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         tags: ["dream-cycle", "consolidated"],
         extractionMethod: "consolidation",
+        provenanceJson: JSON.stringify({
+          method: "dream-cycle",
+          consolidatedAt,
+          sourceEventIds: sourceEvents.map((event) => event.id),
+          sourceEvents,
+        }),
       });
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
@@ -306,38 +324,6 @@ export async function runEpisodicConsolidation(
         subsystem: "facts-db",
       });
       continue;
-    }
-
-    // For each event, create a minimal ephemeral source fact and a DERIVED_FROM link.
-    // The source facts expire immediately; DERIVED_FROM links persist as provenance.
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (const event of cappedGroupEvents) {
-      const srcText = extractEventText(event);
-      if (srcText.length < 3) continue;
-
-      try {
-        const srcFact = factsDb.store({
-          text: srcText.slice(0, 300),
-          category: "fact" as MemoryCategory,
-          importance: 0.1,
-          entity: entityLabel,
-          key: "episodic_source",
-          value: event.eventType,
-          source: "dream-cycle-src",
-          decayClass: "checkpoint",
-          expiresAt: nowSec - 1, // Immediately expired — will be pruned right away
-          confidence: 0.5,
-        });
-        ephemeralSourceFactIds.push(srcFact.id);
-        // consolidated_fact -DERIVED_FROM-> source_fact (provenance)
-        factsDb.createLink(consolidatedFact.id, srcFact.id, "DERIVED_FROM", 1.0);
-      } catch (err) {
-        logger.warn(`memory-hybrid: dream-cycle — failed to create source fact for event ${event.id}: ${err}`);
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "dream-cycle-src-fact",
-          subsystem: "facts-db",
-        });
-      }
     }
 
     // Mark all events in the group as consolidated into the new fact

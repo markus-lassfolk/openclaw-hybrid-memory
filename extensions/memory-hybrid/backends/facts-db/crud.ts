@@ -125,6 +125,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const preserveUntil = entry.preserveUntil ?? null;
   const preserveTags = entry.preserveTags ?? null;
   const preserveTagsStr = preserveTags ? JSON.stringify(preserveTags) : null;
+  const provenanceJson = entry.provenanceJson ?? null;
 
   const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
   const rawFreeze = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
@@ -134,8 +135,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const tx = createTransaction(ctx.db, () => {
     ctx.db
       .prepare(
-        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags, provenance_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -174,6 +175,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
         extractionConfidence,
         preserveUntil,
         preserveTagsStr,
+        provenanceJson,
       );
   });
   tx();

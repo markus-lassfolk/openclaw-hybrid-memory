@@ -280,7 +280,7 @@ describe("runEpisodicConsolidation", () => {
     expect(result.factsCreated).toBe(1); // Both go into __default__ group
   });
 
-  it("creates DERIVED_FROM links for consolidated events", async () => {
+  it("stores JSON provenance instead of DERIVED_FROM links for consolidated events", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({
       sessionId: "s1",
@@ -299,10 +299,15 @@ describe("runEpisodicConsolidation", () => {
     expect(consolidated).toBeDefined();
     expect(consolidated?.decayClass).toBe("durable");
 
-    // Check DERIVED_FROM links from consolidated fact
+    const provenance = JSON.parse(consolidated?.provenanceJson ?? "{}");
+    expect(provenance.method).toBe("dream-cycle");
+    expect(provenance.sourceEventIds).toHaveLength(1);
+    expect(provenance.sourceEvents[0].text).toBe("Fact about Alice");
+
+    // Issue #1195: dream-cycle no longer creates graph edges for append-only provenance.
     const links = factsDb.getLinksFrom(consolidated?.id);
     const derivedLinks = links.filter((l) => l.linkType === "DERIVED_FROM");
-    expect(derivedLinks.length).toBeGreaterThanOrEqual(1);
+    expect(derivedLinks).toHaveLength(0);
   });
 
   it("marks events as consolidated in the event log", async () => {
