@@ -253,6 +253,27 @@ export async function runEpisodicConsolidation(
     }
 
     const cappedGroupEvents = groupEvents.slice(0, maxEventsPerConsolidation);
+    const excessEvents = groupEvents.slice(maxEventsPerConsolidation);
+
+    // Mark excess events as consolidated to prevent reappearance in future cycles
+    if (excessEvents.length > 0) {
+      try {
+        eventLog.markConsolidated(
+          excessEvents.map((e) => e.id),
+          "SKIP:entity_group_cap",
+        );
+        eventsConsolidated += excessEvents.length;
+        logger.info(
+          `memory-hybrid: dream-cycle — skipped ${excessEvents.length} excess event(s) for entity "${entity}": exceeds maxEventsPerConsolidation=${maxEventsPerConsolidation}`,
+        );
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to mark excess entity group events as skipped: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-mark-entity-cap-skip",
+          subsystem: "event-log",
+        });
+      }
+    }
 
     // Collect text from all events in this group
     const eventTexts = cappedGroupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);

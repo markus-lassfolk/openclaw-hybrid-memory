@@ -389,6 +389,29 @@ describe("runEpisodicConsolidation", () => {
     expect(result.eventsConsolidated).toBe(2);
     expect(result.factsCreated).toBe(2); // One per entity group
   });
+
+  it("marks excess entity group events as consolidated to prevent reappearance", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    // Create 5 events for Alice, exceeding the cap of 3
+    for (let i = 0; i < 5; i++) {
+      eventLog.append({
+        sessionId: "s1",
+        timestamp: oldTs,
+        eventType: "fact_learned",
+        content: { text: `Alice event ${i}` },
+        entities: ["Alice"],
+      });
+    }
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger, false, 3);
+
+    // All 5 events should be marked as consolidated (3 processed + 2 excess marked as skipped)
+    expect(result.eventsConsolidated).toBe(5);
+    // Only 1 consolidated fact created for the first 3 events
+    expect(result.factsCreated).toBe(1);
+    // No unconsolidated events should remain
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
