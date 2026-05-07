@@ -558,6 +558,19 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
     // Issue #754: top-level takes precedence; fall back to nested with deprecation warning
     feedToSelfCorrection:
       topLevelFeedToSelfCorrection !== undefined ? topLevelFeedToSelfCorrection : raw?.feedToSelfCorrection !== false,
+    maxLessonsPerDay:
+      typeof raw?.maxLessonsPerDay === "number" && raw.maxLessonsPerDay >= 0
+        ? Math.min(1000, Math.floor(raw.maxLessonsPerDay))
+        : 50,
+    lessonDedupeJaccard:
+      typeof raw?.lessonDedupeJaccard === "number" && raw.lessonDedupeJaccard > 0 && raw.lessonDedupeJaccard <= 1
+        ? raw.lessonDedupeJaccard
+        : 0.8,
+    autoCleanup: raw?.autoCleanup !== false,
+    cleanupLimit:
+      typeof raw?.cleanupLimit === "number" && raw.cleanupLimit >= 0
+        ? Math.min(10000, Math.floor(raw.cleanupLimit))
+        : 1000,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
   };

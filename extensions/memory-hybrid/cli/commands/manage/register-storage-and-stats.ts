@@ -160,6 +160,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const activity = factsDb.recentActivity();
           const decayBreakdown = factsDb.statsBreakdownByDecayClass();
           const sourceBreakdown = factsDb.statsBySource();
+          const implicitFeedbackSignals = sourceBreakdown["implicit-feedback"] ?? 0;
           const cronJobs = extras.getCronJobsStatus?.() ?? [];
 
           const lanceDelta = sqlCount - lanceCount;
@@ -196,6 +197,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           );
           console.log(`Rules: ${rules}`);
           console.log(`Patterns: ${patterns}`);
+          console.log(`Implicit-feedback signals: ${implicitFeedbackSignals}`);
           console.log(`Meta-patterns: ${metaPatterns}`);
           console.log(`Directives: ${directives}`);
           console.log(`Reflection (patterns/rules): ${reflectionPatternsCount}/${reflectionRulesCount}`);

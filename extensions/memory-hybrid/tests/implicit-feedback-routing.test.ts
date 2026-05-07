@@ -12,7 +12,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type HandlerContext, runExtractImplicitFeedbackForCli } from "../cli/handlers.js";
+import {
+  cleanupImplicitFeedbackDuplicates,
+  type HandlerContext,
+  runExtractImplicitFeedbackForCli,
+} from "../cli/handlers.js";
 import type { ManageContext } from "../cli/manage.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { _testing } from "../index.js";
@@ -279,6 +283,32 @@ describe("implicit feedback routing — negative → pattern facts", () => {
       expect(tags).toContain("implicit-feedback");
       expect(tags).toContain("negative");
     }
+  });
+
+  it("collapses historical near-duplicate implicit-feedback facts", () => {
+    const db = makeDb(tmpDir);
+    const first = db.store({
+      text: "User satisfaction increases when the agent provides concrete next steps",
+      category: "technical",
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    const duplicate = db.store({
+      text: "User satisfaction improves when the agent provides concrete next steps",
+      category: "technical",
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+
+    const result = cleanupImplicitFeedbackDuplicates(rawDb(db), { threshold: 0.7, limit: 100 });
+
+    expect(result.collapsed).toBe(1);
+    const rows = rawDb(db)
+      .prepare("SELECT id, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id IN (?, ?)")
+      .all(first.id, duplicate.id) as Array<{ id: string; supersededBy: string | null; supersededAt: number | null }>;
+    const duplicateRow = rows.find((row) => row.id === duplicate.id);
+    expect(duplicateRow?.supersededBy).toBe(first.id);
+    expect(duplicateRow?.supersededAt).toBeTypeOf("number");
   });
 
   it("does NOT store implicit-feedback pattern facts when feedToSelfCorrection=false", async () => {
