@@ -285,6 +285,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(
             `Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted})${proceduresNote}`,
           );
+          console.log(
+            `Pending review (proposals/procedures/tools/crystal/verified): ${proposalsPending}/${Math.max(0, proceduresValidated - proceduresPromoted)}/0/0/${verifiedFacts}`,
+          );
           console.log(`Rules: ${rules}`);
           console.log(`Patterns: ${patterns}`);
           console.log(`Implicit-feedback signals: ${implicitFeedbackSignals}`);

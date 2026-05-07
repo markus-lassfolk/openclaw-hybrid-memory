@@ -18,10 +18,12 @@
  * first_seen, last_seen, count, suggested_fix.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { stdin } from "node:process";
 
+import { capturePluginError } from "../../../services/error-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -54,6 +56,7 @@ interface AnalyzeResult {
   failure: number;
   skipped: number;
   failureGroups: FailureGroup[];
+  findingsPath?: string;
   summaryMd: string;
 }
 
@@ -229,6 +232,41 @@ async function readStdinIfPiped(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+
+function persistMaintenanceFindings(dbPath: string, result: AnalyzeResult): void {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS maintenance_finding (
+        id TEXT PRIMARY KEY,
+        occurred_at INTEGER NOT NULL,
+        job TEXT NOT NULL,
+        step TEXT,
+        exit_code INTEGER,
+        classification TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        log_excerpt TEXT,
+        action_taken TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(
+      `INSERT OR IGNORE INTO maintenance_finding
+       (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, action_taken, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const group of result.failureGroups) {
+      const fingerprint = `${group.category}:${group.jobName}:${group.messages[0] ?? ""}`.slice(0, 180);
+      const id = Buffer.from(fingerprint).toString("base64url").slice(0, 64);
+      stmt.run(id, group.lastSeen, group.jobName, null, null, group.category, fingerprint, group.messages[0] ?? null, "reported", now);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 function buildAnalyzedResult(logs: string): AnalyzeResult {
   const runs = parseCronRunLog(logs);
 
@@ -301,7 +339,7 @@ function buildAnalyzedResult(logs: string): AnalyzeResult {
   };
 }
 
-export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageBindings): void {
+export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBindings): void {
   const cmd = mem
     .command("analyze-maintenance-logs")
     .description(
@@ -319,6 +357,8 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageB
     .option("--strict", "Exit non-zero when failures are found")
     .option("--auto-fix", "Reserved for safe idempotent remediation; currently report-only")
     .option("--dry-run", "Show intended actions without mutating state (default behavior)")
+    .option("--persist <path>", "SQLite path for persisted maintenance findings (default: <memory-dir>/maintenance-findings.db)")
+    .option("--glitchtip", "Report plugin/orchestration-like findings via existing error reporter")
     .option("--format <fmt>", "Output format: md (default) or json")
     .option("--out <path>", "Output file path, or '-' for stdout (default: -)")
     .action(
@@ -349,6 +389,24 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, _b: ManageB
           );
           if (opts?.strict) process.exitCode = 1;
           return;
+        }
+
+        const persistPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
+        if (result.failureGroups.length > 0) {
+          persistMaintenanceFindings(persistPath, result);
+          result.findingsPath = persistPath;
+        }
+
+        if (opts?.glitchtip) {
+          for (const group of result.failureGroups) {
+            if (group.category === "dependency" || group.category === "unknown") {
+              capturePluginError(new Error(`maintenance-log ${group.category}: ${group.jobName}`), {
+                operation: "analyze-maintenance-logs",
+                subsystem: "maintenance",
+                severity: group.severity,
+              });
+            }
+          }
         }
 
         if (opts?.autoFix) {
