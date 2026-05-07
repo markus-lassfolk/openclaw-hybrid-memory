@@ -760,11 +760,40 @@ export function reclassifyDecayClasses(db: DatabaseSync, options: DecayReclassif
 }
 
 export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
-  const report = reclassifyDecayClasses(db, { apply: true, stableOnly: true });
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      "SELECT rowid, entity, key, value, text, source, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND decay_class = 'stable' ORDER BY created_at ASC",
+    )
+    .all() as Array<{
+    rowid: number;
+    entity: string | null;
+    key: string | null;
+    value: string | null;
+    text: string;
+    source: string | null;
+    category: string | null;
+    importance: number | null;
+    decay_class: DecayClass;
+  }>;
+
   const counts: Record<string, number> = {};
-  for (const [transition, count] of Object.entries(report.changes)) {
-    const [, to] = transition.split("->");
-    if (to) counts[to] = (counts[to] ?? 0) + count;
-  }
+  const update = db.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
+
+  const run = () => {
+    for (const row of rows) {
+      const next = classifyDecay(row.entity, row.key, row.value, row.text, {
+        source: row.source,
+        category: row.category,
+        importance: row.importance,
+      });
+      const current = row.decay_class ?? "normal";
+      if (next === current) continue;
+      counts[next] = (counts[next] ?? 0) + 1;
+      update.run(next, calculateExpiry(next, nowSec), row.rowid);
+    }
+  };
+
+  createTransaction(db, run)();
   return counts;
 }

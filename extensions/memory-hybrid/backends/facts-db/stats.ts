@@ -201,7 +201,7 @@ export function cleanEntityStopwords(
   options: { apply?: boolean; stopWords?: readonly string[]; exampleLimit?: number } = {},
 ): CleanEntityStopwordsReport {
   const apply = options.apply === true;
-  const stopWords = filterEntityStopWords([...(options.stopWords ?? [])]);
+  const stopWords = [...(options.stopWords ?? [])];
   const rows = db
     .prepare(
       `SELECT id, entity, superseded_at FROM facts
