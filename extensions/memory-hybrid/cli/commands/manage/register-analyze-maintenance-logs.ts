@@ -25,6 +25,7 @@ import { stdin } from "node:process";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
+import { type AnalyzedRun, parseCronRunLog } from "./maintenance-log-parse.js";
 import type { ManageBindings } from "./bindings.js";
 
 interface FailureGroup {
@@ -36,17 +37,6 @@ interface FailureGroup {
   lastSeen: number;
   messages: string[];
   suggestedFix: string;
-}
-
-interface AnalyzedRun {
-  jobName: string;
-  step?: string;
-  exitCode?: number;
-  logPath?: string;
-  status: "success" | "failure" | "skipped";
-  finishedAt: number;
-  durationMs: number;
-  error?: string;
 }
 
 interface AnalyzeResult {
@@ -182,48 +172,6 @@ function collectExitLogs(root: string, since?: string): string {
     }
   }
   return chunks.join("\n");
-}
-
-function parseCronRunLog(content: string): AnalyzedRun[] {
-  const runs: AnalyzedRun[] = [];
-  // Each run is a JSON object on a single line, or a structured block.
-  // We look for lines that contain run metadata.
-  const lines = content.split("\n");
-
-  let currentRun: Partial<AnalyzedRun> | null = null;
-  for (const line of lines) {
-    // Detect run boundaries (timestamped start lines)
-    const startMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*)\s+(.+)/);
-    if (startMatch && !line.includes("RUNNING") && !line.includes("running")) {
-      if (currentRun?.jobName && currentRun?.finishedAt) {
-        runs.push(currentRun as AnalyzedRun);
-      }
-      currentRun = {
-        jobName: startMatch[2].trim(),
-        finishedAt: new Date(startMatch[1]).getTime() / 1000,
-        status: /exit=(?!0\b)\d+|failed/i.test(line) ? "failure" : "success",
-        step: startMatch[2].includes("/") ? startMatch[2].split("/").pop()?.split(/\s+/)[0] : undefined,
-        exitCode: Number(line.match(/exit=(\d+)/)?.[1] ?? 0),
-        durationMs: 0,
-      };
-    }
-    if (currentRun) {
-      if (/\[ERROR\]|\[FATAL\]|\[FAILURE\]|✗|failed|error/i.test(line)) {
-        currentRun.status = "failure";
-        currentRun.error = (currentRun.error ? currentRun.error + "; " : "") + line.trim().slice(0, 200);
-      }
-      if (/success|✓|completed|done/i.test(line) && !currentRun.error) {
-        currentRun.status = "success";
-      }
-      if (/skipped|skipp/i.test(line)) {
-        currentRun.status = "skipped";
-      }
-    }
-  }
-  if (currentRun?.jobName) {
-    runs.push(currentRun as AnalyzedRun);
-  }
-  return runs;
 }
 
 async function readStdinIfPiped(): Promise<string> {
@@ -369,10 +317,14 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
     .option("--digest <fmt>", "Alias for --format, md or json")
     .option("--strict", "Exit non-zero when failures are found")
     .option("--auto-fix", "Reserved for safe idempotent remediation; currently report-only")
-    .option("--dry-run", "Show intended actions without mutating state (default behavior)")
+    .option("--dry-run", "Do not write the maintenance findings database even if --write-findings is set (report-only)")
+    .option(
+      "--write-findings",
+      "Persist failure groups to SQLite (default: stdout/json report only, no maintenance-findings.db)",
+    )
     .option(
       "--persist <path>",
-      "SQLite path for persisted maintenance findings (default: <memory-dir>/maintenance-findings.db)",
+      "SQLite path when using --write-findings (default: <memory-dir>/maintenance-findings.db)",
     )
     .option("--glitchtip", "Report plugin/orchestration-like findings via existing error reporter")
     .option("--format <fmt>", "Output format: md (default) or json")
@@ -387,6 +339,7 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
           strict?: boolean;
           autoFix?: boolean;
           dryRun?: boolean;
+          writeFindings?: boolean;
           persist?: string;
           glitchtip?: boolean;
           format?: string;
@@ -420,8 +373,9 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
             return;
           }
 
-          const persistPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
-          if (result.failureGroups.length > 0) {
+          const persistAllowed = opts?.writeFindings === true && opts?.dryRun !== true;
+          if (result.failureGroups.length > 0 && persistAllowed) {
+            const persistPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
             persistMaintenanceFindings(persistPath, result);
             result.findingsPath = persistPath;
           }

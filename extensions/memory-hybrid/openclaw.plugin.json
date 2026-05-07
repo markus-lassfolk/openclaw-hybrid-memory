@@ -925,6 +925,69 @@
           "classifyModel": {
             "type": "string",
             "description": "Model for classify-before-write. When unset, uses nano-tier default; set explicitly if that model often wraps JSON in prose or markdown so batch classification stays on the fast path"
+          },
+          "sourceProfiles": {
+            "type": "object",
+            "description": "Per-source dedupe and daily write quotas. Keys are exact fact source strings or glob patterns (e.g. seed:*, implicit-feedback).",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "vectorThreshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "lexicalJaccard": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "maxPerDay": {
+                  "type": "number",
+                  "minimum": 1
+                },
+                "onDuplicate": {
+                  "type": "string",
+                  "enum": ["skip", "boost", "merge", "store"]
+                },
+                "boostBy": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          },
+          "defaultProfile": {
+            "type": "object",
+            "description": "Fallback store profile when no sourceProfiles entry matches.",
+            "additionalProperties": false,
+            "properties": {
+              "vectorThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "lexicalJaccard": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "maxPerDay": {
+                "type": "number",
+                "minimum": 1
+              },
+              "onDuplicate": {
+                "type": "string",
+                "enum": ["skip", "boost", "merge", "store"]
+              },
+              "boostBy": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
           }
         }
       },
