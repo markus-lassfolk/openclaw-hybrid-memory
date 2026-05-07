@@ -568,7 +568,9 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
         : 0.8,
     autoCleanup: raw?.autoCleanup !== false,
     cleanupLimit:
-      typeof raw?.cleanupLimit === "number" && raw.cleanupLimit >= 0 ? Math.min(10000, Math.floor(raw.cleanupLimit)) : 1000,
+      typeof raw?.cleanupLimit === "number" && raw.cleanupLimit >= 0
+        ? Math.min(10000, Math.floor(raw.cleanupLimit))
+        : 1000,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
   };

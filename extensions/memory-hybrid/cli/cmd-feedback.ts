@@ -32,7 +32,6 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 
-
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
 function normalizeLessonTokens(text: string): Set<string> {
@@ -60,7 +59,9 @@ function getImplicitFeedbackLessonsStoredToday(rawDb: ReturnType<HandlerContext[
   if (!rawDb) return 0;
   const startOfDaySec = Math.floor(Date.now() / 86400000) * 86400;
   const row = rawDb
-    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND created_at >= ? AND superseded_at IS NULL")
+    .prepare(
+      "SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND created_at >= ? AND superseded_at IS NULL",
+    )
     .get(startOfDaySec) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
 }
@@ -89,7 +90,10 @@ function findSimilarImplicitFeedbackLesson(
   return null;
 }
 
-function markImplicitFeedbackLessonRecalled(rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>, factId: string): void {
+function markImplicitFeedbackLessonRecalled(
+  rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>,
+  factId: string,
+): void {
   const nowSec = Math.floor(Date.now() / 1000);
   rawDb
     ?.prepare(
@@ -110,7 +114,7 @@ export function cleanupImplicitFeedbackDuplicates(
     .prepare(
       `SELECT id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
        FROM facts
-       WHERE source = 'implicit-feedback' AND superseded_at IS NULL
+       WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND superseded_at IS NULL
        ORDER BY created_at ASC, id ASC
        LIMIT ?`,
     )
@@ -125,7 +129,9 @@ export function cleanupImplicitFeedbackDuplicates(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
   );
   for (const row of rows) {
-    const match = canonical.find((candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold);
+    const match = canonical.find(
+      (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
+    );
     if (!match) {
       canonical.push({ id: row.id, text: row.text });
       continue;
@@ -400,7 +406,7 @@ export async function runExtractImplicitFeedbackForCli(
                 if (similarId) markImplicitFeedbackLessonRecalled(rawDb, similarId);
                 continue;
               }
-              if (maxLessonsPerDay > 0 && lessonsStoredToday >= maxLessonsPerDay) continue;
+              if (lessonsStoredToday >= maxLessonsPerDay) continue;
               try {
                 factsDb.store({
                   text: trimmedLesson,
@@ -447,7 +453,9 @@ export async function runExtractImplicitFeedbackForCli(
         limit: implicitCfg.cleanupLimit ?? 1000,
       });
       if (opts.verbose && cleanup.collapsed > 0) {
-        logger?.info?.(`Implicit-feedback cleanup: collapsed ${cleanup.collapsed}/${cleanup.scanned} near-duplicate signal fact(s)`);
+        logger?.info?.(
+          `Implicit-feedback cleanup: collapsed ${cleanup.collapsed}/${cleanup.scanned} near-duplicate signal fact(s)`,
+        );
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

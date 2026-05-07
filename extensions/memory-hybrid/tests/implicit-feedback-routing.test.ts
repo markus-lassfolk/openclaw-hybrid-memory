@@ -285,7 +285,6 @@ describe("implicit feedback routing — negative → pattern facts", () => {
     }
   });
 
-
   it("collapses historical near-duplicate implicit-feedback facts", () => {
     const db = makeDb(tmpDir);
     const first = db.store({
