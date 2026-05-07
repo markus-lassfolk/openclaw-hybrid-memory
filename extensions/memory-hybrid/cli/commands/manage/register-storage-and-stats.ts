@@ -11,6 +11,7 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
+import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -162,10 +163,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const cronJobs = extras.getCronJobsStatus?.() ?? [];
 
           const lanceDelta = sqlCount - lanceCount;
-          const lanceDeltaSignificant = lanceDelta > 100 && (sqlCount === 0 || lanceDelta / sqlCount > 0.05);
+          const lanceAbs = Math.abs(lanceDelta);
+          const lanceDen = Math.max(sqlCount, lanceCount, 1);
+          const lanceDeltaSignificant = lanceAbs > 100 && lanceAbs / lanceDen > 0.05;
           const canonicalDelta = activeFacts - canonicalEmbeddings;
-          const canonicalDeltaSignificant =
-            canonicalDelta > 100 && (activeFacts === 0 || canonicalDelta / activeFacts > 0.05);
+          const canonicalAbs = Math.abs(canonicalDelta);
+          const canonicalDen = Math.max(activeFacts, canonicalEmbeddings, 1);
+          const canonicalDeltaSignificant = canonicalAbs > 100 && canonicalAbs / canonicalDen > 0.05;
 
           console.log("=== Memory Statistics (rich) ===");
           console.log(`Schema version: ${versionInfo.schemaVersion}`);
@@ -181,7 +185,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           );
           if (lanceDeltaSignificant || canonicalDeltaSignificant) {
             console.log(
-              `  Health: SQLite vs LanceDB Δ=${lanceDelta}; active vs canonical embeddings Δ=${canonicalDelta}. Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
+              `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); active facts ${activeFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}; embedding rows may include superseded facts). Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
             );
           }
           console.log("");
@@ -273,11 +277,16 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           if (cronJobs.length > 0) {
             const nowMs = Date.now();
             const dayMs = 86_400_000;
+            const hourMs = 3_600_000;
+            const noEmojiCron = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
+            const staleLabel = noEmojiCron ? "[WARN] stale" : "⚠ stale";
+            const fmtStaleWindow = (ms: number) =>
+              ms >= dayMs ? `${Math.max(1, Math.round(ms / dayMs))}d` : `${Math.max(1, Math.round(ms / hourMs))}h`;
             const approxIntervalMs = (cron?: string | null): number | null => {
               if (!cron) return null;
               const t = cron.trim();
               if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
-              if (/^\d+\s+\d+\s+\*\s+\*\s+[0-6]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
+              if (/^\d+\s+\d+\s+\*\s+\*\s+[0-7]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
               if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
               const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
               if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
@@ -291,7 +300,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
                 j.lastRunAtMs != null ? `last ${Math.floor((nowMs - j.lastRunAtMs) / 3600000)}h ago` : "last (never)";
               const interval = approxIntervalMs(j.scheduleExpr);
               const stale = j.enabled && interval && (j.lastRunAtMs == null || nowMs - j.lastRunAtMs > interval * 1.5);
-              const tail = stale ? " ⚠ stale (>8d / never)" : "";
+              const staleNote =
+                stale && interval != null
+                  ? ` overdue (no run in >${fmtStaleWindow(interval * 1.5)} vs ~${fmtStaleWindow(interval)} schedule)`
+                  : "";
+              const tail = stale ? ` ${staleLabel}${staleNote}` : "";
               console.log(`  ${status} ${j.name.padEnd(30)} ${sched.padEnd(14)} ${last}${tail}`);
             }
             console.log("");

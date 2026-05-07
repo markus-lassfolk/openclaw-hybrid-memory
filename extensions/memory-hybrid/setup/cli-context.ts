@@ -26,6 +26,7 @@ import {
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runConsolidate } from "../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../services/continuous-verifier.js";
+import { readGuardTimestampMs } from "../services/cron-guard.js";
 import { type DreamCycleResult, runDreamCycle } from "../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -636,9 +637,13 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         const sched = j.schedule as { expr?: string } | string | undefined;
         const scheduleExpr = typeof sched === "string" ? sched : typeof sched?.expr === "string" ? sched.expr : null;
         const state = (typeof j.state === "object" && j.state !== null ? j.state : {}) as Record<string, unknown>;
-        const lastRunAtMs = typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : null;
+        const stateLast = typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : null;
+        const jobName = typeof j.name === "string" ? j.name : pluginJobId;
+        const guardMs = readGuardTimestampMs(jobName.replace(/\s+/g, "-"), owHome);
+        const lastRunAtMs =
+          stateLast != null && guardMs != null ? Math.max(stateLast, guardMs) : (stateLast ?? guardMs);
         out.push({
-          name: typeof j.name === "string" ? j.name : pluginJobId,
+          name: jobName,
           pluginJobId,
           enabled: j.enabled !== false,
           scheduleExpr,

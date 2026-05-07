@@ -123,6 +123,7 @@ export async function runVerifyForCli(
   const OK = noEmoji ? "[OK]" : "✅";
   const FAIL = noEmoji ? "[FAIL]" : "❌";
   const PAUSE = noEmoji ? "[paused]" : "⏸️ ";
+  const WARN_LINE = noEmoji ? "[WARN]" : "⚠️";
   const _ON = noEmoji ? "[on]" : "✅ on";
   const _OFF = noEmoji ? "[off]" : "❌ off";
   const issues: string[] = [];
@@ -1169,7 +1170,7 @@ export async function runVerifyForCli(
     if (!cron) return null;
     const t = cron.trim();
     if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
-    if (/^\d+\s+\d+\s+\*\s+\*\s+[0-6]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
+    if (/^\d+\s+\d+\s+\*\s+\*\s+[0-7]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
     if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
     const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
     if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
@@ -1590,7 +1591,7 @@ export async function runVerifyForCli(
       log("\nAll checks passed.");
     } else {
       log(`\nAll critical checks passed, but ${warnings.length} warning(s):`);
-      for (const w of warnings) log(`  ⚠ ${w}`);
+      for (const w of warnings) log(`  ${WARN_LINE} ${w}`);
       log(
         "  Tip: re-run after the next scheduled window. If 'last: never' persists, confirm the OpenClaw gateway is running and that ~/.openclaw/cron/guard/<job>.ms is being written.",
       );

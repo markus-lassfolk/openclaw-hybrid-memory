@@ -10,7 +10,7 @@ export type HybridMemCronStep = { name: string; cmd: string };
 
 /**
  * Bash script body: `set -euo pipefail`, HM_LOG / HM_EXIT, `hm_step`, and labeled steps.
- * Step `name` must be a short shell-safe token (letters, numbers, hyphens).
+ * Step `name` should be short and shell-safe; any character outside `[A-Za-z0-9-]` is replaced with `_`.
  */
 export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCronStep[]): string {
   const lines = steps.map((s) => {

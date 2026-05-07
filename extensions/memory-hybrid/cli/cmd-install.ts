@@ -23,8 +23,8 @@ import { findPluginRoot } from "../utils/plugin-root.js";
 
 import type { HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
+import { buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
@@ -570,7 +570,15 @@ export function ensureMaintenanceCronJobs(
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
-  mkdirSync(join(openclawDir, "logs", "cron-hybrid-mem"), { recursive: true });
+  try {
+    mkdirSync(join(openclawDir, "logs", "cron-hybrid-mem"), { recursive: true });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "ensureMaintenanceCronJobs:mkdir-cron-logs",
+      severity: "info",
+    });
+  }
   const store: { jobs?: unknown[] } = existsSync(cronStorePath)
     ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
     : {};
