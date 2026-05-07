@@ -51,7 +51,7 @@ export function runCompaction(
       `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
          AND (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
          AND (key IS NULL OR key != 'implicit_feedback_signal')
-         AND (tier IS NULL OR tier != 'structural')`,
+         AND (tier IS NULL OR (tier != 'structural' AND tier != 'hot'))`,
     )
     .all(nowSec) as Array<{ id: string }>;
   for (const { id } of structuralRows) {
