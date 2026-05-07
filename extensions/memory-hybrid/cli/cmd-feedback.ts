@@ -28,11 +28,29 @@ import {
   generateMonthlyReport,
 } from "../services/tool-effectiveness.js";
 import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
+
+/** Comma-safe tag predicate for trajectory lesson rows (avoids substring false positives). */
+const SQL_TRAJECTORY_LESSON_TAGS = `(
+  (',' || COALESCE(tags,'') || ',') LIKE '%,implicit-feedback,%'
+  AND (',' || COALESCE(tags,'') || ',') LIKE '%,trajectory,%'
+  AND (',' || COALESCE(tags,'') || ',') LIKE '%,feedback,%'
+)`;
+
+/** Modern key + legacy pre-migration rows (null key, lesson tag shape; excludes pattern/negative facts). */
+export const SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER = `(
+  key = 'implicit_feedback_signal'
+  OR (
+    (key IS NULL OR TRIM(COALESCE(key, '')) = '')
+    AND category != 'pattern'
+    AND ${SQL_TRAJECTORY_LESSON_TAGS}
+  )
+)`;
 
 function normalizeLessonTokens(text: string): Set<string> {
   const normalized = text
@@ -60,7 +78,7 @@ function getImplicitFeedbackLessonsStoredToday(rawDb: ReturnType<HandlerContext[
   const startOfDaySec = Math.floor(Date.now() / 86400000) * 86400;
   const row = rawDb
     .prepare(
-      "SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND created_at >= ? AND superseded_at IS NULL",
+      `SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER} AND created_at >= ? AND superseded_at IS NULL`,
     )
     .get(startOfDaySec) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
@@ -77,9 +95,9 @@ function findSimilarImplicitFeedbackLesson(
     .prepare(
       `SELECT id, text FROM facts
        WHERE source = 'implicit-feedback'
-         AND key = 'implicit_feedback_signal'
          AND superseded_at IS NULL
-         AND (tags LIKE '%implicit-feedback%' OR tags LIKE '%trajectory%')
+         AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
+         AND ${SQL_TRAJECTORY_LESSON_TAGS}
        ORDER BY created_at DESC
        LIMIT 500`,
     )
@@ -104,28 +122,35 @@ function markImplicitFeedbackLessonRecalled(
 }
 
 export function cleanupImplicitFeedbackDuplicates(
-  rawDb: ReturnType<HandlerContext["factsDb"]["getRawDb"]>,
-  opts: { threshold?: number; limit?: number } = {},
-): { scanned: number; collapsed: number } {
-  if (!rawDb) return { scanned: 0, collapsed: 0 };
+  factsDb: FactsDB,
+  opts: { threshold?: number; limit?: number; afterRowid?: number } = {},
+): { scanned: number; collapsed: number; resumeAfterRowid: number | null } {
+  const rawDb = factsDb.getRawDb();
+  if (!rawDb) return { scanned: 0, collapsed: 0, resumeAfterRowid: null };
   const threshold = opts.threshold ?? 0.8;
   const limit = opts.limit ?? 1000;
-  if (limit <= 0) return { scanned: 0, collapsed: 0 };
+  if (limit <= 0) return { scanned: 0, collapsed: 0, resumeAfterRowid: null };
+  const afterRowid = opts.afterRowid ?? 0;
   const rows = rawDb
     .prepare(
-      `SELECT id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
+      `SELECT rowid as rowid, id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
        FROM facts
-       WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND superseded_at IS NULL
-       ORDER BY created_at ASC, rowid ASC
-       LIMIT ?`,
+       WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
+         AND (@afterRowid = 0 OR rowid > @afterRowid)
+       ORDER BY rowid ASC
+       LIMIT @limit`,
     )
-    .all(limit) as Array<{ id: string; text: string; recallCount: number; accessCount: number; createdAt: number }>;
+    .all({ "@afterRowid": afterRowid, "@limit": limit }) as Array<{
+    rowid: number;
+    id: string;
+    text: string;
+    recallCount: number;
+    accessCount: number;
+    createdAt: number;
+  }>;
   let collapsed = 0;
   const canonical: Array<{ id: string; text: string }> = [];
   const nowSec = Math.floor(Date.now() / 1000);
-  const supersede = rawDb.prepare(
-    "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
-  );
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
   );
@@ -139,7 +164,7 @@ export function cleanupImplicitFeedbackDuplicates(
         canonical.push({ id: row.id, text: row.text });
         continue;
       }
-      supersede.run(nowSec, match.id, nowSec, row.id);
+      if (!factsDb.supersede(row.id, match.id)) continue;
       reinforce.run(Math.max(1, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
       collapsed++;
     }
@@ -148,7 +173,12 @@ export function cleanupImplicitFeedbackDuplicates(
     rawDb.prepare("ROLLBACK").run();
     throw err;
   }
-  return { scanned: rows.length, collapsed };
+  const lastRow = rows[rows.length - 1];
+  return {
+    scanned: rows.length,
+    collapsed,
+    resumeAfterRowid: lastRow ? lastRow.rowid : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -460,14 +490,23 @@ export async function runExtractImplicitFeedbackForCli(
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
     try {
-      const cleanup = cleanupImplicitFeedbackDuplicates(rawDb, {
-        threshold: implicitCfg.lessonDedupeJaccard ?? 0.8,
-        limit: implicitCfg.cleanupLimit ?? 1000,
-      });
-      if (opts.verbose && cleanup.collapsed > 0) {
-        logger?.info?.(
-          `Implicit-feedback cleanup: collapsed ${cleanup.collapsed}/${cleanup.scanned} near-duplicate signal fact(s)`,
-        );
+      const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
+      const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
+      let afterRowid = 0;
+      let totalCollapsed = 0;
+      for (let round = 0; round < 8; round++) {
+        const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
+          threshold,
+          limit: cleanupLimit,
+          afterRowid,
+        });
+        totalCollapsed += cleanup.collapsed;
+        if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
+        afterRowid = cleanup.resumeAfterRowid;
+        if (cleanup.collapsed > 0) break;
+      }
+      if (opts.verbose && totalCollapsed > 0) {
+        logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

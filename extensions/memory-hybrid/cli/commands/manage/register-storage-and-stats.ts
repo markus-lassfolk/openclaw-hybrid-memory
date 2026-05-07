@@ -3,6 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import { vectorDimsForModel } from "../../../config.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
@@ -45,8 +46,20 @@ type AuditHealthReport = {
   decay: Record<string, number>;
   categories: { configured: string[]; present: string[]; unknown: string[] };
   sources: Record<string, number>;
+  implicitFeedbackTrajectorySignals: number;
   warnings: string[];
 };
+
+function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb"]): number {
+  const raw = factsDb.getRawDb?.();
+  if (!raw) return 0;
+  const row = raw
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}`,
+    )
+    .get() as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
+}
 
 function buildAuditHealthReport(
   factsDb: ManageBindings["factsDb"],
@@ -64,6 +77,7 @@ function buildAuditHealthReport(
   const configuredSet = new Set(configured);
   const unknown = present.filter((category: string) => !configuredSet.has(category));
   const sources = factsDb.statsBySource();
+  const implicitFeedbackTrajectorySignals = countImplicitFeedbackTrajectorySignals(factsDb);
   const vectorlessApprox = Math.max(0, activeFacts - canonicalEmbeddings);
   const warnings: string[] = [];
   if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
@@ -83,6 +97,7 @@ function buildAuditHealthReport(
     decay,
     categories: { configured, present, unknown },
     sources,
+    implicitFeedbackTrajectorySignals,
     warnings,
   };
 }
@@ -101,7 +116,7 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log(
     `Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.join(", ") : "none"}`,
   );
-  console.log(`Implicit-feedback signals: ${report.sources["implicit-feedback"] ?? 0}`);
+  console.log(`Implicit-feedback trajectory signals: ${report.implicitFeedbackTrajectorySignals}`);
   console.log("");
   if (report.warnings.length === 0) {
     console.log("Warnings: none");
@@ -235,7 +250,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const activity = factsDb.recentActivity();
           const decayBreakdown = factsDb.statsBreakdownByDecayClass();
           const sourceBreakdown = factsDb.statsBySource();
-          const implicitFeedbackSignals = sourceBreakdown["implicit-feedback"] ?? 0;
+          const implicitFeedbackSignals = countImplicitFeedbackTrajectorySignals(factsDb);
           const cronJobs = extras.getCronJobsStatus?.() ?? [];
 
           const lanceDelta = sqlCount - lanceCount;

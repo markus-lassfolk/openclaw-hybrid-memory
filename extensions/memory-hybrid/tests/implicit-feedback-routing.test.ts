@@ -308,15 +308,17 @@ describe("implicit feedback routing — negative → pattern facts", () => {
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
 
-    const result = cleanupImplicitFeedbackDuplicates(rawDb(db), { threshold: 0.7, limit: 100 });
+    const result = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.7, limit: 100 });
 
     expect(result.collapsed).toBe(1);
     const rows = rawDb(db)
       .prepare("SELECT id, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id IN (?, ?)")
       .all(first.id, duplicate.id) as Array<{ id: string; supersededBy: string | null; supersededAt: number | null }>;
-    const duplicateRow = rows.find((row) => row.id === duplicate.id);
-    expect(duplicateRow?.supersededBy).toBe(first.id);
-    expect(duplicateRow?.supersededAt).toBeTypeOf("number");
+    const canonical = rows.find((row) => row.supersededAt == null);
+    const superseded = rows.find((row) => row.supersededAt != null);
+    expect(canonical).toBeDefined();
+    expect(superseded?.supersededBy).toBe(canonical?.id);
+    expect(superseded?.supersededAt).toBeTypeOf("number");
   });
 
   it("does NOT store implicit-feedback pattern facts when feedToSelfCorrection=false", async () => {

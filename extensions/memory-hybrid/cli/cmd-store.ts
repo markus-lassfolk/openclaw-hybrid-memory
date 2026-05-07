@@ -9,6 +9,7 @@ import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
+import { resolveDedupeProfile } from "../services/dedupe-policy.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
@@ -39,7 +40,8 @@ export async function runStoreForCli(
 ): Promise<StoreCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
-  if (factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
+  const cliDupProfile = resolveDedupeProfile("cli", cfg.store);
+  if (cliDupProfile.onDuplicate === "skip" && factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
   const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
   const entity = opts.entity ?? extracted.entity ?? null;

@@ -63,6 +63,28 @@ export interface GraphFactLookup {
   getByIds(ids: string[], options?: { asOf?: number; scopeFilter?: unknown }): Map<string, MemoryEntry>;
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
+  /** When present (real FactsDB), prefer recursive CTE expansion with per-hop hub guards validated on paths. */
+  expandGraphWithCTE?(
+    seedFactIds: string[],
+    maxDepth: number,
+    options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
+  ): Array<{ factId: string; seedId: string; hopCount: number; path: string }>;
+}
+
+function ctePathMatchesHubGuards(factsDb: GraphFactLookup, path: LinkPathStep[]): boolean {
+  for (const step of path) {
+    const fromId = step.fromFactId;
+    const toId = step.toFactId;
+    const outOk = filterTraversableLinks(factsDb.getLinksFrom(fromId)).some(
+      (l) => l.targetFactId === toId && l.linkType === step.linkType,
+    );
+    if (outOk) continue;
+    const inOk = filterTraversableLinks(factsDb.getLinksTo(fromId)).some(
+      (l) => l.sourceFactId === toId && l.linkType === step.linkType,
+    );
+    if (!inOk) return false;
+  }
+  return true;
 }
 
 /** Options for graph expansion. */
@@ -110,7 +132,9 @@ export function filterTraversableLinks<T extends { linkType: string }>(links: T[
  * Results are ranked: direct matches appear first (hopCount=0), then 1-hop,
  * then 2-hop, etc., each with a distance-decayed score.
  *
- * **Performance:** Uses SQLite recursive CTE instead of iterative BFS to avoid N+1 queries.
+ * **Performance:** When `expandGraphWithCTE` is available (FactsDB), uses a recursive CTE for expansion
+ * and validates each returned path against the same per-hop hub guards as iterative BFS. Custom/mock
+ * lookups without CTE use iterative BFS only.
  *
  * @param factsDb - FactsDB-compatible interface.
  * @param seedResults - Initial results from semantic/FTS5 search.
@@ -148,125 +172,163 @@ export function expandGraph(
   const maxSeedScore = Math.max(...seedResults.map((s) => s.score), 0.5);
   const expandedResults: GraphExpandedResult[] = [];
 
-  // Iterative BFS keeps traversal guards explicit: high-degree provenance hubs are
-  // intentionally not expanded through, because they can swamp recall results.
-  {
-    const nodeMeta = new Map<string, NodeMeta>();
-    for (const s of seedResults) {
-      nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId });
-    }
+  const cteScopeFilter =
+    scopeFilter && typeof scopeFilter === "object"
+      ? (scopeFilter as { userId?: string; agentId?: string; sessionId?: string })
+      : undefined;
 
-    let frontier: string[] = [...seedIds];
-
-    function tryAddNode(
-      candidateId: string,
-      hop: number,
-      steps: LinkPathStep[],
-      seedId: string,
-      nextFrontier: string[],
-      visibleIds: Set<string>,
-    ): void {
-      if (!visibleIds.has(candidateId)) return;
-      const existing = nodeMeta.get(candidateId);
-      const newSeedScore = seedScoreMap.get(seedId) ?? 0;
-      if (!existing) {
-        nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
-        nextFrontier.push(candidateId);
-        return;
-      }
-      if (hop < existing.hopCount) {
-        nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
-        nextFrontier.push(candidateId);
-        return;
-      }
-      if (hop === existing.hopCount && newSeedScore > (seedScoreMap.get(existing.seedId) ?? 0)) {
-        nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
-      }
-    }
-
-    for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
-      const nextFrontier: string[] = [];
-      const candidateMoves: Array<{
-        candidateId: string;
-        steps: LinkPathStep[];
-        seedId: string;
-      }> = [];
-
-      for (const fromId of frontier) {
-        const fromMeta = nodeMeta.get(fromId)!;
-
-        // --- Outgoing edges: fromId → targetId ---
-        const outLinks = filterTraversableLinks(factsDb.getLinksFrom(fromId));
-        for (const link of outLinks) {
-          const steps: LinkPathStep[] = [
-            ...fromMeta.steps,
-            {
-              fromFactId: fromId,
-              toFactId: link.targetFactId,
-              linkType: link.linkType,
-              strength: link.strength,
-            },
-          ];
-          candidateMoves.push({
-            candidateId: link.targetFactId,
-            steps,
-            seedId: fromMeta.seedId,
-          });
-        }
-
-        // --- Incoming edges: sourceId → fromId ---
-        const inLinks = filterTraversableLinks(factsDb.getLinksTo(fromId));
-        for (const link of inLinks) {
-          const steps: LinkPathStep[] = [
-            ...fromMeta.steps,
-            {
-              fromFactId: fromId,
-              toFactId: link.sourceFactId,
-              linkType: link.linkType,
-              strength: link.strength,
-            },
-          ];
-          candidateMoves.push({
-            candidateId: link.sourceFactId,
-            steps,
-            seedId: fromMeta.seedId,
-          });
-        }
-      }
-
-      if (candidateMoves.length === 0) {
-        frontier = nextFrontier;
+  if (factsDb.expandGraphWithCTE) {
+    const expansionRows = factsDb.expandGraphWithCTE(seedIds, maxDepth, {
+      asOf,
+      scopeFilter: cteScopeFilter,
+    });
+    for (const row of expansionRows) {
+      if (row.hopCount === 0) continue;
+      let linkPath: LinkPathStep[];
+      try {
+        linkPath = JSON.parse(row.path) as LinkPathStep[];
+      } catch {
         continue;
       }
+      if (!ctePathMatchesHubGuards(factsDb, linkPath)) continue;
 
-      const candidateIds = Array.from(new Set(candidateMoves.map((m) => m.candidateId)));
-      const visible = factsDb.getByIds(candidateIds, getByIdOpts);
-      const visibleIds = new Set(visible.keys());
-      for (const move of candidateMoves) {
-        tryAddNode(move.candidateId, hop, move.steps, move.seedId, nextFrontier, visibleIds);
-      }
-
-      frontier = nextFrontier;
-    }
-
-    for (const [factId, meta] of nodeMeta) {
-      if (meta.hopCount === 0) continue; // already in directResults
-
-      const entry = factsDb.getById(factId, getByIdOpts);
+      const entry = factsDb.getById(row.factId, getByIdOpts);
       if (!entry) continue;
 
-      const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
-      const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
+      const seedScore = seedScoreMap.get(row.seedId) ?? maxSeedScore;
+      const decay = HOP_SCORE_DECAY[row.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
       const score = seedScore * decay;
 
       expandedResults.push({
-        factId,
+        factId: row.factId,
         entry,
         expansionSource: "graph",
-        hopCount: meta.hopCount,
-        linkPath: meta.steps,
+        hopCount: row.hopCount,
+        linkPath,
         score,
       });
+    }
+  } else {
+    // Iterative BFS keeps traversal guards explicit: high-degree provenance hubs are
+    // intentionally not expanded through, because they can swamp recall results.
+    {
+      const nodeMeta = new Map<string, NodeMeta>();
+      for (const s of seedResults) {
+        nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId });
+      }
+
+      let frontier: string[] = [...seedIds];
+
+      function tryAddNode(
+        candidateId: string,
+        hop: number,
+        steps: LinkPathStep[],
+        seedId: string,
+        nextFrontier: string[],
+        visibleIds: Set<string>,
+      ): void {
+        if (!visibleIds.has(candidateId)) return;
+        const existing = nodeMeta.get(candidateId);
+        const newSeedScore = seedScoreMap.get(seedId) ?? 0;
+        if (!existing) {
+          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+          nextFrontier.push(candidateId);
+          return;
+        }
+        if (hop < existing.hopCount) {
+          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+          nextFrontier.push(candidateId);
+          return;
+        }
+        if (hop === existing.hopCount && newSeedScore > (seedScoreMap.get(existing.seedId) ?? 0)) {
+          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+        }
+      }
+
+      for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
+        const nextFrontier: string[] = [];
+        const candidateMoves: Array<{
+          candidateId: string;
+          steps: LinkPathStep[];
+          seedId: string;
+        }> = [];
+
+        for (const fromId of frontier) {
+          const fromMeta = nodeMeta.get(fromId)!;
+
+          // --- Outgoing edges: fromId → targetId ---
+          const outLinks = filterTraversableLinks(factsDb.getLinksFrom(fromId));
+          for (const link of outLinks) {
+            const steps: LinkPathStep[] = [
+              ...fromMeta.steps,
+              {
+                fromFactId: fromId,
+                toFactId: link.targetFactId,
+                linkType: link.linkType,
+                strength: link.strength,
+              },
+            ];
+            candidateMoves.push({
+              candidateId: link.targetFactId,
+              steps,
+              seedId: fromMeta.seedId,
+            });
+          }
+
+          // --- Incoming edges: sourceId → fromId ---
+          const inLinks = filterTraversableLinks(factsDb.getLinksTo(fromId));
+          for (const link of inLinks) {
+            const steps: LinkPathStep[] = [
+              ...fromMeta.steps,
+              {
+                fromFactId: fromId,
+                toFactId: link.sourceFactId,
+                linkType: link.linkType,
+                strength: link.strength,
+              },
+            ];
+            candidateMoves.push({
+              candidateId: link.sourceFactId,
+              steps,
+              seedId: fromMeta.seedId,
+            });
+          }
+        }
+
+        if (candidateMoves.length === 0) {
+          frontier = nextFrontier;
+          continue;
+        }
+
+        const candidateIds = Array.from(new Set(candidateMoves.map((m) => m.candidateId)));
+        const visible = factsDb.getByIds(candidateIds, getByIdOpts);
+        const visibleIds = new Set(visible.keys());
+        for (const move of candidateMoves) {
+          tryAddNode(move.candidateId, hop, move.steps, move.seedId, nextFrontier, visibleIds);
+        }
+
+        frontier = nextFrontier;
+      }
+
+      for (const [factId, meta] of nodeMeta) {
+        if (meta.hopCount === 0) continue; // already in directResults
+
+        const entry = factsDb.getById(factId, getByIdOpts);
+        if (!entry) continue;
+
+        const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
+        const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
+        const score = seedScore * decay;
+
+        expandedResults.push({
+          factId,
+          entry,
+          expansionSource: "graph",
+          hopCount: meta.hopCount,
+          linkPath: meta.steps,
+          score,
+        });
+      }
     }
   }
 

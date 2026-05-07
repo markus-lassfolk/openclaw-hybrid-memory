@@ -33,6 +33,7 @@ import {
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import { classifyMemoryOperation } from "../services/classification.js";
+import { resolveDedupeProfile } from "../services/dedupe-policy.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import { toFloat32Array } from "../services/embedding-registry.js";
@@ -1605,7 +1606,8 @@ export function registerMemoryTools(
             }
           };
 
-          if (factsDb.hasDuplicate(textToStore)) {
+          const storeDupProfile = resolveDedupeProfile("tool:memory_store", cfg.store);
+          if (storeDupProfile.onDuplicate === "skip" && factsDb.hasDuplicate(textToStore)) {
             return {
               content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },

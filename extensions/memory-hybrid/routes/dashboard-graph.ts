@@ -3,7 +3,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import { filterTraversableLinks } from "../services/graph-retrieval.js";
+import { HUB_GUARD_MAX_LINKS_PER_NODE } from "../services/graph-retrieval.js";
 
 interface MemoryGraphNode {
   id: string;
@@ -69,29 +69,8 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
 }
 
 function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDepth: number): string[] {
-  const seen = new Set(seeds);
-  let frontier = [...seeds];
-  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      const outLinks = filterTraversableLinks(factsDb.getLinksFrom(id));
-      const inLinks = filterTraversableLinks(factsDb.getLinksTo(id));
-      for (const link of outLinks) {
-        const other = link.targetFactId;
-        if (seen.has(other)) continue;
-        seen.add(other);
-        next.push(other);
-      }
-      for (const link of inLinks) {
-        const other = link.sourceFactId;
-        if (seen.has(other)) continue;
-        seen.add(other);
-        next.push(other);
-      }
-    }
-    frontier = next;
-  }
-  return [...seen];
+  if (seeds.length === 0) return [];
+  return factsDb.getConnectedFactIds(seeds, maxDepth, { hubDegreeCap: HUB_GUARD_MAX_LINKS_PER_NODE * 2 });
 }
 
 export function collectGraphRecallPayload(factsDb: FactsDB, query: string): GraphRecallPayload {

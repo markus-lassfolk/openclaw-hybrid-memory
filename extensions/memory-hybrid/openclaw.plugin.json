@@ -1726,6 +1726,22 @@
           },
           "terseResponseRatio": {
             "type": "number"
+          },
+          "maxLessonsPerDay": {
+            "type": "number",
+            "description": "Cap on trajectory lesson facts stored per calendar day (implicit feedback extract)"
+          },
+          "lessonDedupeJaccard": {
+            "type": "number",
+            "description": "Jaccard similarity threshold for near-duplicate lesson detection and cleanup (0–1)"
+          },
+          "autoCleanup": {
+            "type": "boolean",
+            "description": "Run near-duplicate collapse for implicit-feedback trajectory lessons after extract"
+          },
+          "cleanupLimit": {
+            "type": "number",
+            "description": "Max rows scanned per cleanup pass (and per sliding window round)"
           }
         },
         "description": "Implicit feedback detection and routing"
