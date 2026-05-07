@@ -62,6 +62,7 @@ export function runCompaction(
     .prepare(
       `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
          AND (category = 'decision' OR (',' || COALESCE(tags,'') || ',') LIKE '%,task,%')
+         AND NOT (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
          AND (tier IS NULL OR tier != 'cold')`,
     )
     .all(nowSec) as Array<{ id: string }>;
