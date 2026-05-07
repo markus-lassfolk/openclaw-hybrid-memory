@@ -19,7 +19,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { readFileSync as rf } from "node:fs";
 import { join } from "node:path";
 
 import { type Chainable, withExit } from "../../shared.js";
@@ -138,7 +137,6 @@ function parseCronRunLog(content: string): AnalyzedRun[] {
   const runs: AnalyzedRun[] = [];
   // Each run is a JSON object on a single line, or a structured block.
   // We look for lines that contain run metadata.
-  const runLineRe = /^\s*\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/m;
   const lines = content.split("\n");
 
   let currentRun: Partial<AnalyzedRun> | null = null;
@@ -303,7 +301,7 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
             process.exitCode = 1;
             return;
           }
-          logContent = rf(opts.file, "utf-8");
+          logContent = readFileSync(opts.file, "utf-8");
         } else {
           // Try reading from stdin (non-empty)
           // commander passes args after --; in this case we read directly
