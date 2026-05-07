@@ -273,13 +273,24 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           if (cronJobs.length > 0) {
             const nowMs = Date.now();
             const dayMs = 86_400_000;
+            const approxIntervalMs = (cron?: string | null): number | null => {
+              if (!cron) return null;
+              const t = cron.trim();
+              if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
+              if (/^\d+\s+\d+\s+\*\s+\*\s+[0-6]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
+              if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
+              const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
+              if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
+              return null;
+            };
             console.log(`Cron jobs (hybrid-mem:*): ${cronJobs.length}`);
             for (const j of cronJobs) {
               const status = j.enabled ? "enabled " : "disabled";
               const sched = j.scheduleExpr ?? "(no schedule)";
               const last =
                 j.lastRunAtMs != null ? `last ${Math.floor((nowMs - j.lastRunAtMs) / 3600000)}h ago` : "last (never)";
-              const stale = j.enabled && (j.lastRunAtMs == null || nowMs - j.lastRunAtMs > 8 * dayMs);
+              const interval = approxIntervalMs(j.scheduleExpr);
+              const stale = j.enabled && interval && (j.lastRunAtMs == null || nowMs - j.lastRunAtMs > interval * 1.5);
               const tail = stale ? " ⚠ stale (>8d / never)" : "";
               console.log(`  ${status} ${j.name.padEnd(30)} ${sched.padEnd(14)} ${last}${tail}`);
             }
@@ -793,13 +804,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--list-types", "Print allowed --type values and exit")
     .action(
       withExit(
-        async (opts?: {
-          type?: string;
-          limit?: string;
-          order?: string;
-          json?: boolean;
-          listTypes?: boolean;
-        }) => {
+        async (opts?: { type?: string; limit?: string; order?: string; json?: boolean; listTypes?: boolean }) => {
           if (opts?.listTypes) {
             for (const t of listDumpTypeAliases()) console.log(t);
             return;
