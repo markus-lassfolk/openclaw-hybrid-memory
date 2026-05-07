@@ -667,7 +667,6 @@ describe("FactsDB tiering", () => {
     expect(coldFact?.tier).toBe("cold");
   });
 
-
   it("runCompaction moves key/value facts to STRUCTURAL", () => {
     const fact = db.store({
       text: "User email is test@example.com",

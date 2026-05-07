@@ -3,8 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
-import type { EventLogConfig, PathConfig, StoreConfig,
-  StoreSourceProfile, WALConfig } from "../types/core.js";
+import type { EventLogConfig, PathConfig, StoreConfig, StoreSourceProfile, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
   ActiveTaskProjectionConfig,
@@ -74,7 +73,6 @@ export function resolveEnvVars(value: string): string {
     return envValue;
   });
 }
-
 
 const VALID_DUPLICATE_ACTIONS = new Set(["skip", "boost", "merge", "store"]);
 
