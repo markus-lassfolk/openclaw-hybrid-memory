@@ -1653,6 +1653,62 @@ describe("FactsDB.statsBreakdownByCategory", () => {
   });
 });
 
+describe("FactsDB category drift audit/remap", () => {
+  it("reports unknown in-memory categories with examples", () => {
+    const entry = db.store({
+      text: "Legacy monitoring fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("monitoring", entry.id);
+
+    const report = db.auditCategories(["preference", "fact", "other"], 3);
+
+    expect(report.hasDrift).toBe(true);
+    expect(report.unknown).toEqual([
+      expect.objectContaining({ category: "monitoring", count: 1, examples: [entry.id] }),
+    ]);
+    expect(report.configuredOnly).toContain("preference");
+  });
+
+  it("remaps drifted categories without manual SQL and makes dashboard filters agree", () => {
+    const entry = db.store({
+      text: "Legacy ops status fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("ops_status", entry.id);
+
+    expect(db.listForDashboard({ limit: 10, offset: 0, category: "ops_status" }).total).toBe(0);
+
+    const dryRun = db.remapCategory("ops_status", "fact", false);
+    expect(dryRun).toEqual({
+      from: "ops_status",
+      to: "fact",
+      apply: false,
+      matched: 1,
+      activeMatched: 1,
+      changed: 0,
+    });
+    expect(db.getById(entry.id)?.category).toBe("ops_status");
+
+    const applied = db.remapCategory("ops_status", "fact", true);
+    expect(applied.changed).toBe(1);
+    expect(db.getById(entry.id)?.category).toBe("fact");
+    const dashboard = db.listForDashboard({ limit: 10, offset: 0, category: "fact" });
+    expect(dashboard.total).toBe(1);
+    expect(dashboard.facts[0]?.id).toBe(entry.id);
+  });
+});
+
 describe("FactsDB.proceduresCount / proceduresValidatedCount / proceduresPromotedCount", () => {
   it("returns counts from procedures table", () => {
     const total = db.proceduresCount();

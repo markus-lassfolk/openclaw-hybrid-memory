@@ -64,6 +64,93 @@ export function statsBreakdownByCategory(db: DatabaseSync): Record<string, numbe
   return stats;
 }
 
+export type CategoryAuditRow = {
+  category: string;
+  count: number;
+  examples: string[];
+};
+
+export type CategoryAuditReport = {
+  configured: string[];
+  inMemory: CategoryAuditRow[];
+  unknown: CategoryAuditRow[];
+  configuredOnly: string[];
+  hasDrift: boolean;
+};
+
+export type RemapCategoryReport = {
+  from: string;
+  to: string;
+  apply: boolean;
+  matched: number;
+  activeMatched: number;
+  changed: number;
+};
+
+export function auditCategories(
+  db: DatabaseSync,
+  configuredCategories: readonly string[],
+  exampleLimit = 5,
+): CategoryAuditReport {
+  const configured = [...new Set(configuredCategories)].sort();
+  const configuredSet = new Set(configured);
+  const rows = db
+    .prepare(
+      "SELECT COALESCE(category, 'other') as category, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY category ORDER BY category",
+    )
+    .all() as Array<{ category: string; cnt: number }>;
+
+  const inMemory: CategoryAuditRow[] = rows.map((row) => {
+    const examples = db
+      .prepare(
+        "SELECT id FROM facts WHERE COALESCE(category, 'other') = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?",
+      )
+      .all(row.category || "other", Math.max(0, exampleLimit)) as Array<{ id: string }>;
+    return {
+      category: row.category || "other",
+      count: row.cnt,
+      examples: examples.map((e) => e.id),
+    };
+  });
+
+  const inMemorySet = new Set(inMemory.map((r) => r.category));
+  const unknown = inMemory.filter((row) => !configuredSet.has(row.category));
+  const configuredOnly = configured.filter((category) => !inMemorySet.has(category));
+  return {
+    configured,
+    inMemory,
+    unknown,
+    configuredOnly,
+    hasDrift: unknown.length > 0,
+  };
+}
+
+export function remapCategory(db: DatabaseSync, from: string, to: string, apply = false): RemapCategoryReport {
+  const normalizedFrom = from.trim();
+  const normalizedTo = to.trim();
+  const matchedRow = db.prepare("SELECT COUNT(*) as cnt FROM facts WHERE category = ?").get(normalizedFrom) as {
+    cnt: number;
+  };
+  const activeMatchedRow = db
+    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE category = ? AND superseded_at IS NULL")
+    .get(normalizedFrom) as { cnt: number };
+  const matched = matchedRow?.cnt ?? 0;
+  const activeMatched = activeMatchedRow?.cnt ?? 0;
+  let changed = 0;
+  if (apply && matched > 0) {
+    const result = db.prepare("UPDATE facts SET category = ? WHERE category = ?").run(normalizedTo, normalizedFrom);
+    changed = Number(result.changes);
+  }
+  return {
+    from: normalizedFrom,
+    to: normalizedTo,
+    apply,
+    matched,
+    activeMatched,
+    changed,
+  };
+}
+
 export function statsBreakdownByDecayClass(db: DatabaseSync): Record<string, number> {
   const rows = db
     .prepare(

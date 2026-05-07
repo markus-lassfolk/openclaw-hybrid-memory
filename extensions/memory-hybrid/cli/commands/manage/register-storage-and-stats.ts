@@ -4,7 +4,7 @@
  */
 
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
-import { vectorDimsForModel } from "../../../config.js";
+import { isValidCategory, vectorDimsForModel } from "../../../config.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
@@ -342,10 +342,28 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(proposalsLine);
           console.log(`WAL (pending distill): ${walPending}`);
           console.log("");
+          const configuredSet = new Set(categoriesConfigured);
+          const inMemorySet = new Set(uniqueInMemory);
+          const unknownCategories = uniqueInMemory.filter((category: string) => !configuredSet.has(category));
+          const configuredOnlyCategories = categoriesConfigured.filter(
+            (category: string) => !inMemorySet.has(category),
+          );
           console.log(
             `Categories configured: ${categoriesConfigured.length} [${categoriesConfigured.slice(0, 3).join(", ")}...]`,
           );
           console.log(`Categories in memory: ${uniqueInMemory.length} [${uniqueInMemory.slice(0, 3).join(", ")}...]`);
+          if (unknownCategories.length > 0) {
+            console.log(
+              `Discovered/unknown categories: ${unknownCategories.length} [${unknownCategories.join(", ")}] — run 'openclaw hybrid-mem categories audit' and remap or promote them.`,
+            );
+          } else {
+            console.log("Discovered/unknown categories: 0");
+          }
+          if (configuredOnlyCategories.length > 0) {
+            console.log(
+              `Configured categories with no active facts: ${configuredOnlyCategories.length} [${configuredOnlyCategories.join(", ")}]`,
+            );
+          }
           console.log("");
           console.log(
             `Breakdown by tier: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
@@ -890,9 +908,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       }),
     );
 
-  mem
+  const categoriesCommand = mem
     .command("categories")
-    .description("List all categories in memory (discovered from facts)")
+    .description("Inspect and repair category drift")
     .action(
       withExit(async () => {
         try {
@@ -901,12 +919,100 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           for (const c of cats) {
             console.log(`  - ${c}`);
           }
+          console.log("");
+          console.log("Tip: run 'openclaw hybrid-mem categories audit' to compare configured vs in-memory categories.");
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
             operation: "categories",
           });
           throw err;
+        }
+      }),
+    );
+
+  categoriesCommand
+    .command("audit")
+    .description("Show configured vs in-memory category drift with counts and example fact ids")
+    .option("--json", "Emit JSON")
+    .option("--examples <n>", "Example fact ids per category", "5")
+    .action(
+      withExit(async (opts?: { json?: boolean; examples?: string }) => {
+        const examples = Number.parseInt(opts?.examples ?? "5", 10);
+        if (!Number.isFinite(examples) || examples < 0 || examples > 50) {
+          console.error("error: --examples must be an integer from 0 to 50");
+          process.exitCode = 1;
+          return;
+        }
+        const report = factsDb.auditCategories(getMemoryCategories(), examples);
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(`Categories configured (${report.configured.length}): ${report.configured.join(", ")}`);
+        console.log(`Categories in memory (${report.inMemory.length}):`);
+        for (const row of report.inMemory) {
+          const marker = report.unknown.some((u) => u.category === row.category) ? " [unknown]" : "";
+          const examplesText = row.examples.length > 0 ? ` examples=${row.examples.join(",")}` : "";
+          console.log(`  - ${row.category}: ${row.count}${marker}${examplesText}`);
+        }
+        if (report.unknown.length > 0) {
+          console.log("");
+          console.log("Discovered/unknown categories:");
+          for (const row of report.unknown) {
+            const examplesText = row.examples.length > 0 ? ` examples=${row.examples.join(",")}` : "";
+            console.log(`  - ${row.category}: ${row.count}${examplesText}`);
+          }
+          console.log("");
+          console.log("Remap with: openclaw hybrid-mem categories remap --from <unknown> --to <configured> --apply");
+        } else {
+          console.log("");
+          console.log("Discovered/unknown categories: 0");
+        }
+        if (report.configuredOnly.length > 0) {
+          console.log(`Configured categories with no active facts: ${report.configuredOnly.join(", ")}`);
+        }
+      }),
+    );
+
+  categoriesCommand
+    .command("remap")
+    .description("Bulk-remap facts from one category to a configured category (dry-run by default)")
+    .requiredOption("--from <category>", "Existing category to remap")
+    .requiredOption("--to <category>", "Configured destination category")
+    .option("--apply", "Apply the remap; default is dry-run")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { from?: string; to?: string; apply?: boolean; json?: boolean }) => {
+        const from = (opts?.from ?? "").trim();
+        const to = (opts?.to ?? "").trim();
+        if (!from || !to) {
+          console.error("error: --from and --to are required");
+          process.exitCode = 1;
+          return;
+        }
+        if (from === to) {
+          console.error("error: --from and --to must differ");
+          process.exitCode = 1;
+          return;
+        }
+        if (!isValidCategory(to)) {
+          console.error(
+            `error: --to must be a configured category. Valid categories: ${getMemoryCategories().join(", ")}`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        const report = factsDb.remapCategory(from, to, opts?.apply === true);
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(`Category remap ${report.apply ? "applied" : "dry-run"}: ${report.from} -> ${report.to}`);
+        console.log(`Matched facts: ${report.matched} (${report.activeMatched} active)`);
+        console.log(`Changed facts: ${report.changed}`);
+        if (!report.apply) {
+          console.log("Dry-run only. Re-run with --apply to update facts.");
         }
       }),
     );

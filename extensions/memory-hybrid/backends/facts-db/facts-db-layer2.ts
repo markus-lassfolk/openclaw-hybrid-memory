@@ -71,6 +71,8 @@ import {
   linksCount as linksCountImpl,
   listForDashboard as listForDashboardImpl,
   metaPatternsCount as metaPatternsCountImpl,
+  auditCategories as auditCategoriesImpl,
+  remapCategory as remapCategoryImpl,
   statsBreakdownByCategory as statsBreakdownByCategoryImpl,
   statsBreakdownByDecayClass as statsBreakdownByDecayClassImpl,
   statsBreakdownBySource as statsBreakdownBySourceImpl,
@@ -294,6 +296,16 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Distinct memory categories present in non-superseded facts (for CLI stats/categories). */
   uniqueMemoryCategories(): string[] {
     return uniqueMemoryCategoriesImpl(this.liveDb);
+  }
+
+  /** Compare configured categories with active categories present in facts. */
+  auditCategories(configuredCategories: readonly string[], exampleLimit = 5): ReturnType<typeof auditCategoriesImpl> {
+    return auditCategoriesImpl(this.liveDb, configuredCategories, exampleLimit);
+  }
+
+  /** Bulk-remap facts from one category to another; dry-run unless apply=true. */
+  remapCategory(from: string, to: string, apply = false): ReturnType<typeof remapCategoryImpl> {
+    return remapCategoryImpl(this.liveDb, from, to, apply);
   }
 
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
