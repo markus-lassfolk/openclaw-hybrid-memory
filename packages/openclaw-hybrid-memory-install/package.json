@@ -6,7 +6,7 @@
     "openclaw-hybrid-memory-install": "./install.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "keywords": [
     "openclaw",

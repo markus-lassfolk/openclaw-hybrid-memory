@@ -44,15 +44,21 @@ jobs:
               - 'extensions/memory-hybrid/package*.json'
               - 'extensions/memory-hybrid/tsconfig*.json'
               - '.github/workflows/ci.yml'
+              - '.nvmrc'
 
   typecheck:
-    name: Type Check (Node ${{ matrix.node-version }})
+    name: Type Check (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          # Install >=22.12 (node:sqlite / engines); keep job name "Node 22" for branch protection.
+          - node-version: '22.12'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -71,13 +77,17 @@ jobs:
         run: cd extensions/memory-hybrid && npx tsc --noEmit
 
   lint:
-    name: Lint (Node ${{ matrix.node-version }})
+    name: Lint (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: '22.12'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -96,13 +106,17 @@ jobs:
         run: cd extensions/memory-hybrid && npm run lint
 
   test:
-    name: Test (Node ${{ matrix.node-version }})
+    name: Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: '22.12'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -129,14 +143,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.12'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.12-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run tests with coverage
@@ -158,14 +172,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.12'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.12-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run knip
@@ -182,7 +196,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.12'
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm ci
       - name: Check formatting
@@ -199,14 +213,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.12'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.12-
       - name: Install and build (dist/ required by verify-publish)
         run: cd extensions/memory-hybrid && npm ci && npm run build
       - name: verify-publish invariants
@@ -222,14 +236,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.12'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.12-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Strict type check
@@ -240,14 +254,18 @@ jobs:
     # (notably the `@duckflux/core@^0.1.0` ETARGET that broke the peer-resolved
     # `openclaw` tree before the peer range was tightened).
     # Issue #1171: also asserts the published tarball contains `dist/index.js`.
-    name: Install Smoke Test (Node ${{ matrix.node-version }})
+    name: Install Smoke Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: '22.12'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
