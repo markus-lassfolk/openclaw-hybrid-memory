@@ -100,7 +100,10 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
             ? existing.text
             : `${existing.text}
 ${entry.text}`.slice(0, 4000);
-          ctx.db.prepare("UPDATE facts SET text = ? WHERE id = ?").run(mergedText, existing.id);
+          const mergedHash = normalizedHash(mergedText);
+          ctx.db
+            .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
+            .run(mergedText, mergedHash, existing.id);
           return ctx.getById(existing.id) ?? existing;
         }
         return existing;

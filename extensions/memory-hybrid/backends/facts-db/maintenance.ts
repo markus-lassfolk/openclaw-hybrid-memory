@@ -101,8 +101,7 @@ function parsePreserveTagsForTiering(raw: string | null): string[] {
 function isStructuralCandidate(row: TierCandidate): boolean {
   if (row.key === "implicit_feedback_signal") return false;
   return (
-    (row.key != null && row.key.trim() !== "") ||
-    (row.value != null && row.value.trim() !== "") ||
+    (row.key != null && row.key.trim() !== "" && row.value != null && row.value.trim() !== "") ||
     row.decay_class === "permanent"
   );
 }
