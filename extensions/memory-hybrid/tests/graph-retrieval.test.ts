@@ -667,6 +667,33 @@ describe("expandGraph: various link types", () => {
     expect(result.some((r) => r.factId.startsWith("src-"))).toBe(false);
     expect(result.some((r) => r.factId === "semantic")).toBe(true);
   });
+
+  it("does not include session heartbeat facts through high-degree DERIVED_FROM hubs at depth 2", () => {
+    const seed = makeEntry("seed");
+    const hub = makeEntry("hub", { text: "[consolidated from 205 events] session_start; session_end" });
+    const semantic = makeEntry("semantic");
+    const entries = [seed, hub, semantic];
+    const hubLinks = [];
+    for (let i = 0; i < 205; i++) {
+      const id = `heartbeat-${i}`;
+      entries.push(makeEntry(id, { text: i % 2 === 0 ? "session_start" : "session_end" }));
+      hubLinks.push({ id: `d-${i}`, targetFactId: id, linkType: "DERIVED_FROM", strength: 1.0 });
+    }
+    const db = buildMockDb(
+      entries,
+      {
+        seed: [{ id: "to-hub", targetFactId: "hub", linkType: "RELATED_TO", strength: 1.0 }],
+        hub: [...hubLinks, { id: "semantic-link", targetFactId: "semantic", linkType: "RELATED_TO", strength: 1.0 }],
+      },
+      {},
+    );
+
+    const result = expandGraph(db, [{ factId: "seed", score: 1.0, entry: seed }], { maxDepth: 2 });
+
+    expect(result.some((r) => r.factId.startsWith("heartbeat-"))).toBe(false);
+    expect(result.some((r) => r.factId === "hub")).toBe(true);
+    expect(result.some((r) => r.factId === "semantic")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

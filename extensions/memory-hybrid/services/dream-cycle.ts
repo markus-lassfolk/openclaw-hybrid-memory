@@ -178,11 +178,11 @@ export function buildDigestSummary(counts: {
  * Run episodic consolidation:
  *  1. Fetch unconsolidated event log entries older than consolidateAfterDays.
  *  2. Group by primary entity.
- *  3. For each group, create a consolidated fact.
- *  4. For each source event, create a short-lived "episodic source" fact and a
- *     DERIVED_FROM link pointing from the consolidated fact to the source fact.
- *  5. Mark all events as consolidated in the event log.
- *  6. Prune the immediately-expired source facts (DERIVED_FROM links remain for provenance).
+ *  3. For each group, create a consolidated fact with structured provenance_json.
+ *  4. Mark all events as consolidated in the event log.
+ *
+ * Historical versions created one DERIVED_FROM graph edge per source event; new
+ * consolidations keep that lineage on the fact row to avoid provenance mega-hubs.
  */
 export async function runEpisodicConsolidation(
   factsDb: FactsDB,

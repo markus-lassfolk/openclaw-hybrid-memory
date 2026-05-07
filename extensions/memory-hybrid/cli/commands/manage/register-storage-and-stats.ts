@@ -10,6 +10,7 @@ import { runContextAudit } from "../../../services/context-audit.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
+import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { getEnv } from "../../../utils/env-manager.js";
@@ -787,6 +788,70 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           });
           throw err;
         }
+      }),
+    );
+
+  const graph = mem.command("graph").description("Graph repair and audit utilities");
+  graph
+    .command("repair")
+    .description("Repair historical graph pathologies")
+    .option("--collapse-event-hubs", "Collapse legacy dream-cycle/session heartbeat DERIVED_FROM mega-hubs")
+    .option("--apply", "Apply mutations. Omit for dry-run")
+    .option("--threshold <n>", "Outbound DERIVED_FROM threshold for hub candidates", "500")
+    .option("--json", "Emit JSON instead of markdown")
+    .action(
+      withExit(async (opts?: { collapseEventHubs?: boolean; apply?: boolean; threshold?: string; json?: boolean }) => {
+        if (!opts?.collapseEventHubs) {
+          console.error("error: graph repair currently requires --collapse-event-hubs");
+          process.exitCode = 1;
+          return;
+        }
+        const threshold = Number.parseInt(opts.threshold ?? "500", 10);
+        if (!Number.isFinite(threshold) || threshold < 1) {
+          console.error("error: --threshold must be a positive integer");
+          process.exitCode = 1;
+          return;
+        }
+        const raw = factsDb.getRawDb?.();
+        if (!raw) {
+          console.error("error: raw SQLite handle is unavailable");
+          process.exitCode = 1;
+          return;
+        }
+        const report = repairEventHubs(raw, { threshold, apply: opts.apply === true });
+        if (opts.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(`# Graph repair: collapse event hubs (${report.apply ? "apply" : "dry-run"})`);
+        console.log("");
+        console.log(`Threshold: ${report.threshold}`);
+        console.log(`Candidates: ${report.candidates.length}`);
+        console.log(`Before max outbound DERIVED_FROM: ${report.before.maxOutboundDerivedFrom}`);
+        console.log(`Before facts over threshold: ${report.before.overThresholdFacts}`);
+        console.log(`Before link types: ${JSON.stringify(report.before.linkTypes)}`);
+        if (report.candidates.length > 0) {
+          console.log("");
+          console.log("Candidate examples:");
+          for (const candidate of report.candidates.slice(0, 10)) {
+            console.log(
+              `- ${candidate.factId}: ${candidate.outboundDerivedFrom} DERIVED_FROM (${candidate.reason}) ${candidate.textPreview}`,
+            );
+          }
+        }
+        if (!report.apply) {
+          console.log("");
+          console.log(
+            "Dry-run only. Re-run with --apply to migrate provenance_json and delete eligible DERIVED_FROM links.",
+          );
+          return;
+        }
+        console.log("");
+        console.log(`Migrated facts: ${report.migratedFacts}`);
+        console.log(`Deleted DERIVED_FROM links: ${report.deletedLinks}`);
+        console.log(`After max outbound DERIVED_FROM: ${report.after?.maxOutboundDerivedFrom ?? 0}`);
+        console.log(`After facts over threshold: ${report.after?.overThresholdFacts ?? 0}`);
+        console.log(`After link types: ${JSON.stringify(report.after?.linkTypes ?? [])}`);
       }),
     );
 
