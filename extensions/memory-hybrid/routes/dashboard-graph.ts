@@ -3,6 +3,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import { filterTraversableLinks } from "../services/graph-retrieval.js";
 
 interface MemoryGraphNode {
   id: string;
@@ -67,8 +68,6 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   };
 }
 
-const DASHBOARD_MAX_LINKS_PER_NODE = 200;
-
 function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDepth: number): string[] {
   const seen = new Set(seeds);
   let frontier = [...seeds];
@@ -76,12 +75,7 @@ function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDept
     const next: string[] = [];
     for (const id of frontier) {
       const links = [...factsDb.getLinksFrom(id), ...factsDb.getLinksTo(id)];
-      const traversable =
-        links.length > DASHBOARD_MAX_LINKS_PER_NODE
-          ? links
-              .filter((link) => link.linkType !== "CONTRADICTS" && link.linkType !== "DERIVED_FROM")
-              .slice(0, DASHBOARD_MAX_LINKS_PER_NODE)
-          : links.filter((link) => link.linkType !== "CONTRADICTS");
+      const traversable = filterTraversableLinks(links);
       for (const link of traversable) {
         const other = "targetFactId" in link ? link.targetFactId : link.sourceFactId;
         if (seen.has(other)) continue;

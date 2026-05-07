@@ -99,7 +99,7 @@ interface GraphRetrievalOptions {
 export const HOP_SCORE_DECAY: readonly number[] = [1.0, 0.7, 0.5, 0.35];
 export const HUB_GUARD_MAX_LINKS_PER_NODE = 200;
 
-function filterTraversableLinks<T extends { linkType: string }>(links: T[]): T[] {
+export function filterTraversableLinks<T extends { linkType: string }>(links: T[]): T[] {
   if (links.length <= HUB_GUARD_MAX_LINKS_PER_NODE) return links.filter((link) => link.linkType !== "CONTRADICTS");
   return links
     .filter((link) => link.linkType !== "CONTRADICTS" && link.linkType !== "DERIVED_FROM")
