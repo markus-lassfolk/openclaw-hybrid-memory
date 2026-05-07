@@ -182,6 +182,10 @@ export function cleanupImplicitFeedbackDuplicates(
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
   );
+  const supersedeStmt = rawDb.prepare(
+    "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
+  );
+  let supersededAny = false;
   rawDb.prepare("BEGIN").run();
   try {
     for (const row of rows) {
@@ -192,7 +196,9 @@ export function cleanupImplicitFeedbackDuplicates(
         canonical.push({ id: row.id, text: row.text });
         continue;
       }
-      if (!factsDb.supersede(row.id, match.id)) continue;
+      const sup = supersedeStmt.run(nowSec, match.id, nowSec, row.id);
+      if ((sup.changes ?? 0) <= 0) continue;
+      supersededAny = true;
       reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
       collapsed++;
     }
@@ -200,6 +206,9 @@ export function cleanupImplicitFeedbackDuplicates(
   } catch (err) {
     rawDb.prepare("ROLLBACK").run();
     throw err;
+  }
+  if (supersededAny) {
+    factsDb.invalidateSupersededTextsCache();
   }
   const lastRow = rows[rows.length - 1];
   return {

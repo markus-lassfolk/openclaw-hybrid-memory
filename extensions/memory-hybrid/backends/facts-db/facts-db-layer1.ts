@@ -447,6 +447,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return result.changes > 0;
   }
 
+  /**
+   * Invalidate cached superseded-text snapshots after supersede-equivalent SQL on `liveDb`
+   * (e.g. maintenance running inside an explicit transaction where {@link supersede} is not used).
+   */
+  invalidateSupersededTextsCache(): void {
+    this.invalidateSupersededCache();
+  }
+
   /** Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
   findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
     return findSimilarForClassificationImpl(this.liveDb, text, entity, key, limit);

@@ -126,10 +126,28 @@ interface GraphRetrievalOptions {
 export const HOP_SCORE_DECAY: readonly number[] = [1.0, 0.7, 0.5, 0.35];
 export const HUB_GUARD_MAX_LINKS_PER_NODE = 200;
 
-export function filterTraversableLinks<T extends { linkType: string }>(links: T[]): T[] {
+export function filterTraversableLinks<
+  T extends {
+    linkType: string;
+    strength?: number;
+    id?: string;
+    targetFactId?: string;
+    sourceFactId?: string;
+  },
+>(links: T[]): T[] {
   const traversable = links.filter((link) => link.linkType !== "CONTRADICTS");
   if (traversable.length <= HUB_GUARD_MAX_LINKS_PER_NODE) return traversable;
-  return traversable.filter((link) => link.linkType !== "DERIVED_FROM").slice(0, HUB_GUARD_MAX_LINKS_PER_NODE);
+  const capped = traversable.filter((link) => link.linkType !== "DERIVED_FROM");
+  const sorted = [...capped].sort((a, b) => {
+    const ds = (b.strength ?? 0) - (a.strength ?? 0);
+    if (ds !== 0) return ds;
+    const endA = a.targetFactId ?? a.sourceFactId ?? "";
+    const endB = b.targetFactId ?? b.sourceFactId ?? "";
+    const ka = `${a.linkType}\0${endA}\0${a.id ?? ""}`;
+    const kb = `${b.linkType}\0${endB}\0${b.id ?? ""}`;
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  return sorted.slice(0, HUB_GUARD_MAX_LINKS_PER_NODE);
 }
 
 // ---------------------------------------------------------------------------
