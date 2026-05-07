@@ -430,6 +430,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const activity = factsDb.recentActivity();
           const decayBreakdown = factsDb.statsBreakdownByDecayClass();
           const sourceBreakdown = factsDb.statsBySource();
+          const dailyWrites = factsDb.statsDailyWrites().slice(0, 10);
           const implicitFeedbackSignals = countImplicitFeedbackTrajectorySignals(factsDb);
           const cronJobs = extras.getCronJobsStatus?.() ?? [];
 
@@ -480,6 +481,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Reflection (patterns/rules): ${reflectionPatternsCount}/${reflectionRulesCount}`);
           console.log(`Self-correction incidents: ${selfCorrectionCount}`);
           console.log(`Language keywords: ${languageKeywordsCount}`);
+          if (dailyWrites.length > 0) {
+            console.log("Per-source writes/day (latest):");
+            for (const row of dailyWrites) {
+              const dropped = row.dropped > 0 ? `, dropped=${row.dropped}` : "";
+              console.log(`  ${row.day} ${row.source}: count=${row.count}${dropped}`);
+            }
+          }
           if (unresolvedContradictions > 0) {
             console.log(
               `Contradictions (unresolved): ${unresolvedContradictions} — run 'openclaw hybrid-mem resolve-contradictions'`,
@@ -600,6 +608,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         } else if (efficiency) {
           const byTier = breakdown;
           const bySource = factsDb.statsBySource();
+          const dailyWrites = factsDb.statsDailyWrites().slice(0, 10);
           const estimatedTokens = factsDb.estimateStoredTokens();
           console.log("=== Memory Efficiency Stats ===");
           console.log(
@@ -608,6 +617,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Sources: ${Object.keys(bySource).length}`);
           for (const [src, count] of Object.entries(bySource).slice(0, 5)) {
             console.log(`  ${src}: ${count}`);
+          }
+          if (dailyWrites.length > 0) {
+            console.log("Per-source writes/day (latest):");
+            for (const row of dailyWrites) {
+              const dropped = row.dropped > 0 ? `, dropped=${row.dropped}` : "";
+              console.log(`  ${row.day} ${row.source}: count=${row.count}${dropped}`);
+            }
           }
           console.log(`Estimated tokens (all tiers): ~${estimatedTokens}`);
           console.log("");
