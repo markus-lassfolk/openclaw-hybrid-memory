@@ -209,7 +209,11 @@ export type HybridMemCliContext = {
     pendingFactIds?: string[];
     enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
   }>;
-  runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
+  runSelfCorrectionExtract: (opts: {
+    days?: number;
+    outputPath?: string;
+    verbose?: boolean;
+  }) => Promise<SelfCorrectionExtractResult>;
   runSelfCorrectionRun: (opts: {
     extractPath?: string;
     incidents?: Array<{
@@ -285,9 +289,16 @@ export type HybridMemCliContext = {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
     getProposalsAvailable: () => boolean;
-    getWalPending: () => number;
+    getWalPending: () => Promise<number> | number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
+    getCronJobsStatus?: () => Array<{
+      name: string;
+      pluginJobId: string;
+      enabled: boolean;
+      scheduleExpr: string | null;
+      lastRunAtMs: number | null;
+    }>;
   };
   listCommands?: {
     listProposals: (opts: { status?: string }) => Promise<

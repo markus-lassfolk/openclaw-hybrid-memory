@@ -605,6 +605,48 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
       }
       return { sqliteBytes, lanceBytes };
     },
+    getCronJobsStatus: () => {
+      const owHome =
+        process.env.OPENCLAW_HOME?.trim() || join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".openclaw");
+      const cronStorePath = join(owHome, "cron", "jobs.json");
+      if (!existsSync(cronStorePath)) return [];
+      let store: { jobs?: unknown[] };
+      try {
+        store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "stats-read-jobs-json",
+          severity: "info",
+          subsystem: "cli",
+        });
+        return [];
+      }
+      if (!Array.isArray(store.jobs)) return [];
+      const out: Array<{
+        name: string;
+        pluginJobId: string;
+        enabled: boolean;
+        scheduleExpr: string | null;
+        lastRunAtMs: number | null;
+      }> = [];
+      for (const j of store.jobs as Array<Record<string, unknown>>) {
+        if (!j || typeof j !== "object") continue;
+        const pluginJobId = typeof j.pluginJobId === "string" ? j.pluginJobId : "";
+        if (!pluginJobId.startsWith("hybrid-mem:")) continue;
+        const sched = j.schedule as { expr?: string } | string | undefined;
+        const scheduleExpr = typeof sched === "string" ? sched : typeof sched?.expr === "string" ? sched.expr : null;
+        const state = (typeof j.state === "object" && j.state !== null ? j.state : {}) as Record<string, unknown>;
+        const lastRunAtMs = typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : null;
+        out.push({
+          name: typeof j.name === "string" ? j.name : pluginJobId,
+          pluginJobId,
+          enabled: j.enabled !== false,
+          scheduleExpr,
+          lastRunAtMs,
+        });
+      }
+      return out;
+    },
   };
 }
 

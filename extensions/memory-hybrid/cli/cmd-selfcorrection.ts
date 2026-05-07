@@ -58,10 +58,11 @@ const DEFAULT_SELF_CORRECTION = {
  * Extract self-correction incidents from sessions.
  */
 export function runSelfCorrectionExtractForCli(
-  _ctx: HandlerContext,
+  ctx: HandlerContext,
   opts: {
     days?: number;
     outputPath?: string;
+    verbose?: boolean;
     /** Pre-filtered session file paths. When provided, skips gatherSessionFiles(). */
     filePaths?: string[];
   },
@@ -70,6 +71,16 @@ export function runSelfCorrectionExtractForCli(
     opts.filePaths ?? gatherSessionFiles({ days: opts.days ?? 3 }).map((f: { path: string; mtime: number }) => f.path);
   if (filePaths.length === 0) {
     return { incidents: [], sessionsScanned: 0 };
+  }
+  if (opts.verbose) {
+    ctx.logger.info?.(`memory-hybrid: self-correction-extract — scanning ${filePaths.length} session file(s)`);
+    const cap = 40;
+    for (let i = 0; i < Math.min(filePaths.length, cap); i++) {
+      ctx.logger.info?.(`  ${filePaths[i]}`);
+    }
+    if (filePaths.length > cap) {
+      ctx.logger.info?.(`  ... and ${filePaths.length - cap} more`);
+    }
   }
   try {
     const result = runSelfCorrectionExtract({
@@ -162,7 +173,11 @@ export async function runSelfCorrectionRunForCli(
           }
         }
       }
-      const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3, filePaths: scFilePaths });
+      const extractResult = runSelfCorrectionExtractForCli(ctx, {
+        days: 3,
+        filePaths: scFilePaths,
+        verbose: opts.verbose,
+      });
       incidents = extractResult.incidents;
     }
     if (incidents.length === 0) {
@@ -249,6 +264,11 @@ export async function runSelfCorrectionRunForCli(
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+      }
+      if (opts.verbose && analysed.length > 0) {
+        logger.info?.(
+          `memory-hybrid: ${SCAN_TYPE} — LLM returned ${analysed.length} remediation item(s) (before cap/filter)`,
+        );
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });

@@ -37,6 +37,7 @@ import {
 } from "../services/embeddings.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { readGuardTimestampMs } from "../services/cron-guard.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
@@ -126,6 +127,8 @@ export async function runVerifyForCli(
   const _OFF = noEmoji ? "[off]" : "❌ off";
   const issues: string[] = [];
   const fixes: string[] = [];
+  /** Non-blocking warnings: shown alongside "All checks passed" so signals like a missing heartbeat or overdue cron are not silently buried. */
+  const warnings: string[] = [];
   let configOk = true;
   let sqliteOk = false;
   let lanceOk = false;
@@ -1090,13 +1093,18 @@ export async function runVerifyForCli(
       `${OK} Enabled — heartbeatStewardship: ${gs.heartbeatStewardship ? "on" : "off"} (plugin does not schedule LLM turns; OpenClaw/cron delivers messages)`,
     );
     const matchers = getHeartbeatMatchersForVerify(gs);
-    log(
-      `  Heartbeat patterns compiled: ${matchers.length} matcher(s). See docs/GOAL-STEWARDSHIP-OPERATOR.md (Heartbeat scheduling checklist).`,
-    );
+    const patternsPreview = (gs.heartbeatPatterns ?? []).slice(0, 3);
+    const patternsTail =
+      (gs.heartbeatPatterns?.length ?? 0) > patternsPreview.length
+        ? `, … (${(gs.heartbeatPatterns?.length ?? 0) - patternsPreview.length} more)`
+        : "";
+    const patternsHint = patternsPreview.length > 0 ? `: ${patternsPreview.join(" | ")}${patternsTail}` : "";
+    log(`  Heartbeat patterns compiled: ${matchers.length} matcher(s)${patternsHint}.`);
+    log("  See docs/GOAL-STEWARDSHIP-OPERATOR.md (Heartbeat scheduling checklist).");
     try {
       if (!existsSync(cronStorePath)) {
         log(
-          `${WARN} Cannot confirm heartbeat cron: ${cronStorePath} not found. Add jobs via OpenClaw or run \`openclaw hybrid-mem verify --fix\` for maintenance jobs; for goal stewardship prepend, ensure a job message matches your heartbeatPatterns.`,
+          `${WARN} Cannot confirm heartbeat cron: ${cronStorePath} not found. Run \`openclaw hybrid-mem verify --fix\` to seed maintenance jobs, then add a small heartbeat job whose message matches one of the patterns above.`,
         );
       } else {
         const raw = readFileSync(cronStorePath, "utf-8");
@@ -1111,13 +1119,26 @@ export async function runVerifyForCli(
             `${WARN} No job message text found in cron store (payload.message / message empty). Stewardship prepends only run when the agent sees a user message matching heartbeat patterns.`,
           );
         } else if (h.matchingJobIds.length === 0) {
+          const enabledSample = entries
+            .filter((e) => e.enabled && e.text.length > 0)
+            .slice(0, 3)
+            .map((e) => e.id);
           log(
-            `${WARN} No ENABLED cron job message matches current heartbeat patterns (${withText} job(s) with text, ${h.disabledMatchingJobIds.length} disabled match). Update job messages or goalStewardship.heartbeatPatterns.`,
+            `${WARN} No enabled cron job message matches current heartbeat patterns (${withText} job(s) with text${
+              h.disabledMatchingJobIds.length > 0 ? `; ${h.disabledMatchingJobIds.length} disabled job(s) match` : ""
+            }).`,
           );
+          if (enabledSample.length > 0) {
+            log(`         Checked enabled jobs (sample): ${enabledSample.join(", ")}`);
+          }
+          log(
+            "         Fix: either (a) add a small dedicated heartbeat job whose payload.message contains one of the patterns above (recommended), or (b) extend goalStewardship.heartbeatPatterns to match an existing job message. Maintenance jobs are intentionally not heartbeat-shaped.",
+          );
+          warnings.push("goal stewardship: no enabled cron job message matches heartbeat patterns");
         } else {
           log(`${OK} Cron jobs with heartbeat-matching message: ${h.matchingJobIds.join(", ")}`);
           if (h.disabledMatchingJobIds.length > 0) {
-            log(`ℹ️ (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`);
+            log(`ℹ (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`);
           }
         }
       }
@@ -1138,7 +1159,22 @@ export async function runVerifyForCli(
     "weekly-deep-maintenance",
     "monthly-consolidation",
     "weekly-persona-proposals",
+    "nightly-dream-cycle",
+    "sensor-sweep",
   ]);
+  const nightlyDreamCycleRe = /nightly[- ]?dream[- ]?cycle|dream[- ]?cycle/i;
+  const sensorSweepRe = /sensor[- ]?sweep/i;
+  /** Approximate run interval for "stale" detection per cron expression. */
+  function approxIntervalMs(cron?: string | null): number | null {
+    if (!cron) return null;
+    const t = cron.trim();
+    if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
+    if (/^\d+\s+\d+\s+\*\s+\*\s+[0-6]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
+    if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
+    const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
+    if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
+    return null;
+  }
 
   /** Normalize job name to slug for matching: lowercase, spaces to single hyphen. */
   function nameToSlug(n: string): string {
@@ -1173,7 +1209,12 @@ export async function runVerifyForCli(
     if (monthlyConsolidationRe.test(nameLower)) {
       return "monthly-consolidation";
     }
-    // Fallback: if slug matches a known key exactly (e.g. "Weekly Reflection" -> "weekly-reflection"), use it
+    if (nightlyDreamCycleRe.test(nameLower)) {
+      return "nightly-dream-cycle";
+    }
+    if (sensorSweepRe.test(nameLower)) {
+      return "sensor-sweep";
+    }
     if (knownJobSlugs.has(normalized)) {
       return normalized;
     }
@@ -1185,16 +1226,20 @@ export async function runVerifyForCli(
 
   // Helper function to format job status display
   function formatJobStatus(job: JobInfo, label: string, indent: string, log: (msg: string) => void): void {
-    const statusIcon = job.enabled ? OK : PAUSE;
-    const statusText = job.enabled ? "enabled " : "disabled";
+    const isFeatureGated = job.featureGateDisabled === true;
+    const statusIcon = job.enabled ? OK : isFeatureGated ? "○" : PAUSE;
+    const statusText = job.enabled ? "enabled " : isFeatureGated ? "gated   " : "disabled";
 
-    let statusDetails = "";
     const parts: string[] = [];
+
+    if (job.scheduleExpr) parts.push(job.scheduleExpr);
 
     if (job.state?.lastRunAtMs) {
       const lastStatus = job.state.lastStatus ?? "unknown";
       const lastRun = `last: ${relativeTime(job.state.lastRunAtMs)} (${lastStatus})`;
       parts.push(lastRun);
+    } else if (job.lastRunGuardMs) {
+      parts.push(`last: ${relativeTime(job.lastRunGuardMs)} (guard)`);
     } else {
       parts.push("last: never");
     }
@@ -1203,26 +1248,40 @@ export async function runVerifyForCli(
       parts.push(`next: ${relativeTime(job.state.nextRunAtMs)}`);
     }
 
-    if (parts.length > 0) {
-      statusDetails = `  ${parts.join("  ")}`;
+    const lastMs = job.state?.lastRunAtMs ?? job.lastRunGuardMs ?? null;
+    const interval = approxIntervalMs(job.scheduleExpr ?? null);
+    let stale = false;
+    if (job.enabled && interval) {
+      if (lastMs == null || Date.now() - lastMs > interval * 1.5) stale = true;
     }
 
-    log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}${statusDetails}`);
+    const note = isFeatureGated
+      ? "  (disabled by feature gate; will re-enable when feature turns on)"
+      : stale
+        ? "  ⚠ overdue"
+        : "";
 
-    // Show error details on next line if present
+    log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}  ${parts.join("  ")}${note}`);
+
     if (job.state?.lastError && job.state.lastStatus === "error") {
       const errorPreview = job.state.lastError.slice(0, 100);
       log(`${indent}   └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
     }
   }
 
-  // Enhanced job status display
   log("\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):");
 
-  // Read all jobs with state information
   interface JobInfo {
     name: string;
     enabled: boolean;
+    /** Set by ensureMaintenanceCronJobs when a feature gate disabled the job. */
+    featureGateDisabled?: boolean;
+    /** Cron expression (string or { expr }) so verify can show schedule + flag overdue. */
+    scheduleExpr?: string | null;
+    /** Lifted from `~/.openclaw/cron/guard/<job>.ms` when the runner has not written `state.lastRunAtMs` yet. */
+    lastRunGuardMs?: number | null;
+    /** Set when the job carries a `pluginJobId` starting with `hybrid-mem:` (treat the `Other` list as truly external). */
+    isHybridMem?: boolean;
     state?: {
       nextRunAtMs?: number;
       lastRunAtMs?: number;
@@ -1244,24 +1303,37 @@ export async function runVerifyForCli(
           const job = j as Record<string, unknown>;
           const name = String(job.name ?? "");
           const enabled = job.enabled !== false;
+          const featureGateDisabled = job.featureGateDisabled === true;
           const state = job.state as
             | { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string }
             | undefined;
 
-          // Extract payload message for fallback matching
           const payload = job.payload as Record<string, unknown> | undefined;
           const msg = String((payload?.message ?? job.message) || "");
+          const sched = job.schedule as { expr?: string } | string | undefined;
+          const scheduleExpr = typeof sched === "string" ? sched : typeof sched?.expr === "string" ? sched.expr : null;
 
-          // Map job names to our known jobs (check both name and payload message)
+          const pid = String(job.pluginJobId ?? "");
+          const isHybridMem = pid.startsWith("hybrid-mem:");
+          const guardName = name.replace(/\s+/g, "-");
+          const lastRunGuardMs = isHybridMem ? readGuardTimestampMs(guardName, openclawDir) : null;
+
           const canonicalKey = getCanonicalJobKey(name, msg);
           if (canonicalKey) {
-            allJobs.set(canonicalKey, { name, enabled, state });
+            allJobs.set(canonicalKey, {
+              name,
+              enabled,
+              featureGateDisabled,
+              scheduleExpr,
+              lastRunGuardMs,
+              isHybridMem,
+              state,
+            });
           }
         }
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
-      // Continue with incomplete data
     }
   }
 
@@ -1317,12 +1389,30 @@ export async function runVerifyForCli(
     { key: "weekly-deep-maintenance", description: "deep maintenance", docsPath: null },
     { key: "monthly-consolidation", description: "monthly consolidation", docsPath: null },
     { key: "weekly-persona-proposals", description: "persona proposals", docsPath: null },
+    {
+      key: "nightly-dream-cycle",
+      description: "dream cycle",
+      docsPath: null,
+      featureEnabled: cfg.nightlyCycle?.enabled === true,
+    },
+    {
+      key: "sensor-sweep",
+      description: "sensor sweep",
+      docsPath: null,
+      featureEnabled: cfg.sensorSweep?.enabled === true,
+    },
   ];
 
-  for (const { key, description, docsPath } of jobsToDisplay) {
+  for (const entry of jobsToDisplay) {
+    const { key, description, docsPath } = entry;
+    const featureEnabled = (entry as { featureEnabled?: boolean }).featureEnabled;
     const job = allJobs.get(key);
 
     if (!job) {
+      if (featureEnabled === false) {
+        log(`  ○ ${key.padEnd(30)} not installed (feature off in config)`);
+        continue;
+      }
       log(`  ${FAIL} ${key.padEnd(30)} missing`);
       const fixMsg = docsPath
         ? `Optional: Set up ${description} via jobs. See ${docsPath}. Run 'openclaw hybrid-mem verify --fix' to add.`
@@ -1334,13 +1424,13 @@ export async function runVerifyForCli(
     formatJobStatus(job, key, "  ", log);
   }
 
-  // Display any unknown/custom jobs not in the hardcoded list
+  // Truly external jobs: those not in the hybrid-mem canonical list AND not pluginJobId hybrid-mem:*
   const knownKeys = new Set(jobsToDisplay.map((j) => j.key));
-  const unknownJobs = Array.from(allJobs.entries()).filter(([key]) => !knownKeys.has(key));
+  const otherJobs = Array.from(allJobs.entries()).filter(([key, job]) => !knownKeys.has(key) && !job.isHybridMem);
 
-  if (unknownJobs.length > 0) {
-    log("\n  Other custom jobs:");
-    for (const [_key, job] of unknownJobs) {
+  if (otherJobs.length > 0) {
+    log("\n  Other custom jobs (not managed by hybrid-mem):");
+    for (const [_key, job] of otherJobs) {
       formatJobStatus(job, job.name, "    ", log);
     }
   }
@@ -1483,10 +1573,30 @@ export async function runVerifyForCli(
     }
   }
 
+  // Surface overdue / never-run cron jobs as warnings so the summary mentions them even when health checks pass.
+  for (const [key, job] of allJobs) {
+    if (!job.enabled) continue;
+    const lastMs = job.state?.lastRunAtMs ?? job.lastRunGuardMs ?? null;
+    const interval = approxIntervalMs(job.scheduleExpr ?? null);
+    if (interval && (lastMs == null || Date.now() - lastMs > interval * 1.5)) {
+      warnings.push(
+        `cron job ${key} is overdue: last=${lastMs ? new Date(lastMs).toISOString() : "never"}, schedule=${job.scheduleExpr ?? "?"}`,
+      );
+    }
+  }
+
   if (allOk) {
-    log("\nAll checks passed.");
+    if (warnings.length === 0) {
+      log("\nAll checks passed.");
+    } else {
+      log(`\nAll critical checks passed, but ${warnings.length} warning(s):`);
+      for (const w of warnings) log(`  ⚠ ${w}`);
+      log(
+        "  Tip: re-run after the next scheduled window. If 'last: never' persists, confirm the OpenClaw gateway is running and that ~/.openclaw/cron/guard/<job>.ms is being written.",
+      );
+    }
     if (restartPending) {
-      process.exitCode = 2; // Scripting: 2 = restart pending (gateway restart recommended)
+      process.exitCode = 2;
     }
     log(
       "Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.",

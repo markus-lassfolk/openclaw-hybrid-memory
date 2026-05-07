@@ -140,7 +140,11 @@ export type ManageContext = {
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
   }>;
-  runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
+  runSelfCorrectionExtract: (opts: {
+    days?: number;
+    outputPath?: string;
+    verbose?: boolean;
+  }) => Promise<SelfCorrectionExtractResult>;
   runAnalyzeFeedbackPhrases?: (opts: {
     days?: number;
     model?: string;
@@ -178,6 +182,14 @@ export type ManageContext = {
     getWalPending: () => Promise<number>;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
+    /** Snapshot of `~/.openclaw/cron/jobs.json` rows whose pluginJobId starts with `hybrid-mem:`. */
+    getCronJobsStatus?: () => Array<{
+      name: string;
+      pluginJobId: string;
+      enabled: boolean;
+      scheduleExpr: string | null;
+      lastRunAtMs: number | null;
+    }>;
   };
   listCommands?: {
     listProposals: (opts: {

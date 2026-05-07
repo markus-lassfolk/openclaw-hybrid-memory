@@ -15,7 +15,7 @@ This matrix shows **which maintenance tasks run** in each context (installation,
 | **Auto-classify** ("other" → categories) | No            | No                                       | Yes (5 min delay, then every 24 h if enabled)       | No                                                   | No                                |
 | **Proposals prune** (expired)            | No            | No                                       | Yes (every 24 h if personaProposals enabled)        | No                                                   | No                                |
 | **Language keywords build**              | No            | No                                       | Yes (3s if no file, then every N days if autoBuild) | Yes (monthly-consolidation step 2)                   | Yes                               |
-| **Session distill** (facts from logs)    | No            | No                                       | No                                                  | Yes (nightly-memory-sweep step 2)                    | Yes (3 days, if distill enabled)  |
+| **Session distill** (facts from logs)    | No            | No                                       | No                                                  | Yes (nightly-memory-sweep step 2)                    | Yes (1 day window in default cron, if distill enabled)  |
 | **Extract-daily**                        | No            | No                                       | No                                                  | Yes (nightly-memory-sweep step 3)                    | Yes (7 days, if enabled)          |
 | **Extract-directives**                   | No            | No                                       | No                                                  | Yes (weekly-extract-procedures step 2)               | Yes (7 days, if enabled)          |
 | **Extract-reinforcement**                | No            | No                                       | No                                                  | Yes (weekly-extract-procedures step 3)               | Yes (7 days, if enabled)          |
@@ -67,7 +67,7 @@ The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.jso
 
 | Job name                      | Schedule           | Steps (what the job message tells the agent to run)                                          |
 | ----------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 3 3. extract-daily 4. resolve-contradictions 5. enrich-entities   |
+| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 1 3. extract-daily (7d) 4. resolve-contradictions 5. enrich-entities (default cron message: bash harness + file logs under `~/.openclaw/logs/cron-hybrid-mem/`)   |
 | **self-correction-analysis**  | Daily 02:30        | self-correction-run. Exit 0 if selfCorrection disabled.                                      |
 | **nightly-dream-cycle**       | Daily 02:45        | dream-cycle (prune → consolidate → reflect). Exit 0 if nightlyCycle.enabled false.           |
 | **weekly-reflection**         | Sun 03:00          | reflect → reflect-rules → reflect-meta. Exit 0 if reflection.enabled false.                  |

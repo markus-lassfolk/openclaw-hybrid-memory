@@ -65,6 +65,64 @@ export function selfCorrectionIncidentsCount(db: DatabaseSync): number {
   return row?.count ?? 0;
 }
 
+export function countSupersededFacts(db: DatabaseSync): number {
+  const row = db.prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NOT NULL`).get() as
+    | { count: number }
+    | undefined;
+  return row?.count ?? 0;
+}
+
+export function countVerifiedFacts(db: DatabaseSync): number {
+  try {
+    const row = db.prepare("SELECT COUNT(*) as count FROM verified_facts").get() as { count: number } | undefined;
+    return row?.count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Number of active (non-superseded, non-expired) facts created at-or-after `sinceSec`. */
+export function countActiveFactsCreatedSince(db: DatabaseSync, sinceSec: number): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM facts
+         WHERE superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           AND created_at >= ?`,
+    )
+    .get(nowSec, sinceSec) as { count: number } | undefined;
+  return row?.count ?? 0;
+}
+
+/** Recent ingestion activity for the rich `stats` view. Cheap (3× COUNT). */
+export function recentActivity(db: DatabaseSync): {
+  last24h: number;
+  last7d: number;
+  last30d: number;
+  newestCreatedAtSec: number | null;
+  oldestActiveCreatedAtSec: number | null;
+} {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const day = 86400;
+  const last24h = countActiveFactsCreatedSince(db, nowSec - day);
+  const last7d = countActiveFactsCreatedSince(db, nowSec - 7 * day);
+  const last30d = countActiveFactsCreatedSince(db, nowSec - 30 * day);
+  const minMaxRow = db
+    .prepare(
+      `SELECT MIN(created_at) as min_ts, MAX(created_at) as max_ts FROM facts
+         WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+    )
+    .get(nowSec) as { min_ts: number | null; max_ts: number | null } | undefined;
+  return {
+    last24h,
+    last7d,
+    last30d,
+    newestCreatedAtSec: minMaxRow?.max_ts ?? null,
+    oldestActiveCreatedAtSec: minMaxRow?.min_ts ?? null,
+  };
+}
+
 export function countBySource(db: DatabaseSync, source: string): number {
   const row = db
     .prepare("SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = ?")
