@@ -433,6 +433,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          maxEventsPerConsolidation: cfg.nightlyCycle.maxEventsPerConsolidation,
           logRetentionDays: cfg.nightlyCycle.logRetentionDays,
           vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
           verbose,

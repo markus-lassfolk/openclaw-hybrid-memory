@@ -331,6 +331,43 @@ describe("runEpisodicConsolidation", () => {
     expect(result.factsCreated).toBe(0);
   });
 
+  it("skips lifecycle-like transport noise instead of consolidating it", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "action_taken",
+      content: { text: "session_start" },
+    });
+    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "action_taken", content: { text: "session_end" } });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+
+    expect(result.eventsConsolidated).toBe(2);
+    expect(result.factsCreated).toBe(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
+
+  it("skips oversized default groups instead of creating DERIVED_FROM mega-hubs", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    for (let i = 0; i < 4; i++) {
+      eventLog.append({
+        sessionId: "s1",
+        timestamp: oldTs,
+        eventType: "fact_learned",
+        content: { text: `Default group event ${i}` },
+      });
+    }
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger, false, 3);
+
+    expect(result.eventsConsolidated).toBe(4);
+    expect(result.factsCreated).toBe(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+  });
+
   it("groups events by entity into separate consolidated facts", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({
@@ -613,6 +650,7 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.pruneMode).toBe("both");
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(7);
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
+    expect(cfg.nightlyCycle.maxEventsPerConsolidation).toBe(200);
   });
 
   it("honors nightlyCycle.enabled when set to true", () => {
@@ -633,6 +671,7 @@ describe("NightlyCycleConfig parsing", () => {
         pruneMode: "expired",
         consolidateAfterDays: 3,
         maxUnconsolidatedAgeDays: 30,
+        maxEventsPerConsolidation: 42,
       },
     });
     expect(cfg.nightlyCycle.schedule).toBe("30 2 * * *");
@@ -640,6 +679,7 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.pruneMode).toBe("expired");
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(3);
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(30);
+    expect(cfg.nightlyCycle.maxEventsPerConsolidation).toBe(42);
   });
 
   it("clamps reflectWindowDays to max 90", () => {

@@ -640,6 +640,33 @@ describe("expandGraph: various link types", () => {
     expect(bResult).toBeDefined();
     expect(bResult?.linkPath[0].linkType).toBe(linkType);
   });
+
+  it("does not expand through high-degree DERIVED_FROM provenance hubs", () => {
+    const seed = makeEntry("seed");
+    const semantic = makeEntry("semantic");
+    const entries = [seed, semantic];
+    const derivedLinks = [];
+    for (let i = 0; i < 205; i++) {
+      const id = `src-${i}`;
+      entries.push(makeEntry(id));
+      derivedLinks.push({ id: `d-${i}`, targetFactId: id, linkType: "DERIVED_FROM", strength: 1.0 });
+    }
+    const db = buildMockDb(
+      entries,
+      {
+        seed: [
+          ...derivedLinks,
+          { id: "semantic-link", targetFactId: "semantic", linkType: "RELATED_TO", strength: 1.0 },
+        ],
+      },
+      {},
+    );
+
+    const result = expandGraph(db, [{ factId: "seed", score: 1.0, entry: seed }], { maxDepth: 1 });
+
+    expect(result.some((r) => r.factId.startsWith("src-"))).toBe(false);
+    expect(result.some((r) => r.factId === "semantic")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

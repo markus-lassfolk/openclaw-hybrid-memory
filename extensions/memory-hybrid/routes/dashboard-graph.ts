@@ -3,6 +3,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import { filterTraversableLinks } from "../services/graph-retrieval.js";
 
 interface MemoryGraphNode {
   id: string;
@@ -67,6 +68,26 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   };
 }
 
+function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDepth: number): string[] {
+  const seen = new Set(seeds);
+  let frontier = [...seeds];
+  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const links = [...factsDb.getLinksFrom(id), ...factsDb.getLinksTo(id)];
+      const traversable = filterTraversableLinks(links);
+      for (const link of traversable) {
+        const other = "targetFactId" in link ? link.targetFactId : link.sourceFactId;
+        if (seen.has(other)) continue;
+        seen.add(other);
+        next.push(other);
+      }
+    }
+    frontier = next;
+  }
+  return [...seen];
+}
+
 export function collectGraphRecallPayload(factsDb: FactsDB, query: string): GraphRecallPayload {
   const q = query.trim();
   if (!q) {
@@ -78,8 +99,7 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
     diversityWeight: 1,
   });
   const seeds = results.map((r) => r.entry.id);
-  const expanded = new Set<string>(factsDb.getConnectedFactIds(seeds, 3));
-  const ids = [...expanded].slice(0, 2000);
+  const ids = collectDashboardConnectedIds(factsDb, seeds, 3).slice(0, 2000);
   const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
   for (const id of ids) {

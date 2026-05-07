@@ -1523,6 +1523,9 @@
           },
           "maxUnconsolidatedAgeDays": {
             "type": "number"
+          },
+          "maxEventsPerConsolidation": {
+            "type": "number"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"

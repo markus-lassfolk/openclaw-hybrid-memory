@@ -71,6 +71,10 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
       typeof nightlyCycleRaw?.maxUnconsolidatedAgeDays === "number" && nightlyCycleRaw.maxUnconsolidatedAgeDays >= 1
         ? Math.min(3650, Math.floor(nightlyCycleRaw.maxUnconsolidatedAgeDays))
         : 90,
+    maxEventsPerConsolidation:
+      typeof nightlyCycleRaw?.maxEventsPerConsolidation === "number" && nightlyCycleRaw.maxEventsPerConsolidation >= 1
+        ? Math.min(1000, Math.floor(nightlyCycleRaw.maxEventsPerConsolidation))
+        : 200,
     logRetentionDays:
       typeof nightlyCycleRaw?.logRetentionDays === "number" && nightlyCycleRaw.logRetentionDays >= 0
         ? Math.min(3650, Math.floor(nightlyCycleRaw.logRetentionDays))

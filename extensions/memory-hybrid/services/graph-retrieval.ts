@@ -97,6 +97,14 @@ interface GraphRetrievalOptions {
  * Beyond index 3, the last value is reused.
  */
 export const HOP_SCORE_DECAY: readonly number[] = [1.0, 0.7, 0.5, 0.35];
+export const HUB_GUARD_MAX_LINKS_PER_NODE = 200;
+
+export function filterTraversableLinks<T extends { linkType: string }>(links: T[]): T[] {
+  if (links.length <= HUB_GUARD_MAX_LINKS_PER_NODE) return links.filter((link) => link.linkType !== "CONTRADICTS");
+  return links
+    .filter((link) => link.linkType !== "CONTRADICTS" && link.linkType !== "DERIVED_FROM")
+    .slice(0, HUB_GUARD_MAX_LINKS_PER_NODE);
+}
 
 // ---------------------------------------------------------------------------
 // Core expansion function
@@ -150,32 +158,9 @@ export function expandGraph(
   const maxSeedScore = Math.max(...seedResults.map((s) => s.score), 0.5);
   const expandedResults: GraphExpandedResult[] = [];
 
-  // Use recursive CTE to perform graph expansion in a single query if available
-  if (factsDb.expandGraphWithCTE) {
-    const expansionRows = factsDb.expandGraphWithCTE(seedIds, maxDepth, getByIdOpts);
-
-    for (const row of expansionRows) {
-      if (row.hopCount === 0) continue;
-
-      const entry = factsDb.getById(row.factId, getByIdOpts);
-      if (!entry) continue;
-
-      const linkPath: LinkPathStep[] = JSON.parse(row.path);
-      const seedScore = seedScoreMap.get(row.seedId) ?? maxSeedScore;
-      const decay = HOP_SCORE_DECAY[row.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
-      const score = seedScore * decay;
-
-      expandedResults.push({
-        factId: row.factId,
-        entry,
-        expansionSource: "graph",
-        hopCount: row.hopCount,
-        linkPath,
-        score,
-      });
-    }
-  } else {
-    // Fallback: iterative BFS for custom/mock implementations
+  // Iterative BFS keeps traversal guards explicit: high-degree provenance hubs are
+  // intentionally not expanded through, because they can swamp recall results.
+  {
     const nodeMeta = new Map<string, NodeMeta>();
     for (const s of seedResults) {
       nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId });
@@ -221,9 +206,8 @@ export function expandGraph(
         const fromMeta = nodeMeta.get(fromId)!;
 
         // --- Outgoing edges: fromId → targetId ---
-        const outLinks = factsDb.getLinksFrom(fromId);
+        const outLinks = filterTraversableLinks(factsDb.getLinksFrom(fromId));
         for (const link of outLinks) {
-          if (link.linkType === "CONTRADICTS") continue;
           const steps: LinkPathStep[] = [
             ...fromMeta.steps,
             {
@@ -241,9 +225,8 @@ export function expandGraph(
         }
 
         // --- Incoming edges: sourceId → fromId ---
-        const inLinks = factsDb.getLinksTo(fromId);
+        const inLinks = filterTraversableLinks(factsDb.getLinksTo(fromId));
         for (const link of inLinks) {
-          if (link.linkType === "CONTRADICTS") continue;
           const steps: LinkPathStep[] = [
             ...fromMeta.steps,
             {
