@@ -80,24 +80,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const nowSec = Math.floor(Date.now() / 1000);
   const day = new Date(nowSec * 1000).toISOString().slice(0, 10);
 
-  if (profile.maxPerDay != null) {
-    const quotaRow = ctx.db
-      .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
-      .get(sourceForPolicy, day) as { count: number } | undefined;
-    if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
-      ctx.db
-        .prepare(
-          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
-           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-        )
-        .run(sourceForPolicy, day);
-      const existingId = getDuplicateIdByNormalizedHash(ctx.db, entry.text);
-      const existing = existingId ? ctx.getById(existingId) : null;
-      if (existing) return existing;
-      throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
-    }
-  }
-
+  // Resolve normalized-hash duplicates before daily quota: boost/merge/skip only UPDATE or
+  // return and do not consume an insert quota slot.
   if (ctx.fuzzyDedupe && profile.onDuplicate !== "store") {
     const existingId = getDuplicateIdByNormalizedHash(ctx.db, entry.text);
     if (existingId) {
@@ -124,6 +108,21 @@ ${entry.text}`.slice(0, 4000);
         }
         return existing;
       }
+    }
+  }
+
+  if (profile.maxPerDay != null) {
+    const quotaRow = ctx.db
+      .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
+      .get(sourceForPolicy, day) as { count: number } | undefined;
+    if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
+      ctx.db
+        .prepare(
+          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+        )
+        .run(sourceForPolicy, day);
+      throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
     }
   }
 

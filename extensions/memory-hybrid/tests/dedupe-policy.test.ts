@@ -201,4 +201,53 @@ describe("FactsDB sourceProfiles write path", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("applies onDuplicate=boost when at maxPerDay (duplicate path does not consume quota)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-quota-boost-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        sourceProfiles: { "quota-boost": { maxPerDay: 1, onDuplicate: "boost", boostBy: 0.2 } },
+      },
+    });
+    try {
+      const first = db.store({
+        text: "canonical quota boost fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "quota-boost",
+      });
+      const second = db.store({
+        text: "canonical quota boost fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "quota-boost",
+      });
+      expect(second.id).toBe(first.id);
+      expect(second.recallCount).toBeGreaterThanOrEqual(1);
+      expect(second.importance).toBeCloseTo(0.7, 5);
+      expect(db.count()).toBe(1);
+      expect(() =>
+        db.store({
+          text: "different fact same day",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "quota-boost",
+        }),
+      ).toThrow(/daily write quota exceeded/);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
