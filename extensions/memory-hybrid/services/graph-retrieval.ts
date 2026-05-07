@@ -63,16 +63,6 @@ export interface GraphFactLookup {
   getByIds(ids: string[], options?: { asOf?: number; scopeFilter?: unknown }): Map<string, MemoryEntry>;
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
-  expandGraphWithCTE?(
-    seedFactIds: string[],
-    maxDepth: number,
-    options?: { asOf?: number; scopeFilter?: unknown },
-  ): Array<{
-    factId: string;
-    seedId: string;
-    hopCount: number;
-    path: string;
-  }>;
 }
 
 /** Options for graph expansion. */
