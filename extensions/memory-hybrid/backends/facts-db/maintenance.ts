@@ -128,7 +128,11 @@ function isHotCandidate(row: TierCandidate, nowSec: number, opts: Required<Tieri
   const recentlyAccessed = opts.hotAccessWindowDays === 0 || lastAccess >= hotWindowCutoff;
   const accessScore = Math.max(row.recall_count ?? 0, row.access_count ?? 0);
   if (recentlyAccessed && accessScore >= opts.hotMinAccessCount) return true;
-  if (row.category === "preference" && row.importance >= opts.hotPreferenceImportance && recentlyAccessed) return true;
+  if (row.category === "preference" && row.importance >= opts.hotPreferenceImportance) {
+    const preferenceCutoff = nowSec - opts.inactivePreferenceDays * 86400;
+    const preferenceRecentlyAccessed = opts.inactivePreferenceDays === 0 || lastAccess >= preferenceCutoff;
+    if (preferenceRecentlyAccessed) return true;
+  }
   return false;
 }
 
