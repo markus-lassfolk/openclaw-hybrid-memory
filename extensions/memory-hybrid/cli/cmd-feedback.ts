@@ -573,7 +573,7 @@ export async function runExtractImplicitFeedbackForCli(
       let afterRowid = 0;
       let totalCollapsed = 0;
       let carryCanonical: Array<{ id: string; text: string }> | undefined;
-      for (let round = 0; round < 8; round++) {
+      for (;;) {
         const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
           threshold,
           limit: cleanupLimit,

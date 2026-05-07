@@ -48,19 +48,34 @@ export function parseCronRunLog(content: string): AnalyzedRun[] {
       }
       const rest = startMatch[2].trim();
       const { jobName, step } = parseJobStepFromCronRest(rest);
+      const exitM = line.match(/exit=(\d+)\b/);
+      const exitParsed = exitM ? Number(exitM[1]) : undefined;
       currentRun = {
         jobName,
         step,
         finishedAt: new Date(startMatch[1]).getTime() / 1000,
-        status: /exit=(?!0\b)\d+|failed/i.test(line) ? "failure" : "success",
-        exitCode: Number(line.match(/exit=(\d+)/)?.[1] ?? 0),
+        status:
+          exitParsed !== undefined
+            ? exitParsed !== 0
+              ? "failure"
+              : "success"
+            : /exit=(?!0\b)\d+/i.test(line)
+              ? "failure"
+              : /failed/i.test(line)
+                ? "failure"
+                : "success",
+        exitCode: exitParsed,
         durationMs: 0,
       };
+      // Do not scan this same line for excerpt keywords — free-form tails may mention "failed"/"error".
+      continue;
     }
     if (currentRun) {
       if (/\[ERROR\]|\[FATAL\]|\[FAILURE\]|✗|failed|error/i.test(line)) {
-        currentRun.status = "failure";
-        currentRun.error = (currentRun.error ? currentRun.error + "; " : "") + line.trim().slice(0, 200);
+        if (currentRun.exitCode === undefined || currentRun.exitCode !== 0) {
+          currentRun.status = "failure";
+          currentRun.error = (currentRun.error ? currentRun.error + "; " : "") + line.trim().slice(0, 200);
+        }
       }
       if (/success|✓|completed|done/i.test(line) && !currentRun.error) {
         currentRun.status = "success";

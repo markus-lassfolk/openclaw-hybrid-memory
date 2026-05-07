@@ -28,4 +28,21 @@ describe("parseCronRunLog", () => {
     expect(failed.every((r) => r.jobName === "job-a")).toBe(true);
     expect(failed.every((r) => r.step === "step1")).toBe(true);
   });
+
+  it("keeps success when exit=0 even if the excerpt mentions failed/error", () => {
+    const log =
+      "2025-01-01T12:00:00Z job-a/step1 completed exit=0 recovered after earlier failed attempt; no error now";
+    const runs = parseCronRunLog(log);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("success");
+    expect(runs[0].exitCode).toBe(0);
+  });
+
+  it("does not promote follow-up lines to failure when run had exit=0", () => {
+    const log = `2025-01-01T12:00:00Z job-a/step1 completed exit=0 ok
+2025-01-01T12:00:01Z unrelated context: prior run failed with error`;
+    const runs = parseCronRunLog(log);
+    expect(runs).toHaveLength(2);
+    expect(runs[0].status).toBe("success");
+  });
 });
