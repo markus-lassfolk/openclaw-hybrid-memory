@@ -298,7 +298,7 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
 
 export function deleteFact(db: DatabaseSync, id: string): boolean {
   db.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
-  db.prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`).run(id);
+  db.prepare(`DELETE FROM memory_links WHERE target_fact_id = ?`).run(id);
   const result = db.prepare("DELETE FROM facts WHERE id = ?").run(id);
   return result.changes > 0;
 }
