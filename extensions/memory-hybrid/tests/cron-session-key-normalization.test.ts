@@ -48,6 +48,18 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     expect(JSON.stringify(target)).toContain("openclaw hybrid-mem audit health --strict --json");
   });
 
+  it("publishes the weekly pending digest maintenance job", () => {
+    const openclawDir = newOpenclawDir();
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+
+    const jobs = readJobs(openclawDir);
+    const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:weekly-pending-digest");
+    expect(target).toBeTruthy();
+    expect(target?.name).toBe("weekly-pending-digest");
+    expect(JSON.stringify(target)).toContain("openclaw hybrid-mem digest pending --since 7d --format md");
+    expect(target?.delivery).toMatchObject({ mode: "announce" });
+  });
+
   it("adds hybrid-mem maintenance jobs without top-level sessionKey", () => {
     const openclawDir = newOpenclawDir();
     ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });

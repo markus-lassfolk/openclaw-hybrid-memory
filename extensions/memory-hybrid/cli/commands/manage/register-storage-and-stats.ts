@@ -11,6 +11,7 @@ import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
+import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { getEnv } from "../../../utils/env-manager.js";
@@ -411,6 +412,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const credentials = extras.getCredentialsCount();
           const proposalsPending = extras.getProposalsPending();
           const proposalsAvailable = extras.getProposalsAvailable();
+          const pendingReview = countPendingReviewBacklogs(ctx.cfg, factsDb);
           const walPending = await extras.getWalPending();
           const timestamps = extras.getLastRunTimestamps();
           const sizes = await extras.getStorageSizes();
@@ -471,7 +473,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             `Procedures: ${procedures} (validated: ${proceduresValidated}, promoted: ${proceduresPromoted}, blocked: ${procedureTriage.summary.total}${procedureTriage.summary.topReason ? ` by ${procedureTriage.summary.topReason}` : ""})${proceduresNote}`,
           );
           console.log(
-            `Pending review (proposals/procedures/tools/crystal/verified): ${proposalsPending}/${Math.max(0, proceduresValidated - proceduresPromoted)}/0/0/${verifiedFacts}`,
+            `Pending review (proposals/procedures/tools/crystal/verified): ${pendingReview.persona}/${pendingReview.procedures}/${pendingReview.tools}/${pendingReview.crystallization}/${pendingReview.verified}`,
           );
           console.log(`Rules: ${rules}`);
           console.log(`Patterns: ${patterns}`);

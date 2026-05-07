@@ -393,6 +393,24 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Monday 08:00 | weekly-pending-digest | digest pending --since 7d --format md
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`,
+    sessionTarget: "isolated",
+    name: "weekly-pending-digest",
+    schedule: { kind: "cron", expr: "0 8 * * 1" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-pending-digest", {
+      preamble:
+        "Weekly pending-review digest. Render the digest and summarize any pending approve/decline/defer actions for the operator.",
+      steps: [{ name: "digest-pending", cmd: "openclaw hybrid-mem digest pending --since 7d --format md" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
@@ -530,7 +548,11 @@ function resolveCronJob(
   }
   const pluginJobId = rest.pluginJobId;
   const stableId = typeof pluginJobId === "string" && pluginJobId.trim().length > 0 ? pluginJobId.trim() : undefined;
-  return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery: { mode: "none" as const } };
+  const delivery =
+    stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`
+      ? { mode: "announce" as const }
+      : { mode: "none" as const };
+  return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery };
 }
 
 function hasIsolatedCronSessionTarget(job: Record<string, unknown>): boolean {
@@ -554,6 +576,8 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [`${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`]: (j) =>
     /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) =>
+    /weekly-pending-digest|pending digest/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>
     /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
