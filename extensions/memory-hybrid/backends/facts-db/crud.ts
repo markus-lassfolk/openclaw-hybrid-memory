@@ -57,15 +57,6 @@ export function validateStoreEntryInput(
   }
 }
 
-class StoreQuotaExceededError extends Error {
-  readonly sourceForPolicy: string;
-  constructor(sourceForPolicy: string) {
-    super("store quota exceeded");
-    this.name = "StoreQuotaExceededError";
-    this.sourceForPolicy = sourceForPolicy;
-  }
-}
-
 export function getDuplicateIdByNormalizedHash(db: DatabaseSync, text: string): string | null {
   const hash = normalizedHash(text);
   const row = db.prepare("SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1").get(hash) as
@@ -172,6 +163,7 @@ ${entry.text}`.slice(0, 4000);
   const adjustedExpiresAt =
     decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
   const beginMode: SqliteTransactionBeginMode = profile.maxPerDay != null ? "IMMEDIATE" : "DEFERRED";
+  let quotaExceededSource: string | null = null;
   const tx = createTransaction(
     ctx.db,
     () => {
@@ -180,7 +172,14 @@ ${entry.text}`.slice(0, 4000);
           .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
           .get(sourceForPolicy, day) as { count: number } | undefined;
         if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
-          throw new StoreQuotaExceededError(sourceForPolicy);
+          quotaExceededSource = sourceForPolicy;
+          ctx.db
+            .prepare(
+              `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+            )
+            .run(sourceForPolicy, day);
+          return;
         }
       }
       ctx.db
@@ -239,23 +238,9 @@ ${entry.text}`.slice(0, 4000);
     },
     beginMode,
   );
-  try {
-    tx();
-  } catch (err) {
-    if (err instanceof StoreQuotaExceededError) {
-      try {
-        ctx.db
-          .prepare(
-            `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
-           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-          )
-          .run(err.sourceForPolicy, day);
-      } catch {
-        // Ignore drop-tracking failures; preserve original quota-exceeded error
-      }
-      throw new Error(`memory-hybrid: daily write quota exceeded for source ${err.sourceForPolicy}`);
-    }
-    throw err;
+  tx();
+  if (quotaExceededSource) {
+    throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
   }
   if (supersedesId) {
     ctx.invalidateSupersededCache();

@@ -284,7 +284,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   }
 
   /** Compaction — retier facts by structural shape, salience, and inactivity. */
-  runCompaction(opts: TieringOptions): TieringCounts {
+  runCompaction(opts: TieringOptions): RetierReport {
     return runCompactionImpl(this.liveDb, opts);
   }
 

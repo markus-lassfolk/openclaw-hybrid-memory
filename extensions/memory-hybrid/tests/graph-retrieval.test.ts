@@ -38,9 +38,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
+import { filterTraversableLinks, HUB_GUARD_MAX_LINKS_PER_NODE } from "../services/graph-retrieval.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const { expandGraph, formatLinkPath, HOP_SCORE_DECAY, FactsDB } = _testing;
+
+describe("filterTraversableLinks", () => {
+  it("drops DERIVED_FROM links before hub-cap slicing when semantic links exist", () => {
+    const semantic = [{ id: "semantic", linkType: "RELATED_TO", strength: 1, targetFactId: "semantic-target" }];
+    const provenance = Array.from({ length: HUB_GUARD_MAX_LINKS_PER_NODE + 5 }, (_, i) => ({
+      id: `prov-${i}`,
+      linkType: "DERIVED_FROM",
+      strength: 1,
+      targetFactId: `prov-target-${i}`,
+    }));
+    const filtered = filterTraversableLinks([...provenance, ...semantic]);
+    expect(filtered).toEqual(semantic);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

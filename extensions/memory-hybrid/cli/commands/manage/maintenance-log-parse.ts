@@ -42,11 +42,12 @@ export function parseCronRunLog(content: string): AnalyzedRun[] {
   let currentRun: Partial<AnalyzedRun> | null = null;
   for (const line of lines) {
     const startMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*)\s+(.+)/);
-    if (startMatch && !line.includes("RUNNING") && !line.includes("running")) {
+    const rest = startMatch?.[2]?.trim() ?? "";
+    const isRunningStatusLine = /^\S+(?:\/\S+)?\s+(?:RUNNING|running)\b/.test(rest) && !/\bexit=\d+\b/.test(rest);
+    if (startMatch && !isRunningStatusLine) {
       if (currentRun?.jobName && currentRun?.finishedAt) {
         runs.push(currentRun as AnalyzedRun);
       }
-      const rest = startMatch[2].trim();
       const { jobName, step } = parseJobStepFromCronRest(rest);
       const exitM = line.match(/exit=(\d+)\b/);
       const exitParsed = exitM ? Number(exitM[1]) : undefined;
@@ -79,7 +80,11 @@ export function parseCronRunLog(content: string): AnalyzedRun[] {
           currentRun.error = (currentRun.error ? currentRun.error + "; " : "") + line.trim().slice(0, 200);
         }
       }
-      if (/success|✓|completed|done/i.test(line) && !currentRun.error) {
+      if (
+        /success|✓|completed|done/i.test(line) &&
+        !currentRun.error &&
+        (currentRun.exitCode === undefined || currentRun.exitCode === 0)
+      ) {
         currentRun.status = "success";
       }
       if (/skipped|skipp/i.test(line)) {

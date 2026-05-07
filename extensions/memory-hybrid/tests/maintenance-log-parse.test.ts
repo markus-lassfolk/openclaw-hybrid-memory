@@ -45,4 +45,21 @@ describe("parseCronRunLog", () => {
     expect(runs).toHaveLength(2);
     expect(runs[0].status).toBe("success");
   });
+
+  it("does not drop failed exit lines whose excerpt says error running", () => {
+    const log = "2025-01-01T12:00:00Z job-a/step1 failed exit=1 error running maintenance step";
+    const runs = parseCronRunLog(log);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("failure");
+    expect(runs[0].exitCode).toBe(1);
+  });
+
+  it("does not reclassify non-zero exit runs as success from later informational lines", () => {
+    const log = `2025-01-01T12:00:00Z job-a/step1 failed exit=1 initial failure
+cleanup completed after failure handling`;
+    const runs = parseCronRunLog(log);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("failure");
+    expect(runs[0].exitCode).toBe(1);
+  });
 });

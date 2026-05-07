@@ -676,6 +676,21 @@ describe("FactsDB tiering", () => {
     expect(hotFact?.tier).toBe("hot");
   });
 
+  it("runCompaction returns changed and examined counts", () => {
+    db.store({
+      text: "Compaction report fact",
+      category: "fact",
+      importance: 0.5,
+      entity: "compaction-report",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const report = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    expect(report.examined).toBeGreaterThanOrEqual(1);
+    expect(report.changed).toBeGreaterThanOrEqual(0);
+  });
+
   it("runCompaction no longer moves fresh decisions to COLD by category alone", () => {
     const task = db.store({
       text: "Decided to use SQLite",
@@ -849,6 +864,46 @@ describe("FactsDB tiering", () => {
 // ---------------------------------------------------------------------------
 // Fuzzy deduplication
 // ---------------------------------------------------------------------------
+
+describe("FactsDB daily write quota accounting", () => {
+  it("tracks quota drops before returning quota exceeded", () => {
+    const limited = new FactsDB(join(tmpDir, "quota.db"), {
+      storeConfig: {
+        fuzzyDedupe: false,
+        sourceProfiles: {
+          quota_source: { maxPerDay: 1 },
+        },
+      },
+    });
+    try {
+      limited.store({
+        text: "First quota fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "quota_source",
+      });
+      expect(() =>
+        limited.store({
+          text: "Second quota fact",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "quota_source",
+        }),
+      ).toThrow(/daily write quota exceeded/);
+      const row = limited.statsDailyWrites().find((r) => r.source === "quota_source");
+      expect(row?.count).toBe(1);
+      expect(row?.dropped).toBe(1);
+    } finally {
+      limited.close();
+    }
+  });
+});
 
 describe("FactsDB fuzzy deduplication", () => {
   let dedupeDb: InstanceType<typeof FactsDB>;
@@ -3442,13 +3497,30 @@ describe("Issue #1191 vectorless facts and procedure triage", () => {
     });
     const first = db.markProcedurePromoted(proc.id, "skills/auto/original");
     const second = db.markProcedurePromoted(proc.id, "skills/auto/replacement");
-    expect(first?.skillPath).toBe("skills/auto/original");
-    expect(second?.skillPath).toBe("skills/auto/original");
-    expect(second?.promotedToSkill).toBe(1);
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    const promoted = db.getProcedureById(proc.id);
+    expect(promoted?.skillPath).toBe("skills/auto/original");
+    expect(promoted?.promotedToSkill).toBe(1);
   });
 });
 
 describe("FactsDB lifecycle-aware entity decay helpers", () => {
+  it("does not emit null lifecycle pattern buckets for broad SQL matches", () => {
+    db.store({
+      text: "Malformed PR entity",
+      category: "fact",
+      importance: 0.5,
+      entity: "PR #abc",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const report = db.lifecycleEntityReport(20);
+    expect(report.rows.some((row) => row.entity === "PR #abc")).toBe(false);
+    expect(Object.keys(report.totals)).not.toContain("null");
+  });
+
   it("reports PR/Issue/Sprint entities with decay coverage", () => {
     db.store({
       text: "PR work",

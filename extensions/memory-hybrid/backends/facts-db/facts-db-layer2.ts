@@ -543,7 +543,7 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return getProceduresReadyForSkillImpl(this.liveDb, validationThreshold, limit);
   }
 
-  markProcedurePromoted(id: string, skillPath: string): ProcedureEntry | null {
+  markProcedurePromoted(id: string, skillPath: string): boolean {
     return markProcedurePromotedImpl(this.liveDb, id, skillPath);
   }
 

@@ -930,16 +930,14 @@ export function getProceduresReadyForSkill(
 }
 
 /** Mark procedure as promoted to skill (skill_path set). Idempotent for already-promoted rows. */
-export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: string): ProcedureEntry | null {
+export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: string): boolean {
   const existing = getProcedureById(db, id);
-  if (!existing) return null;
+  if (!existing) return false;
   const finalPath = existing.skillPath && existing.skillPath.trim() !== "" ? existing.skillPath : skillPath;
-  db.prepare("UPDATE procedures SET promoted_to_skill = 1, skill_path = ?, updated_at = ? WHERE id = ?").run(
-    finalPath,
-    Math.floor(Date.now() / 1000),
-    id,
-  );
-  return getProcedureById(db, id);
+  const result = db
+    .prepare("UPDATE procedures SET promoted_to_skill = 1, skill_path = ?, updated_at = ? WHERE id = ?")
+    .run(finalPath, Math.floor(Date.now() / 1000), id);
+  return result.changes > 0;
 }
 
 export function triageProcedures(
