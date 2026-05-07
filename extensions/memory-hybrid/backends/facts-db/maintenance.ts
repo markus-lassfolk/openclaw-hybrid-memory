@@ -644,7 +644,7 @@ function incrementCount(counts: Record<string, number>, key: string, delta = 1):
 function decayDistribution(db: DatabaseSync): Record<string, number> {
   const rows = db
     .prepare(
-      "SELECT COALESCE(decay_class, 'normal') as decay_class, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY decay_class",
+      "SELECT COALESCE(decay_class, 'normal') as decay_class, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY COALESCE(decay_class, 'normal')",
     )
     .all() as Array<{ decay_class: string; cnt: number }>;
   const out: Record<string, number> = {};
