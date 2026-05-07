@@ -13,7 +13,7 @@ import { filterByScope } from "../../../services/merge-results.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, withExit } from "../../shared.js";
+import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
@@ -282,16 +282,6 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             const staleLabel = noEmojiCron ? "[WARN] stale" : "⚠ stale";
             const fmtStaleWindow = (ms: number) =>
               ms >= dayMs ? `${Math.max(1, Math.round(ms / dayMs))}d` : `${Math.max(1, Math.round(ms / hourMs))}h`;
-            const approxIntervalMs = (cron?: string | null): number | null => {
-              if (!cron) return null;
-              const t = cron.trim();
-              if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
-              if (/^\d+\s+\d+\s+\*\s+\*\s+[0-7]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
-              if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
-              const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
-              if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
-              return null;
-            };
             console.log(`Cron jobs (hybrid-mem:*): ${cronJobs.length}`);
             for (const j of cronJobs) {
               const status = j.enabled ? "enabled " : "disabled";

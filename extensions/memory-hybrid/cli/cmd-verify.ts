@@ -53,7 +53,7 @@ import {
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
-import { relativeTime } from "./shared.js";
+import { approxIntervalMs, relativeTime } from "./shared.js";
 import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth.js";
 
 import type { HandlerContext } from "./handlers.js";
@@ -1165,17 +1165,6 @@ export async function runVerifyForCli(
   ]);
   const nightlyDreamCycleRe = /nightly[- ]?dream[- ]?cycle|dream[- ]?cycle/i;
   const sensorSweepRe = /sensor[- ]?sweep/i;
-  /** Approximate run interval for "stale" detection per cron expression. */
-  function approxIntervalMs(cron?: string | null): number | null {
-    if (!cron) return null;
-    const t = cron.trim();
-    if (/^\d+\s+\d+\s+\*\s+\*\s+\*$/.test(t)) return 24 * 60 * 60 * 1000;
-    if (/^\d+\s+\d+\s+\*\s+\*\s+[0-7]$/.test(t)) return 7 * 24 * 60 * 60 * 1000;
-    if (/^\d+\s+\d+\s+\d+\s+\*\s+\*$/.test(t)) return 30 * 24 * 60 * 60 * 1000;
-    const everyN = /^\d+\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(t);
-    if (everyN) return Number(everyN[1]) * 60 * 60 * 1000;
-    return null;
-  }
 
   /** Normalize job name to slug for matching: lowercase, spaces to single hyphen. */
   function nameToSlug(n: string): string {
