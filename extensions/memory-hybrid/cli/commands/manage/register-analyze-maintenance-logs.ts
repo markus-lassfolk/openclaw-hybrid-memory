@@ -152,7 +152,6 @@ function parseCronRunLog(content: string): AnalyzedRun[] {
         finishedAt: new Date(startMatch[1]).getTime() / 1000,
         status: "success",
         durationMs: 0,
-        messages: [],
       };
     }
     if (currentRun) {
