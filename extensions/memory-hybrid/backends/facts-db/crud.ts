@@ -109,6 +109,14 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
               "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, importance = min(1.0, importance + ?) WHERE id = ?",
             )
             .run(profile.boostBy, existing.id);
+          if (profile.maxPerDay != null) {
+            ctx.db
+              .prepare(
+                `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
+                 ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
+              )
+              .run(sourceForPolicy, day);
+          }
           return ctx.getById(existing.id) ?? existing;
         }
         if (profile.onDuplicate === "merge") {
@@ -120,6 +128,14 @@ ${entry.text}`.slice(0, 4000);
           ctx.db
             .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
             .run(mergedText, mergedHash, existing.id);
+          if (profile.maxPerDay != null) {
+            ctx.db
+              .prepare(
+                `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
+                 ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
+              )
+              .run(sourceForPolicy, day);
+          }
           return ctx.getById(existing.id) ?? existing;
         }
         return existing;

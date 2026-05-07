@@ -66,7 +66,7 @@ export const SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER = `(
 function normalizeLessonTokens(text: string): Set<string> {
   const normalized = text
     .toLowerCase()
-    .replace(/[^a-z0-9åäö]+/gi, " ")
+    .replace(/[^a-z0-9åäö]+/g, " ")
     .split(/\s+/)
     .map((token) => token.trim())
     .filter((token) => token.length >= 3);
