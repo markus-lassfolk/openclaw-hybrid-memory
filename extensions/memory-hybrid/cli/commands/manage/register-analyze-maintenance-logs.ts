@@ -19,7 +19,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -202,7 +202,7 @@ function parseJobsJson(baseDir: string): Record<
 function buildAnalyzedResult(b: ManageBindings, logs: string): AnalyzeResult {
   const { cfg } = b;
   const runs = parseCronRunLog(logs);
-  const jobsMeta = parseJobsJson(cfg.baseDir);
+  const jobsMeta = parseJobsJson(dirname(cfg.sqlitePath));
 
   const failures = runs.filter((r) => r.status === "failure");
   const success = runs.filter((r) => r.status === "success").length;

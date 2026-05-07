@@ -9,7 +9,7 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { ProposalsDB } from "../../../backends/proposals-db.js";
 import { ToolProposalStore } from "../../../backends/tool-proposal-store.js";
@@ -55,13 +55,13 @@ function buildDigestReport(
   let toolProposed = 0;
   let toolApproved = 0;
   let toolRejected = 0;
-  const toolDbPath = join(cfg.baseDir, "tool-proposals.db");
+  const toolDbPath = join(dirname(cfg.sqlitePath), "tool-proposals.db");
   let toolStore: ToolProposalStore | null = null;
   try {
     toolStore = new ToolProposalStore(toolDbPath);
-    toolProposed = toolStore.countByStatus("proposed");
-    toolApproved = toolStore.countByStatus("approved");
-    toolRejected = toolStore.countByStatus("rejected");
+    toolProposed = toolStore.count("proposed");
+    toolApproved = toolStore.count("approved");
+    toolRejected = toolStore.count("rejected");
   } catch {
     // tool-proposals.db may not exist yet
   }
@@ -70,7 +70,7 @@ function buildDigestReport(
   let crystalPending = 0;
   let crystalApproved = 0;
   let crystalRejected = 0;
-  const crystalDbPath = join(cfg.baseDir, "crystallization.db");
+  const crystalDbPath = join(dirname(cfg.sqlitePath), "crystallization.db");
   let crystalStore: CrystallizationStore | null = null;
   try {
     crystalStore = new CrystallizationStore(crystalDbPath);
@@ -209,7 +209,7 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
   let proposalsDb: ProposalsDB | null = null;
   if (cfg.personaProposals.enabled) {
     try {
-      const path = join(cfg.baseDir, "proposals.db");
+      const path = join(dirname(cfg.sqlitePath), "proposals.db");
       proposalsDb = new ProposalsDB(path);
     } catch {
       // not initialised yet
