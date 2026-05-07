@@ -2064,6 +2064,24 @@ describe("FactsDB.findSimilarForClassification", () => {
 // ---------------------------------------------------------------------------
 
 describe("FactsDB.countExpired", () => {
+  it("cleans stopword entities and reports filtered top entities", () => {
+    for (let i = 0; i < 3; i++)
+      db.store({ text: `u${i}`, entity: "User", category: "fact", importance: 0.5, source: "conversation" });
+    for (let i = 0; i < 2; i++)
+      db.store({ text: `c${i}`, entity: "Credentials", category: "fact", importance: 0.5, source: "conversation" });
+    db.store({ text: "conv", entity: "convention", category: "fact", importance: 0.5, source: "conversation" });
+    for (let i = 0; i < 4; i++)
+      db.store({ text: `d${i}`, entity: "Doris", category: "fact", importance: 0.5, source: "conversation" });
+    expect(db.topEntities(4).map((row) => row.entity)).toEqual(["Doris", "User", "Credentials", "convention"]);
+    expect(db.topEntitiesFiltered(4).map((row) => row.entity)).toEqual(["Doris"]);
+    const dry = db.cleanEntityStopwords({ apply: false, exampleLimit: 5 });
+    expect(dry.activeMatched).toBe(6);
+    expect(dry.changed).toBe(0);
+    const applied = db.cleanEntityStopwords({ apply: true, exampleLimit: 5 });
+    expect(applied.changed).toBe(6);
+    expect(db.topEntities(4).map((row) => row.entity)).toEqual(["Doris"]);
+  });
+
   it("counts expired facts", () => {
     db.store({
       text: "Expired",

@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry } from "../../types/memory.js";
 import { updateConfidence } from "./contradictions.js";
+import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stopwords.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import type { MemoryLinkType } from "./types.js";
 
@@ -21,7 +22,7 @@ export function getKnownEntities(db: DatabaseSync): string[] {
   const rows = db
     .prepare("SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL")
     .all() as Array<{ entity: string }>;
-  const list = rows.map((r) => r.entity);
+  const list = filterEntityStopWords(rows.map((r) => r.entity));
   knownEntitiesCacheByDb.set(db, { list, time: now });
   return list;
 }
@@ -34,7 +35,7 @@ export function extractEntitiesFromText(
   const lowerText = text.toLowerCase();
 
   for (const entity of knownEntities) {
-    if (!entity) continue;
+    if (!entity || isEntityStopWord(entity)) continue;
     const lowerEntity = entity.toLowerCase();
 
     if (!lowerText.includes(lowerEntity)) continue;
@@ -108,7 +109,7 @@ export function autoDetectInstanceOf(
   if (candidates.size === 0) return 0;
 
   const entities = knownEntitiesList ?? getKnown(db);
-  const knownEntitiesSet = new Set(entities.map((e) => e.toLowerCase()));
+  const knownEntitiesSet = new Set(filterEntityStopWords(entities).map((e) => e.toLowerCase()));
   let linked = 0;
 
   for (const typeName of candidates) {

@@ -250,6 +250,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const metaPatterns = factsDb.metaPatternsCount();
           const links = factsDb.linksCount();
           const entities = factsDb.entityCount();
+          const topEntitiesFiltered = factsDb.topEntitiesFiltered(5, ctx.cfg.entityExtraction.stopWords);
           const categoriesConfigured = getMemoryCategories();
           const uniqueInMemory = factsDb.uniqueMemoryCategories();
           const credentials = extras.getCredentialsCount();
@@ -536,6 +537,45 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.warn(`  (${result.errors.length} errors; first 5:)`);
           for (const e of result.errors.slice(0, 5)) console.warn(`  - ${e}`);
         }
+      }),
+    );
+
+  const entitiesCommand = mem.command("entities").description("Inspect and clean entity labels");
+
+  entitiesCommand
+    .command("clean")
+    .description("Null common-noun stopword entities on existing facts (dry-run by default)")
+    .option("--stopwords", "Use default and configured entity stopword list")
+    .option("--apply", "Apply changes; default is dry-run")
+    .option("--examples <n>", "Number of example rows to show", "10")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { stopwords?: boolean; apply?: boolean; examples?: string; json?: boolean }) => {
+        const exampleLimit = Number.parseInt(opts?.examples ?? "10", 10);
+        if (!Number.isFinite(exampleLimit) || exampleLimit < 0) {
+          console.error("error: --examples must be a non-negative integer");
+          process.exitCode = 1;
+          return;
+        }
+        const stopWords = opts?.stopwords === false ? [] : ctx.cfg.entityExtraction.stopWords;
+        const report = factsDb.cleanEntityStopwords({
+          apply: opts?.apply === true,
+          stopWords,
+          exampleLimit,
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(
+          `Entity stopword cleanup ${report.apply ? "applied" : "dry-run"}: matched ${report.matched}, active ${report.activeMatched}, changed ${report.changed}`,
+        );
+        console.log(`Stop words: ${report.stopWords.join(", ") || "(defaults only)"}`);
+        if (report.examples.length > 0) {
+          console.log("Examples:");
+          for (const ex of report.examples) console.log(`  ${ex.id}  ${ex.entity}`);
+        }
+        if (!report.apply) console.log("Dry-run only. Re-run with --apply to null matched entity fields.");
       }),
     );
 

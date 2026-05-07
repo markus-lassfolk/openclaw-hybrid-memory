@@ -2234,7 +2234,9 @@ export function registerMemoryTools(
           // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
           if (cfg.graph.enabled) {
             const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
-            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel)
+            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel, {
+              stopWords: cfg.entityExtraction.stopWords,
+            })
               .then(({ mentions, detectedLang }) => {
                 factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
               })

@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { DECAY_CLASSES } from "../../config.js";
 import { isValidCategory } from "../../config.js";
+import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stopwords.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { searchFts } from "../../services/fts-search.js";
 import { parseTags } from "../../utils/tags.js";
@@ -87,6 +88,20 @@ export type RemapCategoryReport = {
   changed: number;
 };
 
+export type TopEntityRow = {
+  entity: string;
+  count: number;
+};
+
+export type CleanEntityStopwordsReport = {
+  apply: boolean;
+  stopWords: string[];
+  matched: number;
+  activeMatched: number;
+  changed: number;
+  examples: Array<{ id: string; entity: string }>;
+};
+
 export function auditCategories(
   db: DatabaseSync,
   configuredCategories: readonly string[],
@@ -148,6 +163,73 @@ export function remapCategory(db: DatabaseSync, from: string, to: string, apply 
     matched,
     activeMatched,
     changed,
+  };
+}
+
+export function topEntities(db: DatabaseSync, limit = 10, extraStopWords: readonly string[] = []): TopEntityRow[] {
+  const rows = db
+    .prepare(
+      `SELECT entity, COUNT(*) as cnt FROM facts
+       WHERE entity IS NOT NULL AND entity != '' AND superseded_at IS NULL
+       GROUP BY entity ORDER BY cnt DESC, entity COLLATE NOCASE ASC LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(100, Math.floor(limit)))) as Array<{ entity: string; cnt: number }>;
+  return rows.map((row) => ({ entity: row.entity, count: row.cnt }));
+}
+
+export function topEntitiesFiltered(
+  db: DatabaseSync,
+  limit = 10,
+  extraStopWords: readonly string[] = [],
+): TopEntityRow[] {
+  const scanLimit = Math.max(50, Math.max(1, Math.min(100, Math.floor(limit))) * 10);
+  const rows = db
+    .prepare(
+      `SELECT entity, COUNT(*) as cnt FROM facts
+       WHERE entity IS NOT NULL AND entity != '' AND superseded_at IS NULL
+       GROUP BY entity ORDER BY cnt DESC, entity COLLATE NOCASE ASC LIMIT ?`,
+    )
+    .all(scanLimit) as Array<{ entity: string; cnt: number }>;
+  return rows
+    .filter((row) => !isEntityStopWord(row.entity, extraStopWords))
+    .slice(0, Math.max(1, Math.min(100, Math.floor(limit))))
+    .map((row) => ({ entity: row.entity, count: row.cnt }));
+}
+
+export function cleanEntityStopwords(
+  db: DatabaseSync,
+  options: { apply?: boolean; stopWords?: readonly string[]; exampleLimit?: number } = {},
+): CleanEntityStopwordsReport {
+  const apply = options.apply === true;
+  const stopWords = filterEntityStopWords([...(options.stopWords ?? [])]);
+  const rows = db
+    .prepare(
+      `SELECT id, entity, superseded_at FROM facts
+       WHERE entity IS NOT NULL AND entity != ''
+       ORDER BY created_at DESC, rowid DESC`,
+    )
+    .all() as Array<{ id: string; entity: string; superseded_at: number | null }>;
+  const matchedRows = rows.filter((row) => isEntityStopWord(row.entity, stopWords));
+  const activeMatchedRows = matchedRows.filter((row) => row.superseded_at == null);
+  let changed = 0;
+  if (apply && matchedRows.length > 0) {
+    const ids = matchedRows.map((row) => row.id);
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = db.prepare(`UPDATE facts SET entity = NULL WHERE id IN (${placeholders})`).run(...chunk);
+      changed += Number(result.changes);
+    }
+  }
+  const exampleLimit = Math.max(0, Math.min(50, Math.floor(options.exampleLimit ?? 10)));
+  return {
+    apply,
+    stopWords,
+    matched: matchedRows.length,
+    activeMatched: activeMatchedRows.length,
+    changed,
+    examples: activeMatchedRows.slice(0, exampleLimit).map((row) => ({ id: row.id, entity: row.entity })),
   };
 }
 

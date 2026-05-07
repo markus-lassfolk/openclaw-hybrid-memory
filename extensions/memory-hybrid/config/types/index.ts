@@ -53,6 +53,7 @@ import type {
   CrystallizationConfig,
   DashboardConfig,
   DocumentsConfig,
+  EntityExtractionConfig,
   FrequencyCaptureConfig,
   FrustrationDetectionConfig,
   FutureDateProtectionConfig,
@@ -578,6 +579,8 @@ export type HybridMemoryConfig = {
   credentials: CredentialsConfig;
   /** Graph-based spreading activation: auto-linking and graph traversal */
   graph: GraphConfig;
+  /** Entity extraction hygiene: suppress common-noun pseudo-entities (#1190). */
+  entityExtraction: EntityExtractionConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
   /** Event log archival configuration. */

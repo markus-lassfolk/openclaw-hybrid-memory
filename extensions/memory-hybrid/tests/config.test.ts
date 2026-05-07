@@ -1866,3 +1866,13 @@ describe("hybridConfigSchema.parse", () => {
     });
   });
 });
+
+describe("entityExtraction config", () => {
+  it("parses configurable entity stop words", () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "onnx", model: "bge-m3", dimensions: 1024 },
+      entityExtraction: { stopWords: ["Runbook", "Credentials", "Runbook"] },
+    });
+    expect(cfg.entityExtraction.stopWords).toEqual(["Runbook", "Credentials"]);
+  });
+});

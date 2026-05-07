@@ -63,6 +63,7 @@ import {
 } from "./reinforcement.js";
 import { getSupersededTextsSnapshot } from "./search.js";
 import {
+  cleanEntityStopwords as cleanEntityStopwordsImpl,
   countExpiredFacts as countExpiredFactsImpl,
   countFacts as countFactsImpl,
   directivesCount as directivesCountImpl,
@@ -79,6 +80,8 @@ import {
   statsBreakdownBySource as statsBreakdownBySourceImpl,
   statsBreakdownByTier as statsBreakdownByTierImpl,
   statsBreakdown as statsBreakdownImpl,
+  topEntities as topEntitiesImpl,
+  topEntitiesFiltered as topEntitiesFilteredImpl,
   uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
 } from "./stats.js";
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
@@ -347,6 +350,20 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Distinct entity count (non-null, non-empty entity values). */
   entityCount(): number {
     return entityCountImpl(this.liveDb);
+  }
+
+  topEntities(limit = 10): ReturnType<typeof topEntitiesImpl> {
+    return topEntitiesImpl(this.liveDb, limit);
+  }
+
+  topEntitiesFiltered(limit = 10, extraStopWords: readonly string[] = []): ReturnType<typeof topEntitiesFilteredImpl> {
+    return topEntitiesFilteredImpl(this.liveDb, limit, extraStopWords);
+  }
+
+  cleanEntityStopwords(
+    options?: Parameters<typeof cleanEntityStopwordsImpl>[1],
+  ): ReturnType<typeof cleanEntityStopwordsImpl> {
+    return cleanEntityStopwordsImpl(this.liveDb, options);
   }
 
   /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */

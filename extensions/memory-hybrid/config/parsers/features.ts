@@ -13,6 +13,7 @@ import type {
   CrystallizationConfig,
   DashboardConfig,
   DocumentsConfig,
+  EntityExtractionConfig,
   FrequencyCaptureConfig,
   FrustrationDetectionConfig,
   FrustrationSignalWeights,
@@ -31,6 +32,21 @@ import type {
   WorkflowTrackingConfig,
 } from "../types/features.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
+
+export function parseEntityExtractionConfig(cfg: Record<string, unknown>): EntityExtractionConfig {
+  const raw = cfg.entityExtraction as Record<string, unknown> | undefined;
+  const stopWords = Array.isArray(raw?.stopWords)
+    ? [
+        ...new Set(
+          (raw.stopWords as unknown[])
+            .filter((v): v is string => typeof v === "string")
+            .map((v) => v.trim())
+            .filter(Boolean),
+        ),
+      ]
+    : [];
+  return { stopWords };
+}
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;

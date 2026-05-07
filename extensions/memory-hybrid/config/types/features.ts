@@ -1,3 +1,9 @@
+/** Entity extraction hygiene: stop words for structured/NER entity fields. */
+export type EntityExtractionConfig = {
+  /** Additional entity labels to suppress, merged with DEFAULT_ENTITY_STOP_WORDS (#1190). */
+  stopWords: string[];
+};
+
 /** Graph-based spreading activation: auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;
