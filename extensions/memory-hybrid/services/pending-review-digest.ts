@@ -5,6 +5,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { pluginLogger } from "../utils/logger.js";
 
 type FactsDbForPendingDigest = {
   proceduresCount(): number;
@@ -318,10 +319,10 @@ export function writePendingReviewDigestOutput(opts: {
   const output =
     opts.format === "json" ? JSON.stringify(opts.report, null, 2) : renderPendingReviewDigestMarkdown(opts.report);
   if (opts.outPath === "-") {
-    process.stdout.write(output + "\n");
+    process.stdout.write(`${output}\n`);
     return;
   }
   mkdirSync(dirname(opts.outPath), { recursive: true });
   writeFileSync(opts.outPath, output, "utf-8");
-  console.log(`Written: ${opts.outPath}`);
+  pluginLogger.info(`Written: ${opts.outPath}`);
 }

@@ -172,6 +172,16 @@ function markImplicitFeedbackLessonRecalled(
     .run(nowSec, nowSec, factId);
 }
 
+/** Rows matching this OR-branch are legacy implicit-feedback bloat (category=pattern). Use with --include-legacy collapse. */
+export const SQL_IMPLICIT_LEGACY_PATTERN_ROWS = `(category = 'pattern' AND source = 'implicit-feedback')`;
+
+function buildImplicitFeedbackCleanupFilter(includeLegacy: boolean): string {
+  if (includeLegacy) {
+    return `(${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER} OR ${SQL_IMPLICIT_LEGACY_PATTERN_ROWS})`;
+  }
+  return SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER;
+}
+
 export function cleanupImplicitFeedbackDuplicates(
   factsDb: FactsDB,
   opts: {
@@ -182,6 +192,8 @@ export function cleanupImplicitFeedbackDuplicates(
     dryRun?: boolean;
     /** Leaders from prior paging batches so near-duplicates across windows still collapse. */
     seedCanonical?: ReadonlyArray<{ id: string; text: string }>;
+    /** When true, also collapse legacy `category=pattern` implicit-feedback rows into canonical signals. */
+    includeLegacy?: boolean;
   } = {},
 ): {
   scanned: number;
@@ -200,11 +212,12 @@ export function cleanupImplicitFeedbackDuplicates(
   }
   const afterRowid = opts.afterRowid ?? 0;
   const dryRun = opts.dryRun === true;
+  const rowFilter = buildImplicitFeedbackCleanupFilter(opts.includeLegacy === true);
   const rows = rawDb
     .prepare(
       `SELECT rowid as rowid, id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
        FROM facts
-       WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
+       WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND ${rowFilter}
          AND (@afterRowid = 0 OR rowid > @afterRowid)
        ORDER BY rowid ASC
        LIMIT @limit`,
@@ -281,7 +294,7 @@ export function cleanupImplicitFeedbackDuplicates(
 /**
  * Extract implicit feedback signals from recent sessions.
  * Signals are routed to the reinforcement pipeline (positive) or stored as
- * pattern facts for self-correction (negative). Trajectories and closed-loop
+ * technical implicit_feedback_signal facts for self-correction (negative). Trajectories and closed-loop
  * analysis are run as subsequent phases when not disabled.
  */
 export async function runExtractImplicitFeedbackForCli(
@@ -348,6 +361,9 @@ export async function runExtractImplicitFeedbackForCli(
     const sessionFile = basename(filePath);
     const turns = parseSessionTurns(lines);
     if (turns.length < 3) continue;
+
+    /** Shared daily quota for negative signals + trajectory lessons (reset per file from DB). */
+    let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
 
     // Phase 1: Extract implicit signals
     const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
@@ -433,25 +449,34 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // Route negative signals to self-correction pipeline as pattern facts
+    // Route negative signals to self-correction as technical implicit_feedback_signal facts (same dedupe/quota as trajectory lessons).
     if (!opts.dryRun && implicitCfg.feedToSelfCorrection !== false && signals.length > 0) {
       const minConf = implicitCfg.minConfidence ?? 0.5;
+      const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+      const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
         try {
           const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
-          if (!factsDb.hasDuplicate(text)) {
-            factsDb.store({
-              text,
-              category: "pattern",
-              importance: Math.max(0.3, sig.confidence * 0.6),
-              entity: null,
-              key: null,
-              value: text.slice(0, 200),
-              source: "implicit-feedback",
-              tags: ["implicit-feedback", "negative", sig.type],
-            });
+          const similarId = rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, text, lessonDedupeJaccard) : null;
+          if (similarId) {
+            if (rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+            continue;
           }
+          if (factsDb.hasDuplicate(text, "implicit-feedback")) continue;
+          if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
+          factsDb.store({
+            text,
+            category: "technical",
+            importance: Math.max(0.3, sig.confidence * 0.6),
+            entity: null,
+            key: "implicit_feedback_signal",
+            value: text.slice(0, 200),
+            source: "implicit-feedback",
+            tags: ["implicit-feedback", "negative", sig.type],
+            decayClass: "normal",
+          });
+          lessonsStoredTodaySession++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "runExtractImplicitFeedbackForCli:feed-self-correction",
@@ -530,18 +555,17 @@ export async function runExtractImplicitFeedbackForCli(
               row.turn_count,
             );
             // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
-            let lessonsStoredToday = getImplicitFeedbackLessonsStoredToday(rawDb);
             const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
             const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
             for (const lesson of traj.lessonsExtracted) {
               const trimmedLesson = lesson.trim();
               if (!trimmedLesson) continue;
               const similarId = findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard);
-              if (similarId || factsDb.hasDuplicate(trimmedLesson)) {
+              if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
                 if (similarId) markImplicitFeedbackLessonRecalled(rawDb, similarId);
                 continue;
               }
-              if (lessonsStoredToday >= maxLessonsPerDay) continue;
+              if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
               try {
                 factsDb.store({
                   text: trimmedLesson,
@@ -554,7 +578,7 @@ export async function runExtractImplicitFeedbackForCli(
                   tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
                   decayClass: "normal",
                 });
-                lessonsStoredToday++;
+                lessonsStoredTodaySession++;
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   operation: "runExtractImplicitFeedbackForCli:store-lesson",

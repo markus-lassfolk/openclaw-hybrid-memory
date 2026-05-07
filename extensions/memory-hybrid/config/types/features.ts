@@ -18,6 +18,13 @@ export type GraphConfig = {
   autoSupersede: boolean;
   /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default false to avoid read-path mutation. */
   strengthenOnRecall: boolean;
+  /**
+   * Graph hub guard threshold (default 500):
+   * - SQLite / CTE expansion skips traversing nodes whose total degree (in+out, excluding CONTRADICTS/DERIVED_FROM) exceeds this value.
+   * - Per-hop link fanout uses the same cap when trimming high-degree neighbours (see `filterTraversableLinks`).
+   * `null` disables both checks (not recommended on large stores).
+   */
+  hubDegreeCap: number | null;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
@@ -385,6 +392,33 @@ export type HumanizerConfig = {
   modelTag?: string;
   /** Optional skill/context tag for the stored fact. */
   skillTag?: string;
+};
+
+/** Weekly pending-review digest delivery channel (Issue #1197). */
+export type DigestWeeklyDeliveryConfig = {
+  mode: "telegram" | "system" | "none";
+  /** Required when mode is `telegram` — destination chat id or handle understood by the gateway. */
+  chatId?: string;
+};
+
+/** Operator digest configuration (cron + CLI). */
+export type DigestConfig = {
+  weekly: {
+    delivery: DigestWeeklyDeliveryConfig;
+  };
+};
+
+/** GitHub lifecycle adapter (Phase 2 — Issue #1196). */
+export type LifecycleGitHubAdapterConfig = {
+  enabled: boolean;
+  repo?: string;
+  tokenRef?: string;
+};
+
+export type LifecycleAdaptersConfig = {
+  adapters: {
+    github: LifecycleGitHubAdapterConfig;
+  };
 };
 
 /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784). */

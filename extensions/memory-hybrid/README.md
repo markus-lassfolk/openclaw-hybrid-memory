@@ -257,3 +257,16 @@ Rules are data-driven in [`services/maintenance-rules.json`](services/maintenanc
 
 The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the nightly chain and announce the rendered digest to the operator.
 
+### Auto-fix whitelist (#1199)
+
+`--auto-fix` applies **only** safe, idempotent actions implemented in [`services/maintenance-auto-fix.ts`](services/maintenance-auto-fix.ts):
+
+- **Stale scan lock files**: when a finding includes a `*.lock` absolute path and the recorded PID is not running, the lock file is removed.
+- **Retry-once marker**: for transient LLM / network rules, the finding is annotated (`auto-fixed-retry-once`) so the next cron tick can retry — **no** extra shell commands are executed.
+
+Vacuum-on-busy, re-embed, purge guards, and similar heavy fixes stay **report-only**; follow the textual suggestions manually.
+
+### Resolved-issue suppression
+
+[`services/maintenance-resolved.json`](services/maintenance-resolved.json) maps **finding fingerprints** to `{ resolvedInVersion, note }`. When the log’s parsed `pluginVersion` is `>= resolvedInVersion` (dotted numeric comparison), matching findings are dropped from the analyzer output to cut noise after a release fix.
+

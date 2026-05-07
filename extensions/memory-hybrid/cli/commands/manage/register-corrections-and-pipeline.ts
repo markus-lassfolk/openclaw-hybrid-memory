@@ -547,6 +547,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
     .option("--verbose", "Log each meta-pattern as it is extracted")
     .option("--collapse-implicit-feedback", "Collapse near-duplicate implicit-feedback trajectory signals")
+    .option(
+      "--include-legacy",
+      "With --collapse-implicit-feedback, also collapse legacy category=pattern implicit-feedback rows",
+    )
     .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.8")
     .option("--limit <n>", "Maximum implicit-feedback rows to scan per page", "1000")
     .action(
@@ -557,6 +561,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             model?: string;
             verbose?: boolean;
             collapseImplicitFeedback?: boolean;
+            includeLegacy?: boolean;
             threshold?: string;
             limit?: string;
           },
@@ -582,6 +587,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
                 afterRowid,
                 dryRun,
                 seedCanonical: carryCanonical,
+                includeLegacy: opts?.includeLegacy === true,
               });
               scanned += res.scanned;
               collapsed += res.collapsed;

@@ -52,6 +52,7 @@ import type {
   CrossAgentLearningConfig,
   CrystallizationConfig,
   DashboardConfig,
+  DigestConfig,
   DocumentsConfig,
   EntityExtractionConfig,
   FrequencyCaptureConfig,
@@ -63,6 +64,7 @@ import type {
   HumanizerConfig,
   ImplicitFeedbackConfig,
   IngestConfig,
+  LifecycleAdaptersConfig,
   MemoryTieringConfig,
   ReinforcementConfig,
   SelfExtensionConfig,
@@ -728,6 +730,10 @@ export type HybridMemoryConfig = {
   apiTap: ApiTapConfig;
   /** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
   humanizer: HumanizerConfig;
+  /** Weekly digest delivery for cron + operator review (Issue #1197). */
+  digest: DigestConfig;
+  /** Entity lifecycle adapters — GitHub Phase 2 stub (Issue #1196). */
+  lifecycle: LifecycleAdaptersConfig;
   /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */
   frequencyCapture: FrequencyCaptureConfig;
   /**

@@ -954,7 +954,7 @@ describe("FactsDB fuzzy deduplication", () => {
       value: null,
       source: "test",
     });
-    expect(dedupeDb.hasDuplicate("hello world")).toBe(true);
+    expect(dedupeDb.hasDuplicate("hello world", "test")).toBe(true);
   });
 
   it("store skips duplicate when fuzzyDedupe is on", () => {

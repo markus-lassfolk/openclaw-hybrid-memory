@@ -57,7 +57,12 @@ export interface MaintenanceFinding {
   logExcerpt: string;
   logPath: string;
   pluginVersion: string | null;
-  actionTaken: MaintenanceAction | "reported" | "reported-glitchtip";
+  actionTaken:
+    | MaintenanceAction
+    | "reported"
+    | "reported-glitchtip"
+    | "auto-fixed-clear-stale-lock"
+    | "auto-fixed-retry-once";
   suggestedAction: string;
   severity: MaintenanceRule["severity"];
   glitchtipEventId?: string;
@@ -93,6 +98,50 @@ function resolveMaintenanceRulesPath(): string {
     if (existsSync(candidate)) return candidate;
   }
   return candidates[0];
+}
+
+type MaintenanceResolvedEntry = { resolvedInVersion: string; note?: string };
+
+function resolveMaintenanceResolvedPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "maintenance-resolved.json");
+}
+
+function loadMaintenanceResolvedMap(): Record<string, MaintenanceResolvedEntry> {
+  try {
+    const p = resolveMaintenanceResolvedPath();
+    if (!existsSync(p)) return {};
+    const raw = JSON.parse(readFileSync(p, "utf-8")) as { fingerprints?: Record<string, MaintenanceResolvedEntry> };
+    return raw.fingerprints ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** @internal Compare YYYY.M.N or semver-like dotted versions for resolved-issue suppression (#1199). */
+export function pluginVersionGte(current: string | null, minimum: string): boolean {
+  if (!current) return false;
+  const pa = current.split(/[.+]/).map((s) => Number.parseInt(s, 10));
+  const pb = minimum.split(/[.+]/).map((s) => Number.parseInt(s, 10));
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const a = Number.isFinite(pa[i]) ? pa[i]! : 0;
+    const b = Number.isFinite(pb[i]) ? pb[i]! : 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+function filterResolvedMaintenanceFindings(
+  findings: MaintenanceFinding[],
+  resolved: Record<string, MaintenanceResolvedEntry>,
+): MaintenanceFinding[] {
+  return findings.filter((f) => {
+    const entry = resolved[f.fingerprint];
+    if (!entry) return true;
+    return !pluginVersionGte(f.pluginVersion, entry.resolvedInVersion);
+  });
 }
 
 function loadMaintenanceRules(): MaintenanceRule[] {
@@ -239,7 +288,10 @@ export function findingFromStep(step: MaintenanceLogStep, rule = classifyMainten
   };
 }
 
-export function analyzeMaintenanceSteps(steps: MaintenanceLogStep[]): MaintenanceFinding[] {
+export function analyzeMaintenanceSteps(
+  steps: MaintenanceLogStep[],
+  opts?: { resolvedFingerprints?: Record<string, MaintenanceResolvedEntry> },
+): MaintenanceFinding[] {
   const findings: MaintenanceFinding[] = [];
   const zeroExitHeuristicSeen = new Set<string>();
   for (const step of steps) {
@@ -264,7 +316,8 @@ ${step.logContent}`;
     });
     findings.push(findingFromStep(step, rule));
   }
-  return findings;
+  const resolved = opts?.resolvedFingerprints ?? loadMaintenanceResolvedMap();
+  return filterResolvedMaintenanceFindings(findings, resolved);
 }
 
 export function persistMaintenanceFindings(dbPath: string, findings: MaintenanceFinding[]): void {

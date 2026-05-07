@@ -12,6 +12,8 @@ import type {
   CrossAgentLearningConfig,
   CrystallizationConfig,
   DashboardConfig,
+  DigestConfig,
+  DigestWeeklyDeliveryConfig,
   DocumentsConfig,
   EntityExtractionConfig,
   FrequencyCaptureConfig,
@@ -25,6 +27,7 @@ import type {
   ImplicitFeedbackConfig,
   ImplicitSignalType,
   IngestConfig,
+  LifecycleAdaptersConfig,
   MemoryTieringConfig,
   ReinforcementConfig,
   SelfExtensionConfig,
@@ -74,6 +77,12 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
         : 0.3,
     autoSupersede: graphRaw?.autoSupersede !== false,
     strengthenOnRecall: graphRaw?.strengthenOnRecall === true,
+    hubDegreeCap:
+      graphRaw?.hubDegreeCap === null
+        ? null
+        : typeof graphRaw?.hubDegreeCap === "number" && graphRaw.hubDegreeCap > 0
+          ? Math.floor(graphRaw.hubDegreeCap)
+          : 500,
   };
 }
 
@@ -797,5 +806,53 @@ export function parseFrequencyCaptureConfig(cfg: Record<string, unknown>): Frequ
         : 0.6,
     captureCredentials: raw?.captureCredentials !== false,
     ttlDays: typeof raw?.ttlDays === "number" && raw.ttlDays >= 1 ? Math.floor(raw.ttlDays) : 30,
+  };
+}
+
+/** Safe parse for cron install paths that do not run the full hybrid config validator. */
+export function parseDigestWeeklyDeliveryOnly(cfg: Record<string, unknown>): DigestWeeklyDeliveryConfig {
+  const digest = cfg.digest as Record<string, unknown> | undefined;
+  const weekly = digest?.weekly as Record<string, unknown> | undefined;
+  const delivery = weekly?.delivery as Record<string, unknown> | undefined;
+  const modeRaw = delivery?.mode;
+  const valid = ["telegram", "system", "none"] as const;
+  let mode: (typeof valid)[number] = "system";
+  if (typeof modeRaw === "string" && (valid as readonly string[]).includes(modeRaw)) {
+    mode = modeRaw as (typeof valid)[number];
+  } else if (modeRaw !== undefined) {
+    pluginLogger.warn(
+      `memory-hybrid: invalid digest.weekly.delivery.mode "${modeRaw}"; expected telegram|system|none. Using "system".`,
+    );
+  }
+  const chatId =
+    typeof delivery?.chatId === "string" && delivery.chatId.trim().length > 0 ? delivery.chatId.trim() : undefined;
+  if (mode === "telegram" && !chatId) {
+    pluginLogger.warn(
+      `memory-hybrid: digest.weekly.delivery.mode is "telegram" but chatId is missing; using "system".`,
+    );
+    return { mode: "system" };
+  }
+  return { mode, ...(chatId ? { chatId } : {}) };
+}
+
+export function parseDigestConfig(cfg: Record<string, unknown>): DigestConfig {
+  return { weekly: { delivery: parseDigestWeeklyDeliveryOnly(cfg) } };
+}
+
+export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAdaptersConfig {
+  const raw = cfg.lifecycle as Record<string, unknown> | undefined;
+  const adapters = raw?.adapters as Record<string, unknown> | undefined;
+  const github = adapters?.github as Record<string, unknown> | undefined;
+  return {
+    adapters: {
+      github: {
+        enabled: github?.enabled === true,
+        repo: typeof github?.repo === "string" && github.repo.trim().length > 0 ? github.repo.trim() : undefined,
+        tokenRef:
+          typeof github?.tokenRef === "string" && github.tokenRef.trim().length > 0
+            ? github.tokenRef.trim()
+            : undefined,
+      },
+    },
   };
 }

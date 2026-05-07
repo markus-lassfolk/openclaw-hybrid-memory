@@ -32,6 +32,7 @@ import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
   expandGraphWithCTE as expandGraphWithCTEHelper,
+  type GraphConnectedStats,
   getConnectedFactIds as getConnectedFactIdsHelper,
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
@@ -429,9 +430,9 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return deleteFact(this.liveDb, id);
   }
 
-  /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
-  hasDuplicate(text: string): boolean {
-    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text);
+  /** Exact match or dedupe policy would block a new insert for this source (Issue #1194). */
+  hasDuplicate(text: string, source = "conversation"): boolean {
+    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source);
   }
 
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
@@ -529,7 +530,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    * CONTRADICTS links are excluded from traversal — they would otherwise pollute graph-based recall
    * with unrelated contradicted facts and cause traversal explosion when a fact has many contradictions.
    */
-  getConnectedFactIds(factIds: string[], maxDepth: number, options?: { hubDegreeCap?: number | null }): string[] {
+  getConnectedFactIds(
+    factIds: string[],
+    maxDepth: number,
+    options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats },
+  ): string[] {
     return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth, options);
   }
 
@@ -547,6 +552,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     options?: {
       asOf?: number;
       scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+      hubDegreeCap?: number | null;
     },
   ): Array<{
     factId: string;

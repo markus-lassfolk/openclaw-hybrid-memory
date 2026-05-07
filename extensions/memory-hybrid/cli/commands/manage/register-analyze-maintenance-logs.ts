@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { stdin } from "node:process";
 
+import { applyMaintenanceAutoFix } from "../../../services/maintenance-auto-fix.js";
 import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
@@ -89,15 +90,7 @@ export async function runAnalyzeMaintenanceLogs(
   if (opts?.glitchtip) findings = reportGlitchTipFindings(findings);
 
   if (opts?.autoFix) {
-    findings = findings.map((f) =>
-      f.actionTaken === "retry-once"
-        ? {
-            ...f,
-            actionTaken: "reported" as const,
-            suggestedAction: `${f.suggestedAction} Auto-fix dry-run: retry-once is recorded but not executed by this safe analyzer pass.`,
-          }
-        : f,
-    );
+    findings = findings.map((f) => applyMaintenanceAutoFix(f));
   }
 
   if (findings.length > 0 && opts?.noPersist !== true) {
@@ -122,7 +115,10 @@ function addAnalyzeOptions(cmd: Chainable): Chainable {
   return cmd
     .option("--root <path>", "Root cron-hybrid-mem log directory containing YYYYMMDD/*.exit.txt")
     .option("--since <duration>", "Lookback for --root scans, e.g. 24h, 7d (default: 24h)")
-    .option("--auto-fix", "Record safe idempotent remediation intent; does not run unsafe shell actions")
+    .option(
+      "--auto-fix",
+      "Apply whitelisted safe fixes (clear stale .lock with dead PID; mark retry-once). No shell exec for unsafe actions.",
+    )
     .option("--glitchtip", "Report plugin-bug/orchestration-bug findings via existing error reporter")
     .option("--digest <fmt>", "Alias for --format, md or json")
     .option("--format <fmt>", "Output format: md (default) or json")

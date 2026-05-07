@@ -102,16 +102,24 @@ export function getLinksTo(
   }));
 }
 
+/** Optional out-params for hub-guard observability (Issue #1192). */
+export type GraphConnectedStats = {
+  nodesConsidered: number;
+  nodesSkipped: number;
+  hubsSkipped: number;
+};
+
 export function getConnectedFactIds(
   db: DatabaseSync,
   factIds: string[],
   maxDepth: number,
-  options?: { hubDegreeCap?: number | null },
+  options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats },
 ): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
 
   // `null` means no cap; only fall back to 500 when the option is omitted (`undefined`).
   const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
+  const stats = options?.stats;
   const seen = new Set(factIds);
   let frontier = [...factIds];
 
@@ -140,7 +148,13 @@ export function getConnectedFactIds(
     const nextFrontier: string[] = [];
     for (const id of frontier) {
       const degree = degreeOf(id);
-      if (hubDegreeCap != null && degree > hubDegreeCap) continue;
+      if (hubDegreeCap != null && degree > hubDegreeCap) {
+        if (stats) {
+          stats.hubsSkipped += 1;
+          stats.nodesSkipped += degree;
+        }
+        continue;
+      }
       // No hub cap: `degree` is in+out combined; each directional query uses that as LIMIT so every
       // neighbour in that direction is eligible (never truncates). With hub cap, +1 avoids edge truncation.
       const limit = hubDegreeCap == null ? Math.max(degree, 1) : Math.max(hubDegreeCap + 1, 1);
@@ -148,6 +162,7 @@ export function getConnectedFactIds(
         ...(outStmt.all(id, limit) as Array<{ id: string }>),
         ...(inStmt.all(id, limit) as Array<{ id: string }>),
       ];
+      if (stats) stats.nodesConsidered += neighbours.length;
       for (const row of neighbours) {
         if (seen.has(row.id)) continue;
         seen.add(row.id);

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,7 @@ vi.mock("../services/error-reporter.js", () => ({
 }));
 
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyMaintenanceAutoFix, clearStaleLock } from "../services/maintenance-auto-fix.js";
 import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
@@ -16,6 +17,7 @@ import {
   collectMaintenanceSteps,
   maintenanceRules,
   persistMaintenanceFindings,
+  pluginVersionGte,
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
   weekOverWeekTrend,
@@ -173,5 +175,69 @@ describe("maintenance log analyzer", () => {
     expect(findings.filter((f) => f.glitchtipEventId === "event-1")).toHaveLength(2);
     expect(shouldMaintenanceStrictFail(findings)).toBe(true);
     expect(shouldMaintenanceStrictFail([findings[3]])).toBe(false);
+  });
+
+  it("pluginVersionGte compares dotted plugin versions for resolved-issue suppression", () => {
+    expect(pluginVersionGte("2026.5.64", "2026.5.63")).toBe(true);
+    expect(pluginVersionGte("2026.5.64", "2026.5.64")).toBe(true);
+    expect(pluginVersionGte("2026.5.63", "2026.5.64")).toBe(false);
+    expect(pluginVersionGte(null, "1.0.0")).toBe(false);
+  });
+
+  it("suppresses findings when fingerprint is listed and pluginVersion meets resolvedInVersion", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260507");
+    mkdirSync(day, { recursive: true });
+    const exitPath = join(day, "nightly-distill-20260507T021015Z-123.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, ["2026-05-07T02:11:02Z distill exit=1"].join("\n"));
+    writeFileSync(logPath, "openclaw-hybrid-memory 2026.5.64\nTypeError: boom\n");
+
+    const steps = collectMaintenanceSteps(root, "7d", Date.UTC(2026, 4, 8));
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings).toHaveLength(1);
+    const fp = findings[0].fingerprint;
+    const empty = analyzeMaintenanceSteps(steps, {
+      resolvedFingerprints: { [fp]: { resolvedInVersion: "2026.5.64", note: "fixed in release" } },
+    });
+    expect(empty).toHaveLength(0);
+    const stillThere = analyzeMaintenanceSteps(steps, {
+      resolvedFingerprints: { [fp]: { resolvedInVersion: "2026.6.0", note: "future" } },
+    });
+    expect(stillThere).toHaveLength(1);
+  });
+
+  it("clearStaleLock removes dead PID locks and applyMaintenanceAutoFix clears sqlite-busy paths", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hm-lock-"));
+    const lock = join(dir, "scan.lock");
+    writeFileSync(lock, "999999999\n");
+    const cleared = clearStaleLock(lock);
+    expect(cleared.ok).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+
+    const live = join(dir, "live.lock");
+    writeFileSync(live, `${process.pid}\n`);
+    expect(clearStaleLock(live).ok).toBe(false);
+
+    const stalePath = join(dir, "stale.lock");
+    writeFileSync(stalePath, "999999998\n");
+    const fixed = applyMaintenanceAutoFix({
+      id: "x",
+      occurredAt: 1,
+      job: "j",
+      step: "s",
+      exitCode: 1,
+      classification: "infra",
+      ruleId: "sqlite-busy",
+      fingerprint: "fp",
+      logExcerpt: `SQLITE_BUSY database is locked\n${stalePath}`,
+      logPath: "/tmp/x.log",
+      pluginVersion: null,
+      actionTaken: "retry-once",
+      suggestedAction: "retry",
+      severity: "medium",
+    });
+    expect(fixed.actionTaken).toBe("auto-fixed-clear-stale-lock");
+    expect(existsSync(stalePath)).toBe(false);
   });
 });

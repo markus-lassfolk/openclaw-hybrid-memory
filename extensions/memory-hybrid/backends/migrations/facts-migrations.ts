@@ -1239,6 +1239,24 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Maintenance state KV for input-hash gating
   migrateMaintenanceStateTable(db);
+
+  // Audit-health storage growth samples (Issue #1193)
+  migrateStorageGrowthHistoryTable(db);
+}
+
+/** Weekly audit-health: snapshot SQLite/Lance sizes and link/fact counts for growth trends. */
+function migrateStorageGrowthHistoryTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS storage_growth_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recorded_at INTEGER NOT NULL,
+      sqlite_bytes INTEGER,
+      lance_bytes INTEGER,
+      link_count INTEGER,
+      fact_count INTEGER NOT NULL
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_storage_growth_recorded ON storage_growth_history(recorded_at DESC)`);
 }
 
 /** Track completion of NER/contact-org enrichment per fact (avoids re-LLM when zero entities). */

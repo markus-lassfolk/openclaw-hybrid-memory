@@ -63,6 +63,8 @@ interface DashboardContext {
   narrativesDb?: NarrativesDB | null;
   /** Provenance service for fact-to-source tracing. */
   provenanceService?: ProvenanceService | null;
+  /** Mirrors `graph.hubDegreeCap` for dashboard graph recall (Issue #1192). */
+  graphHubDegreeCap?: number | null;
 }
 
 interface MemoryStats {
@@ -1444,7 +1446,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/graph/recall") {
       try {
         const q = searchParams.get("query") ?? searchParams.get("q") ?? "";
-        const body = JSON.stringify(collectGraphRecallPayload(ctx.factsDb, q));
+        const body = JSON.stringify(collectGraphRecallPayload(ctx.factsDb, q, ctx.graphHubDegreeCap));
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {

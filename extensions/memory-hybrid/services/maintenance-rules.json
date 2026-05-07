@@ -78,5 +78,13 @@
     "defaultAction": "glitchtip+digest",
     "severity": "high",
     "suggestedAction": "Report to GlitchTip and recreate/repair the guard only after confirming the job actually succeeded."
+  },
+  {
+    "id": "scan-lock-present",
+    "pattern": "\\.scan\\.lock|scan lock|already running",
+    "classification": "infra",
+    "defaultAction": "retry-once",
+    "severity": "medium",
+    "suggestedAction": "Another run may be holding a scan lock; if the PID is stale, clear the lock file after confirming no live process."
   }
 ]

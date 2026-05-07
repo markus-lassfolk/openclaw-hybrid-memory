@@ -124,7 +124,7 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
               `  ← [${l.linkType}] ${s ? s.text.slice(0, 60) + (s.text.length > 60 ? "…" : "") : l.sourceFactId} (strength: ${l.strength.toFixed(2)})`,
             );
           }
-          const connectedIds = factsDb.getConnectedFactIds([factId], maxD);
+          const connectedIds = factsDb.getConnectedFactIds([factId], maxD, { hubDegreeCap: cfg.graph.hubDegreeCap });
           lines.push("");
           lines.push(`Total connected facts (depth ${maxD}): ${connectedIds.length}`);
           return {

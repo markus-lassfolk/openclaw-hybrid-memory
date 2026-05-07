@@ -3,7 +3,8 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import { HUB_GUARD_MAX_LINKS_PER_NODE } from "../services/graph-retrieval.js";
+import type { GraphConnectedStats } from "../backends/facts-db/links.js";
+import { expandGraph, resolveGraphHubDegreeCap, type GraphExpansionStats } from "../services/graph-retrieval.js";
 
 interface MemoryGraphNode {
   id: string;
@@ -38,6 +39,13 @@ interface GraphPayload {
 
 interface GraphRecallPayload extends GraphPayload {
   activated: string[];
+  /** Hub-guard observability for recall graph (Issue #1192). */
+  graphHubGuard?: {
+    configuredCap: number | null | undefined;
+    effectiveCap: number | null;
+    connected: GraphConnectedStats;
+    expansion: GraphExpansionStats;
+  };
 }
 
 export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: number): GraphPayload {
@@ -80,12 +88,23 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   };
 }
 
-function collectDashboardConnectedIds(factsDb: FactsDB, seeds: string[], maxDepth: number): string[] {
+function collectDashboardConnectedIds(
+  factsDb: FactsDB,
+  seeds: string[],
+  maxDepth: number,
+  hubDegreeCap: number | null | undefined,
+  stats?: GraphConnectedStats,
+): string[] {
   if (seeds.length === 0) return [];
-  return factsDb.getConnectedFactIds(seeds, maxDepth, { hubDegreeCap: HUB_GUARD_MAX_LINKS_PER_NODE * 2 });
+  const cap = hubDegreeCap === undefined ? 500 : hubDegreeCap;
+  return factsDb.getConnectedFactIds(seeds, maxDepth, { hubDegreeCap: cap, stats });
 }
 
-export function collectGraphRecallPayload(factsDb: FactsDB, query: string): GraphRecallPayload {
+export function collectGraphRecallPayload(
+  factsDb: FactsDB,
+  query: string,
+  hubDegreeCap?: number | null,
+): GraphRecallPayload {
   const q = query.trim();
   if (!q) {
     return { generatedAt: new Date().toISOString(), nodes: [], edges: [], activated: [] };
@@ -96,7 +115,14 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
     diversityWeight: 1,
   });
   const seeds = results.map((r) => r.entry.id);
-  const ids = collectDashboardConnectedIds(factsDb, seeds, 3).slice(0, 2000);
+  const connected: GraphConnectedStats = { nodesConsidered: 0, nodesSkipped: 0, hubsSkipped: 0 };
+  const ids = collectDashboardConnectedIds(factsDb, seeds, 3, hubDegreeCap, connected).slice(0, 2000);
+  const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
+  const { stats: expansion } = expandGraph(factsDb, seedInputs, {
+    maxDepth: 3,
+    maxExpandedResults: 20,
+    hubDegreeCap,
+  });
   const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
   for (const id of ids) {
@@ -124,6 +150,12 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
       strength: e.strength,
     })),
     activated: seeds,
+    graphHubGuard: {
+      configuredCap: hubDegreeCap,
+      effectiveCap: resolveGraphHubDegreeCap(hubDegreeCap),
+      connected,
+      expansion,
+    },
   };
 }
 

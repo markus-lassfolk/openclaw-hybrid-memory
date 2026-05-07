@@ -51,7 +51,7 @@ describe("event-hub repair", () => {
       tags: ["dream-cycle", "consolidated"],
     });
     for (let i = 0; i < 4; i++) {
-      const src = storeFact(i % 2 === 0 ? "session_start" : "session_end", { source: "dream-cycle" });
+      const src = storeFact(i % 2 === 0 ? `session_start#${i}` : `session_end#${i}`, { source: "dream-cycle" });
       raw()
         .prepare(
           "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1, strftime('%s','now'))",
@@ -80,7 +80,7 @@ describe("event-hub repair", () => {
 
     const sourceIds: string[] = [];
     for (let i = 0; i < 4; i++) {
-      const src = storeFact(i % 2 === 0 ? "session_start" : "session_end", { source: "dream-cycle" });
+      const src = storeFact(i % 2 === 0 ? `session_start#${i}` : `session_end#${i}`, { source: "dream-cycle" });
       sourceIds.push(src.id);
       raw()
         .prepare(

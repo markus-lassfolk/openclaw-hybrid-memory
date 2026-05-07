@@ -484,6 +484,22 @@
       "label": "Strengthen on recall",
       "help": "When true, strengthen RELATED_TO links between facts recalled together (default false; Phase 1 baseline off)"
     },
+    "graph.hubDegreeCap": {
+      "label": "Graph hub degree cap",
+      "help": "Skip traversing nodes above this total degree and cap per-hop fanout (default 500; null disables — not recommended)"
+    },
+    "digest.weekly.delivery.mode": {
+      "label": "Weekly digest delivery",
+      "help": "How the weekly pending-review digest is delivered: system (default gateway announce), telegram (requires chatId), or none (#1197)"
+    },
+    "digest.weekly.delivery.chatId": {
+      "label": "Weekly digest Telegram chat",
+      "help": "When delivery.mode is telegram, destination chat id or handle for the gateway"
+    },
+    "lifecycle.adapters.github.enabled": {
+      "label": "GitHub lifecycle adapter",
+      "help": "Phase 2 stub — leave disabled until syncLifecycleFromGitHub is wired (#1196)"
+    },
     "procedures.enabled": {
       "label": "Procedural memory",
       "help": "Extract tool-call procedures from session logs, inject in recall, auto-generate skills"
@@ -1342,6 +1358,59 @@
         },
         "description": "Identity reflection layer — synthesize persona-level insights from reflection outputs"
       },
+      "digest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "weekly": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "delivery": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["telegram", "system", "none"],
+                    "description": "Weekly pending-review digest delivery: system (default) uses gateway announce; telegram requires chatId; none disables delivery"
+                  },
+                  "chatId": {
+                    "type": "string",
+                    "description": "Destination when mode is telegram"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Pending-review digest delivery for weekly cron (#1197)"
+      },
+      "lifecycle": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "adapters": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "github": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Enable GitHub lifecycle sync (Phase 2 — not implemented in this release)"
+                  },
+                  "repo": { "type": "string" },
+                  "tokenRef": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "description": "Lifecycle adapters — GitHub stub (#1196)"
+      },
       "graph": {
         "type": "object",
         "additionalProperties": false,
@@ -1375,6 +1444,11 @@
           "strengthenOnRecall": {
             "type": "boolean",
             "description": "Strengthen RELATED_TO links when facts are recalled together (default: false)"
+          },
+          "hubDegreeCap": {
+            "type": ["number", "null"],
+            "minimum": 1,
+            "description": "Hub guard: skip nodes above this total link degree and cap per-hop traversable fanout (default: 500; null disables)"
           }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"

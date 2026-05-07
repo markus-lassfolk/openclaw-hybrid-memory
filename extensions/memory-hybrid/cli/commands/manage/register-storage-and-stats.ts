@@ -12,13 +12,16 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
+import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { filterByScope } from "../../../services/merge-results.js";
+import { expandGraph, resolveGraphHubDegreeCap, type GraphExpansionStats } from "../../../services/graph-retrieval.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
 function entryMatchesHybridSearchFilters(
@@ -56,16 +59,41 @@ type AuditHealthReport = {
     blocked: number;
     topBlockReason: string | null;
   };
-  graphHubs: Array<{ id: string; outDegree: number; textPreview: string | null; overCap: boolean }>;
+  graphHubs: Array<{
+    id: string;
+    outDegree: number;
+    textPreview: string | null;
+    overCap: boolean;
+    eventTypeHistogram: Record<string, number>;
+  }>;
   structuralEligibleWarmFacts: number;
   patternBloat: { implicitFeedbackPatterns: number };
   entityStopwordMatches: Array<{ entity: string; count: number }>;
   storage: { sqliteBytes: number | null; walBytes: number | null; shmBytes: number | null };
+  storageGrowth: {
+    lastSampleAt: number | null;
+    delta7d: {
+      sqliteBytes: number | null;
+      lanceBytes: number | null;
+      linkCount: number | null;
+      factCount: number | null;
+    } | null;
+  };
+  implicitFeedbackSignalNoise: {
+    rowsPerDay30d: Record<string, number>;
+    paraphraseRatio: number | null;
+  };
   tiers: Record<string, number>;
   decay: Record<string, number>;
   categories: { configured: string[]; present: string[]; unknown: string[] };
   sources: Record<string, number>;
   implicitFeedbackTrajectorySignals: number;
+  graphHubGuard: {
+    configuredCap: number | null | undefined;
+    effectiveCap: number | null;
+    connectedProbe: GraphConnectedStats;
+    expansionProbe: GraphExpansionStats;
+  } | null;
   warnings: string[];
   remediation: string[];
 };
@@ -85,8 +113,9 @@ function buildAuditHealthReport(
   factsDb: ManageBindings["factsDb"],
   getMemoryCategories: () => readonly string[],
   entityStopWords: readonly string[] = [],
-  graphHubDegreeCap = 500,
+  graphHubDegreeCap?: number | null,
 ): AuditHealthReport {
+  const capForHubListing = graphHubDegreeCap === undefined ? 500 : graphHubDegreeCap;
   const activeFacts = factsDb.getCount();
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
   const procedures = factsDb.proceduresCount();
@@ -117,12 +146,32 @@ function buildAuditHealthReport(
             LIMIT 10`,
           )
           .all() as Array<{ id: string; cnt: number; text_preview: string | null }>
-      ).map((row) => ({
-        id: row.id,
-        outDegree: Number(row.cnt ?? 0),
-        textPreview: row.text_preview ?? null,
-        overCap: Number(row.cnt ?? 0) > graphHubDegreeCap,
-      }))
+      ).map((row) => {
+        const eventTypeHistogram: Record<string, number> = {};
+        if (raw) {
+          const pr = raw.prepare(`SELECT provenance_json FROM facts WHERE id = ?`).get(row.id) as
+            | { provenance_json: string | null }
+            | undefined;
+          if (pr?.provenance_json) {
+            try {
+              const parsed = JSON.parse(pr.provenance_json) as { sourceEvents?: Array<{ eventType?: string }> };
+              for (const ev of parsed.sourceEvents ?? []) {
+                const t = typeof ev.eventType === "string" && ev.eventType ? ev.eventType : "unknown";
+                eventTypeHistogram[t] = (eventTypeHistogram[t] ?? 0) + 1;
+              }
+            } catch {
+              /* ignore malformed provenance */
+            }
+          }
+        }
+        return {
+          id: row.id,
+          outDegree: Number(row.cnt ?? 0),
+          textPreview: row.text_preview ?? null,
+          overCap: capForHubListing != null && Number(row.cnt ?? 0) > capForHubListing,
+          eventTypeHistogram,
+        };
+      })
     : [];
   const structuralEligibleWarmFacts = raw
     ? Number(
@@ -132,7 +181,9 @@ function buildAuditHealthReport(
               `SELECT COUNT(*) AS cnt FROM facts
               WHERE superseded_at IS NULL
                 AND (expires_at IS NULL OR expires_at > ?)
-                AND COALESCE(key, '') != ''
+                AND TRIM(COALESCE(key, '')) != ''
+                AND TRIM(COALESCE(value, '')) != ''
+                AND NOT (key = 'implicit_feedback_signal')
                 AND COALESCE(tier, 'warm') = 'warm'`,
             )
             .get(Math.floor(Date.now() / 1000)) as { cnt: number } | undefined
@@ -158,6 +209,101 @@ function buildAuditHealthReport(
     .filter((row) => isEntityStopWord(row.entity, entityStopWords))
     .slice(0, 10);
   const storageBytes = factsDb.estimateStorageBytes?.();
+  const nowSecReport = Math.floor(Date.now() / 1000);
+  const linkCountTotal =
+    raw != null
+      ? Number((raw.prepare(`SELECT COUNT(*) AS c FROM memory_links`).get() as { c: number } | undefined)?.c ?? 0)
+      : 0;
+
+  let storageGrowth: AuditHealthReport["storageGrowth"] = { lastSampleAt: null, delta7d: null };
+  if (raw) {
+    const d = new Date();
+    const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
+    const alreadyToday = raw
+      .prepare(`SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1`)
+      .get(startOfDayUtc) as { ok: number } | undefined;
+    if (!alreadyToday) {
+      raw
+        .prepare(
+          `INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(nowSecReport, storageBytes?.sqliteBytes ?? null, null, linkCountTotal, activeFacts);
+    }
+    const lastRow = raw
+      .prepare(`SELECT recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1`)
+      .get() as { recorded_at: number } | undefined;
+    const latestSnap = raw
+      .prepare(
+        `SELECT sqlite_bytes, lance_bytes, link_count, fact_count, recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1`,
+      )
+      .get() as
+      | {
+          sqlite_bytes: number | null;
+          lance_bytes: number | null;
+          link_count: number | null;
+          fact_count: number;
+          recorded_at: number;
+        }
+      | undefined;
+    const cutoff7d = nowSecReport - 7 * 86400;
+    const baselineSnap = raw
+      .prepare(
+        `SELECT sqlite_bytes, lance_bytes, link_count, fact_count, recorded_at FROM storage_growth_history WHERE recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1`,
+      )
+      .get(cutoff7d) as
+      | {
+          sqlite_bytes: number | null;
+          lance_bytes: number | null;
+          link_count: number | null;
+          fact_count: number;
+          recorded_at: number;
+        }
+      | undefined;
+
+    let delta7d: AuditHealthReport["storageGrowth"]["delta7d"] = null;
+    if (latestSnap && baselineSnap && latestSnap.recorded_at !== baselineSnap.recorded_at) {
+      delta7d = {
+        sqliteBytes:
+          latestSnap.sqlite_bytes != null && baselineSnap.sqlite_bytes != null
+            ? latestSnap.sqlite_bytes - baselineSnap.sqlite_bytes
+            : null,
+        lanceBytes:
+          latestSnap.lance_bytes != null && baselineSnap.lance_bytes != null
+            ? latestSnap.lance_bytes - baselineSnap.lance_bytes
+            : null,
+        linkCount:
+          latestSnap.link_count != null && baselineSnap.link_count != null
+            ? latestSnap.link_count - baselineSnap.link_count
+            : null,
+        factCount: latestSnap.fact_count - baselineSnap.fact_count,
+      };
+    }
+    storageGrowth = { lastSampleAt: lastRow?.recorded_at ?? null, delta7d };
+  }
+
+  const implicitFeedbackSignalNoise: AuditHealthReport["implicitFeedbackSignalNoise"] = raw
+    ? (() => {
+        const since30d = nowSecReport - 30 * 86400;
+        const perDayRows = raw
+          .prepare(
+            `SELECT date(created_at, 'unixepoch') AS day, COUNT(*) AS cnt FROM facts
+             WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND created_at >= ?
+             GROUP BY day`,
+          )
+          .all(since30d) as Array<{ day: string; cnt: number }>;
+        const rowsPerDay30d: Record<string, number> = {};
+        for (const r of perDayRows) rowsPerDay30d[String(r.day)] = Number(r.cnt ?? 0);
+        const pr = raw
+          .prepare(
+            `SELECT COUNT(*) AS total, COUNT(DISTINCT normalized_hash) AS dist FROM facts
+             WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND created_at >= ?`,
+          )
+          .get(since30d) as { total: number; dist: number };
+        const paraphraseRatio = pr.total > 0 ? pr.dist / pr.total : null;
+        return { rowsPerDay30d, paraphraseRatio };
+      })()
+    : { rowsPerDay30d: {}, paraphraseRatio: null };
+
   const warnings: string[] = [];
   if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
   if ((tiers.structural ?? 0) === 0)
@@ -167,10 +313,12 @@ function buildAuditHealthReport(
   if (unknown.length > 0) warnings.push(`Categories present in DB but not configured: ${unknown.join(", ")}`);
   if (graphHubs.some((hub) => hub.overCap))
     warnings.push(
-      `${graphHubs.filter((hub) => hub.overCap).length} graph hub(s) exceed degree cap ${graphHubDegreeCap}.`,
+      `${graphHubs.filter((hub) => hub.overCap).length} graph hub(s) exceed degree cap ${capForHubListing}.`,
     );
   if (structuralEligibleWarmFacts > 100)
-    warnings.push(`${structuralEligibleWarmFacts} key-bearing fact(s) are still warm instead of structural.`);
+    warnings.push(
+      `${structuralEligibleWarmFacts} warm fact(s) qualify for structural tier (non-empty key+value; implicit_feedback_signal excluded) but are not structural yet.`,
+    );
   if (implicitFeedbackPatterns > 1000)
     warnings.push(`${implicitFeedbackPatterns} implicit-feedback pattern fact(s) may indicate pattern bloat.`);
   if (entityStopwordMatches.length > 0)
@@ -196,6 +344,32 @@ function buildAuditHealthReport(
     remediation.push(
       "Run `openclaw hybrid-mem procedures triage --not-promoted` and `generate-auto-skills` where appropriate.",
     );
+
+  let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
+  if (raw) {
+    const probeRow = raw.prepare(`SELECT id FROM facts WHERE superseded_at IS NULL LIMIT 1`).get() as
+      | { id: string }
+      | undefined;
+    if (probeRow?.id) {
+      const connectedProbe: GraphConnectedStats = { nodesConsidered: 0, nodesSkipped: 0, hubsSkipped: 0 };
+      factsDb.getConnectedFactIds([probeRow.id], 2, { hubDegreeCap: graphHubDegreeCap, stats: connectedProbe });
+      const entry = factsDb.getById(probeRow.id);
+      if (entry) {
+        const { stats: expansionProbe } = expandGraph(factsDb, [{ factId: probeRow.id, score: 1, entry }], {
+          maxDepth: 2,
+          maxExpandedResults: 20,
+          hubDegreeCap: graphHubDegreeCap,
+        });
+        graphHubGuard = {
+          configuredCap: graphHubDegreeCap,
+          effectiveCap: resolveGraphHubDegreeCap(graphHubDegreeCap),
+          connectedProbe,
+          expansionProbe,
+        };
+      }
+    }
+  }
+
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -221,11 +395,14 @@ function buildAuditHealthReport(
       walBytes: storageBytes?.walBytes ?? null,
       shmBytes: storageBytes?.shmBytes ?? null,
     },
+    storageGrowth,
+    implicitFeedbackSignalNoise,
     tiers,
     decay,
     categories: { configured, present, unknown },
     sources,
     implicitFeedbackTrajectorySignals,
+    graphHubGuard,
     warnings,
     remediation,
   };
@@ -268,7 +445,21 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
     );
   }
   if (report.storage.sqliteBytes != null) console.log(`SQLite bytes: ${report.storage.sqliteBytes}`);
+  if (report.storageGrowth.lastSampleAt != null) {
+    console.log(
+      `Storage growth (last sample unix): ${report.storageGrowth.lastSampleAt}; 7d delta: ${JSON.stringify(report.storageGrowth.delta7d)}`,
+    );
+  }
+  console.log(
+    `Implicit-feedback signal noise (30d): paraphraseRatio=${String(report.implicitFeedbackSignalNoise.paraphraseRatio)} days=${Object.keys(report.implicitFeedbackSignalNoise.rowsPerDay30d).length}`,
+  );
   console.log(`Implicit-feedback trajectory signals: ${report.implicitFeedbackTrajectorySignals}`);
+  if (report.graphHubGuard) {
+    const g = report.graphHubGuard;
+    console.log(
+      `Graph hub guard probe (cap=${String(g.configuredCap)} effective=${String(g.effectiveCap)}): connected considered=${g.connectedProbe.nodesConsidered} skipped=${g.connectedProbe.nodesSkipped} hubsSkipped=${g.connectedProbe.hubsSkipped}; expansion considered=${g.expansionProbe.nodesConsidered} skipped=${g.expansionProbe.nodesSkipped} hubsSkipped=${g.expansionProbe.hubsSkipped}`,
+    );
+  }
   console.log("");
   if (report.warnings.length === 0) {
     console.log("Warnings: none");
@@ -830,6 +1021,8 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   const entitiesCommand = mem.command("entities").description("Inspect and clean entity labels");
 
+  registerEntityLifecycleCommands(entitiesCommand, b);
+
   entitiesCommand
     .command("clean")
     .description("Null common-noun stopword entities on existing facts (dry-run by default)")
@@ -1293,7 +1486,12 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     );
 
   const runAuditHealth = async (opts?: { json?: boolean; strict?: boolean }) => {
-    const report = buildAuditHealthReport(factsDb, getMemoryCategories);
+    const report = buildAuditHealthReport(
+      factsDb,
+      getMemoryCategories,
+      cfg.entityExtraction.stopWords,
+      cfg.graph.hubDegreeCap,
+    );
     if (opts?.json) {
       console.log(JSON.stringify(report, null, 2));
     } else {

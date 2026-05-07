@@ -8,7 +8,7 @@ import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } 
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
-import { resolveDedupeProfile } from "../../services/dedupe-policy.js";
+import { applyDedupe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
 /** Input shape for `FactsDB.store` / `storeFact`. */
@@ -80,34 +80,44 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const nowSec = Math.floor(Date.now() / 1000);
   const day = new Date(nowSec * 1000).toISOString().slice(0, 10);
 
-  // Resolve normalized-hash duplicates before daily quota: boost/merge/skip only UPDATE or
-  // return and do not consume an insert quota slot.
-  if (profile.onDuplicate !== "store" && ctx.fuzzyDedupe) {
-    const existingId = getDuplicateIdByNormalizedHash(ctx.db, entry.text);
-    if (existingId) {
-      const existing = ctx.getById(existingId);
-      if (existing) {
-        if (profile.onDuplicate === "boost") {
-          ctx.db
-            .prepare(
-              "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, importance = min(1.0, importance + ?) WHERE id = ?",
-            )
-            .run(profile.boostBy, existing.id);
-          return ctx.getById(existing.id) ?? existing;
-        }
-        if (profile.onDuplicate === "merge") {
-          const mergedText = existing.text.includes(entry.text)
-            ? existing.text
-            : `${existing.text}
-${entry.text}`.slice(0, 4000);
-          const mergedHash = normalizedHash(mergedText);
-          ctx.db
-            .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
-            .run(mergedText, mergedHash, existing.id);
-          return ctx.getById(existing.id) ?? existing;
-        }
-        return existing;
-      }
+  // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
+  const dedupe = applyDedupe(
+    profile,
+    { text: entry.text, source: sourceForPolicy },
+    {
+      db: ctx.db,
+      nowSec,
+      fuzzyDedupe: ctx.fuzzyDedupe,
+      warn: (m) => console.warn(m),
+    },
+  );
+
+  if (dedupe.action === "skip") {
+    const existing = ctx.getById(dedupe.existingId);
+    if (existing) return existing;
+  }
+
+  if (dedupe.action === "boost") {
+    ctx.db
+      .prepare(
+        "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, importance = min(1.0, importance + ?) WHERE id = ?",
+      )
+      .run(dedupe.boostBy, dedupe.existingId);
+    const boosted = ctx.getById(dedupe.existingId);
+    if (boosted) return boosted;
+  }
+
+  if (dedupe.action === "merge") {
+    const existing = ctx.getById(dedupe.existingId);
+    if (existing) {
+      const mergedText = existing.text.includes(entry.text)
+        ? existing.text
+        : `${existing.text}\n${entry.text}`.slice(0, 4000);
+      const mergedHash = normalizedHash(mergedText);
+      ctx.db
+        .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
+        .run(mergedText, mergedHash, existing.id);
+      return ctx.getById(existing.id) ?? existing;
     }
   }
 
@@ -293,12 +303,17 @@ export function deleteFact(db: DatabaseSync, id: string): boolean {
   return result.changes > 0;
 }
 
-/** Exact or (if fuzzyDedupe) normalized-text duplicate. */
-export function hasDuplicateText(db: DatabaseSync, fuzzyDedupe: boolean, text: string): boolean {
-  const exact = db.prepare("SELECT id FROM facts WHERE text = ? LIMIT 1").get(text);
-  if (exact) return true;
-  if (fuzzyDedupe && getDuplicateIdByNormalizedHash(db, text) !== null) return true;
-  return false;
+/** Exact match or write-time dedupe policy would not insert a new row (per-source). */
+export function hasDuplicateText(
+  db: DatabaseSync,
+  fuzzyDedupe: boolean,
+  text: string,
+  storeConfig?: StoreConfig,
+  source = "conversation",
+): boolean {
+  const profile = resolveDedupeProfile(source, storeConfig ?? { fuzzyDedupe });
+  const r = applyDedupe(profile, { text, source }, { db, nowSec: Math.floor(Date.now() / 1000), fuzzyDedupe });
+  return r.action !== "store";
 }
 
 export function statsDailyWrites(

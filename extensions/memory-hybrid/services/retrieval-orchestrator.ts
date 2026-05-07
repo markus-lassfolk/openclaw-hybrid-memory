@@ -367,9 +367,10 @@ function runGraphStrategy(
   maxDepth: number,
   scopeFilter?: unknown,
   asOf?: number,
+  hubDegreeCap?: number | null,
 ): RankedResult[] {
   if (maxDepth <= 0 || seeds.length === 0 || !hasGraphLookup(factsDb)) return [];
-  const expanded = expandGraph(factsDb, seeds, { maxDepth, scopeFilter, asOf });
+  const { results: expanded } = expandGraph(factsDb, seeds, { maxDepth, scopeFilter, asOf, hubDegreeCap });
   const bestById = new Map<string, number>();
   for (const e of expanded) {
     if (e.expansionSource !== "graph") continue;
@@ -536,6 +537,7 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     embeddingRegistry: describeEmbeddingRegistry(options.embeddingRegistry),
     embeddingFactsEnabled: Boolean(options.factsDbForEmbeddings),
     constrainedFilters: options.constrainedFilters ?? null,
+    graphHubDegreeCap: options.graphHubDegreeCap ?? null,
   });
 }
 
@@ -700,6 +702,8 @@ export interface RetrievalPipelineOptions {
    * then limits semantic/FTS5 ranking to only those candidates.
    * This implements the "filter → rank → hydrate" pattern (Issue #1026). */
   constrainedFilters?: import("../backends/facts-db/search.js").ConstrainedSearchFilters;
+  /** Mirrors `graph.hubDegreeCap` for GraphRAG expansion (Issue #1192). */
+  graphHubDegreeCap?: number | null;
 }
 
 /**
@@ -770,6 +774,7 @@ export async function runExplicitDeepRetrieval(
     adaptiveOpenai,
     documentGradingConfig,
     constrainedFilters,
+    graphHubDegreeCap,
   } = options;
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
@@ -1021,7 +1026,14 @@ export async function runExplicitDeepRetrieval(
         score,
         entry: seedEntries.get(factId)!,
       }));
-      const graphResults = runGraphStrategy(factsDb, seeds, config.graphWalkDepth, scopeFilter, asOf);
+      const graphResults = runGraphStrategy(
+        factsDb,
+        seeds,
+        config.graphWalkDepth,
+        scopeFilter,
+        asOf,
+        graphHubDegreeCap,
+      );
       if (graphResults.length > 0) {
         strategyMap.set("graph", graphResults);
       }
