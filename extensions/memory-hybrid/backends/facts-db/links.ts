@@ -239,12 +239,19 @@ export function expandGraphWithCTE(
 
   // Use recursive CTE to traverse the graph in a single query
   // We track: current node, seed that originated this path, hop count, and JSON path
-  const degreeCheck =
+  const degreeCheckOut =
     hubDegreeCap == null
       ? ""
       : `AND (
-        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ge.fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
-        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ge.fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ml.target_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ml.target_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+      ) <= ?`;
+  const degreeCheckIn =
+    hubDegreeCap == null
+      ? ""
+      : `AND (
+        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ml.source_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ml.source_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
       ) <= ?`;
   const query = `
     WITH RECURSIVE graph_expansion(
@@ -289,7 +296,7 @@ export function expandGraphWithCTE(
         AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
-        ${degreeCheck}
+        ${degreeCheckOut}
         ${factWhereOut}
 
       UNION ALL
@@ -318,7 +325,7 @@ export function expandGraphWithCTE(
         AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
         -- Avoid cycles: only visit each node once per path
         AND ge.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
-        ${degreeCheck}
+        ${degreeCheckIn}
         ${factWhereIn}
     ),
     -- Aggregate to find shortest path to each node

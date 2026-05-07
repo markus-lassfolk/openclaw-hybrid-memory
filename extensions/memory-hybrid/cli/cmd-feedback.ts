@@ -457,6 +457,7 @@ export async function runExtractImplicitFeedbackForCli(
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
         try {
+          lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
           const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
           const similarId = rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, text, lessonDedupeJaccard) : null;
           if (similarId) {
@@ -558,6 +559,7 @@ export async function runExtractImplicitFeedbackForCli(
             const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
             const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
             for (const lesson of traj.lessonsExtracted) {
+              lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
               const trimmedLesson = lesson.trim();
               if (!trimmedLesson) continue;
               const similarId = findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard);
