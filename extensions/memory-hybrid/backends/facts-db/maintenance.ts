@@ -50,7 +50,6 @@ export function runCompaction(
     .prepare(
       `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
          AND (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
-         AND category NOT IN ('decision', 'pattern', 'rule')
          AND (key IS NULL OR key != 'implicit_feedback_signal')
          AND (tier IS NULL OR tier != 'structural')`,
     )
