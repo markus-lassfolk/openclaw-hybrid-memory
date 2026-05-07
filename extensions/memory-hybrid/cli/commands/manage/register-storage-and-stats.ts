@@ -697,6 +697,22 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       }),
     );
 
+
+  mem
+    .command("audit-health")
+    .description("One-shot non-destructive hybrid-memory health report (JSON or markdown)")
+    .option("--json", "Emit JSON instead of markdown")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        const report = buildAuditHealthReport(factsDb);
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          printAuditHealthMarkdown(report);
+        }
+      }),
+    );
+
   mem
     .command("categories")
     .description("List all categories in memory (discovered from facts)")
