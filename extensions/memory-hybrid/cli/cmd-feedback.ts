@@ -95,13 +95,23 @@ function normalizeLessonToken(token: string): string {
 }
 
 function normalizeLessonTokens(text: string): Set<string> {
-  const normalized = text
+  const out = new Set<string>();
+  const rawTokens = text
     .toLowerCase()
     .replace(/[^a-z0-9åäö]+/g, " ")
     .split(/\s+/)
-    .filter((token) => token.length >= 3 && !LESSON_DEDUPE_STOPWORDS.has(token))
-    .map(normalizeLessonToken);
-  return new Set(normalized);
+    .filter((t) => t.length >= 3);
+  for (const raw of rawTokens) {
+    if (LESSON_DEDUPE_STOPWORDS.has(raw)) continue;
+    let stem = normalizeLessonToken(raw);
+    if (!stem || stem.length < 2) continue;
+    if (LESSON_DEDUPE_STOPWORDS.has(stem) && stem !== raw) {
+      stem = raw;
+    }
+    if (LESSON_DEDUPE_STOPWORDS.has(stem)) continue;
+    out.add(stem);
+  }
+  return out;
 }
 
 function tokenJaccard(a: string, b: string): number {
@@ -208,7 +218,7 @@ export function cleanupImplicitFeedbackDuplicates(
     createdAt: number;
   }>;
   let collapsed = 0;
-  const CANONICAL_WINDOW_SIZE = 500;
+  const CANONICAL_WINDOW_SIZE = Math.min(20_000, Math.max(2000, limit * 8));
   const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
     .map((c) => ({ id: c.id, text: c.text }));

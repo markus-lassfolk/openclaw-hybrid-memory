@@ -27,6 +27,7 @@ import {
   groupEventsByEntity,
   runDreamCycle,
   runEpisodicConsolidation,
+  shouldSkipEpisodicConsolidation,
 } from "../services/dream-cycle.js";
 
 const { FactsDB, EventLog } = _testing;
@@ -226,7 +227,7 @@ describe("groupEventsByEntity", () => {
     expect(groups.has("Bob")).toBe(false);
   });
 
-  it("filters lifecycle heartbeat noise before grouping", () => {
+  it("caller pre-filters lifecycle heartbeat noise before grouping", () => {
     const events = [
       makeEntry({ content: { text: "heartbeat" } }),
       makeEntry({ content: { text: "session_start" } }),
@@ -237,7 +238,7 @@ describe("groupEventsByEntity", () => {
       makeEntry({ content: { text: "unattributed useful event" } }),
     ];
 
-    const groups = groupEventsByEntity(events);
+    const groups = groupEventsByEntity(events.filter((e) => !shouldSkipEpisodicConsolidation(e)));
 
     expect(groups.get("Alice")).toHaveLength(1);
     expect(groups.get("__default__")).toHaveLength(1);

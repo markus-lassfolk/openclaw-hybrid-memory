@@ -158,9 +158,10 @@ export function filterTraversableLinks<
 >(links: T[]): T[] {
   const traversable = links.filter((link) => link.linkType !== "CONTRADICTS");
   if (traversable.length <= HUB_GUARD_MAX_LINKS_PER_NODE) return traversable;
-  const derivedFrom = traversable.filter((link) => link.linkType === "DERIVED_FROM");
-  const others = traversable.filter((link) => link.linkType !== "DERIVED_FROM");
-  const sorted = [...others].sort((a, b) => {
+  const sorted = [...traversable].sort((a, b) => {
+    const da = a.linkType === "DERIVED_FROM" ? 1 : 0;
+    const db = b.linkType === "DERIVED_FROM" ? 1 : 0;
+    if (da !== db) return da - db;
     const ds = (b.strength ?? 0) - (a.strength ?? 0);
     if (ds !== 0) return ds;
     const endA = a.targetFactId ?? a.sourceFactId ?? "";
@@ -169,9 +170,7 @@ export function filterTraversableLinks<
     const kb = `${b.linkType}\0${endB}\0${b.id ?? ""}`;
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
-  const cappedOthers = sorted.slice(0, HUB_GUARD_MAX_LINKS_PER_NODE);
-  const remaining = HUB_GUARD_MAX_LINKS_PER_NODE - cappedOthers.length;
-  return remaining > 0 ? [...cappedOthers, ...derivedFrom.slice(0, remaining)] : cappedOthers;
+  return sorted.slice(0, HUB_GUARD_MAX_LINKS_PER_NODE);
 }
 
 // ---------------------------------------------------------------------------

@@ -88,6 +88,7 @@ function hasTag(tagsStr: string | null, tag: string): boolean {
   return parseTags(tagsStr).includes(tag.toLowerCase().trim());
 }
 
+/** JSON-array parsing for `facts.preserve_tags` (tiering + trim). */
 function parsePreserveTags(raw: string | null): string[] {
   if (!raw) return [];
   try {
@@ -111,6 +112,7 @@ function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
   return (
     (row.preserve_until != null && row.preserve_until > nowSec) ||
     preserveTags.length > 0 ||
+    preserveTagsColumnExcludesFromTrimSql(row.preserve_tags) ||
     hasTag(row.tags, "edict") ||
     hasTag(row.tags, "blocker")
   );

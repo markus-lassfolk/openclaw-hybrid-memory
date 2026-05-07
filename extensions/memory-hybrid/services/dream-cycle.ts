@@ -124,6 +124,7 @@ export function extractEventText(event: EventLogEntry): string {
 /**
  * Group event log entries by their primary entity.
  * Events with no entities are grouped under the "__default__" key.
+ * Callers should omit lifecycle/noise events (e.g. via `shouldSkipEpisodicConsolidation`) before calling.
  */
 export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventLogEntry[]> {
   const groups = new Map<string, EventLogEntry[]>();

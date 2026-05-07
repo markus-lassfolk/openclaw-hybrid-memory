@@ -138,7 +138,9 @@ export function getConnectedFactIds(
     for (const id of frontier) {
       const degree = degreeOf(id);
       if (hubDegreeCap != null && degree > hubDegreeCap) continue;
-      const limit = hubDegreeCap == null ? Math.max(degree, 1) : Math.max(degree, 1);
+      // No hub cap: `degree` is in+out combined; each directional query uses that as LIMIT so every
+      // neighbour in that direction is eligible (never truncates). With hub cap, +1 avoids edge truncation.
+      const limit = hubDegreeCap == null ? Math.max(degree, 1) : Math.max(hubDegreeCap + 1, 1);
       const neighbours = [
         ...(outStmt.all(id, limit) as Array<{ id: string }>),
         ...(inStmt.all(id, limit) as Array<{ id: string }>),
