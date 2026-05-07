@@ -18,7 +18,7 @@
  * first_seen, last_seen, count, suggested_fix.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type Chainable, withExit } from "../../shared.js";
@@ -322,14 +322,14 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
           if (outPath === "-") {
             process.stdout.write(out + "\n");
           } else {
-            require("node:fs").writeFileSync(outPath, out, "utf-8");
+            writeFileSync(outPath, out, "utf-8");
             console.log(`Written: ${outPath}`);
           }
         } else {
           if (outPath === "-") {
             process.stdout.write(result.summaryMd + "\n");
           } else {
-            require("node:fs").writeFileSync(outPath, result.summaryMd, "utf-8");
+            writeFileSync(outPath, result.summaryMd, "utf-8");
             console.log(`Written: ${outPath}`);
           }
         }
