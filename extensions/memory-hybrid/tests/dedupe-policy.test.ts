@@ -4,7 +4,9 @@ import { resolveDedupeProfile } from "../services/dedupe-policy.js";
 
 describe("dedupe policy", () => {
   it("resolves exact source profiles", () => {
-    const store = parseStoreConfig({ store: { sourceProfiles: { "implicit-feedback": { onDuplicate: "boost", maxPerDay: 50, boostBy: 0.2 } } } });
+    const store = parseStoreConfig({
+      store: { sourceProfiles: { "implicit-feedback": { onDuplicate: "boost", maxPerDay: 50, boostBy: 0.2 } } },
+    });
     const profile = resolveDedupeProfile("implicit-feedback", store);
     expect(profile.sourcePattern).toBe("implicit-feedback");
     expect(profile.onDuplicate).toBe("boost");
@@ -13,7 +15,9 @@ describe("dedupe policy", () => {
   });
 
   it("resolves glob source profiles before falling back", () => {
-    const store = parseStoreConfig({ store: { sourceProfiles: { "seed:*": { onDuplicate: "store" } }, defaultProfile: { onDuplicate: "skip" } } });
+    const store = parseStoreConfig({
+      store: { sourceProfiles: { "seed:*": { onDuplicate: "store" } }, defaultProfile: { onDuplicate: "skip" } },
+    });
     expect(resolveDedupeProfile("seed:demo", store).onDuplicate).toBe("store");
     expect(resolveDedupeProfile("conversation", store).onDuplicate).toBe("skip");
   });
@@ -41,8 +45,24 @@ describe("FactsDB sourceProfiles write path", () => {
       storeConfig: { fuzzyDedupe: true, sourceProfiles: { "seed:*": { onDuplicate: "store" } } },
     });
     try {
-      db.store({ text: "same seed fact", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "seed:demo" });
-      db.store({ text: "same seed fact", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "seed:demo" });
+      db.store({
+        text: "same seed fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "seed:demo",
+      });
+      db.store({
+        text: "same seed fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "seed:demo",
+      });
       expect(db.count()).toBe(2);
     } finally {
       db.close();
@@ -54,11 +74,30 @@ describe("FactsDB sourceProfiles write path", () => {
     const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-boost-"));
     const db = new FactsDB(join(dir, "facts.db"), {
       fuzzyDedupe: true,
-      storeConfig: { fuzzyDedupe: true, sourceProfiles: { "implicit-feedback": { onDuplicate: "boost", boostBy: 0.2 } } },
+      storeConfig: {
+        fuzzyDedupe: true,
+        sourceProfiles: { "implicit-feedback": { onDuplicate: "boost", boostBy: 0.2 } },
+      },
     });
     try {
-      const first = db.store({ text: "assistant should avoid vague replies", category: "technical", importance: 0.5, entity: null, key: null, value: null, source: "implicit-feedback" });
-      const second = db.store({ text: "assistant should avoid vague replies", category: "technical", importance: 0.5, entity: null, key: null, value: null, source: "implicit-feedback" });
+      const first = db.store({
+        text: "assistant should avoid vague replies",
+        category: "technical",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "implicit-feedback",
+      });
+      const second = db.store({
+        text: "assistant should avoid vague replies",
+        category: "technical",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "implicit-feedback",
+      });
       expect(second.id).toBe(first.id);
       const boosted = db.getById(first.id)!;
       expect(boosted.recallCount).toBeGreaterThanOrEqual(1);
@@ -77,9 +116,25 @@ describe("FactsDB sourceProfiles write path", () => {
       storeConfig: { fuzzyDedupe: true, sourceProfiles: { noisy: { maxPerDay: 1, onDuplicate: "skip" } } },
     });
     try {
-      db.store({ text: "first noisy write", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "noisy" });
+      db.store({
+        text: "first noisy write",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "noisy",
+      });
       expect(() =>
-        db.store({ text: "second noisy write", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "noisy" }),
+        db.store({
+          text: "second noisy write",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "noisy",
+        }),
       ).toThrow(/daily write quota exceeded/);
       const rows = db.statsDailyWrites();
       expect(rows[0].source).toBe("noisy");

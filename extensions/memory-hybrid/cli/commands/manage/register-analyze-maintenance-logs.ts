@@ -140,7 +140,6 @@ function classifyError(
   };
 }
 
-
 function parseSinceMs(value?: string): number {
   if (!value) return 24 * 3600 * 1000;
   const m = value.trim().match(/^(\d+)([dhw])?$/i);
@@ -173,7 +172,11 @@ function collectExitLogs(root: string, since?: string): string {
         const [, iso, step, exitRaw] = m;
         const exitCode = Number.parseInt(exitRaw, 10);
         const status = exitCode === 0 ? "completed" : "failed";
-        const excerpt = logContent.split("\n").filter((l) => /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module/i.test(l)).slice(-5).join("; ");
+        const excerpt = logContent
+          .split("\n")
+          .filter((l) => /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module/i.test(l))
+          .slice(-5)
+          .join("; ");
         chunks.push(`${iso} ${job}/${step} ${status} exit=${exitCode} ${excerpt}`.trim());
       }
     }
@@ -232,7 +235,6 @@ async function readStdinIfPiped(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-
 function persistMaintenanceFindings(dbPath: string, result: AnalyzeResult): void {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -260,7 +262,18 @@ function persistMaintenanceFindings(dbPath: string, result: AnalyzeResult): void
     for (const group of result.failureGroups) {
       const fingerprint = `${group.category}:${group.jobName}:${group.messages[0] ?? ""}`.slice(0, 180);
       const id = Buffer.from(fingerprint).toString("base64url").slice(0, 64);
-      stmt.run(id, group.lastSeen, group.jobName, null, null, group.category, fingerprint, group.messages[0] ?? null, "reported", now);
+      stmt.run(
+        id,
+        group.lastSeen,
+        group.jobName,
+        null,
+        null,
+        group.category,
+        fingerprint,
+        group.messages[0] ?? null,
+        "reported",
+        now,
+      );
     }
   } finally {
     db.close();
@@ -357,80 +370,97 @@ export function registerManageAnalyzeMaintenanceLogs(mem: Chainable, b: ManageBi
     .option("--strict", "Exit non-zero when failures are found")
     .option("--auto-fix", "Reserved for safe idempotent remediation; currently report-only")
     .option("--dry-run", "Show intended actions without mutating state (default behavior)")
-    .option("--persist <path>", "SQLite path for persisted maintenance findings (default: <memory-dir>/maintenance-findings.db)")
+    .option(
+      "--persist <path>",
+      "SQLite path for persisted maintenance findings (default: <memory-dir>/maintenance-findings.db)",
+    )
     .option("--glitchtip", "Report plugin/orchestration-like findings via existing error reporter")
     .option("--format <fmt>", "Output format: md (default) or json")
     .option("--out <path>", "Output file path, or '-' for stdout (default: -)")
     .action(
-      withExit(async (opts?: { file?: string; root?: string; since?: string; digest?: string; strict?: boolean; autoFix?: boolean; dryRun?: boolean; format?: string; out?: string }) => {
-        const format = opts?.digest ?? opts?.format ?? "md";
-        const outPath = opts?.out ?? "-";
+      withExit(
+        async (opts?: {
+          file?: string;
+          root?: string;
+          since?: string;
+          digest?: string;
+          strict?: boolean;
+          autoFix?: boolean;
+          dryRun?: boolean;
+          persist?: string;
+          glitchtip?: boolean;
+          format?: string;
+          out?: string;
+        }) => {
+          const format = opts?.digest ?? opts?.format ?? "md";
+          const outPath = opts?.out ?? "-";
 
-        let logContent = "";
-        if (opts?.file) {
-          if (!existsSync(opts.file)) {
-            console.error(`error: file not found: ${opts.file}`);
-            process.exitCode = 1;
+          let logContent = "";
+          if (opts?.file) {
+            if (!existsSync(opts.file)) {
+              console.error(`error: file not found: ${opts.file}`);
+              process.exitCode = 1;
+              return;
+            }
+            logContent = readFileSync(opts.file, "utf-8");
+          } else if (opts?.root) {
+            logContent = collectExitLogs(opts.root, opts.since);
+          } else {
+            logContent = await readStdinIfPiped();
+          }
+
+          const result = buildAnalyzedResult(logContent);
+
+          if (result.totalRuns === 0) {
+            console.log(
+              "# Maintenance Log Analysis\n\nNo cron run entries detected in the input. " +
+                "Pipe gateway logs:\n  openclaw gateway logs | openclaw hybrid-mem manage analyze-maintenance-logs run",
+            );
+            if (opts?.strict) process.exitCode = 1;
             return;
           }
-          logContent = readFileSync(opts.file, "utf-8");
-        } else if (opts?.root) {
-          logContent = collectExitLogs(opts.root, opts.since);
-        } else {
-          logContent = await readStdinIfPiped();
-        }
 
-        const result = buildAnalyzedResult(logContent);
+          const persistPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
+          if (result.failureGroups.length > 0) {
+            persistMaintenanceFindings(persistPath, result);
+            result.findingsPath = persistPath;
+          }
 
-        if (result.totalRuns === 0) {
-          console.log(
-            "# Maintenance Log Analysis\n\nNo cron run entries detected in the input. " +
-              "Pipe gateway logs:\n  openclaw gateway logs | openclaw hybrid-mem manage analyze-maintenance-logs run",
-          );
-          if (opts?.strict) process.exitCode = 1;
-          return;
-        }
-
-        const persistPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
-        if (result.failureGroups.length > 0) {
-          persistMaintenanceFindings(persistPath, result);
-          result.findingsPath = persistPath;
-        }
-
-        if (opts?.glitchtip) {
-          for (const group of result.failureGroups) {
-            if (group.category === "dependency" || group.category === "unknown") {
-              capturePluginError(new Error(`maintenance-log ${group.category}: ${group.jobName}`), {
-                operation: "analyze-maintenance-logs",
-                subsystem: "maintenance",
-                severity: group.severity,
-              });
+          if (opts?.glitchtip) {
+            for (const group of result.failureGroups) {
+              if (group.category === "dependency" || group.category === "unknown") {
+                capturePluginError(new Error(`maintenance-log ${group.category}: ${group.jobName}`), {
+                  operation: "analyze-maintenance-logs",
+                  subsystem: "maintenance",
+                  severity: group.severity,
+                });
+              }
             }
           }
-        }
 
-        if (opts?.autoFix) {
-          result.summaryMd += "\n\n_Auto-fix requested; no unsafe remediation was executed in this pass._";
-        }
-
-        if (opts?.strict && result.failure > 0) process.exitCode = 1;
-
-        if (format === "json") {
-          const out = JSON.stringify(result, null, 2);
-          if (outPath === "-") {
-            process.stdout.write(out + "\n");
-          } else {
-            writeFileSync(outPath, out, "utf-8");
-            console.log(`Written: ${outPath}`);
+          if (opts?.autoFix) {
+            result.summaryMd += "\n\n_Auto-fix requested; no unsafe remediation was executed in this pass._";
           }
-        } else {
-          if (outPath === "-") {
-            process.stdout.write(result.summaryMd + "\n");
+
+          if (opts?.strict && result.failure > 0) process.exitCode = 1;
+
+          if (format === "json") {
+            const out = JSON.stringify(result, null, 2);
+            if (outPath === "-") {
+              process.stdout.write(out + "\n");
+            } else {
+              writeFileSync(outPath, out, "utf-8");
+              console.log(`Written: ${outPath}`);
+            }
           } else {
-            writeFileSync(outPath, result.summaryMd, "utf-8");
-            console.log(`Written: ${outPath}`);
+            if (outPath === "-") {
+              process.stdout.write(result.summaryMd + "\n");
+            } else {
+              writeFileSync(outPath, result.summaryMd, "utf-8");
+              console.log(`Written: ${outPath}`);
+            }
           }
-        }
-      }),
+        },
+      ),
     );
 }

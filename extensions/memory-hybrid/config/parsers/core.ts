@@ -78,7 +78,10 @@ function parseStoreSourceProfile(raw: unknown): StoreSourceProfile | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const obj = raw as Record<string, unknown>;
   const onDuplicate =
-    obj.onDuplicate === "skip" || obj.onDuplicate === "boost" || obj.onDuplicate === "merge" || obj.onDuplicate === "store"
+    obj.onDuplicate === "skip" ||
+    obj.onDuplicate === "boost" ||
+    obj.onDuplicate === "merge" ||
+    obj.onDuplicate === "store"
       ? obj.onDuplicate
       : undefined;
   return {

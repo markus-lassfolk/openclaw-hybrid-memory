@@ -288,8 +288,9 @@ export function hasDuplicateText(db: DatabaseSync, fuzzyDedupe: boolean, text: s
   return false;
 }
 
-
-export function statsDailyWrites(db: DatabaseSync): Array<{ source: string; day: string; count: number; dropped: number }> {
+export function statsDailyWrites(
+  db: DatabaseSync,
+): Array<{ source: string; day: string; count: number; dropped: number }> {
   return db
     .prepare("SELECT source, day, count, dropped FROM daily_writes ORDER BY day DESC, source ASC LIMIT 100")
     .all() as Array<{ source: string; day: string; count: number; dropped: number }>;
