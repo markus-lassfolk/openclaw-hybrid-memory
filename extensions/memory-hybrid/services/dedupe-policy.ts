@@ -1,6 +1,4 @@
-import type { StoreConfig } from "../config/types/core.js";
-
-export type StoreDedupeAction = "skip" | "boost" | "merge" | "store";
+import type { StoreConfig, StoreDedupeAction } from "../config/types/core.js";
 
 export type ResolvedDedupeProfile = {
   sourcePattern: string;

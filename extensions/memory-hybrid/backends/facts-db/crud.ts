@@ -219,16 +219,16 @@ ${entry.text}`.slice(0, 4000);
         preserveTagsStr,
         provenanceJson,
       );
+    if (profile.maxPerDay != null) {
+      ctx.db
+        .prepare(
+          `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
+           ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
+        )
+        .run(sourceForPolicy, day);
+    }
   });
   tx();
-  if (profile.maxPerDay != null) {
-    ctx.db
-      .prepare(
-        `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 1, 0)
-         ON CONFLICT(source, day) DO UPDATE SET count = count + 1`,
-      )
-      .run(sourceForPolicy, day);
-  }
   if (supersedesId) {
     ctx.invalidateSupersededCache();
   }
