@@ -77,6 +77,7 @@ function findSimilarImplicitFeedbackLesson(
     .prepare(
       `SELECT id, text FROM facts
        WHERE source = 'implicit-feedback'
+         AND key = 'implicit_feedback_signal'
          AND superseded_at IS NULL
          AND (tags LIKE '%implicit-feedback%' OR tags LIKE '%trajectory%')
        ORDER BY created_at DESC
@@ -128,17 +129,24 @@ export function cleanupImplicitFeedbackDuplicates(
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
   );
-  for (const row of rows) {
-    const match = canonical.find(
-      (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
-    );
-    if (!match) {
-      canonical.push({ id: row.id, text: row.text });
-      continue;
+  rawDb.prepare("BEGIN").run();
+  try {
+    for (const row of rows) {
+      const match = canonical.find(
+        (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
+      );
+      if (!match) {
+        canonical.push({ id: row.id, text: row.text });
+        continue;
+      }
+      supersede.run(nowSec, match.id, nowSec, row.id);
+      reinforce.run(Math.max(1, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+      collapsed++;
     }
-    supersede.run(nowSec, match.id, nowSec, row.id);
-    reinforce.run(Math.max(1, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
-    collapsed++;
+    rawDb.prepare("COMMIT").run();
+  } catch (err) {
+    rawDb.prepare("ROLLBACK").run();
+    throw err;
   }
   return { scanned: rows.length, collapsed };
 }
