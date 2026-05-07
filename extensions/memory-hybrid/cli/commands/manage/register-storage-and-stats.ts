@@ -226,7 +226,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const proceduresPromoted = factsDb.proceduresPromotedCount();
           const directives = factsDb.directivesCount();
           const rules = byCategory.rule ?? 0;
-          const patterns = byCategory.pattern ?? 0;
+          const categoryPatterns = byCategory.pattern ?? 0;
           const metaPatterns = factsDb.metaPatternsCount();
           const links = factsDb.linksCount();
           const entities = factsDb.entityCount();
@@ -240,6 +240,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const sizes = await extras.getStorageSizes();
 
           const { reflectionPatternsCount, reflectionRulesCount } = factsDb.statsReflection();
+          const patterns = reflectionPatternsCount;
           const selfCorrectionCount = factsDb.selfCorrectionIncidentsCount();
           const languageKeywordsCount = factsDb.languageKeywordsCount();
 
@@ -291,6 +292,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           );
           console.log(`Rules: ${rules}`);
           console.log(`Patterns: ${patterns}`);
+          console.log(`Category pattern facts: ${categoryPatterns}`);
           console.log(`Implicit-feedback signals: ${implicitFeedbackSignals}`);
           console.log(`Meta-patterns: ${metaPatterns}`);
           console.log(`Directives: ${directives}`);

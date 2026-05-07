@@ -321,6 +321,73 @@ describe("implicit feedback routing — negative → pattern facts", () => {
     expect(superseded?.supersededAt).toBeTypeOf("number");
   });
 
+  it("supports dry-run collapse without superseding historical duplicates", () => {
+    const db = makeDb(tmpDir);
+    const first = db.store({
+      text: "User satisfaction increases when the agent provides concrete next steps",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    const duplicate = db.store({
+      text: "User satisfaction improves when the agent provides concrete next steps",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "implicit-feedback",
+      tags: ["trajectory"],
+    });
+
+    const result = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.7, limit: 100, dryRun: true });
+
+    expect(result.collapsed).toBe(1);
+    const rows = rawDb(db)
+      .prepare("SELECT id, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id IN (?, ?)")
+      .all(first.id, duplicate.id) as Array<{ id: string; supersededBy: string | null; supersededAt: number | null }>;
+    expect(rows.every((row) => row.supersededAt == null)).toBe(true);
+    expect(rows.every((row) => row.supersededBy == null)).toBe(true);
+  });
+
+  it("collapses legacy pattern-shaped trajectory rows into canonical implicit-feedback signals", () => {
+    const db = makeDb(tmpDir);
+    const canonical = db.store({
+      text: "Validate dispatched tasks return complete structured evidence",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    const legacyPattern = db.store({
+      text: "Validate that each dispatched task returns complete structured evidence",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "implicit-feedback",
+      tags: ["trajectory"],
+    });
+
+    const result = cleanupImplicitFeedbackDuplicates(db, { threshold: 0.7, limit: 100 });
+
+    expect(result.collapsed).toBe(1);
+    const row = rawDb(db)
+      .prepare("SELECT category, superseded_by as supersededBy, superseded_at as supersededAt FROM facts WHERE id = ?")
+      .get(legacyPattern.id) as { category: string; supersededBy: string | null; supersededAt: number | null };
+    expect(row.category).toBe("pattern");
+    expect(row.supersededBy).toBe(canonical.id);
+    expect(row.supersededAt).toBeTypeOf("number");
+  });
+
   it("does NOT store implicit-feedback pattern facts when feedToSelfCorrection=false", async () => {
     const db = makeDb(tmpDir);
     writeNegativeSession(sessionsDir, "2026-01-01-session.jsonl");

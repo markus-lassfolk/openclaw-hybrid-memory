@@ -2571,6 +2571,17 @@ describe("FactsDB.statsReflection", () => {
       source: "conversation",
     });
 
+    db.store({
+      text: "Legacy implicit-feedback trajectory signal",
+      category: "pattern",
+      importance: 0.6,
+      entity: null,
+      key: null,
+      value: null,
+      source: "implicit-feedback",
+      tags: ["trajectory"],
+    });
+
     const stats = db.statsReflection();
     expect(stats.reflectionPatternsCount).toBe(2);
     expect(stats.reflectionRulesCount).toBe(1);

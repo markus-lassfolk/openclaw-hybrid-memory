@@ -63,13 +63,39 @@ export const SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER = `(
   )
 )`;
 
+const LESSON_DEDUPE_STOPWORDS = new Set([
+  "and",
+  "are",
+  "each",
+  "for",
+  "from",
+  "has",
+  "have",
+  "into",
+  "that",
+  "the",
+  "then",
+  "this",
+  "when",
+  "with",
+]);
+
+function normalizeLessonToken(token: string): string {
+  let normalized = token.trim();
+  if (normalized.endsWith("ies") && normalized.length > 5) normalized = `${normalized.slice(0, -3)}y`;
+  else if (normalized.endsWith("es") && normalized.length > 4) normalized = normalized.slice(0, -2);
+  else if (normalized.endsWith("s") && normalized.length > 4) normalized = normalized.slice(0, -1);
+  if (normalized.endsWith("ed") && normalized.length > 5) normalized = normalized.slice(0, -2);
+  return normalized;
+}
+
 function normalizeLessonTokens(text: string): Set<string> {
   const normalized = text
     .toLowerCase()
     .replace(/[^a-z0-9åäö]+/g, " ")
     .split(/\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 3);
+    .map(normalizeLessonToken)
+    .filter((token) => token.length >= 3 && !LESSON_DEDUPE_STOPWORDS.has(token));
   return new Set(normalized);
 }
 
@@ -137,6 +163,8 @@ export function cleanupImplicitFeedbackDuplicates(
     threshold?: number;
     limit?: number;
     afterRowid?: number;
+    /** When true, report collapsible rows without superseding/reinforcing. */
+    dryRun?: boolean;
     /** Leaders from prior paging batches so near-duplicates across windows still collapse. */
     seedCanonical?: ReadonlyArray<{ id: string; text: string }>;
   } = {},
@@ -156,6 +184,7 @@ export function cleanupImplicitFeedbackDuplicates(
     return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
   }
   const afterRowid = opts.afterRowid ?? 0;
+  const dryRun = opts.dryRun === true;
   const rows = rawDb
     .prepare(
       `SELECT rowid as rowid, id, text, recall_count as recallCount, access_count as accessCount, created_at as createdAt
@@ -186,8 +215,7 @@ export function cleanupImplicitFeedbackDuplicates(
     "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
   );
   let supersededAny = false;
-  rawDb.prepare("BEGIN").run();
-  try {
+  const scanRows = () => {
     for (const row of rows) {
       const match = canonical.find(
         (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
@@ -196,16 +224,28 @@ export function cleanupImplicitFeedbackDuplicates(
         canonical.push({ id: row.id, text: row.text });
         continue;
       }
+      if (dryRun) {
+        collapsed++;
+        continue;
+      }
       const sup = supersedeStmt.run(nowSec, match.id, nowSec, row.id);
       if ((sup.changes ?? 0) <= 0) continue;
       supersededAny = true;
       reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
       collapsed++;
     }
-    rawDb.prepare("COMMIT").run();
-  } catch (err) {
-    rawDb.prepare("ROLLBACK").run();
-    throw err;
+  };
+  if (dryRun) {
+    scanRows();
+  } else {
+    rawDb.prepare("BEGIN").run();
+    try {
+      scanRows();
+      rawDb.prepare("COMMIT").run();
+    } catch (err) {
+      rawDb.prepare("ROLLBACK").run();
+      throw err;
+    }
   }
   if (supersededAny) {
     factsDb.invalidateSupersededTextsCache();
