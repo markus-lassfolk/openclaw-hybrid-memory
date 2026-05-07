@@ -559,12 +559,15 @@ export async function runExtractImplicitFeedbackForCli(
             const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
             const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
             for (const lesson of traj.lessonsExtracted) {
-              lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
+              lessonsStoredTodaySession = rawDb
+                ? getImplicitFeedbackLessonsStoredToday(rawDb)
+                : lessonsStoredTodaySession;
               const trimmedLesson = lesson.trim();
               if (!trimmedLesson) continue;
-              const similarId = findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard);
+              const similarId =
+                rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
               if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
-                if (similarId) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+                if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
                 continue;
               }
               if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
