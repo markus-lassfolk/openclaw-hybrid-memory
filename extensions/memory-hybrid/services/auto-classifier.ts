@@ -78,7 +78,9 @@ async function writeLastDiscoveryTimestamp(lastRunPath: string, timestampMs: num
 /**
  * Ask the LLM to group "other" facts by topic (free-form labels). Labels with at least
  * minFactsForNewCategory facts become new categories; we do not tell the LLM the threshold.
- * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
+ * Returns proposed category labels and persists them to discoveredCategoriesPath.
+ * Discovery is intentionally non-mutating: it never writes unconfigured free-form
+ * labels into facts.category, which keeps dashboard/API category validation stable.
  */
 async function discoverCategoriesFromOther(
   factsDb: FactsDB,
@@ -170,12 +172,11 @@ async function discoverCategoriesFromOther(
     if (i + DISCOVERY_BATCH_SIZE < others.length) await new Promise((r) => setTimeout(r, 400));
   }
 
-  const newCategoryNames: string[] = [];
+  const proposedCategoryNames: string[] = [];
   for (const [label, ids] of labelToIds) {
     if (existingCategories.has(label)) continue;
     if (ids.length < minForNew) continue;
-    newCategoryNames.push(label);
-    for (const id of ids) factsDb.updateCategory(id, label);
+    proposedCategoryNames.push(label);
   }
 
   // Write last-run timestamp only if at least one batch succeeded (even if no new categories were created).
@@ -186,11 +187,10 @@ async function discoverCategoriesFromOther(
     await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
   }
 
-  if (newCategoryNames.length === 0) return [];
+  if (proposedCategoryNames.length === 0) return [];
 
-  setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
   logger.info(
-    `memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`,
+    `memory-hybrid: proposed ${proposedCategoryNames.length} new categories: ${proposedCategoryNames.join(", ")} (${proposedCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} matching facts left as other)`,
   );
 
   await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
@@ -205,10 +205,10 @@ async function discoverCategoriesFromOther(
     });
     // file doesn't exist yet
   }
-  const merged = [...new Set([...existingList, ...newCategoryNames])];
+  const merged = [...new Set([...existingList, ...proposedCategoryNames])];
   await writeFile(discoveredCategoriesPath, JSON.stringify(merged, null, 2), "utf-8");
 
-  return newCategoryNames;
+  return proposedCategoryNames;
 }
 
 /**

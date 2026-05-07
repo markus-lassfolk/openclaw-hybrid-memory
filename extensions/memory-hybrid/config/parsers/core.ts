@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
-import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
+import type { EventLogConfig, PathConfig, StoreConfig,
+  StoreSourceProfile, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
   ActiveTaskProjectionConfig,
@@ -74,10 +75,48 @@ export function resolveEnvVars(value: string): string {
   });
 }
 
+
+const VALID_DUPLICATE_ACTIONS = new Set(["skip", "boost", "merge", "store"]);
+
+function parseStoreSourceProfile(raw: unknown): StoreSourceProfile | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const profile: StoreSourceProfile = {};
+  if (typeof r.vectorThreshold === "number" && r.vectorThreshold > 0 && r.vectorThreshold <= 1) {
+    profile.vectorThreshold = r.vectorThreshold;
+  }
+  if (typeof r.lexicalJaccard === "number" && r.lexicalJaccard > 0 && r.lexicalJaccard <= 1) {
+    profile.lexicalJaccard = r.lexicalJaccard;
+  }
+  if (typeof r.maxPerDay === "number" && r.maxPerDay >= 0) {
+    profile.maxPerDay = Math.floor(r.maxPerDay);
+  }
+  if (typeof r.onDuplicate === "string" && VALID_DUPLICATE_ACTIONS.has(r.onDuplicate)) {
+    profile.onDuplicate = r.onDuplicate as StoreSourceProfile["onDuplicate"];
+  }
+  if (typeof r.boostBy === "number" && r.boostBy > 0 && r.boostBy <= 1) {
+    profile.boostBy = r.boostBy;
+  }
+  return Object.keys(profile).length > 0 ? profile : undefined;
+}
+
+function parseStoreSourceProfiles(raw: unknown): Record<string, StoreSourceProfile> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, StoreSourceProfile> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const trimmed = key.trim();
+    const profile = parseStoreSourceProfile(value);
+    if (trimmed && profile) out[trimmed] = profile;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function parseStoreConfig(cfg: Record<string, unknown>): StoreConfig {
   const storeRaw = cfg.store as Record<string, unknown> | undefined;
   return {
     fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
+    sourceProfiles: parseStoreSourceProfiles(storeRaw?.sourceProfiles),
+    defaultProfile: parseStoreSourceProfile(storeRaw?.defaultProfile),
     classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
     classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : undefined,
   };

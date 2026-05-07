@@ -8,7 +8,7 @@ import type { DecayClass, MemoryCategory } from "../config.js";
 export type { MemoryCategory, DecayClass };
 
 /** Memory tier for dynamic tiering (hot = always loaded, warm = semantic search, cold = archived). */
-export type MemoryTier = "hot" | "warm" | "cold";
+export type MemoryTier = "hot" | "warm" | "cold" | "structural";
 
 export type MemoryEntry = {
   id: string;

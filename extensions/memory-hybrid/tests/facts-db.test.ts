@@ -667,6 +667,23 @@ describe("FactsDB tiering", () => {
     expect(coldFact?.tier).toBe("cold");
   });
 
+
+  it("runCompaction moves key/value facts to STRUCTURAL", () => {
+    const fact = db.store({
+      text: "User email is test@example.com",
+      category: "fact",
+      entity: "User",
+      key: "email",
+      value: "test@example.com",
+      importance: 0.6,
+      source: "test",
+    });
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(db.getById(fact.id)?.tier).toBe("structural");
+  });
+
   it("runCompaction moves inactive hot preferences to WARM", () => {
     const pref = db.store({
       text: "User prefers TypeScript",

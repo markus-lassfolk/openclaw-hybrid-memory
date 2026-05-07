@@ -99,46 +99,59 @@ export function getLinksTo(
   }));
 }
 
-export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDepth: number): string[] {
+export function getConnectedFactIds(
+  db: DatabaseSync,
+  factIds: string[],
+  maxDepth: number,
+  options?: { hubDegreeCap?: number | null },
+): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
 
-  // Use SQLite's recursive CTE for efficient graph traversal
-  // This replaces the iterative N+1 query pattern with a single query
-  // UNION ALL is used to prevent tuple deduplication during traversal;
-  // final DISTINCT ensures each node appears once in the result
-  const query = `
-    WITH RECURSIVE graph_traversal(fact_id, depth) AS (
-      -- Base case: start with seed facts at depth 0
-      SELECT value AS fact_id, 0 AS depth
-      FROM json_each(?)
+  const hubDegreeCap = options?.hubDegreeCap ?? 500;
+  const seen = new Set(factIds);
+  let frontier = [...factIds];
 
-      UNION ALL
+  const outStmt = db.prepare(
+    `SELECT target_fact_id AS id FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS' ORDER BY strength DESC, created_at DESC LIMIT ?`,
+  );
+  const inStmt = db.prepare(
+    `SELECT source_fact_id AS id FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS' ORDER BY strength DESC, created_at DESC LIMIT ?`,
+  );
+  const degreeStmt = db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS') +
+       (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS') AS degree`,
+  );
+  const degreeCache = new Map<string, number>();
+  const degreeOf = (id: string): number => {
+    const cached = degreeCache.get(id);
+    if (cached != null) return cached;
+    const row = degreeStmt.get(id, id) as { degree: number } | undefined;
+    const degree = Number(row?.degree ?? 0);
+    degreeCache.set(id, degree);
+    return degree;
+  };
 
-      -- Recursive case (outgoing links)
-      SELECT
-        ml.target_fact_id AS fact_id,
-        gt.depth + 1 AS depth
-      FROM graph_traversal gt
-      JOIN memory_links ml ON ml.source_fact_id = gt.fact_id
-      WHERE gt.depth < ?
-        AND ml.link_type != 'CONTRADICTS'
+  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+    const nextFrontier: string[] = [];
+    for (const id of frontier) {
+      const degree = degreeOf(id);
+      if (hubDegreeCap != null && degree > hubDegreeCap) continue;
+      const limit = hubDegreeCap == null ? Math.max(degree, 1) : Math.max(hubDegreeCap + 1, 1);
+      const neighbours = [
+        ...(outStmt.all(id, limit) as Array<{ id: string }>),
+        ...(inStmt.all(id, limit) as Array<{ id: string }>),
+      ];
+      for (const row of neighbours) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        nextFrontier.push(row.id);
+      }
+    }
+    frontier = nextFrontier;
+  }
 
-      UNION ALL
-
-      -- Recursive case (incoming links)
-      SELECT
-        ml.source_fact_id AS fact_id,
-        gt.depth + 1 AS depth
-      FROM graph_traversal gt
-      JOIN memory_links ml ON ml.target_fact_id = gt.fact_id
-      WHERE gt.depth < ?
-        AND ml.link_type != 'CONTRADICTS'
-    )
-    SELECT DISTINCT fact_id FROM graph_traversal
-  `;
-
-  const rows = db.prepare(query).all(JSON.stringify(factIds), maxDepth, maxDepth) as Array<{ fact_id: string }>;
-  return rows.map((r) => r.fact_id);
+  return [...seen];
 }
 
 /**

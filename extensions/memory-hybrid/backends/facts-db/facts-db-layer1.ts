@@ -511,8 +511,8 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    * CONTRADICTS links are excluded from traversal — they would otherwise pollute graph-based recall
    * with unrelated contradicted facts and cause traversal explosion when a fact has many contradictions.
    */
-  getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
-    return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth);
+  getConnectedFactIds(factIds: string[], maxDepth: number, options?: { hubDegreeCap?: number | null }): string[] {
+    return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth, options);
   }
 
   /**

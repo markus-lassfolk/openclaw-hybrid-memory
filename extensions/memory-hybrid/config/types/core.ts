@@ -24,9 +24,21 @@ export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
   checkpoint: 4 * 3600, // legacy: 4 hours
 };
 
+export type StoreDedupeAction = "skip" | "boost" | "merge" | "store";
+
+export type StoreSourceProfile = {
+  vectorThreshold?: number;
+  lexicalJaccard?: number;
+  maxPerDay?: number;
+  onDuplicate?: StoreDedupeAction;
+  boostBy?: number;
+};
+
 /** Store options: fuzzy dedupe and optional classify-before-write. */
 export type StoreConfig = {
   fuzzyDedupe: boolean;
+  sourceProfiles?: Record<string, StoreSourceProfile>;
+  defaultProfile?: StoreSourceProfile;
   /** Classify incoming fact against existing similar facts (ADD/UPDATE/DELETE/NOOP) before storing (default: false) */
   classifyBeforeWrite?: boolean;
   /** Model for classification; when unset, runtime uses getDefaultCronModel(cfg, "nano") */

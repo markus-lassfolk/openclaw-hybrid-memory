@@ -40,10 +40,23 @@ export function runCompaction(
   hot: number;
   warm: number;
   cold: number;
+  structural: number;
 } {
   const nowSec = Math.floor(Date.now() / 1000);
   const inactiveCutoff = nowSec - opts.inactivePreferenceDays * 86400;
-  const counts = { hot: 0, warm: 0, cold: 0 };
+  const counts = { hot: 0, warm: 0, cold: 0, structural: 0 };
+
+  const structuralRows = db
+    .prepare(
+      `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+         AND (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
+         AND category NOT IN ('decision', 'pattern', 'rule')
+         AND (tier IS NULL OR tier != 'structural')`,
+    )
+    .all(nowSec) as Array<{ id: string }>;
+  for (const { id } of structuralRows) {
+    if (setFactTier(db, id, "structural")) counts.structural++;
+  }
 
   const taskRows = db
     .prepare(
@@ -78,7 +91,13 @@ export function runCompaction(
   const blockerRows = db
     .prepare(
       `SELECT id, text, summary FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
+         AND (
+           (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
+           OR COALESCE(recall_count, 0) >= 10
+           OR COALESCE(access_count, 0) >= 10
+         )
+         AND category NOT IN ('decision', 'pattern', 'rule')
+         AND NOT (COALESCE(key, '') != '' OR COALESCE(value, '') != '')
          AND (tier IS NULL OR tier != 'hot')`,
     )
     .all(nowSec) as Array<{

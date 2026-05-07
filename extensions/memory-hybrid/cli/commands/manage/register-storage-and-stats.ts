@@ -36,6 +36,74 @@ function entryMatchesHybridSearchFilters(
   return true;
 }
 
+type AuditHealthReport = {
+  activeFacts: number;
+  canonicalEmbeddings: number;
+  vectorlessApprox: number;
+  procedures: { total: number; validated: number; promoted: number; validatedNotPromoted: number };
+  tiers: Record<string, number>;
+  decay: Record<string, number>;
+  categories: { configured: string[]; present: string[]; unknown: string[] };
+  sources: Record<string, number>;
+  warnings: string[];
+};
+
+function buildAuditHealthReport(factsDb: ManageBindings["factsDb"], getMemoryCategories: () => readonly string[]): AuditHealthReport {
+  const activeFacts = factsDb.getCount();
+  const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
+  const procedures = factsDb.proceduresCount();
+  const validated = factsDb.proceduresValidatedCount();
+  const promoted = factsDb.proceduresPromotedCount();
+  const tiers = factsDb.statsBreakdownByTier();
+  const decay = factsDb.statsBreakdownByDecayClass();
+  const present = factsDb.uniqueMemoryCategories().slice().sort();
+  const configured = [...getMemoryCategories()].slice().sort();
+  const configuredSet = new Set(configured);
+  const unknown = present.filter((category: string) => !configuredSet.has(category));
+  const sources = factsDb.statsBySource();
+  const vectorlessApprox = Math.max(0, activeFacts - canonicalEmbeddings);
+  const warnings: string[] = [];
+  if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
+  if ((tiers.structural ?? 0) === 0) warnings.push("No STRUCTURAL tier facts detected; key/value facts may be stuck in warm tier.");
+  if (activeFacts > 0 && (decay.stable ?? 0) / activeFacts > 0.5) warnings.push("More than half of active facts are stable/no-expiry.");
+  if (unknown.length > 0) warnings.push(`Categories present in DB but not configured: ${unknown.join(", ")}`);
+  if (vectorlessApprox > 0) warnings.push(`${vectorlessApprox} active fact(s) may be missing canonical embeddings.`);
+  if (validated - promoted > 0) warnings.push(`${validated - promoted} validated procedure(s) are not promoted.`);
+  return {
+    activeFacts,
+    canonicalEmbeddings,
+    vectorlessApprox,
+    procedures: { total: procedures, validated, promoted, validatedNotPromoted: Math.max(0, validated - promoted) },
+    tiers,
+    decay,
+    categories: { configured, present, unknown },
+    sources,
+    warnings,
+  };
+}
+
+function printAuditHealthMarkdown(report: AuditHealthReport): void {
+  console.log("# Hybrid-memory audit health");
+  console.log("");
+  console.log(`Active facts: ${report.activeFacts}`);
+  console.log(`Canonical embeddings: ${report.canonicalEmbeddings}`);
+  console.log(`Vectorless approximation: ${report.vectorlessApprox}`);
+  console.log(
+    `Procedures: ${report.procedures.total} (validated: ${report.procedures.validated}, promoted: ${report.procedures.promoted}, validated-not-promoted: ${report.procedures.validatedNotPromoted})`,
+  );
+  console.log(`Tiers: ${JSON.stringify(report.tiers)}`);
+  console.log(`Decay: ${JSON.stringify(report.decay)}`);
+  console.log(`Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.join(", ") : "none"}`);
+  console.log(`Implicit-feedback signals: ${report.sources["implicit-feedback"] ?? 0}`);
+  console.log("");
+  if (report.warnings.length === 0) {
+    console.log("Warnings: none");
+    return;
+  }
+  console.log("Warnings:");
+  for (const warning of report.warnings) console.log(`- ${warning}`);
+}
+
 export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
@@ -704,7 +772,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--json", "Emit JSON instead of markdown")
     .action(
       withExit(async (opts?: { json?: boolean }) => {
-        const report = buildAuditHealthReport(factsDb);
+        const report = buildAuditHealthReport(factsDb, getMemoryCategories);
         if (opts?.json) {
           console.log(JSON.stringify(report, null, 2));
         } else {

@@ -19,7 +19,6 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CredentialType, HybridMemoryConfig } from "../config.js";
-import { getMemoryCategories, setMemoryCategories } from "../config.js";
 import { normalizeResolvedSecretValue } from "../config/parsers/core.js";
 import { is403QuotaOrRateLimitLike, is429OrWrapped } from "../services/chat.js";
 import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
@@ -471,19 +470,22 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const narrativesDb = new NarrativesDB(narrativesPath);
   api.logger.info(`memory-hybrid: narratives store initialized (${narrativesPath})`);
 
-  // Load previously discovered categories so they remain available after restart
+  // Report previously proposed categories, but do not load them as valid runtime categories.
+  // Auto-classifier discovery is advisory only; operators must promote categories through config
+  // before facts can be written under those labels.
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   if (existsSync(discoveredPath)) {
     try {
       const loaded = JSON.parse(readFileSync(discoveredPath, "utf-8")) as string[];
       if (Array.isArray(loaded) && loaded.length > 0) {
-        setMemoryCategories([...getMemoryCategories(), ...loaded]);
-        api.logger.info(`memory-hybrid: loaded ${loaded.length} discovered categories`);
+        api.logger.info(
+          `memory-hybrid: ${loaded.length} proposed categories pending operator review (${discoveredPath})`,
+        );
       }
     } catch (err) {
-      api.logger.warn(`memory-hybrid: failed to load discovered categories: ${err}`);
+      api.logger.warn(`memory-hybrid: failed to inspect proposed categories: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "load-discovered-categories",
+        operation: "inspect-proposed-categories",
         subsystem: "config",
       });
     }
