@@ -327,7 +327,6 @@ export function expandGraphWithCTE(
   `;
 
   const hubParams = hubDegreeCap == null ? [] : [hubDegreeCap, hubDegreeCap];
-  // console.log('CTE Query:', query);
   const rows = db
     .prepare(query)
     .all(

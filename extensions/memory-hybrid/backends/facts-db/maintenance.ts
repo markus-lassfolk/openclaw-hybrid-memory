@@ -224,42 +224,9 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
   return counts;
 }
 
-export function runCompaction(db: DatabaseSync, opts: TieringOptions): TieringCounts {
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  // Capture tiers before compaction
-  const beforeTiers = new Map(
-    (
-      db
-        .prepare(
-          `SELECT id, COALESCE(tier, 'warm') as tier FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-        )
-        .all(nowSec) as Array<{ id: string; tier: MemoryTier }>
-    ).map((r) => [r.id, r.tier]),
-  );
-
-  // Run compaction
-  retierFacts(db, opts, true);
-
-  // Capture tiers after compaction and count deltas
-  const afterRows = db
-    .prepare(
-      `SELECT id, COALESCE(tier, 'warm') as tier FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-    )
-    .all(nowSec) as Array<{ id: string; tier: MemoryTier }>;
-
-  const counts: TieringCounts = { hot: 0, warm: 0, cold: 0, structural: 0 };
-  for (const row of afterRows) {
-    const beforeTier = beforeTiers.get(row.id);
-    if (beforeTier && beforeTier !== row.tier) {
-      if (row.tier === "hot") counts.hot++;
-      else if (row.tier === "warm") counts.warm++;
-      else if (row.tier === "cold") counts.cold++;
-      else if (row.tier === "structural") counts.structural++;
-    }
-  }
-
-  return counts;
+export function runCompaction(db: DatabaseSync, opts: TieringOptions): RetierReport {
+  const report = retierFacts(db, opts, true);
+  return report;
 }
 
 export function trimToBudget(
