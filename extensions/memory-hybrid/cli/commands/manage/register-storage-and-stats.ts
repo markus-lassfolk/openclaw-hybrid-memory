@@ -48,7 +48,10 @@ type AuditHealthReport = {
   warnings: string[];
 };
 
-function buildAuditHealthReport(factsDb: ManageBindings["factsDb"], getMemoryCategories: () => readonly string[]): AuditHealthReport {
+function buildAuditHealthReport(
+  factsDb: ManageBindings["factsDb"],
+  getMemoryCategories: () => readonly string[],
+): AuditHealthReport {
   const activeFacts = factsDb.getCount();
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
   const procedures = factsDb.proceduresCount();
@@ -64,8 +67,10 @@ function buildAuditHealthReport(factsDb: ManageBindings["factsDb"], getMemoryCat
   const vectorlessApprox = Math.max(0, activeFacts - canonicalEmbeddings);
   const warnings: string[] = [];
   if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
-  if ((tiers.structural ?? 0) === 0) warnings.push("No STRUCTURAL tier facts detected; key/value facts may be stuck in warm tier.");
-  if (activeFacts > 0 && (decay.stable ?? 0) / activeFacts > 0.5) warnings.push("More than half of active facts are stable/no-expiry.");
+  if ((tiers.structural ?? 0) === 0)
+    warnings.push("No STRUCTURAL tier facts detected; key/value facts may be stuck in warm tier.");
+  if (activeFacts > 0 && (decay.stable ?? 0) / activeFacts > 0.5)
+    warnings.push("More than half of active facts are stable/no-expiry.");
   if (unknown.length > 0) warnings.push(`Categories present in DB but not configured: ${unknown.join(", ")}`);
   if (vectorlessApprox > 0) warnings.push(`${vectorlessApprox} active fact(s) may be missing canonical embeddings.`);
   if (validated - promoted > 0) warnings.push(`${validated - promoted} validated procedure(s) are not promoted.`);
@@ -93,7 +98,9 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   );
   console.log(`Tiers: ${JSON.stringify(report.tiers)}`);
   console.log(`Decay: ${JSON.stringify(report.decay)}`);
-  console.log(`Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.join(", ") : "none"}`);
+  console.log(
+    `Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.join(", ") : "none"}`,
+  );
   console.log(`Implicit-feedback signals: ${report.sources["implicit-feedback"] ?? 0}`);
   console.log("");
   if (report.warnings.length === 0) {
@@ -764,7 +771,6 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         }
       }),
     );
-
 
   mem
     .command("audit-health")

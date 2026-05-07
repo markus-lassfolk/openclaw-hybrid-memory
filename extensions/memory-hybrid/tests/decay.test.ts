@@ -99,8 +99,8 @@ describe("classifyDecay — English keys (regression)", () => {
     expect(classifyDecay(null, "preflight_check", null, "ok")).toBe("checkpoint");
   });
 
-  it("null key, generic text → stable", () => {
-    expect(classifyDecay(null, null, null, "some random info")).toBe("stable");
+  it("null key, generic text → normal", () => {
+    expect(classifyDecay(null, null, null, "some random info")).toBe("normal");
   });
 });
 

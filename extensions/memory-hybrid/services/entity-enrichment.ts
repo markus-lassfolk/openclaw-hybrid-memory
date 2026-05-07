@@ -14,14 +14,7 @@ import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const MIN_CHARS = 24;
 const MAX_CHARS = 8000;
-const ENTITY_STOP_WORDS = new Set([
-  "agent",
-  "assistant",
-  "convention",
-  "credentials",
-  "system",
-  "user",
-]);
+const ENTITY_STOP_WORDS = new Set(["agent", "assistant", "convention", "credentials", "system", "user"]);
 
 export type ExtractedMention = {
   label: EntityMentionLabel;

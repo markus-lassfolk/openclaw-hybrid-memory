@@ -38,7 +38,6 @@ export function classifyDecay(
   if (getDecayPermanentRegex().test(textLower)) return "permanent";
   if (entityLower && getDecayPermanentEntities().some((e) => entityLower === e)) return "permanent";
 
-
   if (getDecaySessionKeys().some((k) => keyLower.includes(k))) return "session";
   if (getDecaySessionRegex().test(textLower)) return "session";
 
