@@ -99,8 +99,8 @@ function normalizeLessonTokens(text: string): Set<string> {
     .toLowerCase()
     .replace(/[^a-z0-9åäö]+/g, " ")
     .split(/\s+/)
-    .map(normalizeLessonToken)
-    .filter((token) => token.length >= 3 && !LESSON_DEDUPE_STOPWORDS.has(token));
+    .filter((token) => token.length >= 3 && !LESSON_DEDUPE_STOPWORDS.has(token))
+    .map(normalizeLessonToken);
   return new Set(normalized);
 }
 

@@ -176,9 +176,10 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
 
   const desired = rows.map((row) => ({ id: row.id, from: row.tier, to: chooseTier(row, nowSec, normalized) }));
 
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
   const hotDesired = desired
     .filter((d) => d.to === "hot")
-    .map((d) => rows.find((row) => row.id === d.id) as TierCandidate)
+    .map((d) => rowsById.get(d.id) as TierCandidate)
     .sort((a, b) => {
       const bScore = Math.max(b.recall_count ?? 0, b.access_count ?? 0);
       const aScore = Math.max(a.recall_count ?? 0, a.access_count ?? 0);
