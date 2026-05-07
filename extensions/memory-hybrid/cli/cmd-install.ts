@@ -536,7 +536,8 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: 3 * 60 * 60 * 1000,
     featureGate: "sensorSweep.enabled",
   },
-  // Daily 04:00 | daily-lifecycle-sync — stub / disabled until GitHub adapter Phase 2 (#1196)
+  // Daily 04:00 | daily-lifecycle-sync — GitHub lifecycle adapter Phase 2 (#1196).
+  // Cron job is installed disabled by default; enable when `lifecycle.adapters.github.enabled` is true.
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}daily-lifecycle-sync`,
     sessionTarget: "isolated",
@@ -545,11 +546,11 @@ const MAINTENANCE_CRON_JOBS: Array<
     channel: "system",
     message: buildHybridMemCronTaskMessage("daily-lifecycle-sync", {
       preamble:
-        "Lifecycle sync placeholder (GitHub adapter Phase 2). Job is installed disabled; enable only after wiring syncLifecycleFromGitHub.",
+        "GitHub lifecycle sync (#1196). Reads lifecycle.adapters.github.{repos,onMerged,onClosed,onOpen} and updates expires_at/decay_class on facts whose entity matches PR #N or Issue #N.",
       steps: [
         {
-          name: "lifecycle-sync-skipped",
-          cmd: `bash -c 'echo "hybrid-mem: lifecycle GitHub adapter not enabled — skipping"; exit 0'`,
+          name: "lifecycle-sync-github",
+          cmd: "openclaw hybrid-mem lifecycle sync github",
         },
       ],
     }),
@@ -557,6 +558,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "nano",
     enabled: false,
     minIntervalMs: MIN_INTERVAL_MS.daily,
+    featureGate: "lifecycle.adapters.github.enabled",
   },
 ];
 

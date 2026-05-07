@@ -109,6 +109,37 @@ export type GraphConnectedStats = {
   hubsSkipped: number;
 };
 
+/**
+ * Refresh denormalized `out_degree` / `in_degree` columns on `facts` (#1192). Counts only
+ * traversable links — `CONTRADICTS` and `DERIVED_FROM` are excluded so the values match
+ * what the BFS hub guard uses. Called from the dream-cycle so the per-traversal `COUNT(*)`
+ * fallback path is rarely hit on warm stores.
+ *
+ * Returns the number of facts whose degree was updated (rows in `facts`).
+ */
+export function refreshFactDegrees(db: DatabaseSync): { updated: number } {
+  const tx = createTransaction(db, () => {
+    db.exec(`
+      UPDATE facts SET
+        out_degree = COALESCE(
+          (SELECT COUNT(*) FROM memory_links ml
+           WHERE ml.source_fact_id = facts.id
+             AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')),
+          0
+        ),
+        in_degree = COALESCE(
+          (SELECT COUNT(*) FROM memory_links ml
+           WHERE ml.target_fact_id = facts.id
+             AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')),
+          0
+        )
+    `);
+  });
+  tx();
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number } | undefined;
+  return { updated: Number(row?.cnt ?? 0) };
+}
+
 export function getConnectedFactIds(
   db: DatabaseSync,
   factIds: string[],
@@ -129,7 +160,13 @@ export function getConnectedFactIds(
   const inStmt = db.prepare(
     `SELECT source_fact_id AS id FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
   );
-  const degreeStmt = db.prepare(
+  // #1192: prefer the denormalized columns when present (refreshed by the dream-cycle).
+  // Falls back to the legacy COUNT(*) path when columns are missing or zero (which can
+  // happen on a brand-new store before the first dream-cycle has run).
+  const denormDegreeStmt = db.prepare(
+    `SELECT COALESCE(out_degree, 0) + COALESCE(in_degree, 0) AS degree FROM facts WHERE id = ? LIMIT 1`,
+  );
+  const fallbackDegreeStmt = db.prepare(
     `SELECT
        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) AS degree`,
@@ -138,8 +175,17 @@ export function getConnectedFactIds(
   const degreeOf = (id: string): number => {
     const cached = degreeCache.get(id);
     if (cached != null) return cached;
-    const row = degreeStmt.get(id, id) as { degree: number } | undefined;
-    const degree = Number(row?.degree ?? 0);
+    let degree = 0;
+    try {
+      const row = denormDegreeStmt.get(id) as { degree: number } | undefined;
+      degree = Number(row?.degree ?? 0);
+    } catch {
+      degree = 0;
+    }
+    if (degree === 0) {
+      const row = fallbackDegreeStmt.get(id, id) as { degree: number } | undefined;
+      degree = Number(row?.degree ?? 0);
+    }
     degreeCache.set(id, degree);
     return degree;
   };
@@ -237,23 +283,41 @@ export function expandGraphWithCTE(
     factWhereIn = baseWhere;
   }
 
-  // Use recursive CTE to traverse the graph in a single query
-  // We track: current node, seed that originated this path, hop count, and JSON path
-  // Hub cap applies to the neighbor being entered (outgoing → `ml.target_fact_id`, incoming →
+  // Use recursive CTE to traverse the graph in a single query.
+  // We track: current node, seed that originated this path, hop count, and JSON path.
+  // #1192: prefer the denormalized `out_degree`/`in_degree` columns on `facts` (refreshed by the
+  // dream-cycle) so the per-traversal `COUNT(*)` (O(edges) per hop) is avoided. The COALESCE
+  // fallback ensures correctness on stores whose dream-cycle has not yet refreshed the columns
+  // (or for legacy data with NULL/zero degrees) by checking `> 0` and only then short-circuiting.
+  // Hub degree cap applies to the neighbor being entered (outgoing → `ml.target_fact_id`, incoming →
   // `ml.source_fact_id`), matching `getConnectedFactIds` which skips expanding from overloaded nodes.
   const degreeCheckOut =
     hubDegreeCap == null
       ? ""
       : `AND (
-        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ml.target_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
-        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ml.target_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+        SELECT
+          CASE WHEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0)) > 0
+            THEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0))
+            ELSE (
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.target_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+            )
+          END
+        FROM facts WHERE id = ml.target_fact_id
       ) <= ?`;
   const degreeCheckIn =
     hubDegreeCap == null
       ? ""
       : `AND (
-        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ml.source_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
-        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ml.source_fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+        SELECT
+          CASE WHEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0)) > 0
+            THEN (COALESCE(out_degree, 0) + COALESCE(in_degree, 0))
+            ELSE (
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+              (SELECT COUNT(*) FROM memory_links sub WHERE sub.target_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+            )
+          END
+        FROM facts WHERE id = ml.source_fact_id
       ) <= ?`;
   const query = `
     WITH RECURSIVE graph_expansion(

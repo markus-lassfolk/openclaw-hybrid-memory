@@ -51,8 +51,8 @@ describe("TTL_DEFAULTS", () => {
     expect(TTL_DEFAULTS.durable).toBe(90 * 24 * 3600);
   });
 
-  it("normal is 2 weeks in seconds", () => {
-    expect(TTL_DEFAULTS.normal).toBe(14 * 24 * 3600);
+  it("normal is 90 days in seconds (#1186/#1189: aligned with trajectory TTL)", () => {
+    expect(TTL_DEFAULTS.normal).toBe(90 * 24 * 3600);
   });
 
   it("short is 2 days in seconds", () => {

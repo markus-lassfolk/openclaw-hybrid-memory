@@ -211,6 +211,14 @@ async function runCapture(
         inactivePreferenceDays: ctx.cfg.memoryTiering.inactivePreferenceDays,
         hotMaxTokens: ctx.cfg.memoryTiering.hotMaxTokens,
         hotMaxFacts: ctx.cfg.memoryTiering.hotMaxFacts,
+        coldAfterInactivityDays: ctx.cfg.memoryTiering.coldAfterInactivityDays,
+        hotMinAccessCount: ctx.cfg.memoryTiering.hotMinAccessCount,
+        hotAccessWindowDays: ctx.cfg.memoryTiering.hotAccessWindowDays,
+        hotPreferenceImportance: ctx.cfg.memoryTiering.hotPreferenceImportance,
+        hotByRecallWindowDays: ctx.cfg.memoryTiering.hotByRecall.windowDays,
+        hotByRecallTopN: ctx.cfg.memoryTiering.hotByRecall.topN,
+        structuralByCategoryEnabled: ctx.cfg.memoryTiering.structuralByCategory,
+        structuralPermanentEnabled: ctx.cfg.memoryTiering.structuralPermanent,
       });
       if (counts.hot + counts.warm + counts.cold > 0) {
         api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);

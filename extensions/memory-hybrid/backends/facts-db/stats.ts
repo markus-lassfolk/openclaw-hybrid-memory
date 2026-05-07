@@ -88,6 +88,15 @@ export type RemapCategoryReport = {
   changed: number;
 };
 
+export type ProposedCategoryRow = {
+  /** Suggested label (the part after `category-suggested:`). */
+  label: string;
+  /** Number of active facts tagged with this suggestion. */
+  count: number;
+  /** Up to N example fact ids. */
+  examples: string[];
+};
+
 export type TopEntityRow = {
   entity: string;
   count: number;
@@ -248,6 +257,47 @@ export function remapCategory(db: DatabaseSync, from: string, to: string, apply 
     activeMatched,
     changed,
   };
+}
+
+/**
+ * List "category-suggested:<label>" tags emitted by the auto-classifier (#1188).
+ *
+ * The auto-classifier never invents a configured category; if the LLM proposes a label
+ * not in the configured set, it tags the fact with `category-suggested:<label>` and keeps
+ * the fact in `category=other`. This helper aggregates those tags so operators can
+ * surface (and optionally promote/remap) common suggestions via the
+ * `categories propose` CLI.
+ */
+export function proposedCategories(db: DatabaseSync, exampleLimit = 5): ProposedCategoryRow[] {
+  const limit = Math.max(0, Math.min(50, Math.floor(exampleLimit)));
+  const rows = db
+    .prepare(
+      `SELECT id, tags FROM facts
+       WHERE superseded_at IS NULL
+         AND tags IS NOT NULL
+         AND (',' || tags || ',') LIKE '%,category-suggested:%'`,
+    )
+    .all() as Array<{ id: string; tags: string | null }>;
+  const map = new Map<string, { count: number; examples: string[] }>();
+  for (const row of rows) {
+    const tags = (row.tags ?? "").split(",");
+    for (const raw of tags) {
+      const tag = raw.trim();
+      if (!tag.startsWith("category-suggested:")) continue;
+      const label = tag.slice("category-suggested:".length).trim();
+      if (!label) continue;
+      let entry = map.get(label);
+      if (!entry) {
+        entry = { count: 0, examples: [] };
+        map.set(label, entry);
+      }
+      entry.count++;
+      if (entry.examples.length < limit) entry.examples.push(row.id);
+    }
+  }
+  return [...map.entries()]
+    .map(([label, { count, examples }]) => ({ label, count, examples }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 export function topEntities(db: DatabaseSync, limit = 10): TopEntityRow[] {

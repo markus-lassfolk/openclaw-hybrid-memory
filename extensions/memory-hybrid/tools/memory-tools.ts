@@ -951,6 +951,7 @@ export function registerMemoryTools(
         scopeFilter,
         asOf: asOfSec ?? undefined,
         graphHubDegreeCap: cfg.graph.hubDegreeCap,
+        graphHubScorePenalty: cfg.graph.hubScorePenalty,
         aliasDb: cfg.aliases?.enabled ? aliasDb : null,
         clustersConfig: cfg.clusters,
         embeddingRegistry: embeddingRegistry ?? null,
@@ -1054,6 +1055,7 @@ export function registerMemoryTools(
         scopeFilter: scopeFilter ?? undefined,
         asOf: asOfSec ?? undefined,
         hubDegreeCap: cfg.graph.hubDegreeCap,
+        hubScorePenalty: cfg.graph.hubScorePenalty,
       });
 
       // Re-build results from expanded output (preserves scores and dedup).

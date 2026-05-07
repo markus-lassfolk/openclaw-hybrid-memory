@@ -228,6 +228,50 @@ describe("FactsDB sourceProfiles write path", () => {
       expect(rows[0].source).toBe("noisy");
       expect(rows[0].count).toBe(1);
       expect(rows[0].dropped).toBe(1);
+      expect(rows[0].evicted).toBe(0);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("evicts the lowest-confidence active fact on overflow when onOverflow=evict-lowest-confidence (#1194)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-evict-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        sourceProfiles: {
+          "noisy-evict": { maxPerDay: 1, onDuplicate: "store", onOverflow: "evict-lowest-confidence" },
+        },
+      },
+    });
+    try {
+      const victim = db.store({
+        text: "low-confidence stale fact",
+        category: "fact",
+        importance: 0.1,
+        entity: null,
+        key: null,
+        value: null,
+        source: "noisy-evict",
+        confidence: 0.2,
+      });
+      const winner = db.store({
+        text: "fresh high-confidence write",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "noisy-evict",
+        confidence: 0.9,
+      });
+      expect(winner.id).not.toBe(victim.id);
+      const rows = db.statsDailyWrites();
+      const noisy = rows.find((r) => r.source === "noisy-evict");
+      expect(noisy?.dropped ?? 0).toBe(0);
+      expect(noisy?.evicted).toBe(1);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });
@@ -277,6 +321,47 @@ describe("FactsDB sourceProfiles write path", () => {
           source: "quota-boost",
         }),
       ).toThrow(/daily write quota exceeded/);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("honours vectorThreshold via caller-supplied vectorCandidates and bumps recall on the winner (#1186, #1194)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-vector-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        sourceProfiles: { "implicit-feedback": { onDuplicate: "skip", vectorThreshold: 0.85 } },
+      },
+    });
+    try {
+      const original = db.store({
+        text: "user prefers concise summaries when reviewing PRs",
+        category: "technical",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "implicit-feedback",
+      });
+      const initialRecall = original.recallCount ?? 0;
+      const stored = db.store(
+        {
+          text: "Concise summaries are preferred for PR reviews by the user",
+          category: "technical",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "implicit-feedback",
+        },
+        { vectorCandidates: [{ id: original.id, score: 0.9 }] },
+      );
+      expect(stored.id).toBe(original.id);
+      expect((stored.recallCount ?? 0) - initialRecall).toBeGreaterThanOrEqual(1);
+      expect(db.count()).toBe(1);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });

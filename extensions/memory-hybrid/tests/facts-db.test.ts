@@ -3102,7 +3102,7 @@ describe("FactsDB new decay classes (#237)", () => {
     expect(retrieved?.decayClass).toBe(dc);
   });
 
-  it("normal decay class has 2-week TTL", () => {
+  it("normal decay class has 90-day TTL (#1186/#1189)", () => {
     const entry = db.store({
       text: "Normal decay fact",
       category: "fact",
@@ -3113,12 +3113,12 @@ describe("FactsDB new decay classes (#237)", () => {
       source: "test",
       decayClass: "normal",
     });
-    const twoWeeksSec = 14 * 24 * 3600;
+    const ninetyDaysSec = 90 * 24 * 3600;
     const nowSec = Math.floor(Date.now() / 1000);
     expect(entry.expiresAt).toBeDefined();
     expect(entry.expiresAt).not.toBeNull();
-    // expires_at should be roughly now + 2 weeks (within 60s tolerance)
-    expect(Math.abs(entry.expiresAt! - (nowSec + twoWeeksSec))).toBeLessThan(60);
+    // expires_at should be roughly now + 90 days (within 60s tolerance)
+    expect(Math.abs(entry.expiresAt! - (nowSec + ninetyDaysSec))).toBeLessThan(60);
   });
 
   it("permanent decay class never expires", () => {

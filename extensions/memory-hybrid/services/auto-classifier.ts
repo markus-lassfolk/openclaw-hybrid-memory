@@ -213,14 +213,21 @@ async function discoverCategoriesFromOther(
 
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
- * Returns a map of factId → newCategory and a success flag indicating whether the LLM call succeeded.
+ *
+ * Returns:
+ *   - `results`: factId → valid category (matched the configured allowlist).
+ *   - `suggestions`: factId → normalized free-form label the LLM proposed but that is not
+ *     in the configured set (#1188). Callers tag these facts with
+ *     `category-suggested:<label>` instead of silently dropping the LLM's output, so
+ *     `categories propose` can surface them.
+ *   - `success`: whether the LLM call itself succeeded.
  */
 async function classifyBatch(
   openai: OpenAI,
   model: string,
   facts: { id: string; text: string }[],
   categories: readonly string[],
-): Promise<{ results: Map<string, string>; success: boolean }> {
+): Promise<{ results: Map<string, string>; suggestions: Map<string, string>; success: boolean }> {
   const catList = categories.filter((c) => c !== "other").join(", ");
   const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
 
@@ -249,18 +256,23 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
 
     const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
     const parsed = tryParseFirstJsonArray(content);
-    if (!parsed) return { results: new Map(), success: false };
+    if (!parsed) return { results: new Map(), suggestions: new Map(), success: false };
 
     const results: string[] = parsed as string[];
     const map = new Map<string, string>();
+    const suggestions = new Map<string, string>();
 
     for (let i = 0; i < Math.min(results.length, facts.length); i++) {
       const cat = results[i]?.toLowerCase()?.trim();
-      if (cat && cat !== "other" && isValidCategory(cat)) {
+      if (!cat || cat === "other") continue;
+      if (isValidCategory(cat)) {
         map.set(facts[i].id, cat);
+      } else {
+        const normalized = normalizeSuggestedLabel(cat);
+        if (normalized) suggestions.set(facts[i].id, normalized);
       }
     }
-    return { results: map, success: true };
+    return { results: map, suggestions, success: true };
   } catch (err) {
     const classifyErr = err instanceof Error ? err : new Error(String(err));
     // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
@@ -278,7 +290,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         subsystem: "classifier",
       });
     }
-    return { results: new Map(), success: false };
+    return { results: new Map(), suggestions: new Map(), success: false };
   }
 }
 
@@ -365,10 +377,18 @@ async function runClassifyForCli(
   for (let i = 0; i < others.length; i += config.batchSize) {
     reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const { results } = await classifyBatch(openai, classifyModel, batch, categories);
+    const { results, suggestions } = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
+    }
+    if (!opts.dryRun) {
+      for (const [id, label] of suggestions) {
+        // #1188: surface invalid-but-meaningful LLM suggestions instead of silently
+        // dropping them. Operators can review with `categories propose` and promote
+        // via existing `categories remap`.
+        factsDb.addTag(id, `category-suggested:${label}`);
+      }
     }
     batchIndex++;
     if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
@@ -437,12 +457,17 @@ async function runAutoClassify(
       text: e.text,
     }));
 
-    const { results, success } = await classifyBatch(openai, model, batch, categories);
+    const { results, suggestions, success } = await classifyBatch(openai, model, batch, categories);
 
     const batchIds = batch.map((b) => b.id);
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);
       totalReclassified++;
+    }
+    for (const [id, label] of suggestions) {
+      // #1188: tag invalid LLM categories so they surface in `categories propose`
+      // instead of being silently dropped. The fact stays in `category=other`.
+      factsDb.addTag(id, `category-suggested:${label}`);
     }
     // Only mark classify attempt if the LLM call succeeded
     if (success) {

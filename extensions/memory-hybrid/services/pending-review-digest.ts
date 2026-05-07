@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
@@ -12,6 +13,16 @@ type FactsDbForPendingDigest = {
   proceduresValidatedCount(): number;
   proceduresPromotedCount(): number;
   countVerifiedFacts(): number;
+  /**
+   * Optional: count procedures whose `validated_at` falls within `[sinceSec, nowSec)` (#1197).
+   * Used by `procedures.newThisWeek` in the digest. When unsupported, the digest reports 0.
+   */
+  proceduresValidatedSince?(sinceSec: number): number;
+  /**
+   * Optional: return the raw SQLite handle so the digest can resolve persona-proposal evidence
+   * (#1197 — `evidence: { topFactIds, facts }`). Falls back to empty evidence when unsupported.
+   */
+  getRawDb?(): DatabaseSync | undefined | null;
 };
 
 export type PendingReviewCounts = {
@@ -32,6 +43,8 @@ export type PendingReviewDigestReport = {
     validated: number;
     promoted: number;
     validatedNotPromoted: number;
+    /** #1197: procedures whose `validated_at` is within `sinceDays`. */
+    newThisWeek: number;
   };
   personaProposals: {
     enabled: boolean;
@@ -48,6 +61,12 @@ export type PendingReviewDigestReport = {
       approveCommand: string;
       declineCommand: string;
       deferCommand: string;
+      /**
+       * #1197: top supporting facts derived from the proposal's `evidenceSessions`. Capped at
+       * `topFactIds.length <= 5`; `facts` is the total count of supporting facts found across
+       * those sessions (not just the truncated head).
+       */
+      evidence: { topFactIds: string[]; facts: number };
     }>;
   };
   toolProposals: {
@@ -192,6 +211,9 @@ export function buildPendingReviewDigestReport(opts: {
   const proceduresValidated = factsDb.proceduresValidatedCount();
   const proceduresPromoted = factsDb.proceduresPromotedCount();
   const validatedNotPromoted = Math.max(0, proceduresValidated - proceduresPromoted);
+  const proceduresNewThisWeek = factsDb.proceduresValidatedSince
+    ? Math.max(0, factsDb.proceduresValidatedSince(sinceSec))
+    : 0;
   const toolProposed = toolAll.filter((p) => p.status === "proposed");
   const crystalPending = crystalAll.filter((p) => p.status === "pending");
   const pendingReview = {
@@ -201,6 +223,32 @@ export function buildPendingReviewDigestReport(opts: {
     crystallization: crystalPending.length,
     verified: factsDb.countVerifiedFacts(),
   };
+
+  // #1197: resolve persona-proposal evidence by joining `evidenceSessions` against
+  // `facts.provenance_session`. Best-effort — empty when the FactsDB does not expose a raw db.
+  const rawDb = factsDb.getRawDb?.();
+  function evidenceForProposal(sessions: string[]): { topFactIds: string[]; facts: number } {
+    if (!rawDb || sessions.length === 0) return { topFactIds: [], facts: 0 };
+    try {
+      const placeholders = sessions.map(() => "?").join(",");
+      const rows = rawDb
+        .prepare(
+          `SELECT id FROM facts
+           WHERE superseded_at IS NULL
+             AND provenance_session IS NOT NULL
+             AND provenance_session IN (${placeholders})
+           ORDER BY COALESCE(importance, 0) DESC, created_at DESC
+           LIMIT 50`,
+        )
+        .all(...sessions) as Array<{ id: string }>;
+      return {
+        topFactIds: rows.slice(0, 5).map((r) => r.id),
+        facts: rows.length,
+      };
+    } catch {
+      return { topFactIds: [], facts: 0 };
+    }
+  }
 
   return {
     schemaVersion: 1,
@@ -212,6 +260,7 @@ export function buildPendingReviewDigestReport(opts: {
       validated: proceduresValidated,
       promoted: proceduresPromoted,
       validatedNotPromoted,
+      newThisWeek: proceduresNewThisWeek,
     },
     personaProposals: {
       enabled: cfg.personaProposals.enabled,
@@ -228,6 +277,7 @@ export function buildPendingReviewDigestReport(opts: {
         approveCommand: `openclaw hybrid-mem proposals approve ${p.id}`,
         declineCommand: `openclaw hybrid-mem proposals reject ${p.id}`,
         deferCommand: `openclaw hybrid-mem proposals list --status pending`,
+        evidence: evidenceForProposal(p.evidenceSessions ?? []),
       })),
     },
     toolProposals: {
@@ -278,10 +328,14 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
     lines.push(`   - Approve: ${p.approveCommand}`);
     lines.push(`   - Decline: ${p.declineCommand}`);
     lines.push(`   - Defer: ${p.deferCommand}`);
+    if (p.evidence.facts > 0) {
+      const sample = p.evidence.topFactIds.length > 0 ? ` (sample: ${p.evidence.topFactIds.join(", ")})` : "";
+      lines.push(`   - Evidence: ${p.evidence.facts} fact(s)${sample}`);
+    }
   });
   lines.push(
     "",
-    `## Procedure promotions (${report.procedures.validatedNotPromoted} backlog)`,
+    `## Procedure promotions (${report.procedures.validatedNotPromoted} backlog, ${report.procedures.newThisWeek} new this week)`,
     `- Review: openclaw hybrid-mem procedures triage --not-promoted`,
     `- Approve/promote: openclaw hybrid-mem generate-auto-skills`,
     `- Defer: leave validated procedures unpromoted`,

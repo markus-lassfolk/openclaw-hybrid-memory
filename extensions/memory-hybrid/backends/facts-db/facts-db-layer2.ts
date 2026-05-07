@@ -51,6 +51,7 @@ import {
   proceduresCount as proceduresCountImpl,
   proceduresPromotedCount as proceduresPromotedCountImpl,
   proceduresValidatedCount as proceduresValidatedCountImpl,
+  proceduresValidatedSince as proceduresValidatedSinceImpl,
   recordProcedureFailure as recordProcedureFailureImpl,
   recordProcedureSuccess as recordProcedureSuccessImpl,
   searchProcedures as searchProceduresImpl,
@@ -79,6 +80,7 @@ import {
   listForDashboard as listForDashboardImpl,
   metaPatternsCount as metaPatternsCountImpl,
   auditCategories as auditCategoriesImpl,
+  proposedCategories as proposedCategoriesImpl,
   remapCategory as remapCategoryImpl,
   statsBreakdownByCategory as statsBreakdownByCategoryImpl,
   statsBreakdownByDecayClass as statsBreakdownByDecayClassImpl,
@@ -93,8 +95,13 @@ import {
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
 
 export class FactsDBLayer2 extends FactsDBLayer1 {
-  /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
-  getRecentFacts(days: number, options?: { excludeCategories?: string[] }): MemoryEntry[] {
+  /**
+   * Get facts from the last N days (for reflection).
+   * Excludes `pattern`/`rule` categories and `implicit-feedback`-tagged facts by default
+   * so trajectory paraphrases (#1186) do not pollute reflection input.
+   * More efficient than getAll+filter.
+   */
+  getRecentFacts(days: number, options?: { excludeCategories?: string[]; excludeTags?: string[] }): MemoryEntry[] {
     return getRecentFactsImpl(this.liveDb, days, options);
   }
 
@@ -314,6 +321,14 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return remapCategoryImpl(this.liveDb, from, to, apply);
   }
 
+  /**
+   * List `category-suggested:<label>` tags emitted by the auto-classifier (#1188).
+   * Use to surface promotable LLM suggestions via `categories propose`.
+   */
+  proposedCategories(exampleLimit = 5): ReturnType<typeof proposedCategoriesImpl> {
+    return proposedCategoriesImpl(this.liveDb, exampleLimit);
+  }
+
   countVectorlessActiveFacts(source?: string): number {
     return countVectorlessActiveFactsImpl(this.liveDb, source);
   }
@@ -341,6 +356,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Count of procedures with last_validated set (validated at least once). */
   proceduresValidatedCount(): number {
     return proceduresValidatedCountImpl(this.liveDb);
+  }
+
+  /** Count of procedures whose last_validated is >= sinceSec (e.g., for "new this week" digest metrics). */
+  proceduresValidatedSince(sinceSec: number): number {
+    return proceduresValidatedSinceImpl(this.liveDb, sinceSec);
   }
 
   /** Count of procedures promoted to skill (promoted_to_skill = 1). */

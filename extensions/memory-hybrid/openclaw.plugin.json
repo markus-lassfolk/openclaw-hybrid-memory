@@ -488,6 +488,10 @@
       "label": "Graph hub degree cap",
       "help": "Skip traversing nodes above this total degree and cap per-hop fanout (default 500; null disables — not recommended)"
     },
+    "graph.hubScorePenalty": {
+      "label": "Graph hub score penalty",
+      "help": "Optional alternative to skip mode (#1192): when set in (0,1), nodes whose degree exceeds the cap are still traversed but descendants' scores are multiplied by (1 - penalty) per hub hop. Default null (skip mode)."
+    },
     "digest.weekly.delivery.mode": {
       "label": "Weekly digest delivery",
       "help": "How the weekly pending-review digest is delivered: system (default gateway announce), telegram (requires chatId), or none (#1197)"

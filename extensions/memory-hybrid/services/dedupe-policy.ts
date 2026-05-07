@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { StoreConfig, StoreDedupeAction } from "../config/types/core.js";
+import type { StoreConfig, StoreDedupeAction, StoreOverflowAction } from "../config/types/core.js";
 import { normalizedHash } from "../utils/tags.js";
 
 export type ResolvedDedupeProfile = {
@@ -10,6 +10,8 @@ export type ResolvedDedupeProfile = {
   maxPerDay?: number;
   onDuplicate: StoreDedupeAction;
   boostBy: number;
+  /** Behaviour when `maxPerDay` is exceeded (#1194). Default `drop`. */
+  onOverflow: StoreOverflowAction;
 };
 
 const DEFAULT_PROFILE: ResolvedDedupeProfile = {
@@ -18,6 +20,7 @@ const DEFAULT_PROFILE: ResolvedDedupeProfile = {
   lexicalJaccard: 0.9,
   onDuplicate: "skip",
   boostBy: 0.05,
+  onOverflow: "drop",
 };
 
 function globToRegExp(pattern: string): RegExp {
@@ -41,6 +44,9 @@ function normalizeProfile(sourcePattern: string, raw?: StoreConfig["defaultProfi
   }
   if (typeof raw?.boostBy === "number" && raw.boostBy > 0) {
     partial.boostBy = Math.min(1, raw.boostBy);
+  }
+  if (raw?.onOverflow === "drop" || raw?.onOverflow === "evict-lowest-confidence") {
+    partial.onOverflow = raw.onOverflow;
   }
   return partial;
 }
@@ -91,14 +97,22 @@ export type ApplyDedupeContext = {
   fuzzyDedupe: boolean;
   /** When set but no embedding is provided, callers may warn (vector dedupe deferred). */
   embedding?: Float32Array | null;
+  /**
+   * Pre-computed vector neighbour candidates for the new fact's embedding (#1186, #1194).
+   * Callers that have access to the vector backend should populate this so `applyDedupe`
+   * can decide vector-side without going async. Each entry is `{id, score}` where `score`
+   * is cosine similarity in `[0, 1]` (higher = more similar). Sorted descending is helpful
+   * but not required.
+   */
+  vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
   warn?: (message: string) => void;
 };
 
 export type ApplyDedupeResult =
   | { action: "store" }
-  | { action: "skip"; existingId: string }
-  | { action: "boost"; existingId: string; boostBy: number }
-  | { action: "merge"; existingId: string };
+  | { action: "skip"; existingId: string; reason?: "exact" | "hash" | "lexical" | "vector" }
+  | { action: "boost"; existingId: string; boostBy: number; reason?: "exact" | "hash" | "lexical" | "vector" }
+  | { action: "merge"; existingId: string; reason?: "exact" | "hash" | "lexical" | "vector" };
 
 function tokenizeForJaccard(text: string): Set<string> {
   return new Set(
@@ -131,21 +145,11 @@ export function applyDedupe(
   candidate: DedupeCandidate,
   ctx: ApplyDedupeContext,
 ): ApplyDedupeResult {
-  if (
-    profile.vectorThreshold != null &&
-    profile.vectorThreshold > 0 &&
-    (ctx.embedding == null || ctx.embedding.length === 0)
-  ) {
-    ctx.warn?.(
-      `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no pre-store embedding; vector cosine dedupe at write time is not implemented yet (TODO #1194-vector).`,
-    );
-  }
-
   const exact = ctx.db
     .prepare("SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL LIMIT 1")
     .get(candidate.text, candidate.source) as { id: string } | undefined;
   if (exact) {
-    const mapped = mapOnDuplicate(profile, exact.id);
+    const mapped = mapOnDuplicate(profile, exact.id, "exact");
     if (mapped.action !== "store") {
       return mapped;
     }
@@ -165,7 +169,41 @@ export function applyDedupe(
     .get(hash, candidate.source) as { id: string } | undefined;
 
   if (hashRow) {
-    return mapOnDuplicate(profile, hashRow.id);
+    return mapOnDuplicate(profile, hashRow.id, "hash");
+  }
+
+  // Vector-side cosine dedupe (#1186, #1194). Caller pre-computes neighbour candidates so
+  // `applyDedupe` can stay synchronous while still honouring `profile.vectorThreshold`.
+  if (
+    profile.vectorThreshold != null &&
+    profile.vectorThreshold > 0 &&
+    profile.vectorThreshold <= 1 &&
+    ctx.vectorCandidates &&
+    ctx.vectorCandidates.length > 0
+  ) {
+    let bestVec: { id: string; score: number } | null = null;
+    for (const cand of ctx.vectorCandidates) {
+      if (
+        typeof cand.score === "number" &&
+        cand.score >= profile.vectorThreshold &&
+        (bestVec === null || cand.score > bestVec.score)
+      ) {
+        bestVec = { id: cand.id, score: cand.score };
+      }
+    }
+    if (bestVec) {
+      return mapOnDuplicate(profile, bestVec.id, "vector");
+    }
+  } else if (
+    profile.vectorThreshold != null &&
+    profile.vectorThreshold > 0 &&
+    (ctx.embedding == null || ctx.embedding.length === 0) &&
+    !ctx.vectorCandidates
+  ) {
+    // Caller asked for vector dedupe but supplied neither candidates nor an embedding.
+    ctx.warn?.(
+      `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe.`,
+    );
   }
 
   if (typeof profile.lexicalJaccard === "number" && profile.lexicalJaccard > 0 && profile.lexicalJaccard <= 1) {
@@ -185,21 +223,25 @@ export function applyDedupe(
       }
     }
     if (best) {
-      return mapOnDuplicate(profile, best.id);
+      return mapOnDuplicate(profile, best.id, "lexical");
     }
   }
 
   return { action: "store" };
 }
 
-function mapOnDuplicate(profile: ResolvedDedupeProfile, existingId: string): ApplyDedupeResult {
+function mapOnDuplicate(
+  profile: ResolvedDedupeProfile,
+  existingId: string,
+  reason: "exact" | "hash" | "lexical" | "vector",
+): ApplyDedupeResult {
   switch (profile.onDuplicate) {
     case "boost":
-      return { action: "boost", existingId, boostBy: profile.boostBy };
+      return { action: "boost", existingId, boostBy: profile.boostBy, reason };
     case "merge":
-      return { action: "merge", existingId };
+      return { action: "merge", existingId, reason };
     case "skip":
-      return { action: "skip", existingId };
+      return { action: "skip", existingId, reason };
     case "store":
       return { action: "store" };
     default:

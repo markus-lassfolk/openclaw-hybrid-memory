@@ -96,6 +96,7 @@ function parseStoreSourceProfile(raw: unknown): StoreSourceProfile | undefined {
     maxPerDay: typeof obj.maxPerDay === "number" && obj.maxPerDay > 0 ? Math.floor(obj.maxPerDay) : undefined,
     onDuplicate,
     boostBy: typeof obj.boostBy === "number" && obj.boostBy > 0 ? Math.min(1, obj.boostBy) : undefined,
+    onOverflow: obj.onOverflow === "drop" || obj.onOverflow === "evict-lowest-confidence" ? obj.onOverflow : undefined,
   };
 }
 

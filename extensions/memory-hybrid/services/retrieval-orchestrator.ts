@@ -368,9 +368,16 @@ function runGraphStrategy(
   scopeFilter?: unknown,
   asOf?: number,
   hubDegreeCap?: number | null,
+  hubScorePenalty?: number | null,
 ): RankedResult[] {
   if (maxDepth <= 0 || seeds.length === 0 || !hasGraphLookup(factsDb)) return [];
-  const { results: expanded } = expandGraph(factsDb, seeds, { maxDepth, scopeFilter, asOf, hubDegreeCap });
+  const { results: expanded } = expandGraph(factsDb, seeds, {
+    maxDepth,
+    scopeFilter,
+    asOf,
+    hubDegreeCap,
+    hubScorePenalty,
+  });
   const bestById = new Map<string, number>();
   for (const e of expanded) {
     if (e.expansionSource !== "graph") continue;
@@ -538,6 +545,7 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     embeddingFactsEnabled: Boolean(options.factsDbForEmbeddings),
     constrainedFilters: options.constrainedFilters ?? null,
     graphHubDegreeCap: options.graphHubDegreeCap ?? null,
+    graphHubScorePenalty: options.graphHubScorePenalty ?? null,
   });
 }
 
@@ -704,6 +712,8 @@ export interface RetrievalPipelineOptions {
   constrainedFilters?: import("../backends/facts-db/search.js").ConstrainedSearchFilters;
   /** Mirrors `graph.hubDegreeCap` for GraphRAG expansion (Issue #1192). */
   graphHubDegreeCap?: number | null;
+  /** Mirrors `graph.hubScorePenalty` for GraphRAG expansion (Issue #1192). */
+  graphHubScorePenalty?: number | null;
 }
 
 /**
@@ -775,6 +785,7 @@ export async function runExplicitDeepRetrieval(
     documentGradingConfig,
     constrainedFilters,
     graphHubDegreeCap,
+    graphHubScorePenalty,
   } = options;
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
@@ -1033,6 +1044,7 @@ export async function runExplicitDeepRetrieval(
         scopeFilter,
         asOf,
         graphHubDegreeCap,
+        graphHubScorePenalty,
       );
       if (graphResults.length > 0) {
         strategyMap.set("graph", graphResults);

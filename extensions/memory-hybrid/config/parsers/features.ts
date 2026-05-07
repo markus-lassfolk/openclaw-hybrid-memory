@@ -83,6 +83,10 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
         : typeof graphRaw?.hubDegreeCap === "number" && graphRaw.hubDegreeCap > 0
           ? Math.floor(graphRaw.hubDegreeCap)
           : 500,
+    hubScorePenalty:
+      typeof graphRaw?.hubScorePenalty === "number" && graphRaw.hubScorePenalty > 0 && graphRaw.hubScorePenalty < 1
+        ? graphRaw.hubScorePenalty
+        : null,
   };
 }
 
@@ -159,6 +163,7 @@ export function parseIngestConfig(cfg: Record<string, unknown>): IngestConfig | 
 
 export function parseMemoryTieringConfig(cfg: Record<string, unknown>): MemoryTieringConfig {
   const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
+  const hotByRecallRaw = tierRaw?.hotByRecall as Record<string, unknown> | undefined;
   return {
     enabled: tierRaw?.enabled !== false,
     hotMaxTokens:
@@ -186,6 +191,15 @@ export function parseMemoryTieringConfig(cfg: Record<string, unknown>): MemoryTi
       typeof tierRaw?.hotPreferenceImportance === "number" && tierRaw.hotPreferenceImportance >= 0
         ? Math.min(1, tierRaw.hotPreferenceImportance)
         : 0.7,
+    hotByRecall: {
+      windowDays:
+        typeof hotByRecallRaw?.windowDays === "number" && hotByRecallRaw.windowDays >= 0
+          ? Math.floor(hotByRecallRaw.windowDays)
+          : 7,
+      topN: typeof hotByRecallRaw?.topN === "number" && hotByRecallRaw.topN >= 0 ? Math.floor(hotByRecallRaw.topN) : 20,
+    },
+    structuralByCategory: tierRaw?.structuralByCategory !== false,
+    structuralPermanent: tierRaw?.structuralPermanent === true,
   };
 }
 
@@ -843,15 +857,26 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
   const raw = cfg.lifecycle as Record<string, unknown> | undefined;
   const adapters = raw?.adapters as Record<string, unknown> | undefined;
   const github = adapters?.github as Record<string, unknown> | undefined;
+  const validAction = (value: unknown): "expire-now" | "expire-soon" | "keep-stable" | undefined =>
+    value === "expire-now" || value === "expire-soon" || value === "keep-stable" ? value : undefined;
+  const repos = Array.isArray(github?.repos)
+    ? (github!.repos as unknown[])
+        .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+        .map((r) => r.trim())
+    : undefined;
   return {
     adapters: {
       github: {
         enabled: github?.enabled === true,
         repo: typeof github?.repo === "string" && github.repo.trim().length > 0 ? github.repo.trim() : undefined,
+        repos: repos && repos.length > 0 ? repos : undefined,
         tokenRef:
           typeof github?.tokenRef === "string" && github.tokenRef.trim().length > 0
             ? github.tokenRef.trim()
             : undefined,
+        onMerged: validAction(github?.onMerged),
+        onClosed: validAction(github?.onClosed),
+        onOpen: validAction(github?.onOpen),
       },
     },
   };

@@ -37,6 +37,22 @@ export type TieringOptions = {
   hotMinAccessCount?: number;
   hotAccessWindowDays?: number;
   hotPreferenceImportance?: number;
+  /**
+   * #1187: Top-N facts by recall_count over the last `windowDays` are forced into the hot tier.
+   * Set `topN` to 0 to disable this rule. Defaults to {windowDays: 7, topN: 20}.
+   */
+  hotByRecallWindowDays?: number;
+  hotByRecallTopN?: number;
+  /**
+   * #1187: Treat schematic categories (entity/person/place/project) as structural even when
+   * the facts have only `key` (no `value`). Default: true.
+   */
+  structuralByCategoryEnabled?: boolean;
+  /**
+   * #1187: Treat `decay_class='permanent'` facts as structural (kept indexable but out of the
+   * recall ranking). Default: false to preserve the original behavior.
+   */
+  structuralPermanentEnabled?: boolean;
 };
 
 export type TieringCounts = {
@@ -81,6 +97,10 @@ function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions>
     hotMinAccessCount: opts.hotMinAccessCount ?? 3,
     hotAccessWindowDays: opts.hotAccessWindowDays ?? 7,
     hotPreferenceImportance: opts.hotPreferenceImportance ?? 0.7,
+    hotByRecallWindowDays: opts.hotByRecallWindowDays ?? 7,
+    hotByRecallTopN: opts.hotByRecallTopN ?? 20,
+    structuralByCategoryEnabled: opts.structuralByCategoryEnabled ?? true,
+    structuralPermanentEnabled: opts.structuralPermanentEnabled ?? false,
   };
 }
 
@@ -99,11 +119,28 @@ function parsePreserveTags(raw: string | null): string[] {
   }
 }
 
-function isStructuralCandidate(row: TierCandidate): boolean {
+const STRUCTURAL_CATEGORIES = new Set(["entity", "person", "place", "project"]);
+
+function isStructuralCandidate(row: TierCandidate, opts?: Required<TieringOptions>): boolean {
   if (row.key === "implicit_feedback_signal") return false;
-  // Structural tier is only for explicit key/value rows. `decay_class === "permanent"` does not
-  // imply structural — permanent edicts/rules/preferences without key+value stay hot/warm/cold.
-  return row.key != null && row.key.trim() !== "" && row.value != null && row.value.trim() !== "";
+  const hasKv = row.key != null && row.key.trim() !== "" && row.value != null && row.value.trim() !== "";
+  if (hasKv) return true;
+  // #1187: schematic facts (entity/person/place/project with a non-empty key) are structural
+  // even if they don't carry a `value`, so dashboards can surface them via `?tier=structural`.
+  if (
+    opts?.structuralByCategoryEnabled &&
+    row.category != null &&
+    STRUCTURAL_CATEGORIES.has(row.category) &&
+    row.key != null &&
+    row.key.trim() !== ""
+  ) {
+    return true;
+  }
+  // #1187: `decay_class='permanent'` rows can be tiered to structural to keep them out of
+  // semantic recall ranking while remaining indexable. Off by default; enable when you have
+  // a separate ranker that respects the structural tier.
+  if (opts?.structuralPermanentEnabled && row.decay_class === "permanent") return true;
+  return false;
 }
 
 function isPinnedTierCandidate(row: TierCandidate, nowSec: number): boolean {
@@ -121,10 +158,11 @@ function isHotCandidate(
   row: TierCandidate,
   nowSec: number,
   opts: Required<TieringOptions>,
-  flags?: { ignoreStructuralBlock?: boolean },
+  flags?: { ignoreStructuralBlock?: boolean; hotByRecallIds?: ReadonlySet<string> },
 ): boolean {
-  if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row)) return false;
+  if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row, opts)) return false;
   if (hasTag(row.tags, "blocker")) return true;
+  if (flags?.hotByRecallIds?.has(row.id)) return true;
   if (["decision", "pattern", "rule"].includes(row.category ?? "")) return false;
   if (row.preserve_until != null && row.preserve_until > nowSec) return true;
   const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
@@ -140,26 +178,68 @@ function isHotCandidate(
   return false;
 }
 
-function isColdCandidate(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): boolean {
-  if (isStructuralCandidate(row)) return false;
+function isColdCandidate(
+  row: TierCandidate,
+  nowSec: number,
+  opts: Required<TieringOptions>,
+  flags?: { hotByRecallIds?: ReadonlySet<string> },
+): boolean {
+  if (isStructuralCandidate(row, opts)) return false;
   if (row.category === "preference") return false;
-  if (isHotCandidate(row, nowSec, opts)) return false;
+  if (isHotCandidate(row, nowSec, opts, flags)) return false;
   if (isPinnedTierCandidate(row, nowSec)) return false;
   const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
   const coldCutoff = nowSec - opts.coldAfterInactivityDays * 86400;
   return lastAccess < coldCutoff && (row.recall_count ?? 0) === 0 && (row.access_count ?? 0) === 0;
 }
 
-function chooseTier(row: TierCandidate, nowSec: number, opts: Required<TieringOptions>): MemoryTier {
+function chooseTier(
+  row: TierCandidate,
+  nowSec: number,
+  opts: Required<TieringOptions>,
+  flags?: { hotByRecallIds?: ReadonlySet<string> },
+): MemoryTier {
   if (isPinnedTierCandidate(row, nowSec)) {
-    if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true })) return "hot";
+    if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true, hotByRecallIds: flags?.hotByRecallIds })) {
+      return "hot";
+    }
     return "warm";
   }
-  if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true })) return "hot";
-  // Inactive key+value rows (and other structural candidates) land in structural after hot/warm rules.
-  if (isStructuralCandidate(row)) return "structural";
-  if (isColdCandidate(row, nowSec, opts)) return "cold";
+  // Key+value (and other structural) candidates use the structural slice before generic hot/warm/cold.
+  if (isStructuralCandidate(row, opts)) return "structural";
+  if (isHotCandidate(row, nowSec, opts, flags)) return "hot";
+  if (isColdCandidate(row, nowSec, opts, flags)) return "cold";
   return "warm";
+}
+
+/**
+ * #1187: Compute the set of fact ids that are top-N by `recall_count` over the last
+ * `windowDays`. We approximate "in-window" by requiring `last_accessed >= cutoff`. When
+ * topN is 0 the rule is disabled.
+ */
+function computeHotByRecallIds(
+  rows: readonly TierCandidate[],
+  nowSec: number,
+  opts: Required<TieringOptions>,
+): Set<string> {
+  if (opts.hotByRecallTopN <= 0) return new Set();
+  const cutoff = opts.hotByRecallWindowDays > 0 ? nowSec - opts.hotByRecallWindowDays * 86400 : 0;
+  const eligible = rows
+    .filter((row) => {
+      const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+      const recall = row.recall_count ?? 0;
+      return recall > 0 && lastAccess >= cutoff;
+    })
+    .sort((a, b) => {
+      const bRecall = b.recall_count ?? 0;
+      const aRecall = a.recall_count ?? 0;
+      if (bRecall !== aRecall) return bRecall - aRecall;
+      const bAccess = b.last_accessed ?? b.last_confirmed_at ?? b.created_at;
+      const aAccess = a.last_accessed ?? a.last_confirmed_at ?? a.created_at;
+      return bAccess - aAccess;
+    })
+    .slice(0, opts.hotByRecallTopN);
+  return new Set(eligible.map((row) => row.id));
 }
 
 export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true): RetierReport {
@@ -175,7 +255,12 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
     )
     .all(nowSec) as TierCandidate[];
 
-  const desired = rows.map((row) => ({ id: row.id, from: row.tier, to: chooseTier(row, nowSec, normalized) }));
+  const hotByRecallIds = computeHotByRecallIds(rows, nowSec, normalized);
+  const desired = rows.map((row) => ({
+    id: row.id,
+    from: row.tier,
+    to: chooseTier(row, nowSec, normalized, { hotByRecallIds }),
+  }));
 
   const rowsById = new Map(rows.map((row) => [row.id, row]));
   const hotDesired = desired

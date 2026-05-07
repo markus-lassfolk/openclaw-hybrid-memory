@@ -80,6 +80,16 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
         ? Math.min(3650, Math.floor(nightlyCycleRaw.logRetentionDays))
         : 30,
     vacuumOnCycle: nightlyCycleRaw?.vacuumOnCycle !== false,
+    reclassifyDecayOnCycle: nightlyCycleRaw?.reclassifyDecayOnCycle !== false,
+    reclassifyInactiveDays:
+      typeof nightlyCycleRaw?.reclassifyInactiveDays === "number" && nightlyCycleRaw.reclassifyInactiveDays >= 1
+        ? Math.min(3650, Math.floor(nightlyCycleRaw.reclassifyInactiveDays))
+        : 90,
+    reclassifyPromoteRecallCount:
+      typeof nightlyCycleRaw?.reclassifyPromoteRecallCount === "number" &&
+      nightlyCycleRaw.reclassifyPromoteRecallCount >= 1
+        ? Math.floor(nightlyCycleRaw.reclassifyPromoteRecallCount)
+        : 3,
     eventLogArchivalDays:
       typeof nightlyCycleRaw?.eventLogArchivalDays === "number" && nightlyCycleRaw.eventLogArchivalDays >= 0
         ? Math.floor(nightlyCycleRaw.eventLogArchivalDays)

@@ -25,6 +25,14 @@ export type GraphConfig = {
    * `null` disables both checks (not recommended on large stores).
    */
   hubDegreeCap: number | null;
+  /**
+   * Optional per-hop score penalty applied to neighbours of nodes whose out-degree exceeds
+   * `hubDegreeCap` (#1192). Default `null` (skip mode — drop the link entirely). When set to a
+   * positive number, hub neighbours are *kept* but their composite recall score is multiplied
+   * by `(1 - hubScorePenalty)` per traversal hop, so noisy mega-hubs attenuate gracefully
+   * instead of being hard-blocked.
+   */
+  hubScorePenalty: number | null;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
@@ -98,6 +106,23 @@ export type MemoryTieringConfig = {
   hotAccessWindowDays: number;
   /** Importance threshold for recently accessed preferences to be HOT candidates (default: 0.7). */
   hotPreferenceImportance: number;
+  /**
+   * #1187: Top-N facts by `recall_count` over `hotByRecall.windowDays` are forced HOT.
+   * Set `topN` to 0 to disable. Default: { windowDays: 7, topN: 20 }.
+   */
+  hotByRecall: {
+    windowDays: number;
+    topN: number;
+  };
+  /**
+   * #1187: Treat schematic categories (entity/person/place/project) as structural even when
+   * the fact has only `key` (no `value`). Default: true.
+   */
+  structuralByCategory: boolean;
+  /**
+   * #1187: Treat `decay_class='permanent'` rows as structural. Default: false (keeps existing behavior).
+   */
+  structuralPermanent: boolean;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
@@ -408,11 +433,28 @@ export type DigestConfig = {
   };
 };
 
+/**
+ * Decay-class action applied to a fact whose lifecycle event matched (#1196).
+ * - `expire-now`: set `expires_at` to now (eligible for the next prune).
+ * - `expire-soon`: set `expires_at` to `now + 7 days`.
+ * - `keep-stable`: leave the row's TTL alone (still records `last_lifecycle_synced_at`).
+ */
+export type LifecycleGitHubAction = "expire-now" | "expire-soon" | "keep-stable";
+
 /** GitHub lifecycle adapter (Phase 2 — Issue #1196). */
 export type LifecycleGitHubAdapterConfig = {
   enabled: boolean;
+  /** Single repo (legacy) — kept for backwards compatibility. */
   repo?: string;
+  /** Multiple repos in `owner/name` form. Takes precedence over `repo` when both are set. */
+  repos?: string[];
   tokenRef?: string;
+  /** Action when a PR is merged. Default `expire-soon`. */
+  onMerged?: LifecycleGitHubAction;
+  /** Action when an Issue/PR is closed without merging. Default `expire-now`. */
+  onClosed?: LifecycleGitHubAction;
+  /** Action when an Issue/PR is open. Default `keep-stable`. */
+  onOpen?: LifecycleGitHubAction;
 };
 
 export type LifecycleAdaptersConfig = {

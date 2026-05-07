@@ -1,7 +1,7 @@
 export const DECAY_CLASSES = [
   "permanent",
   "durable", // ~3 months half-life
-  "normal", // ~2 weeks half-life
+  "normal", // ~90 days half-life (#1186/#1189: aligned with implicit-feedback trajectory TTL)
   "short", // ~2 days half-life
   "ephemeral", // ~4 hours half-life
   "stable", // legacy: 90 days
@@ -15,7 +15,10 @@ export type DecayClass = (typeof DECAY_CLASSES)[number];
 export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
   permanent: null,
   durable: 90 * 24 * 3600, // ~3 months
-  normal: 14 * 24 * 3600, // 2 weeks
+  // Issue #1186/#1189: trajectory lessons and other source-/importance-defaulted facts use
+  // `normal` and need ~90 days of grace before they expire (was 14 days). Reinforcement on
+  // recall keeps useful facts alive; never-recalled facts now actually expire.
+  normal: 90 * 24 * 3600, // ~90 days
   short: 2 * 24 * 3600, // 2 days
   ephemeral: 4 * 3600, // 4 hours
   stable: 90 * 24 * 3600, // legacy: 90 days
@@ -26,12 +29,24 @@ export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
 
 export type StoreDedupeAction = "skip" | "boost" | "merge" | "store";
 
+/**
+ * Behaviour when a write would exceed `maxPerDay`:
+ *   - `drop` (legacy default) — reject the new write, increment `daily_writes.dropped`.
+ *   - `evict-lowest-confidence` — supersede the lowest-confidence active fact for the same
+ *     source and insert the new one, incrementing `daily_writes.evicted` (#1194). This is the
+ *     recommended setting for noisy ingest paths (e.g. implicit-feedback) where dropping new
+ *     evidence in favour of stale facts is the wrong choice.
+ */
+export type StoreOverflowAction = "drop" | "evict-lowest-confidence";
+
 export type StoreSourceProfile = {
   vectorThreshold?: number;
   lexicalJaccard?: number;
   maxPerDay?: number;
   onDuplicate?: StoreDedupeAction;
   boostBy?: number;
+  /** Strategy applied when `maxPerDay` is exceeded (#1194). Default `drop`. */
+  onOverflow?: StoreOverflowAction;
 };
 
 /** Store options: fuzzy dedupe and optional classify-before-write. */

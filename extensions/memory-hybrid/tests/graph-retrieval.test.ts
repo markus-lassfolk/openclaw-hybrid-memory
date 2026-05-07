@@ -918,4 +918,45 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(bResult).toBeDefined();
     expect(bResult?.expansionSource).toBe("graph");
   });
+
+  it("bounds expansion + finishes quickly through a literal 10k-edge hub (#1192)", () => {
+    const seed = storeFact("Seed across a 10k-edge hub");
+    const hub = storeFact("[consolidated from 10000 events] session_start; session_end");
+    const semantic = storeFact("Useful semantic neighbour past the hub");
+    db.createLink(seed.id, hub.id, "RELATED_TO", 1.0);
+    db.createLink(hub.id, semantic.id, "RELATED_TO", 1.0);
+
+    // Synthesize a literal 10k-edge hub: 10000 DERIVED_FROM legacy rows hanging off the hub.
+    const insertLink = db
+      .getRawDb()
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1.0, strftime('%s','now'))",
+      );
+    db.getRawDb().exec("BEGIN");
+    try {
+      for (let i = 0; i < 10000; i++) {
+        const noise = storeFact(i % 2 === 0 ? "session_start" : "session_end");
+        insertLink.run(`hub-edge-${i}`, hub.id, noise.id);
+      }
+      db.getRawDb().exec("COMMIT");
+    } catch (err) {
+      db.getRawDb().exec("ROLLBACK");
+      throw err;
+    }
+
+    db.refreshFactDegrees();
+
+    const seedEntry = db.getById(seed.id)!;
+    const start = Date.now();
+    const { results: result } = expandGraph(db, [{ factId: seed.id, score: 1.0, entry: seedEntry }], {
+      maxDepth: 3,
+      maxExpandedResults: 20,
+      hubDegreeCap: 500,
+    });
+    const elapsedMs = Date.now() - start;
+
+    expect(result.length).toBeLessThanOrEqual(21);
+    expect(result.some((r) => r.entry.text === "session_start" || r.entry.text === "session_end")).toBe(false);
+    expect(elapsedMs).toBeLessThan(5000);
+  }, 30_000);
 });

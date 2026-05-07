@@ -228,6 +228,28 @@ openclaw hybrid-mem audit health --strict
 
 The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits non-zero when warnings are present. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
 
+## Weekly pending digest (#1197)
+
+Render an at-a-glance backlog of approve/decline/defer actions across persona proposals,
+procedure promotions, tool proposals, crystallization proposals, and verified facts:
+
+```bash
+openclaw hybrid-mem digest pending --since 7d --format md
+openclaw hybrid-mem digest pending --since 7d --format json --out /tmp/pending.json
+```
+
+The JSON payload is versioned (`schemaVersion: 1`) and surfaces:
+
+- `personaProposals.pendingEntries[].evidence` — top supporting fact ids and total count derived
+  from the proposal's `evidenceSessions` join against `facts.provenance_session`.
+- `procedures.newThisWeek` — count of procedures whose `last_validated` timestamp falls within
+  the lookback window, alongside the existing `validatedNotPromoted` backlog.
+- Approve / decline / defer commands per entry so the operator can act without leaving the digest.
+
+The installer registers `hybrid-mem:weekly-pending-digest` (Mondays 08:00) and respects
+`digest.weekly.delivery.{ mode, chatId }` to optionally announce the rendered markdown body to a
+Telegram channel. Full schema and rationale: [docs/pending-digest.md](docs/pending-digest.md).
+
 ## Maintenance log format & analyzer
 
 Hybrid-memory maintenance cron jobs write structured run artifacts under:

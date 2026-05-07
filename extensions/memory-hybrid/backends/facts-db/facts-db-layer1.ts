@@ -36,6 +36,7 @@ import {
   getConnectedFactIds as getConnectedFactIdsHelper,
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
+  refreshFactDegrees as refreshFactDegreesHelper,
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
 } from "./links.js";
 import {
@@ -214,7 +215,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return estimateStorageBytesOnDisk(this.dbPath);
   }
 
-  store(entry: StoreFactInput): MemoryEntry {
+  store(
+    entry: StoreFactInput,
+    options?: { vectorCandidates?: ReadonlyArray<{ id: string; score: number }> },
+  ): MemoryEntry {
     return storeFact(
       {
         db: this.liveDb,
@@ -224,12 +228,13 @@ export class FactsDBLayer1 extends BaseSqliteStore {
         invalidateSupersededCache: () => {
           this.supersededTextsCacheMgr.invalidate();
         },
+        vectorCandidates: options?.vectorCandidates,
       },
       entry,
     );
   }
 
-  statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number }> {
+  statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {
     return statsDailyWritesImpl(this.liveDb);
   }
 
@@ -561,6 +566,15 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     path: string;
   }> {
     return expandGraphWithCTEHelper(this.liveDb, seedFactIds, maxDepth, options);
+  }
+
+  /**
+   * Refresh denormalized `out_degree` / `in_degree` columns on `facts` (#1192). The dream-cycle
+   * calls this once per night so the BFS hub guard avoids running `COUNT(*) FROM memory_links`
+   * on every traversal.
+   */
+  refreshFactDegrees(): { updated: number } {
+    return refreshFactDegreesHelper(this.liveDb);
   }
 
   /** Invalidate superseded texts cache (called after supersede operations). */

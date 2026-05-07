@@ -58,6 +58,17 @@ export type NightlyCycleConfig = {
    * Default: true.
    */
   vacuumOnCycle: boolean;
+  /**
+   * When true, run the source-/importance-aware decay reclassifier as part of the
+   * nightly cycle (#1189). Without this, the only way to reclassify legacy
+   * `decay_class=stable` entries was the manual `decay reclassify --apply` CLI.
+   * Default: true.
+   */
+  reclassifyDecayOnCycle: boolean;
+  /** Inactivity threshold (days) used by the recall-based demotion path. Default: 90. */
+  reclassifyInactiveDays: number;
+  /** Recall count required to promote a fact to a longer-lived class. Default: 3. */
+  reclassifyPromoteRecallCount: number;
 };
 
 /** Memory health dashboard configuration (Issue #148). */

@@ -9,6 +9,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -175,6 +176,64 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             `  [${p.id.slice(0, 8)}] ${p.procedureType.padEnd(8)} ${rate.padEnd(6)} ${ver} "${p.taskPattern.slice(0, 60)}"`,
           );
         }
+      }),
+    );
+
+  // #1191: per-id procedure promote — sister to batch `generate-auto-skills`. Idempotent: a
+  // second call on a promoted procedure prints the existing skill path and exits 0.
+  procedureCmd
+    .command("promote <id>")
+    .description("Promote a single procedure to skills/auto/<slug> (idempotent)")
+    .option("--dry-run", "Print what would happen without writing files")
+    .option("--force", "Skip the validationThreshold safeguard")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (id: string, opts?: { dryRun?: boolean; force?: boolean; json?: boolean }) => {
+        const result = generateAutoSkillForProcedure(
+          factsDb,
+          {
+            skillsAutoPath: cfg.procedures.skillsAutoPath,
+            validationThreshold: cfg.procedures.validationThreshold,
+            skillTTLDays: cfg.procedures.skillTTLDays,
+            procedureId: id,
+            dryRun: opts?.dryRun === true,
+            requireValidation: opts?.force !== true,
+          },
+          { info: (s) => console.log(s), warn: (s) => console.warn(s) },
+        );
+
+        if (opts?.json) {
+          console.log(JSON.stringify({ id, ...result }, null, 2));
+          if (!result.ok) process.exitCode = 1;
+          return;
+        }
+
+        if (!result.ok) {
+          if (result.reason === "not-found") {
+            console.error(`error: procedure not found: ${id}`);
+          } else if (result.reason === "validation-pending") {
+            console.error(
+              `error: procedure ${id} has not reached validationThreshold=${cfg.procedures.validationThreshold}; pass --force to override`,
+            );
+          } else {
+            console.error(`error: failed to promote ${id}: ${result.error ?? "unknown error"}`);
+          }
+          process.exitCode = 1;
+          return;
+        }
+
+        if (result.alreadyPromoted) {
+          console.log(`Procedure ${id} already promoted (no-op).`);
+          console.log(`  Skill: ${result.skillPath}`);
+          return;
+        }
+
+        if (result.dryRun) {
+          console.log(`[dry-run] would promote ${id} → ${result.skillPath}`);
+          return;
+        }
+
+        console.log(`Promoted ${id} → ${result.skillPath}`);
       }),
     );
 

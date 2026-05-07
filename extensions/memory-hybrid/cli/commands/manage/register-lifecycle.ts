@@ -1,8 +1,9 @@
 /**
- * Entity lifecycle CLIs (Issue #1196 Phase 1).
+ * Entity lifecycle CLIs (Issue #1196 Phase 1 + Phase 2).
  */
 
 import type { DecayClass } from "../../../config.js";
+import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -33,6 +34,39 @@ export function registerEntityLifecycleCommands(entitiesCommand: Chainable, b: M
         }
         console.log(`Lifecycle entity report (limit=${limit})`);
         console.log(JSON.stringify(report, null, 2));
+      }),
+    );
+}
+
+/** Phase 2 GitHub lifecycle sync — `openclaw hybrid-mem lifecycle sync github` (#1196). */
+export function registerLifecycleSyncCommands(mem: Chainable, b: ManageBindings): void {
+  const { factsDb, cfg } = b;
+  const lifecycleCmd = mem.command("lifecycle").description("Lifecycle adapters (#1196 Phase 2)");
+  const syncCmd = lifecycleCmd.command("sync").description("Sync lifecycle state from external sources");
+  syncCmd
+    .command("github")
+    .description("Sync from GitHub: PR/Issue state → fact expires_at/decay_class")
+    .option("--dry-run", "Do not apply changes; report counts only")
+    .option("--json", "Emit JSON report")
+    .action(
+      withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
+        try {
+          const report = await syncLifecycleFromGitHub(factsDb, {
+            config: cfg.lifecycle.adapters.github,
+            apply: opts?.dryRun !== true,
+          });
+          if (opts?.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(
+            `lifecycle sync github ${opts?.dryRun ? "(dry-run)" : ""}: scanned=${report.scanned} matched=${report.matched} expiredNow=${report.expiredNow} expiredSoon=${report.expiredSoon} keptStable=${report.keptStable}${report.errors.length > 0 ? ` errors=${report.errors.length}` : ""}`,
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`lifecycle sync github: ${message}`);
+          process.exitCode = 1;
+        }
       }),
     );
 }

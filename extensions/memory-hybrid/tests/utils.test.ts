@@ -360,22 +360,22 @@ describe("extractStructuredFields", () => {
     expect(result.key).toContain("over");
   });
 
-  it("extracts rule (always/never)", () => {
+  it("extracts rule (always/never) (#1190: convention entity nulled by stopword filter)", () => {
     const result = extractStructuredFields("always use strict TypeScript", "preference");
-    expect(result.entity).toBe("convention");
+    expect(result.entity).toBeNull();
     expect(result.value).toBe("always");
   });
 
-  it("extracts possessive (my X is Y)", () => {
+  it("extracts possessive (my X is Y) (#1190: user entity nulled)", () => {
     const result = extractStructuredFields("My favorite color is blue", "preference");
-    expect(result.entity).toBe("user");
+    expect(result.entity).toBeNull();
     expect(result.key).toBe("favorite color");
     expect(result.value).toBe("blue");
   });
 
-  it("extracts preference (I prefer X)", () => {
+  it("extracts preference (I prefer X) (#1190: user entity nulled)", () => {
     const result = extractStructuredFields("I prefer dark mode", "preference");
-    expect(result.entity).toBe("user");
+    expect(result.entity).toBeNull();
     expect(result.key).toBe("prefer");
     expect(result.value).toBe("dark mode");
   });

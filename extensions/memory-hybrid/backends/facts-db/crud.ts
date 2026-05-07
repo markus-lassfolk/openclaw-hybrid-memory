@@ -71,6 +71,12 @@ export type StoreFactContext = {
   storeConfig?: StoreConfig;
   getById: (id: string) => MemoryEntry | null;
   invalidateSupersededCache: () => void;
+  /**
+   * Pre-computed vector neighbour candidates for the new fact's embedding (#1186, #1194).
+   * Caller is expected to populate this when the embedding is known and the policy has
+   * `vectorThreshold` configured.
+   */
+  vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
 };
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryEntry {
@@ -88,11 +94,22 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       db: ctx.db,
       nowSec,
       fuzzyDedupe: ctx.fuzzyDedupe,
+      vectorCandidates: ctx.vectorCandidates,
       warn: (m) => console.warn(m),
     },
   );
 
   if (dedupe.action === "skip") {
+    // #1186 acceptance ("cosine ≥ 0.85 → skip + recall_count++"): when we skipped because
+    // of a near-duplicate, bump recall on the existing winner so the dedup acts as a
+    // reinforcement signal instead of silently dropping the new evidence.
+    if (dedupe.reason === "vector" || dedupe.reason === "lexical" || dedupe.reason === "hash") {
+      ctx.db
+        .prepare(
+          `UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_confirmed_at = ? WHERE id = ?`,
+        )
+        .run(nowSec, dedupe.existingId);
+    }
     const existing = ctx.getById(dedupe.existingId);
     if (existing) return existing;
   }
@@ -174,6 +191,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
     decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
   const beginMode: SqliteTransactionBeginMode = profile.maxPerDay != null ? "IMMEDIATE" : "DEFERRED";
   let quotaExceededSource: string | null = null;
+  let evictedFactId: string | null = null;
   const tx = createTransaction(
     ctx.db,
     () => {
@@ -182,14 +200,52 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
           .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
           .get(sourceForPolicy, day) as { count: number } | undefined;
         if ((quotaRow?.count ?? 0) >= profile.maxPerDay) {
-          quotaExceededSource = sourceForPolicy;
-          ctx.db
-            .prepare(
-              `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
-           ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
-            )
-            .run(sourceForPolicy, day);
-          return;
+          // #1194: legacy behaviour was throw-on-overflow + bump `dropped`. With
+          // `onOverflow=evict-lowest-confidence`, we instead supersede the lowest-confidence
+          // active fact for this source and let the new write through, which prevents the
+          // quota from acting as a "freeze the noise" gate when noisy sources accumulate stale
+          // low-confidence rows.
+          if (profile.onOverflow === "evict-lowest-confidence") {
+            const victim = ctx.db
+              .prepare(
+                `SELECT id FROM facts
+                  WHERE source = ? AND superseded_at IS NULL
+                  ORDER BY confidence ASC, COALESCE(recall_count, 0) ASC, created_at ASC
+                  LIMIT 1`,
+              )
+              .get(sourceForPolicy) as { id: string } | undefined;
+            if (victim) {
+              ctx.db
+                .prepare(`UPDATE facts SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL`)
+                .run(nowSec, victim.id);
+              evictedFactId = victim.id;
+              ctx.db
+                .prepare(
+                  `INSERT INTO daily_writes (source, day, count, dropped, evicted) VALUES (?, ?, 0, 0, 1)
+                   ON CONFLICT(source, day) DO UPDATE SET evicted = evicted + 1`,
+                )
+                .run(sourceForPolicy, day);
+              // Fall through to the INSERT path below (do not return).
+            } else {
+              quotaExceededSource = sourceForPolicy;
+              ctx.db
+                .prepare(
+                  `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+                   ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+                )
+                .run(sourceForPolicy, day);
+              return;
+            }
+          } else {
+            quotaExceededSource = sourceForPolicy;
+            ctx.db
+              .prepare(
+                `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+                 ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+              )
+              .run(sourceForPolicy, day);
+            return;
+          }
         }
       }
       ctx.db
@@ -252,7 +308,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   if (quotaExceededSource) {
     throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
   }
-  if (supersedesId) {
+  if (supersedesId || evictedFactId) {
     ctx.invalidateSupersededCache();
   }
   const loaded = ctx.getById(id);
@@ -318,8 +374,10 @@ export function hasDuplicateText(
 
 export function statsDailyWrites(
   db: DatabaseSync,
-): Array<{ source: string; day: string; count: number; dropped: number }> {
+): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {
   return db
-    .prepare("SELECT source, day, count, dropped FROM daily_writes ORDER BY day DESC, source ASC LIMIT 100")
-    .all() as Array<{ source: string; day: string; count: number; dropped: number }>;
+    .prepare(
+      "SELECT source, day, count, dropped, COALESCE(evicted, 0) AS evicted FROM daily_writes ORDER BY day DESC, source ASC LIMIT 100",
+    )
+    .all() as Array<{ source: string; day: string; count: number; dropped: number; evicted: number }>;
 }

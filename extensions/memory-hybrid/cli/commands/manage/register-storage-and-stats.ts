@@ -43,11 +43,13 @@ function entryMatchesHybridSearchFilters(
   return true;
 }
 
-type AuditHealthReport = {
+export type AuditHealthReport = {
   schemaVersion: 1;
   generatedAt: string;
   ok: boolean;
   activeFacts: number;
+  /** Age (in days) of the oldest active fact. Used to gate sparse-store warnings (#1193). */
+  storeAgeDays: number;
   canonicalEmbeddings: number;
   vectorless: number;
   vectorlessBySource: Array<{ source: string; count: number }>;
@@ -67,9 +69,19 @@ type AuditHealthReport = {
     eventTypeHistogram: Record<string, number>;
   }>;
   structuralEligibleWarmFacts: number;
-  patternBloat: { implicitFeedbackPatterns: number };
+  patternBloat: {
+    implicitFeedbackPatterns: number;
+    /** Top 5 leading-token prefixes for `category=pattern AND source=implicit-feedback` (#1193). */
+    implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }>;
+  };
   entityStopwordMatches: Array<{ entity: string; count: number }>;
-  storage: { sqliteBytes: number | null; walBytes: number | null; shmBytes: number | null };
+  storage: {
+    sqliteBytes: number | null;
+    walBytes: number | null;
+    shmBytes: number | null;
+    /** LanceDB directory size on disk in bytes (#1193). */
+    lanceBytes: number | null;
+  };
   storageGrowth: {
     lastSampleAt: number | null;
     delta7d: {
@@ -78,6 +90,8 @@ type AuditHealthReport = {
       linkCount: number | null;
       factCount: number | null;
     } | null;
+    /** Lance bytes per week derived from delta7d (null when unknown). */
+    lanceBytesPerWeekDelta: number | null;
   };
   implicitFeedbackSignalNoise: {
     rowsPerDay30d: Record<string, number>;
@@ -85,7 +99,17 @@ type AuditHealthReport = {
   };
   tiers: Record<string, number>;
   decay: Record<string, number>;
-  categories: { configured: string[]; present: string[]; unknown: string[] };
+  /**
+   * Stickiness ratio: `(stable + permanent) / activeFacts`. Surfaced separately from `decay` so
+   * dashboards can render a single number and gate the 60% warning (#1193).
+   */
+  stableStickiness: { stablePermanent: number; activeFacts: number; ratio: number };
+  categories: {
+    configured: string[];
+    present: string[];
+    /** Per-category drift counts so the JSON consumer doesn't need to re-query (#1193). */
+    unknown: Array<{ category: string; count: number }>;
+  };
   sources: Record<string, number>;
   implicitFeedbackTrajectorySignals: number;
   graphHubGuard: {
@@ -109,11 +133,12 @@ function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb
   return row?.cnt ?? 0;
 }
 
-function buildAuditHealthReport(
+export function buildAuditHealthReport(
   factsDb: ManageBindings["factsDb"],
   getMemoryCategories: () => readonly string[],
   entityStopWords: readonly string[] = [],
   graphHubDegreeCap?: number | null,
+  options?: { lanceBytes?: number | null },
 ): AuditHealthReport {
   const capForHubListing = graphHubDegreeCap === undefined ? 500 : graphHubDegreeCap;
   const activeFacts = factsDb.getCount();
@@ -126,13 +151,37 @@ function buildAuditHealthReport(
   const present = factsDb.uniqueMemoryCategories().slice().sort();
   const configured = [...getMemoryCategories()].slice().sort();
   const configuredSet = new Set(configured);
-  const unknown = present.filter((category: string) => !configuredSet.has(category));
   const sources = factsDb.statsBySource();
   const implicitFeedbackTrajectorySignals = countImplicitFeedbackTrajectorySignals(factsDb);
   const vectorless = factsDb.countVectorlessActiveFacts();
   const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(10);
   const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
   const raw = factsDb.getRawDb?.();
+
+  // #1193: surface per-category drift counts directly so JSON consumers do not need to re-query.
+  const unknown: Array<{ category: string; count: number }> = (() => {
+    const drift = present.filter((category: string) => !configuredSet.has(category));
+    if (drift.length === 0) return [];
+    if (!raw) return drift.map((category) => ({ category, count: 0 }));
+    return drift.map((category) => {
+      const row = raw
+        .prepare(`SELECT COUNT(*) AS cnt FROM facts WHERE COALESCE(category, 'other') = ? AND superseded_at IS NULL`)
+        .get(category) as { cnt: number } | undefined;
+      return { category, count: Number(row?.cnt ?? 0) };
+    });
+  })();
+
+  // #1193: store age (days) gates sparse-store warnings — a brand-new install with hot=0 is
+  // expected, and the operator should not get a "memory is broken" warning during the first
+  // two weeks while the store warms up.
+  const oldestRow =
+    raw != null
+      ? (raw.prepare(`SELECT MIN(created_at) AS oldest FROM facts WHERE superseded_at IS NULL`).get() as
+          | { oldest: number | null }
+          | undefined)
+      : undefined;
+  const nowSecForAge = Math.floor(Date.now() / 1000);
+  const storeAgeDays = oldestRow?.oldest != null ? Math.max(0, (nowSecForAge - oldestRow.oldest) / 86400) : 0;
   const graphHubs = raw
     ? (
         raw
@@ -204,18 +253,49 @@ function buildAuditHealthReport(
         )?.cnt ?? 0,
       )
     : 0;
+  // #1193: aggregate the leading 6 tokens of `category=pattern AND source=implicit-feedback`
+  // facts to surface "should never store" duplicate prefixes (e.g. paraphrases of the same
+  // self-correction) without scanning every row.
+  const implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }> = (() => {
+    if (!raw) return [];
+    const rows = raw
+      .prepare(
+        `SELECT text FROM facts
+         WHERE superseded_at IS NULL AND category = 'pattern' AND source = 'implicit-feedback'`,
+      )
+      .all() as Array<{ text: string | null }>;
+    if (rows.length === 0) return [];
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const text = (row.text ?? "").trim().toLowerCase();
+      if (!text) continue;
+      const tokens = text.split(/\s+/).slice(0, 6).join(" ");
+      const prefix = tokens.length > 0 ? tokens.slice(0, 80) : "<empty>";
+      counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([prefix, count]) => ({ prefix, count }))
+      .filter((row) => row.count >= 2)
+      .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
+      .slice(0, 5);
+  })();
   const entityStopwordMatches = factsDb
     .topEntities(50)
     .filter((row) => isEntityStopWord(row.entity, entityStopWords))
     .slice(0, 10);
   const storageBytes = factsDb.estimateStorageBytes?.();
+  const lanceBytes = options?.lanceBytes ?? null;
   const nowSecReport = Math.floor(Date.now() / 1000);
   const linkCountTotal =
     raw != null
       ? Number((raw.prepare(`SELECT COUNT(*) AS c FROM memory_links`).get() as { c: number } | undefined)?.c ?? 0)
       : 0;
 
-  let storageGrowth: AuditHealthReport["storageGrowth"] = { lastSampleAt: null, delta7d: null };
+  let storageGrowth: AuditHealthReport["storageGrowth"] = {
+    lastSampleAt: null,
+    delta7d: null,
+    lanceBytesPerWeekDelta: null,
+  };
   if (raw) {
     const d = new Date();
     const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
@@ -227,7 +307,7 @@ function buildAuditHealthReport(
         .prepare(
           `INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(nowSecReport, storageBytes?.sqliteBytes ?? null, null, linkCountTotal, activeFacts);
+        .run(nowSecReport, storageBytes?.sqliteBytes ?? null, lanceBytes, linkCountTotal, activeFacts);
     }
     const lastRow = raw
       .prepare(`SELECT recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1`)
@@ -278,7 +358,13 @@ function buildAuditHealthReport(
         factCount: latestSnap.fact_count - baselineSnap.fact_count,
       };
     }
-    storageGrowth = { lastSampleAt: lastRow?.recorded_at ?? null, delta7d };
+    const ageWeeks =
+      latestSnap && baselineSnap && latestSnap.recorded_at !== baselineSnap.recorded_at
+        ? (latestSnap.recorded_at - baselineSnap.recorded_at) / (7 * 86400)
+        : 0;
+    const lanceBytesPerWeekDelta =
+      delta7d?.lanceBytes != null && ageWeeks > 0 ? Math.round(delta7d.lanceBytes / ageWeeks) : null;
+    storageGrowth = { lastSampleAt: lastRow?.recorded_at ?? null, delta7d, lanceBytesPerWeekDelta };
   }
 
   const implicitFeedbackSignalNoise: AuditHealthReport["implicitFeedbackSignalNoise"] = raw
@@ -304,13 +390,34 @@ function buildAuditHealthReport(
       })()
     : { rowsPerDay30d: {}, paraphraseRatio: null };
 
+  // #1193: stickiness flag is `(stable + permanent) / activeFacts > 0.6`. The previous 50%
+  // stable-only rule fired for healthy stores (because `permanent` decisions are normal).
+  const stablePermanentCount = (decay.stable ?? 0) + (decay.permanent ?? 0);
+  const stableStickinessRatio = activeFacts > 0 ? stablePermanentCount / activeFacts : 0;
+  const stableStickiness = {
+    stablePermanent: stablePermanentCount,
+    activeFacts,
+    ratio: stableStickinessRatio,
+  };
+
   const warnings: string[] = [];
-  if ((tiers.hot ?? 0) === 0) warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
-  if ((tiers.structural ?? 0) === 0)
-    warnings.push("No STRUCTURAL tier facts detected; key/value facts may be stuck in warm tier.");
-  if (activeFacts > 0 && (decay.stable ?? 0) / activeFacts > 0.5)
-    warnings.push("More than half of active facts are stable/no-expiry.");
-  if (unknown.length > 0) warnings.push(`Categories present in DB but not configured: ${unknown.join(", ")}`);
+  // #1193: gate hot=0/structural=0 warnings on storeAgeDays > 14 to avoid false positives during
+  // the first 14 days of a fresh install (no facts have aged into warm/cold yet).
+  if (storeAgeDays > 14) {
+    if ((tiers.hot ?? 0) === 0)
+      warnings.push("No HOT tier facts detected; tiering may not be promoting active memory.");
+    if ((tiers.structural ?? 0) === 0)
+      warnings.push("No STRUCTURAL tier facts detected; key/value facts may be stuck in warm tier.");
+  }
+  if (activeFacts > 0 && stableStickinessRatio > 0.6) {
+    warnings.push(
+      `${(stableStickinessRatio * 100).toFixed(1)}% of active facts are stable+permanent — decay reclassifier may need to run.`,
+    );
+  }
+  if (unknown.length > 0)
+    warnings.push(
+      `Categories present in DB but not configured: ${unknown.map((u) => `${u.category}=${u.count}`).join(", ")}`,
+    );
   if (graphHubs.some((hub) => hub.overCap))
     warnings.push(
       `${graphHubs.filter((hub) => hub.overCap).length} graph hub(s) exceed degree cap ${capForHubListing}.`,
@@ -321,6 +428,10 @@ function buildAuditHealthReport(
     );
   if (implicitFeedbackPatterns > 1000)
     warnings.push(`${implicitFeedbackPatterns} implicit-feedback pattern fact(s) may indicate pattern bloat.`);
+  if (implicitFeedbackPrefixHistogram.length > 0 && implicitFeedbackPrefixHistogram[0].count >= 10)
+    warnings.push(
+      `Implicit-feedback patterns share a "${implicitFeedbackPrefixHistogram[0].prefix}…" prefix ${implicitFeedbackPrefixHistogram[0].count}× — likely paraphrase duplicates.`,
+    );
   if (entityStopwordMatches.length > 0)
     warnings.push(
       `Top entities include stop-word-like labels: ${entityStopwordMatches.map((row) => row.entity).join(", ")}.`,
@@ -375,6 +486,7 @@ function buildAuditHealthReport(
     generatedAt: new Date().toISOString(),
     ok: warnings.length === 0,
     activeFacts,
+    storeAgeDays: Number(storeAgeDays.toFixed(2)),
     canonicalEmbeddings,
     vectorless,
     vectorlessBySource,
@@ -388,17 +500,19 @@ function buildAuditHealthReport(
     },
     graphHubs,
     structuralEligibleWarmFacts,
-    patternBloat: { implicitFeedbackPatterns },
+    patternBloat: { implicitFeedbackPatterns, implicitFeedbackPrefixHistogram },
     entityStopwordMatches,
     storage: {
       sqliteBytes: storageBytes?.sqliteBytes ?? null,
       walBytes: storageBytes?.walBytes ?? null,
       shmBytes: storageBytes?.shmBytes ?? null,
+      lanceBytes,
     },
     storageGrowth,
     implicitFeedbackSignalNoise,
     tiers,
     decay,
+    stableStickiness,
     categories: { configured, present, unknown },
     sources,
     implicitFeedbackTrajectorySignals,
@@ -415,6 +529,7 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log(`Generated: ${report.generatedAt}`);
   console.log(`Schema version: ${report.schemaVersion}`);
   console.log(`Active facts: ${report.activeFacts}`);
+  console.log(`Store age (days): ${report.storeAgeDays.toFixed(1)}`);
   console.log(`Canonical embeddings: ${report.canonicalEmbeddings}`);
   console.log(`Vectorless active non-kv facts: ${report.vectorless}`);
   if (report.vectorlessBySource.length > 0) {
@@ -426,28 +541,44 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log(`Tiers: ${JSON.stringify(report.tiers)}`);
   console.log(`Decay: ${JSON.stringify(report.decay)}`);
   console.log(
-    `Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.join(", ") : "none"}`,
+    `Unknown categories: ${report.categories.unknown.length ? report.categories.unknown.map((u) => `${u.category}=${u.count}`).join(", ") : "none"}`,
+  );
+  console.log(
+    `Stable+permanent stickiness: ${report.stableStickiness.stablePermanent}/${report.stableStickiness.activeFacts} (${(
+      report.stableStickiness.ratio * 100
+    ).toFixed(1)}%)`,
   );
   console.log(`Graph hubs over cap: ${report.graphHubs.filter((hub) => hub.overCap).length}`);
   if (report.graphHubs.length > 0) {
+    // #1193: TTY summary now mirrors the JSON `top 10`, not the previous truncated 3.
     console.log(
       `Top graph hubs: ${report.graphHubs
-        .slice(0, 3)
+        .slice(0, 10)
         .map((hub) => `${hub.id.slice(0, 8)}=${hub.outDegree}`)
         .join(", ")}`,
     );
   }
   console.log(`Structural-eligible warm facts: ${report.structuralEligibleWarmFacts}`);
   console.log(`Implicit-feedback pattern facts: ${report.patternBloat.implicitFeedbackPatterns}`);
+  if (report.patternBloat.implicitFeedbackPrefixHistogram.length > 0) {
+    console.log(
+      `Implicit-feedback prefix histogram: ${report.patternBloat.implicitFeedbackPrefixHistogram
+        .map((row) => `"${row.prefix}"=${row.count}`)
+        .join(", ")}`,
+    );
+  }
   if (report.entityStopwordMatches.length > 0) {
     console.log(
       `Entity stop-word matches: ${report.entityStopwordMatches.map((row) => `${row.entity}=${row.count}`).join(", ")}`,
     );
   }
   if (report.storage.sqliteBytes != null) console.log(`SQLite bytes: ${report.storage.sqliteBytes}`);
+  if (report.storage.lanceBytes != null) console.log(`Lance bytes: ${report.storage.lanceBytes}`);
   if (report.storageGrowth.lastSampleAt != null) {
+    const lanceWeekly = report.storageGrowth.lanceBytesPerWeekDelta;
+    const lanceWeeklyStr = lanceWeekly != null ? `; lance/week=${lanceWeekly}` : "";
     console.log(
-      `Storage growth (last sample unix): ${report.storageGrowth.lastSampleAt}; 7d delta: ${JSON.stringify(report.storageGrowth.delta7d)}`,
+      `Storage growth (last sample unix): ${report.storageGrowth.lastSampleAt}; 7d delta: ${JSON.stringify(report.storageGrowth.delta7d)}${lanceWeeklyStr}`,
     );
   }
   console.log(
@@ -678,7 +809,8 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             console.log("Per-source writes/day (latest):");
             for (const row of dailyWrites) {
               const dropped = row.dropped > 0 ? `, dropped=${row.dropped}` : "";
-              console.log(`  ${row.day} ${row.source}: count=${row.count}${dropped}`);
+              const evicted = row.evicted > 0 ? `, evicted=${row.evicted}` : "";
+              console.log(`  ${row.day} ${row.source}: count=${row.count}${dropped}${evicted}`);
             }
           }
           if (unresolvedContradictions > 0) {
@@ -693,6 +825,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           }
           console.log("");
           console.log(`Graph (links/entities): ${links}/${entities}`);
+          if (topEntitiesFiltered.length > 0) {
+            const formatted = topEntitiesFiltered.map((row) => `${row.entity}=${row.count}`).join(", ");
+            console.log(`Top entities (filtered): ${formatted}`);
+          }
           console.log(
             `Credentials (vaulted): ${credentials}${
               credentials === 0 && !ctx.cfg.credentials.enabled ? " (vault off in effective config; counts stay 0)" : ""
@@ -815,7 +951,8 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             console.log("Per-source writes/day (latest):");
             for (const row of dailyWrites) {
               const dropped = row.dropped > 0 ? `, dropped=${row.dropped}` : "";
-              console.log(`  ${row.day} ${row.source}: count=${row.count}${dropped}`);
+              const evicted = row.evicted > 0 ? `, evicted=${row.evicted}` : "";
+              console.log(`  ${row.day} ${row.source}: count=${row.count}${dropped}${evicted}`);
             }
           }
           console.log(`Estimated tokens (all tiers): ~${estimatedTokens}`);
@@ -1486,11 +1623,24 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     );
 
   const runAuditHealth = async (opts?: { json?: boolean; strict?: boolean }) => {
+    let lanceBytes: number | null = null;
+    try {
+      const sizes = await ctx.richStatsExtras?.getStorageSizes();
+      if (sizes && typeof sizes.lanceBytes === "number") lanceBytes = sizes.lanceBytes;
+    } catch (err) {
+      // best-effort — lance bytes are optional in the audit-health output
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "audit-health-lance-bytes",
+        severity: "info",
+        subsystem: "cli",
+      });
+    }
     const report = buildAuditHealthReport(
       factsDb,
       getMemoryCategories,
       cfg.entityExtraction.stopWords,
       cfg.graph.hubDegreeCap,
+      { lanceBytes },
     );
     if (opts?.json) {
       console.log(JSON.stringify(report, null, 2));
@@ -1579,6 +1729,39 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         if (report.configuredOnly.length > 0) {
           console.log(`Configured categories with no active facts: ${report.configuredOnly.join(", ")}`);
         }
+      }),
+    );
+
+  categoriesCommand
+    .command("propose")
+    .description("List `category-suggested:*` tags emitted by the auto-classifier (#1188)")
+    .option("--json", "Emit JSON")
+    .option("--examples <n>", "Example fact ids per suggestion", "5")
+    .action(
+      withExit(async (opts?: { json?: boolean; examples?: string }) => {
+        const examples = Number.parseInt(opts?.examples ?? "5", 10);
+        if (!Number.isFinite(examples) || examples < 0 || examples > 50) {
+          console.error("error: --examples must be an integer from 0 to 50");
+          process.exitCode = 1;
+          return;
+        }
+        const proposals = factsDb.proposedCategories(examples);
+        if (opts?.json) {
+          console.log(JSON.stringify({ proposals }, null, 2));
+          return;
+        }
+        if (proposals.length === 0) {
+          console.log("No category-suggested:* tags found. The auto-classifier has not surfaced new labels yet.");
+          return;
+        }
+        console.log(`Proposed categories (${proposals.length}):`);
+        for (const row of proposals) {
+          const examplesText = row.examples.length > 0 ? ` examples=${row.examples.join(",")}` : "";
+          console.log(`  - ${row.label}: ${row.count}${examplesText}`);
+        }
+        console.log("");
+        console.log("To promote a label, add it to plugin config `categories` or remap matching facts:");
+        console.log("  openclaw hybrid-mem categories remap --from other --to <label> --apply");
       }),
     );
 

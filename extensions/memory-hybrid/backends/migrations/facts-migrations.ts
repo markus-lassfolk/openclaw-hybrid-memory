@@ -1033,6 +1033,13 @@ function migrateDailyWritesTable(db: DatabaseSync): void {
       PRIMARY KEY (source, day)
     )
   `);
+  // #1194: distinguish quota-rejected writes (`dropped`) from quota-evicted writes
+  // (`evicted`) so dashboards / audit-health can show the difference between "we
+  // refused to write because of overflow" and "we wrote, but evicted a stale fact".
+  const cols = db.prepare("PRAGMA table_info(daily_writes)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "evicted")) {
+    db.exec("ALTER TABLE daily_writes ADD COLUMN evicted INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 /** Add provenance_json column (Issue #1195). */
@@ -1242,6 +1249,28 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Audit-health storage growth samples (Issue #1193)
   migrateStorageGrowthHistoryTable(db);
+
+  // Denormalized degree columns for hub guard (#1192)
+  migrateFactDegreeColumns(db);
+}
+
+/**
+ * #1192: denormalized `out_degree` / `in_degree` columns on `facts` so the hub guard does
+ * not run a per-traversal `COUNT(*) FROM memory_links` (which is O(n) per BFS step on stores
+ * with millions of edges). The columns are refreshed by the dream-cycle's existing pass —
+ * see `services/dream-cycle.ts`.
+ */
+function migrateFactDegreeColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const have = new Set(cols.map((c) => c.name));
+  if (!have.has("out_degree")) {
+    db.exec("ALTER TABLE facts ADD COLUMN out_degree INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!have.has("in_degree")) {
+    db.exec("ALTER TABLE facts ADD COLUMN in_degree INTEGER NOT NULL DEFAULT 0");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_out_degree ON facts(out_degree)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_in_degree ON facts(in_degree)");
 }
 
 /** Weekly audit-health: snapshot SQLite/Lance sizes and link/fact counts for growth trends. */

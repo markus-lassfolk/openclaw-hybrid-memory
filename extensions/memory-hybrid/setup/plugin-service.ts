@@ -466,6 +466,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               narrativesDb,
               provenanceService,
               graphHubDegreeCap: cfg.graph.hubDegreeCap,
+              graphHubScorePenalty: cfg.graph.hubScorePenalty,
             },
             cfg.dashboard.port,
           );

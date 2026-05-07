@@ -1066,6 +1066,23 @@ export function proceduresValidatedCount(db: DatabaseSync): number {
   }
 }
 
+/** Count procedures whose `last_validated` timestamp is >= sinceSec. */
+export function proceduresValidatedSince(db: DatabaseSync, sinceSec: number): number {
+  try {
+    const row = db
+      .prepare("SELECT COUNT(*) as cnt FROM procedures WHERE last_validated IS NOT NULL AND last_validated >= ?")
+      .get(sinceSec) as { cnt: number };
+    return row?.cnt ?? 0;
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: "count-procedures-validated-since",
+      severity: "info",
+      subsystem: "facts",
+    });
+    return 0;
+  }
+}
+
 export function proceduresPromotedCount(db: DatabaseSync): number {
   try {
     const row = db.prepare("SELECT COUNT(*) as cnt FROM procedures WHERE promoted_to_skill = 1").get() as {

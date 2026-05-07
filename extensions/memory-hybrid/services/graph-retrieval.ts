@@ -74,6 +74,12 @@ interface NodeMeta {
   steps: LinkPathStep[];
   /** factId of the seed that originated this traversal path. */
   seedId: string;
+  /**
+   * #1192: cumulative hub-attenuation multiplier accumulated over the path. Starts at 1.0.
+   * Each hop traversed *through* a node whose degree exceeded `hubDegreeCap` multiplies this
+   * by `(1 - hubScorePenalty)`. The final score is `seedScore * decay * hubAttenuation`.
+   */
+  hubAttenuation: number;
 }
 
 /** Minimal interface the graph-retrieval service needs from FactsDB. */
@@ -164,6 +170,12 @@ export interface GraphRetrievalOptions {
    * `null` disables per-hop fanout trimming and CTE/SQL degree skip (not recommended).
    */
   hubDegreeCap?: number | null;
+  /**
+   * #1192: when set, traversing a node whose degree exceeds `hubDegreeCap` no longer skips the
+   * link entirely. Instead, the descendants' composite score is multiplied by `(1 - hubScorePenalty)`
+   * once per hub hop. `null` (default) keeps the legacy hard-skip behaviour.
+   */
+  hubScorePenalty?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +197,7 @@ export function filterTraversableLinks<
     targetFactId?: string;
     sourceFactId?: string;
   },
->(links: T[], traversalCap: number | null, stats?: GraphExpansionStats): T[] {
+>(links: T[], traversalCap: number | null, stats?: GraphExpansionStats, options?: { mode?: "skip" | "penalty" }): T[] {
   const traversable = links.filter((link) => link.linkType !== "CONTRADICTS");
   if (stats) stats.nodesConsidered += traversable.length;
   if (traversalCap === null || traversable.length <= traversalCap) return traversable;
@@ -203,6 +215,12 @@ export function filterTraversableLinks<
     const kb = `${b.linkType}\0${endB}\0${b.id ?? ""}`;
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
+  // #1192: in penalty mode the caller plans to attenuate scores rather than drop links.
+  // Returning the full sorted candidate set lets the BFS apply a multiplier instead of skipping.
+  if (options?.mode === "penalty") {
+    if (stats) stats.hubsSkipped += 1;
+    return sorted;
+  }
   const sliced = sorted.slice(0, traversalCap);
   if (stats) {
     stats.nodesSkipped += traversable.length - sliced.length;
@@ -242,8 +260,20 @@ export function expandGraph(
   seedResults: Array<{ factId: string; score: number; entry: MemoryEntry }>,
   options: GraphRetrievalOptions = {},
 ): { results: GraphExpandedResult[]; stats: GraphExpansionStats } {
-  const { maxDepth = 2, maxExpandedResults = 20, scopeFilter, asOf, hubDegreeCap: hubCapOpt } = options;
+  const {
+    maxDepth = 2,
+    maxExpandedResults = 20,
+    scopeFilter,
+    asOf,
+    hubDegreeCap: hubCapOpt,
+    hubScorePenalty: hubScorePenaltyOpt = null,
+  } = options;
   const traversalCap = resolveGraphHubDegreeCap(hubCapOpt);
+  const hubScorePenalty =
+    typeof hubScorePenaltyOpt === "number" && hubScorePenaltyOpt > 0 && hubScorePenaltyOpt < 1
+      ? hubScorePenaltyOpt
+      : null;
+  const filterMode: "skip" | "penalty" = hubScorePenalty != null ? "penalty" : "skip";
   const stats: GraphExpansionStats = { nodesConsidered: 0, nodesSkipped: 0, hubsSkipped: 0 };
 
   const getByIdOpts = scopeFilter != null || asOf != null ? { asOf, scopeFilter } : undefined;
@@ -352,7 +382,7 @@ export function expandGraph(
     {
       const nodeMeta = new Map<string, NodeMeta>();
       for (const s of seedResults) {
-        nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId });
+        nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId, hubAttenuation: 1 });
       }
 
       let frontier: string[] = [...seedIds];
@@ -362,6 +392,7 @@ export function expandGraph(
         hop: number,
         steps: LinkPathStep[],
         seedId: string,
+        hubAttenuation: number,
         nextFrontier: string[],
         visibleIds: Set<string>,
       ): void {
@@ -369,17 +400,17 @@ export function expandGraph(
         const existing = nodeMeta.get(candidateId);
         const newSeedScore = seedScoreMap.get(seedId) ?? 0;
         if (!existing) {
-          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId, hubAttenuation });
           nextFrontier.push(candidateId);
           return;
         }
         if (hop < existing.hopCount) {
-          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId, hubAttenuation });
           nextFrontier.push(candidateId);
           return;
         }
         if (hop === existing.hopCount && newSeedScore > (seedScoreMap.get(existing.seedId) ?? 0)) {
-          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+          nodeMeta.set(candidateId, { hopCount: hop, steps, seedId, hubAttenuation });
         }
       }
 
@@ -389,13 +420,21 @@ export function expandGraph(
           candidateId: string;
           steps: LinkPathStep[];
           seedId: string;
+          hubAttenuation: number;
         }> = [];
 
         for (const fromId of frontier) {
           const fromMeta = nodeMeta.get(fromId)!;
 
           // --- Outgoing edges: fromId → targetId ---
-          const outLinks = filterTraversableLinks(factsDb.getLinksFrom(fromId), traversalCap, stats);
+          const rawOut = factsDb.getLinksFrom(fromId);
+          const outIsHub =
+            traversalCap !== null && rawOut.filter((l) => l.linkType !== "CONTRADICTS").length > traversalCap;
+          const outLinks = filterTraversableLinks(rawOut, traversalCap, stats, { mode: filterMode });
+          const outAttenuation =
+            hubScorePenalty != null && outIsHub
+              ? fromMeta.hubAttenuation * (1 - hubScorePenalty)
+              : fromMeta.hubAttenuation;
           for (const link of outLinks) {
             const steps: LinkPathStep[] = [
               ...fromMeta.steps,
@@ -410,11 +449,19 @@ export function expandGraph(
               candidateId: link.targetFactId,
               steps,
               seedId: fromMeta.seedId,
+              hubAttenuation: outAttenuation,
             });
           }
 
           // --- Incoming edges: sourceId → fromId ---
-          const inLinks = filterTraversableLinks(factsDb.getLinksTo(fromId), traversalCap, stats);
+          const rawIn = factsDb.getLinksTo(fromId);
+          const inIsHub =
+            traversalCap !== null && rawIn.filter((l) => l.linkType !== "CONTRADICTS").length > traversalCap;
+          const inLinks = filterTraversableLinks(rawIn, traversalCap, stats, { mode: filterMode });
+          const inAttenuation =
+            hubScorePenalty != null && inIsHub
+              ? fromMeta.hubAttenuation * (1 - hubScorePenalty)
+              : fromMeta.hubAttenuation;
           for (const link of inLinks) {
             const steps: LinkPathStep[] = [
               ...fromMeta.steps,
@@ -429,6 +476,7 @@ export function expandGraph(
               candidateId: link.sourceFactId,
               steps,
               seedId: fromMeta.seedId,
+              hubAttenuation: inAttenuation,
             });
           }
         }
@@ -442,7 +490,7 @@ export function expandGraph(
         const visible = factsDb.getByIds(candidateIds, getByIdOpts);
         const visibleIds = new Set(visible.keys());
         for (const move of candidateMoves) {
-          tryAddNode(move.candidateId, hop, move.steps, move.seedId, nextFrontier, visibleIds);
+          tryAddNode(move.candidateId, hop, move.steps, move.seedId, move.hubAttenuation, nextFrontier, visibleIds);
         }
 
         frontier = nextFrontier;
@@ -456,7 +504,7 @@ export function expandGraph(
 
         const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
         const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
-        const score = seedScore * decay;
+        const score = seedScore * decay * meta.hubAttenuation;
 
         expandedResults.push({
           factId,

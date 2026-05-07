@@ -58,6 +58,15 @@ export interface DreamCycleConfig {
    * Default: true.
    */
   vacuumOnCycle: boolean;
+  /**
+   * When true, run the source-/importance-aware decay reclassifier (#1189) as part of the
+   * nightly cycle. Defaults to true; operators can opt out by setting it to false.
+   */
+  reclassifyDecayOnCycle?: boolean;
+  /** Inactivity threshold in days for the recall-based demotion path. Default: 90. */
+  reclassifyInactiveDays?: number;
+  /** Recall count required to promote a fact to a longer-lived class. Default: 3. */
+  reclassifyPromoteRecallCount?: number;
   /** When true, log episodic consolidation / reflection / memory-index detail (CLI `--verbose`). */
   verbose?: boolean;
 }
@@ -82,6 +91,8 @@ export interface DreamCycleResult {
   logRowsPruned: number;
   /** True when VACUUM + checkpoint was executed (Issue #573). */
   vacuumRan: boolean;
+  /** Number of facts re-tiered by the source-/importance-aware reclassifier (#1189). */
+  decayReclassified: number;
   /** Human-readable summary of the cycle. */
   digestSummary: string;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
@@ -158,10 +169,14 @@ export function buildDigestSummary(counts: {
   rulesGenerated: number;
   logRowsPruned?: number;
   vacuumRan?: boolean;
+  decayReclassified?: number;
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
   if (counts.factsDecayed > 0) parts.push(`${counts.factsDecayed} facts decayed`);
+  if (counts.decayReclassified && counts.decayReclassified > 0) {
+    parts.push(`${counts.decayReclassified} facts re-tiered`);
+  }
   if (counts.linksPruned && counts.linksPruned > 0) parts.push(`${counts.linksPruned} orphaned links removed`);
   if (counts.eventsConsolidated > 0) {
     parts.push(`${counts.eventsConsolidated} events consolidated into ${counts.factsCreated} facts`);
@@ -409,6 +424,7 @@ export async function runDreamCycle(
       rulesGenerated: 0,
       logRowsPruned: 0,
       vacuumRan: false,
+      decayReclassified: 0,
       digestSummary: "Dream cycle disabled.",
       skipped: true,
     };
@@ -463,6 +479,54 @@ export async function runDreamCycle(
       operation: "dream-cycle-prune-orphaned-links",
       subsystem: "facts-db",
     });
+  }
+
+  // ── Step 1c: Decay reclassify (#1189) ────────────────────────────────────
+  // Source-/importance-aware reclassifier. Without this nightly hook, the
+  // reclassifier only ran when an operator manually invoked the CLI, which
+  // meant `decay_class=stable` accumulated and prune found nothing.
+  let decayReclassified = 0;
+  if (config.reclassifyDecayOnCycle !== false) {
+    step("decay reclassify (source/importance/recall)");
+    try {
+      const report = factsDb.reclassifyDecayClasses({
+        apply: true,
+        inactiveDays: config.reclassifyInactiveDays ?? 90,
+        promoteRecallCount: config.reclassifyPromoteRecallCount ?? 3,
+      });
+      decayReclassified = report.changed;
+      if (decayReclassified > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — decay reclassify: ${decayReclassified} facts re-tiered (scanned ${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-reclassify-decay",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
+  // ── Step 1d: Refresh denormalized graph degrees (#1192) ──────────────────
+  // Without this, every BFS hop runs `COUNT(*) FROM memory_links` against the same node, which
+  // is O(edges) per call. A single nightly refresh keeps reads cheap while still adapting to
+  // graph changes within a day.
+  if (typeof (factsDb as { refreshFactDegrees?: () => unknown }).refreshFactDegrees === "function") {
+    step("refresh fact degrees");
+    try {
+      const result = (factsDb as { refreshFactDegrees: () => { updated: number } }).refreshFactDegrees();
+      if (v) {
+        logger.info(`memory-hybrid: dream-cycle — refreshed fact degrees for ${result.updated} facts`);
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — refreshFactDegrees failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-refresh-degrees",
+        subsystem: "facts-db",
+      });
+    }
   }
 
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
@@ -678,6 +742,7 @@ export async function runDreamCycle(
     rulesGenerated,
     logRowsPruned,
     vacuumRan,
+    decayReclassified,
   });
 
   logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
@@ -692,6 +757,7 @@ export async function runDreamCycle(
     rulesGenerated,
     logRowsPruned,
     vacuumRan,
+    decayReclassified,
     digestSummary,
     skipped: false,
   };
