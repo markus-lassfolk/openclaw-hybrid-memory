@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry } from "../../types/memory.js";
 import { updateConfidence } from "./contradictions.js";
-import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stopwords.js";
+import { filterEntityStopWords } from "../../utils/entity-stopwords.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import type { MemoryLinkType } from "./types.js";
 
@@ -35,7 +35,7 @@ export function extractEntitiesFromText(
   const lowerText = text.toLowerCase();
 
   for (const entity of knownEntities) {
-    if (!entity || isEntityStopWord(entity)) continue;
+    if (!entity) continue;
     const lowerEntity = entity.toLowerCase();
 
     if (!lowerText.includes(lowerEntity)) continue;
@@ -109,7 +109,7 @@ export function autoDetectInstanceOf(
   if (candidates.size === 0) return 0;
 
   const entities = knownEntitiesList ?? getKnown(db);
-  const knownEntitiesSet = new Set(filterEntityStopWords(entities).map((e) => e.toLowerCase()));
+  const knownEntitiesSet = new Set(entities.map((e) => e.toLowerCase()));
   let linked = 0;
 
   for (const typeName of candidates) {

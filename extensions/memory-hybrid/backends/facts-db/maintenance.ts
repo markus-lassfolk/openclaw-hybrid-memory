@@ -155,8 +155,8 @@ function chooseTier(row: TierCandidate, nowSec: number, opts: Required<TieringOp
     if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true })) return "hot";
     return "warm";
   }
+  if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true })) return "hot";
   if (isStructuralCandidate(row)) return "structural";
-  if (isHotCandidate(row, nowSec, opts)) return "hot";
   if (isColdCandidate(row, nowSec, opts)) return "cold";
   return "warm";
 }
