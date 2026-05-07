@@ -224,25 +224,15 @@ export function expandGraphWithCTE(
 
   // Use recursive CTE to traverse the graph in a single query
   // We track: current node, seed that originated this path, hop count, and JSON path
-  const degreeJoin = hubDegreeCap == null ? "" : "LEFT JOIN node_degrees nd ON nd.fact_id = ge.fact_id";
-  const degreeCheck = hubDegreeCap == null ? "" : "AND (nd.degree IS NULL OR nd.degree <= ?)";
+  const degreeCheck =
+    hubDegreeCap == null
+      ? ""
+      : `AND (
+        (SELECT COUNT(*) FROM memory_links WHERE source_fact_id = ge.fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
+        (SELECT COUNT(*) FROM memory_links WHERE target_fact_id = ge.fact_id AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM'))
+      ) <= ?`;
   const query = `
-    WITH RECURSIVE ${
-      hubDegreeCap == null
-        ? ""
-        : `node_degrees AS (
-      SELECT
-        fact_id,
-        COUNT(*) AS degree
-      FROM (
-        SELECT target_fact_id AS fact_id FROM memory_links WHERE link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
-        UNION ALL
-        SELECT source_fact_id AS fact_id FROM memory_links WHERE link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')
-      )
-      GROUP BY fact_id
-    ),
-    `
-    }graph_expansion(
+    WITH RECURSIVE graph_expansion(
       fact_id,
       seed_id,
       hop_count,
@@ -277,7 +267,6 @@ export function expandGraphWithCTE(
         ) AS path_json,
         ge.visited_ids || ml.target_fact_id || ',' AS visited_ids
       FROM graph_expansion ge
-      ${degreeJoin}
       JOIN memory_links ml ON ml.source_fact_id = ge.fact_id
       ${factJoinOut}
       WHERE
@@ -307,7 +296,6 @@ export function expandGraphWithCTE(
         ) AS path_json,
         ge.visited_ids || ml.source_fact_id || ',' AS visited_ids
       FROM graph_expansion ge
-      ${degreeJoin}
       JOIN memory_links ml ON ml.target_fact_id = ge.fact_id
       ${factJoinIn}
       WHERE

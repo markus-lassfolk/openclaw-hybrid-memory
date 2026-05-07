@@ -676,14 +676,20 @@ export function lifecycleEntityReport(db: DatabaseSync, limit = 100): LifecycleE
     cnt: number;
     active_cnt: number;
   }>;
-  const filtered = rows.map((row) => ({
-    pattern: lifecycleEntityPattern(row.entity) as "pr" | "issue" | "sprint",
-    entity: row.entity,
-    count: Number(row.cnt ?? 0),
-    activeCount: Number(row.active_cnt ?? 0),
-    decayClass: row.decay_class,
-    expiresAt: row.expires_at == null ? null : Number(row.expires_at),
-  }));
+  const filtered = rows
+    .map((row) => {
+      const pattern = lifecycleEntityPattern(row.entity);
+      if (pattern === null) return null;
+      return {
+        pattern,
+        entity: row.entity,
+        count: Number(row.cnt ?? 0),
+        activeCount: Number(row.active_cnt ?? 0),
+        decayClass: row.decay_class,
+        expiresAt: row.expires_at == null ? null : Number(row.expires_at),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
   const totals = filtered.reduce(
     (acc, row) => {
       acc[row.pattern] = (acc[row.pattern] ?? 0) + row.count;
