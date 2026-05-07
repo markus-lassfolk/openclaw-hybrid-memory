@@ -60,7 +60,7 @@ function classifyError(
 } {
   const lower = errorMsg.toLowerCase();
 
-  if (/dns|getaddrinfo|ename or service not known|connection refused|etimedout|ECONNREFUSED|ENOTFOUND/i.test(lower)) {
+  if (/dns|getaddrinfo|name or service not known|connection refused|etimedout|ECONNREFUSED|ENOTFOUND/i.test(lower)) {
     return {
       category: "network",
       severity: "high",

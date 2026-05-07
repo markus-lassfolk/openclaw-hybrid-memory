@@ -203,10 +203,10 @@ export function cleanupImplicitFeedbackDuplicates(
     createdAt: number;
   }>;
   let collapsed = 0;
-  const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])].map((c) => ({
-    id: c.id,
-    text: c.text,
-  }));
+  const CANONICAL_WINDOW_SIZE = 500;
+  const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
+    .slice(-CANONICAL_WINDOW_SIZE)
+    .map((c) => ({ id: c.id, text: c.text }));
   const nowSec = Math.floor(Date.now() / 1000);
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
@@ -255,7 +255,7 @@ export function cleanupImplicitFeedbackDuplicates(
     scanned: rows.length,
     collapsed,
     resumeAfterRowid: lastRow ? lastRow.rowid : null,
-    carryCanonical: canonical.map((c) => ({ id: c.id, text: c.text })),
+    carryCanonical: canonical.slice(-CANONICAL_WINDOW_SIZE).map((c) => ({ id: c.id, text: c.text })),
   };
 }
 

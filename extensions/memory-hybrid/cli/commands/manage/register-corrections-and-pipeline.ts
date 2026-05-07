@@ -574,7 +574,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             let afterRowid = 0;
             let scanned = 0;
             let collapsed = 0;
-            let carryCanonical: Array<{ id: string; text: string }> | undefined;
+            let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
             for (let round = 0; round < 100; round++) {
               const res = cleanupImplicitFeedbackDuplicates(factsDb, {
                 threshold,
