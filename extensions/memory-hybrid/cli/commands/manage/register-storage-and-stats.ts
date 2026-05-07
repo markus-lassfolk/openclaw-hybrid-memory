@@ -166,7 +166,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const lanceAbs = Math.abs(lanceDelta);
           const lanceDen = Math.max(sqlCount, lanceCount, 1);
           const lanceDeltaSignificant = lanceAbs > 100 && lanceAbs / lanceDen > 0.05;
-          const totalFacts = activeFacts + supersededFacts;
+          const totalFacts = sqlCount;
           const canonicalDelta = totalFacts - canonicalEmbeddings;
           const canonicalAbs = Math.abs(canonicalDelta);
           const canonicalDen = Math.max(totalFacts, canonicalEmbeddings, 1);
@@ -179,7 +179,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log("");
           console.log(`Total facts (SQLite): ${sqlCount}`);
           console.log(
-            `Active facts: ${activeFacts} (superseded: ${supersededFacts}, expired pending prune: ${expired})`,
+            `Active facts: ${activeFacts}; superseded: ${supersededFacts}; expired pending prune: ${expired}`,
           );
           console.log(
             `Total vectors (LanceDB): ${lanceCount} (canonical embeddings in SQLite: ${canonicalEmbeddings})`,
