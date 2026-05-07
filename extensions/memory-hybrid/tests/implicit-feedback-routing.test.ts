@@ -290,12 +290,20 @@ describe("implicit feedback routing — negative → pattern facts", () => {
     const first = db.store({
       text: "User satisfaction increases when the agent provides concrete next steps",
       category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
       source: "implicit-feedback",
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
     const duplicate = db.store({
       text: "User satisfaction improves when the agent provides concrete next steps",
       category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
       source: "implicit-feedback",
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
