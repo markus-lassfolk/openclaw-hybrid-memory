@@ -297,7 +297,7 @@ async function runCapture(
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
           const extracted = extractStructuredFields(textToStore, category);
-          if (ctx.factsDb.hasDuplicate(textToStore)) {
+          if (ctx.factsDb.hasDuplicate(textToStore, "auto-capture")) {
             ctx.auditStore?.append({
               agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
               action: "auto-capture:duplicate",

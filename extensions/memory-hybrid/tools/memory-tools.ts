@@ -1611,7 +1611,7 @@ export function registerMemoryTools(
             }
           };
 
-          if (factsDb.hasDuplicate(textToStore)) {
+          if (factsDb.hasDuplicate(textToStore, "conversation")) {
             return {
               content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },

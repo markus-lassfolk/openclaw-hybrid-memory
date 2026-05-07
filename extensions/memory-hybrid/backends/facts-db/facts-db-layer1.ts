@@ -435,8 +435,8 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return deleteFact(this.liveDb, id);
   }
 
-  /** Exact match or dedupe policy would block a new insert for this source (Issue #1194). */
-  hasDuplicate(text: string, source = "conversation"): boolean {
+  /** Exact match or dedupe policy would block a new insert (per-source if `source` set; global probe if omitted, #1202). */
+  hasDuplicate(text: string, source?: string): boolean {
     return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source);
   }
 

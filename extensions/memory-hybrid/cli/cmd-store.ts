@@ -39,7 +39,7 @@ export async function runStoreForCli(
 ): Promise<StoreCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
-  if (factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
+  if (factsDb.hasDuplicate(text, "cli")) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
   const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
   const entity = opts.entity ?? extracted.entity ?? null;

@@ -230,6 +230,59 @@ export function applyDedupe(
   return { action: "store" };
 }
 
+/**
+ * Source-agnostic duplicate probe for callers that omit `source` (e.g. WAL replay, CLI
+ * pre-checks that should align with cross-source exact/hash semantics, #1202).
+ * Global exact text always counts as duplicate. Hash and lexical paths honour
+ * `defaultProfile` / default thresholds via {@link resolveDedupeProfile}(undefined, …).
+ */
+export function hasGlobalDuplicateProbe(
+  db: DatabaseSync,
+  text: string,
+  opts: { nowSec: number; fuzzyDedupe: boolean; storeConfig?: StoreConfig },
+): boolean {
+  const rowExact = db.prepare("SELECT id FROM facts WHERE text = ? AND superseded_at IS NULL LIMIT 1").get(text) as
+    | { id: string }
+    | undefined;
+  if (rowExact) return true;
+
+  if (!opts.fuzzyDedupe) return false;
+
+  const profile = resolveDedupeProfile(undefined, opts.storeConfig ?? { fuzzyDedupe: opts.fuzzyDedupe });
+
+  const hash = normalizedHash(text);
+  const hashRow = db
+    .prepare("SELECT id FROM facts WHERE normalized_hash = ? AND superseded_at IS NULL LIMIT 1")
+    .get(hash) as { id: string } | undefined;
+
+  if (hashRow) {
+    return mapOnDuplicate(profile, hashRow.id, "hash").action !== "store";
+  }
+
+  if (typeof profile.lexicalJaccard === "number" && profile.lexicalJaccard > 0 && profile.lexicalJaccard <= 1) {
+    const since = opts.nowSec - JACCARD_LOOKBACK_SEC;
+    const rows = db
+      .prepare(
+        `SELECT id, text FROM facts WHERE superseded_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(since, JACCARD_ROW_LIMIT) as Array<{ id: string; text: string }>;
+
+    const candTokens = tokenizeForJaccard(text);
+    let best: { id: string; score: number } | null = null;
+    for (const row of rows) {
+      const score = tokenJaccard(candTokens, tokenizeForJaccard(row.text));
+      if (score >= profile.lexicalJaccard && (!best || score > best.score)) {
+        best = { id: row.id, score };
+      }
+    }
+    if (best) {
+      return mapOnDuplicate(profile, best.id, "lexical").action !== "store";
+    }
+  }
+
+  return false;
+}
+
 function mapOnDuplicate(
   profile: ResolvedDedupeProfile,
   existingId: string,

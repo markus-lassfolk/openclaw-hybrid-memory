@@ -8,7 +8,7 @@ import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } 
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
-import { applyDedupe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
+import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
 /** Input shape for `FactsDB.store` / `storeFact`. */
@@ -199,6 +199,10 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const adjustedExpiresAt =
     decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
   const beginMode: SqliteTransactionBeginMode = profile.maxPerDay != null ? "IMMEDIATE" : "DEFERRED";
+  // Quota "drop" path records `dropped` in this transaction, commits, then throws below so
+  // observability survives the error. Retrying the same write increments `dropped` again (each
+  // attempt is counted), which is intentional for operational metrics.
+  let quotaExceededSource: string | null = null;
   let evictedFactId: string | null = null;
   const tx = createTransaction(
     ctx.db,
@@ -235,10 +239,24 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
                 .run(sourceForPolicy, day);
               // Fall through to the INSERT path below (do not return).
             } else {
-              throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
+              quotaExceededSource = sourceForPolicy;
+              ctx.db
+                .prepare(
+                  `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+                   ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+                )
+                .run(sourceForPolicy, day);
+              return;
             }
           } else {
-            throw new Error(`memory-hybrid: daily write quota exceeded for source ${sourceForPolicy}`);
+            quotaExceededSource = sourceForPolicy;
+            ctx.db
+              .prepare(
+                `INSERT INTO daily_writes (source, day, count, dropped) VALUES (?, ?, 0, 1)
+                 ON CONFLICT(source, day) DO UPDATE SET dropped = dropped + 1`,
+              )
+              .run(sourceForPolicy, day);
+            return;
           }
         }
       }
@@ -299,6 +317,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
     beginMode,
   );
   tx();
+  if (quotaExceededSource) {
+    throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
+  }
   if (supersedesId || evictedFactId) {
     ctx.invalidateSupersededCache();
   }
@@ -345,21 +366,28 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
 
 export function deleteFact(db: DatabaseSync, id: string): boolean {
   db.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
-  db.prepare(`DELETE FROM memory_links WHERE target_fact_id = ?`).run(id);
+  db.prepare(`DELETE FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?`).run(id, id);
   const result = db.prepare("DELETE FROM facts WHERE id = ?").run(id);
   return result.changes > 0;
 }
 
-/** Exact match or write-time dedupe policy would not insert a new row (per-source). */
+/**
+ * Exact match or write-time dedupe policy would not insert a new row.
+ * When `source` is omitted, uses a global probe (any source) for idempotency / CLI alignment (#1202).
+ */
 export function hasDuplicateText(
   db: DatabaseSync,
   fuzzyDedupe: boolean,
   text: string,
   storeConfig?: StoreConfig,
-  source = "conversation",
+  source?: string,
 ): boolean {
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (source === undefined) {
+    return hasGlobalDuplicateProbe(db, text, { nowSec, fuzzyDedupe, storeConfig });
+  }
   const profile = resolveDedupeProfile(source, storeConfig ?? { fuzzyDedupe });
-  const r = applyDedupe(profile, { text, source }, { db, nowSec: Math.floor(Date.now() / 1000), fuzzyDedupe });
+  const r = applyDedupe(profile, { text, source }, { db, nowSec, fuzzyDedupe });
   return r.action !== "store";
 }
 
