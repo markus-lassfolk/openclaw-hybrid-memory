@@ -156,6 +156,7 @@ function chooseTier(row: TierCandidate, nowSec: number, opts: Required<TieringOp
     return "warm";
   }
   if (isHotCandidate(row, nowSec, opts, { ignoreStructuralBlock: true })) return "hot";
+  // Inactive key+value rows (and other structural candidates) land in structural after hot/warm rules.
   if (isStructuralCandidate(row)) return "structural";
   if (isColdCandidate(row, nowSec, opts)) return "cold";
   return "warm";

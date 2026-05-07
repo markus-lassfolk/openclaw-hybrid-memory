@@ -104,7 +104,15 @@ type MaintenanceResolvedEntry = { resolvedInVersion: string; note?: string };
 
 function resolveMaintenanceResolvedPath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "maintenance-resolved.json");
+  const candidates = [
+    join(here, "maintenance-resolved.json"),
+    // Packaged dist/services/*.js omits JSON; published tarball still ships services/*.json.
+    join(here, "..", "..", "services", "maintenance-resolved.json"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
 }
 
 function loadMaintenanceResolvedMap(): Record<string, MaintenanceResolvedEntry> {

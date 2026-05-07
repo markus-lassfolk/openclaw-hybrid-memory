@@ -142,8 +142,8 @@ export function applyDedupe(
   }
 
   const exact = ctx.db
-    .prepare("SELECT id FROM facts WHERE text = ? AND superseded_at IS NULL LIMIT 1")
-    .get(candidate.text) as { id: string } | undefined;
+    .prepare("SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL LIMIT 1")
+    .get(candidate.text, candidate.source) as { id: string } | undefined;
   if (exact) {
     const mapped = mapOnDuplicate(profile, exact.id);
     if (mapped.action !== "store") {

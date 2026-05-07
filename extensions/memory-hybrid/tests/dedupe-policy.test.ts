@@ -39,6 +39,38 @@ import { _testing } from "../index.js";
 const { FactsDB } = _testing;
 
 describe("FactsDB sourceProfiles write path", () => {
+  it("scopes exact-text dedupe to the same source (#1202)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-exact-source-scope-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: { fuzzyDedupe: true, defaultProfile: { onDuplicate: "skip" } },
+    });
+    try {
+      db.store({
+        text: "same raw text different channels",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "channel-a",
+      });
+      db.store({
+        text: "same raw text different channels",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "channel-b",
+      });
+      expect(db.count()).toBe(2);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("bypasses duplicate suppression for onDuplicate=store", () => {
     const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-store-"));
     const db = new FactsDB(join(dir, "facts.db"), {

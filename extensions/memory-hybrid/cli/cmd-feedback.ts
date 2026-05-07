@@ -362,7 +362,11 @@ export async function runExtractImplicitFeedbackForCli(
     const turns = parseSessionTurns(lines);
     if (turns.length < 3) continue;
 
-    /** Shared daily quota for negative signals + trajectory lessons (reset per file from DB). */
+    /**
+     * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
+     * file; each store path re-reads `getImplicitFeedbackLessonsStoredToday` before quota-gated writes
+     * so counts stay accurate after earlier phases in the same file.
+     */
     let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
 
     // Phase 1: Extract implicit signals

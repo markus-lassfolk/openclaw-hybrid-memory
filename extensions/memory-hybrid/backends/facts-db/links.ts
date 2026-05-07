@@ -239,6 +239,8 @@ export function expandGraphWithCTE(
 
   // Use recursive CTE to traverse the graph in a single query
   // We track: current node, seed that originated this path, hop count, and JSON path
+  // Hub cap applies to the neighbor being entered (outgoing → `ml.target_fact_id`, incoming →
+  // `ml.source_fact_id`), matching `getConnectedFactIds` which skips expanding from overloaded nodes.
   const degreeCheckOut =
     hubDegreeCap == null
       ? ""
