@@ -34,7 +34,13 @@ export type EventType =
   | "action_taken"
   | "entity_mentioned"
   | "preference_expressed"
-  | "correction";
+  | "correction"
+  /** Session / transport lifecycle — excluded from episodic consolidation by default (#1185). */
+  | "session_start"
+  | "session_end"
+  | "heartbeat"
+  | "transport_connect"
+  | "transport_disconnect";
 
 export function categoryToEventType(category: string): EventType {
   switch (category) {
@@ -63,6 +69,53 @@ export interface EventLogEntry {
   createdAt: string;
 }
 
+function migrateEventLogRelaxEventTypeCheck(db: DatabaseSync): void {
+  const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='event_log'`).get() as
+    | { sql: string }
+    | undefined;
+  if (!row?.sql?.includes("CHECK(event_type")) return;
+  try {
+    db.exec("BEGIN");
+    db.exec("DROP TABLE IF EXISTS event_log__mig;");
+    db.exec(`
+      CREATE TABLE event_log__mig (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        entities TEXT,
+        consolidated_into TEXT,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `);
+    db.exec(`
+      INSERT INTO event_log__mig (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata, created_at)
+      SELECT id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata, created_at FROM event_log;
+    `);
+    db.exec("DROP TABLE event_log;");
+    db.exec("ALTER TABLE event_log__mig RENAME TO event_log;");
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_event_log_session ON event_log(session_id);
+      CREATE INDEX IF NOT EXISTS idx_event_log_timestamp ON event_log(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(event_type);
+      CREATE INDEX IF NOT EXISTS idx_event_log_consolidated ON event_log(consolidated_into);
+    `);
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // ignore
+    }
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "event-log-migrate-event-type-check",
+      subsystem: "event-log",
+    });
+  }
+}
+
 export class EventLog extends BaseSqliteStore {
   private readonly dbPath: string;
 
@@ -77,7 +130,7 @@ export class EventLog extends BaseSqliteStore {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         timestamp TEXT NOT NULL,
-        event_type TEXT NOT NULL CHECK(event_type IN ('fact_learned', 'decision_made', 'action_taken', 'entity_mentioned', 'preference_expressed', 'correction')),
+        event_type TEXT NOT NULL,
         content TEXT NOT NULL,
         entities TEXT,
         consolidated_into TEXT,
@@ -89,6 +142,7 @@ export class EventLog extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(event_type);
       CREATE INDEX IF NOT EXISTS idx_event_log_consolidated ON event_log(consolidated_into);
     `);
+    migrateEventLogRelaxEventTypeCheck(this.liveDb);
   }
 
   protected getSubsystemName(): string {
