@@ -60,7 +60,7 @@ function getImplicitFeedbackLessonsStoredToday(rawDb: ReturnType<HandlerContext[
   if (!rawDb) return 0;
   const startOfDaySec = Math.floor(Date.now() / 86400000) * 86400;
   const row = rawDb
-    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND created_at >= ? AND superseded_at IS NULL")
+    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback' AND key = 'implicit_feedback_signal' AND created_at >= ? AND superseded_at IS NULL")
     .get(startOfDaySec) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
 }
