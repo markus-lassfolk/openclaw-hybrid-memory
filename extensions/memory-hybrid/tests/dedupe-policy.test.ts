@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseStoreConfig } from "../config/parsers/core.js";
 import { resolveDedupeProfile } from "../services/dedupe-policy.js";
+import { normalizedHash } from "../utils/tags.js";
 
 describe("dedupe policy", () => {
   it("resolves exact source profiles", () => {
@@ -64,6 +65,61 @@ describe("FactsDB sourceProfiles write path", () => {
         source: "seed:demo",
       });
       expect(db.count()).toBe(2);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes normalized_hash when onDuplicate=merge extends text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-merge-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        sourceProfiles: { "merge-test": { onDuplicate: "merge" } },
+      },
+    });
+    try {
+      // Same normalized form as second insert (hash match) but not a substring merge, so text is concatenated.
+      const first = db.store({
+        text: "Alpha   Bravo",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-test",
+      });
+      const merged = db.store({
+        text: "alpha bravo",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-test",
+      });
+      expect(merged.id).toBe(first.id);
+      expect(merged.text).toBe("Alpha   Bravo\nalpha bravo");
+      const expectedHash = normalizedHash(merged.text);
+      const raw = db.getRawDb();
+      const row = raw.prepare("SELECT normalized_hash FROM facts WHERE id = ?").get(first.id) as
+        | { normalized_hash: string }
+        | undefined;
+      expect(row?.normalized_hash).toBe(expectedHash);
+
+      const third = db.store({
+        text: "alpha bravo alpha bravo",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-test",
+      });
+      expect(third.id).toBe(first.id);
+      expect(db.count()).toBe(1);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });
