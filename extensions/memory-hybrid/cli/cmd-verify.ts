@@ -614,11 +614,14 @@ export async function runVerifyForCli(
   );
 
   const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-  const adaptiveStatePath = join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json");
+  const adaptiveStatePath =
+    typeof ctx.resolvedSqlitePath === "string" && ctx.resolvedSqlitePath.length > 0
+      ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+      : "";
   tableLog(
     `    Adaptive maintenance LLM sizing: ${adaptiveEnabled ? "enabled" : "disabled"} (state=${adaptiveStatePath}; applies to distill, reflect, extract-reinforcement, self-correction-run)`,
   );
-  if (adaptiveEnabled && existsSync(adaptiveStatePath)) {
+  if (adaptiveEnabled && adaptiveStatePath && existsSync(adaptiveStatePath)) {
     try {
       const adaptiveState = loadAdaptiveModelLimits(adaptiveStatePath);
       const sampleModels = [
