@@ -104,7 +104,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
       "Run all maintenance tasks in optimal order (prune, compact, distill, extract-*, reflection, generate-proposals, self-correction, build-languages). Use --dry-run to list steps only.",
     )
     .option("--dry-run", "List steps that would run without executing")
-    .option("--verbose", "Show detailed output for each step")
+    .option("-v, --verbose", "Show detailed output for each step")
     .action(
       withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;

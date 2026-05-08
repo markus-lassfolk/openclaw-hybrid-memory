@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { normalizeMaintenanceFallbackPolicy } from "../maintenance-fallback-policy.js";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
 import type { EventLogConfig, PathConfig, StoreConfig, StoreSourceProfile, WALConfig } from "../types/core.js";
@@ -569,6 +570,18 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
           .map((p) => p.trim().toLowerCase())
       : [];
+  const maintenanceFallbackPolicyRaw = llmRaw?.maintenanceFallbackPolicy;
+  const maintenanceFallbackPolicy = normalizeMaintenanceFallbackPolicy(maintenanceFallbackPolicyRaw);
+  if (
+    maintenanceFallbackPolicyRaw !== undefined &&
+    maintenanceFallbackPolicyRaw !== null &&
+    typeof maintenanceFallbackPolicyRaw === "string" &&
+    maintenanceFallbackPolicy === undefined
+  ) {
+    pluginLogger.warn(
+      `memory-hybrid: invalid llm.maintenanceFallbackPolicy ${JSON.stringify(maintenanceFallbackPolicyRaw)} — ignoring`,
+    );
+  }
   const llm: LLMConfig | undefined =
     maintenanceList.length > 0 ||
     defaultList.length > 0 ||
@@ -590,6 +603,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           providers: llmProviders,
           localAutoStart,
           ...(disabledProviders.length > 0 ? { disabledProviders } : {}),
+          ...(maintenanceFallbackPolicy !== undefined ? { maintenanceFallbackPolicy } : {}),
         }
       : undefined;
   return llm;

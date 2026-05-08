@@ -14,6 +14,7 @@ import {
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
+  describeMaintenanceFallbackPolicy,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { isValidCategory } from "../config.js";
@@ -308,6 +309,9 @@ export async function runDistillForCli(
     }
 
     logger.info?.(`memory-hybrid: distill main model tier = ${distillMainTier}`);
+    if (distillMainTier === "maintenance") {
+      logger.info?.(`memory-hybrid: distill maintenance fallback policy = ${describeMaintenanceFallbackPolicy(cfg)}`);
+    }
     const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
     logger.info?.(`memory-hybrid: distill directives/reinforcement extraction tier = ${extractionTier}`);
     logger.info?.(`memory-hybrid: distill starting with model ${model} (source=${modelSource})`);

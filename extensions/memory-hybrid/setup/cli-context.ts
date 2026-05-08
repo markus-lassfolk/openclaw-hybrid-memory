@@ -12,6 +12,7 @@ import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
+import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
@@ -1119,12 +1120,16 @@ function registerCliWithHelp(
   options?: RegisterHybridMemCliWithApiOptions,
 ): void {
   const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands") as Command;
+  // Match OpenClaw's program: flags after the subcommand name apply to that subcommand (Issue #1224).
+  mem.enablePositionalOptions();
   mem.option(
     "-v, --verbose",
     "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
     false,
   );
   const onComplete = options?.onHybridMemCliComplete;
+  // Before subcommands are registered — children inherit this exit handler (Issue #1224).
+  attachHybridMemCliFatalExit(mem, onComplete);
   if (onComplete && typeof mem.hook === "function") {
     mem.hook("postAction", async () => {
       try {
@@ -1146,6 +1151,7 @@ function registerCliWithHelp(
     });
     throw err;
   }
+  ensureVerboseFlagOnHybridMemTree(mem);
   if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
     const helpText = HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS;
     (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", helpText);
