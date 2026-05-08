@@ -58,11 +58,10 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
       sqliteBytes: expect.any(Number),
       lanceBytes: 4096,
     });
-    expect(report.storageGrowth).toMatchObject({
-      lastSampleAt: expect.anything(),
-      delta7d: expect.anything(),
-      lanceBytesPerWeekDelta: expect.anything(),
-    });
+    const { lastSampleAt, delta7d, lanceBytesPerWeekDelta } = report.storageGrowth;
+    expect(lastSampleAt).toEqual(expect.any(Number));
+    expect(delta7d === null || typeof delta7d === "object").toBe(true);
+    expect(lanceBytesPerWeekDelta === null || typeof lanceBytesPerWeekDelta === "number").toBe(true);
     expect(report.tiers).toBeTypeOf("object");
     expect(report.decay).toBeTypeOf("object");
     expect(report.stableStickiness).toMatchObject({

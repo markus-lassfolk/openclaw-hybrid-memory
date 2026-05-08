@@ -22,31 +22,28 @@ export function registerValidateCronExit(hybrid: Chainable): void {
     .requiredOption("--required-steps <steps...>", "Required step names (space-separated)")
     .option("--allow-skip", "Allow skip variants (e.g., distill-skipped) to count as success")
     .option("--json", "Output JSON result")
-    .action(async (opts: {
-      exitPath: string;
-      logPath?: string;
-      requiredSteps: string[];
-      allowSkip?: boolean;
-      json?: boolean;
-    }) => {
-      const result = validateMaintenanceExecution(
-        opts.exitPath,
-        opts.logPath,
-        opts.requiredSteps,
-        !!opts.allowSkip,
-      );
+    .action(
+      async (opts: {
+        exitPath: string;
+        logPath?: string;
+        requiredSteps: string[];
+        allowSkip?: boolean;
+        json?: boolean;
+      }) => {
+        const result = validateMaintenanceExecution(opts.exitPath, opts.logPath, opts.requiredSteps, !!opts.allowSkip);
 
-      if (opts.json) {
-        console.log(generateCronStatusReport(result));
-      } else {
-        printValidationResult(result);
-      }
+        if (opts.json) {
+          console.log(generateCronStatusReport(result));
+        } else {
+          printValidationResult(result);
+        }
 
-      // Exit with non-zero if maintenance failed
-      if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
-        process.exitCode = 1;
-      }
-    });
+        // Exit with non-zero if maintenance failed
+        if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
+          process.exitCode = 1;
+        }
+      },
+    );
 }
 
 function printValidationResult(result: ExitValidationResult): void {

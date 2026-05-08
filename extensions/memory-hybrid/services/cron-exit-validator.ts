@@ -209,7 +209,7 @@ export function validateMaintenanceExecution(
       parts.push(`Missing steps: ${missingSteps.join(", ")}`);
     }
     if (failedSteps.length > 0) {
-      parts.push(`Failed steps: ${failedSteps.map(s => `${s.step} (exit=${s.exitCode})`).join(", ")}`);
+      parts.push(`Failed steps: ${failedSteps.map((s) => `${s.step} (exit=${s.exitCode})`).join(", ")}`);
     }
     error = parts.join("; ");
   }
@@ -234,12 +234,12 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
   return JSON.stringify(
     {
       maintenanceStatus: validation.maintenanceStatus,
-      requiredSteps: validation.steps.map(s => ({
+      requiredSteps: validation.steps.map((s) => ({
         name: s.step,
         exit: s.exitCode,
       })),
       missingSteps: validation.missingSteps,
-      failedSteps: validation.failedSteps.map(s => ({
+      failedSteps: validation.failedSteps.map((s) => ({
         name: s.step,
         exit: s.exitCode,
         error: s.exitCode !== 0 ? "Non-zero exit code" : undefined,

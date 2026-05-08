@@ -3,7 +3,7 @@
   "private": true,
   "description": "Root package for git hooks and pre-commit formatting.",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.16.0"
   },
   "scripts": {
     "prepare": "husky"

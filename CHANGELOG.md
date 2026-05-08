@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Cron exit ledger validation** ([#1203](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1203)): structured validation of maintenance step exit lines, `validate-cron-exit` CLI, bash harness guidance, and normalization of obsolete cron command references in managed job messages.
+
+### Changed
+
+- **Node.js**: Minimum version is now **22.16.0** so built-in `node:sqlite` includes **FTS5** (see [nodejs/node#57621](https://github.com/nodejs/node/pull/57621)); CI `.nvmrc` and `engines` updated accordingly.
+
 ---
 
 ## [2026.5.61] - 2026-05-07

@@ -69,8 +69,8 @@ export function buildHybridMemCronTaskMessage(
   const bash = buildHybridMemCronBashBody(jobSlug, options.steps);
 
   // Build list of required steps for validation
-  const requiredSteps = options.requiredSteps ?? options.steps.map(s => s.name);
-  const requiredStepsList = requiredSteps.map(s => `"${s}"`).join(", ");
+  const requiredSteps = options.requiredSteps ?? options.steps.map((s) => s.name);
+  const requiredStepsList = requiredSteps.map((s) => `"${s}"`).join(", ");
 
   const orchestration = [
     "EXECUTION (durable logs + per-step exits)",

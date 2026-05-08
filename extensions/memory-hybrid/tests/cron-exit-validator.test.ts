@@ -99,11 +99,7 @@ error: unknown command 'bar'
 `,
       );
 
-      const result = validateMaintenanceExecution(
-        exitPath,
-        undefined,
-        ["prune", "distill", "extract-daily"],
-      );
+      const result = validateMaintenanceExecution(exitPath, undefined, ["prune", "distill", "extract-daily"]);
 
       expect(result.maintenanceStatus).toBe("success");
       expect(result.guardUpdated).toBe(true);
@@ -122,11 +118,7 @@ error: unknown command 'bar'
 `,
       );
 
-      const result = validateMaintenanceExecution(
-        exitPath,
-        undefined,
-        ["prune", "distill"],
-      );
+      const result = validateMaintenanceExecution(exitPath, undefined, ["prune", "distill"]);
 
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
@@ -144,11 +136,7 @@ error: unknown command 'bar'
 `,
       );
 
-      const result = validateMaintenanceExecution(
-        exitPath,
-        undefined,
-        ["prune", "distill", "extract-daily"],
-      );
+      const result = validateMaintenanceExecution(exitPath, undefined, ["prune", "distill", "extract-daily"]);
 
       expect(result.maintenanceStatus).toBe("partial");
       expect(result.guardUpdated).toBe(false);
@@ -161,11 +149,7 @@ error: unknown command 'bar'
       const exitPath = join(tmpDir, "test.exit.txt");
       writeFileSync(exitPath, "");
 
-      const result = validateMaintenanceExecution(
-        exitPath,
-        undefined,
-        ["prune", "distill"],
-      );
+      const result = validateMaintenanceExecution(exitPath, undefined, ["prune", "distill"]);
 
       expect(result.maintenanceStatus).toBe("skipped");
       expect(result.guardUpdated).toBe(false);
@@ -204,11 +188,7 @@ error: unknown command 'bar'
       );
       writeFileSync(logPath, "error: unknown command 'consolidate-episodes'\n");
 
-      const result = validateMaintenanceExecution(
-        exitPath,
-        logPath,
-        ["prune"],
-      );
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
 
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
@@ -216,11 +196,7 @@ error: unknown command 'bar'
     });
 
     it("should fail when exit file does not exist", () => {
-      const result = validateMaintenanceExecution(
-        "/nonexistent/path.exit.txt",
-        undefined,
-        ["prune"],
-      );
+      const result = validateMaintenanceExecution("/nonexistent/path.exit.txt", undefined, ["prune"]);
 
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
