@@ -247,12 +247,18 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("Adaptive distill sizing");
   {
     const enabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-    const statePath =
-      (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim() ||
-      join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json");
+    const envState = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim();
+    const inferredState =
+      typeof ctx.resolvedSqlitePath === "string" && ctx.resolvedSqlitePath.length > 0
+        ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+        : "";
+    const statePath = envState || inferredState;
     log(`  enabled: ${enabled ? "yes" : "no"} (env: OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL)`);
-    log(`  state: ${statePath}`);
+    log(
+      `  state: ${statePath || "(unset — set OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE or run with resolved SQLite path)"}`,
+    );
     try {
+      if (!statePath) throw new Error("no adaptive distill state path");
       const state = loadAdaptiveModelLimits(statePath);
       const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
       const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
