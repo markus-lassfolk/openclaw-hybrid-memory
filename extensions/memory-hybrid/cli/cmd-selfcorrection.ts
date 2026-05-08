@@ -263,6 +263,7 @@ export async function runSelfCorrectionRunForCli(
         logger.info?.(
           `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
         );
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
         const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
           model,
           modelSource,
@@ -278,6 +279,7 @@ export async function runSelfCorrectionRunForCli(
             ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
               ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
               : undefined,
+          enabled: adaptiveEnabled,
         });
         if (detail.modelUsed !== model) {
           logger.info?.(`memory-hybrid: self-correction-run analysis used fallback model ${detail.modelUsed}`);
@@ -420,6 +422,7 @@ export async function runSelfCorrectionRunForCli(
           logger.info?.(
             `memory-hybrid: self-correction-run rewrite-tools starting with model ${model} (source=${modelSource})`,
           );
+          const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
           const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
             model,
             modelSource,
@@ -435,6 +438,7 @@ export async function runSelfCorrectionRunForCli(
               ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
                 ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
                 : undefined,
+            enabled: adaptiveEnabled,
           });
           if (detail.modelUsed !== model) {
             logger.info?.(`memory-hybrid: self-correction-run rewrite-tools used fallback model ${detail.modelUsed}`);

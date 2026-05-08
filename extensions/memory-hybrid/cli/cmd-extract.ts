@@ -420,6 +420,7 @@ export async function runExtractReinforcementForCli(
         logger.info?.(
           `memory-hybrid: extract-reinforcement analysis fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
         );
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
         const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
           model,
           modelSource,
@@ -435,6 +436,7 @@ export async function runExtractReinforcementForCli(
             ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
               ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
               : undefined,
+          enabled: adaptiveEnabled,
         });
         if (detail.modelUsed !== model) {
           logger.info?.(

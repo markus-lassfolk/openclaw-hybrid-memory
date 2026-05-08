@@ -21,6 +21,7 @@ import {
   REFLECTION_PATTERN_MAX_CHARS,
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { LLMRetryError } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
@@ -281,6 +282,7 @@ export async function runReflection(
 
   let rawResponse: string;
   try {
+    const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       model: opts.model,
       modelSource: opts.modelSource,
@@ -293,6 +295,7 @@ export async function runReflection(
       feature: CostFeature.reflection,
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
+      enabled: adaptiveEnabled,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflection — used fallback model ${detail.modelUsed}`);
@@ -502,6 +505,7 @@ export async function runReflectionRules(
   }
   let rawResponse: string;
   try {
+    const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       model: opts.model,
       modelSource: opts.modelSource,
@@ -514,6 +518,7 @@ export async function runReflectionRules(
       feature: CostFeature.reflectionRules,
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
+      enabled: adaptiveEnabled,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-rules — used fallback model ${detail.modelUsed}`);
@@ -723,6 +728,7 @@ export async function runReflectionMeta(
   }
   let rawResponse: string;
   try {
+    const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       model: opts.model,
       modelSource: opts.modelSource,
@@ -735,6 +741,7 @@ export async function runReflectionMeta(
       feature: CostFeature.reflectionMeta,
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
+      enabled: adaptiveEnabled,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-meta — used fallback model ${detail.modelUsed}`);
