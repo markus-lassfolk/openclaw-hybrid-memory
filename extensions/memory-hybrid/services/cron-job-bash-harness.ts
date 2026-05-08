@@ -15,7 +15,7 @@ export function hybridMemCronEnvSanitizerBashLines(): string[] {
   return [
     HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
     "openclaw() {",
-    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_HOME -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER command openclaw "$@"',
+    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER command openclaw "$@"',
     "}",
   ];
 }
@@ -33,7 +33,7 @@ export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCron
     "set -euo pipefail",
     "set -x",
     ...hybridMemCronEnvSanitizerBashLines(),
-    'OW="$HOME/.openclaw"',
+    'if [ -n "${OPENCLAW_HOME:-}" ]; then OW="$OPENCLAW_HOME"; else OW=~/.openclaw; fi',
     'HM_LOG_BASE="$OW/logs/cron-hybrid-mem"',
     'if ! mkdir -p "$HM_LOG_BASE" 2>/dev/null; then',
     '  HM_LOG_BASE="/tmp/openclaw-cron-hybrid-mem-${USER:-user}"',

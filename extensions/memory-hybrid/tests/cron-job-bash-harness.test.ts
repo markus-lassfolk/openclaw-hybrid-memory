@@ -14,7 +14,8 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER);
     expect(bash).toContain("env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI");
     expect(bash).toContain('HM_LOG_BASE="$OW/logs/cron-hybrid-mem"');
-    expect(bash).toContain('OW="$HOME/.openclaw"');
+    expect(bash).toContain('if [ -n "${OPENCLAW_HOME:-}" ]; then OW="$OPENCLAW_HOME"; else OW=~/.openclaw; fi');
+    expect(bash).not.toContain("-u OPENCLAW_HOME");
     expect(bash).toContain('HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"');
     expect(bash).toContain('local ec="${PIPESTATUS[0]}"');
     expect(bash).toContain('hm_step "prune" openclaw hybrid-mem prune --verbose');
