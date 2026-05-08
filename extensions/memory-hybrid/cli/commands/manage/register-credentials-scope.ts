@@ -12,11 +12,8 @@ import type { ManageBindings } from "./bindings.js";
 export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
-    vectorDb,
-    embeddings,
-    cfg,
-    mergeResults: merge,
     runMigrateToVault,
+    runEncryptVault,
     runCredentialsList,
     runCredentialsGet,
     runCredentialsAudit,
@@ -29,7 +26,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     .description("Migrate credentials from plaintext to vaulted storage (one-time)")
     .action(
       withExit(async () => {
-        let res;
+        let res: MigrateToVaultResult | null;
         try {
           res = await runMigrateToVault();
         } catch (err) {
@@ -47,6 +44,38 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           console.error(`Errors during migration: ${res.errors.join(", ")}`);
         }
         console.log(`Migrated ${res.migrated} credentials (${res.skipped} skipped).`);
+      }),
+    );
+
+  credentials
+    .command("encrypt-vault")
+    .description("Encrypt an existing plaintext credentials vault at rest (kdf_version=0 → scrypt/AES-GCM)")
+    .option("--yes", "Apply changes (default: dry-run)")
+    .action(
+      withExit(async (opts?: { yes?: boolean }) => {
+        const res = runEncryptVault({ yes: opts?.yes === true });
+        if (!res.ok) {
+          console.error(`Encrypt vault: FAIL — ${res.error}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (res.dryRun) {
+          if (res.status.encryptedAtRest) {
+            console.log(`Vault already encrypted (kdf_version=${res.status.kdfVersion}).`);
+            return;
+          }
+          console.log(`Vault is plaintext (kdf_version=${res.status.kdfVersion}).`);
+          console.log(`Vault path: ${res.vaultPath}`);
+          console.log("Dry-run only. To encrypt the existing vault at rest, run:");
+          console.log("  openclaw hybrid-mem credentials encrypt-vault --yes");
+          return;
+        }
+        console.log(
+          `Encrypted vault at rest (kdf_version=${res.status.kdfVersion}). Migrated ${res.migrated} entr${
+            res.migrated === 1 ? "y" : "ies"
+          }.`,
+        );
+        console.log("Restart the gateway (or re-run verify) to confirm.");
       }),
     );
 
