@@ -17,7 +17,7 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain("set -euo pipefail");
     expect(bash).toContain(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER);
     expect(bash).toContain("env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI");
-    expect(bash).toContain("-u OPENCLAW_HOME");
+    expect(bash).not.toContain("-u OPENCLAW_HOME");
     expect(bash).toContain("-u OPENCLAW_CLI");
     expect(bash).toContain("-u OPENCLAW_SERVICE_KIND");
     expect(bash).toContain("-u OPENCLAW_SERVICE_MARKER");
@@ -45,6 +45,14 @@ describe("cron-job-bash-harness", () => {
     expect(msg).toContain("```bash");
     expect(msg).toContain('hm_step "t1" openclaw hybrid-mem sensor-sweep --tier 1');
     expect(msg).toContain("The bash harness automatically runs `openclaw hybrid-mem validate-cron-exit`");
+  });
+
+  it("lists sanitized required step names in the task message to match HM_EXIT labels", () => {
+    const msg = buildHybridMemCronTaskMessage("job", {
+      steps: [{ name: "step one", cmd: "echo ok" }],
+    });
+    expect(msg).toContain('required steps ["step_one"]');
+    expect(msg).toContain('hm_step "step_one" echo ok');
   });
 
   it("uses explicit required steps for validation while allowing skip variants", () => {

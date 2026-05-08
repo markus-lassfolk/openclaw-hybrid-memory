@@ -336,10 +336,9 @@ export async function runDistillForCli(
     const distillPrompt = loadPrompt("distill-sessions");
     const promptPrefix = `${distillPrompt}\n\n`;
     const promptTokens = estimateTokens(promptPrefix);
-    const modelChain = [model, ...distillFallbacks];
     const primaryCatalogBatchLimit = distillBatchTokenLimit(model);
     const primaryCatalogMaxOut = distillMaxOutputTokens(model);
-    const safeCatalogBatchLimit = Math.min(...modelChain.map((m) => distillBatchTokenLimit(m)));
+    // Chunk using the primary model's catalog limit only; smaller fallbacks are filtered per-batch later.
     const primaryLimits = adaptiveEnabled
       ? getEffectiveModelLimits({
           state: adaptiveState,
@@ -353,7 +352,7 @@ export async function runDistillForCli(
           maxOutputTokens: primaryCatalogMaxOut,
           source: "catalog" as const,
         };
-    const safeInitialBatchTokenLimit = Math.min(primaryLimits.batchTokenLimit, safeCatalogBatchLimit);
+    const safeInitialBatchTokenLimit = Math.min(primaryLimits.batchTokenLimit, primaryCatalogBatchLimit);
     const maxSessionTokens = opts.maxSessionTokens ?? Math.max(256, safeInitialBatchTokenLimit - promptTokens - 256);
     for (let i = 0; i < filesToProcess.length; i++) {
       const { path: fp } = filesToProcess[i];
@@ -371,9 +370,9 @@ export async function runDistillForCli(
         // Safety check: ensure chunks don't exceed model catalog input limit (prompt + block)
         const validChunks = chunks.filter((chunk, idx) => {
           const chunkTokens = estimateTokens(chunk);
-          if (promptTokens + chunkTokens > safeCatalogBatchLimit) {
+          if (promptTokens + chunkTokens > primaryCatalogBatchLimit) {
             sink.warn(
-              `memory-hybrid: distill: chunk ${idx + 1} too large for primary/fallback chain (${promptTokens + chunkTokens} tokens incl prompt), skipping`,
+              `memory-hybrid: distill: chunk ${idx + 1} too large for primary model (${promptTokens + chunkTokens} tokens incl prompt), skipping`,
             );
             return false;
           }

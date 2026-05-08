@@ -17,7 +17,7 @@ export function hybridMemCronEnvSanitizerBashLines(): string[] {
     "openclaw() {",
     "  local openclaw_bin",
     '  openclaw_bin="$(type -P openclaw)" || return 127',
-    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_HOME -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER "$openclaw_bin" "$@"',
+    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER "$openclaw_bin" "$@"',
     "}",
   ];
 }
@@ -116,7 +116,7 @@ export function buildHybridMemCronTaskMessage(
   const bash = buildHybridMemCronBashBody(jobSlug, options.steps, requiredSteps);
 
   // Build list of required steps for validation
-  const requiredStepsList = requiredSteps.map((s) => `"${s}"`).join(", ");
+  const requiredStepsList = requiredSteps.map((s) => `"${shellSafeStepName(s)}"`).join(", ");
 
   const orchestration = [
     "EXECUTION (durable logs + per-step exits)",

@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { getEnv } from "../utils/env-manager.js";
 import { estimateTokens } from "../utils/text.js";
 import {
   type AdaptiveFailureKind,
@@ -76,8 +77,11 @@ function compatibleFallbacks(
 export async function chatCompleteWithAdaptiveMaintenanceRetry(
   opts: AdaptiveMaintenanceLlmOptions,
 ): Promise<ChatCompleteWithRetryDetails> {
-  const enabled = opts.enabled !== false;
-  const state = enabled && opts.adaptiveStatePath ? loadAdaptiveModelLimits(opts.adaptiveStatePath) : emptyState();
+  const envAdaptiveOn = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+  const enabled = opts.enabled !== undefined ? opts.enabled : envAdaptiveOn;
+  const envAdaptiveState = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim();
+  const adaptiveStatePath = envAdaptiveState || opts.adaptiveStatePath;
+  const state = enabled && adaptiveStatePath ? loadAdaptiveModelLimits(adaptiveStatePath) : emptyState();
   const catalogBatchTokenLimit = distillBatchTokenLimit(opts.model);
   const catalogMaxOutputTokens = distillMaxOutputTokens(opts.model);
   const inputTokens = estimateTokens(opts.content);
@@ -126,7 +130,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
         usedBatchTokenLimit: Math.min(effective.batchTokenLimit, usedCatalogBatch),
         usedMaxOutputTokens: Math.min(maxTokens, usedCatalogOutput),
       });
-      if (opts.adaptiveStatePath) saveAdaptiveModelLimits(opts.adaptiveStatePath, state);
+      if (adaptiveStatePath) saveAdaptiveModelLimits(adaptiveStatePath, state);
     }
     if (detail.modelUsed !== opts.model) {
       opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed}`);
@@ -145,9 +149,9 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
         usedBatchTokenLimit: effective.batchTokenLimit,
         usedMaxOutputTokens: maxTokens,
       });
-      if (opts.adaptiveStatePath) {
+      if (adaptiveStatePath) {
         try {
-          saveAdaptiveModelLimits(opts.adaptiveStatePath, state);
+          saveAdaptiveModelLimits(adaptiveStatePath, state);
         } catch (saveErr) {
           capturePluginError(saveErr instanceof Error ? saveErr : new Error(String(saveErr)), {
             subsystem: "cli",
