@@ -287,6 +287,31 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
 
+function ensureHybridMemCronMessageHasEnvSanitizer(message: string): string | null {
+  if (message.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return null;
+  if (!/openclaw\s+hybrid-mem\b/.test(message) && !/\bhm_step\b/.test(message)) return null;
+
+  const fenceRe = /```bash\n([\s\S]*?)\n```/m;
+  const m = fenceRe.exec(message);
+  if (!m) return null;
+
+  const bash = m[1] ?? "";
+  if (bash.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return null;
+  if (/\bopenclaw\(\)\s*\{/.test(bash)) return null;
+
+  const lines = bash.split("\n");
+  let insertAt = lines.findIndex((l) => l.trim() === "set -x");
+  if (insertAt >= 0) insertAt += 1;
+  else {
+    insertAt = lines.findIndex((l) => l.trim() === "set -euo pipefail");
+    insertAt = insertAt >= 0 ? insertAt + 1 : 0;
+  }
+  lines.splice(insertAt, 0, ...hybridMemCronEnvSanitizerBashLines());
+  const nextBash = lines.join("\n");
+  const next = message.slice(0, m.index) + `\`\`\`bash\n${nextBash}\n\`\`\`` + message.slice(m.index + m[0].length);
+  return next === message ? null : next;
+}
+
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
 // Each entry uses pluginJobId as stable identity; resolveCronJob also sets `id` to that value for gateway `cron.run` / UI parity.
@@ -872,6 +897,28 @@ export function ensureMaintenanceCronJobs(
             }
           }
         }
+
+        // Issue #1205: cron/service environments can leak OPENCLAW_HOME / service marker vars,
+        // breaking plugin CLI metadata discovery and causing "Unknown command: openclaw hybrid-mem".
+        // Normalize existing job messages by injecting an env-sanitized `openclaw()` wrapper inside
+        // the bash block, preserving user edits outside the code fence.
+        const cronPayload = existing.payload as { message?: string } | undefined;
+        if (cronPayload && typeof cronPayload.message === "string") {
+          const next = ensureHybridMemCronMessageHasEnvSanitizer(cronPayload.message);
+          if (next) {
+            cronPayload.message = next;
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
+        } else if (typeof existing.message === "string") {
+          const next = ensureHybridMemCronMessageHasEnvSanitizer(existing.message);
+          if (next) {
+            existing.message = next;
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
+        }
+
         // Issue #963: keep stored job model aligned with agents.defaults.model.primary when set,
         // so agentTurn + agentId sessions do not throw LiveSessionModelSwitchError.
         if (agentPrimary?.trim()) {

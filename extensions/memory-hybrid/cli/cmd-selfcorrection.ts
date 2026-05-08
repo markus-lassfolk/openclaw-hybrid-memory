@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
+import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
@@ -23,6 +23,7 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -204,7 +205,13 @@ export async function runSelfCorrectionRunForCli(
       incidents_json: JSON.stringify(incidents),
     });
     const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+    const heavyPrefWithSources = resolveTierPreferenceWithSources(cfg, "heavy");
     const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const modelSource = opts.model
+      ? "--model"
+      : heavyPrefWithSources.models[0] === model
+        ? (heavyPrefWithSources.sources[0] ?? "built-in")
+        : "built-in";
     const scFallbackModels = opts.model
       ? []
       : heavyPref.length > 1
@@ -250,7 +257,12 @@ export async function runSelfCorrectionRunForCli(
         content = (r.stdout ?? "") + (r.stderr ?? "");
         if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
       } else {
-        content = await chatCompleteWithRetry({
+        logger.info?.(`memory-hybrid: self-correction-run model tier = heavy`);
+        logger.info?.(`memory-hybrid: self-correction-run starting with model ${model} (source=${modelSource})`);
+        logger.info?.(
+          `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
+        );
+        const detail = await chatCompleteWithRetryDetailed({
           model,
           content: prompt,
           temperature: 0.2,
@@ -260,6 +272,10 @@ export async function runSelfCorrectionRunForCli(
           label: "memory-hybrid: self-correction analyze",
           feature: CostFeature.selfCorrectionAnalyze,
         });
+        if (detail.modelUsed !== model) {
+          logger.info?.(`memory-hybrid: self-correction-run analysis used fallback model ${detail.modelUsed}`);
+        }
+        content = detail.content;
       }
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
@@ -394,7 +410,10 @@ export async function runSelfCorrectionRunForCli(
             current_tools: currentTools,
             new_rules: toolsSuggestions.join("\n"),
           });
-          const rewritten = await chatCompleteWithRetry({
+          logger.info?.(
+            `memory-hybrid: self-correction-run rewrite-tools starting with model ${model} (source=${modelSource})`,
+          );
+          const detail = await chatCompleteWithRetryDetailed({
             model,
             content: rewritePrompt,
             temperature: 0.2,
@@ -404,7 +423,10 @@ export async function runSelfCorrectionRunForCli(
             label: "memory-hybrid: self-correction rewrite-tools",
             feature: CostFeature.selfCorrectionRewriteTools,
           });
-          const cleaned = rewritten
+          if (detail.modelUsed !== model) {
+            logger.info?.(`memory-hybrid: self-correction-run rewrite-tools used fallback model ${detail.modelUsed}`);
+          }
+          const cleaned = detail.content
             .trim()
             .replace(/^```\w*\n?|```\s*$/g, "")
             .trim();
