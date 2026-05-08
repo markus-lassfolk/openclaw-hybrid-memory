@@ -359,10 +359,6 @@ export async function loadReflectionDedupeCorpusVectors(
       }
     }
 
-    if (!deferredDueToRateLimit && !deferredDueToCap && corpusOpts?.checkpoint) {
-      persistCheckpoint(needEmbedIndices.length);
-    }
-
     const nonNull = result.filter((v) => v !== null).length;
     const complete = !deferredDueToRateLimit && !deferredDueToCap;
     const remainingNeed = Math.max(0, needEmbedIndices.length - checkpointNextIdx);
