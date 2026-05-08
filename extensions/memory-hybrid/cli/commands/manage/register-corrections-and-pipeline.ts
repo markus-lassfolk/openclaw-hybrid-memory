@@ -216,14 +216,52 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   mem
     .command("config")
     .description("Show current configuration and feature toggles (use config-set to change)")
+    .option("--json", "Output configuration as JSON")
+    .option("--format <format>", "Output format: text (default) or json")
     .action(
-      withExit(async () => {
+      withExit(async (opts?: { json?: boolean; format?: string }) => {
         try {
-          runConfigView({ log: (s: string) => console.log(s), error: (s: string) => console.error(s) });
+          const fmtRaw = (opts?.format ?? "text").trim().toLowerCase();
+          if (opts?.json && opts.format && fmtRaw !== "json") {
+            console.error("Error: do not combine --json with --format text.");
+            process.exitCode = 1;
+            return;
+          }
+          if (!opts?.json && fmtRaw !== "text" && fmtRaw !== "json") {
+            console.error(`Error: invalid --format "${opts?.format ?? ""}". Use text or json.`);
+            process.exitCode = 1;
+            return;
+          }
+          // Determine format: --json takes precedence, then --format, default to text
+          const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
+          runConfigView(
+            { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
+            { format: format as "text" | "json" },
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
             operation: "config",
+          });
+          throw err;
+        }
+      }),
+    );
+
+  mem
+    .command("features")
+    .description("Emit feature toggles only as JSON (same keys as config --format json `features` object)")
+    .action(
+      withExit(async () => {
+        try {
+          runConfigView(
+            { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
+            { format: "json", featuresOnly: true },
+          );
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "features",
           });
           throw err;
         }
@@ -477,6 +515,27 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           );
         },
       ),
+    );
+
+  // Add consolidate-episodes as an alias/compatibility command
+  mem
+    .command("consolidate-episodes")
+    .description(
+      "(Deprecated) Consolidate episodic memories. Use 'dream-cycle' for nightly maintenance or 'consolidate' for duplicate facts.",
+    )
+    .action(
+      withExit(async () => {
+        console.error("Warning: 'consolidate-episodes' is deprecated (exits 0 for automation compatibility).");
+        console.error("");
+        console.error("For episodic memory consolidation as part of nightly maintenance:");
+        console.error("  openclaw hybrid-mem dream-cycle");
+        console.error("");
+        console.error("For consolidating duplicate facts:");
+        console.error("  openclaw hybrid-mem consolidate");
+        console.error("");
+        console.error("See also: https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1206");
+        process.exitCode = 0;
+      }),
     );
 
   mem

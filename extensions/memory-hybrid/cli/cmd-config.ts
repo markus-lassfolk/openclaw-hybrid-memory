@@ -129,9 +129,74 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
  * Config view — show current settings in a simple, scannable format.
  * Focus on what's on/off so users can understand and change via config-set.
  */
-export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): void {
+export function runConfigViewForCli(
+  ctx: HandlerContext,
+  sink: VerifyCliSink,
+  opts?: { format?: "text" | "json"; featuresOnly?: boolean },
+): void {
   const { cfg } = ctx;
   const log = sink.log;
+  const format = opts?.format ?? "text";
+
+  // If JSON format requested, output machine-readable JSON
+  if (format === "json") {
+    const features = {
+      nightlyCycle: cfg.nightlyCycle?.enabled ?? false,
+      passiveObserver: cfg.passiveObserver?.enabled ?? false,
+      reflection: cfg.reflection.enabled,
+      personaProposals: cfg.personaProposals.enabled,
+      selfCorrection: !!cfg.selfCorrection,
+      selfExtension: cfg.selfExtension?.enabled ?? false,
+      crystallization: cfg.crystallization?.enabled ?? false,
+      extraction: !!cfg.extraction?.extractionPasses,
+      goalStewardship: cfg.goalStewardship?.enabled ?? false,
+      activeTask: cfg.activeTask.enabled,
+      frustrationDetection: cfg.frustrationDetection.enabled,
+      crossAgentLearning: cfg.crossAgentLearning.enabled,
+      toolEffectiveness: cfg.toolEffectiveness.enabled,
+      workflowTracking: cfg.workflowTracking.enabled,
+      documents: cfg.documents.enabled,
+      provenance: cfg.provenance.enabled,
+      verification: cfg.verification.enabled,
+      aliases: cfg.aliases.enabled,
+      reranking: cfg.reranking.enabled,
+      contextualVariants: cfg.contextualVariants.enabled,
+      errorReporting: cfg.errorReporting?.enabled ?? false,
+      costTracking: cfg.costTracking?.enabled ?? false,
+      wal: cfg.wal.enabled,
+      ambient: cfg.ambient.enabled,
+      futureDateProtection: cfg.futureDateProtection.enabled,
+    };
+    if (opts?.featuresOnly) {
+      log(JSON.stringify(features, null, 2));
+      return;
+    }
+    const jsonOutput = {
+      schemaVersion: 1,
+      contract: "openclaw.hybrid-mem.config-view.summary.v1",
+      mode: cfg.mode && cfg.mode !== "custom" ? cfg.mode : "custom",
+      verbosity: cfg.verbosity ?? "normal",
+      core: {
+        autoCapture: cfg.autoCapture,
+        autoRecall: cfg.autoRecall.enabled,
+        credentials: cfg.credentials.enabled,
+        procedures: cfg.procedures.enabled,
+        memoryTiering: cfg.memoryTiering.enabled,
+        graph: cfg.graph.enabled,
+        autoClassify: cfg.autoClassify.enabled,
+      },
+      features,
+      advanced: {
+        queryExpansion: cfg.queryExpansion.enabled,
+        retrievalDirectives: cfg.autoRecall.retrievalDirectives?.enabled ?? false,
+        entityLookup: cfg.autoRecall.entityLookup?.enabled ?? false,
+      },
+    };
+    log(JSON.stringify(jsonOutput, null, 2));
+    return;
+  }
+
+  // Otherwise, show human-readable text format
   const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const ON = noEmoji ? "[on]" : "on";
   const OFF = noEmoji ? "[off]" : "off";

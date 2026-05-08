@@ -8,14 +8,6 @@
     "suggestedAction": "Install or activate Node.js v22.16.0 or newer (see plugin package.json engines) before running hybrid-memory maintenance."
   },
   {
-    "id": "openclaw-cli-env-leak",
-    "pattern": "Unknown command: openclaw hybrid-mem|No built-in command or plugin CLI metadata owns\\s+\"hybrid-mem\"|Failed to start CLI: Error: Unknown command: openclaw hybrid-mem",
-    "classification": "env-misconfig",
-    "defaultAction": "escalate-user",
-    "severity": "high",
-    "suggestedAction": "Service/cron environments may leak OPENCLAW_HOME or service marker vars, preventing plugin CLI metadata discovery. Re-run with a sanitized env: `env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_HOME -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER openclaw hybrid-mem ...`. For managed cron payloads, run `openclaw hybrid-mem verify --fix`."
-  },
-  {
     "id": "llm-rate-limit",
     "pattern": "429|TooManyRequests|RateLimit|too many requests|rate limit",
     "classification": "transient-llm",

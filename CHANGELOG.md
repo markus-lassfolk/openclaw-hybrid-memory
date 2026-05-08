@@ -21,6 +21,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **JSON config output**: `openclaw hybrid-mem config --json` and `openclaw hybrid-mem config --format json` now output configuration in machine-readable JSON format (core features, optional features, advanced settings).
+- **`features` command**: New `openclaw hybrid-mem features` command that outputs all feature flags in JSON format for automated inspection and cron scripts.
+- **`consolidate-episodes` compatibility shim**: Added `consolidate-episodes` command that prints a deprecation warning and **exits 0** so legacy cron/runbooks do not fail hard, while directing operators to `dream-cycle` or `consolidate` (addresses #1206).
+
+### Fixed
+
+- **CLI command compatibility**: Resolves issue #1206 where historical maintenance runbooks referenced obsolete commands (`consolidate-episodes`, `features`, `config --json`) that did not exist in current CLI. Adds `config --json` / `--format json` (versioned summary contract), `features` (feature toggles JSON only), and a non-failing `consolidate-episodes` shim.
+
+### Changed
+
+- **Node.js**: Minimum version is now **22.16.0** so built-in `node:sqlite` includes **FTS5** (needed for hybrid search) and does not require `--experimental-sqlite` (matches CI `.nvmrc` and `engines`; see [nodejs/node#57621](https://github.com/nodejs/node/pull/57621)).
+
 ---
 
 ## [2026.5.61] - 2026-05-07

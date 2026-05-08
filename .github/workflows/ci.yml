@@ -54,7 +54,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # Install 22.16+ — node:sqlite is unreliable on exact 22.12.0; setup-node may resolve '22.12' to that patch.
+          # Install >=22.16 (node:sqlite + FTS5; see nodejs/node#57621); keep job name "Node 22" for branch protection.
           - node-version: '22.16'
             job-name-suffix: '22'
           - node-version: '24'
