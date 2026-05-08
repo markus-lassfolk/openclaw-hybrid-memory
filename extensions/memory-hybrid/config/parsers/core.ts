@@ -516,6 +516,10 @@ export function parseAuthConfig(cfg: Record<string, unknown>): AuthOrderConfig |
 
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {
   const llmRaw = cfg.llm as Record<string, unknown> | undefined;
+  const maintenanceList =
+    llmRaw && Array.isArray(llmRaw.maintenance)
+      ? (llmRaw.maintenance as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : [];
   const defaultList =
     llmRaw && Array.isArray(llmRaw.default)
       ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
@@ -566,6 +570,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           .map((p) => p.trim().toLowerCase())
       : [];
   const llm: LLMConfig | undefined =
+    maintenanceList.length > 0 ||
     defaultList.length > 0 ||
     heavyList.length > 0 ||
     nanoList.length > 0 ||
@@ -573,6 +578,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
     localAutoStart ||
     disabledProviders.length > 0
       ? {
+          ...(maintenanceList.length > 0 ? { maintenance: maintenanceList } : {}),
           default: defaultList,
           heavy: heavyList,
           ...(nanoList.length > 0 ? { nano: nanoList } : {}),

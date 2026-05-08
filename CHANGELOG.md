@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Deprecated cron command handling**: detect `consolidate-episodes` and related stale dream-cycle install paths; `hybrid-mem verify --fix` can normalize managed cron job messages; maintenance log classification rule for obsolete CLI steps.
+- **Maintenance LLM tier** (`llm.maintenance`): dedicated ordered model list for scheduled/maintenance commands; `CronModelTier` includes `"maintenance"`; `hybrid-mem verify` warns on cron vs maintenance routing mismatches.
 
 ### Changed
 

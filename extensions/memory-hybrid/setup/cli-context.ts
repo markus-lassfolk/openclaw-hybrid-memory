@@ -306,20 +306,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: async (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
-      const effectiveModel = opts.model ?? defaultModel;
-      const source = (() => {
-        const configured = typeof cfg.reflection.model === "string" ? cfg.reflection.model.trim() : "";
-        if (configured && configured === effectiveModel) return "reflection.model";
-        if (opts.model && opts.model !== defaultModel && opts.model !== configured) return "--model";
-        if (tierPref.models[0] === effectiveModel) return tierPref.sources[0] ?? "built-in";
-        return "built-in";
-      })();
-      pluginLogger.info(`memory-hybrid: reflect starting with model ${effectiveModel} (source=${source})`);
-      pluginLogger.info(
-        `memory-hybrid: reflect fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
-      );
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const result = await runReflection(
         factsDb,
         vectorDb,
@@ -347,20 +334,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       return result;
     },
     runReflectionRules: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
-      const effectiveModel = opts.model ?? defaultModel;
-      const source = (() => {
-        const configured = typeof cfg.reflection.model === "string" ? cfg.reflection.model.trim() : "";
-        if (configured && configured === effectiveModel) return "reflection.model";
-        if (opts.model && opts.model !== defaultModel && opts.model !== configured) return "--model";
-        if (tierPref.models[0] === effectiveModel) return tierPref.sources[0] ?? "built-in";
-        return "built-in";
-      })();
-      pluginLogger.info(`memory-hybrid: reflect-rules starting with model ${effectiveModel} (source=${source})`);
-      pluginLogger.info(
-        `memory-hybrid: reflect-rules fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
-      );
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       return runReflectionRules(
         factsDb,
         vectorDb,
@@ -372,20 +346,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       );
     },
     runReflectionMeta: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
-      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
-      const effectiveModel = opts.model ?? defaultModel;
-      const source = (() => {
-        const configured = typeof cfg.reflection.model === "string" ? cfg.reflection.model.trim() : "";
-        if (configured && configured === effectiveModel) return "reflection.model";
-        if (opts.model && opts.model !== defaultModel && opts.model !== configured) return "--model";
-        if (tierPref.models[0] === effectiveModel) return tierPref.sources[0] ?? "built-in";
-        return "built-in";
-      })();
-      pluginLogger.info(`memory-hybrid: reflect-meta starting with model ${effectiveModel} (source=${source})`);
-      pluginLogger.info(
-        `memory-hybrid: reflect-meta fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
-      );
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       return runReflectionMeta(
         factsDb,
         vectorDb,
@@ -447,7 +408,8 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       ),
     runBuildLanguageKeywords: (opts) =>
       runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
-        model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "default").defaultModel,
+        model:
+          opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
         dryRun: opts.dryRun,
       }),
     runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
@@ -460,7 +422,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       ),
     runDreamCycle: async (opts?: { verbose?: boolean }) => {
       const verbose = !!opts?.verbose;
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
       const tierPref = resolveTierPreferenceWithSources(cfg, "default");
       const dreamSource =
@@ -989,7 +951,7 @@ function createHybridMemCliContext(
     runResolveContradictions: services.runResolveContradictions,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
-      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
+      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),
     },
     runClassify: services.runClassify,
     autoClassifyConfig: {

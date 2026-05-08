@@ -49,7 +49,7 @@ To reduce API or compute usage, set `"mode": "minimal"` or `"mode": "local"` in 
 
 In **Minimal** mode, the preset uses:
 
-- **Distill** (session logs → facts): `distill.extractionModelTier` is set to **default (flash)** so extraction quality is good while cost stays low.
+- **Distill** (session logs → facts): `distill.extractionModelTier` is set to **nano** for cost safety. You can raise to `maintenance` or `default` if you want higher-quality extraction.
 - **Auto-classify**: uses the **nano** tier (e.g. `llm.nano` or lightest configured model).
 
 This gives good value at low cost. For even lower cost or fully offline use, use **Local** (no external LLM). See [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) for the full feature/tier matrix.
@@ -125,7 +125,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | ingest (paths) | — | ✓ | ✓ | ✓ |
 | distill.extractDirectives | ✓ | ✓ | ✓ | ✓ |
 | distill.extractReinforcement | — | ✓ | ✓ | ✓ |
-| distill.extractionModelTier | — | **default (flash)** | default | default |
+| distill.extractionModelTier | — | **nano** | nano | maintenance |
 | errorReporting | — | — | opt | opt |
 | **Advanced / opt-in** (preset: off unless noted) |
 | workflowTracking | — | — | — | — |

@@ -8,14 +8,6 @@
     "suggestedAction": "Install or activate Node.js v22.16.0 or newer (see plugin package.json engines) before running hybrid-memory maintenance."
   },
   {
-    "id": "deprecated-cli-command-consolidate-episodes",
-    "pattern": "unknown command[^\\n]*consolidate-episodes|consolidate-episodes[^\\n]*unknown command",
-    "classification": "orchestration-bug",
-    "defaultAction": "escalate-user",
-    "severity": "high",
-    "suggestedAction": "A managed cron/runbook step is calling a removed CLI command (consolidate-episodes). Run `openclaw hybrid-mem verify --fix` to normalize managed cron job messages, then rerun the nightly dream-cycle."
-  },
-  {
     "id": "llm-rate-limit",
     "pattern": "429|TooManyRequests|RateLimit|too many requests|rate limit",
     "classification": "transient-llm",

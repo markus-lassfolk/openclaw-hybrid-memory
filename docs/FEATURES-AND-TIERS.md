@@ -1,8 +1,8 @@
 # Features and model tiers
 
-This document lists LLM-using (and related) features: what each does, which modes enable it, and which **model tier** is used so you can balance value and cost. Tiers are **nano** (cheapest, short/simple tasks), **default** (flash-class, general), and **heavy** (larger context, complex analysis).
+This document lists LLM-using (and related) features: what each does, which modes enable it, and which **model tier** is used so you can balance value and cost. Tiers are **nano** (cheapest), **maintenance** (scheduled/manual maintenance), **default** (general), and **heavy** (largest context / complex analysis).
 
-**Mode defaults:** Local = no external LLM. Minimal = nano for classify, default (flash) for distill. Enhanced/Complete add more features; we still use nano or default where that’s enough for value.
+**Mode defaults:** Local = no external LLM. Minimal/Enhanced keep most LLM use on nano/maintenance-tier models where that’s enough for value; Complete enables more features but still tries to keep maintenance work off the heaviest models by default.
 
 ---
 
@@ -26,7 +26,7 @@ This document lists LLM-using (and related) features: what each does, which mode
 | **Auto-capture**              | Extract facts, preferences, decisions from conversation turns        | Local, Minimal, Enhanced, Complete                | —                                                                                                    | Rule-based extraction; no LLM in core path.                                                            |
 | **Auto-recall**               | Inject relevant memories into the prompt each turn                   | Local, Minimal, Enhanced, Complete                | —                                                                                                    | Uses embeddings + FTS (Local: FTS only). No per-turn LLM unless optional features below are on.        |
 | **Embeddings**                | Vectorize facts for semantic search                                  | Minimal, Enhanced, Complete                       | —                                                                                                    | Local mode is FTS-only (no embeddings).                                                                |
-| **Distill**                   | Turn session logs into structured facts (batch)                      | Minimal, Enhanced, Complete                       | **Minimal: default (flash)**. Enhanced/Complete: **default** (config: `distill.extractionModelTier`) | Flash gives better extraction quality; nano is cheaper. Minimal preset uses default (flash) for value. |
+| **Distill**                   | Turn session logs into structured facts (batch)                      | Minimal, Enhanced, Complete                       | **nano/maintenance/default/heavy** (config: `distill.extractionModelTier`)                           | Prefer `nano` or `maintenance` unless you explicitly want heavy extraction.                             |
 | **Auto-classify**             | Assign category (preference, fact, decision, entity, other) to facts | Minimal, Enhanced, Complete                       | **nano**                                                                                             | Simple classification; nano is sufficient.                                                             |
 | **Classify-before-write**     | Classify at store time instead of batch                              | Enhanced, Complete                                | **nano**                                                                                             | Same as auto-classify; one call per store.                                                             |
 | **Query expansion**           | Expand user query with LLM before embedding (better recall)          | Complete (opt-in)                                 | **nano**                                                                                             | One nano call per recall; improves relevance.                                                          |
@@ -45,8 +45,8 @@ This document lists LLM-using (and related) features: what each does, which mode
 | **Suggest categories**        | Propose new categories from data                                     | Minimal, Enhanced, Complete                       | **nano**                                                                                             | Same as auto-classify.                                                                                 |
 | **Retrieval aliases**         | Generate aliases for entities                                        | Enhanced, Complete (opt-in)                       | **nano**                                                                                             | Nano.                                                                                                  |
 | **Persona proposals**         | Propose identity updates from reflection                             | Enhanced, Complete (opt-in)                       | **default**                                                                                          | One summary step; default is enough.                                                                   |
-| **Dream cycle**               | Nightly: prune, consolidate, reflect, reflect-rules                  | Enhanced, Complete (opt-in)                       | **default** (reflection steps)                                                                       | No LLM for prune/consolidate; reflection uses default.                                                 |
-| **Consolidate**               | Merge duplicate facts with LLM                                       | Enhanced, Complete                                | **default**                                                                                          | Uses default tier; pass `--model` to override.                                                         |
+| **Dream cycle**               | Nightly: prune, consolidate, reflect, reflect-rules                  | Enhanced, Complete (opt-in)                       | **maintenance** (reflection steps)                                                                   | No LLM for prune/consolidate; reflection uses maintenance tier unless overridden.                      |
+| **Consolidate**               | Merge duplicate facts with LLM                                       | Enhanced, Complete                                | **maintenance**                                                                                      | Uses maintenance tier by default; pass `--model` to override.                                          |
 | **Generate proposals**        | Persona proposals from reflection                                    | Enhanced, Complete (opt-in)                       | **default**                                                                                          | Same as persona proposals.                                                                             |
 | **Ingest (files)**            | Extract facts from workspace Markdown                                | Minimal, Enhanced, Complete                        | **default**                                                                                          | File → facts; default. On-demand (run ingest-files).                                                   |
 | **Documents (MarkItDown)**    | Ingest PDF, DOCX, etc. via MarkItDown                                | Complete                                          | **default** (vision from llm.default)                                                                | No LLM for PDF/DOCX (chunk+embed only). Optional vision for images.                                   |
@@ -59,7 +59,8 @@ This document lists LLM-using (and related) features: what each does, which mode
 ## Tier summary
 
 - **nano**: Auto-classify, classify-before-write, query expansion, summarize, reranking, contextual variants, language keywords, suggest categories, retrieval aliases, passive observer. Use for short, classification-style or lightweight generation tasks.
-- **default (flash)**: Distill (in Minimal and typically in Enhanced/Complete), reflection (all steps), extract-procedures, persona proposals, dream cycle (reflection parts), consolidate, ingest, documents, cross-agent learning. Use for general extraction, synthesis, and multi-step reasoning that doesn’t need the largest context.
+- **maintenance**: Dream cycle (reflection parts), reflection commands, consolidation helpers, session-extraction analysis. Use for scheduled/manual maintenance where cost control matters.
+- **default (flash)**: General analysis and features that explicitly use the default tier. Use for extraction, synthesis, and multi-step reasoning that doesn’t need the largest context.
 - **heavy**: Self-correction. Use only where deep analysis and large context pay off.
 
 ---
@@ -67,5 +68,4 @@ This document lists LLM-using (and related) features: what each does, which mode
 ## See also
 
 - [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) — What each mode enables.
-- [CONFIGURATION.md](CONFIGURATION.md) — Full config reference and `llm.nano` / `llm.default` / `llm.heavy`.
-
+- [CONFIGURATION.md](CONFIGURATION.md) — Full config reference and `llm.nano` / `llm.maintenance` / `llm.default` / `llm.heavy`.
