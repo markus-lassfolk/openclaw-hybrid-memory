@@ -54,8 +54,8 @@ jobs:
     strategy:
       matrix:
         include:
-          # Install >=22.12 (node:sqlite / engines); keep job name "Node 22" for branch protection.
-          - node-version: '22.12'
+          # Install >=22.13 (node:sqlite is available without --experimental-sqlite); keep job name "Node 22" for branch protection.
+          - node-version: '22.13'
             job-name-suffix: '22'
           - node-version: '24'
             job-name-suffix: '24'
@@ -84,7 +84,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - node-version: '22.12'
+          - node-version: '22.13'
             job-name-suffix: '22'
           - node-version: '24'
             job-name-suffix: '24'
@@ -113,7 +113,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - node-version: '22.12'
+          - node-version: '22.13'
             job-name-suffix: '22'
           - node-version: '24'
             job-name-suffix: '24'
@@ -143,14 +143,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '22.12'
+          node-version: '22.13'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.13-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22.12-
+            ${{ runner.os }}-node-22.13-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run tests with coverage
@@ -172,14 +172,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '22.12'
+          node-version: '22.13'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.13-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22.12-
+            ${{ runner.os }}-node-22.13-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run knip
@@ -196,7 +196,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: '22.12'
+          node-version: '22.13'
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm ci
       - name: Check formatting
@@ -213,14 +213,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '22.12'
+          node-version: '22.13'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.13-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22.12-
+            ${{ runner.os }}-node-22.13-
       - name: Install and build (dist/ required by verify-publish)
         run: cd extensions/memory-hybrid && npm ci && npm run build
       - name: verify-publish invariants
@@ -236,14 +236,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '22.12'
+          node-version: '22.13'
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.12-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.13-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22.12-
+            ${{ runner.os }}-node-22.13-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Strict type check
@@ -262,7 +262,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - node-version: '22.12'
+          - node-version: '22.13'
             job-name-suffix: '22'
           - node-version: '24'
             job-name-suffix: '24'

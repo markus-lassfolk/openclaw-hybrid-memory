@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **CLI command compatibility**: Resolves issue #1206 where historical maintenance runbooks referenced obsolete commands (`consolidate-episodes`, `features`, `config --json`) that did not exist in current CLI, causing exit 1 errors and confusing audit output.
 
+### Changed
+
+- **Node.js**: Minimum version is now **22.13.0** so built-in `node:sqlite` is available without `--experimental-sqlite` (matches CI `.nvmrc` and `engines`).
+
 ---
 
 ## [2026.5.61] - 2026-05-07

@@ -5,7 +5,7 @@
     "classification": "env-misconfig",
     "defaultAction": "escalate-user",
     "severity": "high",
-    "suggestedAction": "Install or activate Node.js v22.12.0 or newer (see plugin package.json engines) before running hybrid-memory maintenance."
+    "suggestedAction": "Install or activate Node.js v22.13.0 or newer (see plugin package.json engines) before running hybrid-memory maintenance."
   },
   {
     "id": "llm-rate-limit",

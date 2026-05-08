@@ -125,7 +125,11 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
  * Config view — show current settings in a simple, scannable format.
  * Focus on what's on/off so users can understand and change via config-set.
  */
-export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink, opts?: { format?: "text" | "json" }): void {
+export function runConfigViewForCli(
+  ctx: HandlerContext,
+  sink: VerifyCliSink,
+  opts?: { format?: "text" | "json" },
+): void {
   const { cfg } = ctx;
   const log = sink.log;
   const format = opts?.format ?? "text";

@@ -222,8 +222,11 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       withExit(async (opts?: { json?: boolean; format?: string }) => {
         try {
           // Determine format: --json takes precedence, then --format, default to text
-          const format = opts?.json ? "json" : (opts?.format === "json" ? "json" : "text");
-          runConfigView({ log: (s: string) => console.log(s), error: (s: string) => console.error(s) }, { format: format as "text" | "json" });
+          const format = opts?.json ? "json" : opts?.format === "json" ? "json" : "text";
+          runConfigView(
+            { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
+            { format: format as "text" | "json" },
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
@@ -241,7 +244,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       withExit(async () => {
         try {
           // Always output JSON for features command
-          runConfigView({ log: (s: string) => console.log(s), error: (s: string) => console.error(s) }, { format: "json" });
+          runConfigView(
+            { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
+            { format: "json" },
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
@@ -504,7 +510,9 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   // Add consolidate-episodes as an alias/compatibility command
   mem
     .command("consolidate-episodes")
-    .description("(Deprecated) Consolidate episodic memories. Use 'dream-cycle' for nightly maintenance or 'consolidate' for duplicate facts.")
+    .description(
+      "(Deprecated) Consolidate episodic memories. Use 'dream-cycle' for nightly maintenance or 'consolidate' for duplicate facts.",
+    )
     .action(
       withExit(async () => {
         console.error("Error: 'consolidate-episodes' is deprecated.");

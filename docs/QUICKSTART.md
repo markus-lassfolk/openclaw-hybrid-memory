@@ -21,7 +21,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
   
   Use `embedding.preferredProviders` for automatic failover between providers (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full details.
 - **Chat/completion** (optional for basic memory): needed for distillation, reflection, auto-classify, etc. Any provider the OpenClaw gateway supports works; optional **`llm`** config sets model preference lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
-- **Node.js `>=22.12.0`** with npm (plugin `engines` field).
+- **Node.js `>=22.13.0`** with npm (plugin `engines` field).
 
 ---
 
