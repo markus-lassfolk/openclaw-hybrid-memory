@@ -22,7 +22,8 @@ import {
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError, chatCompleteWithRetryDetailed } from "./chat.js";
+import { LLMRetryError } from "./chat.js";
+import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
@@ -56,6 +57,8 @@ interface ReflectionOptions {
   model: string;
   verbose?: boolean;
   fallbackModels?: string[];
+  modelSource?: string;
+  adaptiveStatePath?: string;
 }
 
 interface ReflectionResult {
@@ -278,8 +281,9 @@ export async function runReflection(
 
   let rawResponse: string;
   try {
-    const detail = await chatCompleteWithRetryDetailed({
+    const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       model: opts.model,
+      modelSource: opts.modelSource,
       content: prompt,
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 1500,
@@ -287,6 +291,8 @@ export async function runReflection(
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflection",
       feature: CostFeature.reflection,
+      logger,
+      adaptiveStatePath: opts.adaptiveStatePath,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflection — used fallback model ${detail.modelUsed}`);
@@ -467,7 +473,14 @@ export async function runReflectionRules(
   vectorDb: VectorDB,
   embeddings: EmbeddingProvider,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
+  opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    fallbackModels?: string[];
+    modelSource?: string;
+    adaptiveStatePath?: string;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionRulesResult> {
@@ -489,8 +502,9 @@ export async function runReflectionRules(
   }
   let rawResponse: string;
   try {
-    const detail = await chatCompleteWithRetryDetailed({
+    const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       model: opts.model,
+      modelSource: opts.modelSource,
       content: prompt,
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 800,
@@ -498,6 +512,8 @@ export async function runReflectionRules(
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-rules",
       feature: CostFeature.reflectionRules,
+      logger,
+      adaptiveStatePath: opts.adaptiveStatePath,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-rules — used fallback model ${detail.modelUsed}`);
@@ -678,7 +694,14 @@ export async function runReflectionMeta(
   vectorDb: VectorDB,
   embeddings: EmbeddingProvider,
   openai: OpenAI,
-  opts: { dryRun: boolean; model: string; verbose?: boolean; fallbackModels?: string[] },
+  opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    fallbackModels?: string[];
+    modelSource?: string;
+    adaptiveStatePath?: string;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionMetaResult> {
@@ -700,8 +723,9 @@ export async function runReflectionMeta(
   }
   let rawResponse: string;
   try {
-    const detail = await chatCompleteWithRetryDetailed({
+    const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       model: opts.model,
+      modelSource: opts.modelSource,
       content: prompt,
       temperature: REFLECTION_TEMPERATURE,
       maxTokens: 500,
@@ -709,6 +733,8 @@ export async function runReflectionMeta(
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-meta",
       feature: CostFeature.reflectionMeta,
+      logger,
+      adaptiveStatePath: opts.adaptiveStatePath,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-meta — used fallback model ${detail.modelUsed}`);

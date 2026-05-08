@@ -15,20 +15,32 @@ export function hybridMemCronEnvSanitizerBashLines(): string[] {
   return [
     HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
     "openclaw() {",
-    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER command openclaw "$@"',
+    "  local openclaw_bin",
+    '  openclaw_bin="$(type -P openclaw)" || return 127',
+    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_HOME -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER "$openclaw_bin" "$@"',
     "}",
   ];
 }
 
+function shellSafeStepName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9-]/g, "_");
+}
+
 /**
- * Bash script body: `set -euo pipefail`, HM_LOG / HM_EXIT, `hm_step`, and labeled steps.
+ * Bash script body: `set -euo pipefail`, HM_LOG / HM_EXIT, `hm_step`, labeled steps,
+ * and mandatory `validate-cron-exit` on shell exit.
  * Step `name` should be short and shell-safe; any character outside `[A-Za-z0-9-]` is replaced with `_`.
  */
-export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCronStep[]): string {
+export function buildHybridMemCronBashBody(
+  jobSlug: string,
+  steps: HybridMemCronStep[],
+  requiredSteps: string[] = steps.map((s) => s.name),
+): string {
   const lines = steps.map((s) => {
-    const safe = s.name.replace(/[^a-zA-Z0-9-]/g, "_");
+    const safe = shellSafeStepName(s.name);
     return `hm_step "${safe}" ${s.cmd}`;
   });
+  const requiredArgs = requiredSteps.map((s) => `"${shellSafeStepName(s)}"`).join(" ");
   return [
     "set -euo pipefail",
     "set -x",
@@ -43,6 +55,7 @@ export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCron
     `HM_JOB="${jobSlug}"`,
     'HM_LOG="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.log"',
     'HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"',
+    `HM_REQUIRED_STEPS=(${requiredArgs})`,
     ': >"$HM_LOG"',
     ': >"$HM_EXIT"',
     "{",
@@ -66,6 +79,26 @@ export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCron
     '  return "$ec"',
     "}",
     "",
+    "HM_VALIDATED=0",
+    "hm_validate() {",
+    '  local original_ec="${1:-0}"',
+    '  if [ "${HM_VALIDATED}" = "1" ]; then',
+    '    return "$original_ec"',
+    "  fi",
+    "  HM_VALIDATED=1",
+    "  set +e",
+    '  echo "--- validate-cron-exit ---" | tee -a "$HM_LOG"',
+    '  openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json 2>&1 | tee -a "$HM_LOG"',
+    '  local validation_ec="${PIPESTATUS[0]}"',
+    "  set -e",
+    '  if [ "$original_ec" -ne 0 ]; then',
+    '    return "$original_ec"',
+    "  fi",
+    '  return "$validation_ec"',
+    "}",
+    "trap 'ec=$?; trap - EXIT; hm_validate \"$ec\"; exit $?' EXIT",
+    "trap 'trap - TERM INT; hm_validate 143; exit $?' TERM INT",
+    "",
     ...lines,
   ].join("\n");
 }
@@ -79,10 +112,10 @@ export function buildHybridMemCronTaskMessage(
   options: { preamble?: string; steps: HybridMemCronStep[]; requiredSteps?: string[] },
 ): string {
   const preamble = options.preamble?.trim();
-  const bash = buildHybridMemCronBashBody(jobSlug, options.steps);
+  const requiredSteps = options.requiredSteps ?? options.steps.map((s) => s.name);
+  const bash = buildHybridMemCronBashBody(jobSlug, options.steps, requiredSteps);
 
   // Build list of required steps for validation
-  const requiredSteps = options.requiredSteps ?? options.steps.map((s) => s.name);
   const requiredStepsList = requiredSteps.map((s) => `"${s}"`).join(", ");
 
   const orchestration = [
@@ -95,8 +128,8 @@ export function buildHybridMemCronTaskMessage(
     "```",
     "",
     "VALIDATION & GUARD UPDATE (Issue: cron jobs report OK despite failures)",
-    `After the bash script completes, validate that ALL required steps [${requiredStepsList}] appear in HM_EXIT with exit=0.`,
-    "- If ANY required step is missing from HM_EXIT, has exit≠0, or the log contains 'unknown command', this job has FAILED.",
+    `The bash harness automatically runs \`openclaw hybrid-mem validate-cron-exit\` at shell exit and validates that ALL required steps [${requiredStepsList}] appear in HM_EXIT with exit=0.`,
+    "- If ANY required step is missing from HM_EXIT, has exit≠0, or the log contains 'unknown command', validate-cron-exit returns non-zero and the shell exits non-zero.",
     "- If a step is replaced with a config-skip variant (e.g., 'distill-skipped' exit=0 when distill.enabled is false), that counts as present.",
     "- Only after ALL required steps are validated successful: perform the GUARD CHECK timestamp write.",
     "- If validation fails, do NOT update the guard file.",

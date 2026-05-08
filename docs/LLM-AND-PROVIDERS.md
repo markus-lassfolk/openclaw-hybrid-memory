@@ -170,7 +170,7 @@ Each LLM-backed feature is assigned a **tier** (nano, default, or heavy). The fe
 |---------|------|--------------------------|
 | Auto-classify, classify-before-write, query expansion, summarize (recall), reranking, contextual variants, language keywords, retrieval aliases, passive observer | **nano** | `cfg.autoClassify.model` (or equivalent per feature) or `getDefaultCronModel(cronCfg, "nano")`. |
 | Reflection, reflect-rules, reflect-meta, **consolidate**, extract-procedures, persona proposals, dream cycle (reflection steps), ingest, cross-agent learning | **default** | Feature-specific config (e.g. `cfg.reflection.model`) or `getDefaultCronModel(cronCfg, "default")`. CLI `--model` overrides when present (e.g. `consolidate --model …`). |
-| Distill, self-correction, generate-proposals (heavy path) | **heavy** | `cfg.distill` / selfCorrection config or `getDefaultCronModel(cronCfg, "heavy")`. Distill uses heavy by default; self-correction uses heavy or `selfCorrection.spawnModel`. |
+| Distill main pass | **maintenance** by default | `distill.modelTier` (unset → maintenance), `distill.defaultModel`, or CLI `distill --model`. Use `heavy` only by opting into `distill.modelTier="heavy"`. |
 
 So: **identification** = config + `getCronModelConfig` + `getLLMModelPreference` (and optionally `getProvidersWithKeys`). **Usage** = pick the tier for the feature, then take the first working model from that tier’s list. The full feature–tier matrix is in [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md).
 
@@ -178,7 +178,7 @@ So: **identification** = config + `getCronModelConfig` + `getLLMModelPreference`
 
 ## Configuring models: `llm` block
 
-Set `llm.nano`, `llm.default`, and `llm.heavy` with ordered model lists. The plugin tries each in order; if one fails (no key, rate limit, 5xx), it tries the next. Model IDs can be **with or without** a provider prefix: `gemini-3.1-pro-preview` and `google/gemini-3.1-pro-preview` are equivalent (the plugin infers `google/` for bare `gemini-*` names so the correct API is used; same for `claude-*` → `anthropic/`, `gpt-*`/`o1` → `openai/`).
+Set `llm.nano`, `llm.maintenance`, `llm.default`, and `llm.heavy` with ordered model lists. The plugin tries each in order; if one fails (no key, rate limit, 5xx), it tries the next. Model IDs can be **with or without** a provider prefix: `gemini-3.1-pro-preview` and `google/gemini-3.1-pro-preview` are equivalent (the plugin infers `google/` for bare `gemini-*` names so the correct API is used; same for `claude-*` → `anthropic/`, `gpt-*`/`o1` → `openai/`).
 
 **Gateway provider keys:** At startup the plugin merges the gateway’s provider config (e.g. `models.providers` or `llm.providers` in OpenClaw config) into its own `llm.providers`. So any API keys you have in the gateway (Anthropic, Minimax, etc.) are available to the plugin without duplicating them in the plugin config. Add that provider’s models to `llm.default` or `llm.heavy` (e.g. `minimax/your-model`) to use them. Plugin-explicit `llm.providers.<name>` always wins over the gateway merge for that provider.
 

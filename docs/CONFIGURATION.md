@@ -516,7 +516,7 @@ Run **`openclaw hybrid-mem verify`** to see effective models per tier and featur
 
 ## Session distillation (legacy: `distill`)
 
-Session distillation uses an LLM to extract durable facts from conversation logs. Prefer configuring models via **`llm.heavy`** (above); the **`distill`** block is legacy.
+Session distillation uses an LLM to extract durable facts from conversation logs. The main distill pass uses **`distill.modelTier`** (unset → **`maintenance`**) plus the corresponding `llm.<tier>` list; `--model` and legacy `distill.defaultModel` still override for one run/global compatibility. The **`distill`** block is otherwise legacy.
 
 ```json
 "distill": {

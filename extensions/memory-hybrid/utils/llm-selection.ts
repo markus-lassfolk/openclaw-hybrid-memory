@@ -1,7 +1,7 @@
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreferenceUnfiltered } from "../config.js";
 
-export type CronModelTier = "nano" | "default" | "heavy";
+export type CronModelTier = "nano" | "maintenance" | "default" | "heavy";
 
 export type TierPreferenceWithSources = {
   tier: CronModelTier;
@@ -12,7 +12,14 @@ export type TierPreferenceWithSources = {
 };
 
 function readTierList(cfg: HybridMemoryConfig, tier: CronModelTier): string[] | undefined {
-  const list = tier === "nano" ? cfg.llm?.nano : tier === "heavy" ? cfg.llm?.heavy : cfg.llm?.default;
+  const list =
+    tier === "nano"
+      ? cfg.llm?.nano
+      : tier === "maintenance"
+        ? cfg.llm?.maintenance
+        : tier === "heavy"
+          ? cfg.llm?.heavy
+          : cfg.llm?.default;
   if (!Array.isArray(list)) return undefined;
   const trimmed = list.map((m) => (typeof m === "string" ? m.trim() : "")).filter((m) => m.length > 0);
   return trimmed.length > 0 ? trimmed : undefined;
@@ -35,7 +42,12 @@ export function resolveTierPreferenceWithSources(
       sources.push(`llm.${tier}[${i}]`);
       continue;
     }
-    if (tier === "nano" && !configuredTierList && configuredDefault && configuredDefault[i] === models[i]) {
+    if (
+      (tier === "nano" || tier === "maintenance") &&
+      !configuredTierList &&
+      configuredDefault &&
+      configuredDefault[i] === models[i]
+    ) {
       sources.push(`llm.default[${i}]`);
       continue;
     }
