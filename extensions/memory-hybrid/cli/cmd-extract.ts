@@ -11,7 +11,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
@@ -23,6 +23,7 @@ import {
 } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
+import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
@@ -419,8 +420,10 @@ export async function runExtractReinforcementForCli(
         logger.info?.(
           `memory-hybrid: extract-reinforcement analysis fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
         );
-        const detail = await chatCompleteWithRetryDetailed({
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
           model,
+          modelSource,
           content: prompt,
           temperature: 0.2,
           maxTokens: distillMaxOutputTokens(model),
@@ -428,6 +431,12 @@ export async function runExtractReinforcementForCli(
           fallbackModels,
           label: "memory-hybrid: reinforcement analyze",
           feature: CostFeature.extractReinforcement,
+          logger,
+          adaptiveStatePath:
+            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+              : undefined,
+          enabled: adaptiveEnabled,
         });
         if (detail.modelUsed !== model) {
           logger.info?.(

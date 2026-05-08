@@ -131,4 +131,30 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(hotWarn).toBeUndefined();
     db.close();
   });
+  it("marks expensive sections partial when the audit-health deadline is exhausted", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Expired budget fact",
+      category: "off-roster",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500, {
+      timeoutMs: 1,
+      startedAtMs: Date.now() - 10,
+      deadlineMs: Date.now() - 1,
+    });
+
+    expect(report.status).toBe("partial");
+    expect(report.ok).toBe(false);
+    expect(report.timeoutMs).toBe(1);
+    expect(report.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(report.errors.some((e) => e.message.includes("timeout budget exceeded"))).toBe(true);
+    expect(report.categories.unknown).toEqual([{ category: "off-roster", count: 0 }]);
+    db.close();
+  });
 });

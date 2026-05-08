@@ -25,7 +25,11 @@ import type { DigestWeeklyDeliveryConfig, HybridMemoryConfig } from "../config.j
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
-import { buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
+import {
+  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
+  buildHybridMemCronTaskMessage,
+  hybridMemCronEnvSanitizerBashLines,
+} from "../services/cron-job-bash-harness.js";
 import { findDeprecatedHybridMemCronTokens } from "../services/deprecated-cron-commands.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";

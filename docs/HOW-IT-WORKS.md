@@ -212,7 +212,7 @@ Background (automatic):
 | Auto-classify batch (20 facts) | ~$0.0002–0.001 | Once per 24h | **nano** |
 | Reflection (per run) | ~$0.002 | On-demand (CLI) | default |
 | Consolidation (per cluster) | ~$0.002 | On-demand (CLI) | default |
-| Session distillation (per session) | ~$0.01–0.05 | On-demand / nightly cron | **heavy** |
+| Session distillation (per session) | ~$0.01–0.05 | On-demand / nightly cron | **maintenance** by default (`distill.modelTier`; heavy is opt-in) |
 | SQLite operations | Free | Always | — |
 
 With the nano tier (`gemini-2.5-flash-lite` or `gpt-4.1-nano`), per-message LLM costs drop 5–10× vs mid-tier models. At typical usage (~50 turns/day with query expansion and auto-classify): roughly **$0.10–0.20/month** total.
