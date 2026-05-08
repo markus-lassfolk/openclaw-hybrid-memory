@@ -10,15 +10,38 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import type { HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
+import {
+  getCronModelConfig,
+  getDefaultCronModel,
+  getLLMModelPreference,
+  resolveReflectionModelAndFallbacks,
+} from "../config.js";
 import { isValidCategory } from "../config.js";
 import type { MemoryCategory } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
+import {
+  chatCompleteWithRetryDetailed,
+  distillBatchTokenLimit,
+  distillMaxOutputTokens,
+  is403QuotaOrRateLimitLike,
+  is429OrWrapped,
+  isConnectionErrorLike,
+  isContextLengthError,
+  parseRetryAfterMs,
+} from "../services/chat.js";
+import {
+  getEffectiveModelLimits,
+  loadAdaptiveModelLimits,
+  recordAdaptiveFailure,
+  recordAdaptiveSuccess,
+  saveAdaptiveModelLimits,
+} from "../services/adaptive-model-limits.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { chunkSessionText, estimateTokens } from "../utils/text.js";
@@ -251,15 +274,75 @@ export async function runDistillForCli(
     }
 
     const cronCfgDistill = getCronModelConfig(cfg);
-    const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
+    const heavyPrefWithSources = resolveTierPreferenceWithSources(cfg, "heavy");
+    const heavyResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
     const model =
-      opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? getDefaultCronModel(cronCfgDistill, "heavy");
-    const distillFallbacks =
-      heavyPref.length > 1 ? heavyPref.slice(1) : cfg.llm ? undefined : cfg.distill?.fallbackModels;
-    const batches: string[] = [];
-    let currentBatch = "";
-    const batchTokenLimit = distillBatchTokenLimit(model);
-    const maxSessionTokens = opts.maxSessionTokens ?? batchTokenLimit;
+      opts.model ??
+      heavyResolved.defaultModel ??
+      cfg.distill?.defaultModel ??
+      getDefaultCronModel(cronCfgDistill, "heavy");
+    const modelSource = opts.model
+      ? "--model"
+      : heavyPrefWithSources.models[0] === model
+        ? (heavyPrefWithSources.sources[0] ?? "built-in")
+        : cfg.distill?.defaultModel === model
+          ? "distill.defaultModel"
+          : "built-in";
+    const distillFallbacks = heavyResolved.fallbackModels ?? [];
+    const configuredDistillFallbacks = cfg.distill?.fallbackModels ?? [];
+    const configuredFallbackModel = cfg.llm?.fallbackModel?.trim() || "";
+    const fallbackSources = new Map<string, string>();
+    for (let i = 0; i < heavyPrefWithSources.models.length; i++) {
+      const m = heavyPrefWithSources.models[i];
+      const s = heavyPrefWithSources.sources[i];
+      if (m && s) fallbackSources.set(m, s);
+    }
+    if (configuredFallbackModel) fallbackSources.set(configuredFallbackModel, "llm.fallbackModel");
+    for (let i = 0; i < configuredDistillFallbacks.length; i++) {
+      const m = configuredDistillFallbacks[i]?.trim();
+      if (m && !fallbackSources.has(m)) fallbackSources.set(m, `distill.fallbackModels[${i}]`);
+    }
+
+    logger.info?.("memory-hybrid: distill main model tier = heavy");
+    const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+    logger.info?.(`memory-hybrid: distill directives/reinforcement extraction tier = ${extractionTier}`);
+    logger.info?.(`memory-hybrid: distill starting with model ${model} (source=${modelSource})`);
+    logger.info?.(
+      `memory-hybrid: distill fallback chain = [${distillFallbacks.length > 0 ? distillFallbacks.join(", ") : ""}]`,
+    );
+
+    const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+    const adaptiveStatePath =
+      (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim() ||
+      join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json");
+    logger.info?.(
+      `memory-hybrid: distill adaptive sizing = ${adaptiveEnabled ? "enabled" : "disabled"} (state=${adaptiveStatePath})`,
+    );
+    const adaptiveState = adaptiveEnabled
+      ? loadAdaptiveModelLimits(adaptiveStatePath)
+      : loadAdaptiveModelLimits(adaptiveStatePath);
+
+    type DistillBlock = { text: string; tokens: number };
+    const blocks: DistillBlock[] = [];
+    const distillPrompt = loadPrompt("distill-sessions");
+    const promptPrefix = `${distillPrompt}\n\n`;
+    const promptTokens = estimateTokens(promptPrefix);
+    const primaryCatalogBatchLimit = distillBatchTokenLimit(model);
+    const primaryCatalogMaxOut = distillMaxOutputTokens(model);
+    const primaryLimits = adaptiveEnabled
+      ? getEffectiveModelLimits({
+          state: adaptiveState,
+          model,
+          catalogBatchTokenLimit: primaryCatalogBatchLimit,
+          catalogMaxOutputTokens: primaryCatalogMaxOut,
+          minBatchTokenLimit: Math.max(2048, promptTokens + 256),
+        })
+      : {
+          batchTokenLimit: primaryCatalogBatchLimit,
+          maxOutputTokens: primaryCatalogMaxOut,
+          source: "catalog" as const,
+        };
+    const maxSessionTokens = opts.maxSessionTokens ?? Math.max(256, primaryLimits.batchTokenLimit - promptTokens - 256);
     for (let i = 0; i < filesToProcess.length; i++) {
       const { path: fp } = filesToProcess[i];
       try {
@@ -273,12 +356,13 @@ export async function runDistillForCli(
           );
         }
 
-        // Safety check: ensure chunks don't exceed model-specific batch limits
-        const safeLimit = batchTokenLimit; // Use model-specific limit instead of hardcoded 350k
+        // Safety check: ensure chunks don't exceed model catalog input limit (prompt + block)
         const validChunks = chunks.filter((chunk, idx) => {
-          const chunkTokens = Math.ceil(chunk.length / 4);
-          if (chunkTokens > safeLimit) {
-            sink.warn(`memory-hybrid: distill: chunk ${idx + 1} too large (${chunkTokens} tokens), skipping`);
+          const chunkTokens = estimateTokens(chunk);
+          if (promptTokens + chunkTokens > primaryCatalogBatchLimit) {
+            sink.warn(
+              `memory-hybrid: distill: chunk ${idx + 1} too large (${promptTokens + chunkTokens} tokens incl prompt), skipping`,
+            );
             return false;
           }
           return true;
@@ -290,13 +374,7 @@ export async function runDistillForCli(
               ? `\n--- SESSION: ${basename(fp)} ---\n\n`
               : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${validChunks.length}) ---\n\n`;
           const block = header + validChunks[c];
-          const blockTokens = Math.ceil(block.length / 4);
-          if (currentBatch.length > 0 && estimateTokens(currentBatch) + blockTokens > batchTokenLimit) {
-            batches.push(currentBatch);
-            currentBatch = block;
-          } else {
-            currentBatch += (currentBatch ? "\n" : "") + block;
-          }
+          blocks.push({ text: block, tokens: estimateTokens(block) });
         }
       } catch (err) {
         capturePluginError(err as Error, {
@@ -306,8 +384,7 @@ export async function runDistillForCli(
         });
       }
     }
-    if (currentBatch.trim()) batches.push(currentBatch);
-    const distillPrompt = loadPrompt("distill-sessions");
+
     const allFacts: Array<{
       category: string;
       text: string;
@@ -317,21 +394,108 @@ export async function runDistillForCli(
       source_date?: string;
       tags?: string[];
     }> = [];
-    const progress = createProgressReporter(sink, batches.length, "Distilling sessions");
-    for (let b = 0; b < batches.length; b++) {
-      progress.update(b + 1);
-      const userContent = `${distillPrompt}\n\n${batches[b]}`;
+    const progress = createProgressReporter(sink, Math.max(1, blocks.length), "Distilling session chunks");
+    let processedBlocks = 0;
+    let batchNum = 0;
+    let cursorBlock = 0;
+    let shrinkBudget = 8;
+
+    const effectiveLimitsForModel = (m: string) => {
+      const catalogBatchTokenLimit = distillBatchTokenLimit(m);
+      const catalogMaxOutputTokens = distillMaxOutputTokens(m);
+      if (!adaptiveEnabled)
+        return {
+          batchTokenLimit: catalogBatchTokenLimit,
+          maxOutputTokens: catalogMaxOutputTokens,
+          source: "catalog" as const,
+        };
+      return getEffectiveModelLimits({
+        state: adaptiveState,
+        model: m,
+        catalogBatchTokenLimit,
+        catalogMaxOutputTokens,
+        minBatchTokenLimit: Math.max(2048, promptTokens + 256),
+      });
+    };
+
+    const buildBatch = (startIdx: number, batchTokenLimit: number): { text: string; count: number; tokens: number } => {
+      let text = "";
+      let tokens = promptTokens;
+      let count = 0;
+      for (let i = startIdx; i < blocks.length; i++) {
+        const b = blocks[i];
+        const sep = text ? "\n" : "";
+        const nextTokens = tokens + b.tokens;
+        if (count > 0 && nextTokens > batchTokenLimit) break;
+        if (count === 0 && nextTokens > batchTokenLimit) break;
+        text += `${sep}${b.text}`;
+        tokens = nextTokens;
+        count++;
+      }
+      return { text, count, tokens };
+    };
+
+    while (cursorBlock < blocks.length) {
+      batchNum++;
+      const limits = effectiveLimitsForModel(model);
+      const batch = buildBatch(cursorBlock, limits.batchTokenLimit);
+      if (batch.count <= 0) {
+        sink.warn(
+          `memory-hybrid: distill: could not fit next block into batchTokenLimit=${limits.batchTokenLimit}; skipping one block`,
+        );
+        cursorBlock++;
+        processedBlocks++;
+        progress.update(processedBlocks);
+        continue;
+      }
+
+      const userContent = `${promptPrefix}${batch.text}`;
+      const inputTokens = estimateTokens(userContent);
+      const compatibleFallbacks: string[] = [];
+      const skippedFallbacks: string[] = [];
+      for (const fb of distillFallbacks) {
+        const fbLimits = effectiveLimitsForModel(fb);
+        if (inputTokens <= fbLimits.batchTokenLimit) compatibleFallbacks.push(fb);
+        else skippedFallbacks.push(fb);
+      }
+      if (skippedFallbacks.length > 0) {
+        logger.info?.(
+          `memory-hybrid: distill batch ${batchNum} — skipping context-incompatible fallbacks: ${skippedFallbacks.join(", ")}`,
+        );
+      }
+
+      logger.info?.(`memory-hybrid: distill batch ${batchNum} starting with model ${model} (source=${modelSource})`);
       try {
-        const content = await chatCompleteWithRetry({
+        const detail = await chatCompleteWithRetryDetailed({
           model,
           content: userContent,
           temperature: 0.2,
-          maxTokens: distillMaxOutputTokens(model),
+          maxTokens: limits.maxOutputTokens,
           openai,
-          fallbackModels: distillFallbacks,
-          label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
+          fallbackModels: compatibleFallbacks,
+          label: `memory-hybrid: distill batch ${batchNum}`,
           feature: CostFeature.distillCli,
         });
+        if (detail.modelUsed !== model) {
+          const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
+          logger.info?.(
+            `memory-hybrid: distill batch ${batchNum} succeeded with fallback model ${detail.modelUsed} (source=${src})`,
+          );
+        }
+        if (adaptiveEnabled) {
+          const usedLimits = effectiveLimitsForModel(detail.modelUsed);
+          recordAdaptiveSuccess({
+            state: adaptiveState,
+            model: detail.modelUsed,
+            catalogBatchTokenLimit: distillBatchTokenLimit(detail.modelUsed),
+            catalogMaxOutputTokens: distillMaxOutputTokens(detail.modelUsed),
+            usedBatchTokenLimit: usedLimits.batchTokenLimit,
+            usedMaxOutputTokens: usedLimits.maxOutputTokens,
+          });
+          saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+        }
+
+        const content = detail.content;
         const lines = content.split("\n").filter((l) => l.trim());
         for (const line of lines) {
           const jsonMatch = line.match(/\{[\s\S]*\}/);
@@ -361,9 +525,55 @@ export async function runDistillForCli(
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
           }
         }
+        cursorBlock += batch.count;
+        processedBlocks += batch.count;
+        progress.update(processedBlocks);
       } catch (err) {
-        sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
+        const e = err instanceof Error ? err : new Error(String(err));
+        const isContext = isContextLengthError(e);
+        const isRateLimit = is429OrWrapped(e);
+        const isQuota = is403QuotaOrRateLimitLike(e);
+        const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(e.message);
+        const isConn = isConnectionErrorLike(e);
+        const kind = isContext
+          ? "context_length"
+          : isRateLimit
+            ? "rate_limit"
+            : isQuota
+              ? "quota"
+              : isTimeout || isConn
+                ? "timeout"
+                : "other";
+        if (adaptiveEnabled) {
+          recordAdaptiveFailure({
+            state: adaptiveState,
+            model,
+            kind,
+            catalogBatchTokenLimit: primaryCatalogBatchLimit,
+            catalogMaxOutputTokens: primaryCatalogMaxOut,
+            usedBatchTokenLimit: limits.batchTokenLimit,
+            usedMaxOutputTokens: limits.maxOutputTokens,
+          });
+          saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+        }
+        const retryAfterMs = parseRetryAfterMs(e);
+        if ((isRateLimit || isQuota) && retryAfterMs != null && retryAfterMs > 0) {
+          const delay = Math.min(retryAfterMs, 60_000);
+          sink.warn(`memory-hybrid: distill batch ${batchNum} rate limited — backing off ${delay}ms`);
+          await new Promise<void>((r) => setTimeout(r, delay));
+        }
+        if (shrinkBudget > 0 && (isContext || isRateLimit || isQuota || isTimeout || isConn)) {
+          shrinkBudget--;
+          sink.warn(
+            `memory-hybrid: distill batch ${batchNum} failed (${kind}); shrinking and retrying with smaller batch (budget left=${shrinkBudget})`,
+          );
+          continue;
+        }
+        sink.warn(`memory-hybrid: distill batch ${batchNum} failed: ${e}`);
+        capturePluginError(e, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
+        cursorBlock += batch.count;
+        processedBlocks += batch.count;
+        progress.update(processedBlocks);
       }
     }
     progress.done();

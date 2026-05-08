@@ -9,17 +9,21 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   type ConfigMode,
   PRESET_OVERRIDES,
   getCronModelConfig,
+  getDefaultCronModel,
   getLLMModelPreference,
+  resolveReflectionModelAndFallbacks,
   hybridConfigSchema,
 } from "../config.js";
+import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { getPluginConfigFromFile } from "./cmd-install.js";
 import { resolvedActiveTaskFilePath } from "./config-feature-summaries.js";
@@ -210,10 +214,60 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
     if (cfg.nightlyCycle?.model?.trim()) {
       log(`  nightlyCycle.model (overrides dream / MEMORY_INDEX LLM): ${cfg.nightlyCycle.model.trim()}`);
     }
-    const extTier = cfg.distill?.extractionModelTier ?? "default";
-    log(`  distill.extractionModelTier (session extraction): ${extTier}`);
+    const extTier = cfg.distill?.extractionModelTier ?? "nano";
+    log(`  distill.extractionModelTier (directive/reinforcement analysis): ${extTier}`);
   } catch {
     log("  (could not resolve tiers — check plugin config)");
+  }
+  log("");
+
+  log("Maintenance routing");
+  try {
+    const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+    const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const distillFallbacks = distillResolved.fallbackModels ?? [];
+    log(
+      `  distill: llm.heavy (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
+    );
+    const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+    const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
+    const extractionModel =
+      extractionResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), extractionTier);
+    log(`  extract-reinforcement: distill.extractionModelTier=${extractionTier} (primary=${extractionModel})`);
+    log(`  extract-directives: regex only (no LLM)`);
+    const reflectResolved = resolveReflectionModelAndFallbacks(cfg, "default");
+    log(`  reflect/reflect-rules/reflect-meta: llm.default (primary=${reflectResolved.defaultModel})`);
+    log(`  dream-cycle: llm.default (or nightlyCycle.model override)`);
+    log(`  self-correction-run: llm.heavy (primary=${distillModel})`);
+  } catch {
+    log("  (could not resolve maintenance routing — check plugin config)");
+  }
+  log("");
+
+  log("Adaptive distill sizing");
+  {
+    const enabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+    const statePath =
+      (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim() ||
+      join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json");
+    log(`  enabled: ${enabled ? "yes" : "no"} (env: OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL)`);
+    log(`  state: ${statePath}`);
+    try {
+      const state = loadAdaptiveModelLimits(statePath);
+      const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+      const effective = getEffectiveModelLimits({
+        state,
+        model,
+        catalogBatchTokenLimit: distillBatchTokenLimit(model),
+        catalogMaxOutputTokens: distillMaxOutputTokens(model),
+      });
+      log(
+        `  ${model}: batchTokenLimit=${effective.batchTokenLimit}, maxOutputTokens=${effective.maxOutputTokens} (source=${effective.source})`,
+      );
+    } catch {
+      // ignore
+    }
   }
   log("");
 
