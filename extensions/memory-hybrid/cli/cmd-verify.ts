@@ -24,9 +24,11 @@ import {
   getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
   isCompactVerbosity,
+  resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
-import { chatComplete } from "../services/chat.js";
+import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { readGuardTimestampMs } from "../services/cron-guard.js";
 import {
@@ -588,6 +590,53 @@ export async function runVerifyForCli(
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
   );
+
+  tableLog("\n  Maintenance routing (effective, machine-readable-ish):");
+  const distillHeavy = resolveReflectionModelAndFallbacks(cfg, "heavy");
+  const distillModel = distillHeavy.defaultModel;
+  const distillFallbacks = distillHeavy.fallbackModels ?? [];
+  tableLog(
+    `    distill: tier=heavy primary=${distillModel} fallbackCount=${distillFallbacks.length} (config key: llm.heavy)`,
+  );
+  tableLog(
+    `    self-correction-run: tier=heavy primary=${distillModel} fallbackCount=${distillFallbacks.length} (config key: llm.heavy)`,
+  );
+  const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+  const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
+  tableLog(
+    `    extract-reinforcement: tier=${extractionTier} primary=${extractionResolved.defaultModel} (config key: distill.extractionModelTier)`,
+  );
+  tableLog(`    extract-directives: tier=none primary=none (regex only)`);
+  const reflectionResolved = resolveReflectionModelAndFallbacks(cfg, "default");
+  tableLog(
+    `    reflect/reflect-rules/reflect-meta: tier=default primary=${reflectionResolved.defaultModel} (config key: reflection.model or llm.default)`,
+  );
+  tableLog(
+    `    dream-cycle: tier=default primary=${dreamOverride ?? reflectionResolved.defaultModel} (config key: nightlyCycle.model or llm.default)`,
+  );
+
+  tableLog("\n  Distill adaptive sizing:");
+  const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+  const adaptiveStatePath =
+    (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim() ||
+    join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json");
+  tableLog(`    enabled: ${adaptiveEnabled ? "yes" : "no"} (OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL)`);
+  tableLog(`    state: ${adaptiveStatePath}`);
+  try {
+    const state = loadAdaptiveModelLimits(adaptiveStatePath);
+    const effective = getEffectiveModelLimits({
+      state,
+      model: distillModel,
+      catalogBatchTokenLimit: distillBatchTokenLimit(distillModel),
+      catalogMaxOutputTokens: distillMaxOutputTokens(distillModel),
+    });
+    tableLog(
+      `    ${distillModel}: batchTokenLimit=${effective.batchTokenLimit} maxOutputTokens=${effective.maxOutputTokens} (source=${effective.source})`,
+    );
+  } catch {
+    // ignore
+  }
+
   const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
     ...getLLMModelPreference(cronCfg, "default"),
