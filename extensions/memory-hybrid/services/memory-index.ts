@@ -5,6 +5,7 @@ import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { getEnv } from "../utils/env-manager.js";
+import { formatElapsedSec } from "../utils/maintenance-progress.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
   LLMRetryError,
@@ -329,10 +330,12 @@ export async function writeMemoryIndex(
   options: MemoryIndexOptions,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<MemoryIndexResult> {
+  const snapT0 = Date.now();
   const snapshot = buildMemoryIndexSnapshot(factsDb, options);
   if (options.verbose) {
+    const factTotal = factsDb.count();
     logger.info(
-      `memory-hybrid: memory-index — snapshot: ${snapshot.clusters.length} clusters, ${snapshot.recentDecisions.length} recent decisions, ${snapshot.keyEntities.length} key entities, ${snapshot.recentPatterns.length} recent patterns/rules`,
+      `memory-hybrid: memory-index — snapshot built in ${formatElapsedSec(snapT0)} from ${factTotal} fact row(s): ${snapshot.clusters.length} clusters, ${snapshot.recentDecisions.length} recent decisions, ${snapshot.keyEntities.length} key entities, ${snapshot.recentPatterns.length} recent patterns/rules`,
     );
   }
 
@@ -354,7 +357,18 @@ export async function writeMemoryIndex(
     }
   }
 
+  const llmT0 = Date.now();
+  if (options.verbose) {
+    logger.info(
+      "memory-hybrid: memory-index — starting LLM synthesis (or deterministic fallback if unchanged/skipped)…",
+    );
+  }
   const llmMarkdown = await synthesizeMemoryIndex(snapshot, openai, options, logger);
+  if (options.verbose) {
+    logger.info(
+      `memory-hybrid: memory-index — synthesis step finished in ${formatElapsedSec(llmT0)} (${llmMarkdown ? "LLM markdown" : "deterministic template fallback"})`,
+    );
+  }
   const content = llmMarkdown || renderMemoryIndexMarkdown(snapshot);
 
   await mkdir(dirname(outputPath), { recursive: true });

@@ -452,30 +452,37 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--threshold <n>", "Similarity threshold (0-1, default 0.85)", "0.85")
     .option("--include-structured", "Include structured facts (kv, credentials) in search")
     .option("--limit <n>", "Max pairs to return (default 100)", "100")
+    .option("-v, --verbose", "Log embedding batches and Lance scan progress")
     .action(
-      withExit(async (opts?: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
-        const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
-        const includeStructured = !!opts?.includeStructured;
-        const limit = Number.parseInt(opts?.limit ?? "100", 10);
-        let res;
-        try {
-          res = await runFindDuplicates({ threshold, includeStructured, limit });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "find-duplicates",
-          });
-          throw err;
-        }
-        console.log(
-          `Found ${res.pairs.length} duplicate pairs (threshold=${threshold}, candidates=${res.candidatesCount}, skippedStructured=${res.skippedStructured})`,
-        );
-        for (const p of res.pairs) {
-          console.log(`  [${p.idA}] <-> [${p.idB}] (score=${p.score.toFixed(3)})`);
-          console.log(`    A: ${p.textA.substring(0, 60)}...`);
-          console.log(`    B: ${p.textB.substring(0, 60)}...`);
-        }
-      }),
+      withExit(
+        async (
+          opts?: { threshold?: string; includeStructured?: boolean; limit?: string; verbose?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
+          const includeStructured = !!opts?.includeStructured;
+          const limit = Number.parseInt(opts?.limit ?? "100", 10);
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let res;
+          try {
+            res = await runFindDuplicates({ threshold, includeStructured, limit, verbose });
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "find-duplicates",
+            });
+            throw err;
+          }
+          console.log(
+            `Found ${res.pairs.length} duplicate pairs (threshold=${threshold}, candidates=${res.candidatesCount}, skippedStructured=${res.skippedStructured})`,
+          );
+          for (const p of res.pairs) {
+            console.log(`  [${p.idA}] <-> [${p.idB}] (score=${p.score.toFixed(3)})`);
+            console.log(`    A: ${p.textA.substring(0, 60)}...`);
+            console.log(`    B: ${p.textB.substring(0, 60)}...`);
+          }
+        },
+      ),
     );
 
   mem
@@ -486,23 +493,29 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--dry-run", "Show what would be consolidated without consolidating")
     .option("--limit <n>", "Max clusters to process (default 10)", "10")
     .option("--model <m>", "LLM model for merging (default: default tier from config)")
+    .option("-v, --verbose", "Log Lance + embedding corpus load progress for clustering")
     .action(
       withExit(
-        async (opts?: {
-          threshold?: string;
-          includeStructured?: boolean;
-          dryRun?: boolean;
-          limit?: string;
-          model?: string;
-        }) => {
+        async (
+          opts?: {
+            threshold?: string;
+            includeStructured?: boolean;
+            dryRun?: boolean;
+            limit?: string;
+            model?: string;
+            verbose?: boolean;
+          },
+          cmd?: CommanderOptsParent,
+        ) => {
           const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
           const includeStructured = !!opts?.includeStructured;
           const dryRun = !!opts?.dryRun;
           const limit = Number.parseInt(opts?.limit ?? "10", 10);
           const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           let res;
           try {
-            res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
+            res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model, verbose });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",

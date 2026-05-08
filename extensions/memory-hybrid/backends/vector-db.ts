@@ -36,7 +36,7 @@ const _optimizingByPath = new Map<string, boolean>();
 const _optimizeFailuresByPath = new Map<string, number>();
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
 
-type VectorDBLogger = { warn: (msg: string) => void };
+type VectorDBLogger = { warn: (msg: string) => void; info?: (msg: string) => void };
 
 interface SemanticQueryCacheEntry {
   id: string;
@@ -115,6 +115,11 @@ export class VectorDB {
    */
   private isPersistent = false;
   /**
+   * When true (e.g. dream-cycle `--verbose`), emit `pluginLogger.info` milestones during
+   * Lance reconnect and table initialization so long silent phases are distinguishable from hangs (#1228).
+   */
+  private maintenanceVerbose = false;
+  /**
    * Reader-count for the exclusive-writer lock guarding optimize() vs concurrent reads.
    * Issue #768: optimize({cleanupOlderThan}) removes old LanceDB data versions while
    * concurrent search/hasDuplicate calls are in-flight — causing "Not found: ...lance"
@@ -139,6 +144,21 @@ export class VectorDB {
 
   setLogger(logger: VectorDBLogger): void {
     this.logger = logger;
+  }
+
+  /** Enable/disable extra Lance init/reconnect progress lines (used by dream-cycle `--verbose`). */
+  setMaintenanceVerbose(enabled: boolean): void {
+    this.maintenanceVerbose = enabled;
+  }
+
+  private logMaintenanceInfo(msg: string): void {
+    if (!this.maintenanceVerbose) return;
+    const text = `memory-hybrid: ${msg}`;
+    if (this.logger && typeof this.logger.info === "function") {
+      this.logger.info(text);
+    } else {
+      pluginLogger.info(text);
+    }
   }
 
   private logWarn(msg: string): void {
@@ -233,6 +253,9 @@ export class VectorDB {
     // reconnect. Mirrors the FactsDB/CredentialsDB liveDb() pattern for post-restart recovery.
     if (this.closed) {
       this.logWarn("memory-hybrid: VectorDB was closed; reconnecting...");
+      this.logMaintenanceInfo(
+        "VectorDB reconnect — closed flag cleared; reopening Lance connection (connect → openTable → schema check)",
+      );
       this.closed = false;
       // Allow a fresh connection attempt after an explicit close/reopen cycle
       // (e.g., plugin reload). Clear both degraded-mode signals so doInitialize() can retry.
@@ -301,6 +324,8 @@ export class VectorDB {
     // edge case or WSL path mapping), resolve it relative to process.cwd() so the binding
     // can still locate the data directory.
     const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const initStarted = Date.now();
+    this.logMaintenanceInfo(`VectorDB init — connecting (path=${resolvedPath}, vectorDim=${this.vectorDim})`);
 
     try {
       this.db = await lancedb.connect(resolvedPath);
@@ -317,6 +342,7 @@ export class VectorDB {
       );
       return;
     }
+    this.logMaintenanceInfo(`VectorDB init — lancedb.connect done (${Date.now() - initStarted}ms); listing tables`);
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
     // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
@@ -328,15 +354,18 @@ export class VectorDB {
       throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
 
     if (tables.includes(LANCE_TABLE)) {
+      this.logMaintenanceInfo(`VectorDB init — opening existing table '${LANCE_TABLE}'`);
       this.table = await this.db.openTable(LANCE_TABLE);
       if (!this.db || this.closed)
         throw new Error("VectorDB initialization aborted: closed during openTable (concurrent re-registration).");
+      this.logMaintenanceInfo("VectorDB init — validating / repairing memories schema");
       await this.validateOrRepairSchema();
       if (!this.db || this.closed)
         throw new Error(
           "VectorDB initialization aborted: closed during validateOrRepairSchema (concurrent re-registration).",
         );
     } else {
+      this.logMaintenanceInfo(`VectorDB init — creating empty table '${LANCE_TABLE}'`);
       this.table = await this.db.createTable(LANCE_TABLE, [
         {
           id: "__schema__",
@@ -355,7 +384,12 @@ export class VectorDB {
       }
     }
 
+    this.logMaintenanceInfo(
+      `VectorDB init — memories table ready (schemaValid=${this.schemaValid}, wasRepaired=${this.wasRepaired})`,
+    );
+    this.logMaintenanceInfo("VectorDB init — semantic query cache table");
     await this.ensureSemanticQueryCacheTable();
+    this.logMaintenanceInfo(`VectorDB init — complete (${Date.now() - initStarted}ms total)`);
   }
 
   private async ensureSemanticQueryCacheTable(): Promise<void> {
@@ -1301,7 +1335,10 @@ export class VectorDB {
    * Used by reflection dedupe to avoid re-embedding the entire corpus each run.
    * Map keys are lowercase UUIDs. Unknown ids and wrong-dimension vectors are omitted.
    */
-  async getVectorsByFactIds(ids: string[]): Promise<Map<string, number[]>> {
+  async getVectorsByFactIds(
+    ids: string[],
+    options?: { onChunkProgress?: (loaded: number, total: number) => void },
+  ): Promise<Map<string, number[]>> {
     const out = new Map<string, number[]>();
     if (!this.lanceDbAvailable || ids.length === 0) return out;
     try {
@@ -1323,6 +1360,7 @@ export class VectorDB {
             const vec = this.vectorColumnToNumbers((row as { vector?: unknown }).vector);
             if (vec && vec.length === this.vectorDim) out.set(id, vec);
           }
+          options?.onChunkProgress?.(Math.min(offset + chunk.length, unique.length), unique.length);
         }
       } finally {
         this.releaseReader(acquired);

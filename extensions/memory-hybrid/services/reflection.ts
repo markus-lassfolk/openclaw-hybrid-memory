@@ -22,6 +22,7 @@ import {
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { formatElapsedSec, withVerboseHeartbeat } from "../utils/maintenance-progress.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { LLMRetryError } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
@@ -104,6 +105,13 @@ export function dotProductSimilarity(a: number[], b: number[]): number {
   return dot;
 }
 
+export interface ReflectionDedupeCorpusOptions {
+  /** When true, emit Lance chunk lines, embedding batch milestones, and idle heartbeats (#1228). */
+  verbose?: boolean;
+  /** Short label for progress lines (e.g. `reflection dedupe`). */
+  progressLabel?: string;
+}
+
 /**
  * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
  * else call the embedding API. Batches API calls (20) with a short pause only when a batch used the API.
@@ -115,68 +123,142 @@ export async function loadReflectionDedupeCorpusVectors(
   logger: { info: (msg: string) => void },
   logPrefix: string,
   captureOperation: string,
+  corpusOpts?: ReflectionDedupeCorpusOptions,
 ): Promise<(number[] | null)[]> {
-  const vdb = vectorDb as VectorDB & {
-    getVectorDim?: () => number;
-    getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
-  };
-  const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
-  let byId = new Map<string, number[]>();
-  if (typeof vdb.getVectorsByFactIds === "function") {
-    try {
-      byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
-    } catch {
-      byId = new Map();
+  const verbose = corpusOpts?.verbose === true;
+  const progressLabel = corpusOpts?.progressLabel ?? "dedupe corpus";
+  const hb = { lanceHits: 0, apiEmbeds: 0, rowEnd: 0 };
+
+  const runBody = async (): Promise<(number[] | null)[]> => {
+    const vdb = vectorDb as VectorDB & {
+      getVectorDim?: () => number;
+      getVectorsByFactIds?: (
+        ids: string[],
+        opts?: { onChunkProgress?: (loaded: number, total: number) => void },
+      ) => Promise<Map<string, number[]>>;
+      isMemoriesVectorSchemaValid?: () => boolean;
+      isLanceAvailable?: () => boolean;
+    };
+    const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
+    let byId = new Map<string, number[]>();
+    const lanceSchemaOk =
+      typeof vdb.isMemoriesVectorSchemaValid === "function" ? vdb.isMemoriesVectorSchemaValid() : true;
+    const lanceUp = typeof vdb.isLanceAvailable === "function" ? vdb.isLanceAvailable() : true;
+
+    if (verbose && facts.length > 0) {
+      logger.info(
+        `${logPrefix} — ${progressLabel}: starting (${facts.length} row(s); Lance available=${lanceUp}, memories vector schema valid=${lanceSchemaOk}, embedModel=${embeddings.modelName ?? "unknown"})`,
+      );
     }
-  }
 
-  const result: (number[] | null)[] = new Array(facts.length);
-  let lanceHits = 0;
-  let apiEmbeds = 0;
+    const prefetchStart = Date.now();
+    if (typeof vdb.getVectorsByFactIds === "function") {
+      try {
+        if (verbose) {
+          logger.info(
+            `${logPrefix} — ${progressLabel}: Lance bulk fetch for ${facts.length} fact id(s) (indexed id IN queries, chunked)`,
+          );
+        }
+        byId = await vdb.getVectorsByFactIds(
+          facts.map((f) => f.id),
+          verbose
+            ? {
+                onChunkProgress: (loaded, total) => {
+                  logger.info(
+                    `${logPrefix} — ${progressLabel}: Lance id scan ${loaded}/${total}, elapsed=${formatElapsedSec(prefetchStart)}`,
+                  );
+                },
+              }
+            : undefined,
+        );
+      } catch {
+        byId = new Map();
+      }
+      if (verbose) {
+        logger.info(
+          `${logPrefix} — ${progressLabel}: Lance bulk fetch done — ${byId.size} vector(s) present in Lance for requested ids, elapsed=${formatElapsedSec(prefetchStart)}`,
+        );
+      }
+    } else if (verbose) {
+      logger.info(
+        `${logPrefix} — ${progressLabel}: no getVectorsByFactIds on backend — per-row embedding API on cache miss`,
+      );
+    }
 
-  for (let i = 0; i < facts.length; i += 20) {
-    const end = Math.min(i + 20, facts.length);
-    let hadApiEmbed = false;
-    for (let j = i; j < end; j++) {
-      const f = facts[j]!;
-      const cached = byId.get(f.id.toLowerCase());
-      const modelOk =
-        f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
-      const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
-      if (useCache) {
-        result[j] = normalizeVector(cached);
-        lanceHits++;
-      } else {
-        try {
-          const vec = await embeddings.embed(f.text);
-          result[j] = normalizeVector(vec);
-          apiEmbeds++;
-          hadApiEmbed = true;
-        } catch (err) {
-          if (!shouldSuppressEmbeddingError(err)) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: captureOperation,
-              subsystem: "embeddings",
-              factId: f.id,
-            });
+    const result: (number[] | null)[] = new Array(facts.length);
+    let lanceHits = 0;
+    let apiEmbeds = 0;
+    const embedPhaseStart = Date.now();
+    const batchSize = 20;
+    const totalBatches = Math.max(1, Math.ceil(facts.length / batchSize));
+
+    for (let i = 0; i < facts.length; i += batchSize) {
+      const end = Math.min(i + batchSize, facts.length);
+      let hadApiEmbed = false;
+      for (let j = i; j < end; j++) {
+        const f = facts[j]!;
+        const cached = byId.get(f.id.toLowerCase());
+        const modelOk =
+          f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
+        const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
+        if (useCache) {
+          result[j] = normalizeVector(cached);
+          lanceHits++;
+        } else {
+          try {
+            const vec = await embeddings.embed(f.text);
+            result[j] = normalizeVector(vec);
+            apiEmbeds++;
+            hadApiEmbed = true;
+          } catch (err) {
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: captureOperation,
+                subsystem: "embeddings",
+                factId: f.id,
+              });
+            }
+            result[j] = null;
+            hadApiEmbed = true;
           }
-          result[j] = null;
-          hadApiEmbed = true;
         }
       }
+      hb.lanceHits = lanceHits;
+      hb.apiEmbeds = apiEmbeds;
+      hb.rowEnd = end;
+      if (verbose) {
+        const batchNum = Math.floor(i / batchSize) + 1;
+        const logThisBatch = facts.length <= 100 || batchNum === 1 || batchNum === totalBatches || batchNum % 25 === 0;
+        if (logThisBatch) {
+          logger.info(
+            `${logPrefix} — ${progressLabel}: embedding batch ${batchNum}/${totalBatches} rows ${end}/${facts.length} lanceHits=${lanceHits} apiEmbeds=${apiEmbeds} elapsed=${formatElapsedSec(embedPhaseStart)}`,
+          );
+        }
+      }
+      if (hadApiEmbed && end < facts.length) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
     }
-    if (hadApiEmbed && end < facts.length) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
 
-  if (facts.length > 0) {
-    const ok = result.filter((v) => v !== null).length;
-    logger.info(
-      `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
-    );
+    if (facts.length > 0) {
+      const ok = result.filter((v) => v !== null).length;
+      logger.info(
+        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
+      );
+    }
+    return result;
+  };
+
+  if (!verbose) {
+    return runBody();
   }
-  return result;
+  return withVerboseHeartbeat({
+    verbose: true,
+    log: (m) => logger.info(m),
+    prefix: `${logPrefix} — ${progressLabel}`,
+    detail: () => `rows=${hb.rowEnd}/${facts.length} lanceHits=${hb.lanceHits} apiEmbeds=${hb.apiEmbeds}`,
+    fn: runBody,
+  });
 }
 
 /**
@@ -335,6 +417,7 @@ export async function runReflection(
   }
 
   let existingVectors: (number[] | null)[] = [];
+  const corpusLoadStarted = Date.now();
   if (existingPatternFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflection — loading ${existingPatternFacts.length} existing pattern row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
@@ -346,9 +429,15 @@ export async function runReflection(
       logger,
       "memory-hybrid: reflection",
       "reflection-embed-existing",
+      { verbose: opts.verbose, progressLabel: "reflection dedupe (existing corpus)" },
     );
   } else {
     logger.info("memory-hybrid: reflection — no existing pattern facts for dedupe; embedding new candidates only");
+  }
+  if (opts.verbose && existingPatternFacts.length > 0) {
+    logger.info(
+      `memory-hybrid: reflection — existing corpus vectors ready: ${existingVectors.length} slot(s), elapsed=${formatElapsedSec(corpusLoadStarted)}`,
+    );
   }
 
   logger.info(
@@ -359,7 +448,10 @@ export async function runReflection(
   let duplicatesSkipped = 0;
   let newPatternEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const newCandidatePhaseStart = Date.now();
+  let candIndex = 0;
   for (const patternText of uniqueNewPatterns) {
+    candIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(patternText);
@@ -373,6 +465,11 @@ export async function runReflection(
           subsystem: "reflection",
         });
       }
+      if (opts.verbose) {
+        logger.info(
+          `memory-hybrid: reflection — dedupe candidate ${candIndex}/${uniqueNewPatterns.length}: embed failed, skipped | elapsed=${formatElapsedSec(newCandidatePhaseStart)}`,
+        );
+      }
       continue; // Skip this pattern on embed failure
     }
     const normVec = normalizeVector(vec);
@@ -383,6 +480,11 @@ export async function runReflection(
         isDuplicate = true;
         break;
       }
+    }
+    if (opts.verbose) {
+      logger.info(
+        `memory-hybrid: reflection — dedupe candidate ${candIndex}/${uniqueNewPatterns.length}: cosine check done, duplicate=${isDuplicate} | elapsed=${formatElapsedSec(newCandidatePhaseStart)}`,
+      );
     }
     if (isDuplicate) {
       duplicatesSkipped++;
@@ -457,7 +559,8 @@ export async function runReflection(
     factsDb.setMaintenanceState("reflection_input_hash", inputHash);
   }
   logger.info(
-    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
+    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total` +
+      (opts.verbose ? ` | new-candidate phase elapsed=${formatElapsedSec(newCandidatePhaseStart)}` : ""),
   );
 
   return {
@@ -579,6 +682,7 @@ export async function runReflectionRules(
       logger,
       "memory-hybrid: reflect-rules",
       "reflection-rules-embed-existing",
+      { verbose: opts.verbose, progressLabel: "reflect-rules dedupe (existing corpus)" },
     );
   } else {
     logger.info("memory-hybrid: reflect-rules — no existing rule facts for dedupe; embedding new candidates only");
@@ -592,7 +696,10 @@ export async function runReflectionRules(
   let rulesDuplicatesSkipped = 0;
   let newRuleEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const rulesCandidatePhaseStart = Date.now();
+  let ruleCandIndex = 0;
   for (const ruleText of uniqueRules) {
+    ruleCandIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(ruleText);
@@ -606,6 +713,11 @@ export async function runReflectionRules(
           subsystem: "reflection",
         });
       }
+      if (opts.verbose) {
+        logger.info(
+          `memory-hybrid: reflect-rules — dedupe candidate ${ruleCandIndex}/${uniqueRules.length}: embed failed, skipped | elapsed=${formatElapsedSec(rulesCandidatePhaseStart)}`,
+        );
+      }
       continue; // Skip this rule on embed failure
     }
     const normVec = normalizeVector(vec);
@@ -616,6 +728,11 @@ export async function runReflectionRules(
         isDuplicate = true;
         break;
       }
+    }
+    if (opts.verbose) {
+      logger.info(
+        `memory-hybrid: reflect-rules — dedupe candidate ${ruleCandIndex}/${uniqueRules.length}: duplicate=${isDuplicate} | elapsed=${formatElapsedSec(rulesCandidatePhaseStart)}`,
+      );
     }
     if (isDuplicate) {
       rulesDuplicatesSkipped++;
@@ -685,7 +802,8 @@ export async function runReflectionRules(
   }
 
   logger.info(
-    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`,
+    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total` +
+      (opts.verbose ? ` | new-candidate phase elapsed=${formatElapsedSec(rulesCandidatePhaseStart)}` : ""),
   );
 
   return { rulesExtracted: rules.length, rulesStored: stored };
@@ -804,6 +922,7 @@ export async function runReflectionMeta(
       logger,
       "memory-hybrid: reflect-meta",
       "reflection-meta-embed-existing",
+      { verbose: opts.verbose, progressLabel: "reflect-meta dedupe (existing corpus)" },
     );
   } else {
     logger.info("memory-hybrid: reflect-meta — no existing meta-patterns for dedupe; embedding new candidates only");
@@ -817,7 +936,10 @@ export async function runReflectionMeta(
   let metaDuplicatesSkipped = 0;
   let newMetaEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const metaCandidatePhaseStart = Date.now();
+  let metaCandIndex = 0;
   for (const metaText of uniqueMetas) {
+    metaCandIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(metaText);
@@ -831,6 +953,11 @@ export async function runReflectionMeta(
           subsystem: "reflection",
         });
       }
+      if (opts.verbose) {
+        logger.info(
+          `memory-hybrid: reflect-meta — dedupe candidate ${metaCandIndex}/${uniqueMetas.length}: embed failed, skipped | elapsed=${formatElapsedSec(metaCandidatePhaseStart)}`,
+        );
+      }
       continue; // Skip this meta-pattern on embed failure
     }
     const normVec = normalizeVector(vec);
@@ -841,6 +968,11 @@ export async function runReflectionMeta(
         isDuplicate = true;
         break;
       }
+    }
+    if (opts.verbose) {
+      logger.info(
+        `memory-hybrid: reflect-meta — dedupe candidate ${metaCandIndex}/${uniqueMetas.length}: duplicate=${isDuplicate} | elapsed=${formatElapsedSec(metaCandidatePhaseStart)}`,
+      );
     }
     if (isDuplicate) {
       metaDuplicatesSkipped++;
@@ -910,7 +1042,8 @@ export async function runReflectionMeta(
   }
 
   logger.info(
-    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total`,
+    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total` +
+      (opts.verbose ? ` | new-candidate phase elapsed=${formatElapsedSec(metaCandidatePhaseStart)}` : ""),
   );
 
   return { metaExtracted: metas.length, metaStored: stored };

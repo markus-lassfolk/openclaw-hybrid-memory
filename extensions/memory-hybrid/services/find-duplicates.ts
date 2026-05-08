@@ -8,12 +8,15 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { isStructuredForConsolidation } from "./consolidation.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { formatElapsedSec } from "../utils/maintenance-progress.js";
 import { capturePluginError } from "./error-reporter.js";
 
 interface FindDuplicatesOptions {
   threshold: number;
   includeStructured: boolean;
   limit: number;
+  /** Extra embedding / Lance search progress (#1228). */
+  verbose?: boolean;
 }
 
 interface FindDuplicatesResult {
@@ -68,6 +71,9 @@ export async function runFindDuplicates(
   const vectors: number[][] = [];
   const validIds: string[] = [];
   let skippedEmbeddings = 0;
+  const verbose = opts.verbose === true;
+  const embedStarted = Date.now();
+  const totalBatches = Math.max(1, Math.ceil(ids.length / BATCH_SIZE));
 
   for (let i = 0; i < ids.length; i += BATCH_SIZE) {
     const batch = ids.slice(i, i + BATCH_SIZE);
@@ -77,6 +83,12 @@ export async function runFindDuplicates(
     });
     const batchTexts = batchFacts.map(({ fact }) => fact.text);
     const vecs = await safeEmbedBatch(embeddings, batchTexts, (msg) => logger.warn(msg));
+    if (verbose) {
+      const bn = Math.floor(i / BATCH_SIZE) + 1;
+      logger.info(
+        `memory-hybrid: find-duplicates — embed batch ${bn}/${totalBatches} (rows ${Math.min(i + BATCH_SIZE, ids.length)}/${ids.length}), elapsed=${formatElapsedSec(embedStarted)}`,
+      );
+    }
     // Whole batch failed: all slots are null — log once instead of once-per-fact to avoid log spam.
     if (vecs.every((v) => v === null || v.length === 0)) {
       logger.warn(
@@ -106,9 +118,15 @@ export async function runFindDuplicates(
   const idToIndex = new Map(validIds.map((id, idx) => [id, idx]));
   const pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }> = [];
   const searchLimit = Math.min(100, validIds.length);
+  const lanceStarted = Date.now();
 
   // Use LanceDB vector search (indexed) instead of O(n^2) pairwise loop
   for (let i = 0; i < validIds.length; i++) {
+    if (verbose && validIds.length > 0 && (i === 0 || i === validIds.length - 1 || (i + 1) % 50 === 0)) {
+      logger.info(
+        `memory-hybrid: find-duplicates — Lance similarity scan ${i + 1}/${validIds.length}, pairsSoFar=${pairs.length}, elapsed=${formatElapsedSec(lanceStarted)}`,
+      );
+    }
     const vi = vectors[i];
     const idA = validIds[i];
     if (!vi || !idA) continue;
