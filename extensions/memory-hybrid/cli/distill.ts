@@ -100,7 +100,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       "--model <model>",
       "LLM for extraction (recommended: gemini-3.1-pro-preview for 1M context). Default: config.distill.defaultModel or gemini-3.1-pro-preview",
     )
-    .option("--verbose", "Log each fact as it is stored")
+    .option("-v, --verbose", "Log each fact as it is stored")
     .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
     .option(
       "--max-session-tokens <n>",
@@ -192,7 +192,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .description("Extract structured facts from daily memory files")
     .option("--days <n>", "How many days back to scan", "7")
     .option("--dry-run", "Show extractions without storing")
-    .option("--verbose", "Log each extracted fact as it is stored")
+    .option("-v, --verbose", "Log each extracted fact as it is stored")
     .action(
       withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const daysBack = Number.parseInt(opts.days, 10);
@@ -218,7 +218,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
     .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
     .option("--dry-run", "Show what would be stored without writing")
-    .option("--verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
+    .option("-v, --verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
       withExit(
@@ -251,7 +251,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("generate-auto-skills")
     .description("Generate SKILL.md + recipe.json in skills/auto/ for procedures validated enough times")
     .option("--dry-run", "Show what would be generated without writing")
-    .option("--verbose", "Log each generated skill path")
+    .option("-v, --verbose", "Log each generated skill path")
     .action(
       withExit(async (opts: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const result = await runGenerateAutoSkills({
@@ -273,7 +273,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("generate-proposals")
     .description("Generate persona proposals from reflection insights (patterns, rules, meta). Use after reflect-meta.")
     .option("--dry-run", "Show what would be proposed without creating")
-    .option("--verbose", "Log each proposal created")
+    .option("-v, --verbose", "Log each proposal created")
     .action(
       withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         if (!runGenerateProposals) {
@@ -296,7 +296,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("extract-directives")
     .description("Extract directive incidents from session JSONL (10 categories)")
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
-    .option("--verbose", "Log each directive as it is detected")
+    .option("-v, --verbose", "Log each directive as it is detected")
     .option("--dry-run", "Show what would be extracted without storing")
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
@@ -330,7 +330,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("extract-reinforcement")
     .description("Extract reinforcement incidents from session JSONL and annotate facts/procedures")
     .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
-    .option("--verbose", "Log each reinforcement as it is detected")
+    .option("-v, --verbose", "Log each reinforcement as it is detected")
     .option("--dry-run", "Show what would be annotated without storing")
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(

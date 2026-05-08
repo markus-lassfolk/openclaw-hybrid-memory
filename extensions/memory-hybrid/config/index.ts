@@ -23,8 +23,18 @@ export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
 
 import { resolveSecretRef } from "./parsers/core.js";
+import {
+  effectiveMaintenanceFallbackPolicy,
+  filterMaintenanceTierFallbackModels,
+} from "./maintenance-fallback-policy.js";
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
+
+export {
+  describeMaintenanceFallbackPolicy,
+  effectiveMaintenanceFallbackPolicy,
+  isExpensiveMaintenanceFallbackModel,
+} from "./maintenance-fallback-policy.js";
 
 const OPENAI_NANO_CRON_MODEL = "openai/gpt-4.1-nano";
 const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";
@@ -293,6 +303,10 @@ function appendUniqueFallbackList(chain: string[], candidates: string[] | undefi
  * and `distill.fallbackModels` (de-duplicated). That way heavy crons using a single Responses API
  * model (e.g. azure-foundry/o3-pro) can still fail over without duplicating the whole preference list
  * (#1034).
+ *
+ * Maintenance tier (`tier === "maintenance"`): `llm.maintenanceFallbackPolicy` controls whether
+ * expensive models are stripped from automatic fallbacks and whether global fallbacks are merged
+ * when `llm.maintenance` is an explicit list (#1226). Unset policy defaults to `cheap-only`.
  */
 export function resolveReflectionModelAndFallbacks(
   cfg: HybridMemoryConfig,
@@ -302,13 +316,32 @@ export function resolveReflectionModelAndFallbacks(
   const pref = getLLMModelPreference(cronCfg, tier);
   const defaultModel = pref[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
 
-  const chain: string[] = pref.length > 1 ? pref.slice(1) : [];
+  let chain: string[] = pref.length > 1 ? pref.slice(1) : [];
 
-  if (!cfg.llm && chain.length === 0) {
+  const maintPolicy = tier === "maintenance" ? effectiveMaintenanceFallbackPolicy(cfg) : null;
+  const maintenanceArr = cfg.llm?.maintenance;
+  const explicitMaintList = Array.isArray(maintenanceArr) ? maintenanceArr : [];
+  const explicitMaintenance = explicitMaintList.length > 0;
+  const explicitMaintenanceSet =
+    tier === "maintenance" && explicitMaintenance
+      ? new Set(explicitMaintList.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean))
+      : undefined;
+
+  if (tier === "maintenance" && maintPolicy === "cheap-only") {
+    chain = filterMaintenanceTierFallbackModels(chain, defaultModel, explicitMaintenanceSet);
+  }
+
+  const skipGlobalFallbackAppend = tier === "maintenance" && maintPolicy === "explicit-only" && explicitMaintenance;
+
+  if (!cfg.llm && chain.length === 0 && !skipGlobalFallbackAppend) {
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
-  } else if (cfg.llm && chain.length === 0) {
+  } else if (cfg.llm && chain.length === 0 && !skipGlobalFallbackAppend) {
     appendUniqueFallback(chain, cfg.llm.fallbackModel, defaultModel);
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
+  }
+
+  if (tier === "maintenance" && maintPolicy === "cheap-only") {
+    chain = filterMaintenanceTierFallbackModels(chain, defaultModel, explicitMaintenanceSet);
   }
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };

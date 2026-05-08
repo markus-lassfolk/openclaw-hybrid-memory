@@ -101,6 +101,14 @@ export type LLMConfig = {
    * When not set, falls back to the default tier.
    */
   maintenance?: string[];
+  /**
+   * How maintenance-tier commands (distill when `distill.modelTier=maintenance`, dream-cycle, etc.) build
+   * automatic fallback chains (#1226). Unset defaults to `cheap-only` (strip expensive models unless listed in `llm.maintenance`).
+   * - `cheap-only`: strip o3 / gpt-5.4+ / gpt-4o / large MiniMax / Opus / Gemini 3 & 2.5 Pro from automatic fallbacks.
+   * - `explicit-only`: when `llm.maintenance` is non-empty, do not append `llm.fallbackModel` or `distill.fallbackModels`.
+   * - `default` / `allow-heavy`: legacy behaviour — full tier preference + global fallbacks.
+   */
+  maintenanceFallbackPolicy?: "default" | "cheap-only" | "explicit-only" | "allow-heavy";
   /** Ordered preference for default-tier LLM calls (first available wins). */
   default: string[];
   /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */

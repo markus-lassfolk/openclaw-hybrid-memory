@@ -5,8 +5,7 @@
  * required steps completed successfully and fail the job if they didn't.
  */
 
-import { existsSync } from "node:fs";
-import type { Chainable } from "../../shared.js";
+import { type Chainable, withExit } from "../../shared.js";
 import {
   validateMaintenanceExecution,
   generateCronStatusReport,
@@ -23,31 +22,37 @@ export function registerValidateCronExit(hybrid: Chainable): void {
     .option("--allow-skip", "Allow skip variants (e.g., distill-skipped) to count as success")
     .option("--json", "Output JSON result")
     .action(
-      async (opts: {
-        exitPath: string;
-        logPath?: string;
-        requiredSteps: string[];
-        allowSkip?: boolean;
-        json?: boolean;
-      }) => {
-        const result = validateMaintenanceExecution(opts.exitPath, opts.logPath, opts.requiredSteps, !!opts.allowSkip);
+      withExit(
+        async (opts: {
+          exitPath: string;
+          logPath?: string;
+          requiredSteps: string[];
+          allowSkip?: boolean;
+          json?: boolean;
+        }) => {
+          const result = validateMaintenanceExecution(
+            opts.exitPath,
+            opts.logPath,
+            opts.requiredSteps,
+            !!opts.allowSkip,
+          );
 
-        if (opts.json) {
-          console.log(generateCronStatusReport(result));
-        } else {
-          printValidationResult(result);
-        }
+          if (opts.json) {
+            console.log(generateCronStatusReport(result));
+          } else {
+            printValidationResult(result);
+          }
 
-        // Exit with non-zero if maintenance failed
-        if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
-          process.exitCode = 1;
-        }
-      },
+          if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
+            process.exitCode = 1;
+          }
+        },
+      ),
     );
 }
 
 function printValidationResult(result: ExitValidationResult): void {
-  console.log(`\n=== Maintenance Validation ===`);
+  console.log("\n=== Maintenance Validation ===");
   console.log(`Status: ${result.maintenanceStatus.toUpperCase()}`);
 
   if (result.exitPath) {
@@ -68,7 +73,7 @@ function printValidationResult(result: ExitValidationResult): void {
   }
 
   if (result.failedSteps.length > 0) {
-    console.log(`\nFailed steps:`);
+    console.log("\nFailed steps:");
     for (const step of result.failedSteps) {
       console.log(`  ✗ ${step.step} (exit=${step.exitCode})`);
     }
@@ -79,5 +84,5 @@ function printValidationResult(result: ExitValidationResult): void {
   }
 
   console.log(`\nGuard file update: ${result.guardUpdated ? "YES" : "NO"}`);
-  console.log(`==============================\n`);
+  console.log("==============================\n");
 }

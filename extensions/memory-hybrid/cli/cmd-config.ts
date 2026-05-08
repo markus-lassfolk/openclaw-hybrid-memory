@@ -15,6 +15,7 @@ import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   type ConfigMode,
   PRESET_OVERRIDES,
+  describeMaintenanceFallbackPolicy,
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
@@ -308,6 +309,7 @@ export function runConfigViewForCli(
 
   log("Maintenance routing");
   try {
+    log(`  maintenanceFallbackPolicy: ${describeMaintenanceFallbackPolicy(cfg)}`);
     const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
     const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
     const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);

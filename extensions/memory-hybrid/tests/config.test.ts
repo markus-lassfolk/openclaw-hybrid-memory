@@ -1384,6 +1384,75 @@ describe("hybridConfigSchema.parse", () => {
       expect(resolveReflectionModelAndFallbacks(withoutMaintenance, "maintenance").defaultModel).toBe("gpt-4o-mini");
     });
 
+    it("#1226: maintenance cheap-only strips expensive models when tier aliases to llm.default", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          default: [
+            "azure-foundry/gpt-4.1-mini",
+            "azure-foundry/o3",
+            "azure-foundry/gpt-5.4",
+            "openai-platform/gpt-4o",
+            "azure-foundry/gpt-5.4-mini",
+          ],
+          heavy: ["azure-foundry/o3"],
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("azure-foundry/gpt-4.1-mini");
+      expect(r.fallbackModels).toEqual(["azure-foundry/gpt-5.4-mini"]);
+    });
+
+    it("#1226: maintenanceFallbackPolicy default restores expensive fallbacks from llm.default", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          default: ["azure-foundry/gpt-4.1-mini", "azure-foundry/o3"],
+          heavy: ["gpt-4o"],
+          maintenanceFallbackPolicy: "default",
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("azure-foundry/gpt-4.1-mini");
+      expect(r.fallbackModels).toEqual(["azure-foundry/o3"]);
+    });
+
+    it("#1226: explicit-only skips global distill fallbacks when llm.maintenance is set", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: {
+          apiKey: "GEMINI_KEY_LONG_ENOUGH_12345",
+          fallbackModels: ["openai/should-not-append"],
+        },
+        llm: {
+          maintenance: ["gpt-4.1-mini"],
+          default: ["gpt-4.1-mini", "gpt-4o"],
+          heavy: ["gpt-4o"],
+          maintenanceFallbackPolicy: "explicit-only",
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("gpt-4.1-mini");
+      expect(r.fallbackModels).toBeUndefined();
+    });
+
+    it("#1226: cheap-only filters appended distill.fallbackModels for single-model maintenance primary", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: {
+          apiKey: "GEMINI_KEY_LONG_ENOUGH_12345",
+          fallbackModels: ["openai/o3", "openai/gpt-4.1-nano"],
+        },
+        llm: {
+          default: ["gpt-4.1-mini"],
+          heavy: ["gpt-4o"],
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("gpt-4.1-mini");
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-nano"]);
+    });
+
     it("returns heavy tier from llm.heavy with fallbacks when multiple models", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,

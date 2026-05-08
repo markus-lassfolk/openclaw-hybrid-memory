@@ -544,7 +544,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--window <n>", "Days to look back (default from config)", reflectionConfig.defaultWindow.toString())
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .option("--verbose", "Log each pattern as it is extracted")
+    .option("-v, --verbose", "Log each pattern as it is extracted")
     .action(
       withExit(
         async (
@@ -578,7 +578,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .description("Run reflection (rules): extract high-level rules from patterns")
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .option("--verbose", "Log each rule as it is extracted")
+    .option("-v, --verbose", "Log each rule as it is extracted")
     .action(
       withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
@@ -606,7 +606,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .description("Run reflection (meta-patterns): extract meta-patterns from existing patterns")
     .option("--dry-run", "Show what would be stored without storing")
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .option("--verbose", "Log each meta-pattern as it is extracted")
+    .option("-v, --verbose", "Log each meta-pattern as it is extracted")
     .option("--collapse-implicit-feedback", "Collapse near-duplicate implicit-feedback trajectory signals")
     .option(
       "--include-legacy",
@@ -686,7 +686,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       .option("--window <n>", "Days to look back (default from config)", reflectionConfig.defaultWindow.toString())
       .option("--dry-run", "Show what would be stored without storing")
       .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-      .option("--verbose", "Log each identity insight as it is stored")
+      .option("-v, --verbose", "Log each identity insight as it is stored")
       .action(
         withExit(
           async (
@@ -713,7 +713,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       .description(
         "Run nightly dream cycle: prune expired/decayed facts, consolidate old episodic events, reflect to extract patterns, optionally extract rules",
       )
-      .option("--verbose", "Detailed progress (reflection, memory index, WAL flush, nightly follow-up steps)")
+      .option("-v, --verbose", "Detailed progress (reflection, memory index, WAL flush, nightly follow-up steps)")
       .action(
         withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -879,7 +879,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   mem
     .command("resolve-contradictions")
     .description("Resolve unresolved contradictions (auto-resolve obvious cases, report ambiguous pairs)")
-    .option("--verbose", "List every auto-resolved pair and all ambiguous pairs")
+    .option("-v, --verbose", "List every auto-resolved pair and all ambiguous pairs")
     .option(
       "--details",
       "For ambiguous pairs, print entity/key/value summaries (not only UUIDs); implies listing all ambiguous rows",
@@ -1034,7 +1034,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--limit <n>", "Max facts to process (default 200)", "200")
     .option("--model <m>", "LLM model (default: cron nano tier)")
     .option("--dry-run", "Only report how many facts need enrichment")
-    .option("--verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
+    .option("-v, --verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
       withExit(
         async (
@@ -1094,7 +1094,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     )
     .option("--days <n>", "Days to look back (default 7)", "7")
     .option("--output <path>", "Output path for incidents JSON (default: memory/.self-correction-incidents.json)")
-    .option("--verbose", "Log session files scanned (plugin logger) and incident previews on stdout")
+    .option("-v, --verbose", "Log session files scanned (plugin logger) and incident previews on stdout")
     .action(
       withExit(async (opts?: { days?: string; output?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const days = opts?.days ? Number.parseInt(opts.days, 10) : 7;
@@ -1134,7 +1134,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--approve", "Auto-approve all corrections (skip review)")
     .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
     .option("--full", "Force full re-scan (bypass 23-hour startup guard)")
-    .option("--verbose", "Log progress before LLM analysis (plugin logger); respects hybrid-mem -v")
+    .option("-v, --verbose", "Log progress before LLM analysis (plugin logger); respects hybrid-mem -v")
     .action(
       withExit(
         async (
@@ -1214,7 +1214,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       )
       .option("--days <n>", "Days to look back (default 3)", "3")
       .option("--dry-run", "Show what would be stored without storing")
-      .option("--verbose", "Show detailed signal output per session")
+      .option("-v, --verbose", "Show detailed signal output per session")
       .option("--no-trajectories", "Skip trajectory building")
       .option("--no-closed-loop", "Skip closed-loop analysis")
       .action(
@@ -1262,7 +1262,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   mem
     .command("cross-agent-learning")
     .description("Generalise agent-scoped lessons into global patterns (Issue #263 — Phase 2)")
-    .option("--verbose", "Log each LLM batch and use hybrid-mem -v for full plugin output")
+    .option("-v, --verbose", "Log each LLM batch and use hybrid-mem -v for full plugin output")
     .action(
       withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -1334,7 +1334,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   mem
     .command("tool-effectiveness")
     .description("Compute and display tool effectiveness scores from workflow traces (Issue #263 — Phase 3)")
-    .option("--verbose", "Show detailed per-tool breakdown")
+    .option("-v, --verbose", "Show detailed per-tool breakdown")
     .action(
       withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         if (!runToolEffectiveness) {

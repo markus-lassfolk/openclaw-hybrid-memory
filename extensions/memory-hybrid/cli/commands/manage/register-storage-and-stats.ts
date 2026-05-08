@@ -1144,7 +1144,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
   mem
     .command("prune")
     .description("Remove expired facts (decayed past threshold)")
-    .option("--verbose", "List fact ids that will be removed before pruning")
+    .option("-v, --verbose", "List fact ids that will be removed before pruning")
     .action(
       withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);

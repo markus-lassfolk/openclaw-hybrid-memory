@@ -27,6 +27,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.81] - 2026-05-08
+
+### Changed
+
+- Bump plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.5.81** (lockfile aligned).
+
+---
+
 ## [2026.5.80] - 2026-05-08
 
 ### Added
