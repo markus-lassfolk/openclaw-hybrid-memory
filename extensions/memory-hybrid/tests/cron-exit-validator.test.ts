@@ -2,8 +2,7 @@
  * Tests for cron exit ledger validation.
  */
 
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "vitest";
 import {
   parseExitLine,
   validateMaintenanceExecution,
@@ -19,30 +18,30 @@ describe("cron-exit-validator", () => {
     it("should parse valid exit line", () => {
       const line = "2024-05-08T02:15:30Z prune exit=0";
       const result = parseExitLine(line);
-      assert.ok(result);
-      assert.equal(result.timestamp, "2024-05-08T02:15:30Z");
-      assert.equal(result.step, "prune");
-      assert.equal(result.exitCode, 0);
+      expect(result).toBeTruthy();
+      expect(result?.timestamp).toBe("2024-05-08T02:15:30Z");
+      expect(result?.step).toBe("prune");
+      expect(result?.exitCode).toBe(0);
     });
 
     it("should parse line with non-zero exit code", () => {
       const line = "2024-05-08T02:15:30Z distill exit=1";
       const result = parseExitLine(line);
-      assert.ok(result);
-      assert.equal(result.exitCode, 1);
+      expect(result).toBeTruthy();
+      expect(result?.exitCode).toBe(1);
     });
 
     it("should return null for invalid line", () => {
-      assert.equal(parseExitLine("invalid line"), null);
-      assert.equal(parseExitLine(""), null);
-      assert.equal(parseExitLine("2024-05-08 prune exit=0"), null);
+      expect(parseExitLine("invalid line")).toBeNull();
+      expect(parseExitLine("")).toBeNull();
+      expect(parseExitLine("2024-05-08 prune exit=0")).toBeNull();
     });
 
     it("should handle hyphenated step names", () => {
       const line = "2024-05-08T02:15:30Z extract-daily exit=0";
       const result = parseExitLine(line);
-      assert.ok(result);
-      assert.equal(result.step, "extract-daily");
+      expect(result).toBeTruthy();
+      expect(result?.step).toBe("extract-daily");
     });
   });
 
@@ -59,8 +58,8 @@ Job failed
       );
 
       const unknownCommands = checkForUnknownCommands(logPath);
-      assert.equal(unknownCommands.length, 1);
-      assert.equal(unknownCommands[0], "consolidate-episodes");
+      expect(unknownCommands.length).toBe(1);
+      expect(unknownCommands[0]).toBe("consolidate-episodes");
     });
 
     it("should detect multiple unknown commands", () => {
@@ -74,8 +73,8 @@ error: unknown command 'bar'
       );
 
       const unknownCommands = checkForUnknownCommands(logPath);
-      assert.equal(unknownCommands.length, 2);
-      assert.deepEqual(unknownCommands, ["foo", "bar"]);
+      expect(unknownCommands.length).toBe(2);
+      expect(unknownCommands).toEqual(["foo", "bar"]);
     });
 
     it("should return empty array if no unknown commands", () => {
@@ -84,7 +83,7 @@ error: unknown command 'bar'
       writeFileSync(logPath, "Everything ok\nNo errors\n");
 
       const unknownCommands = checkForUnknownCommands(logPath);
-      assert.equal(unknownCommands.length, 0);
+      expect(unknownCommands.length).toBe(0);
     });
   });
 
@@ -106,11 +105,11 @@ error: unknown command 'bar'
         ["prune", "distill", "extract-daily"],
       );
 
-      assert.equal(result.maintenanceStatus, "success");
-      assert.equal(result.guardUpdated, true);
-      assert.equal(result.missingSteps.length, 0);
-      assert.equal(result.failedSteps.length, 0);
-      assert.equal(result.steps.length, 3);
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.missingSteps.length).toBe(0);
+      expect(result.failedSteps.length).toBe(0);
+      expect(result.steps.length).toBe(3);
     });
 
     it("should report failed when a step has non-zero exit", () => {
@@ -129,11 +128,11 @@ error: unknown command 'bar'
         ["prune", "distill"],
       );
 
-      assert.equal(result.maintenanceStatus, "failed");
-      assert.equal(result.guardUpdated, false);
-      assert.equal(result.failedSteps.length, 1);
-      assert.equal(result.failedSteps[0].step, "distill");
-      assert.equal(result.failedSteps[0].exitCode, 1);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.length).toBe(1);
+      expect(result.failedSteps[0].step).toBe("distill");
+      expect(result.failedSteps[0].exitCode).toBe(1);
     });
 
     it("should report partial when steps are missing", () => {
@@ -151,10 +150,10 @@ error: unknown command 'bar'
         ["prune", "distill", "extract-daily"],
       );
 
-      assert.equal(result.maintenanceStatus, "partial");
-      assert.equal(result.guardUpdated, false);
-      assert.equal(result.missingSteps.length, 2);
-      assert.deepEqual(result.missingSteps, ["distill", "extract-daily"]);
+      expect(result.maintenanceStatus).toBe("partial");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.missingSteps.length).toBe(2);
+      expect(result.missingSteps).toEqual(["distill", "extract-daily"]);
     });
 
     it("should report skipped when all steps are missing", () => {
@@ -168,8 +167,8 @@ error: unknown command 'bar'
         ["prune", "distill"],
       );
 
-      assert.equal(result.maintenanceStatus, "skipped");
-      assert.equal(result.guardUpdated, false);
+      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.guardUpdated).toBe(false);
     });
 
     it("should accept skip variants when allowSkip is true", () => {
@@ -189,9 +188,9 @@ error: unknown command 'bar'
         true, // allowSkip
       );
 
-      assert.equal(result.maintenanceStatus, "success");
-      assert.equal(result.guardUpdated, true);
-      assert.equal(result.missingSteps.length, 0);
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.missingSteps.length).toBe(0);
     });
 
     it("should fail when unknown command detected in log", () => {
@@ -211,9 +210,9 @@ error: unknown command 'bar'
         ["prune"],
       );
 
-      assert.equal(result.maintenanceStatus, "failed");
-      assert.equal(result.guardUpdated, false);
-      assert.ok(result.error?.includes("consolidate-episodes"));
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.error).toContain("consolidate-episodes");
     });
 
     it("should fail when exit file does not exist", () => {
@@ -223,9 +222,9 @@ error: unknown command 'bar'
         ["prune"],
       );
 
-      assert.equal(result.maintenanceStatus, "failed");
-      assert.equal(result.guardUpdated, false);
-      assert.ok(result.error?.includes("not found"));
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.error).toContain("not found");
     });
   });
 });
