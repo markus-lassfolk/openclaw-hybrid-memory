@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **Node.js**: Minimum version is now **22.13.0** so built-in `node:sqlite` is available without `--experimental-sqlite` (matches CI `.nvmrc` and `engines`).
+- **Node.js**: Minimum version is now **22.16.0** so built-in `node:sqlite` includes **FTS5** (needed for hybrid search) and does not require `--experimental-sqlite` (matches CI `.nvmrc` and `engines`; see [nodejs/node#57621](https://github.com/nodejs/node/pull/57621)).
 
 ---
 

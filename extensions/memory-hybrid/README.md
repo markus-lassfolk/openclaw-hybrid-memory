@@ -24,7 +24,7 @@ Upgrade: `openclaw hybrid-mem upgrade` (then restart the gateway).
 
 | Requirement | Notes |
 |-------------|--------|
-| **Node.js** | `>=22.13.0` (`engines` in `package.json`) |
+| **Node.js** | `>=22.16.0` (`engines` in `package.json`) |
 | **OpenClaw** | v2026.3.8+ (peer); current 2026.3.x recommended |
 | **Embeddings** | Required — OpenAI, Ollama, ONNX, or Google; see [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md) |
 | **Build toolchain** | For `@lancedb/lancedb`: C++ build tools + Python 3 on the install machine |
