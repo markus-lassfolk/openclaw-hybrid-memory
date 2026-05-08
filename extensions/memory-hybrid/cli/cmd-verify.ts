@@ -1447,7 +1447,9 @@ export async function runVerifyForCli(
   }
 
   // Warn if the stored cron messages or recent exit logs reference deprecated CLI commands/steps.
-  const deprecatedCronJobs = Array.from(allJobs.values()).filter((j) => (j.deprecatedCronTokens?.length ?? 0) > 0);
+  const deprecatedCronJobs = Array.from(allJobs.values()).filter(
+    (j) => (j.deprecatedCronTokens?.length ?? 0) > 0 && j.featureGateDisabled !== true,
+  );
   if (deprecatedCronJobs.length > 0) {
     const affected = deprecatedCronJobs
       .slice(0, 5)
