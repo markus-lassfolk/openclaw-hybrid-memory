@@ -441,7 +441,7 @@ describe("EventLog.getStats", () => {
 // ---------------------------------------------------------------------------
 
 describe("EventLog CHECK constraint", () => {
-  it("rejects an invalid event_type", () => {
+  it("persists event_type verbatim (schema no longer enforces CHECK; see migrateEventLogRelaxEventTypeCheck)", () => {
     expect(() => {
       log.append({
         sessionId: "s",
@@ -449,7 +449,7 @@ describe("EventLog CHECK constraint", () => {
         eventType: "invalid_type" as never,
         content: {},
       });
-    }).toThrow();
+    }).not.toThrow();
   });
 
   it("accepts all valid event types", () => {
