@@ -12,6 +12,7 @@ import type {
   ConfigCliResult,
   CredentialsAuditResult,
   CredentialsPruneResult,
+  EncryptVaultResult,
   FindDuplicatesResult,
   IngestFilesResult,
   IngestFilesSink,
@@ -44,6 +45,7 @@ export type ManageContext = {
     sink: IngestFilesSink,
   ) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runEncryptVault: (opts: { yes?: boolean }) => EncryptVaultResult;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
   runCredentialsGet: (opts: {
     service: string;
@@ -53,7 +55,10 @@ export type ManageContext = {
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
-  runConfigView: (sink: import("./types.js").VerifyCliSink) => void;
+  runConfigView: (
+    sink: import("./types.js").VerifyCliSink,
+    opts?: { format?: "text" | "json"; featuresOnly?: boolean },
+  ) => void;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSetHelp: (key: string) => ConfigCliResult | Promise<ConfigCliResult>;

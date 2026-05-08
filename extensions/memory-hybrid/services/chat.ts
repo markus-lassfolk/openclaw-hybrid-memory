@@ -798,6 +798,40 @@ export async function chatCompleteWithRetry(opts: {
   /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
   feature?: string;
 }): Promise<string> {
+  return (await chatCompleteWithRetryDetailed(opts)).content;
+}
+
+export type ChatCompleteWithRetryDetails = {
+  content: string;
+  modelUsed: string;
+  /**
+   * Effective model attempt order (primary then fallbacks). This is the full chain that was eligible
+   * for attempts; some models may still have been skipped due to AbortSignal pre-checks.
+   */
+  attemptChain: string[];
+};
+
+/**
+ * Like {@link chatCompleteWithRetry} but returns which model actually produced the response.
+ * Used by maintenance commands to log the effective model selected after fallbacks.
+ */
+export async function chatCompleteWithRetryDetailed(opts: {
+  model: string;
+  content: string;
+  temperature?: number;
+  maxTokens?: number;
+  openai: OpenAI;
+  fallbackModels?: string[];
+  label?: string;
+  /** Timeout per model attempt (passed to chatComplete). Default 45s. */
+  timeoutMs?: number;
+  /** When aborted (e.g. parent step timeout), the request is cancelled and no fallback models are tried. */
+  signal?: AbortSignal;
+  /** Optional per-instance warning queue for missing provider keys. */
+  pendingWarnings?: PendingLLMWarnings;
+  /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
+  feature?: string;
+}): Promise<ChatCompleteWithRetryDetails> {
   const {
     fallbackModels = [],
     label: rawLabel,
@@ -813,6 +847,7 @@ export async function chatCompleteWithRetry(opts: {
 
   let lastError: Error | undefined;
   let unconfiguredCount = 0;
+  let lastAttemptedModel = opts.model;
 
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
@@ -823,12 +858,13 @@ export async function chatCompleteWithRetry(opts: {
       throw abortError;
     }
     const currentModel = modelsToTry[i];
+    lastAttemptedModel = currentModel;
     const _isFallback = i > 0;
     // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
     try {
-      return await withLLMRetry(
+      const content = await withLLMRetry(
         () =>
           chatComplete({
             ...chatOpts,
@@ -844,6 +880,7 @@ export async function chatCompleteWithRetry(opts: {
           llmContext: { model: currentModel, operation: label },
         },
       );
+      return { content, modelUsed: currentModel, attemptChain: modelsToTry };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
@@ -1007,6 +1044,9 @@ export async function chatCompleteWithRetry(opts: {
       phase: "fallback-exhausted",
     });
   }
+
+  // Let callers (e.g. adaptive distill) attribute limits to the model that actually failed last.
+  Object.assign(finalError, { lastAttemptedModel });
 
   throw finalError;
 }

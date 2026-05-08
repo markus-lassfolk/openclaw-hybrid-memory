@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureMaintenanceCronJobs } from "../cli/cmd-install.js";
+import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../services/cron-job-bash-harness.js";
 
 function readJobs(openclawDir: string): Array<Record<string, unknown>> {
   const raw = readFileSync(join(openclawDir, "cron", "jobs.json"), "utf-8");
@@ -173,5 +174,43 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     const twice = readFileSync(join(openclawDir, "cron", "jobs.json"), "utf-8");
 
     expect(twice).toBe(once);
+  });
+
+  it("injects a robust env sanitizer into existing managed cron messages (#1205)", () => {
+    const openclawDir = newOpenclawDir();
+    seedMaintenanceJobs(openclawDir);
+
+    const jobs = readJobs(openclawDir);
+    const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill");
+    expect(target).toBeTruthy();
+
+    const payload =
+      target && typeof target.payload === "object" && target.payload !== null
+        ? (target.payload as Record<string, unknown>)
+        : {};
+    const message = String(
+      (payload as { message?: unknown }).message ?? (target as { message?: unknown }).message ?? "",
+    );
+    expect(message).toContain(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER);
+
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const stripped = message.replace(
+      new RegExp(`${esc(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)}\\nopenclaw\\(\\) \\{\\n[^\\n]*\\n\\}\\n?`, "m"),
+      "",
+    );
+    if (payload && typeof (payload as { message?: unknown }).message === "string") {
+      (payload as { message?: string }).message = stripped;
+      target!.payload = payload;
+    } else {
+      target!.message = stripped;
+    }
+    writeJobs(openclawDir, jobs);
+
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+
+    const after = readJobs(openclawDir);
+    const fixed = after.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill");
+    expect(fixed).toBeTruthy();
+    expect(JSON.stringify(fixed)).toContain(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER);
   });
 });

@@ -22,7 +22,7 @@ import {
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
+import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
 import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
@@ -43,6 +43,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -212,6 +213,7 @@ export async function runExtractDirectivesForCli(
 ): Promise<DirectiveExtractResult & { stored?: number }> {
   const { factsDb, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
+  logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
@@ -400,11 +402,24 @@ export async function runExtractReinforcementForCli(
           incidents_json: JSON.stringify(result.incidents),
         });
         const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+        const tierPrefWithSources = resolveTierPreferenceWithSources(
+          cfg,
+          extractionTier as "nano" | "default" | "heavy",
+        );
         const cronCfg = getCronModelConfig(cfg);
         const tierPref = getLLMModelPreference(cronCfg, extractionTier);
         const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
         const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
-        const content = await chatCompleteWithRetry({
+        const modelSource =
+          tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
+        logger.info?.(`memory-hybrid: extract-reinforcement analysis tier = ${extractionTier}`);
+        logger.info?.(
+          `memory-hybrid: extract-reinforcement analysis starting with model ${model} (source=${modelSource})`,
+        );
+        logger.info?.(
+          `memory-hybrid: extract-reinforcement analysis fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+        );
+        const detail = await chatCompleteWithRetryDetailed({
           model,
           content: prompt,
           temperature: 0.2,
@@ -414,7 +429,12 @@ export async function runExtractReinforcementForCli(
           label: "memory-hybrid: reinforcement analyze",
           feature: CostFeature.extractReinforcement,
         });
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (detail.modelUsed !== model) {
+          logger.info?.(
+            `memory-hybrid: extract-reinforcement analysis succeeded with fallback model ${detail.modelUsed}`,
+          );
+        }
+        const jsonMatch = detail.content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
           analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
@@ -770,7 +790,7 @@ export async function runGenerateProposalsForCli(
   const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []);
   let rawResponse: string;
   try {
-    rawResponse = await chatCompleteWithRetry({
+    const detail = await chatCompleteWithRetryDetailed({
       model,
       content: prompt,
       temperature: 0.3,
@@ -780,6 +800,7 @@ export async function runGenerateProposalsForCli(
       label: "memory-hybrid: generate-proposals",
       feature: CostFeature.generateProposals,
     });
+    rawResponse = detail.content;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(
