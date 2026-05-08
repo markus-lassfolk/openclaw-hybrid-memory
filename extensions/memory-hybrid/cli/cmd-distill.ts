@@ -465,12 +465,10 @@ export async function runDistillForCli(
     while (cursorBlock < blocks.length) {
       batchNum++;
       const limits = effectiveLimitsForModel(model);
-      const fallbackBatchLimits = distillFallbacks.map((m) => effectiveLimitsForModel(m).batchTokenLimit);
-      const safeBatchTokenLimit = Math.min(limits.batchTokenLimit, ...fallbackBatchLimits);
-      const batch = buildBatch(cursorBlock, safeBatchTokenLimit);
+      const batch = buildBatch(cursorBlock, limits.batchTokenLimit);
       if (batch.count <= 0) {
         sink.warn(
-          `memory-hybrid: distill: could not fit next block into safe batchTokenLimit=${safeBatchTokenLimit}; skipping one block`,
+          `memory-hybrid: distill: could not fit next block into batchTokenLimit=${limits.batchTokenLimit}; skipping one block`,
         );
         cursorBlock++;
         processedBlocks++;

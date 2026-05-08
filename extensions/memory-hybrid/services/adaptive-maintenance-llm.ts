@@ -130,7 +130,16 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
         usedBatchTokenLimit: Math.min(effective.batchTokenLimit, usedCatalogBatch),
         usedMaxOutputTokens: Math.min(maxTokens, usedCatalogOutput),
       });
-      if (adaptiveStatePath) saveAdaptiveModelLimits(adaptiveStatePath, state);
+      if (adaptiveStatePath) {
+        try {
+          saveAdaptiveModelLimits(adaptiveStatePath, state);
+        } catch (saveErr) {
+          capturePluginError(saveErr instanceof Error ? saveErr : new Error(String(saveErr)), {
+            subsystem: "cli",
+            operation: "adaptive-maintenance-llm-save",
+          });
+        }
+      }
     }
     if (detail.modelUsed !== opts.model) {
       opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed}`);
