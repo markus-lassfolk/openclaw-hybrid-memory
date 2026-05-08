@@ -24,13 +24,26 @@ import {
 import { getEnv } from "../utils/env-manager.js";
 import { formatElapsedSec, withVerboseHeartbeat } from "../utils/maintenance-progress.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError } from "./chat.js";
+import { LLMRetryError, parseRetryAfterMs } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
+import {
+  computeDedupeCorpusFingerprint,
+  CONSOLIDATE_REFLECTION_DEDUPE_HYDRATION,
+  DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+  dedupeHydrationStateKey,
+  isEmbeddingRateLimitError,
+  readDedupeHydrationCheckpoint,
+  REFLECTION_DEDUPE_CHECKPOINT_VERSION,
+  reflectionLexicalNearDuplicateAgainstFact,
+  writeDedupeHydrationCheckpoint,
+  type DedupeCorpusCheckpointKind,
+  type ReflectionDedupeHydrationResolved,
+} from "./reflection-dedupe-hydration.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -61,6 +74,8 @@ interface ReflectionOptions {
   fallbackModels?: string[];
   modelSource?: string;
   adaptiveStatePath?: string;
+  /** Resolved hydration throttle + cap (#1229). When omitted, defaults for consolidate-style paths. */
+  dedupeHydration?: ReflectionDedupeHydrationResolved;
 }
 
 interface ReflectionResult {
@@ -105,31 +120,61 @@ export function dotProductSimilarity(a: number[], b: number[]): number {
   return dot;
 }
 
+export interface ReflectionDedupeCorpusCheckpointOpts {
+  factsDb: FactsDB;
+  kind: DedupeCorpusCheckpointKind;
+}
+
 export interface ReflectionDedupeCorpusOptions {
   /** When true, emit Lance chunk lines, embedding batch milestones, and idle heartbeats (#1228). */
   verbose?: boolean;
   /** Short label for progress lines (e.g. `reflection dedupe`). */
   progressLabel?: string;
+  /** When set, persist/resume hydration cursor across runs (#1229). */
+  checkpoint?: ReflectionDedupeCorpusCheckpointOpts;
+  /** Throttle + cap; default depends on checkpoint (dream-cycle vs consolidate). */
+  hydrationPolicy?: ReflectionDedupeHydrationResolved;
+}
+
+export interface ReflectionDedupeCorpusResult {
+  vectors: (number[] | null)[];
+  hydration: {
+    complete: boolean;
+    totalRows: number;
+    needEmbedTotal: number;
+    /** Next index into the sorted need-embed list for resume (see maintenance_state). */
+    checkpointNextNeedIdx: number;
+    deferredDueToRateLimit: boolean;
+    deferredDueToCap: boolean;
+    apiEmbedsThisRun: number;
+    lanceHits: number;
+    vectorsNonNull: number;
+    /** False when some rows still lack vectors — use lexical fallback for those slots (#1229). */
+    vectorsCompleteForCosine: boolean;
+  };
 }
 
 /**
- * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
- * else call the embedding API. Batches API calls (20) with a short pause only when a batch used the API.
+ * Build normalized dedupe-corpus vectors: Lance first, then throttled embedding with
+ * checkpoints, 429 backpressure, per-run caps, and resumable backlog (#1229).
  */
 export async function loadReflectionDedupeCorpusVectors(
   facts: MemoryEntry[],
   embeddings: EmbeddingProvider,
   vectorDb: VectorDB,
-  logger: { info: (msg: string) => void },
+  logger: { info: (msg: string) => void; warn?: (msg: string) => void },
   logPrefix: string,
   captureOperation: string,
   corpusOpts?: ReflectionDedupeCorpusOptions,
-): Promise<(number[] | null)[]> {
+): Promise<ReflectionDedupeCorpusResult> {
   const verbose = corpusOpts?.verbose === true;
   const progressLabel = corpusOpts?.progressLabel ?? "dedupe corpus";
-  const hb = { lanceHits: 0, apiEmbeds: 0, rowEnd: 0 };
+  const policy =
+    corpusOpts?.hydrationPolicy ??
+    (corpusOpts?.checkpoint ? DEFAULT_REFLECTION_DEDUPE_HYDRATION : CONSOLIDATE_REFLECTION_DEDUPE_HYDRATION);
+  const hb = { lanceHits: 0, apiEmbeds: 0, rowEnd: 0, needK: 0, needTotal: 0 };
 
-  const runBody = async (): Promise<(number[] | null)[]> => {
+  const runBody = async (): Promise<ReflectionDedupeCorpusResult> => {
     const vdb = vectorDb as VectorDB & {
       getVectorDim?: () => number;
       getVectorsByFactIds?: (
@@ -147,7 +192,7 @@ export async function loadReflectionDedupeCorpusVectors(
 
     if (verbose && facts.length > 0) {
       logger.info(
-        `${logPrefix} — ${progressLabel}: starting (${facts.length} row(s); Lance available=${lanceUp}, memories vector schema valid=${lanceSchemaOk}, embedModel=${embeddings.modelName ?? "unknown"})`,
+        `${logPrefix} — ${progressLabel}: starting (${facts.length} row(s); Lance available=${lanceUp}, memories vector schema valid=${lanceSchemaOk}, embedModel=${embeddings.modelName ?? "unknown"}; maxEmbedsPerRun=${policy.maxEmbedsPerRun || "∞"}, minIntervalMs=${policy.minIntervalMsBetweenEmbeds})`,
       );
     }
 
@@ -185,32 +230,110 @@ export async function loadReflectionDedupeCorpusVectors(
       );
     }
 
-    const result: (number[] | null)[] = new Array(facts.length);
+    const result: (number[] | null)[] = new Array(facts.length).fill(null);
     let lanceHits = 0;
-    let apiEmbeds = 0;
-    const embedPhaseStart = Date.now();
-    const batchSize = 20;
-    const totalBatches = Math.max(1, Math.ceil(facts.length / batchSize));
+    const modelKey = embeddings.modelName ?? "";
+    for (let j = 0; j < facts.length; j++) {
+      const f = facts[j]!;
+      const cached = byId.get(f.id.toLowerCase());
+      const modelOk =
+        f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
+      const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
+      if (useCache) {
+        result[j] = normalizeVector(cached);
+        lanceHits++;
+      }
+    }
 
-    for (let i = 0; i < facts.length; i += batchSize) {
-      const end = Math.min(i + batchSize, facts.length);
-      let hadApiEmbed = false;
-      for (let j = i; j < end; j++) {
-        const f = facts[j]!;
-        const cached = byId.get(f.id.toLowerCase());
-        const modelOk =
-          f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
-        const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
-        if (useCache) {
-          result[j] = normalizeVector(cached);
-          lanceHits++;
-        } else {
-          try {
-            const vec = await embeddings.embed(f.text);
-            result[j] = normalizeVector(vec);
-            apiEmbeds++;
-            hadApiEmbed = true;
-          } catch (err) {
+    const needEmbedIndices: number[] = [];
+    for (let j = 0; j < facts.length; j++) {
+      if (result[j] === null) needEmbedIndices.push(j);
+    }
+    needEmbedIndices.sort((a, b) => facts[a]!.id.toLowerCase().localeCompare(facts[b]!.id.toLowerCase()));
+    const sortedIds = [...facts.map((f) => f.id)].map((id) => id.toLowerCase()).sort();
+    const fp = computeDedupeCorpusFingerprint(sortedIds, modelKey);
+    const stateKey = corpusOpts?.checkpoint ? dedupeHydrationStateKey(corpusOpts.checkpoint.kind) : "";
+
+    let nextK = 0;
+    if (corpusOpts?.checkpoint) {
+      const cp = readDedupeHydrationCheckpoint(corpusOpts.checkpoint.factsDb, stateKey);
+      if (cp && cp.fp === fp && cp.model === modelKey) {
+        nextK = Math.min(cp.nextNeedIdx, needEmbedIndices.length);
+      }
+    }
+
+    let checkpointNextIdx = nextK;
+    let apiEmbedsThisRun = 0;
+    let deferredDueToRateLimit = false;
+    let deferredDueToCap = false;
+    let lastEmbedAt = 0;
+    let consecutive429 = 0;
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const embedPhaseStart = Date.now();
+    hb.needTotal = needEmbedIndices.length;
+
+    const persistCheckpoint = (nextNeedIdx: number) => {
+      checkpointNextIdx = nextNeedIdx;
+      if (!corpusOpts?.checkpoint) return;
+      writeDedupeHydrationCheckpoint(corpusOpts.checkpoint.factsDb, stateKey, {
+        v: REFLECTION_DEDUPE_CHECKPOINT_VERSION,
+        fp,
+        model: modelKey,
+        nextNeedIdx,
+      });
+    };
+
+    for (let kk = nextK; kk < needEmbedIndices.length; kk++) {
+      hb.needK = kk;
+      if (policy.maxEmbedsPerRun > 0 && apiEmbedsThisRun >= policy.maxEmbedsPerRun) {
+        deferredDueToCap = true;
+        persistCheckpoint(kk);
+        logger.info(
+          `${logPrefix} — ${progressLabel}: hydration cap — processed=${kk}/${needEmbedIndices.length} embed API calls this run=${apiEmbedsThisRun} cap=${policy.maxEmbedsPerRun} remaining=${needEmbedIndices.length - kk} checkpoint nextNeedIdx=${kk} (#1229)`,
+        );
+        break;
+      }
+
+      const j = needEmbedIndices[kk]!;
+      const f = facts[j]!;
+      const gap = lastEmbedAt + policy.minIntervalMsBetweenEmbeds - Date.now();
+      if (gap > 0) await sleep(gap);
+
+      let done = false;
+      while (!done && !deferredDueToRateLimit) {
+        try {
+          const vec = await embeddings.embed(f.text);
+          result[j] = normalizeVector(vec);
+          apiEmbedsThisRun++;
+          consecutive429 = 0;
+          lastEmbedAt = Date.now();
+          done = true;
+          hb.rowEnd = j + 1;
+          hb.lanceHits = lanceHits;
+          hb.apiEmbeds = apiEmbedsThisRun;
+          if (corpusOpts?.checkpoint && (apiEmbedsThisRun % 8 === 0 || kk === needEmbedIndices.length - 1)) {
+            persistCheckpoint(kk + 1);
+          }
+        } catch (err) {
+          if (isEmbeddingRateLimitError(err)) {
+            consecutive429++;
+            const e = err instanceof Error ? err : new Error(String(err));
+            const ra = parseRetryAfterMs(e);
+            const exp = policy.baseBackoffMsAfter429 * 2 ** Math.max(0, consecutive429 - 1);
+            const backMs = Math.min(180_000, Math.max(ra ?? 0, exp));
+            const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+            logWarn(
+              `${logPrefix} — ${progressLabel}: embedding rate-limited — backing off ${backMs}ms (consecutive=${consecutive429}/${policy.maxConsecutive429BeforeDefer}, backlog kk=${kk}/${needEmbedIndices.length}) (#1229)`,
+            );
+            await sleep(backMs);
+            if (consecutive429 >= policy.maxConsecutive429BeforeDefer) {
+              deferredDueToRateLimit = true;
+              persistCheckpoint(kk);
+              logger.info(
+                `${logPrefix} — ${progressLabel}: deferring hydration — processed=${kk}/${needEmbedIndices.length} remaining=${needEmbedIndices.length - kk} deferred_due_to_rate_limit=1 checkpoint nextNeedIdx=${kk} vectors_created_this_run=${apiEmbedsThisRun} (#1229)`,
+              );
+            }
+          } else {
             if (!shouldSuppressEmbeddingError(err)) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: captureOperation,
@@ -219,34 +342,55 @@ export async function loadReflectionDedupeCorpusVectors(
               });
             }
             result[j] = null;
-            hadApiEmbed = true;
+            done = true;
           }
         }
       }
-      hb.lanceHits = lanceHits;
-      hb.apiEmbeds = apiEmbeds;
-      hb.rowEnd = end;
+      if (deferredDueToRateLimit) break;
+
       if (verbose) {
-        const batchNum = Math.floor(i / batchSize) + 1;
-        const logThisBatch = facts.length <= 100 || batchNum === 1 || batchNum === totalBatches || batchNum % 25 === 0;
-        if (logThisBatch) {
+        const logEvery =
+          needEmbedIndices.length <= 80 || kk === 0 || kk === needEmbedIndices.length - 1 || kk % 40 === 0;
+        if (logEvery) {
           logger.info(
-            `${logPrefix} — ${progressLabel}: embedding batch ${batchNum}/${totalBatches} rows ${end}/${facts.length} lanceHits=${lanceHits} apiEmbeds=${apiEmbeds} elapsed=${formatElapsedSec(embedPhaseStart)}`,
+            `${logPrefix} — ${progressLabel}: embed progress kk=${kk + 1}/${needEmbedIndices.length} apiEmbeds=${apiEmbedsThisRun} lanceHits=${lanceHits} elapsed=${formatElapsedSec(embedPhaseStart)}`,
           );
         }
       }
-      if (hadApiEmbed && end < facts.length) {
-        await new Promise((r) => setTimeout(r, 200));
-      }
     }
 
+    if (!deferredDueToRateLimit && !deferredDueToCap && corpusOpts?.checkpoint) {
+      persistCheckpoint(needEmbedIndices.length);
+    }
+
+    const nonNull = result.filter((v) => v !== null).length;
+    const complete = !deferredDueToRateLimit && !deferredDueToCap;
+    const remainingNeed = Math.max(0, needEmbedIndices.length - checkpointNextIdx);
+
     if (facts.length > 0) {
-      const ok = result.filter((v) => v !== null).length;
       logger.info(
-        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
+        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbedsThisRun} via embedding API, ${nonNull}/${facts.length} non-null for cosine check` +
+          (deferredDueToRateLimit || deferredDueToCap
+            ? ` | backlog need_embed_total=${needEmbedIndices.length} remaining=${remainingNeed} checkpoint_nextNeedIdx=${checkpointNextIdx} deferred429=${deferredDueToRateLimit ? 1 : 0} deferredCap=${deferredDueToCap ? 1 : 0} (#1229)`
+            : ""),
       );
     }
-    return result;
+
+    return {
+      vectors: result,
+      hydration: {
+        complete,
+        totalRows: facts.length,
+        needEmbedTotal: needEmbedIndices.length,
+        checkpointNextNeedIdx: checkpointNextIdx,
+        deferredDueToRateLimit,
+        deferredDueToCap,
+        apiEmbedsThisRun,
+        lanceHits,
+        vectorsNonNull: nonNull,
+        vectorsCompleteForCosine: facts.length === 0 || nonNull === facts.length,
+      },
+    };
   };
 
   if (!verbose) {
@@ -256,7 +400,8 @@ export async function loadReflectionDedupeCorpusVectors(
     verbose: true,
     log: (m) => logger.info(m),
     prefix: `${logPrefix} — ${progressLabel}`,
-    detail: () => `rows=${hb.rowEnd}/${facts.length} lanceHits=${hb.lanceHits} apiEmbeds=${hb.apiEmbeds}`,
+    detail: () =>
+      `rows=${hb.rowEnd}/${facts.length} lanceHits=${hb.lanceHits} apiEmbeds=${hb.apiEmbeds} needEmbed=${hb.needK}/${hb.needTotal}`,
     fn: runBody,
   });
 }
@@ -417,20 +562,42 @@ export async function runReflection(
   }
 
   let existingVectors: (number[] | null)[] = [];
+  let patternCorpusHydration = {
+    vectorsCompleteForCosine: true,
+    complete: true,
+    needEmbedTotal: 0,
+    checkpointNextNeedIdx: 0,
+    deferredDueToRateLimit: false,
+    deferredDueToCap: false,
+    apiEmbedsThisRun: 0,
+    vectorsNonNull: 0,
+  };
   const corpusLoadStarted = Date.now();
   if (existingPatternFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflection — loading ${existingPatternFacts.length} existing pattern row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
     );
-    existingVectors = await loadReflectionDedupeCorpusVectors(
+    const corpusRes = await loadReflectionDedupeCorpusVectors(
       existingPatternFacts,
       embeddings,
       vectorDb,
       logger,
       "memory-hybrid: reflection",
       "reflection-embed-existing",
-      { verbose: opts.verbose, progressLabel: "reflection dedupe (existing corpus)" },
+      {
+        verbose: opts.verbose,
+        progressLabel: "reflection dedupe (existing corpus)",
+        checkpoint: { factsDb, kind: "pattern" },
+        hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+      },
     );
+    existingVectors = corpusRes.vectors;
+    patternCorpusHydration = corpusRes.hydration;
+    if (!corpusRes.hydration.vectorsCompleteForCosine) {
+      logger.info(
+        `memory-hybrid: reflection — dedupe corpus hydration partial: vectors_non_null=${corpusRes.hydration.vectorsNonNull}/${corpusRes.hydration.totalRows} need_embed_total=${corpusRes.hydration.needEmbedTotal} remaining_next_idx=${corpusRes.hydration.checkpointNextNeedIdx} — lexical fallback for rows without vectors (#1229)`,
+      );
+    }
   } else {
     logger.info("memory-hybrid: reflection — no existing pattern facts for dedupe; embedding new candidates only");
   }
@@ -474,16 +641,24 @@ export async function runReflection(
     }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
+    for (let ei = 0; ei < existingVectors.length; ei++) {
+      const ev = existingVectors[ei];
+      if (ev !== null && ev.length > 0) {
+        if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+          isDuplicate = true;
+          break;
+        }
+      } else if (!patternCorpusHydration.vectorsCompleteForCosine) {
+        const prior = existingPatternFacts[ei];
+        if (prior && reflectionLexicalNearDuplicateAgainstFact(patternText, prior.text)) {
+          isDuplicate = true;
+          break;
+        }
       }
     }
     if (opts.verbose) {
       logger.info(
-        `memory-hybrid: reflection — dedupe candidate ${candIndex}/${uniqueNewPatterns.length}: cosine check done, duplicate=${isDuplicate} | elapsed=${formatElapsedSec(newCandidatePhaseStart)}`,
+        `memory-hybrid: reflection — dedupe candidate ${candIndex}/${uniqueNewPatterns.length}: cosine/lexical check done, duplicate=${isDuplicate} | elapsed=${formatElapsedSec(newCandidatePhaseStart)}`,
       );
     }
     if (isDuplicate) {
@@ -586,6 +761,7 @@ export async function runReflectionRules(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    dedupeHydration?: ReflectionDedupeHydrationResolved;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -671,19 +847,40 @@ export async function runReflectionRules(
     .getByCategory("rule")
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   let existingVectors: (number[] | null)[] = [];
+  let rulesCorpusHydration = {
+    vectorsCompleteForCosine: true,
+    vectorsNonNull: 0,
+    totalRows: 0,
+  };
   if (existingRuleFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflect-rules — loading ${existingRuleFacts.length} existing rule row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
     );
-    existingVectors = await loadReflectionDedupeCorpusVectors(
+    const corpusRes = await loadReflectionDedupeCorpusVectors(
       existingRuleFacts,
       embeddings,
       vectorDb,
       logger,
       "memory-hybrid: reflect-rules",
       "reflection-rules-embed-existing",
-      { verbose: opts.verbose, progressLabel: "reflect-rules dedupe (existing corpus)" },
+      {
+        verbose: opts.verbose,
+        progressLabel: "reflect-rules dedupe (existing corpus)",
+        checkpoint: { factsDb, kind: "rule" },
+        hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+      },
     );
+    existingVectors = corpusRes.vectors;
+    rulesCorpusHydration = {
+      vectorsCompleteForCosine: corpusRes.hydration.vectorsCompleteForCosine,
+      vectorsNonNull: corpusRes.hydration.vectorsNonNull,
+      totalRows: corpusRes.hydration.totalRows,
+    };
+    if (!corpusRes.hydration.vectorsCompleteForCosine) {
+      logger.info(
+        `memory-hybrid: reflect-rules — dedupe corpus hydration partial (${corpusRes.hydration.vectorsNonNull}/${corpusRes.hydration.totalRows}); lexical fallback for null-vector rows (#1229)`,
+      );
+    }
   } else {
     logger.info("memory-hybrid: reflect-rules — no existing rule facts for dedupe; embedding new candidates only");
   }
@@ -722,11 +919,19 @@ export async function runReflectionRules(
     }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
+    for (let ei = 0; ei < existingVectors.length; ei++) {
+      const ev = existingVectors[ei];
+      if (ev !== null && ev.length > 0) {
+        if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+          isDuplicate = true;
+          break;
+        }
+      } else if (!rulesCorpusHydration.vectorsCompleteForCosine) {
+        const prior = existingRuleFacts[ei];
+        if (prior && reflectionLexicalNearDuplicateAgainstFact(ruleText, prior.text)) {
+          isDuplicate = true;
+          break;
+        }
       }
     }
     if (opts.verbose) {
@@ -824,6 +1029,7 @@ export async function runReflectionMeta(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    dedupeHydration?: ReflectionDedupeHydrationResolved;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -911,19 +1117,32 @@ export async function runReflectionMeta(
       (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
     );
   let existingVectors: (number[] | null)[] = [];
+  let metaCorpusHydration = { vectorsCompleteForCosine: true };
   if (existingMetaFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflect-meta — loading ${existingMetaFacts.length} existing meta-pattern row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
     );
-    existingVectors = await loadReflectionDedupeCorpusVectors(
+    const corpusRes = await loadReflectionDedupeCorpusVectors(
       existingMetaFacts,
       embeddings,
       vectorDb,
       logger,
       "memory-hybrid: reflect-meta",
       "reflection-meta-embed-existing",
-      { verbose: opts.verbose, progressLabel: "reflect-meta dedupe (existing corpus)" },
+      {
+        verbose: opts.verbose,
+        progressLabel: "reflect-meta dedupe (existing corpus)",
+        checkpoint: { factsDb, kind: "meta" },
+        hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+      },
     );
+    existingVectors = corpusRes.vectors;
+    metaCorpusHydration = { vectorsCompleteForCosine: corpusRes.hydration.vectorsCompleteForCosine };
+    if (!corpusRes.hydration.vectorsCompleteForCosine) {
+      logger.info(
+        `memory-hybrid: reflect-meta — dedupe corpus hydration partial; lexical fallback for null-vector rows (#1229)`,
+      );
+    }
   } else {
     logger.info("memory-hybrid: reflect-meta — no existing meta-patterns for dedupe; embedding new candidates only");
   }
@@ -962,11 +1181,19 @@ export async function runReflectionMeta(
     }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
+    for (let ei = 0; ei < existingVectors.length; ei++) {
+      const ev = existingVectors[ei];
+      if (ev !== null && ev.length > 0) {
+        if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+          isDuplicate = true;
+          break;
+        }
+      } else if (!metaCorpusHydration.vectorsCompleteForCosine) {
+        const prior = existingMetaFacts[ei];
+        if (prior && reflectionLexicalNearDuplicateAgainstFact(metaText, prior.text)) {
+          isDuplicate = true;
+          break;
+        }
       }
     }
     if (opts.verbose) {

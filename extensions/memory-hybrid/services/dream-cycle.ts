@@ -22,6 +22,10 @@ import { writeMemoryIndex } from "./memory-index.js";
 import { formatElapsedSec } from "../utils/maintenance-progress.js";
 import type { ProvenanceService } from "./provenance.js";
 import {
+  DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+  type ReflectionDedupeHydrationResolved,
+} from "./reflection-dedupe-hydration.js";
+import {
   type ReflectionConfig,
   countActivePatternFactsForMaintenance,
   runReflection,
@@ -80,6 +84,11 @@ export interface DreamCycleConfig {
     /** Extra types to treat as noise (merged with built-in deny list). */
     deny?: string[];
   };
+  /**
+   * Resolved embedding throttle + checkpoint policy for reflection dedupe hydration (#1229).
+   * When omitted, {@link DEFAULT_REFLECTION_DEDUPE_HYDRATION} is used.
+   */
+  reflectionDedupeHydration?: ReflectionDedupeHydrationResolved;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -701,6 +710,7 @@ export async function runDreamCycle(
           model: config.model,
           fallbackModels: config.fallbackModels ?? [],
           verbose: v,
+          dedupeHydration: config.reflectionDedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
         },
         logger,
         provenanceService,
@@ -728,7 +738,13 @@ export async function runDreamCycle(
           vectorDb,
           embeddings,
           openai,
-          { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [], verbose: v },
+          {
+            dryRun: false,
+            model: config.model,
+            fallbackModels: config.fallbackModels ?? [],
+            verbose: v,
+            dedupeHydration: config.reflectionDedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+          },
           logger,
           provenanceService,
         );

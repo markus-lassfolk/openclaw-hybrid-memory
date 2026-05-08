@@ -157,7 +157,7 @@ export async function runConsolidate(
     "consolidate-embed",
     { verbose: opts.verbose === true, progressLabel: "consolidate dedupe corpus" },
   );
-  const vectors = vectorResults.map((v) => (v === null ? [] : v));
+  const vectors = vectorResults.vectors.map((v) => (v === null ? [] : v));
 
   const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const edges: Array<[string, string]> = [];
