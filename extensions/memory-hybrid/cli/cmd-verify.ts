@@ -9,7 +9,7 @@ import { getEnv } from "../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -24,9 +24,11 @@ import {
   getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
   isCompactVerbosity,
+  resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
-import { chatComplete } from "../services/chat.js";
+import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { readGuardTimestampMs } from "../services/cron-guard.js";
 import {
@@ -38,11 +40,17 @@ import {
 } from "../services/embeddings.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../services/cron-job-bash-harness.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
   getHeartbeatMatchersForVerify,
 } from "../services/goal-stewardship-verify-cron.js";
+import {
+  collectRecentHmExitLedgerPaths,
+  findDeprecatedHybridMemCronTokens,
+  findDeprecatedTokensInHmExitContent,
+} from "../services/deprecated-cron-commands.js";
 import { resolveWireApi } from "../services/model-capabilities.js";
 import { callResponsesApi } from "../services/responses-adapter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
@@ -1059,12 +1067,27 @@ export async function runVerifyForCli(
           const first = items[0];
           credentialsDb.get(first.service, first.type as CredentialType);
         }
-        const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-        log(`\nCredentials (vault): OK (${items.length} stored)${encrypted ? " [encrypted]" : " [plaintext]"}`);
+        const st = credentialsDb.getVaultStatus();
+        const stateLabel = st.encryptedAtRest
+          ? `encrypted (kdf_version=${st.kdfVersion})`
+          : `plaintext (kdf_version=${st.kdfVersion})`;
+        log(`\nCredentials (vault): OK (${items.length} stored) [${stateLabel}]`);
+        log(
+          `Credentials (vault): encryption_key_configured=${st.configuredKeyPresent ? "yes" : "no"}; migration_required=${
+            st.migrationRequired ? "yes" : "no"
+          }`,
+        );
+        if (st.migrationRequired) {
+          const WARN = noEmoji ? "[WARN]" : "⚠️";
+          log(
+            `${WARN} Credentials (vault): encryption key is configured but ignored until the existing vault is encrypted at rest.`,
+          );
+          log("Fix: run `openclaw hybrid-mem credentials encrypt-vault --yes` (see docs/CREDENTIALS.md).");
+        }
       } catch (e) {
         issues.push(`Credentials vault: ${String(e)}`);
-        const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-        if (encrypted) {
+        const hasKey = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+        if (hasKey) {
           fixes.push(
             "Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.",
           );
@@ -1302,6 +1325,7 @@ export async function runVerifyForCli(
 
   interface JobInfo {
     name: string;
+    pluginJobId?: string;
     enabled: boolean;
     /** Set by ensureMaintenanceCronJobs when a feature gate disabled the job. */
     featureGateDisabled?: boolean;
@@ -1311,6 +1335,7 @@ export async function runVerifyForCli(
     lastRunGuardMs?: number | null;
     /** Set when the job carries a `pluginJobId` starting with `hybrid-mem:` (treat the `Other` list as truly external). */
     isHybridMem?: boolean;
+    deprecatedCronTokens?: string[];
     state?: {
       nextRunAtMs?: number;
       lastRunAtMs?: number;
@@ -1320,6 +1345,27 @@ export async function runVerifyForCli(
   }
 
   const allJobs = new Map<string, JobInfo>();
+
+  function hybridMemCronMessageSanitizerStatus(message: string): "ok" | "partial" | "missing" {
+    if (message.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return "ok";
+    const required = [
+      "OPENCLAW_SKIP_HYBRID_MEMORY_CLI",
+      "OPENCLAW_HOME",
+      "OPENCLAW_CLI",
+      "OPENCLAW_SERVICE_KIND",
+      "OPENCLAW_SERVICE_MARKER",
+    ];
+    const present = required.filter((v) => message.includes(`-u ${v}`));
+    if (present.length > 0 && present.length < required.length) return "partial";
+    const mentionsHybridMem = /openclaw\s+hybrid-mem\b/.test(message);
+    const hasAnyUnsets =
+      message.includes("-u OPENCLAW_HOME") ||
+      message.includes("-u OPENCLAW_CLI") ||
+      message.includes("-u OPENCLAW_SERVICE_KIND") ||
+      message.includes("-u OPENCLAW_SERVICE_MARKER");
+    if (mentionsHybridMem && !hasAnyUnsets) return "missing";
+    return "ok";
+  }
 
   if (existsSync(cronStorePath)) {
     try {
@@ -1349,13 +1395,16 @@ export async function runVerifyForCli(
 
           const canonicalKey = getCanonicalJobKey(name, msg);
           if (canonicalKey) {
+            const deprecatedCronTokens = findDeprecatedHybridMemCronTokens(msg).map((t) => t.token);
             allJobs.set(canonicalKey, {
               name,
+              pluginJobId: pid || undefined,
               enabled,
               featureGateDisabled,
               scheduleExpr,
               lastRunGuardMs,
               isHybridMem,
+              deprecatedCronTokens: deprecatedCronTokens.length > 0 ? deprecatedCronTokens : undefined,
               state,
             });
           }
@@ -1364,6 +1413,35 @@ export async function runVerifyForCli(
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
     }
+  }
+
+  // Issue #1205: hybrid-mem cron jobs can fail in service/cron-like envs when OPENCLAW_HOME or service marker vars leak
+  // into the execution shell, preventing plugin CLI metadata discovery ("Unknown command: openclaw hybrid-mem").
+  const cronEnvLeakPartial: string[] = [];
+  const cronEnvLeakMissing: string[] = [];
+  for (const [key, job] of allJobs.entries()) {
+    if (!job.isHybridMem || !job.message) continue;
+    const status = hybridMemCronMessageSanitizerStatus(job.message);
+    if (status === "partial") cronEnvLeakPartial.push(key);
+    if (status === "missing") cronEnvLeakMissing.push(key);
+  }
+  if (cronEnvLeakPartial.length > 0 || cronEnvLeakMissing.length > 0) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    const list = [
+      cronEnvLeakMissing.length > 0 ? `missing sanitizer: ${cronEnvLeakMissing.join(", ")}` : null,
+      cronEnvLeakPartial.length > 0 ? `partial sanitizer: ${cronEnvLeakPartial.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    log(
+      `\n${WARN} Cron payload env sanitizer (issue #1205): ${list}. Service/cron environments can leak OPENCLAW_HOME / service marker vars and make \`openclaw hybrid-mem\` unavailable. Fix: run \`openclaw hybrid-mem verify --fix\` to inject a robust sanitizer (unsets OPENCLAW_HOME, OPENCLAW_CLI, OPENCLAW_SERVICE_KIND, OPENCLAW_SERVICE_MARKER, OPENCLAW_SKIP_HYBRID_MEMORY_CLI).`,
+    );
+    warnings.push(
+      `hybrid-mem cron payloads are missing/partial env sanitizer (issue #1205); run 'openclaw hybrid-mem verify --fix'`,
+    );
+    fixes.push(
+      "Run 'openclaw hybrid-mem verify --fix' to update managed cron job messages with an env sanitizer for OPENCLAW_HOME/service markers.",
+    );
   }
 
   // Also check default config for jobs not found in cron store
@@ -1462,6 +1540,62 @@ export async function runVerifyForCli(
     for (const [_key, job] of otherJobs) {
       formatJobStatus(job, job.name, "    ", log);
     }
+  }
+
+  // Warn if the stored cron messages or recent exit logs reference deprecated CLI commands/steps.
+  const deprecatedCronJobs = Array.from(allJobs.values()).filter(
+    (j) => (j.deprecatedCronTokens?.length ?? 0) > 0 && j.featureGateDisabled !== true,
+  );
+  if (deprecatedCronJobs.length > 0) {
+    const affected = deprecatedCronJobs
+      .slice(0, 5)
+      .map((j) => `${j.pluginJobId ?? j.name} (${(j.deprecatedCronTokens ?? []).join(", ")})`)
+      .join("; ");
+    warnings.push(
+      `cron store contains deprecated hybrid-mem command references: ${affected}${
+        deprecatedCronJobs.length > 5 ? `; … (${deprecatedCronJobs.length - 5} more)` : ""
+      }`,
+    );
+    log(
+      `\n${WARN_LINE} Stale cron payload detected: job messages reference deprecated command(s)/step(s). Run \`openclaw hybrid-mem verify --fix\` to normalize managed job messages.`,
+    );
+  }
+
+  // Also scan recent HM_EXIT logs (these can reveal stale commands even when the top-level cron payload looks correct).
+  try {
+    const logsRoot = join(openclawDir, "logs", "cron-hybrid-mem");
+    if (existsSync(logsRoot)) {
+      const cutoffMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
+
+      const exitHits: Array<{ file: string; hit: ReturnType<typeof findDeprecatedTokensInHmExitContent>[number] }> = [];
+      for (const full of exitFiles) {
+        try {
+          const content = readFileSync(full, "utf-8");
+          const hits = findDeprecatedTokensInHmExitContent(content);
+          for (const hit of hits) {
+            exitHits.push({ file: full, hit });
+            if (exitHits.length >= 5) break;
+          }
+        } catch {
+          /* skip unreadable or partial files */
+        }
+        if (exitHits.length >= 5) break;
+      }
+
+      if (exitHits.length > 0) {
+        const sample = exitHits
+          .map((h) => `${h.hit.token.token} in ${h.file}${h.hit.iso ? ` @ ${h.hit.iso}` : ""}`)
+          .slice(0, 3)
+          .join("; ");
+        warnings.push(`recent cron-hybrid-mem exit logs reference deprecated step(s): ${sample}`);
+        log(
+          `${WARN_LINE} Recent maintenance logs reference deprecated command(s)/step(s). This can happen even when cron jobs appear updated. Normalize with \`openclaw hybrid-mem verify --fix\`.`,
+        );
+      }
+    }
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:scan-cron-exit-logs" });
   }
 
   // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than

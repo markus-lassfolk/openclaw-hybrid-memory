@@ -71,6 +71,18 @@ export OPENCLAW_CRED_KEY="your-secret-key-min-16-chars"
 - **autoCapture** (optional): Auto-capture credentials from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below). You can set **requirePatternMatch** to `true` so that only values matching a known credential pattern (e.g. JWT, `sk-...`, `ghp_...`) are stored; narrative or value-only text is then rejected.
 - **expiryWarningDays** (optional): Days before expiry to warn (default: 7).
 
+## Encrypt an existing plaintext vault
+
+If your credentials vault was initialized in **plaintext mode** (`kdf_version=0`) and you later configure an encryption key, the key is **ignored** until you encrypt the existing vault at rest. This prevents the plugin from accidentally treating an existing plaintext database as encrypted (or vice versa).
+
+To safely encrypt the existing vault in place (no secrets printed):
+
+```bash
+openclaw hybrid-mem credentials encrypt-vault --yes
+```
+
+After running the command, restart the gateway (or run `openclaw hybrid-mem verify`) to confirm the vault now reports `encrypted (kdf_version=2)`.
+
 ## API (Tools)
 
 When enabled, four tools are registered:

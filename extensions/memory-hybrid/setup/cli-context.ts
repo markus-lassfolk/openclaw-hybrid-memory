@@ -39,6 +39,7 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { pluginLogger } from "../utils/logger.js";
 import { versionInfo } from "../versionInfo.js";
 
@@ -316,7 +317,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           minObservations: cfg.reflection.minObservations,
           enabled: cfg.reflection.enabled,
         },
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -339,7 +340,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -351,7 +352,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -423,6 +424,18 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       const verbose = !!opts?.verbose;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const dreamSource =
+        typeof cfg.nightlyCycle.model === "string" && cfg.nightlyCycle.model.trim().length > 0
+          ? "nightlyCycle.model"
+          : tierPref.models[0] === dreamModel
+            ? (tierPref.sources[0] ?? "built-in")
+            : "built-in";
+      pluginLogger.info("memory-hybrid: dream-cycle model tier = default");
+      pluginLogger.info(`memory-hybrid: dream-cycle starting with model ${dreamModel} (source=${dreamSource})`);
+      pluginLogger.info(
+        `memory-hybrid: dream-cycle fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
       if (verbose) {
         pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
       }
@@ -570,12 +583,17 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getStorageSizes: async () => {
       let sqliteBytes: number | undefined;
       let lanceBytes: number | undefined;
-      async function dirSizeAsync(p: string): Promise<number> {
+      let lanceBytesTimedOut = false;
+      async function dirSizeAsync(p: string): Promise<number | "timeout"> {
         try {
           const { execFile } = await import("node:child_process");
-          return await new Promise<number>((resolve) => {
-            execFile("du", ["-sk", p], (error, stdout) => {
+          return await new Promise<number | "timeout">((resolve) => {
+            execFile("du", ["-sk", p], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
               if (error) {
+                if ("killed" in error && error.killed) {
+                  resolve("timeout");
+                  return;
+                }
                 try {
                   const st = statSync(p);
                   resolve(st.isDirectory() ? 0 : st.size);
@@ -623,7 +641,11 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         }
       }
       try {
-        if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
+        if (existsSync(resolvedLancePath)) {
+          const lz = await dirSizeAsync(resolvedLancePath);
+          if (lz === "timeout") lanceBytesTimedOut = true;
+          else lanceBytes = lz;
+        }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "dir-size",
@@ -632,7 +654,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         });
         /* ignore */
       }
-      return { sqliteBytes, lanceBytes };
+      return { sqliteBytes, lanceBytes, lanceBytesTimedOut };
     },
     getCronJobsStatus: () => {
       const owHome =
@@ -908,13 +930,14 @@ function createHybridMemCliContext(
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+    runEncryptVault: (opts) => handlers.runEncryptVaultForCli(handlerCtx, opts),
     runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
     runCredentialsGet: (opts) => handlers.runCredentialsGetForCli(handlerCtx, opts),
     runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
     runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
     runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
     runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
-    runConfigView: (sink) => handlers.runConfigViewForCli(handlerCtx, sink),
+    runConfigView: (sink, opts) => handlers.runConfigViewForCli(handlerCtx, sink, opts),
     runConfigMode: (mode) => Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),
     runConfigSet: (key, value) => Promise.resolve(handlers.runConfigSetForCli(handlerCtx, key, value)),
     runConfigSetHelp: (key) => Promise.resolve(handlers.runConfigSetHelpForCli(handlerCtx, key)),

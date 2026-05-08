@@ -9,17 +9,21 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   type ConfigMode,
   PRESET_OVERRIDES,
   getCronModelConfig,
+  getDefaultCronModel,
   getLLMModelPreference,
+  resolveReflectionModelAndFallbacks,
   hybridConfigSchema,
 } from "../config.js";
+import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { getPluginConfigFromFile } from "./cmd-install.js";
 import { resolvedActiveTaskFilePath } from "./config-feature-summaries.js";
@@ -125,9 +129,74 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
  * Config view — show current settings in a simple, scannable format.
  * Focus on what's on/off so users can understand and change via config-set.
  */
-export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): void {
+export function runConfigViewForCli(
+  ctx: HandlerContext,
+  sink: VerifyCliSink,
+  opts?: { format?: "text" | "json"; featuresOnly?: boolean },
+): void {
   const { cfg } = ctx;
   const log = sink.log;
+  const format = opts?.format ?? "text";
+
+  // If JSON format requested, output machine-readable JSON
+  if (format === "json") {
+    const features = {
+      nightlyCycle: cfg.nightlyCycle?.enabled ?? false,
+      passiveObserver: cfg.passiveObserver?.enabled ?? false,
+      reflection: cfg.reflection.enabled,
+      personaProposals: cfg.personaProposals.enabled,
+      selfCorrection: !!cfg.selfCorrection,
+      selfExtension: cfg.selfExtension?.enabled ?? false,
+      crystallization: cfg.crystallization?.enabled ?? false,
+      extraction: !!cfg.extraction?.extractionPasses,
+      goalStewardship: cfg.goalStewardship?.enabled ?? false,
+      activeTask: cfg.activeTask.enabled,
+      frustrationDetection: cfg.frustrationDetection.enabled,
+      crossAgentLearning: cfg.crossAgentLearning.enabled,
+      toolEffectiveness: cfg.toolEffectiveness.enabled,
+      workflowTracking: cfg.workflowTracking.enabled,
+      documents: cfg.documents.enabled,
+      provenance: cfg.provenance.enabled,
+      verification: cfg.verification.enabled,
+      aliases: cfg.aliases.enabled,
+      reranking: cfg.reranking.enabled,
+      contextualVariants: cfg.contextualVariants.enabled,
+      errorReporting: cfg.errorReporting?.enabled ?? false,
+      costTracking: cfg.costTracking?.enabled ?? false,
+      wal: cfg.wal.enabled,
+      ambient: cfg.ambient.enabled,
+      futureDateProtection: cfg.futureDateProtection.enabled,
+    };
+    if (opts?.featuresOnly) {
+      log(JSON.stringify(features, null, 2));
+      return;
+    }
+    const jsonOutput = {
+      schemaVersion: 1,
+      contract: "openclaw.hybrid-mem.config-view.summary.v1",
+      mode: cfg.mode && cfg.mode !== "custom" ? cfg.mode : "custom",
+      verbosity: cfg.verbosity ?? "normal",
+      core: {
+        autoCapture: cfg.autoCapture,
+        autoRecall: cfg.autoRecall.enabled,
+        credentials: cfg.credentials.enabled,
+        procedures: cfg.procedures.enabled,
+        memoryTiering: cfg.memoryTiering.enabled,
+        graph: cfg.graph.enabled,
+        autoClassify: cfg.autoClassify.enabled,
+      },
+      features,
+      advanced: {
+        queryExpansion: cfg.queryExpansion.enabled,
+        retrievalDirectives: cfg.autoRecall.retrievalDirectives?.enabled ?? false,
+        entityLookup: cfg.autoRecall.entityLookup?.enabled ?? false,
+      },
+    };
+    log(JSON.stringify(jsonOutput, null, 2));
+    return;
+  }
+
+  // Otherwise, show human-readable text format
   const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const ON = noEmoji ? "[on]" : "on";
   const OFF = noEmoji ? "[off]" : "off";
@@ -231,6 +300,62 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
     );
   } catch {
     log("  (could not resolve tiers — check plugin config)");
+  }
+  log("");
+
+  log("Maintenance routing");
+  try {
+    const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+    const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const distillFallbacks = distillResolved.fallbackModels ?? [];
+    log(
+      `  distill: llm.heavy (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
+    );
+    const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+    const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
+    const extractionModel =
+      extractionResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), extractionTier);
+    log(`  extract-reinforcement: distill.extractionModelTier=${extractionTier} (primary=${extractionModel})`);
+    log(`  extract-directives: regex only (no LLM)`);
+    const reflectResolved = resolveReflectionModelAndFallbacks(cfg, "default");
+    log(`  reflect/reflect-rules/reflect-meta: llm.default (primary=${reflectResolved.defaultModel})`);
+    log(`  dream-cycle: llm.default (or nightlyCycle.model override)`);
+    log(`  self-correction-run: llm.heavy (primary=${distillModel})`);
+  } catch {
+    log("  (could not resolve maintenance routing — check plugin config)");
+  }
+  log("");
+
+  log("Adaptive distill sizing");
+  {
+    const enabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+    const envState = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim();
+    const inferredState =
+      typeof ctx.resolvedSqlitePath === "string" && ctx.resolvedSqlitePath.length > 0
+        ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+        : "";
+    const statePath = envState || inferredState;
+    log(`  enabled: ${enabled ? "yes" : "no"} (env: OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL)`);
+    log(
+      `  state: ${statePath || "(unset — set OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE or run with resolved SQLite path)"}`,
+    );
+    try {
+      if (!statePath) throw new Error("no adaptive distill state path");
+      const state = loadAdaptiveModelLimits(statePath);
+      const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+      const effective = getEffectiveModelLimits({
+        state,
+        model,
+        catalogBatchTokenLimit: distillBatchTokenLimit(model),
+        catalogMaxOutputTokens: distillMaxOutputTokens(model),
+      });
+      log(
+        `  ${model}: batchTokenLimit=${effective.batchTokenLimit}, maxOutputTokens=${effective.maxOutputTokens} (source=${effective.source})`,
+      );
+    } catch {
+      // ignore
+    }
   }
   log("");
 
