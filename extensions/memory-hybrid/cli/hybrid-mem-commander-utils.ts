@@ -3,7 +3,7 @@
  * on parse errors (Issue #1224).
  */
 
-import { CommanderError, type Command } from "commander";
+import type { Command, CommanderError } from "commander";
 
 const VERBOSE_DESC =
   "Verbose output (same as `openclaw hybrid-mem -v` before this subcommand). Subcommands that already define detailed --verbose behavior treat this as the same flag.";

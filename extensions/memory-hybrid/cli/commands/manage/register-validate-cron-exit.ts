@@ -52,7 +52,7 @@ export function registerValidateCronExit(hybrid: Chainable): void {
 }
 
 function printValidationResult(result: ExitValidationResult): void {
-  console.log(`\n=== Maintenance Validation ===`);
+  console.log("\n=== Maintenance Validation ===");
   console.log(`Status: ${result.maintenanceStatus.toUpperCase()}`);
 
   if (result.exitPath) {
@@ -73,7 +73,7 @@ function printValidationResult(result: ExitValidationResult): void {
   }
 
   if (result.failedSteps.length > 0) {
-    console.log(`\nFailed steps:`);
+    console.log("\nFailed steps:");
     for (const step of result.failedSteps) {
       console.log(`  ✗ ${step.step} (exit=${step.exitCode})`);
     }
@@ -84,5 +84,5 @@ function printValidationResult(result: ExitValidationResult): void {
   }
 
   console.log(`\nGuard file update: ${result.guardUpdated ? "YES" : "NO"}`);
-  console.log(`==============================\n`);
+  console.log("==============================\n");
 }

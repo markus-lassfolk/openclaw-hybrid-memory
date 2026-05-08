@@ -15,14 +15,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       // Intercept append-mode opens used by fsyncAfterWrite.
       if (args[1] === "r" || args[1] === "a" || args[1] === "a+") {
         const origDatasync = fh.datasync.bind(fh);
-        (fh as any).datasync = async () => {
+        vi.spyOn(fh, "datasync").mockImplementation(async () => {
           if (fsyncError.value) {
             const err = fsyncError.value;
             fsyncError.value = null;
             throw err;
           }
           return origDatasync();
-        };
+        });
       }
       return fh;
     }),

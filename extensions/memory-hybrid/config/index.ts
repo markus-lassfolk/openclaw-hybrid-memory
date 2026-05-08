@@ -319,7 +319,8 @@ export function resolveReflectionModelAndFallbacks(
   let chain: string[] = pref.length > 1 ? pref.slice(1) : [];
 
   const maintPolicy = tier === "maintenance" ? effectiveMaintenanceFallbackPolicy(cfg) : null;
-  const explicitMaintList = Array.isArray(cfg.llm?.maintenance) ? cfg.llm!.maintenance! : [];
+  const maintenanceArr = cfg.llm?.maintenance;
+  const explicitMaintList = Array.isArray(maintenanceArr) ? maintenanceArr : [];
   const explicitMaintenance = explicitMaintList.length > 0;
   const explicitMaintenanceSet =
     tier === "maintenance" && explicitMaintenance
