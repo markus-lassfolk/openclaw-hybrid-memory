@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hybridConfigSchema } from "../config.js";
-import memoryHybridPlugin from "../index.js";
+import memoryHybridPlugin, { isHybridMemHelpInvocation } from "../index.js";
 
 function makeMockApi() {
   return {
@@ -19,6 +19,14 @@ function makeMockApi() {
     config: {},
   };
 }
+
+describe("isHybridMemHelpInvocation", () => {
+  it("treats flags before -- as help, not args after --", () => {
+    expect(isHybridMemHelpInvocation(["node", "openclaw", "hybrid-mem", "--help"])).toBe(true);
+    expect(isHybridMemHelpInvocation(["node", "openclaw", "hybrid-mem", "verify", "-h"])).toBe(true);
+    expect(isHybridMemHelpInvocation(["node", "openclaw", "hybrid-mem", "store", "--", "--help"])).toBe(false);
+  });
+});
 
 describe("hybrid-mem help invocations", () => {
   let tmpDir: string;
@@ -80,6 +88,28 @@ describe("hybrid-mem help invocations", () => {
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
     expect(api.registerService).not.toHaveBeenCalled();
+  });
+
+  it("openclaw hybrid-mem store -- --help uses full registration (not help fast-path)", () => {
+    process.argv = ["node", "openclaw", "hybrid-mem", "store", "--", "--help"];
+    const api = makeMockApi();
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lanceDbPath = join(tmpDir, "lancedb");
+    const pluginConfig = hybridConfigSchema.parse({
+      sqlitePath,
+      lanceDbPath,
+      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+    });
+    const mockApi = {
+      ...api,
+      pluginConfig,
+      registrationMode: "full" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+
+    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    expect(api.registerTool).toHaveBeenCalled();
+    expect(api.registerService).toHaveBeenCalled();
   });
 
   it("help is deterministic even with invalid/unresolvable plugin config", () => {
