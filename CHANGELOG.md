@@ -21,6 +21,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **audit-health command reliability**: Added timeout protection and partial result handling to prevent hanging on long-lived stores. The command now:
+  - Limits expensive queries (e.g., implicitFeedbackPrefixHistogram capped at 5000 rows)
+  - Times out LanceDB size calculation after 5 seconds
+  - Returns partial results with errors array when sections fail
+  - Adds `status` field ("ok"|"partial"|"failed") alongside backward-compatible `ok` boolean
+  - Completes within bounded time on large stores (addresses #TBD)
+
 ---
 
 ## [2026.5.61] - 2026-05-07
