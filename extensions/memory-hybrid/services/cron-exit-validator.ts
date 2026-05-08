@@ -19,7 +19,7 @@ export interface ExitStep {
 
 export interface ExitValidationResult {
   /** Overall maintenance status */
-  maintenanceStatus: "success" | "skipped" | "partial" | "failed";
+  maintenanceStatus: "success" | "partial" | "failed";
   /** All steps found in exit ledger */
   steps: ExitStep[];
   /** Required steps that are missing from exit ledger */
@@ -183,14 +183,16 @@ export function validateMaintenanceExecution(
   }
 
   // Determine overall status
-  let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
+  let maintenanceStatus: "success" | "partial" | "failed";
 
   if (missingSteps.length === 0 && failedSteps.length === 0) {
     // All required steps present and succeeded
     maintenanceStatus = "success";
   } else if (missingSteps.length === requiredSteps.length) {
-    // All steps missing - likely skipped due to guard or config
-    maintenanceStatus = "skipped";
+    // Every required step absent from the ledger (including an empty file). Treat as
+    // failure: the shell may have aborted before the first hm_step wrote HM_EXIT,
+    // which must not be reported as skipped / exit 0.
+    maintenanceStatus = "failed";
   } else if (missingSteps.length > 0 || failedSteps.length > 0) {
     // Some steps missing or failed
     maintenanceStatus = failedSteps.length > 0 ? "failed" : "partial";

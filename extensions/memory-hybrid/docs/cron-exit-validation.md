@@ -24,7 +24,7 @@ New module that validates maintenance execution by:
 - Checking for `unknown command` errors in HM_LOG
 - Validating all required steps are present with `exit=0`
 - Supporting skip variants (e.g., `distill-skipped` when config disabled)
-- Returning structured status: `success`, `skipped`, `partial`, or `failed`
+- Returning structured status: `success`, `partial`, or `failed`
 
 ### 2. Updated Cron Message Templates (`services/cron-job-bash-harness.ts`)
 
@@ -81,15 +81,11 @@ Any step missing or non-zero exit:
 - `guardUpdated`: `false`
 - Cron status should be: `error` (agent must signal failure)
 
-### Skipped
+### All required steps missing (empty or incomplete ledger)
 
-All steps missing (guard prevented run):
-```
-(empty exit file)
-```
-- `maintenanceStatus`: `skipped`
-- `guardUpdated`: `false`
-- Cron status: `skipped`
+When the exit file exists but **none** of the required steps appear in the ledger (including an empty file), validation returns **`failed`**. That pattern matches an abort before the first `hm_step` wrote to `HM_EXIT`, and must not be treated as a successful skip.
+
+Use config skip variants (e.g. `distill-skipped` with `--allow-skip`) when a step is intentionally omitted.
 
 ### Partial
 
@@ -128,7 +124,7 @@ The message normalization preserves the guard prefix while updating the orchestr
 Comprehensive tests in `tests/cron-exit-validator.test.ts`:
 - Exit line parsing (valid, invalid, non-zero codes)
 - Unknown command detection
-- Success/failed/partial/skipped status determination
+- Success/failed/partial status determination (all-required-missing → failed)
 - Skip variant handling
 - Missing file handling
 
@@ -139,7 +135,7 @@ All 14 tests pass.
 ✅ Required-step failure makes cron run non-OK
 ✅ Unknown command makes cron run non-OK
 ✅ Missing required steps treated as failure
-✅ Guard-skip produces `skipped`, not `ok`
+✅ Empty or incomplete ledgers do not produce a false `ok` / skip outcome
 ✅ Message normalization removes obsolete commands
 ✅ Validation instructions embedded in all cron messages
 
@@ -147,7 +143,7 @@ All 14 tests pass.
 
 To fully close the loop, OpenClaw cron core would need to:
 1. Accept structured status from agent (not just text response)
-2. Map `maintenanceStatus` → cron `status` (`success`→`ok`, `failed`/`partial`→`error`, `skipped`→`skipped`)
+2. Map `maintenanceStatus` → cron `status` (`success`→`ok`, `failed`/`partial`→`error`)
 3. Update `lastRunStatus` and `consecutiveErrors` based on maintenance outcome
 
 Until then, agents must signal failure explicitly (e.g., by mentioning "FAILED" in response or exiting with error) when validation fails.

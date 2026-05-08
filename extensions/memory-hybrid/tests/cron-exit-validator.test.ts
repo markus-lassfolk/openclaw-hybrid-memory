@@ -144,15 +144,17 @@ error: unknown command 'bar'
       expect(result.missingSteps).toEqual(["distill", "extract-daily"]);
     });
 
-    it("should report skipped when all steps are missing", () => {
+    it("should report failed when all required steps are missing from the ledger", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
       writeFileSync(exitPath, "");
 
       const result = validateMaintenanceExecution(exitPath, undefined, ["prune", "distill"]);
 
-      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
+      expect(result.missingSteps).toEqual(["prune", "distill"]);
+      expect(result.error).toContain("Missing steps");
     });
 
     it("should accept skip variants when allowSkip is true", () => {
