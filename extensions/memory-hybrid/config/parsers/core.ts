@@ -589,7 +589,8 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
     nanoList.length > 0 ||
     llmProviders !== undefined ||
     localAutoStart ||
-    disabledProviders.length > 0
+    disabledProviders.length > 0 ||
+    maintenanceFallbackPolicy !== undefined
       ? {
           ...(maintenanceList.length > 0 ? { maintenance: maintenanceList } : {}),
           default: defaultList,

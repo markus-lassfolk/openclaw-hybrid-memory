@@ -176,6 +176,17 @@ describe("parseLLMConfig — localAutoStart", () => {
   });
 });
 
+describe("parseLLMConfig — maintenanceFallbackPolicy", () => {
+  it("materializes llm when only maintenanceFallbackPolicy is set", () => {
+    const cfg = { llm: { maintenanceFallbackPolicy: "explicit-only" } };
+    const result = parseLLMConfig(cfg);
+    expect(result).toBeDefined();
+    expect(result?.maintenanceFallbackPolicy).toBe("explicit-only");
+    expect(result?.default).toEqual([]);
+    expect(result?.heavy).toEqual([]);
+  });
+});
+
 describe("parseLLMConfig — provider baseURL / baseUrl", () => {
   it("accepts camelCase `baseUrl` in provider config (OpenClaw convention)", () => {
     const cfg = {
