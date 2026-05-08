@@ -12,6 +12,7 @@ import type {
   ConfigCliResult,
   CredentialsAuditResult,
   CredentialsPruneResult,
+  EncryptVaultResult,
   FindDuplicatesResult,
   IngestFilesResult,
   IngestFilesSink,
@@ -44,6 +45,7 @@ export type ManageContext = {
     sink: IngestFilesSink,
   ) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runEncryptVault: (opts: { yes?: boolean }) => EncryptVaultResult;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
   runCredentialsGet: (opts: {
     service: string;

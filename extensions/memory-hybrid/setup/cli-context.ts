@@ -39,6 +39,7 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { pluginLogger } from "../utils/logger.js";
 import { versionInfo } from "../versionInfo.js";
 
@@ -306,6 +307,19 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     },
     runReflection: async (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const effectiveModel = opts.model ?? defaultModel;
+      const source = (() => {
+        const configured = typeof cfg.reflection.model === "string" ? cfg.reflection.model.trim() : "";
+        if (configured && configured === effectiveModel) return "reflection.model";
+        if (opts.model && opts.model !== defaultModel && opts.model !== configured) return "--model";
+        if (tierPref.models[0] === effectiveModel) return tierPref.sources[0] ?? "built-in";
+        return "built-in";
+      })();
+      pluginLogger.info(`memory-hybrid: reflect starting with model ${effectiveModel} (source=${source})`);
+      pluginLogger.info(
+        `memory-hybrid: reflect fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
       const result = await runReflection(
         factsDb,
         vectorDb,
@@ -316,7 +330,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           minObservations: cfg.reflection.minObservations,
           enabled: cfg.reflection.enabled,
         },
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -334,24 +348,50 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     },
     runReflectionRules: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const effectiveModel = opts.model ?? defaultModel;
+      const source = (() => {
+        const configured = typeof cfg.reflection.model === "string" ? cfg.reflection.model.trim() : "";
+        if (configured && configured === effectiveModel) return "reflection.model";
+        if (opts.model && opts.model !== defaultModel && opts.model !== configured) return "--model";
+        if (tierPref.models[0] === effectiveModel) return tierPref.sources[0] ?? "built-in";
+        return "built-in";
+      })();
+      pluginLogger.info(`memory-hybrid: reflect-rules starting with model ${effectiveModel} (source=${source})`);
+      pluginLogger.info(
+        `memory-hybrid: reflect-rules fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
       return runReflectionRules(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
     },
     runReflectionMeta: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const effectiveModel = opts.model ?? defaultModel;
+      const source = (() => {
+        const configured = typeof cfg.reflection.model === "string" ? cfg.reflection.model.trim() : "";
+        if (configured && configured === effectiveModel) return "reflection.model";
+        if (opts.model && opts.model !== defaultModel && opts.model !== configured) return "--model";
+        if (tierPref.models[0] === effectiveModel) return tierPref.sources[0] ?? "built-in";
+        return "built-in";
+      })();
+      pluginLogger.info(`memory-hybrid: reflect-meta starting with model ${effectiveModel} (source=${source})`);
+      pluginLogger.info(
+        `memory-hybrid: reflect-meta fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
       return runReflectionMeta(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -422,6 +462,18 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       const verbose = !!opts?.verbose;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const dreamSource =
+        typeof cfg.nightlyCycle.model === "string" && cfg.nightlyCycle.model.trim().length > 0
+          ? "nightlyCycle.model"
+          : tierPref.models[0] === dreamModel
+            ? (tierPref.sources[0] ?? "built-in")
+            : "built-in";
+      pluginLogger.info("memory-hybrid: dream-cycle model tier = default");
+      pluginLogger.info(`memory-hybrid: dream-cycle starting with model ${dreamModel} (source=${dreamSource})`);
+      pluginLogger.info(
+        `memory-hybrid: dream-cycle fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
       if (verbose) {
         pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
       }
@@ -907,6 +959,7 @@ function createHybridMemCliContext(
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+    runEncryptVault: (opts) => handlers.runEncryptVaultForCli(handlerCtx, opts),
     runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
     runCredentialsGet: (opts) => handlers.runCredentialsGetForCli(handlerCtx, opts),
     runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
