@@ -4,6 +4,10 @@
 
 Closes #
 
+**PR title:** Must follow [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `fix: …`, `chore: merge develop into main`). CI validates the title via the **Conventional Commits** check.
+
+**Large merges:** For branches with many commits (e.g. `develop` → `main`), GitHub may pre-fill the merge/squash description with every commit message. Before completing merge or auto-merge, switch to **Squash and merge** (if allowed) and replace that body with a short summary, or merge locally with `git merge -m "…"`.
+
 ## Type of Change
 
 - [ ] Bug fix (non-breaking change that fixes an issue)
