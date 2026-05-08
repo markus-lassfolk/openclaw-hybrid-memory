@@ -10,7 +10,7 @@ import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stop
 import { capturePluginError } from "../../services/error-reporter.js";
 import { searchFts } from "../../services/fts-search.js";
 import { parseTags } from "../../utils/tags.js";
-import { estimateTokensForDisplay } from "../../utils/text.js";
+import { estimateTokensForDisplay, truncateText } from "../../utils/text.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
 /** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
@@ -69,6 +69,8 @@ export type CategoryAuditRow = {
   category: string;
   count: number;
   examples: string[];
+  /** Same order as `examples`: single-line truncated fact text for operator-facing output. */
+  examplePreviews: string[];
 };
 
 export type CategoryAuditReport = {
@@ -208,16 +210,20 @@ export function auditCategories(
     )
     .all() as Array<{ category: string; cnt: number }>;
 
+  const previewStmt = db.prepare(
+    `SELECT id, substr(COALESCE(text, ''), 1, 400) AS snippet
+     FROM facts WHERE COALESCE(category, 'other') = ? AND superseded_at IS NULL
+     ORDER BY created_at DESC LIMIT ?`,
+  );
   const inMemory: CategoryAuditRow[] = rows.map((row) => {
-    const examples = db
-      .prepare(
-        "SELECT id FROM facts WHERE COALESCE(category, 'other') = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?",
-      )
-      .all(row.category || "other", Math.max(0, exampleLimit)) as Array<{ id: string }>;
+    const lim = Math.max(0, exampleLimit);
+    const sampleRows =
+      lim === 0 ? [] : (previewStmt.all(row.category || "other", lim) as Array<{ id: string; snippet: string }>);
     return {
       category: row.category || "other",
       count: row.cnt,
-      examples: examples.map((e) => e.id),
+      examples: sampleRows.map((e) => e.id),
+      examplePreviews: sampleRows.map((e) => truncateText(e.snippet.replace(/\s+/g, " ").trim() || "(empty)", 88)),
     };
   });
 
