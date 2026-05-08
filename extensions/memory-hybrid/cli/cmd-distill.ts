@@ -280,15 +280,16 @@ export async function runDistillForCli(
     const heavyResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
     const model =
       opts.model ??
-      heavyResolved.defaultModel ??
       cfg.distill?.defaultModel ??
+      heavyResolved.defaultModel ??
       getDefaultCronModel(cronCfgDistill, "heavy");
+    const heavySrcIdx = heavyPrefWithSources.models.indexOf(model);
     const modelSource = opts.model
       ? "--model"
-      : heavyPrefWithSources.models[0] === model
-        ? (heavyPrefWithSources.sources[0] ?? "built-in")
-        : cfg.distill?.defaultModel === model
-          ? "distill.defaultModel"
+      : cfg.distill?.defaultModel === model
+        ? "distill.defaultModel"
+        : heavySrcIdx >= 0
+          ? (heavyPrefWithSources.sources[heavySrcIdx] ?? "built-in")
           : "built-in";
     const distillFallbacks = heavyResolved.fallbackModels ?? [];
     const configuredDistillFallbacks = cfg.distill?.fallbackModels ?? [];
@@ -429,6 +430,18 @@ export async function runDistillForCli(
       });
     };
 
+    const persistAdaptiveLimitsToDisk = () => {
+      if (!adaptiveStatePath) return;
+      try {
+        saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "runDistillForCli:save-adaptive-limits",
+        });
+      }
+    };
+
     const buildBatch = (startIdx: number, batchTokenLimit: number): { text: string; count: number; tokens: number } => {
       let text = "";
       let tokens = promptTokens;
@@ -465,8 +478,7 @@ export async function runDistillForCli(
       const compatibleFallbacks: string[] = [];
       const skippedFallbacks: string[] = [];
       for (const fb of distillFallbacks) {
-        const fbLimits = effectiveLimitsForModel(fb);
-        if (inputTokens <= fbLimits.batchTokenLimit) compatibleFallbacks.push(fb);
+        if (inputTokens <= distillBatchTokenLimit(fb)) compatibleFallbacks.push(fb);
         else skippedFallbacks.push(fb);
       }
       if (skippedFallbacks.length > 0) {
@@ -481,7 +493,6 @@ export async function runDistillForCli(
           model,
           content: userContent,
           temperature: 0.2,
-          maxTokens: limits.maxOutputTokens,
           openai,
           fallbackModels: compatibleFallbacks,
           label: `memory-hybrid: distill batch ${batchNum}`,
@@ -503,7 +514,7 @@ export async function runDistillForCli(
             usedBatchTokenLimit: usedLimits.batchTokenLimit,
             usedMaxOutputTokens: usedLimits.maxOutputTokens,
           });
-          saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+          persistAdaptiveLimitsToDisk();
         }
         if (!adaptiveEnabled) {
           nonAdaptiveBatchFactor = 1;
@@ -560,16 +571,21 @@ export async function runDistillForCli(
                 ? "timeout"
                 : "other";
         if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
+          const failureModel =
+            typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
+              ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
+              : model;
+          const flimits = effectiveLimitsForModel(failureModel);
           recordAdaptiveFailure({
             state: adaptiveState,
-            model,
+            model: failureModel,
             kind,
-            catalogBatchTokenLimit: primaryCatalogBatchLimit,
-            catalogMaxOutputTokens: primaryCatalogMaxOut,
-            usedBatchTokenLimit: limits.batchTokenLimit,
-            usedMaxOutputTokens: limits.maxOutputTokens,
+            catalogBatchTokenLimit: distillBatchTokenLimit(failureModel),
+            catalogMaxOutputTokens: distillMaxOutputTokens(failureModel),
+            usedBatchTokenLimit: flimits.batchTokenLimit,
+            usedMaxOutputTokens: flimits.maxOutputTokens,
           });
-          saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+          persistAdaptiveLimitsToDisk();
         }
         if (!adaptiveEnabled) {
           const { batch: bf, out: of } = adaptiveFailureShrinkRatios(kind);
@@ -582,7 +598,11 @@ export async function runDistillForCli(
           sink.warn(`memory-hybrid: distill batch ${batchNum} rate limited — backing off ${delay}ms`);
           await new Promise<void>((r) => setTimeout(r, delay));
         }
-        if (shrinkBudget > 0 && (isContext || isRateLimit || isQuota || isTimeout || isConn)) {
+        const canShrinkRetry =
+          shrinkBudget > 0 &&
+          (isContext || isRateLimit || isQuota || isTimeout || isConn) &&
+          !(adaptiveEnabled && opts.dryRun);
+        if (canShrinkRetry) {
           shrinkBudget--;
           sink.warn(
             `memory-hybrid: distill batch ${batchNum} failed (${kind}); shrinking and retrying with smaller batch (budget left=${shrinkBudget})`,

@@ -847,6 +847,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
 
   let lastError: Error | undefined;
   let unconfiguredCount = 0;
+  let lastAttemptedModel = opts.model;
 
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
@@ -857,6 +858,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
       throw abortError;
     }
     const currentModel = modelsToTry[i];
+    lastAttemptedModel = currentModel;
     const _isFallback = i > 0;
     // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
@@ -1042,6 +1044,9 @@ export async function chatCompleteWithRetryDetailed(opts: {
       phase: "fallback-exhausted",
     });
   }
+
+  // Let callers (e.g. adaptive distill) attribute limits to the model that actually failed last.
+  Object.assign(finalError, { lastAttemptedModel });
 
   throw finalError;
 }
