@@ -151,14 +151,28 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
     const error = err instanceof Error ? err : new Error(String(err));
     if (enabled) {
       const kind = classifyAdaptiveFailure(error);
+      const failureModel =
+        typeof (error as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
+          ? (error as Error & { lastAttemptedModel: string }).lastAttemptedModel
+          : opts.model;
+      const failureCatalogBatch = distillBatchTokenLimit(failureModel);
+      const failureCatalogMaxOut = distillMaxOutputTokens(failureModel);
+      const failureEffective = getEffectiveModelLimits({
+        state,
+        model: failureModel,
+        catalogBatchTokenLimit: failureCatalogBatch,
+        catalogMaxOutputTokens: failureCatalogMaxOut,
+        minBatchTokenLimit: Math.max(1024, inputTokens + 128),
+        minMaxOutputTokens: Math.min(128, opts.maxTokens),
+      });
       recordAdaptiveFailure({
         state,
-        model: opts.model,
+        model: failureModel,
         kind,
-        catalogBatchTokenLimit,
-        catalogMaxOutputTokens,
-        usedBatchTokenLimit: effective.batchTokenLimit,
-        usedMaxOutputTokens: maxTokens,
+        catalogBatchTokenLimit: failureCatalogBatch,
+        catalogMaxOutputTokens: failureCatalogMaxOut,
+        usedBatchTokenLimit: failureEffective.batchTokenLimit,
+        usedMaxOutputTokens: Math.min(maxTokens, failureCatalogMaxOut),
       });
       if (adaptiveStatePath) {
         try {
@@ -170,7 +184,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
           });
         }
       }
-      opts.logger.info?.(`${opts.label}: recorded adaptive ${kind} failure for ${opts.model}`);
+      opts.logger.info?.(`${opts.label}: recorded adaptive ${kind} failure for ${failureModel}`);
     }
     throw error;
   }
