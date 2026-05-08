@@ -220,7 +220,7 @@ export async function runDistillForCli(
   },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
-  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, logger } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, logger, resolvedSqlitePath } = ctx;
   const SCAN_TYPE = "distill";
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
@@ -314,14 +314,19 @@ export async function runDistillForCli(
     );
 
     const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-    const adaptiveStatePath =
-      (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim() ||
-      join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json");
+    const envAdaptiveState = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim();
+    const inferredAdaptiveState =
+      typeof resolvedSqlitePath === "string" && resolvedSqlitePath.length > 0
+        ? join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json")
+        : "";
+    const adaptiveStatePath = envAdaptiveState || inferredAdaptiveState;
     logger.info?.(
-      `memory-hybrid: distill adaptive sizing = ${adaptiveEnabled ? "enabled" : "disabled"} (state=${adaptiveStatePath})`,
+      `memory-hybrid: distill adaptive sizing = ${adaptiveEnabled ? "enabled" : "disabled"} (state=${adaptiveStatePath || "(no path — set OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE or resolved SQLite)"})`,
     );
     const adaptiveState = adaptiveEnabled
-      ? loadAdaptiveModelLimits(adaptiveStatePath)
+      ? adaptiveStatePath
+        ? loadAdaptiveModelLimits(adaptiveStatePath)
+        : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} }
       : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} };
 
     type DistillBlock = { text: string; tokens: number };
@@ -488,7 +493,7 @@ export async function runDistillForCli(
             `memory-hybrid: distill batch ${batchNum} succeeded with fallback model ${detail.modelUsed} (source=${src})`,
           );
         }
-        if (adaptiveEnabled && !opts.dryRun) {
+        if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
           const usedLimits = effectiveLimitsForModel(detail.modelUsed);
           recordAdaptiveSuccess({
             state: adaptiveState,
@@ -554,7 +559,7 @@ export async function runDistillForCli(
               : isTimeout || isConn
                 ? "timeout"
                 : "other";
-        if (adaptiveEnabled && !opts.dryRun) {
+        if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
           recordAdaptiveFailure({
             state: adaptiveState,
             model,
