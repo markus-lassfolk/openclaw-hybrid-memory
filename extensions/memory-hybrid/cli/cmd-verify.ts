@@ -226,7 +226,7 @@ export async function runVerifyForCli(
     issues.push(`SQLite: ${msg}`);
     if (isBindingsError(msg)) {
       _sqliteBindingsFailed = true;
-      fixes.push("node:sqlite is not available. Upgrade Node.js to >=22.12.0 or use a compatible version.");
+      fixes.push("node:sqlite is not available. Upgrade Node.js to >=22.16.0 or use a compatible version.");
     } else {
       fixes.push(
         `SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`,

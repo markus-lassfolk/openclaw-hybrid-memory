@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Deprecated cron command handling**: detect `consolidate-episodes` and related stale dream-cycle install paths; `hybrid-mem verify --fix` can normalize managed cron job messages; maintenance log classification rule for obsolete CLI steps.
+
+### Changed
+
+- **Node.js**: Minimum version is now **22.16.0** so built-in `node:sqlite` includes **FTS5** (see [nodejs/node#57621](https://github.com/nodejs/node/pull/57621)); CI `.nvmrc` and `engines` updated accordingly.
+
 ---
 
 ## [2026.5.61] - 2026-05-07
