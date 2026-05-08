@@ -52,7 +52,7 @@ export function parseExitLine(line: string): ExitStep | null {
   return {
     timestamp: match[1],
     step: match[2],
-    exitCode: parseInt(match[3], 10),
+    exitCode: Number.parseInt(match[3], 10),
     line: trimmed,
   };
 }
