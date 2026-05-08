@@ -91,14 +91,14 @@ describe("maintenance log analyzer", () => {
     );
     writeFileSync(
       logPath,
-      "openclaw-hybrid-memory 2026.5.64\nTypeError: Cannot read properties of undefined\nguard not updated after success\n",
+      "openclaw-hybrid-memory 2026.5.80\nTypeError: Cannot read properties of undefined\nguard not updated after success\n",
     );
 
     const steps = collectMaintenanceSteps(root, "7d", Date.UTC(2026, 4, 8));
     const findings = analyzeMaintenanceSteps(steps);
     expect(steps).toHaveLength(3);
     expect(findings.map((f) => f.classification)).toEqual(["plugin-bug", "orchestration-bug"]);
-    expect(findings[0].pluginVersion).toBe("2026.5.64");
+    expect(findings[0].pluginVersion).toBe("2026.5.80");
 
     const report = buildMaintenanceAnalysisReport({ root, since: "7d", steps, findings });
     expect(report.schemaVersion).toBe(1);
@@ -122,7 +122,7 @@ describe("maintenance log analyzer", () => {
         fingerprint: "fp-a",
         logExcerpt: "TypeError",
         logPath: "/tmp/a.log",
-        pluginVersion: "2026.5.64",
+        pluginVersion: "2026.5.80",
         actionTaken: "glitchtip+digest" as const,
         suggestedAction: "fix",
         severity: "high" as const,
@@ -186,9 +186,9 @@ describe("maintenance log analyzer", () => {
   });
 
   it("pluginVersionGte compares dotted plugin versions for resolved-issue suppression", () => {
-    expect(pluginVersionGte("2026.5.64", "2026.5.63")).toBe(true);
-    expect(pluginVersionGte("2026.5.64", "2026.5.64")).toBe(true);
-    expect(pluginVersionGte("2026.5.63", "2026.5.64")).toBe(false);
+    expect(pluginVersionGte("2026.5.80", "2026.5.63")).toBe(true);
+    expect(pluginVersionGte("2026.5.80", "2026.5.80")).toBe(true);
+    expect(pluginVersionGte("2026.5.63", "2026.5.80")).toBe(false);
     expect(pluginVersionGte(null, "1.0.0")).toBe(false);
   });
 
@@ -199,14 +199,14 @@ describe("maintenance log analyzer", () => {
     const exitPath = join(day, "nightly-distill-20260507T021015Z-123.exit.txt");
     const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
     writeFileSync(exitPath, ["2026-05-07T02:11:02Z distill exit=1"].join("\n"));
-    writeFileSync(logPath, "openclaw-hybrid-memory 2026.5.64\nTypeError: boom\n");
+    writeFileSync(logPath, "openclaw-hybrid-memory 2026.5.80\nTypeError: boom\n");
 
     const steps = collectMaintenanceSteps(root, "7d", Date.UTC(2026, 4, 8));
     const findings = analyzeMaintenanceSteps(steps);
     expect(findings).toHaveLength(1);
     const fp = findings[0].fingerprint;
     const empty = analyzeMaintenanceSteps(steps, {
-      resolvedFingerprints: { [fp]: { resolvedInVersion: "2026.5.64", note: "fixed in release" } },
+      resolvedFingerprints: { [fp]: { resolvedInVersion: "2026.5.80", note: "fixed in release" } },
     });
     expect(empty).toHaveLength(0);
     const stillThere = analyzeMaintenanceSteps(steps, {
