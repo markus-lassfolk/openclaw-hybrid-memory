@@ -46,6 +46,9 @@ function entryMatchesHybridSearchFilters(
 export type AuditHealthReport = {
   schemaVersion: 1;
   generatedAt: string;
+  /** "ok" when no warnings; "partial" when some sections timed out; "failed" on critical errors. */
+  status: "ok" | "partial" | "failed";
+  /** @deprecated Use `status` instead. Kept for backward compatibility. */
   ok: boolean;
   activeFacts: number;
   /** Age (in days) of the oldest active fact. Used to gate sparse-store warnings (#1193). */
@@ -120,6 +123,8 @@ export type AuditHealthReport = {
   } | null;
   warnings: string[];
   remediation: string[];
+  /** Errors encountered during report generation (e.g., timeouts, query failures). */
+  errors: Array<{ section: string; message: string }>;
 };
 
 function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb"]): number {
@@ -140,6 +145,7 @@ export function buildAuditHealthReport(
   graphHubDegreeCap?: number | null,
   options?: { lanceBytes?: number | null },
 ): AuditHealthReport {
+  const errors: Array<{ section: string; message: string }> = [];
   const capForHubListing = graphHubDegreeCap === undefined ? 500 : graphHubDegreeCap;
   const activeFacts = factsDb.getCount();
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
@@ -256,28 +262,44 @@ export function buildAuditHealthReport(
   // #1193: aggregate the leading 6 tokens of `category=pattern AND source=implicit-feedback`
   // facts to surface "should never store" duplicate prefixes (e.g. paraphrases of the same
   // self-correction) without scanning every row.
+  // LIMIT added to prevent hanging on long-lived stores with thousands of implicit-feedback patterns.
   const implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }> = (() => {
     if (!raw) return [];
-    const rows = raw
-      .prepare(
-        `SELECT text FROM facts
-         WHERE superseded_at IS NULL AND category = 'pattern' AND source = 'implicit-feedback'`,
-      )
-      .all() as Array<{ text: string | null }>;
-    if (rows.length === 0) return [];
-    const counts = new Map<string, number>();
-    for (const row of rows) {
-      const text = (row.text ?? "").trim().toLowerCase();
-      if (!text) continue;
-      const tokens = text.split(/\s+/).slice(0, 6).join(" ");
-      const prefix = tokens.length > 0 ? tokens.slice(0, 80) : "<empty>";
-      counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+    try {
+      // Limit to 5000 rows to prevent hanging on large stores
+      const rows = raw
+        .prepare(
+          `SELECT text FROM facts
+           WHERE superseded_at IS NULL AND category = 'pattern' AND source = 'implicit-feedback'
+           LIMIT 5000`,
+        )
+        .all() as Array<{ text: string | null }>;
+      if (rows.length === 0) return [];
+      const counts = new Map<string, number>();
+      for (const row of rows) {
+        const text = (row.text ?? "").trim().toLowerCase();
+        if (!text) continue;
+        const tokens = text.split(/\s+/).slice(0, 6).join(" ");
+        const prefix = tokens.length > 0 ? tokens.slice(0, 80) : "<empty>";
+        counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+      }
+      const result = [...counts.entries()]
+        .map(([prefix, count]) => ({ prefix, count }))
+        .filter((row) => row.count >= 2)
+        .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
+        .slice(0, 5);
+      // Warn if we hit the limit — partial data
+      if (rows.length === 5000) {
+        errors.push({ section: "implicitFeedbackPrefixHistogram", message: "Truncated to 5000 rows" });
+      }
+      return result;
+    } catch (err) {
+      errors.push({
+        section: "implicitFeedbackPrefixHistogram",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return [];
     }
-    return [...counts.entries()]
-      .map(([prefix, count]) => ({ prefix, count }))
-      .filter((row) => row.count >= 2)
-      .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
-      .slice(0, 5);
   })();
   const entityStopwordMatches = factsDb
     .topEntities(50)
@@ -481,9 +503,12 @@ export function buildAuditHealthReport(
     }
   }
 
+  const status: AuditHealthReport["status"] = errors.length > 0 ? "partial" : warnings.length === 0 ? "ok" : "ok";
+
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
+    status,
     ok: warnings.length === 0,
     activeFacts,
     storeAgeDays: Number(storeAgeDays.toFixed(2)),
@@ -519,13 +544,14 @@ export function buildAuditHealthReport(
     graphHubGuard,
     warnings,
     remediation,
+    errors,
   };
 }
 
 function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log("# Hybrid-memory audit health");
   console.log("");
-  console.log(`Status: ${report.ok ? "ok" : "warning"}`);
+  console.log(`Status: ${report.status}${report.status !== "ok" ? ` (legacy ok=${report.ok})` : ""}`);
   console.log(`Generated: ${report.generatedAt}`);
   console.log(`Schema version: ${report.schemaVersion}`);
   console.log(`Active facts: ${report.activeFacts}`);
@@ -592,6 +618,11 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
     );
   }
   console.log("");
+  if (report.errors.length > 0) {
+    console.log("Errors:");
+    for (const error of report.errors) console.log(`- [${error.section}] ${error.message}`);
+    console.log("");
+  }
   if (report.warnings.length === 0) {
     console.log("Warnings: none");
   } else {
@@ -1625,7 +1656,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
   const runAuditHealth = async (opts?: { json?: boolean; strict?: boolean }) => {
     let lanceBytes: number | null = null;
     try {
-      const sizes = await ctx.richStatsExtras?.getStorageSizes();
+      // Add 5-second timeout for LanceDB size calculation to prevent hanging
+      const { withTimeout } = await import("../../../utils/timeout.js");
+      const sizes = await withTimeout(5000, async () => ctx.richStatsExtras?.getStorageSizes());
       if (sizes && typeof sizes.lanceBytes === "number") lanceBytes = sizes.lanceBytes;
     } catch (err) {
       // best-effort — lance bytes are optional in the audit-health output
@@ -1647,7 +1680,8 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     } else {
       printAuditHealthMarkdown(report);
     }
-    if (opts?.strict && !report.ok) process.exitCode = 2;
+    // Exit non-zero if strict mode and either warnings present or status is partial/failed
+    if (opts?.strict && (report.status !== "ok" || !report.ok)) process.exitCode = 2;
   };
 
   mem

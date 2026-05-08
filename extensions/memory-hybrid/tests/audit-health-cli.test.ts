@@ -34,6 +34,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
 
     expect(report.schemaVersion).toBe(1);
     expect(report.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(report.status).toMatch(/^(ok|partial|failed)$/);
     expect(typeof report.ok).toBe("boolean");
     expect(report.activeFacts).toBeGreaterThanOrEqual(1);
     expect(report.storeAgeDays).toBeGreaterThanOrEqual(0);
@@ -80,6 +81,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(typeof report.implicitFeedbackTrajectorySignals).toBe("number");
     expect(Array.isArray(report.warnings)).toBe(true);
     expect(Array.isArray(report.remediation)).toBe(true);
+    expect(Array.isArray(report.errors)).toBe(true);
     db.close();
   });
 
