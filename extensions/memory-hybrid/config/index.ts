@@ -178,6 +178,14 @@ export function getLLMModelPreferenceUnfiltered(
     }
     return getLLMModelPreferenceUnfiltered(pluginConfig, "default");
   }
+  if (tier === "maintenance") {
+    const maintenanceList = pluginConfig?.llm?.maintenance;
+    if (Array.isArray(maintenanceList) && maintenanceList.length > 0) {
+      const trimmed = maintenanceList.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
+      if (trimmed.length > 0) return trimmed;
+    }
+    return getLLMModelPreferenceUnfiltered(pluginConfig, "default");
+  }
   const list = tier === "heavy" ? pluginConfig?.llm?.heavy : pluginConfig?.llm?.default;
   if (Array.isArray(list) && list.length > 0) {
     const trimmed = list.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);

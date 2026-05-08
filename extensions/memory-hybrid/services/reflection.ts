@@ -22,7 +22,7 @@ import {
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import { LLMRetryError, chatCompleteWithRetryDetailed } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
@@ -278,7 +278,7 @@ export async function runReflection(
 
   let rawResponse: string;
   try {
-    rawResponse = await chatCompleteWithRetry({
+    const detail = await chatCompleteWithRetryDetailed({
       model: opts.model,
       content: prompt,
       temperature: REFLECTION_TEMPERATURE,
@@ -288,6 +288,10 @@ export async function runReflection(
       label: "memory-hybrid: reflection",
       feature: CostFeature.reflection,
     });
+    if (detail.modelUsed !== opts.model) {
+      logger.info(`memory-hybrid: reflection — used fallback model ${detail.modelUsed}`);
+    }
+    rawResponse = detail.content;
   } catch (err) {
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
@@ -485,7 +489,7 @@ export async function runReflectionRules(
   }
   let rawResponse: string;
   try {
-    rawResponse = await chatCompleteWithRetry({
+    const detail = await chatCompleteWithRetryDetailed({
       model: opts.model,
       content: prompt,
       temperature: REFLECTION_TEMPERATURE,
@@ -495,6 +499,10 @@ export async function runReflectionRules(
       label: "memory-hybrid: reflect-rules",
       feature: CostFeature.reflectionRules,
     });
+    if (detail.modelUsed !== opts.model) {
+      logger.info(`memory-hybrid: reflect-rules — used fallback model ${detail.modelUsed}`);
+    }
+    rawResponse = detail.content;
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
@@ -692,7 +700,7 @@ export async function runReflectionMeta(
   }
   let rawResponse: string;
   try {
-    rawResponse = await chatCompleteWithRetry({
+    const detail = await chatCompleteWithRetryDetailed({
       model: opts.model,
       content: prompt,
       temperature: REFLECTION_TEMPERATURE,
@@ -702,6 +710,10 @@ export async function runReflectionMeta(
       label: "memory-hybrid: reflect-meta",
       feature: CostFeature.reflectionMeta,
     });
+    if (detail.modelUsed !== opts.model) {
+      logger.info(`memory-hybrid: reflect-meta — used fallback model ${detail.modelUsed}`);
+    }
+    rawResponse = detail.content;
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;

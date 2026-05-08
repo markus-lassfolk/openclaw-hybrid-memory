@@ -30,15 +30,17 @@ For full features you need at least one chat provider configured. The plugin wor
 
 ## How the plugin uses LLMs — tiers
 
-Every LLM feature belongs to one of three tiers. The tier determines which model list is tried first.
+Every LLM feature belongs to a tier. The tier determines which model list is tried first.
 
 | Tier | Features | Optimised for | Recommended models |
 |------|----------|---------------|-------------------|
 | **nano** | autoClassify, query expansion, classifyBeforeWrite, auto-recall summarize | Cheapest — runs on **every** chat message or write | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| **maintenance** | dream cycle, reflection, consolidation helpers, session-extraction analysis | Cost-safe scheduled/manual work | `gemini-2.5-flash`, `gpt-4.1-mini`, `claude-sonnet-4-6` |
 | **default** | reflection, language keywords, general analysis | Balanced quality/cost | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
 | **heavy** | Session distillation, self-correction, persona proposals | Most capable; **long context critical** for distill | `gemini-3.1-pro-preview` (1024k), `claude-opus-4-6`, `o3` |
 
 When `llm.nano` is not configured, nano ops fall back to `llm.default[0]`.
+When `llm.maintenance` is not configured, maintenance ops fall back to `llm.default[0]`.
 
 > **Why Gemini first for heavy?** Distillation processes entire session histories — up to 500k tokens. Google's Gemini Pro is currently the only model with 1024k context at the heavy tier, making it far more effective for distill than Claude Opus (195k) or OpenAI o3 (195k).
 

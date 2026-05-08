@@ -737,7 +737,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
               typeof distillRaw.extractionModelTier === "string"
                 ? distillRaw.extractionModelTier.trim().toLowerCase()
                 : "";
-            return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
+            return v === "nano" || v === "maintenance" || v === "default" || v === "heavy"
+              ? (v as "nano" | "maintenance" | "default" | "heavy")
+              : undefined;
           })(),
         }
       : undefined;

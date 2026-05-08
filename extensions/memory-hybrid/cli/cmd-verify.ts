@@ -9,7 +9,7 @@ import { getEnv } from "../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -24,9 +24,11 @@ import {
   getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
   isCompactVerbosity,
+  resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
-import { chatComplete } from "../services/chat.js";
+import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
+import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { readGuardTimestampMs } from "../services/cron-guard.js";
 import {
@@ -38,16 +40,23 @@ import {
 } from "../services/embeddings.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../services/cron-job-bash-harness.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
   getHeartbeatMatchersForVerify,
 } from "../services/goal-stewardship-verify-cron.js";
+import {
+  collectRecentHmExitLedgerPaths,
+  findDeprecatedHybridMemCronTokens,
+  findDeprecatedTokensInHmExitContent,
+} from "../services/deprecated-cron-commands.js";
 import { resolveWireApi } from "../services/model-capabilities.js";
 import { callResponsesApi } from "../services/responses-adapter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
+import { isHeavyModel } from "../utils/model-tier.js";
 import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
@@ -542,8 +551,8 @@ export async function runVerifyForCli(
     }
   }
 
-  // ───── LLM / models table: one row per model from llm.nano / llm.default / llm.heavy; auth + source ─────
-  tableLog("\n───── LLM / Models (from llm.nano, llm.default, llm.heavy) ─────");
+  // ───── LLM / models table: one row per model from llm.nano / llm.maintenance / llm.default / llm.heavy; auth + source ─────
+  tableLog("\n───── LLM / Models (from llm.nano, llm.maintenance, llm.default, llm.heavy) ─────");
   const cronCfg = getCronModelConfig(cfg);
   const providersWithKeys = getProvidersWithKeys(cronCfg);
   const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
@@ -553,14 +562,19 @@ export async function runVerifyForCli(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );
   const tierNano = getLLMModelPreferenceUnfiltered(cronCfg, "nano");
+  const tierMaintenance = getLLMModelPreferenceUnfiltered(cronCfg, "maintenance");
   const tierDefault = getLLMModelPreferenceUnfiltered(cronCfg, "default");
   const tierHeavy = getLLMModelPreferenceUnfiltered(cronCfg, "heavy");
   const nanoExplicitConfigured =
     Array.isArray(cronCfg.llm?.nano) && cronCfg.llm.nano.some((m) => typeof m === "string" && m.trim().length > 0);
-  const allModelsUnfiltered: string[] = [...tierNano, ...tierDefault, ...tierHeavy];
+  const maintenanceExplicitConfigured =
+    Array.isArray(cronCfg.llm?.maintenance) &&
+    cronCfg.llm.maintenance.some((m) => typeof m === "string" && m.trim().length > 0);
+  const allModelsUnfiltered: string[] = [...tierNano, ...tierMaintenance, ...tierDefault, ...tierHeavy];
   function tiersForModel(model: string): string {
     const tags: string[] = [];
     if (tierNano.includes(model)) tags.push("nano");
+    if (tierMaintenance.includes(model)) tags.push("maintenance");
     if (tierDefault.includes(model)) tags.push("default");
     if (tierHeavy.includes(model)) tags.push("heavy");
     if (tags.length === 0) return "—";
@@ -571,10 +585,13 @@ export async function runVerifyForCli(
   tableLog(
     `    nano:    ${fmtTierList(tierNano)}${nanoExplicitConfigured ? "" : "  — llm.nano unset; nano tier reuses the default list"}`,
   );
+  tableLog(
+    `    maintenance: ${fmtTierList(tierMaintenance)}${maintenanceExplicitConfigured ? "" : "  — llm.maintenance unset; maintenance tier reuses the default list"}`,
+  );
   tableLog(`    default: ${fmtTierList(tierDefault)}`);
   tableLog(`    heavy:   ${fmtTierList(tierHeavy)}`);
   tableLog(
-    `    First choice per tier: nano=${tierNano[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
+    `    First choice per tier: nano=${tierNano[0] ?? "—"} | maintenance=${tierMaintenance[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
   );
   const dreamOverride =
     typeof cfg.nightlyCycle?.model === "string" && cfg.nightlyCycle.model.trim().length > 0
@@ -583,13 +600,30 @@ export async function runVerifyForCli(
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
-      : `    Dream cycle + MEMORY_INDEX.md: uses default tier first choice (${tierDefault[0] ?? "—"}) unless nightlyCycle.model is set.`,
+      : `    Dream cycle + MEMORY_INDEX.md: uses maintenance tier first choice (${tierMaintenance[0] ?? "—"}) unless nightlyCycle.model is set.`,
   );
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
   );
+
+  // Maintenance routing warnings: flag when maintenance-adjacent tasks are routed to heavy/expensive models unintentionally.
+  const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+  const extractionFirst =
+    getLLMModelPreference(cronCfg, extractionTier)[0] ?? getLLMModelPreference(cronCfg, "nano")[0] ?? "—";
+  if (extractionTier !== "heavy" && extractionFirst !== "—" && isHeavyModel(extractionFirst)) {
+    warnings.push(
+      `distill.extractionModelTier=${extractionTier} routes session extraction to a heavy/expensive first-choice model (${extractionFirst}); set distill.extractionModelTier=nano or configure llm.maintenance and use distill.extractionModelTier=maintenance`,
+    );
+  }
+  const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
+  if (dreamEffective !== "—" && isHeavyModel(dreamEffective)) {
+    warnings.push(
+      `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
+    );
+  }
   const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
+    ...getLLMModelPreference(cronCfg, "maintenance"),
     ...getLLMModelPreference(cronCfg, "default"),
     ...getLLMModelPreference(cronCfg, "heavy"),
   ];
@@ -772,7 +806,7 @@ export async function runVerifyForCli(
     let oauthError: string | undefined = undefined;
     let apiError: string | undefined = undefined;
     let apiSkippedReason: string | undefined = undefined;
-    // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/default/heavy.
+    // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/maintenance/default/heavy.
     if (opts.testLlm && enabled && (hasOAuth || hasApi)) {
       const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
       const wireApi = resolveWireApi(model);
@@ -904,7 +938,9 @@ export async function runVerifyForCli(
     });
   }
   if (llmRows.length === 0) {
-    tableLog("  No LLM models configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
+    tableLog(
+      "  No LLM models configured (add llm.nano / llm.maintenance / llm.default / llm.heavy or API keys / OAuth).",
+    );
     tableLog("  LLMs: add model tiers or API keys in config. See docs/LLM-AND-PROVIDERS.md.");
     tableLog("");
     tableLog("  Summary: Configure LLM tiers or API keys to use memory and cron jobs.");
@@ -988,7 +1024,7 @@ export async function runVerifyForCli(
       tableLog("");
     }
     tableLog(
-      '  (Tier(s) = which tier lists include this model; "—" = reference row only, not in your llm.nano/default/heavy. Source = key origin. Enabled = provider not in llm.disabledProviders. Skipped = not tested.)',
+      '  (Tier(s) = which tier lists include this model; "—" = reference row only, not in your llm.nano/maintenance/default/heavy. Source = key origin. Enabled = provider not in llm.disabledProviders. Skipped = not tested.)',
     );
     const llmProvidersWithCreds = new Set(llmRows.filter((r) => r.hasApi || r.hasOAuth).map((r) => r.provider)).size;
     const llmOk = llmProvidersWithCreds >= 1;
@@ -1031,12 +1067,27 @@ export async function runVerifyForCli(
           const first = items[0];
           credentialsDb.get(first.service, first.type as CredentialType);
         }
-        const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-        log(`\nCredentials (vault): OK (${items.length} stored)${encrypted ? " [encrypted]" : " [plaintext]"}`);
+        const st = credentialsDb.getVaultStatus();
+        const stateLabel = st.encryptedAtRest
+          ? `encrypted (kdf_version=${st.kdfVersion})`
+          : `plaintext (kdf_version=${st.kdfVersion})`;
+        log(`\nCredentials (vault): OK (${items.length} stored) [${stateLabel}]`);
+        log(
+          `Credentials (vault): encryption_key_configured=${st.configuredKeyPresent ? "yes" : "no"}; migration_required=${
+            st.migrationRequired ? "yes" : "no"
+          }`,
+        );
+        if (st.migrationRequired) {
+          const WARN = noEmoji ? "[WARN]" : "⚠️";
+          log(
+            `${WARN} Credentials (vault): encryption key is configured but ignored until the existing vault is encrypted at rest.`,
+          );
+          log("Fix: run `openclaw hybrid-mem credentials encrypt-vault --yes` (see docs/CREDENTIALS.md).");
+        }
       } catch (e) {
         issues.push(`Credentials vault: ${String(e)}`);
-        const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-        if (encrypted) {
+        const hasKey = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+        if (hasKey) {
           fixes.push(
             "Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.",
           );
@@ -1274,6 +1325,7 @@ export async function runVerifyForCli(
 
   interface JobInfo {
     name: string;
+    pluginJobId?: string;
     enabled: boolean;
     /** Set by ensureMaintenanceCronJobs when a feature gate disabled the job. */
     featureGateDisabled?: boolean;
@@ -1283,6 +1335,7 @@ export async function runVerifyForCli(
     lastRunGuardMs?: number | null;
     /** Set when the job carries a `pluginJobId` starting with `hybrid-mem:` (treat the `Other` list as truly external). */
     isHybridMem?: boolean;
+    deprecatedCronTokens?: string[];
     state?: {
       nextRunAtMs?: number;
       lastRunAtMs?: number;
@@ -1292,6 +1345,27 @@ export async function runVerifyForCli(
   }
 
   const allJobs = new Map<string, JobInfo>();
+
+  function hybridMemCronMessageSanitizerStatus(message: string): "ok" | "partial" | "missing" {
+    if (message.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return "ok";
+    const required = [
+      "OPENCLAW_SKIP_HYBRID_MEMORY_CLI",
+      "OPENCLAW_HOME",
+      "OPENCLAW_CLI",
+      "OPENCLAW_SERVICE_KIND",
+      "OPENCLAW_SERVICE_MARKER",
+    ];
+    const present = required.filter((v) => message.includes(`-u ${v}`));
+    if (present.length > 0 && present.length < required.length) return "partial";
+    const mentionsHybridMem = /openclaw\s+hybrid-mem\b/.test(message);
+    const hasAnyUnsets =
+      message.includes("-u OPENCLAW_HOME") ||
+      message.includes("-u OPENCLAW_CLI") ||
+      message.includes("-u OPENCLAW_SERVICE_KIND") ||
+      message.includes("-u OPENCLAW_SERVICE_MARKER");
+    if (mentionsHybridMem && !hasAnyUnsets) return "missing";
+    return "ok";
+  }
 
   if (existsSync(cronStorePath)) {
     try {
@@ -1321,13 +1395,16 @@ export async function runVerifyForCli(
 
           const canonicalKey = getCanonicalJobKey(name, msg);
           if (canonicalKey) {
+            const deprecatedCronTokens = findDeprecatedHybridMemCronTokens(msg).map((t) => t.token);
             allJobs.set(canonicalKey, {
               name,
+              pluginJobId: pid || undefined,
               enabled,
               featureGateDisabled,
               scheduleExpr,
               lastRunGuardMs,
               isHybridMem,
+              deprecatedCronTokens: deprecatedCronTokens.length > 0 ? deprecatedCronTokens : undefined,
               state,
             });
           }
@@ -1336,6 +1413,35 @@ export async function runVerifyForCli(
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
     }
+  }
+
+  // Issue #1205: hybrid-mem cron jobs can fail in service/cron-like envs when OPENCLAW_HOME or service marker vars leak
+  // into the execution shell, preventing plugin CLI metadata discovery ("Unknown command: openclaw hybrid-mem").
+  const cronEnvLeakPartial: string[] = [];
+  const cronEnvLeakMissing: string[] = [];
+  for (const [key, job] of allJobs.entries()) {
+    if (!job.isHybridMem || !job.message) continue;
+    const status = hybridMemCronMessageSanitizerStatus(job.message);
+    if (status === "partial") cronEnvLeakPartial.push(key);
+    if (status === "missing") cronEnvLeakMissing.push(key);
+  }
+  if (cronEnvLeakPartial.length > 0 || cronEnvLeakMissing.length > 0) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    const list = [
+      cronEnvLeakMissing.length > 0 ? `missing sanitizer: ${cronEnvLeakMissing.join(", ")}` : null,
+      cronEnvLeakPartial.length > 0 ? `partial sanitizer: ${cronEnvLeakPartial.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    log(
+      `\n${WARN} Cron payload env sanitizer (issue #1205): ${list}. Service/cron environments can leak OPENCLAW_HOME / service marker vars and make \`openclaw hybrid-mem\` unavailable. Fix: run \`openclaw hybrid-mem verify --fix\` to inject a robust sanitizer (unsets OPENCLAW_HOME, OPENCLAW_CLI, OPENCLAW_SERVICE_KIND, OPENCLAW_SERVICE_MARKER, OPENCLAW_SKIP_HYBRID_MEMORY_CLI).`,
+    );
+    warnings.push(
+      `hybrid-mem cron payloads are missing/partial env sanitizer (issue #1205); run 'openclaw hybrid-mem verify --fix'`,
+    );
+    fixes.push(
+      "Run 'openclaw hybrid-mem verify --fix' to update managed cron job messages with an env sanitizer for OPENCLAW_HOME/service markers.",
+    );
   }
 
   // Also check default config for jobs not found in cron store
@@ -1434,6 +1540,62 @@ export async function runVerifyForCli(
     for (const [_key, job] of otherJobs) {
       formatJobStatus(job, job.name, "    ", log);
     }
+  }
+
+  // Warn if the stored cron messages or recent exit logs reference deprecated CLI commands/steps.
+  const deprecatedCronJobs = Array.from(allJobs.values()).filter(
+    (j) => (j.deprecatedCronTokens?.length ?? 0) > 0 && j.featureGateDisabled !== true,
+  );
+  if (deprecatedCronJobs.length > 0) {
+    const affected = deprecatedCronJobs
+      .slice(0, 5)
+      .map((j) => `${j.pluginJobId ?? j.name} (${(j.deprecatedCronTokens ?? []).join(", ")})`)
+      .join("; ");
+    warnings.push(
+      `cron store contains deprecated hybrid-mem command references: ${affected}${
+        deprecatedCronJobs.length > 5 ? `; … (${deprecatedCronJobs.length - 5} more)` : ""
+      }`,
+    );
+    log(
+      `\n${WARN_LINE} Stale cron payload detected: job messages reference deprecated command(s)/step(s). Run \`openclaw hybrid-mem verify --fix\` to normalize managed job messages.`,
+    );
+  }
+
+  // Also scan recent HM_EXIT logs (these can reveal stale commands even when the top-level cron payload looks correct).
+  try {
+    const logsRoot = join(openclawDir, "logs", "cron-hybrid-mem");
+    if (existsSync(logsRoot)) {
+      const cutoffMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
+
+      const exitHits: Array<{ file: string; hit: ReturnType<typeof findDeprecatedTokensInHmExitContent>[number] }> = [];
+      for (const full of exitFiles) {
+        try {
+          const content = readFileSync(full, "utf-8");
+          const hits = findDeprecatedTokensInHmExitContent(content);
+          for (const hit of hits) {
+            exitHits.push({ file: full, hit });
+            if (exitHits.length >= 5) break;
+          }
+        } catch {
+          /* skip unreadable or partial files */
+        }
+        if (exitHits.length >= 5) break;
+      }
+
+      if (exitHits.length > 0) {
+        const sample = exitHits
+          .map((h) => `${h.hit.token.token} in ${h.file}${h.hit.iso ? ` @ ${h.hit.iso}` : ""}`)
+          .slice(0, 3)
+          .join("; ");
+        warnings.push(`recent cron-hybrid-mem exit logs reference deprecated step(s): ${sample}`);
+        log(
+          `${WARN_LINE} Recent maintenance logs reference deprecated command(s)/step(s). This can happen even when cron jobs appear updated. Normalize with \`openclaw hybrid-mem verify --fix\`.`,
+        );
+      }
+    }
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:scan-cron-exit-logs" });
   }
 
   // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than

@@ -146,7 +146,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     },
     // queryExpansion not set in preset — defaults to disabled; set explicitly to enable.
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
-    distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "default" },
+    distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "maintenance" },
     frustrationDetection: { enabled: false },
     nightlyCycle: { enabled: false },
     passiveObserver: { enabled: false },
