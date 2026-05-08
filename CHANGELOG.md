@@ -25,11 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **JSON config output**: `openclaw hybrid-mem config --json` and `openclaw hybrid-mem config --format json` now output configuration in machine-readable JSON format (core features, optional features, advanced settings).
 - **`features` command**: New `openclaw hybrid-mem features` command that outputs all feature flags in JSON format for automated inspection and cron scripts.
-- **`consolidate-episodes` deprecation notice**: Added `consolidate-episodes` command that returns exit code 1 with helpful error message directing users to `dream-cycle` or `consolidate` commands (addresses #1206).
+- **`consolidate-episodes` compatibility shim**: Added `consolidate-episodes` command that prints a deprecation warning and **exits 0** so legacy cron/runbooks do not fail hard, while directing operators to `dream-cycle` or `consolidate` (addresses #1206).
 
 ### Fixed
 
-- **CLI command compatibility**: Resolves issue #1206 where historical maintenance runbooks referenced obsolete commands (`consolidate-episodes`, `features`, `config --json`) that did not exist in current CLI, causing exit 1 errors and confusing audit output.
+- **CLI command compatibility**: Resolves issue #1206 where historical maintenance runbooks referenced obsolete commands (`consolidate-episodes`, `features`, `config --json`) that did not exist in current CLI. Adds `config --json` / `--format json` (versioned summary contract), `features` (feature toggles JSON only), and a non-failing `consolidate-episodes` shim.
 
 ### Changed
 

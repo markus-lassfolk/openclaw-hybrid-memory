@@ -221,8 +221,19 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .action(
       withExit(async (opts?: { json?: boolean; format?: string }) => {
         try {
+          const fmtRaw = (opts?.format ?? "text").trim().toLowerCase();
+          if (opts?.json && opts.format && fmtRaw !== "json") {
+            console.error("Error: do not combine --json with --format text.");
+            process.exitCode = 1;
+            return;
+          }
+          if (!opts?.json && fmtRaw !== "text" && fmtRaw !== "json") {
+            console.error(`Error: invalid --format "${opts?.format ?? ""}". Use text or json.`);
+            process.exitCode = 1;
+            return;
+          }
           // Determine format: --json takes precedence, then --format, default to text
-          const format = opts?.json ? "json" : opts?.format === "json" ? "json" : "text";
+          const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
           runConfigView(
             { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
             { format: format as "text" | "json" },
@@ -239,14 +250,13 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
 
   mem
     .command("features")
-    .description("Show enabled/disabled feature flags in JSON format (for machine consumption)")
+    .description("Emit feature toggles only as JSON (same keys as config --format json `features` object)")
     .action(
       withExit(async () => {
         try {
-          // Always output JSON for features command
           runConfigView(
             { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
-            { format: "json" },
+            { format: "json", featuresOnly: true },
           );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -515,7 +525,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     )
     .action(
       withExit(async () => {
-        console.error("Error: 'consolidate-episodes' is deprecated.");
+        console.error("Warning: 'consolidate-episodes' is deprecated (exits 0 for automation compatibility).");
         console.error("");
         console.error("For episodic memory consolidation as part of nightly maintenance:");
         console.error("  openclaw hybrid-mem dream-cycle");
@@ -524,7 +534,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         console.error("  openclaw hybrid-mem consolidate");
         console.error("");
         console.error("See also: https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1206");
-        process.exitCode = 1;
+        process.exitCode = 0;
       }),
     );
 

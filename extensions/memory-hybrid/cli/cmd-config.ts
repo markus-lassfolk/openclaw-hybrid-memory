@@ -128,7 +128,7 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
 export function runConfigViewForCli(
   ctx: HandlerContext,
   sink: VerifyCliSink,
-  opts?: { format?: "text" | "json" },
+  opts?: { format?: "text" | "json"; featuresOnly?: boolean },
 ): void {
   const { cfg } = ctx;
   const log = sink.log;
@@ -136,7 +136,40 @@ export function runConfigViewForCli(
 
   // If JSON format requested, output machine-readable JSON
   if (format === "json") {
+    const features = {
+      nightlyCycle: cfg.nightlyCycle?.enabled ?? false,
+      passiveObserver: cfg.passiveObserver?.enabled ?? false,
+      reflection: cfg.reflection.enabled,
+      personaProposals: cfg.personaProposals.enabled,
+      selfCorrection: !!cfg.selfCorrection,
+      selfExtension: cfg.selfExtension?.enabled ?? false,
+      crystallization: cfg.crystallization?.enabled ?? false,
+      extraction: !!cfg.extraction?.extractionPasses,
+      goalStewardship: cfg.goalStewardship?.enabled ?? false,
+      activeTask: cfg.activeTask.enabled,
+      frustrationDetection: cfg.frustrationDetection.enabled,
+      crossAgentLearning: cfg.crossAgentLearning.enabled,
+      toolEffectiveness: cfg.toolEffectiveness.enabled,
+      workflowTracking: cfg.workflowTracking.enabled,
+      documents: cfg.documents.enabled,
+      provenance: cfg.provenance.enabled,
+      verification: cfg.verification.enabled,
+      aliases: cfg.aliases.enabled,
+      reranking: cfg.reranking.enabled,
+      contextualVariants: cfg.contextualVariants.enabled,
+      errorReporting: cfg.errorReporting?.enabled ?? false,
+      costTracking: cfg.costTracking?.enabled ?? false,
+      wal: cfg.wal.enabled,
+      ambient: cfg.ambient.enabled,
+      futureDateProtection: cfg.futureDateProtection.enabled,
+    };
+    if (opts?.featuresOnly) {
+      log(JSON.stringify(features, null, 2));
+      return;
+    }
     const jsonOutput = {
+      schemaVersion: 1,
+      contract: "openclaw.hybrid-mem.config-view.summary.v1",
       mode: cfg.mode && cfg.mode !== "custom" ? cfg.mode : "custom",
       verbosity: cfg.verbosity ?? "normal",
       core: {
@@ -148,30 +181,7 @@ export function runConfigViewForCli(
         graph: cfg.graph.enabled,
         autoClassify: cfg.autoClassify.enabled,
       },
-      features: {
-        nightlyCycle: cfg.nightlyCycle?.enabled ?? false,
-        passiveObserver: cfg.passiveObserver?.enabled ?? false,
-        reflection: cfg.reflection.enabled,
-        personaProposals: cfg.personaProposals.enabled,
-        selfCorrection: !!cfg.selfCorrection,
-        selfExtension: cfg.selfExtension?.enabled ?? false,
-        crystallization: cfg.crystallization?.enabled ?? false,
-        extraction: !!cfg.extraction?.extractionPasses,
-        goalStewardship: cfg.goalStewardship?.enabled ?? false,
-        activeTask: cfg.activeTask.enabled,
-        frustrationDetection: cfg.frustrationDetection.enabled,
-        crossAgentLearning: cfg.crossAgentLearning.enabled,
-        toolEffectiveness: cfg.toolEffectiveness.enabled,
-        workflowTracking: cfg.workflowTracking.enabled,
-        documents: cfg.documents.enabled,
-        provenance: cfg.provenance.enabled,
-        verification: cfg.verification.enabled,
-        aliases: cfg.aliases.enabled,
-        reranking: cfg.reranking.enabled,
-        contextualVariants: cfg.contextualVariants.enabled,
-        errorReporting: cfg.errorReporting?.enabled ?? false,
-        costTracking: cfg.costTracking?.enabled ?? false,
-      },
+      features,
       advanced: {
         queryExpansion: cfg.queryExpansion.enabled,
         retrievalDirectives: cfg.autoRecall.retrievalDirectives?.enabled ?? false,
