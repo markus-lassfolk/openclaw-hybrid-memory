@@ -77,7 +77,11 @@ import {
   applyPostRrfAdjustments,
   fuseResults,
 } from "./services/rrf-fusion.js";
-import { registerHybridMemCliMetadataOnly, registerHybridMemCliWithApi } from "./setup/cli-context.js";
+import {
+  registerHybridMemCliHelpOnlyWithApi,
+  registerHybridMemCliMetadataOnly,
+  registerHybridMemCliWithApi,
+} from "./setup/cli-context.js";
 import { versionInfo } from "./versionInfo.js";
 export type {
   GraphExpandedResult,
@@ -388,6 +392,14 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // cannot block lightweight metadata registration.
   if (api.registrationMode === "cli-metadata") {
     registerHybridMemCliMetadataOnly(api);
+    return;
+  }
+
+  // Help invocations should be cheap and deterministic: register the command tree but do not
+  // bootstrap DBs or start background checks/timers that can keep Node alive after help prints.
+  // Examples: `openclaw hybrid-mem --help`, `openclaw hybrid-mem verify --help`.
+  if (isHybridMemHelpInvocation(process.argv)) {
+    registerHybridMemCliHelpOnlyWithApi(api);
     return;
   }
 
@@ -828,6 +840,16 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
       })();
     });
   }
+}
+
+function isHybridMemHelpInvocation(argv: string[]): boolean {
+  const hybridIdx = argv.indexOf("hybrid-mem");
+  if (hybridIdx === -1) return false;
+  for (let i = hybridIdx + 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") return true;
+  }
+  return false;
 }
 
 // Export internal functions and classes for testing

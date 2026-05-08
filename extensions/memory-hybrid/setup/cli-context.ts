@@ -18,6 +18,7 @@ import { applyApprovedProposal } from "../cli/proposals.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
 import {
+  hybridConfigSchema,
   getCronModelConfig,
   getDefaultCronModel,
   getMemoryCategories,
@@ -39,7 +40,7 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
-import { pluginLogger } from "../utils/logger.js";
+import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 import { versionInfo } from "../versionInfo.js";
 
 /** Help text shown after hybrid-mem commands list */
@@ -529,6 +530,86 @@ export function registerHybridMemCliWithApi(
         });
         throw err;
       }
+    },
+    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
+  );
+}
+
+/**
+ * Help-only CLI wiring for `openclaw hybrid-mem --help` (and subcommand help).
+ *
+ * When OpenClaw prints help, no Commander action runs; `postAction` teardown hooks never fire.
+ * If the plugin bootstraps databases or starts async background checks during register(), those
+ * handles can keep the process alive and make help look hung (issue #<hang-help>).
+ *
+ * This registers the full Commander command tree without initializing DBs, native deps, or any
+ * background checks. It intentionally ignores the user's plugin config so help is deterministic
+ * even when config secrets (env:/file:) are missing.
+ */
+export function registerHybridMemCliHelpOnlyWithApi(api: ClawdbotPluginApi): void {
+  // Silence config-parser telemetry so help output stays clean.
+  resetPluginLogger();
+  let cfg: HandlerContext["cfg"];
+  try {
+    cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "openai",
+        apiKey: "sk-help-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+    });
+  } catch {
+    // Fallback that does not require credentials (still needs a model name for provider != openai).
+    cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "ollama",
+        model: "nomic-embed-text",
+      },
+    });
+  } finally {
+    restoreDefaultLogger();
+  }
+
+  const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
+  const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
+
+  const stub: unknown = {};
+  const cliRegistrationCtx: HybridMemCliRegistrationContext = {
+    factsDb: stub as HandlerContext["factsDb"],
+    vectorDb: stub as HandlerContext["vectorDb"],
+    embeddings: stub as HandlerContext["embeddings"],
+    openai: stub as HandlerContext["openai"],
+    cfg,
+    credentialsDb: null,
+    aliasDb: null,
+    wal: null,
+    proposalsDb: null,
+    identityReflectionStore: null,
+    personaStateStore: null,
+    verificationStore: null,
+    provenanceService: null,
+    resolvedSqlitePath,
+    resolvedLancePath,
+    pluginId: "openclaw-hybrid-memory",
+    detectCategory: (() => "fact") as HandlerContext["detectCategory"],
+    eventLog: null,
+    costTracker: null,
+    eventBus: null,
+    auditStore: null,
+    agentHealthStore: null,
+  };
+
+  const handlerCtx: HandlerContext = {
+    ...cliRegistrationCtx,
+    logger: api.logger,
+    api,
+  };
+
+  const services = buildCliContextServices(cliRegistrationCtx, api);
+  api.registerCli(
+    ({ program }: { program: Command }) => {
+      const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
+      registerCliWithHelp(program, cliCtx);
     },
     { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
   );
