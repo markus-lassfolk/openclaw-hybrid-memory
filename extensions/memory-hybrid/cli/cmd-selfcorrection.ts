@@ -15,7 +15,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
+import { distillMaxOutputTokens } from "../services/chat.js";
+import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
@@ -262,8 +263,10 @@ export async function runSelfCorrectionRunForCli(
         logger.info?.(
           `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
         );
-        const detail = await chatCompleteWithRetryDetailed({
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
           model,
+          modelSource,
           content: prompt,
           temperature: 0.2,
           maxTokens: distillMaxOutputTokens(model),
@@ -271,6 +274,12 @@ export async function runSelfCorrectionRunForCli(
           fallbackModels: scFallbackModels,
           label: "memory-hybrid: self-correction analyze",
           feature: CostFeature.selfCorrectionAnalyze,
+          logger,
+          adaptiveStatePath:
+            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+              : undefined,
+          enabled: adaptiveEnabled,
         });
         if (detail.modelUsed !== model) {
           logger.info?.(`memory-hybrid: self-correction-run analysis used fallback model ${detail.modelUsed}`);
@@ -413,8 +422,10 @@ export async function runSelfCorrectionRunForCli(
           logger.info?.(
             `memory-hybrid: self-correction-run rewrite-tools starting with model ${model} (source=${modelSource})`,
           );
-          const detail = await chatCompleteWithRetryDetailed({
+          const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+          const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
             model,
+            modelSource,
             content: rewritePrompt,
             temperature: 0.2,
             maxTokens: 16000,
@@ -422,6 +433,12 @@ export async function runSelfCorrectionRunForCli(
             fallbackModels: scFallbackModels,
             label: "memory-hybrid: self-correction rewrite-tools",
             feature: CostFeature.selfCorrectionRewriteTools,
+            logger,
+            adaptiveStatePath:
+              ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+                ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+                : undefined,
+            enabled: adaptiveEnabled,
           });
           if (detail.modelUsed !== model) {
             logger.info?.(`memory-hybrid: self-correction-run rewrite-tools used fallback model ${detail.modelUsed}`);

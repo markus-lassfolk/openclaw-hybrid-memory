@@ -1149,6 +1149,22 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill?.extractReinforcement).toBe(false);
   });
 
+  it("parses distill.modelTier for the main distill pass (nano | maintenance | default | heavy)", () => {
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { modelTier: "nano" } }).distill?.modelTier).toBe("nano");
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { modelTier: "maintenance" } }).distill?.modelTier).toBe(
+      "maintenance",
+    );
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { modelTier: "default" } }).distill?.modelTier).toBe(
+      "default",
+    );
+    expect(hybridConfigSchema.parse({ ...validBase, distill: { modelTier: "heavy" } }).distill?.modelTier).toBe(
+      "heavy",
+    );
+    expect(
+      hybridConfigSchema.parse({ ...validBase, distill: { modelTier: "other" } }).distill?.modelTier,
+    ).toBeUndefined();
+  });
+
   it("parses distill.extractionModelTier (nano | maintenance | default | heavy)", () => {
     expect(
       hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "nano" } }).distill?.extractionModelTier,
@@ -1359,6 +1375,7 @@ describe("hybridConfigSchema.parse", () => {
         llm: { maintenance: ["gpt-4o-mini", "gpt-4o"], default: ["gpt-4o"], heavy: ["gpt-4o"] },
       });
       expect(resolveReflectionModelAndFallbacks(withMaintenance, "maintenance").defaultModel).toBe("gpt-4o-mini");
+      expect(resolveReflectionModelAndFallbacks(withMaintenance, "maintenance").fallbackModels).toEqual(["gpt-4o"]);
 
       const withoutMaintenance = hybridConfigSchema.parse({
         ...validBase,

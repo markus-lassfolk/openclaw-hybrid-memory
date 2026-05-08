@@ -276,28 +276,29 @@ export async function runDistillForCli(
     }
 
     const cronCfgDistill = getCronModelConfig(cfg);
-    const heavyPrefWithSources = resolveTierPreferenceWithSources(cfg, "heavy");
-    const heavyResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+    const distillMainTier = cfg.distill?.modelTier ?? "maintenance";
+    const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, distillMainTier);
+    const tierResolved = resolveReflectionModelAndFallbacks(cfg, distillMainTier);
     const model =
       opts.model ??
       cfg.distill?.defaultModel ??
-      heavyResolved.defaultModel ??
-      getDefaultCronModel(cronCfgDistill, "heavy");
-    const heavySrcIdx = heavyPrefWithSources.models.indexOf(model);
+      tierResolved.defaultModel ??
+      getDefaultCronModel(cronCfgDistill, distillMainTier);
+    const tierSrcIdx = tierPrefWithSources.models.indexOf(model);
     const modelSource = opts.model
       ? "--model"
       : cfg.distill?.defaultModel === model
         ? "distill.defaultModel"
-        : heavySrcIdx >= 0
-          ? (heavyPrefWithSources.sources[heavySrcIdx] ?? "built-in")
+        : tierSrcIdx >= 0
+          ? (tierPrefWithSources.sources[tierSrcIdx] ?? "built-in")
           : "built-in";
-    const distillFallbacks = heavyResolved.fallbackModels ?? [];
+    const distillFallbacks = tierResolved.fallbackModels ?? [];
     const configuredDistillFallbacks = cfg.distill?.fallbackModels ?? [];
     const configuredFallbackModel = cfg.llm?.fallbackModel?.trim() || "";
     const fallbackSources = new Map<string, string>();
-    for (let i = 0; i < heavyPrefWithSources.models.length; i++) {
-      const m = heavyPrefWithSources.models[i];
-      const s = heavyPrefWithSources.sources[i];
+    for (let i = 0; i < tierPrefWithSources.models.length; i++) {
+      const m = tierPrefWithSources.models[i];
+      const s = tierPrefWithSources.sources[i];
       if (m && s) fallbackSources.set(m, s);
     }
     if (configuredFallbackModel) fallbackSources.set(configuredFallbackModel, "llm.fallbackModel");
@@ -306,7 +307,7 @@ export async function runDistillForCli(
       if (m && !fallbackSources.has(m)) fallbackSources.set(m, `distill.fallbackModels[${i}]`);
     }
 
-    logger.info?.("memory-hybrid: distill main model tier = heavy");
+    logger.info?.(`memory-hybrid: distill main model tier = ${distillMainTier}`);
     const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
     logger.info?.(`memory-hybrid: distill directives/reinforcement extraction tier = ${extractionTier}`);
     logger.info?.(`memory-hybrid: distill starting with model ${model} (source=${modelSource})`);
@@ -337,6 +338,7 @@ export async function runDistillForCli(
     const promptTokens = estimateTokens(promptPrefix);
     const primaryCatalogBatchLimit = distillBatchTokenLimit(model);
     const primaryCatalogMaxOut = distillMaxOutputTokens(model);
+    // Chunk using the primary model's catalog limit only; smaller fallbacks are filtered per-batch later.
     const primaryLimits = adaptiveEnabled
       ? getEffectiveModelLimits({
           state: adaptiveState,
@@ -350,7 +352,8 @@ export async function runDistillForCli(
           maxOutputTokens: primaryCatalogMaxOut,
           source: "catalog" as const,
         };
-    const maxSessionTokens = opts.maxSessionTokens ?? Math.max(256, primaryLimits.batchTokenLimit - promptTokens - 256);
+    const safeInitialBatchTokenLimit = Math.min(primaryLimits.batchTokenLimit, primaryCatalogBatchLimit);
+    const maxSessionTokens = opts.maxSessionTokens ?? Math.max(256, safeInitialBatchTokenLimit - promptTokens - 256);
     for (let i = 0; i < filesToProcess.length; i++) {
       const { path: fp } = filesToProcess[i];
       try {
@@ -369,7 +372,7 @@ export async function runDistillForCli(
           const chunkTokens = estimateTokens(chunk);
           if (promptTokens + chunkTokens > primaryCatalogBatchLimit) {
             sink.warn(
-              `memory-hybrid: distill: chunk ${idx + 1} too large (${promptTokens + chunkTokens} tokens incl prompt), skipping`,
+              `memory-hybrid: distill: chunk ${idx + 1} too large for primary model (${promptTokens + chunkTokens} tokens incl prompt), skipping`,
             );
             return false;
           }
@@ -462,10 +465,12 @@ export async function runDistillForCli(
     while (cursorBlock < blocks.length) {
       batchNum++;
       const limits = effectiveLimitsForModel(model);
-      const batch = buildBatch(cursorBlock, limits.batchTokenLimit);
+      const fallbackBatchLimits = distillFallbacks.map((m) => effectiveLimitsForModel(m).batchTokenLimit);
+      const safeBatchTokenLimit = Math.min(limits.batchTokenLimit, ...fallbackBatchLimits);
+      const batch = buildBatch(cursorBlock, safeBatchTokenLimit);
       if (batch.count <= 0) {
         sink.warn(
-          `memory-hybrid: distill: could not fit next block into batchTokenLimit=${limits.batchTokenLimit}; skipping one block`,
+          `memory-hybrid: distill: could not fit next block into safe batchTokenLimit=${safeBatchTokenLimit}; skipping one block`,
         );
         cursorBlock++;
         processedBlocks++;

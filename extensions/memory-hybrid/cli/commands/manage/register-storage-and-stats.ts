@@ -125,6 +125,10 @@ export type AuditHealthReport = {
   remediation: string[];
   /** Errors encountered during report generation (e.g., timeouts, query failures). */
   errors: Array<{ section: string; message: string }>;
+  /** Optional operator budget used for audit-health command execution. */
+  timeoutMs?: number;
+  /** Elapsed wall-clock time spent building the report. */
+  elapsedMs?: number;
 };
 
 function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb"]): number {
@@ -143,9 +147,29 @@ export function buildAuditHealthReport(
   getMemoryCategories: () => readonly string[],
   entityStopWords: readonly string[] = [],
   graphHubDegreeCap?: number | null,
-  options?: { lanceBytes?: number | null; preReportErrors?: Array<{ section: string; message: string }> },
+  options?: {
+    lanceBytes?: number | null;
+    preReportErrors?: Array<{ section: string; message: string }>;
+    timeoutMs?: number;
+    startedAtMs?: number;
+    deadlineMs?: number;
+  },
 ): AuditHealthReport {
+  const startedAtMs = options?.startedAtMs ?? Date.now();
+  const deadlineMs = options?.deadlineMs;
   const errors: Array<{ section: string; message: string }> = [...(options?.preReportErrors ?? [])];
+  const timeoutRecorded = new Set<string>();
+  const hasBudget = (section: string): boolean => {
+    if (deadlineMs == null || Date.now() <= deadlineMs) return true;
+    if (!timeoutRecorded.has(section)) {
+      timeoutRecorded.add(section);
+      errors.push({
+        section,
+        message: `Skipped: audit-health timeout budget exceeded${options?.timeoutMs ? ` (${options.timeoutMs}ms)` : ""}`,
+      });
+    }
+    return false;
+  };
   const capForHubListing = graphHubDegreeCap === undefined ? 500 : graphHubDegreeCap;
   const activeFacts = factsDb.getCount();
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
@@ -168,7 +192,7 @@ export function buildAuditHealthReport(
   const unknown: Array<{ category: string; count: number }> = (() => {
     const drift = present.filter((category: string) => !configuredSet.has(category));
     if (drift.length === 0) return [];
-    if (!raw) return drift.map((category) => ({ category, count: 0 }));
+    if (!raw || !hasBudget("categories.unknown")) return drift.map((category) => ({ category, count: 0 }));
     return drift.map((category) => {
       const row = raw
         .prepare(`SELECT COUNT(*) AS cnt FROM facts WHERE COALESCE(category, 'other') = ? AND superseded_at IS NULL`)
@@ -188,46 +212,47 @@ export function buildAuditHealthReport(
       : undefined;
   const nowSecForAge = Math.floor(Date.now() / 1000);
   const storeAgeDays = oldestRow?.oldest != null ? Math.max(0, (nowSecForAge - oldestRow.oldest) / 86400) : 0;
-  const graphHubs = raw
-    ? (
-        raw
-          .prepare(
-            `SELECT ml.source_fact_id AS id, COUNT(*) AS cnt, SUBSTR(f.text, 1, 120) AS text_preview
+  const graphHubs =
+    raw && hasBudget("graphHubs")
+      ? (
+          raw
+            .prepare(
+              `SELECT ml.source_fact_id AS id, COUNT(*) AS cnt, SUBSTR(f.text, 1, 120) AS text_preview
              FROM memory_links ml
              LEFT JOIN facts f ON f.id = ml.source_fact_id
             WHERE ml.link_type != 'CONTRADICTS'
             GROUP BY ml.source_fact_id
             ORDER BY cnt DESC
             LIMIT 10`,
-          )
-          .all() as Array<{ id: string; cnt: number; text_preview: string | null }>
-      ).map((row) => {
-        const eventTypeHistogram: Record<string, number> = {};
-        if (raw) {
-          const pr = raw.prepare(`SELECT provenance_json FROM facts WHERE id = ?`).get(row.id) as
-            | { provenance_json: string | null }
-            | undefined;
-          if (pr?.provenance_json) {
-            try {
-              const parsed = JSON.parse(pr.provenance_json) as { sourceEvents?: Array<{ eventType?: string }> };
-              for (const ev of parsed.sourceEvents ?? []) {
-                const t = typeof ev.eventType === "string" && ev.eventType ? ev.eventType : "unknown";
-                eventTypeHistogram[t] = (eventTypeHistogram[t] ?? 0) + 1;
+            )
+            .all() as Array<{ id: string; cnt: number; text_preview: string | null }>
+        ).map((row) => {
+          const eventTypeHistogram: Record<string, number> = {};
+          if (raw) {
+            const pr = raw.prepare(`SELECT provenance_json FROM facts WHERE id = ?`).get(row.id) as
+              | { provenance_json: string | null }
+              | undefined;
+            if (pr?.provenance_json) {
+              try {
+                const parsed = JSON.parse(pr.provenance_json) as { sourceEvents?: Array<{ eventType?: string }> };
+                for (const ev of parsed.sourceEvents ?? []) {
+                  const t = typeof ev.eventType === "string" && ev.eventType ? ev.eventType : "unknown";
+                  eventTypeHistogram[t] = (eventTypeHistogram[t] ?? 0) + 1;
+                }
+              } catch {
+                /* ignore malformed provenance */
               }
-            } catch {
-              /* ignore malformed provenance */
             }
           }
-        }
-        return {
-          id: row.id,
-          outDegree: Number(row.cnt ?? 0),
-          textPreview: row.text_preview ?? null,
-          overCap: capForHubListing != null && Number(row.cnt ?? 0) > capForHubListing,
-          eventTypeHistogram,
-        };
-      })
-    : [];
+          return {
+            id: row.id,
+            outDegree: Number(row.cnt ?? 0),
+            textPreview: row.text_preview ?? null,
+            overCap: capForHubListing != null && Number(row.cnt ?? 0) > capForHubListing,
+            eventTypeHistogram,
+          };
+        })
+      : [];
   const structuralEligibleWarmFacts = raw
     ? Number(
         (
@@ -264,7 +289,7 @@ export function buildAuditHealthReport(
   // self-correction) without scanning every row.
   // LIMIT added to prevent hanging on long-lived stores with thousands of implicit-feedback patterns.
   const implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }> = (() => {
-    if (!raw) return [];
+    if (!raw || !hasBudget("implicitFeedbackPrefixHistogram")) return [];
     try {
       // Fetch 5000 + 1 rows so we only flag truncation when another row exists (exactly 5000 rows is not truncated).
       const rows = raw
@@ -322,7 +347,7 @@ export function buildAuditHealthReport(
     delta7d: null,
     lanceBytesPerWeekDelta: null,
   };
-  if (raw) {
+  if (raw && hasBudget("storageGrowth")) {
     const d = new Date();
     const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
     const alreadyToday = raw
@@ -393,28 +418,29 @@ export function buildAuditHealthReport(
     storageGrowth = { lastSampleAt: lastRow?.recorded_at ?? null, delta7d, lanceBytesPerWeekDelta };
   }
 
-  const implicitFeedbackSignalNoise: AuditHealthReport["implicitFeedbackSignalNoise"] = raw
-    ? (() => {
-        const since30d = nowSecReport - 30 * 86400;
-        const perDayRows = raw
-          .prepare(
-            `SELECT date(created_at, 'unixepoch') AS day, COUNT(*) AS cnt FROM facts
+  const implicitFeedbackSignalNoise: AuditHealthReport["implicitFeedbackSignalNoise"] =
+    raw && hasBudget("implicitFeedbackSignalNoise")
+      ? (() => {
+          const since30d = nowSecReport - 30 * 86400;
+          const perDayRows = raw
+            .prepare(
+              `SELECT date(created_at, 'unixepoch') AS day, COUNT(*) AS cnt FROM facts
              WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND created_at >= ?
              GROUP BY day`,
-          )
-          .all(since30d) as Array<{ day: string; cnt: number }>;
-        const rowsPerDay30d: Record<string, number> = {};
-        for (const r of perDayRows) rowsPerDay30d[String(r.day)] = Number(r.cnt ?? 0);
-        const pr = raw
-          .prepare(
-            `SELECT COUNT(*) AS total, COUNT(DISTINCT normalized_hash) AS dist FROM facts
+            )
+            .all(since30d) as Array<{ day: string; cnt: number }>;
+          const rowsPerDay30d: Record<string, number> = {};
+          for (const r of perDayRows) rowsPerDay30d[String(r.day)] = Number(r.cnt ?? 0);
+          const pr = raw
+            .prepare(
+              `SELECT COUNT(*) AS total, COUNT(DISTINCT normalized_hash) AS dist FROM facts
              WHERE source = 'implicit-feedback' AND superseded_at IS NULL AND created_at >= ?`,
-          )
-          .get(since30d) as { total: number; dist: number };
-        const paraphraseRatio = pr.total > 0 ? pr.dist / pr.total : null;
-        return { rowsPerDay30d, paraphraseRatio };
-      })()
-    : { rowsPerDay30d: {}, paraphraseRatio: null };
+            )
+            .get(since30d) as { total: number; dist: number };
+          const paraphraseRatio = pr.total > 0 ? pr.dist / pr.total : null;
+          return { rowsPerDay30d, paraphraseRatio };
+        })()
+      : { rowsPerDay30d: {}, paraphraseRatio: null };
 
   // #1193: stickiness flag is `(stable + permanent) / activeFacts > 0.6`. The previous 50%
   // stable-only rule fired for healthy stores (because `permanent` decisions are normal).
@@ -483,7 +509,7 @@ export function buildAuditHealthReport(
     );
 
   let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
-  if (raw) {
+  if (raw && hasBudget("graphHubGuard")) {
     const probeRow = raw.prepare(`SELECT id FROM facts WHERE superseded_at IS NULL LIMIT 1`).get() as
       | { id: string }
       | undefined;
@@ -549,6 +575,8 @@ export function buildAuditHealthReport(
     warnings,
     remediation,
     errors,
+    timeoutMs: options?.timeoutMs,
+    elapsedMs: Date.now() - startedAtMs,
   };
 }
 
@@ -1658,11 +1686,36 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       }),
     );
 
-  const runAuditHealth = async (opts?: { json?: boolean; strict?: boolean }) => {
+  const runAuditHealth = async (opts?: { json?: boolean; format?: string; strict?: boolean; timeoutMs?: string }) => {
+    const parsedTimeoutMs = Number.parseInt(String(opts?.timeoutMs ?? "30000"), 10);
+    const timeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0 ? parsedTimeoutMs : 30000;
+    const startedAtMs = Date.now();
+    const deadlineMs = startedAtMs + timeoutMs;
+    const wantsJson = opts?.json === true || String(opts?.format ?? "").toLowerCase() === "json";
     let lanceBytes: number | null = null;
     const preReportErrors: Array<{ section: string; message: string }> = [];
+    const withTimeout = async <T>(promise: Promise<T>, section: string): Promise<T | undefined> => {
+      const remainingMs = Math.max(1, deadlineMs - Date.now());
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => {
+              preReportErrors.push({
+                section,
+                message: `Timed out after ${timeoutMs}ms overall audit-health budget; section omitted`,
+              });
+              resolve(undefined);
+            }, remainingMs);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
     try {
-      const sizes = await ctx.richStatsExtras?.getStorageSizes();
+      const sizes = await withTimeout(Promise.resolve(ctx.richStatsExtras?.getStorageSizes()), "storage.lanceBytes");
       if (sizes?.lanceBytesTimedOut) {
         preReportErrors.push({
           section: "storage.lanceBytes",
@@ -1687,9 +1740,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       getMemoryCategories,
       cfg.entityExtraction.stopWords,
       cfg.graph.hubDegreeCap,
-      { lanceBytes, preReportErrors },
+      { lanceBytes, preReportErrors, timeoutMs, startedAtMs, deadlineMs },
     );
-    if (opts?.json) {
+    if (wantsJson) {
       console.log(JSON.stringify(report, null, 2));
     } else {
       printAuditHealthMarkdown(report);
@@ -1702,7 +1755,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .command("audit-health")
     .description("One-shot non-destructive hybrid-memory health report (JSON or markdown)")
     .option("--json", "Emit versioned JSON instead of markdown")
-    .option("--strict", "Exit non-zero when warnings are present")
+    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .option("--timeout-ms <n>", "Overall audit budget in milliseconds (default: 30000)", "30000")
+    .option("--strict", "Exit non-zero when warnings or partial/failed status are present")
     .action(withExit(runAuditHealth));
 
   const audit = mem.command("audit").description("Audit hybrid-memory health and maintenance state");
@@ -1710,7 +1765,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .command("health")
     .description("One-shot non-destructive hybrid-memory health report (JSON or markdown)")
     .option("--json", "Emit versioned JSON instead of markdown")
-    .option("--strict", "Exit non-zero when warnings are present")
+    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .option("--timeout-ms <n>", "Overall audit budget in milliseconds (default: 30000)", "30000")
+    .option("--strict", "Exit non-zero when warnings or partial/failed status are present")
     .action(withExit(runAuditHealth));
 
   audit

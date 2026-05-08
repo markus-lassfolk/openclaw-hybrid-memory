@@ -295,6 +295,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     wal,
   } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
+  const adaptiveMaintenanceStatePath = join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json");
   const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
   return {
     runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
@@ -308,6 +309,12 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     },
     runReflection: async (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const modelSource = opts.model
+        ? "--model"
+        : cfg.reflection.model?.trim()
+          ? "reflection.model"
+          : "llm.maintenance[0]";
       const result = await runReflection(
         factsDb,
         vectorDb,
@@ -318,7 +325,13 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           minObservations: cfg.reflection.minObservations,
           enabled: cfg.reflection.enabled,
         },
-        { ...opts, model: effectiveModel, fallbackModels },
+        {
+          ...opts,
+          model: effectiveModel,
+          modelSource,
+          fallbackModels,
+          adaptiveStatePath: adaptiveMaintenanceStatePath,
+        },
         logSink,
         provenanceService,
       );
@@ -336,24 +349,48 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     },
     runReflectionRules: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const modelSource = opts.model
+        ? "--model"
+        : cfg.reflection.model?.trim()
+          ? "reflection.model"
+          : "llm.maintenance[0]";
       return runReflectionRules(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: effectiveModel, fallbackModels },
+        {
+          ...opts,
+          model: effectiveModel,
+          modelSource,
+          fallbackModels,
+          adaptiveStatePath: adaptiveMaintenanceStatePath,
+        },
         logSink,
         provenanceService,
       );
     },
     runReflectionMeta: (opts) => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const modelSource = opts.model
+        ? "--model"
+        : cfg.reflection.model?.trim()
+          ? "reflection.model"
+          : "llm.maintenance[0]";
       return runReflectionMeta(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: effectiveModel, fallbackModels },
+        {
+          ...opts,
+          model: effectiveModel,
+          modelSource,
+          fallbackModels,
+          adaptiveStatePath: adaptiveMaintenanceStatePath,
+        },
         logSink,
         provenanceService,
       );

@@ -275,20 +275,23 @@ export function runConfigViewForCli(
     const fmt = (arr: string[]) =>
       arr.length === 0 ? "—" : arr.length === 1 ? arr[0] : `${arr[0]} (+${arr.length - 1} more)`;
     log(`  nano (HyDE, classify, summarize): ${fmt(nano)}`);
-    log(`  maintenance (dream cycle, reflection, consolidation): ${fmt(maintenance)}`);
+    log(`  maintenance (distill, dream cycle, reflection, consolidation): ${fmt(maintenance)}`);
     log(`  default (general): ${fmt(def)}`);
-    log(`  heavy (distill, self-correction, hard tasks): ${fmt(heavy)}`);
+    log(`  heavy (self-correction, hard tasks; opt-in for distill): ${fmt(heavy)}`);
     if (cfg.nightlyCycle?.model?.trim()) {
       log(`  nightlyCycle.model (overrides dream / MEMORY_INDEX LLM): ${cfg.nightlyCycle.model.trim()}`);
     }
+    const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
     const extTier = cfg.distill?.extractionModelTier ?? "nano";
-    log(`  distill.extractionModelTier (session extraction): ${extTier}`);
+    log(`  distill.modelTier (main session distill): ${mainDistillTier}`);
+    log(`  distill.extractionModelTier (directives/reinforcement extraction): ${extTier}`);
 
     log("");
     log("Maintenance command routing (cron wrapper model affects only the wrapper agent turn):");
     const first = (arr: string[]) => (arr.length > 0 ? arr[0] : "—");
     const tierFirst = (tier: "nano" | "maintenance" | "default" | "heavy") =>
       first(getLLMModelPreference(cronCfg, tier));
+    log(`  distill main pass: tier=${mainDistillTier} -> ${tierFirst(mainDistillTier)}`);
     log(`  distill extraction (directives/reinforcement): tier=${extTier} -> ${tierFirst(extTier)}`);
     const dreamDefault = tierFirst("maintenance");
     log(
@@ -305,11 +308,12 @@ export function runConfigViewForCli(
 
   log("Maintenance routing");
   try {
-    const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
-    const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
+    const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
+    const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);
     const distillFallbacks = distillResolved.fallbackModels ?? [];
     log(
-      `  distill: llm.heavy (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
+      `  distill: distill.modelTier=${mainDistillTier} (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
     );
     const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
     const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
@@ -320,13 +324,16 @@ export function runConfigViewForCli(
     const reflectResolved = resolveReflectionModelAndFallbacks(cfg, "default");
     log(`  reflect/reflect-rules/reflect-meta: llm.default (primary=${reflectResolved.defaultModel})`);
     log(`  dream-cycle: llm.default (or nightlyCycle.model override)`);
-    log(`  self-correction-run: llm.heavy (primary=${distillModel})`);
+    const selfCorrectionResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+    const selfCorrectionModel =
+      selfCorrectionResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    log(`  self-correction-run: llm.heavy (primary=${selfCorrectionModel})`);
   } catch {
     log("  (could not resolve maintenance routing — check plugin config)");
   }
   log("");
 
-  log("Adaptive distill sizing");
+  log("Adaptive maintenance LLM sizing");
   {
     const enabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const envState = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim();
@@ -335,15 +342,18 @@ export function runConfigViewForCli(
         ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
         : "";
     const statePath = envState || inferredState;
-    log(`  enabled: ${enabled ? "yes" : "no"} (env: OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL)`);
+    log(
+      `  enabled: ${enabled ? "yes" : "no"} (env: OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL; applies to distill, reflect, extract-reinforcement, self-correction-run)`,
+    );
     log(
       `  state: ${statePath || "(unset — set OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE or run with resolved SQLite path)"}`,
     );
     try {
-      if (!statePath) throw new Error("no adaptive distill state path");
+      if (!statePath) throw new Error("no adaptive maintenance state path");
       const state = loadAdaptiveModelLimits(statePath);
-      const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
-      const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+      const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
+      const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
+      const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);
       const effective = getEffectiveModelLimits({
         state,
         model,
@@ -609,6 +619,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
   }
   // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
   const enumKeys: Record<string, string[]> = {
+    "distill.modelTier": ["nano", "maintenance", "default", "heavy"],
     "distill.extractionModelTier": ["nano", "maintenance", "default", "heavy"],
   };
   let valueToSet: unknown = value;

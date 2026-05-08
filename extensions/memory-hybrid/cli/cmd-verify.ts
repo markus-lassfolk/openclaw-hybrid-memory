@@ -593,10 +593,17 @@ export async function runVerifyForCli(
   tableLog(
     `    First choice per tier: nano=${tierNano[0] ?? "—"} | maintenance=${tierMaintenance[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
   );
+  const distillMainTier = cfg.distill?.modelTier ?? "maintenance";
+  const distillMainEffective = getLLMModelPreference(cronCfg, distillMainTier)[0] ?? "—";
+  tableLog(
+    `    Distill main pass: distill.modelTier=${distillMainTier} -> ${distillMainEffective}; --model overrides one run.`,
+  );
   const dreamOverride =
     typeof cfg.nightlyCycle?.model === "string" && cfg.nightlyCycle.model.trim().length > 0
       ? cfg.nightlyCycle.model.trim()
       : null;
+  const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
+  const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
@@ -606,8 +613,52 @@ export async function runVerifyForCli(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
   );
 
+  const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+  const adaptiveStatePath =
+    typeof ctx.resolvedSqlitePath === "string" && ctx.resolvedSqlitePath.length > 0
+      ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+      : "";
+  tableLog(
+    `    Adaptive maintenance LLM sizing: ${adaptiveEnabled ? "enabled" : "disabled"} (state=${adaptiveStatePath}; applies to distill, reflect, extract-reinforcement, self-correction-run)`,
+  );
+  if (adaptiveEnabled && adaptiveStatePath && existsSync(adaptiveStatePath)) {
+    try {
+      const adaptiveState = loadAdaptiveModelLimits(adaptiveStatePath);
+      const sampleModels = [
+        distillMainEffective,
+        dreamEffective,
+        getLLMModelPreference(cronCfg, extractionTier)[0] ?? "—",
+        tierHeavy[0] ?? "—",
+      ].filter((m, i, arr) => m !== "—" && arr.indexOf(m) === i);
+      for (const sampleModel of sampleModels) {
+        const effective = getEffectiveModelLimits({
+          state: adaptiveState,
+          model: sampleModel,
+          catalogBatchTokenLimit: distillBatchTokenLimit(sampleModel),
+          catalogMaxOutputTokens: distillMaxOutputTokens(sampleModel),
+        });
+        tableLog(
+          `      ${sampleModel}: batchTokenLimit=${effective.batchTokenLimit}, maxOutputTokens=${effective.maxOutputTokens}, source=${effective.source}`,
+        );
+      }
+    } catch (err) {
+      warnings.push(
+        `adaptive maintenance LLM state could not be read: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // Maintenance routing warnings: flag when maintenance-adjacent tasks are routed to heavy/expensive models unintentionally.
-  const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+  if (distillMainTier !== "heavy" && distillMainEffective !== "—" && isHeavyModel(distillMainEffective)) {
+    warnings.push(
+      `distill.modelTier=${distillMainTier} routes the main distill pass to a heavy/expensive first-choice model (${distillMainEffective}); configure llm.maintenance with a cheap-first list, set distill.modelTier=nano, or opt into distill.modelTier=heavy explicitly`,
+    );
+  }
+  if (distillMainTier === "heavy") {
+    warnings.push(
+      `distill.modelTier=heavy: main session distill will use the heavy tier. This is opt-in; use maintenance/nano for cheaper nightly maintenance.`,
+    );
+  }
   const extractionFirst =
     getLLMModelPreference(cronCfg, extractionTier)[0] ?? getLLMModelPreference(cronCfg, "nano")[0] ?? "—";
   if (extractionTier !== "heavy" && extractionFirst !== "—" && isHeavyModel(extractionFirst)) {
@@ -615,7 +666,6 @@ export async function runVerifyForCli(
       `distill.extractionModelTier=${extractionTier} routes session extraction to a heavy/expensive first-choice model (${extractionFirst}); set distill.extractionModelTier=nano or configure llm.maintenance and use distill.extractionModelTier=maintenance`,
     );
   }
-  const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
   if (dreamEffective !== "—" && isHeavyModel(dreamEffective)) {
     warnings.push(
       `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
@@ -1326,6 +1376,7 @@ export async function runVerifyForCli(
   interface JobInfo {
     name: string;
     pluginJobId?: string;
+    message?: string;
     enabled: boolean;
     /** Set by ensureMaintenanceCronJobs when a feature gate disabled the job. */
     featureGateDisabled?: boolean;
@@ -1399,6 +1450,7 @@ export async function runVerifyForCli(
             allJobs.set(canonicalKey, {
               name,
               pluginJobId: pid || undefined,
+              message: msg || undefined,
               enabled,
               featureGateDisabled,
               scheduleExpr,
