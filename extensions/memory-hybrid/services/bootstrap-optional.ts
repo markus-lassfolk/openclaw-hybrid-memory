@@ -58,7 +58,9 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey ?? "");
       const st = credentialsDb.getVaultStatus();
       if (st.encryptedAtRest) {
-        api.logger.info(`memory-hybrid: credentials vault enabled (encrypted, kdf_version=${st.kdfVersion}) (${credPath})`);
+        api.logger.info(
+          `memory-hybrid: credentials vault enabled (encrypted, kdf_version=${st.kdfVersion}) (${credPath})`,
+        );
       } else if (st.migrationRequired) {
         api.logger.warn(
           `memory-hybrid: credentials vault enabled (plaintext, kdf_version=${st.kdfVersion}) (${credPath}) — encryption key is configured but ignored until the vault is encrypted. Fix: run \`openclaw hybrid-mem credentials encrypt-vault --yes\` (see docs/CREDENTIALS.md).`,

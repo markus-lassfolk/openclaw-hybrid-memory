@@ -16,7 +16,12 @@ import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "
 import { auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HandlerContext } from "./handlers.js";
-import type { CredentialsAuditResult, CredentialsPruneResult, EncryptVaultResult, MigrateToVaultResult } from "./types.js";
+import type {
+  CredentialsAuditResult,
+  CredentialsPruneResult,
+  EncryptVaultResult,
+  MigrateToVaultResult,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // migrate-to-vault
