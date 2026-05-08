@@ -440,7 +440,7 @@ describe("EventLog.getStats", () => {
 // CHECK constraint on event_type
 // ---------------------------------------------------------------------------
 
-describe("EventLog CHECK constraint", () => {
+describe("EventLog event_type persistence (CHECK relaxed)", () => {
   it("persists event_type verbatim (schema no longer enforces CHECK; see migrateEventLogRelaxEventTypeCheck)", () => {
     expect(() => {
       log.append({
