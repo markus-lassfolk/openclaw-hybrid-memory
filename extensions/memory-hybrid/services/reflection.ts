@@ -342,6 +342,7 @@ export async function loadReflectionDedupeCorpusVectors(
               });
             }
             result[j] = null;
+            consecutive429 = 0;
             done = true;
           }
         }

@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { is403QuotaOrRateLimitLike, is429OrWrapped, parseRetryAfterMs } from "./chat.js";
+import { is403QuotaOrRateLimitLike, is429OrWrapped } from "./chat.js";
 
 export const REFLECTION_DEDUPE_CHECKPOINT_VERSION = 1;
 
