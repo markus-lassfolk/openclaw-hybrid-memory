@@ -607,7 +607,7 @@ export async function runVerifyForCli(
       `distill.extractionModelTier=${extractionTier} routes session extraction to a heavy/expensive first-choice model (${extractionFirst}); set distill.extractionModelTier=nano or configure llm.maintenance and use distill.extractionModelTier=maintenance`,
     );
   }
-  const dreamEffective = dreamOverride ?? tierMaintenance[0] ?? "—";
+  const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
   if (dreamEffective !== "—" && isHeavyModel(dreamEffective)) {
     warnings.push(
       `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
