@@ -56,7 +56,6 @@ export function isExpensiveMaintenanceFallbackModel(modelId: string): boolean {
     /(^|[-._])mini($|[-._])/i.test(seg) ||
     /gpt-4\.1-mini|gpt-4o-mini|gpt-4\.1-nano|1\.5-flash|2\.0-flash-lite|2\.5-flash(?!-pro)/i.test(seg)
   ) {
-    if (/minimax-m2\.7|^minimax-m2$/i.test(seg)) return true;
     return false;
   }
 

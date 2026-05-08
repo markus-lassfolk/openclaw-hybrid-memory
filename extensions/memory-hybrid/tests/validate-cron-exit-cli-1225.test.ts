@@ -15,6 +15,8 @@ describe("validate-cron-exit CLI (#1225)", () => {
 
   afterEach(() => {
     process.argv = origArgv;
+    // Action sets process.exitCode for partial/failed; reset so other tests/workers are not tainted.
+    process.exitCode = undefined;
     vi.restoreAllMocks();
   });
 
