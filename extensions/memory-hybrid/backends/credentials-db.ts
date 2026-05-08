@@ -258,28 +258,33 @@ export class CredentialsDB extends BaseSqliteStore {
       throw new Error(`Credentials vault is already encrypted (kdf_version=${this.kdfVersion}).`);
     }
 
-    const rows = this.liveDb.prepare("SELECT service, type, value FROM credentials").all() as Array<{
-      service: string;
-      type: string;
-      value: Uint8Array | Buffer;
-    }>;
-
     const newSalt = randomBytes(32);
     const newKdfVersion = CRED_KDF_VERSION;
     const newKey = deriveKey(encryptionKey, newSalt, newKdfVersion);
 
-    const migrate = createTransaction(this.liveDb, () => {
-      const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
-      for (const r of rows) {
-        const plaintext = toBuffer(r.value).toString("utf8");
-        const encrypted = encryptValue(plaintext, newKey);
-        updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
-      }
-      this.liveDb
-        .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
-        .run(Buffer.from([newKdfVersion]));
-      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
-    });
+    let migratedCount = 0;
+    const migrate = createTransaction(
+      this.liveDb,
+      () => {
+        const rows = this.liveDb.prepare("SELECT service, type, value FROM credentials").all() as Array<{
+          service: string;
+          type: string;
+          value: Uint8Array | Buffer;
+        }>;
+        migratedCount = rows.length;
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const r of rows) {
+          const plaintext = toBuffer(r.value).toString("utf8");
+          const encrypted = encryptValue(plaintext, newKey);
+          updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
+        }
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([newKdfVersion]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
+      },
+      "IMMEDIATE",
+    );
 
     migrate();
 
@@ -289,7 +294,7 @@ export class CredentialsDB extends BaseSqliteStore {
     this.password = null;
     this.storesEncryptedValues = true;
 
-    return { migrated: rows.length, kdfVersion: this.kdfVersion };
+    return { migrated: migratedCount, kdfVersion: this.kdfVersion };
   }
 
   /**
@@ -375,32 +380,34 @@ export class CredentialsDB extends BaseSqliteStore {
       throw new Error("Migration requires password");
     }
 
-    // Fetch all credentials (will be decrypted with old key)
-    const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
-
     // Generate new salt and derive new key with scrypt (avoid deriveKey dispatcher so static analysis sees only scrypt here)
-    this.salt = randomBytes(32);
-    const newKey = deriveKeyV2(this.password, this.salt);
+    const migrationSalt = randomBytes(32);
+    const newKey = deriveKeyV2(this.password, migrationSalt);
 
-    // Wrap all mutations in a transaction to prevent partial migration
-    const migrate = createTransaction(this.liveDb, () => {
-      // Re-encrypt all credentials with new key
-      const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
-      for (const row of rows) {
-        const oldBuf = toBuffer(row.value as Uint8Array | Buffer);
-        const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
-        const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
-        updateStmt.run(newEncrypted as unknown as Uint8Array, row.service as string, row.type as string);
-      }
+    // Wrap read + mutations in one transaction (IMMEDIATE) so new rows cannot appear after the snapshot.
+    const migrate = createTransaction(
+      this.liveDb,
+      () => {
+        const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const row of rows) {
+          const oldBuf = toBuffer(row.value as Uint8Array | Buffer);
+          const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
+          const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
+          updateStmt.run(newEncrypted as unknown as Uint8Array, row.service as string, row.type as string);
+        }
 
-      // Update metadata
-      this.liveDb
-        .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
-        .run(Buffer.from([CRED_KDF_VERSION]));
-      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
-    });
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([CRED_KDF_VERSION]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(migrationSalt);
+      },
+      "IMMEDIATE",
+    );
 
     migrate();
+
+    this.salt = migrationSalt;
 
     // Update instance state
     this.kdfVersion = CRED_KDF_VERSION;
