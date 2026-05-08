@@ -100,4 +100,3 @@ describe("hybrid-mem help invocations", () => {
     expect(api.registerService).not.toHaveBeenCalled();
   });
 });
-
