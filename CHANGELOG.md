@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Maintenance LLM tier** (`llm.maintenance`): dedicated ordered model list for scheduled/maintenance commands; `CronModelTier` includes `"maintenance"`; `hybrid-mem verify` warns on cron vs maintenance routing mismatches.
+
+### Changed
+
+- **Node.js**: Minimum version is now **22.16.0** so built-in `node:sqlite` includes **FTS5** (see [nodejs/node#57621](https://github.com/nodejs/node/pull/57621)); CI `.nvmrc` and `engines` updated accordingly.
+
 ---
 
 ## [2026.5.61] - 2026-05-07

@@ -407,7 +407,8 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       ),
     runBuildLanguageKeywords: (opts) =>
       runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
-        model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
+        model:
+          opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
         dryRun: opts.dryRun,
       }),
     runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),

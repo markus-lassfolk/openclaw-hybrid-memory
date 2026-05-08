@@ -223,7 +223,7 @@ export async function runVerifyForCli(
     issues.push(`SQLite: ${msg}`);
     if (isBindingsError(msg)) {
       _sqliteBindingsFailed = true;
-      fixes.push("node:sqlite is not available. Upgrade Node.js to >=22.12.0 or use a compatible version.");
+      fixes.push("node:sqlite is not available. Upgrade Node.js to >=22.16.0 or use a compatible version.");
     } else {
       fixes.push(
         `SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`,
@@ -609,7 +609,7 @@ export async function runVerifyForCli(
       `distill.extractionModelTier=${extractionTier} routes session extraction to a heavy/expensive first-choice model (${extractionFirst}); set distill.extractionModelTier=nano or configure llm.maintenance and use distill.extractionModelTier=maintenance`,
     );
   }
-  const dreamEffective = dreamOverride ?? (tierMaintenance[0] ?? "—");
+  const dreamEffective = dreamOverride ?? tierMaintenance[0] ?? "—";
   if (dreamEffective !== "—" && isHeavyModel(dreamEffective)) {
     warnings.push(
       `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
@@ -932,7 +932,9 @@ export async function runVerifyForCli(
     });
   }
   if (llmRows.length === 0) {
-    tableLog("  No LLM models configured (add llm.nano / llm.maintenance / llm.default / llm.heavy or API keys / OAuth).");
+    tableLog(
+      "  No LLM models configured (add llm.nano / llm.maintenance / llm.default / llm.heavy or API keys / OAuth).",
+    );
     tableLog("  LLMs: add model tiers or API keys in config. See docs/LLM-AND-PROVIDERS.md.");
     tableLog("");
     tableLog("  Summary: Configure LLM tiers or API keys to use memory and cron jobs.");

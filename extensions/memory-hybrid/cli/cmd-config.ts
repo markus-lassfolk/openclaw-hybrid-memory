@@ -218,14 +218,17 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
     log("");
     log("Maintenance command routing (cron wrapper model affects only the wrapper agent turn):");
     const first = (arr: string[]) => (arr.length > 0 ? arr[0] : "—");
-    const tierFirst = (tier: "nano" | "maintenance" | "default" | "heavy") => first(getLLMModelPreference(cronCfg, tier));
+    const tierFirst = (tier: "nano" | "maintenance" | "default" | "heavy") =>
+      first(getLLMModelPreference(cronCfg, tier));
     log(`  distill extraction (directives/reinforcement): tier=${extTier} -> ${tierFirst(extTier)}`);
     const dreamDefault = tierFirst("maintenance");
     log(
       `  dream-cycle + MEMORY_INDEX: nightlyCycle.model=${cfg.nightlyCycle?.model?.trim() ? cfg.nightlyCycle.model.trim() : "(unset)"} -> ${cfg.nightlyCycle?.model?.trim() ? cfg.nightlyCycle.model.trim() : dreamDefault}`,
     );
     const reflectDefault = cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : tierFirst("maintenance");
-    log(`  reflect / reflect-rules / reflect-meta: reflection.model=${cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : "(unset)"} -> ${reflectDefault}`);
+    log(
+      `  reflect / reflect-rules / reflect-meta: reflection.model=${cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : "(unset)"} -> ${reflectDefault}`,
+    );
   } catch {
     log("  (could not resolve tiers — check plugin config)");
   }
@@ -251,9 +254,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("Example (toggle): openclaw hybrid-mem config-set nightlyCycle enabled");
   log("Example (goals): openclaw hybrid-mem config-set goalStewardship enabled");
   log("Example (LLM tier lists as JSON): openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'");
-  log(
-    "Example (maintenance tier): openclaw hybrid-mem config-set llm.maintenance '[\"azure-foundry/gpt-4.1-mini\"]'",
-  );
+  log("Example (maintenance tier): openclaw hybrid-mem config-set llm.maintenance '[\"azure-foundry/gpt-4.1-mini\"]'");
   log("Help for a key: openclaw hybrid-mem help config-set <key>");
   log("Detail: openclaw hybrid-mem goals config   |   openclaw hybrid-mem active-tasks config");
 }
