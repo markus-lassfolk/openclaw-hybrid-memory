@@ -58,7 +58,11 @@ describe("maintenance log analyzer", () => {
 
   it("classifies curated synthetic failures", () => {
     const cases: Array<[string, string]> = [
-      ["Node.js v22.16+ is required", "env-misconfig"],
+      ["Node.js v22.12+ is required", "env-misconfig"],
+      [
+        'Unknown command: openclaw hybrid-mem. No built-in command or plugin CLI metadata owns "hybrid-mem".',
+        "env-misconfig",
+      ],
       ["429 TooManyRequests from Azure", "transient-llm"],
       ["ECONNRESET to gateway", "transient-network"],
       ["EmbeddingError 401 Unauthorized", "provider-auth"],

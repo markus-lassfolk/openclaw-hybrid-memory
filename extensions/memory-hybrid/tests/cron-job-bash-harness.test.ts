@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildHybridMemCronBashBody, buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
+import {
+  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
+  buildHybridMemCronBashBody,
+  buildHybridMemCronTaskMessage,
+} from "../services/cron-job-bash-harness.js";
 
 describe("cron-job-bash-harness", () => {
   it("buildHybridMemCronBashBody includes pipefail, logging paths, hm_step, and steps", () => {
@@ -7,7 +11,10 @@ describe("cron-job-bash-harness", () => {
       { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
     ]);
     expect(bash).toContain("set -euo pipefail");
+    expect(bash).toContain(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER);
+    expect(bash).toContain("env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI");
     expect(bash).toContain('HM_LOG_BASE="$OW/logs/cron-hybrid-mem"');
+    expect(bash).toContain('OW="$HOME/.openclaw"');
     expect(bash).toContain('HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"');
     expect(bash).toContain('local ec="${PIPESTATUS[0]}"');
     expect(bash).toContain('hm_step "prune" openclaw hybrid-mem prune --verbose');

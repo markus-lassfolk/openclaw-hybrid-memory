@@ -8,6 +8,18 @@
 
 export type HybridMemCronStep = { name: string; cmd: string };
 
+export const HYBRID_MEM_CRON_ENV_SANITIZER_MARKER =
+  "# Hybrid-mem env sanitizer (strip service vars that can break plugin CLI discovery)";
+
+export function hybridMemCronEnvSanitizerBashLines(): string[] {
+  return [
+    HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
+    "openclaw() {",
+    '  env -u OPENCLAW_SKIP_HYBRID_MEMORY_CLI -u OPENCLAW_HOME -u OPENCLAW_CLI -u OPENCLAW_SERVICE_KIND -u OPENCLAW_SERVICE_MARKER command openclaw "$@"',
+    "}",
+  ];
+}
+
 /**
  * Bash script body: `set -euo pipefail`, HM_LOG / HM_EXIT, `hm_step`, and labeled steps.
  * Step `name` should be short and shell-safe; any character outside `[A-Za-z0-9-]` is replaced with `_`.
@@ -20,7 +32,8 @@ export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCron
   return [
     "set -euo pipefail",
     "set -x",
-    'OW="${OPENCLAW_HOME:-$HOME/.openclaw}"',
+    ...hybridMemCronEnvSanitizerBashLines(),
+    'OW="$HOME/.openclaw"',
     'HM_LOG_BASE="$OW/logs/cron-hybrid-mem"',
     'if ! mkdir -p "$HM_LOG_BASE" 2>/dev/null; then',
     '  HM_LOG_BASE="/tmp/openclaw-cron-hybrid-mem-${USER:-user}"',

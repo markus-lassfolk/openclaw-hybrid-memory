@@ -40,6 +40,7 @@ import {
 } from "../services/embeddings.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../services/cron-job-bash-harness.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
@@ -1332,6 +1333,8 @@ export async function runVerifyForCli(
     lastRunGuardMs?: number | null;
     /** Set when the job carries a `pluginJobId` starting with `hybrid-mem:` (treat the `Other` list as truly external). */
     isHybridMem?: boolean;
+    /** Raw message payload (used for env sanitizer checks). */
+    message?: string;
     state?: {
       nextRunAtMs?: number;
       lastRunAtMs?: number;
@@ -1341,6 +1344,27 @@ export async function runVerifyForCli(
   }
 
   const allJobs = new Map<string, JobInfo>();
+
+  function hybridMemCronMessageSanitizerStatus(message: string): "ok" | "partial" | "missing" {
+    if (message.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return "ok";
+    const required = [
+      "OPENCLAW_SKIP_HYBRID_MEMORY_CLI",
+      "OPENCLAW_HOME",
+      "OPENCLAW_CLI",
+      "OPENCLAW_SERVICE_KIND",
+      "OPENCLAW_SERVICE_MARKER",
+    ];
+    const present = required.filter((v) => message.includes(`-u ${v}`));
+    if (present.length > 0 && present.length < required.length) return "partial";
+    const mentionsHybridMem = /openclaw\s+hybrid-mem\b/.test(message);
+    const hasAnyUnsets =
+      message.includes("-u OPENCLAW_HOME") ||
+      message.includes("-u OPENCLAW_CLI") ||
+      message.includes("-u OPENCLAW_SERVICE_KIND") ||
+      message.includes("-u OPENCLAW_SERVICE_MARKER");
+    if (mentionsHybridMem && !hasAnyUnsets) return "missing";
+    return "ok";
+  }
 
   if (existsSync(cronStorePath)) {
     try {
@@ -1377,6 +1401,7 @@ export async function runVerifyForCli(
               scheduleExpr,
               lastRunGuardMs,
               isHybridMem,
+              message: msg,
               state,
             });
           }
@@ -1385,6 +1410,35 @@ export async function runVerifyForCli(
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-job-state" });
     }
+  }
+
+  // Issue #1205: hybrid-mem cron jobs can fail in service/cron-like envs when OPENCLAW_HOME or service marker vars leak
+  // into the execution shell, preventing plugin CLI metadata discovery ("Unknown command: openclaw hybrid-mem").
+  const cronEnvLeakPartial: string[] = [];
+  const cronEnvLeakMissing: string[] = [];
+  for (const [key, job] of allJobs.entries()) {
+    if (!job.isHybridMem || !job.message) continue;
+    const status = hybridMemCronMessageSanitizerStatus(job.message);
+    if (status === "partial") cronEnvLeakPartial.push(key);
+    if (status === "missing") cronEnvLeakMissing.push(key);
+  }
+  if (cronEnvLeakPartial.length > 0 || cronEnvLeakMissing.length > 0) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    const list = [
+      cronEnvLeakMissing.length > 0 ? `missing sanitizer: ${cronEnvLeakMissing.join(", ")}` : null,
+      cronEnvLeakPartial.length > 0 ? `partial sanitizer: ${cronEnvLeakPartial.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    log(
+      `\n${WARN} Cron payload env sanitizer (issue #1205): ${list}. Service/cron environments can leak OPENCLAW_HOME / service marker vars and make \`openclaw hybrid-mem\` unavailable. Fix: run \`openclaw hybrid-mem verify --fix\` to inject a robust sanitizer (unsets OPENCLAW_HOME, OPENCLAW_CLI, OPENCLAW_SERVICE_KIND, OPENCLAW_SERVICE_MARKER, OPENCLAW_SKIP_HYBRID_MEMORY_CLI).`,
+    );
+    warnings.push(
+      `hybrid-mem cron payloads are missing/partial env sanitizer (issue #1205); run 'openclaw hybrid-mem verify --fix'`,
+    );
+    fixes.push(
+      "Run 'openclaw hybrid-mem verify --fix' to update managed cron job messages with an env sanitizer for OPENCLAW_HOME/service markers.",
+    );
   }
 
   // Also check default config for jobs not found in cron store
