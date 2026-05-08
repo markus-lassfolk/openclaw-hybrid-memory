@@ -16,7 +16,7 @@ import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "
 import { auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HandlerContext } from "./handlers.js";
-import type { CredentialsAuditResult, CredentialsPruneResult, MigrateToVaultResult } from "./types.js";
+import type { CredentialsAuditResult, CredentialsPruneResult, EncryptVaultResult, MigrateToVaultResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // migrate-to-vault
@@ -43,6 +43,55 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runMigrateToVaultForCli" });
     throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// encrypt-vault (plaintext -> encrypted at rest)
+// ---------------------------------------------------------------------------
+
+/**
+ * Encrypt an existing plaintext vault at rest (kdf_version=0).
+ * Safe by default: returns a dry-run unless `yes` is true.
+ */
+export function runEncryptVaultForCli(ctx: HandlerContext, opts: { yes?: boolean }): EncryptVaultResult {
+  const { credentialsDb, resolvedSqlitePath, cfg } = ctx;
+  const vaultPath = join(dirname(resolvedSqlitePath), "credentials.db");
+  if (!credentialsDb) {
+    return { ok: false, vaultPath, error: "Credentials vault is not available (credentialsDb is null)." };
+  }
+
+  const st = credentialsDb.getVaultStatus();
+  if (st.encryptedAtRest) {
+    return { ok: true, dryRun: true, vaultPath, status: { kdfVersion: st.kdfVersion, encryptedAtRest: true } };
+  }
+
+  if (!st.configuredKeyPresent) {
+    return {
+      ok: false,
+      vaultPath,
+      error:
+        "Vault is plaintext and no encryption key is configured. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY, then re-run.",
+    };
+  }
+
+  if (!opts.yes) {
+    return { ok: true, dryRun: true, vaultPath, status: { kdfVersion: st.kdfVersion, encryptedAtRest: false } };
+  }
+
+  try {
+    const res = credentialsDb.enableEncryptionAtRest(cfg.credentials.encryptionKey ?? "");
+    const after = credentialsDb.getVaultStatus();
+    return {
+      ok: true,
+      dryRun: false,
+      vaultPath,
+      migrated: res.migrated,
+      status: { kdfVersion: after.kdfVersion, encryptedAtRest: after.encryptedAtRest },
+    };
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runEncryptVaultForCli" });
+    return { ok: false, vaultPath, error: String(err) };
   }
 }
 

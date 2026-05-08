@@ -959,6 +959,7 @@ function createHybridMemCliContext(
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+    runEncryptVault: (opts) => handlers.runEncryptVaultForCli(handlerCtx, opts),
     runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
     runCredentialsGet: (opts) => handlers.runCredentialsGetForCli(handlerCtx, opts),
     runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),

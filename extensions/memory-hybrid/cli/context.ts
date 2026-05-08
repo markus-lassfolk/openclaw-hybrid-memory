@@ -15,6 +15,7 @@ import type {
   FindDuplicatesResult,
   IngestFilesResult,
   IngestFilesSink,
+  EncryptVaultResult,
   MigrateToVaultResult,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
@@ -44,6 +45,7 @@ export type ManageContext = {
     sink: IngestFilesSink,
   ) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runEncryptVault: (opts: { yes?: boolean }) => EncryptVaultResult;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
   runCredentialsGet: (opts: {
     service: string;

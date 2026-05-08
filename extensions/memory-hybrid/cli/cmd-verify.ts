@@ -1080,12 +1080,27 @@ export async function runVerifyForCli(
           const first = items[0];
           credentialsDb.get(first.service, first.type as CredentialType);
         }
-        const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-        log(`\nCredentials (vault): OK (${items.length} stored)${encrypted ? " [encrypted]" : " [plaintext]"}`);
+        const st = credentialsDb.getVaultStatus();
+        const stateLabel = st.encryptedAtRest
+          ? `encrypted (kdf_version=${st.kdfVersion})`
+          : `plaintext (kdf_version=${st.kdfVersion})`;
+        log(`\nCredentials (vault): OK (${items.length} stored) [${stateLabel}]`);
+        log(
+          `Credentials (vault): encryption_key_configured=${st.configuredKeyPresent ? "yes" : "no"}; migration_required=${
+            st.migrationRequired ? "yes" : "no"
+          }`,
+        );
+        if (st.migrationRequired) {
+          const WARN = noEmoji ? "[WARN]" : "⚠️";
+          log(
+            `${WARN} Credentials (vault): encryption key is configured but ignored until the existing vault is encrypted at rest.`,
+          );
+          log("Fix: run `openclaw hybrid-mem credentials encrypt-vault --yes` (see docs/CREDENTIALS.md).");
+        }
       } catch (e) {
         issues.push(`Credentials vault: ${String(e)}`);
-        const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-        if (encrypted) {
+        const hasKey = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
+        if (hasKey) {
           fixes.push(
             "Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.",
           );

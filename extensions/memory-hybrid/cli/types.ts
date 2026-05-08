@@ -56,6 +56,17 @@ export type InstallCliResult =
 
 export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
 
+export type EncryptVaultResult =
+  | { ok: true; dryRun: true; vaultPath: string; status: { kdfVersion: number; encryptedAtRest: boolean } }
+  | {
+      ok: true;
+      dryRun: false;
+      vaultPath: string;
+      migrated: number;
+      status: { kdfVersion: number; encryptedAtRest: boolean };
+    }
+  | { ok: false; vaultPath: string; error: string };
+
 export type DistillWindowResult = {
   mode: "full" | "incremental";
   startDate: string;

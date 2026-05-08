@@ -87,6 +87,8 @@ export class CredentialsDB extends BaseSqliteStore {
   private salt!: Buffer;
   /** When false, values are stored and read as plaintext (no encryption). Mutable when DB metadata overrides key length heuristics. */
   private storesEncryptedValues: boolean;
+  /** True when a 16+ character encryption key was provided to the constructor. */
+  private readonly configuredKeyPresent: boolean;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
@@ -98,6 +100,7 @@ export class CredentialsDB extends BaseSqliteStore {
     const db = new DatabaseSync(dbPath);
     super(db);
     this.dbPath = dbPath;
+    this.configuredKeyPresent = keyLooksEncrypted;
     tryRestrictSqliteDbFileMode(dbPath);
     this.storesEncryptedValues = keyLooksEncrypted;
 
@@ -170,7 +173,8 @@ export class CredentialsDB extends BaseSqliteStore {
       // Optionally warn that key is being ignored
       if (encryptionKey.length >= 16) {
         pluginLogger.warn(
-          "Credentials vault is in plaintext mode (kdf_version=0). The provided encryption key is being ignored.",
+          "Credentials vault is in plaintext mode (kdf_version=0). The configured encryption key is being ignored. " +
+            "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --yes",
         );
       }
       return;
@@ -214,6 +218,78 @@ export class CredentialsDB extends BaseSqliteStore {
 
   protected getSubsystemName(): string {
     return "credentials";
+  }
+
+  getVaultStatus(): {
+    dbPath: string;
+    kdfVersion: number;
+    encryptedAtRest: boolean;
+    configuredKeyPresent: boolean;
+    keyIgnored: boolean;
+    migrationRequired: boolean;
+  } {
+    const encryptedAtRest = this.kdfVersion !== CRED_KDF_PLAINTEXT;
+    const keyIgnored = this.kdfVersion === CRED_KDF_PLAINTEXT && this.configuredKeyPresent;
+    const migrationRequired = keyIgnored;
+    return {
+      dbPath: this.dbPath,
+      kdfVersion: this.kdfVersion,
+      encryptedAtRest,
+      configuredKeyPresent: this.configuredKeyPresent,
+      keyIgnored,
+      migrationRequired,
+    };
+  }
+
+  /**
+   * Encrypt an existing plaintext vault in place.
+   * Requires a 16+ character encryption key. Safe and idempotent:
+   * - Throws if vault is already encrypted
+   * - Performs an in-DB transaction so it cannot partially convert rows
+   */
+  enableEncryptionAtRest(encryptionKey: string): { migrated: number; kdfVersion: number } {
+    const keyLooksEncrypted = encryptionKey.length >= 16;
+    if (!keyLooksEncrypted) {
+      throw new Error(
+        "Encryption key is missing or too short. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY before encrypting the vault.",
+      );
+    }
+    if (this.kdfVersion !== CRED_KDF_PLAINTEXT) {
+      throw new Error(`Credentials vault is already encrypted (kdf_version=${this.kdfVersion}).`);
+    }
+
+    const rows = this.liveDb.prepare("SELECT service, type, value FROM credentials").all() as Array<{
+      service: string;
+      type: string;
+      value: Uint8Array | Buffer;
+    }>;
+
+    const newSalt = randomBytes(32);
+    const newKdfVersion = CRED_KDF_VERSION;
+    const newKey = deriveKey(encryptionKey, newSalt, newKdfVersion);
+
+    const migrate = createTransaction(this.liveDb, () => {
+      const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+      for (const r of rows) {
+        const plaintext = toBuffer(r.value).toString("utf8");
+        const encrypted = encryptValue(plaintext, newKey);
+        updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
+      }
+      this.liveDb
+        .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+        .run(Buffer.from([newKdfVersion]));
+      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
+    });
+
+    migrate();
+
+    this.kdfVersion = newKdfVersion;
+    this.salt = newSalt;
+    this.key = newKey;
+    this.password = null;
+    this.storesEncryptedValues = true;
+
+    return { migrated: rows.length, kdfVersion: this.kdfVersion };
   }
 
   /**
