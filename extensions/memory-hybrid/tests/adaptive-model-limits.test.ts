@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  adaptiveFailureShrinkRatios,
   getEffectiveModelLimits,
   loadAdaptiveModelLimits,
   recordAdaptiveFailure,
@@ -12,6 +13,13 @@ import {
 } from "../services/adaptive-model-limits.js";
 
 describe("adaptive-model-limits", () => {
+  it("adaptiveFailureShrinkRatios matches recordAdaptiveFailure output scaling", () => {
+    expect(adaptiveFailureShrinkRatios("timeout")).toEqual({ batch: 0.75, out: 0.75 });
+    expect(adaptiveFailureShrinkRatios("context_length")).toEqual({ batch: 0.6, out: 0.6 });
+    expect(adaptiveFailureShrinkRatios("rate_limit").batch).toBe(0.85);
+    expect(adaptiveFailureShrinkRatios("rate_limit").out).toBe(0.95);
+  });
+
   it("uses catalog limits when no state exists", () => {
     const state = loadAdaptiveModelLimits("/no/such/file.json");
     const eff = getEffectiveModelLimits({

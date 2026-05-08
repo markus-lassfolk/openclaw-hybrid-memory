@@ -127,6 +127,13 @@ function shrinkFactor(kind: AdaptiveFailureKind): number {
   return 0.8;
 }
 
+/** Matches {@link recordAdaptiveFailure} so non-adaptive distill retries shrink batches the same way. */
+export function adaptiveFailureShrinkRatios(kind: AdaptiveFailureKind): { batch: number; out: number } {
+  const batch = shrinkFactor(kind);
+  const out = kind === "timeout" || kind === "context_length" ? Math.min(0.9, batch) : 0.95;
+  return { batch, out };
+}
+
 export function recordAdaptiveFailure(opts: {
   state: AdaptiveModelLimitsStateV1;
   model: string;

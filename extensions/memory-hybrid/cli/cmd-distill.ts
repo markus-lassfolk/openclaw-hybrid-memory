@@ -18,6 +18,15 @@ import {
 } from "../config.js";
 import { isValidCategory } from "../config.js";
 import type { MemoryCategory } from "../config.js";
+import {
+  ADAPTIVE_MODEL_LIMITS_VERSION,
+  adaptiveFailureShrinkRatios,
+  getEffectiveModelLimits,
+  loadAdaptiveModelLimits,
+  recordAdaptiveFailure,
+  recordAdaptiveSuccess,
+  saveAdaptiveModelLimits,
+} from "../services/adaptive-model-limits.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import {
   chatCompleteWithRetryDetailed,
@@ -29,13 +38,6 @@ import {
   isContextLengthError,
   parseRetryAfterMs,
 } from "../services/chat.js";
-import {
-  getEffectiveModelLimits,
-  loadAdaptiveModelLimits,
-  recordAdaptiveFailure,
-  recordAdaptiveSuccess,
-  saveAdaptiveModelLimits,
-} from "../services/adaptive-model-limits.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
@@ -320,7 +322,7 @@ export async function runDistillForCli(
     );
     const adaptiveState = adaptiveEnabled
       ? loadAdaptiveModelLimits(adaptiveStatePath)
-      : loadAdaptiveModelLimits(adaptiveStatePath);
+      : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} };
 
     type DistillBlock = { text: string; tokens: number };
     const blocks: DistillBlock[] = [];
@@ -399,22 +401,26 @@ export async function runDistillForCli(
     let batchNum = 0;
     let cursorBlock = 0;
     let shrinkBudget = 8;
+    let nonAdaptiveBatchFactor = 1;
+    let nonAdaptiveOutFactor = 1;
+    const minBatchForModel = Math.max(2048, promptTokens + 256);
 
     const effectiveLimitsForModel = (m: string) => {
       const catalogBatchTokenLimit = distillBatchTokenLimit(m);
       const catalogMaxOutputTokens = distillMaxOutputTokens(m);
-      if (!adaptiveEnabled)
+      if (!adaptiveEnabled) {
         return {
-          batchTokenLimit: catalogBatchTokenLimit,
-          maxOutputTokens: catalogMaxOutputTokens,
+          batchTokenLimit: Math.max(minBatchForModel, Math.floor(catalogBatchTokenLimit * nonAdaptiveBatchFactor)),
+          maxOutputTokens: Math.max(128, Math.floor(catalogMaxOutputTokens * nonAdaptiveOutFactor)),
           source: "catalog" as const,
         };
+      }
       return getEffectiveModelLimits({
         state: adaptiveState,
         model: m,
         catalogBatchTokenLimit,
         catalogMaxOutputTokens,
-        minBatchTokenLimit: Math.max(2048, promptTokens + 256),
+        minBatchTokenLimit: minBatchForModel,
       });
     };
 
@@ -482,7 +488,7 @@ export async function runDistillForCli(
             `memory-hybrid: distill batch ${batchNum} succeeded with fallback model ${detail.modelUsed} (source=${src})`,
           );
         }
-        if (adaptiveEnabled) {
+        if (adaptiveEnabled && !opts.dryRun) {
           const usedLimits = effectiveLimitsForModel(detail.modelUsed);
           recordAdaptiveSuccess({
             state: adaptiveState,
@@ -493,6 +499,10 @@ export async function runDistillForCli(
             usedMaxOutputTokens: usedLimits.maxOutputTokens,
           });
           saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+        }
+        if (!adaptiveEnabled) {
+          nonAdaptiveBatchFactor = 1;
+          nonAdaptiveOutFactor = 1;
         }
 
         const content = detail.content;
@@ -544,7 +554,7 @@ export async function runDistillForCli(
               : isTimeout || isConn
                 ? "timeout"
                 : "other";
-        if (adaptiveEnabled) {
+        if (adaptiveEnabled && !opts.dryRun) {
           recordAdaptiveFailure({
             state: adaptiveState,
             model,
@@ -555,6 +565,11 @@ export async function runDistillForCli(
             usedMaxOutputTokens: limits.maxOutputTokens,
           });
           saveAdaptiveModelLimits(adaptiveStatePath, adaptiveState);
+        }
+        if (!adaptiveEnabled) {
+          const { batch: bf, out: of } = adaptiveFailureShrinkRatios(kind);
+          nonAdaptiveBatchFactor *= bf;
+          nonAdaptiveOutFactor *= of;
         }
         const retryAfterMs = parseRetryAfterMs(e);
         if ((isRateLimit || isQuota) && retryAfterMs != null && retryAfterMs > 0) {
@@ -571,6 +586,10 @@ export async function runDistillForCli(
         }
         sink.warn(`memory-hybrid: distill batch ${batchNum} failed: ${e}`);
         capturePluginError(e, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
+        if (!adaptiveEnabled) {
+          nonAdaptiveBatchFactor = 1;
+          nonAdaptiveOutFactor = 1;
+        }
         cursorBlock += batch.count;
         processedBlocks += batch.count;
         progress.update(processedBlocks);
