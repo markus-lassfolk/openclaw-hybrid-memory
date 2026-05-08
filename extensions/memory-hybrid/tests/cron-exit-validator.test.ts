@@ -2,16 +2,16 @@
  * Tests for cron exit ledger validation.
  */
 
-import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import {
+  type ExitStep,
+  checkForUnknownCommands,
   parseExitLine,
   validateMaintenanceExecution,
-  checkForUnknownCommands,
-  type ExitStep,
 } from "../services/cron-exit-validator.js";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 describe("cron-exit-validator", () => {
   describe("parseExitLine", () => {
@@ -203,6 +203,35 @@ error: unknown command 'bar'
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
       expect(result.error).toContain("not found");
+    });
+
+    it("should report skipped when ledger is empty and log indicates feature-gated full skip", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "");
+      writeFileSync(
+        logPath,
+        "reflection.enabled is false in hybrid-memory config. Job was skipped per preamble; not updating guard.",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect", "reflect-rules"]);
+
+      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.steps.length).toBe(0);
+    });
+
+    it("should still fail on empty ledger when log does not indicate intentional skip", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "");
+      writeFileSync(logPath, "set -euo pipefail\nbash: something blew up\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
     });
   });
 });

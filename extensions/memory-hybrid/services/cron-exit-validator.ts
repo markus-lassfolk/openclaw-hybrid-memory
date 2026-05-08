@@ -19,7 +19,7 @@ export interface ExitStep {
 
 export interface ExitValidationResult {
   /** Overall maintenance status */
-  maintenanceStatus: "success" | "partial" | "failed";
+  maintenanceStatus: "success" | "skipped" | "partial" | "failed";
   /** All steps found in exit ledger */
   steps: ExitStep[];
   /** Required steps that are missing from exit ledger */
@@ -86,6 +86,30 @@ export function readExitLedger(exitPath: string): ExitStep[] {
 /**
  * Check for "unknown command" errors in log file.
  */
+/**
+ * Detect agent/log text that matches hybrid-mem cron preambles for intentional full-job skips
+ * when a feature gate is off (no hm_step runs, empty HM_EXIT). Avoids false greens on shell
+ * abort before first step — we only match phrases unlikely to appear in generic failures.
+ */
+export function logIndicatesIntentionalFeatureSkip(logPath: string): boolean {
+  if (!existsSync(logPath)) return false;
+  try {
+    const text = readFileSync(logPath, "utf-8").toLowerCase();
+    if (text.length === 0) return false;
+    if (/\bjob was skipped\b/.test(text)) return true;
+    if (/\bskip(ped|ping)?\b.*\bhybrid[- ]memory\b.*\bconfig\b/.test(text)) return true;
+    if (/\bself[- ]correction\b.*\b(disabled|skipped)\b/.test(text)) return true;
+    if (/\breflection\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
+    if (/\bnightly\s*cycle\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
+    if (/\bsensor\s*sweep\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
+    if (/\bpersona\s*proposals?\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
+    if (/\bskip the script\b.*\b(disabled|reply)\b/.test(text)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function checkForUnknownCommands(logPath: string): string[] {
   if (!existsSync(logPath)) {
     return [];
@@ -183,16 +207,20 @@ export function validateMaintenanceExecution(
   }
 
   // Determine overall status
-  let maintenanceStatus: "success" | "partial" | "failed";
+  let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
 
   if (missingSteps.length === 0 && failedSteps.length === 0) {
     // All required steps present and succeeded
     maintenanceStatus = "success";
   } else if (missingSteps.length === requiredSteps.length) {
-    // Every required step absent from the ledger (including an empty file). Treat as
-    // failure: the shell may have aborted before the first hm_step wrote HM_EXIT,
-    // which must not be reported as skipped / exit 0.
-    maintenanceStatus = "failed";
+    // Every required step absent — usually a hard failure (shell died before hm_step).
+    // Exception: cron preambles that tell the agent to skip the whole script when a feature
+    // is disabled leave an empty ledger; corroborate with HM_LOG text.
+    if (logPath && steps.length === 0 && failedSteps.length === 0 && logIndicatesIntentionalFeatureSkip(logPath)) {
+      maintenanceStatus = "skipped";
+    } else {
+      maintenanceStatus = "failed";
+    }
   } else if (missingSteps.length > 0 || failedSteps.length > 0) {
     // Some steps missing or failed
     maintenanceStatus = failedSteps.length > 0 ? "failed" : "partial";
@@ -200,7 +228,7 @@ export function validateMaintenanceExecution(
     maintenanceStatus = "success";
   }
 
-  // Guard should only be updated if status is success
+  // Guard should only be updated on full success (not feature-gated skips).
   const guardUpdated = maintenanceStatus === "success";
 
   // Build error message
@@ -214,6 +242,8 @@ export function validateMaintenanceExecution(
       parts.push(`Failed steps: ${failedSteps.map((s) => `${s.step} (exit=${s.exitCode})`).join(", ")}`);
     }
     error = parts.join("; ");
+  } else if (maintenanceStatus === "skipped") {
+    error = "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
   }
 
   return {
