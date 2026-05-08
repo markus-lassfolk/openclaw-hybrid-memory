@@ -9,7 +9,7 @@ import { getEnv } from "../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -46,6 +46,11 @@ import {
   extractCronJobMessageEntries,
   getHeartbeatMatchersForVerify,
 } from "../services/goal-stewardship-verify-cron.js";
+import {
+  collectRecentHmExitLedgerPaths,
+  findDeprecatedHybridMemCronTokens,
+  findDeprecatedTokensInHmExitContent,
+} from "../services/deprecated-cron-commands.js";
 import { resolveWireApi } from "../services/model-capabilities.js";
 import { callResponsesApi } from "../services/responses-adapter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
@@ -1339,6 +1344,7 @@ export async function runVerifyForCli(
 
   interface JobInfo {
     name: string;
+    pluginJobId?: string;
     enabled: boolean;
     /** Set by ensureMaintenanceCronJobs when a feature gate disabled the job. */
     featureGateDisabled?: boolean;
@@ -1348,8 +1354,7 @@ export async function runVerifyForCli(
     lastRunGuardMs?: number | null;
     /** Set when the job carries a `pluginJobId` starting with `hybrid-mem:` (treat the `Other` list as truly external). */
     isHybridMem?: boolean;
-    /** Raw message payload (used for env sanitizer checks). */
-    message?: string;
+    deprecatedCronTokens?: string[];
     state?: {
       nextRunAtMs?: number;
       lastRunAtMs?: number;
@@ -1409,14 +1414,16 @@ export async function runVerifyForCli(
 
           const canonicalKey = getCanonicalJobKey(name, msg);
           if (canonicalKey) {
+            const deprecatedCronTokens = findDeprecatedHybridMemCronTokens(msg).map((t) => t.token);
             allJobs.set(canonicalKey, {
               name,
+              pluginJobId: pid || undefined,
               enabled,
               featureGateDisabled,
               scheduleExpr,
               lastRunGuardMs,
               isHybridMem,
-              message: msg,
+              deprecatedCronTokens: deprecatedCronTokens.length > 0 ? deprecatedCronTokens : undefined,
               state,
             });
           }
@@ -1552,6 +1559,62 @@ export async function runVerifyForCli(
     for (const [_key, job] of otherJobs) {
       formatJobStatus(job, job.name, "    ", log);
     }
+  }
+
+  // Warn if the stored cron messages or recent exit logs reference deprecated CLI commands/steps.
+  const deprecatedCronJobs = Array.from(allJobs.values()).filter(
+    (j) => (j.deprecatedCronTokens?.length ?? 0) > 0 && j.featureGateDisabled !== true,
+  );
+  if (deprecatedCronJobs.length > 0) {
+    const affected = deprecatedCronJobs
+      .slice(0, 5)
+      .map((j) => `${j.pluginJobId ?? j.name} (${(j.deprecatedCronTokens ?? []).join(", ")})`)
+      .join("; ");
+    warnings.push(
+      `cron store contains deprecated hybrid-mem command references: ${affected}${
+        deprecatedCronJobs.length > 5 ? `; … (${deprecatedCronJobs.length - 5} more)` : ""
+      }`,
+    );
+    log(
+      `\n${WARN_LINE} Stale cron payload detected: job messages reference deprecated command(s)/step(s). Run \`openclaw hybrid-mem verify --fix\` to normalize managed job messages.`,
+    );
+  }
+
+  // Also scan recent HM_EXIT logs (these can reveal stale commands even when the top-level cron payload looks correct).
+  try {
+    const logsRoot = join(openclawDir, "logs", "cron-hybrid-mem");
+    if (existsSync(logsRoot)) {
+      const cutoffMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
+
+      const exitHits: Array<{ file: string; hit: ReturnType<typeof findDeprecatedTokensInHmExitContent>[number] }> = [];
+      for (const full of exitFiles) {
+        try {
+          const content = readFileSync(full, "utf-8");
+          const hits = findDeprecatedTokensInHmExitContent(content);
+          for (const hit of hits) {
+            exitHits.push({ file: full, hit });
+            if (exitHits.length >= 5) break;
+          }
+        } catch {
+          /* skip unreadable or partial files */
+        }
+        if (exitHits.length >= 5) break;
+      }
+
+      if (exitHits.length > 0) {
+        const sample = exitHits
+          .map((h) => `${h.hit.token.token} in ${h.file}${h.hit.iso ? ` @ ${h.hit.iso}` : ""}`)
+          .slice(0, 3)
+          .join("; ");
+        warnings.push(`recent cron-hybrid-mem exit logs reference deprecated step(s): ${sample}`);
+        log(
+          `${WARN_LINE} Recent maintenance logs reference deprecated command(s)/step(s). This can happen even when cron jobs appear updated. Normalize with \`openclaw hybrid-mem verify --fix\`.`,
+        );
+      }
+    }
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:scan-cron-exit-logs" });
   }
 
   // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than

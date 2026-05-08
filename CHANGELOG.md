@@ -21,14 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **audit-health command reliability**: Added timeout protection and partial result handling to prevent hanging on long-lived stores. The command now:
-  - Limits expensive queries (e.g., implicitFeedbackPrefixHistogram capped at 5000 rows)
-  - Times out LanceDB size calculation after 5 seconds
-  - Returns partial results with errors array when sections fail
-  - Adds `status` field ("ok"|"partial"|"failed") alongside backward-compatible `ok` boolean
-  - Completes within bounded time on large stores (#1214)
+- **Deprecated cron command handling**: detect `consolidate-episodes` and related stale dream-cycle install paths; `hybrid-mem verify --fix` can normalize managed cron job messages; maintenance log classification rule for obsolete CLI steps.
 
 ### Changed
 
