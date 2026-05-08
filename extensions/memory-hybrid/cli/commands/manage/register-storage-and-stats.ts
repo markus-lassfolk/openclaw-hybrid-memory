@@ -46,7 +46,7 @@ function entryMatchesHybridSearchFilters(
 export type AuditHealthReport = {
   schemaVersion: 1;
   generatedAt: string;
-  /** "ok" when no warnings; "partial" when some sections timed out; "failed" on critical errors. */
+  /** "ok" when no warnings and no generation errors; "partial" when degraded (warnings, timeouts, or non-fatal errors). */
   status: "ok" | "partial" | "failed";
   /** @deprecated Use `status` instead. Kept for backward compatibility. */
   ok: boolean;
@@ -143,9 +143,9 @@ export function buildAuditHealthReport(
   getMemoryCategories: () => readonly string[],
   entityStopWords: readonly string[] = [],
   graphHubDegreeCap?: number | null,
-  options?: { lanceBytes?: number | null },
+  options?: { lanceBytes?: number | null; preReportErrors?: Array<{ section: string; message: string }> },
 ): AuditHealthReport {
-  const errors: Array<{ section: string; message: string }> = [];
+  const errors: Array<{ section: string; message: string }> = [...(options?.preReportErrors ?? [])];
   const capForHubListing = graphHubDegreeCap === undefined ? 500 : graphHubDegreeCap;
   const activeFacts = factsDb.getCount();
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
@@ -503,13 +503,13 @@ export function buildAuditHealthReport(
     }
   }
 
-  const status: AuditHealthReport["status"] = errors.length > 0 ? "partial" : warnings.length === 0 ? "ok" : "ok";
+  const status: AuditHealthReport["status"] = errors.length > 0 || warnings.length > 0 ? "partial" : "ok";
 
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     status,
-    ok: warnings.length === 0,
+    ok: warnings.length === 0 && errors.length === 0,
     activeFacts,
     storeAgeDays: Number(storeAgeDays.toFixed(2)),
     canonicalEmbeddings,
@@ -1656,13 +1656,22 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   const runAuditHealth = async (opts?: { json?: boolean; strict?: boolean }) => {
     let lanceBytes: number | null = null;
+    const preReportErrors: Array<{ section: string; message: string }> = [];
     try {
-      // Add 5-second timeout for LanceDB size calculation to prevent hanging
-      const { withTimeout } = await import("../../../utils/timeout.js");
-      const sizes = await withTimeout(5000, async () => ctx.richStatsExtras?.getStorageSizes());
-      if (sizes && typeof sizes.lanceBytes === "number") lanceBytes = sizes.lanceBytes;
+      const sizes = await ctx.richStatsExtras?.getStorageSizes();
+      if (sizes?.lanceBytesTimedOut) {
+        preReportErrors.push({
+          section: "storage.lanceBytes",
+          message: "LanceDB directory size probe timed out (du terminated after 5s); storage.lanceBytes omitted",
+        });
+      } else if (sizes && typeof sizes.lanceBytes === "number") {
+        lanceBytes = sizes.lanceBytes;
+      }
     } catch (err) {
-      // best-effort — lance bytes are optional in the audit-health output
+      preReportErrors.push({
+        section: "storage.lanceBytes",
+        message: err instanceof Error ? err.message : String(err),
+      });
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "audit-health-lance-bytes",
         severity: "info",
@@ -1674,7 +1683,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       getMemoryCategories,
       cfg.entityExtraction.stopWords,
       cfg.graph.hubDegreeCap,
-      { lanceBytes },
+      { lanceBytes, preReportErrors },
     );
     if (opts?.json) {
       console.log(JSON.stringify(report, null, 2));

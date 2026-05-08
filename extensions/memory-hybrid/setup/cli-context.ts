@@ -569,12 +569,17 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getStorageSizes: async () => {
       let sqliteBytes: number | undefined;
       let lanceBytes: number | undefined;
-      async function dirSizeAsync(p: string): Promise<number> {
+      let lanceBytesTimedOut = false;
+      async function dirSizeAsync(p: string): Promise<number | "timeout"> {
         try {
           const { execFile } = await import("node:child_process");
-          return await new Promise<number>((resolve) => {
-            execFile("du", ["-sk", p], (error, stdout) => {
+          return await new Promise<number | "timeout">((resolve) => {
+            execFile("du", ["-sk", p], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
               if (error) {
+                if ("killed" in error && error.killed) {
+                  resolve("timeout");
+                  return;
+                }
                 try {
                   const st = statSync(p);
                   resolve(st.isDirectory() ? 0 : st.size);
@@ -622,7 +627,11 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         }
       }
       try {
-        if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
+        if (existsSync(resolvedLancePath)) {
+          const lz = await dirSizeAsync(resolvedLancePath);
+          if (lz === "timeout") lanceBytesTimedOut = true;
+          else lanceBytes = lz;
+        }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "dir-size",
@@ -631,7 +640,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         });
         /* ignore */
       }
-      return { sqliteBytes, lanceBytes };
+      return { sqliteBytes, lanceBytes, lanceBytesTimedOut };
     },
     getCronJobsStatus: () => {
       const owHome =

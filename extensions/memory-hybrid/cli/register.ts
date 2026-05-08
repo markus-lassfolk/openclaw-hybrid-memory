@@ -299,7 +299,11 @@ export type HybridMemCliContext = {
     getProposalsAvailable: () => boolean;
     getWalPending: () => Promise<number> | number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
-    getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
+    getStorageSizes: () => Promise<{
+      sqliteBytes?: number;
+      lanceBytes?: number;
+      lanceBytesTimedOut?: boolean;
+    }>;
     getCronJobsStatus?: () => Array<{
       name: string;
       pluginJobId: string;

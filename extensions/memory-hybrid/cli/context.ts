@@ -189,7 +189,12 @@ export type ManageContext = {
     getProposalsAvailable: () => boolean;
     getWalPending: () => Promise<number>;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
-    getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
+    getStorageSizes: () => Promise<{
+      sqliteBytes?: number;
+      lanceBytes?: number;
+      /** True when `du` was killed due to timeout while sizing LanceDB. */
+      lanceBytesTimedOut?: boolean;
+    }>;
     /** Snapshot of `~/.openclaw/cron/jobs.json` rows whose pluginJobId starts with `hybrid-mem:`. */
     getCronJobsStatus?: () => Array<{
       name: string;

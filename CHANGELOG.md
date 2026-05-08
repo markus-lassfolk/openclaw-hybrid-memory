@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Times out LanceDB size calculation after 5 seconds
   - Returns partial results with errors array when sections fail
   - Adds `status` field ("ok"|"partial"|"failed") alongside backward-compatible `ok` boolean
-  - Completes within bounded time on large stores (addresses #TBD)
+  - Completes within bounded time on large stores (#1214)
 
 ### Changed
 
