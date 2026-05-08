@@ -913,7 +913,7 @@ function createHybridMemCliContext(
     runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
     runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
     runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
-    runConfigView: (sink) => handlers.runConfigViewForCli(handlerCtx, sink),
+    runConfigView: (sink, opts) => handlers.runConfigViewForCli(handlerCtx, sink, opts),
     runConfigMode: (mode) => Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),
     runConfigSet: (key, value) => Promise.resolve(handlers.runConfigSetForCli(handlerCtx, key, value)),
     runConfigSetHelp: (key) => Promise.resolve(handlers.runConfigSetHelpForCli(handlerCtx, key)),
