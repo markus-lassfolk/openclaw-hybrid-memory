@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+
 export interface DeprecatedCronToken {
   token: string;
   replacement?: string;
@@ -12,9 +15,54 @@ export const DEPRECATED_HYBRID_MEM_CRON_TOKENS: readonly DeprecatedCronToken[] =
   },
 ];
 
+function escapeRegExpLiteral(token: string): string {
+  return token.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
 function tokenRegex(token: string): RegExp {
   // Treat token as a word-like command/step name, not a substring of another identifier.
-  return new RegExp(`(^|[^a-zA-Z0-9_-])${token}([^a-zA-Z0-9_-]|$)`, "i");
+  const escaped = escapeRegExpLiteral(token);
+  return new RegExp(`(^|[^a-zA-Z0-9_-])${escaped}([^a-zA-Z0-9_-]|$)`, "i");
+}
+
+/**
+ * Collect `.exit.txt` paths under the cron hybrid-mem log root modified on or after `cutoffMs`.
+ * Walks recursively so both flat layouts (`logs/cron-hybrid-mem/*.exit.txt`) and dated subfolders are included.
+ */
+export function collectRecentHmExitLedgerPaths(logsRoot: string, cutoffMs: number): string[] {
+  const paths: string[] = [];
+  const walk = (dir: string): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const full = join(dir, name);
+      try {
+        const st = statSync(full);
+        if (st.isFile() && name.endsWith(".exit.txt") && st.mtimeMs >= cutoffMs) {
+          paths.push(full);
+        } else if (st.isDirectory()) {
+          walk(full);
+        }
+      } catch {
+        /* skip unreadable entries */
+      }
+    }
+  };
+  if (existsSync(logsRoot)) walk(logsRoot);
+  return paths
+    .map((p) => {
+      try {
+        return { p, m: statSync(p).mtimeMs };
+      } catch {
+        return { p, m: 0 };
+      }
+    })
+    .sort((a, b) => b.m - a.m)
+    .map((x) => x.p);
 }
 
 export function findDeprecatedHybridMemCronTokens(text: string): DeprecatedCronToken[] {

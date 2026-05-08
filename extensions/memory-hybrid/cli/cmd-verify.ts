@@ -44,6 +44,7 @@ import {
   getHeartbeatMatchersForVerify,
 } from "../services/goal-stewardship-verify-cron.js";
 import {
+  collectRecentHmExitLedgerPaths,
   findDeprecatedHybridMemCronTokens,
   findDeprecatedTokensInHmExitContent,
 } from "../services/deprecated-cron-commands.js";
@@ -1467,29 +1468,19 @@ export async function runVerifyForCli(
     const logsRoot = join(openclawDir, "logs", "cron-hybrid-mem");
     if (existsSync(logsRoot)) {
       const cutoffMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
-      const days = readdirSync(logsRoot)
-        .filter((d) => /^\d{8}$/.test(d))
-        .map((d) => ({ d, path: join(logsRoot, d) }))
-        .filter(({ path }) => {
-          try {
-            return statSync(path).isDirectory() && statSync(path).mtimeMs >= cutoffMs;
-          } catch {
-            return false;
-          }
-        })
-        .sort((a, b) => b.d.localeCompare(a.d));
+      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
 
       const exitHits: Array<{ file: string; hit: ReturnType<typeof findDeprecatedTokensInHmExitContent>[number] }> = [];
-      for (const day of days) {
-        for (const file of readdirSync(day.path).filter((f) => f.endsWith(".exit.txt"))) {
-          const full = join(day.path, file);
+      for (const full of exitFiles) {
+        try {
           const content = readFileSync(full, "utf-8");
           const hits = findDeprecatedTokensInHmExitContent(content);
           for (const hit of hits) {
             exitHits.push({ file: full, hit });
             if (exitHits.length >= 5) break;
           }
-          if (exitHits.length >= 5) break;
+        } catch {
+          /* skip unreadable or partial files */
         }
         if (exitHits.length >= 5) break;
       }
