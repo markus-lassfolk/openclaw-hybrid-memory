@@ -26,6 +26,7 @@ import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from ".
 import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
 import { buildHybridMemCronTaskMessage } from "../services/cron-job-bash-harness.js";
+import { findDeprecatedHybridMemCronTokens } from "../services/deprecated-cron-commands.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
@@ -749,6 +750,29 @@ export function ensureMaintenanceCronJobs(
         }
       }
       if (normalizeExisting) {
+        // If the stored job message contains a deprecated command token (e.g., old runbook step),
+        // refresh it to the current template so managed runs don't fail early on unknown commands.
+        const existingPayload = existing.payload as { message?: string; kind?: string } | undefined;
+        const currentMsg =
+          existingPayload && typeof existingPayload.message === "string"
+            ? existingPayload.message
+            : typeof existing.message === "string"
+              ? existing.message
+              : "";
+        const deprecated = findDeprecatedHybridMemCronTokens(currentMsg);
+        if (deprecated.length > 0 && !messageOverrides?.[id]) {
+          const desiredJob = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery);
+          const desiredMsg = typeof desiredJob.message === "string" ? desiredJob.message : "";
+          if (desiredMsg) {
+            if (existingPayload && typeof existingPayload.message === "string") {
+              existingPayload.message = desiredMsg;
+            } else {
+              existing.message = desiredMsg;
+            }
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
+        }
         if (typeof existing.schedule === "string") {
           existing.schedule = { kind: "cron", expr: scheduleExpr ?? existing.schedule };
           jobsChanged = true;
