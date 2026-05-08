@@ -48,6 +48,7 @@ import { callResponsesApi } from "../services/responses-adapter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
+import { isHeavyModel } from "../utils/model-tier.js";
 import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
@@ -542,8 +543,8 @@ export async function runVerifyForCli(
     }
   }
 
-  // ───── LLM / models table: one row per model from llm.nano / llm.default / llm.heavy; auth + source ─────
-  tableLog("\n───── LLM / Models (from llm.nano, llm.default, llm.heavy) ─────");
+  // ───── LLM / models table: one row per model from llm.nano / llm.maintenance / llm.default / llm.heavy; auth + source ─────
+  tableLog("\n───── LLM / Models (from llm.nano, llm.maintenance, llm.default, llm.heavy) ─────");
   const cronCfg = getCronModelConfig(cfg);
   const providersWithKeys = getProvidersWithKeys(cronCfg);
   const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
@@ -553,14 +554,19 @@ export async function runVerifyForCli(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );
   const tierNano = getLLMModelPreferenceUnfiltered(cronCfg, "nano");
+  const tierMaintenance = getLLMModelPreferenceUnfiltered(cronCfg, "maintenance");
   const tierDefault = getLLMModelPreferenceUnfiltered(cronCfg, "default");
   const tierHeavy = getLLMModelPreferenceUnfiltered(cronCfg, "heavy");
   const nanoExplicitConfigured =
     Array.isArray(cronCfg.llm?.nano) && cronCfg.llm.nano.some((m) => typeof m === "string" && m.trim().length > 0);
-  const allModelsUnfiltered: string[] = [...tierNano, ...tierDefault, ...tierHeavy];
+  const maintenanceExplicitConfigured =
+    Array.isArray(cronCfg.llm?.maintenance) &&
+    cronCfg.llm.maintenance.some((m) => typeof m === "string" && m.trim().length > 0);
+  const allModelsUnfiltered: string[] = [...tierNano, ...tierMaintenance, ...tierDefault, ...tierHeavy];
   function tiersForModel(model: string): string {
     const tags: string[] = [];
     if (tierNano.includes(model)) tags.push("nano");
+    if (tierMaintenance.includes(model)) tags.push("maintenance");
     if (tierDefault.includes(model)) tags.push("default");
     if (tierHeavy.includes(model)) tags.push("heavy");
     if (tags.length === 0) return "—";
@@ -571,10 +577,13 @@ export async function runVerifyForCli(
   tableLog(
     `    nano:    ${fmtTierList(tierNano)}${nanoExplicitConfigured ? "" : "  — llm.nano unset; nano tier reuses the default list"}`,
   );
+  tableLog(
+    `    maintenance: ${fmtTierList(tierMaintenance)}${maintenanceExplicitConfigured ? "" : "  — llm.maintenance unset; maintenance tier reuses the default list"}`,
+  );
   tableLog(`    default: ${fmtTierList(tierDefault)}`);
   tableLog(`    heavy:   ${fmtTierList(tierHeavy)}`);
   tableLog(
-    `    First choice per tier: nano=${tierNano[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
+    `    First choice per tier: nano=${tierNano[0] ?? "—"} | maintenance=${tierMaintenance[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
   );
   const dreamOverride =
     typeof cfg.nightlyCycle?.model === "string" && cfg.nightlyCycle.model.trim().length > 0
@@ -583,13 +592,32 @@ export async function runVerifyForCli(
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
-      : `    Dream cycle + MEMORY_INDEX.md: uses default tier first choice (${tierDefault[0] ?? "—"}) unless nightlyCycle.model is set.`,
+      : `    Dream cycle + MEMORY_INDEX.md: uses maintenance tier first choice (${tierMaintenance[0] ?? "—"}) unless nightlyCycle.model is set.`,
   );
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
   );
+
+  // Maintenance routing warnings: flag when maintenance-adjacent tasks are routed to heavy/expensive models unintentionally.
+  const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+  const extractionFirst =
+    getLLMModelPreferenceUnfiltered(cronCfg, extractionTier)[0] ??
+    getLLMModelPreferenceUnfiltered(cronCfg, "nano")[0] ??
+    "—";
+  if (extractionTier !== "heavy" && extractionFirst !== "—" && isHeavyModel(extractionFirst)) {
+    warnings.push(
+      `distill.extractionModelTier=${extractionTier} routes session extraction to a heavy/expensive first-choice model (${extractionFirst}); set distill.extractionModelTier=nano or configure llm.maintenance and use distill.extractionModelTier=maintenance`,
+    );
+  }
+  const dreamEffective = dreamOverride ?? (tierMaintenance[0] ?? "—");
+  if (dreamEffective !== "—" && isHeavyModel(dreamEffective)) {
+    warnings.push(
+      `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
+    );
+  }
   const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
+    ...getLLMModelPreference(cronCfg, "maintenance"),
     ...getLLMModelPreference(cronCfg, "default"),
     ...getLLMModelPreference(cronCfg, "heavy"),
   ];
@@ -772,7 +800,7 @@ export async function runVerifyForCli(
     let oauthError: string | undefined = undefined;
     let apiError: string | undefined = undefined;
     let apiSkippedReason: string | undefined = undefined;
-    // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/default/heavy.
+    // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/maintenance/default/heavy.
     if (opts.testLlm && enabled && (hasOAuth || hasApi)) {
       const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
       const wireApi = resolveWireApi(model);
@@ -904,7 +932,7 @@ export async function runVerifyForCli(
     });
   }
   if (llmRows.length === 0) {
-    tableLog("  No LLM models configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
+    tableLog("  No LLM models configured (add llm.nano / llm.maintenance / llm.default / llm.heavy or API keys / OAuth).");
     tableLog("  LLMs: add model tiers or API keys in config. See docs/LLM-AND-PROVIDERS.md.");
     tableLog("");
     tableLog("  Summary: Configure LLM tiers or API keys to use memory and cron jobs.");
@@ -988,7 +1016,7 @@ export async function runVerifyForCli(
       tableLog("");
     }
     tableLog(
-      '  (Tier(s) = which tier lists include this model; "—" = reference row only, not in your llm.nano/default/heavy. Source = key origin. Enabled = provider not in llm.disabledProviders. Skipped = not tested.)',
+      '  (Tier(s) = which tier lists include this model; "—" = reference row only, not in your llm.nano/maintenance/default/heavy. Source = key origin. Enabled = provider not in llm.disabledProviders. Skipped = not tested.)',
     );
     const llmProvidersWithCreds = new Set(llmRows.filter((r) => r.hasApi || r.hasOAuth).map((r) => r.provider)).size;
     const llmOk = llmProvidersWithCreds >= 1;

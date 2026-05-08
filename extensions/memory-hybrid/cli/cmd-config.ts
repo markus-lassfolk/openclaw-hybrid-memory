@@ -200,18 +200,32 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   try {
     const cronCfg = getCronModelConfig(cfg);
     const nano = getLLMModelPreference(cronCfg, "nano");
+    const maintenance = getLLMModelPreference(cronCfg, "maintenance");
     const def = getLLMModelPreference(cronCfg, "default");
     const heavy = getLLMModelPreference(cronCfg, "heavy");
     const fmt = (arr: string[]) =>
       arr.length === 0 ? "—" : arr.length === 1 ? arr[0] : `${arr[0]} (+${arr.length - 1} more)`;
     log(`  nano (HyDE, classify, summarize): ${fmt(nano)}`);
-    log(`  default (maintenance, dream cycle if nightlyCycle.model unset): ${fmt(def)}`);
+    log(`  maintenance (dream cycle, reflection, consolidation): ${fmt(maintenance)}`);
+    log(`  default (general): ${fmt(def)}`);
     log(`  heavy (distill, self-correction, hard tasks): ${fmt(heavy)}`);
     if (cfg.nightlyCycle?.model?.trim()) {
       log(`  nightlyCycle.model (overrides dream / MEMORY_INDEX LLM): ${cfg.nightlyCycle.model.trim()}`);
     }
-    const extTier = cfg.distill?.extractionModelTier ?? "default";
+    const extTier = cfg.distill?.extractionModelTier ?? "nano";
     log(`  distill.extractionModelTier (session extraction): ${extTier}`);
+
+    log("");
+    log("Maintenance command routing (cron wrapper model affects only the wrapper agent turn):");
+    const first = (arr: string[]) => (arr.length > 0 ? arr[0] : "—");
+    const tierFirst = (tier: "nano" | "maintenance" | "default" | "heavy") => first(getLLMModelPreference(cronCfg, tier));
+    log(`  distill extraction (directives/reinforcement): tier=${extTier} -> ${tierFirst(extTier)}`);
+    const dreamDefault = tierFirst("maintenance");
+    log(
+      `  dream-cycle + MEMORY_INDEX: nightlyCycle.model=${cfg.nightlyCycle?.model?.trim() ? cfg.nightlyCycle.model.trim() : "(unset)"} -> ${cfg.nightlyCycle?.model?.trim() ? cfg.nightlyCycle.model.trim() : dreamDefault}`,
+    );
+    const reflectDefault = cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : tierFirst("maintenance");
+    log(`  reflect / reflect-rules / reflect-meta: reflection.model=${cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : "(unset)"} -> ${reflectDefault}`);
   } catch {
     log("  (could not resolve tiers — check plugin config)");
   }
@@ -237,6 +251,9 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("Example (toggle): openclaw hybrid-mem config-set nightlyCycle enabled");
   log("Example (goals): openclaw hybrid-mem config-set goalStewardship enabled");
   log("Example (LLM tier lists as JSON): openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'");
+  log(
+    "Example (maintenance tier): openclaw hybrid-mem config-set llm.maintenance '[\"azure-foundry/gpt-4.1-mini\"]'",
+  );
   log("Help for a key: openclaw hybrid-mem help config-set <key>");
   log("Detail: openclaw hybrid-mem goals config   |   openclaw hybrid-mem active-tasks config");
 }
@@ -466,7 +483,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
   }
   // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
   const enumKeys: Record<string, string[]> = {
-    "distill.extractionModelTier": ["nano", "default", "heavy"],
+    "distill.extractionModelTier": ["nano", "maintenance", "default", "heavy"],
   };
   let valueToSet: unknown = value;
   if (enumKeys[k]) {

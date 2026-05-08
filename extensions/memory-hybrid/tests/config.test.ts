@@ -1149,10 +1149,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.distill?.extractReinforcement).toBe(false);
   });
 
-  it("parses distill.extractionModelTier (nano | default | heavy)", () => {
+  it("parses distill.extractionModelTier (nano | maintenance | default | heavy)", () => {
     expect(
       hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "nano" } }).distill?.extractionModelTier,
     ).toBe("nano");
+    expect(
+      hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "maintenance" } }).distill
+        ?.extractionModelTier,
+    ).toBe("maintenance");
     expect(
       hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "default" } }).distill
         ?.extractionModelTier,
@@ -1182,6 +1186,20 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.llm?.heavy).toEqual(["gemini-2.0-flash-thinking", "gpt-4o"]);
     expect(result.llm?.fallbackToDefault).toBe(true);
     expect(result.llm?.fallbackModel).toBe("gpt-4o-mini");
+  });
+
+  it("parses llm.maintenance and resolves maintenance tier preference", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        maintenance: ["gpt-4o-mini", "gpt-4o"],
+        default: ["gpt-4o"],
+        heavy: ["gpt-4o"],
+      },
+    });
+    expect(cfg.llm?.maintenance).toEqual(["gpt-4o-mini", "gpt-4o"]);
+    const cronCfg = getCronModelConfig(cfg);
+    expect(getLLMModelPreference(cronCfg, "maintenance")).toEqual(["gpt-4o-mini", "gpt-4o"]);
   });
 
   it("allows single-tier llm (only default or only heavy)", () => {
@@ -1333,6 +1351,20 @@ describe("hybridConfigSchema.parse", () => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       expect(defaultModel).toBe("gemini-2.0-flash");
       expect(fallbackModels).toEqual(["gpt-4o-mini"]);
+    });
+
+    it("returns maintenance tier from llm.maintenance (falls back to default when unset)", () => {
+      const withMaintenance = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { maintenance: ["gpt-4o-mini", "gpt-4o"], default: ["gpt-4o"], heavy: ["gpt-4o"] },
+      });
+      expect(resolveReflectionModelAndFallbacks(withMaintenance, "maintenance").defaultModel).toBe("gpt-4o-mini");
+
+      const withoutMaintenance = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { default: ["gpt-4o-mini"], heavy: ["gpt-4o"] },
+      });
+      expect(resolveReflectionModelAndFallbacks(withoutMaintenance, "maintenance").defaultModel).toBe("gpt-4o-mini");
     });
 
     it("returns heavy tier from llm.heavy with fallbacks when multiple models", () => {
@@ -1822,7 +1854,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.search?.hydeEnabled).toBeFalsy();
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
       expect(result.autoRecall.interactiveEnrichment).toBe("fast");
-      expect(result.distill?.extractionModelTier).toBe("default");
+      expect(result.distill?.extractionModelTier).toBe("maintenance");
     });
 
     it("user overrides win over preset (mode local + graph.enabled true); mode becomes Custom for verify", () => {

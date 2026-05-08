@@ -407,7 +407,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       ),
     runBuildLanguageKeywords: (opts) =>
       runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
-        model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "default").defaultModel,
+        model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
         dryRun: opts.dryRun,
       }),
     runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
@@ -420,7 +420,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       ),
     runDreamCycle: async (opts?: { verbose?: boolean }) => {
       const verbose = !!opts?.verbose;
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
       if (verbose) {
         pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");

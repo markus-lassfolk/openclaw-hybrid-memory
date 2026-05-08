@@ -461,7 +461,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           const includeStructured = !!opts?.includeStructured;
           const dryRun = !!opts?.dryRun;
           const limit = Number.parseInt(opts?.limit ?? "10", 10);
-          const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default");
+          const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
           let res;
           try {
             res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
@@ -494,7 +494,8 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         ) => {
           const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
           const dryRun = !!opts?.dryRun;
-          const model = opts?.model ?? reflectionConfig.model;
+          const model =
+            opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           let res;
           try {
@@ -522,7 +523,8 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .action(
       withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
-        const model = opts?.model ?? reflectionConfig.model;
+        const model =
+          opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         let res;
         try {
@@ -568,7 +570,8 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           cmd?: CommanderOptsParent,
         ) => {
           const dryRun = !!opts?.dryRun;
-          const model = opts?.model ?? reflectionConfig.model;
+          const model =
+            opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           if (opts?.collapseImplicitFeedback) {
             const thresholdRaw = opts?.threshold ? Number.parseFloat(opts.threshold) : 0.8;
@@ -633,7 +636,8 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           ) => {
             const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
             const dryRun = !!opts?.dryRun;
-            const model = opts?.model ?? reflectionConfig.model;
+            const model =
+              opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             const res = await runReflectIdentity({ dryRun, model, verbose, window });
             console.log(

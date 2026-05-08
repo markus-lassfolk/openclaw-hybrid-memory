@@ -467,11 +467,12 @@ The plugin makes **direct API calls** to provider endpoints — it does not rout
 
 See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provider-specific details (Anthropic headers, o-series quirks), and the recommended model matrix.
 
-**Three tiers:**
+**Tiers:**
 
 | Tier | Used for | Recommended models |
 |------|----------|--------------------|
 | `nano` | autoClassify, query expansion, classifyBeforeWrite, auto-recall summarize (runs every message) | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| `maintenance` | dream cycle, reflection, consolidation helpers, session-extraction analysis | `gemini-2.5-flash`, `gpt-4.1-mini`, `claude-sonnet-4-6` |
 | `default` | reflection, language keywords, general analysis | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
 | `heavy` | distillation, self-correction, persona proposals | `gemini-3.1-pro-preview`, `claude-opus-4-6`, `o3` |
 
@@ -483,6 +484,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
         "config": {
           "llm": {
             "nano":    ["google/gemini-2.5-flash-lite",    "openai/gpt-4.1-nano",         "anthropic/claude-haiku-4-5"],
+            "maintenance": ["google/gemini-2.5-flash",     "anthropic/claude-sonnet-4-6", "openai/gpt-4.1-mini"],
             "default": ["google/gemini-2.5-flash",          "anthropic/claude-sonnet-4-6", "openai/gpt-4.1"],
             "heavy":   ["google/gemini-3.1-pro-preview",    "anthropic/claude-opus-4-6",   "openai/o3"],
             "providers": {
@@ -499,6 +501,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 | Key | Description |
 |-----|-------------|
 | `nano` | Ordered list for ultra-cheap nano-tier ops. Falls back to `default[0]` when unset. |
+| `maintenance` | Ordered list for maintenance-tier ops. Falls back to `default[0]` when unset. |
 | `default` | Ordered list for default-tier features (reflection, classify, ingest, query expansion, build-languages). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
 | `providers` | Per-provider API keys and optional `baseURL`. Built-in (no `baseURL` needed): `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key), `minimax` (uses `MINIMAX_API_KEY` env var fallback). Any other OpenAI-compatible provider can be added here with an explicit `baseURL`. |

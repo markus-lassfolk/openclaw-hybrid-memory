@@ -78,7 +78,8 @@ import type { SensorSweepConfig } from "./sensors.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
-export type CronModelTier = "default" | "heavy" | "nano";
+/** "maintenance" = dedicated tier for scheduled/manual maintenance commands; falls back to "default" when unset. */
+export type CronModelTier = "default" | "maintenance" | "heavy" | "nano";
 
 /**
  * Per-provider API credentials for direct LLM calls (bypasses the gateway agent endpoint).
@@ -95,6 +96,11 @@ export type LLMProviderConfig = {
 export type LLMConfig = {
   /** Internal: set to "gateway" when auto-derived from agents.defaults.model; undefined when from plugin config. */
   _source?: "gateway";
+  /**
+   * Optional: ordered model list for maintenance/scheduled work — dream cycle, reflection, consolidation helpers.
+   * When not set, falls back to the default tier.
+   */
+  maintenance?: string[];
   /** Ordered preference for default-tier LLM calls (first available wins). */
   default: string[];
   /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
@@ -627,8 +633,8 @@ export type HybridMemoryConfig = {
     reinforcementProcedureBoost?: number;
     /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
     reinforcementPromotionThreshold?: number;
-    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" or "default" saves cost and avoids locking the main model; unset = "heavy". */
-    extractionModelTier?: "nano" | "default" | "heavy";
+    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset = "heavy". */
+    extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";
   };
   /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
   languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };

@@ -125,9 +125,13 @@
       "label": "LLM tier: nano (cheapest)",
       "help": "Ordered model IDs for high-volume, low-stakes calls: HyDE, auto-classify, classify-before-write, summarization. Prefer nano/mini/flash-lite deployments first. If unset, nano reuses llm.default. CLI: openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'"
     },
+    "llm.maintenance": {
+      "label": "LLM tier: maintenance",
+      "help": "Optional. Dedicated tier for scheduled/manual maintenance commands (dream-cycle, reflection, consolidation helpers, session-extraction analysis). If unset, maintenance reuses llm.default. CLI: openclaw hybrid-mem config-set llm.maintenance '[\"azure-foundry/gpt-4.1-mini\",\"azure-foundry/gpt-5.4\"]'"
+    },
     "llm.default": {
       "label": "LLM tier: default",
-      "help": "General maintenance, reflection, and dream-cycle / MEMORY_INDEX when nightlyCycle.model is not set. Put a small-but-capable model first; reserve bigger models as fallbacks. CLI: openclaw hybrid-mem config-set llm.default '[\"azure-foundry/gpt-4.1-mini\",\"azure-foundry/gpt-5.4\"]'"
+      "help": "General-purpose tier used when a command/tool selects the default tier. Put a small-but-capable model first; reserve bigger models as fallbacks. CLI: openclaw hybrid-mem config-set llm.default '[\"azure-foundry/gpt-4.1-mini\",\"azure-foundry/gpt-5.4\"]'"
     },
     "llm.heavy": {
       "label": "LLM tier: heavy",
@@ -140,11 +144,11 @@
     },
     "nightlyCycle.model": {
       "label": "Dream cycle model override",
-      "help": "Optional. When set, nightly dream cycle and MEMORY_INDEX LLM use this model instead of llm.default[0]. Leave unset to follow llm.default. CLI: openclaw hybrid-mem config-set nightlyCycle.model azure-foundry/gpt-4.1-mini"
+      "help": "Optional. When set, nightly dream cycle and MEMORY_INDEX LLM use this model instead of llm.maintenance[0]. Leave unset to follow llm.maintenance (or llm.default if maintenance unset). CLI: openclaw hybrid-mem config-set nightlyCycle.model azure-foundry/gpt-4.1-mini"
     },
     "distill.extractionModelTier": {
       "label": "Distill extraction tier",
-      "help": "Which LLM tier to use for directive/reinforcement extraction from sessions: nano (cheapest), default, or heavy. Presets minimal/enhanced default to nano. CLI: openclaw hybrid-mem config-set distill.extractionModelTier nano"
+      "help": "Which LLM tier to use for directive/reinforcement extraction from sessions: nano (cheapest), maintenance (recommended), default, or heavy. Presets minimal/enhanced default to nano. CLI: openclaw hybrid-mem config-set distill.extractionModelTier maintenance"
     },
     "lanceDbPath": {
       "label": "LanceDB Path",
@@ -1163,8 +1167,8 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"],
-            "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' or 'default' saves cost and avoids locking the main model; unset = heavy. Expert/Full presets use 'default'."
+            "enum": ["nano", "maintenance", "default", "heavy"],
+            "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset = heavy."
           }
         }
       },
@@ -1748,7 +1752,7 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"]
+            "enum": ["nano", "maintenance", "default", "heavy"]
           },
           "preFilter": {
             "type": "object",
@@ -1822,6 +1826,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "maintenance": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "default": {
             "type": "array",
             "items": {
@@ -1860,7 +1870,7 @@
             "description": "Provider ids to exclude from automatic LLM selection (e.g. openai, anthropic, google). Same as parseLLMConfig / hybrid-mem config-set."
           }
         },
-        "description": "LLM model preference lists per tier (default, heavy, nano)"
+        "description": "LLM model preference lists per tier (maintenance, default, heavy, nano)"
       },
       "implicitFeedback": {
         "type": "object",
