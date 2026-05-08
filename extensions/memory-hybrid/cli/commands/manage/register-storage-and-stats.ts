@@ -266,17 +266,19 @@ export function buildAuditHealthReport(
   const implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }> = (() => {
     if (!raw) return [];
     try {
-      // Limit to 5000 rows to prevent hanging on large stores
+      // Fetch 5000 + 1 rows so we only flag truncation when another row exists (exactly 5000 rows is not truncated).
       const rows = raw
         .prepare(
           `SELECT text FROM facts
            WHERE superseded_at IS NULL AND category = 'pattern' AND source = 'implicit-feedback'
-           LIMIT 5000`,
+           LIMIT 5001`,
         )
         .all() as Array<{ text: string | null }>;
-      if (rows.length === 0) return [];
+      const truncated = rows.length > 5000;
+      const forAgg = truncated ? rows.slice(0, 5000) : rows;
+      if (forAgg.length === 0) return [];
       const counts = new Map<string, number>();
-      for (const row of rows) {
+      for (const row of forAgg) {
         const text = (row.text ?? "").trim().toLowerCase();
         if (!text) continue;
         const tokens = text.split(/\s+/).slice(0, 6).join(" ");
@@ -288,9 +290,11 @@ export function buildAuditHealthReport(
         .filter((row) => row.count >= 2)
         .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
         .slice(0, 5);
-      // Warn if we hit the limit — partial data
-      if (rows.length === 5000) {
-        errors.push({ section: "implicitFeedbackPrefixHistogram", message: "Truncated to 5000 rows" });
+      if (truncated) {
+        errors.push({
+          section: "implicitFeedbackPrefixHistogram",
+          message: "Truncated: more than 5000 implicit-feedback pattern rows (histogram used first 5000 only)",
+        });
       }
       return result;
     } catch (err) {
