@@ -99,7 +99,9 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
         maxOutputTokens: catalogMaxOutputTokens,
         source: "catalog" as const,
       };
-  const maxTokens = Math.max(128, Math.min(opts.maxTokens, effective.maxOutputTokens));
+  // Completion budget: honor caller (e.g. self-correction TOOLS rewrite) up to catalog cap only.
+  // Do not apply adaptive shrunk maxOutputTokens — shared state would truncate long outputs after unrelated failures.
+  const maxTokens = Math.max(128, Math.min(opts.maxTokens, catalogMaxOutputTokens));
   const fallbackModels = compatibleFallbacks(opts.content, opts.fallbackModels ?? [], opts.logger, opts.label);
 
   opts.logger.info?.(
