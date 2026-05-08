@@ -601,9 +601,7 @@ export async function runVerifyForCli(
   // Maintenance routing warnings: flag when maintenance-adjacent tasks are routed to heavy/expensive models unintentionally.
   const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
   const extractionFirst =
-    getLLMModelPreferenceUnfiltered(cronCfg, extractionTier)[0] ??
-    getLLMModelPreferenceUnfiltered(cronCfg, "nano")[0] ??
-    "—";
+    getLLMModelPreference(cronCfg, extractionTier)[0] ?? getLLMModelPreference(cronCfg, "nano")[0] ?? "—";
   if (extractionTier !== "heavy" && extractionFirst !== "—" && isHeavyModel(extractionFirst)) {
     warnings.push(
       `distill.extractionModelTier=${extractionTier} routes session extraction to a heavy/expensive first-choice model (${extractionFirst}); set distill.extractionModelTier=nano or configure llm.maintenance and use distill.extractionModelTier=maintenance`,

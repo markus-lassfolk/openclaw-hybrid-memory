@@ -1168,7 +1168,7 @@
           "extractionModelTier": {
             "type": "string",
             "enum": ["nano", "maintenance", "default", "heavy"],
-            "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset = heavy."
+            "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset defaults to nano (same as CLI/runtime ?? \"nano\")."
           }
         }
       },

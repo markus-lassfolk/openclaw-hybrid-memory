@@ -85,7 +85,7 @@ export type ExtractionConfig = {
    * Reduces cloud LLM costs by ~80–95% for bulk re-index operations.
    */
   preFilter?: ExtractionPreFilterConfig;
-  /** Model tier for extraction pipeline LLM calls. "nano" saves cost; "maintenance" isolates from llm.default; unset = "heavy". */
+  /** Model tier for extraction pipeline LLM calls. "nano" saves cost; "maintenance" isolates from llm.default; unset defaults to "nano". */
   extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";
 };
 

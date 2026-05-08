@@ -305,7 +305,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: async (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const result = await runReflection(
         factsDb,
         vectorDb,
@@ -333,7 +333,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       return result;
     },
     runReflectionRules: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       return runReflectionRules(
         factsDb,
         vectorDb,
@@ -345,7 +345,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       );
     },
     runReflectionMeta: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       return runReflectionMeta(
         factsDb,
         vectorDb,
@@ -928,7 +928,7 @@ function createHybridMemCliContext(
     runResolveContradictions: services.runResolveContradictions,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
-      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
+      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),
     },
     runClassify: services.runClassify,
     autoClassifyConfig: {

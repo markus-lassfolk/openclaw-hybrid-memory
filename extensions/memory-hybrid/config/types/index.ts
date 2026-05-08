@@ -633,7 +633,7 @@ export type HybridMemoryConfig = {
     reinforcementProcedureBoost?: number;
     /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
     reinforcementPromotionThreshold?: number;
-    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset = "heavy". */
+    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset defaults to "nano". */
     extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";
   };
   /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
