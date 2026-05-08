@@ -4,6 +4,8 @@
  * Skips rebuild when the module already loads successfully (warm cache).
  * Exits 1 on failure with a clear message — no silent failures.
  */
+// @security-note Direct child_process use is required here during install-time script execution
+// where our TS wrappers are not yet compiled or guaranteed available.
 const { execSync } = require("child_process");
 const path = require("path");
 

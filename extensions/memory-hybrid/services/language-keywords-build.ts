@@ -6,7 +6,8 @@
  * and idioms per language.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;
@@ -26,7 +28,7 @@ const CHARS_PER_SAMPLE = 400;
 
 const KEYWORD_GROUPS = Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[];
 
-export type BuildLanguageKeywordsResult =
+type BuildLanguageKeywordsResult =
   | {
       ok: true;
       path: string;
@@ -60,7 +62,7 @@ export function collectSamplesFromFacts(
 /**
  * Ask LLM to detect the 3 most common languages in the samples. Returns ISO 639-1 codes (e.g. en, sv, de).
  */
-export async function detectTopLanguages(samples: string[], openai: OpenAI, model: string): Promise<string[]> {
+async function detectTopLanguages(samples: string[], openai: OpenAI, model: string): Promise<string[]> {
   if (samples.length === 0) return [];
   const block = samples
     .slice(0, 30)
@@ -80,7 +82,7 @@ ${block}`;
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
-          max_tokens: 100,
+          ...chatCompletionTokenParams(model, 100),
         }),
       { maxRetries: 2 },
     );
@@ -225,7 +227,7 @@ function normalizeExtraction(raw: unknown): LanguageExtractionTemplate | null {
  * Ask LLM to produce intent-based natural equivalents for each language (keywords,
  * structural trigger phrases, extraction building blocks). Uses English as template of intents.
  */
-export async function generateIntentBasedLanguages(
+async function generateIntentBasedLanguages(
   langCodes: string[],
   openai: OpenAI,
   model: string,
@@ -253,7 +255,7 @@ export async function generateIntentBasedLanguages(
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.2,
-          max_tokens: 6000,
+          ...chatCompletionTokenParams(model, 6000),
         }),
       { maxRetries: 2 },
     );
@@ -306,7 +308,7 @@ export async function generateIntentBasedLanguages(
 /**
  * Legacy: translate keywords literally (same order as English). Kept for backward compatibility.
  */
-export async function translateKeywordsToLanguages(
+async function translateKeywordsToLanguages(
   langCodes: string[],
   openai: OpenAI,
   model: string,
@@ -340,7 +342,7 @@ Each value must be an array of translated strings in the same order as the Engli
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.2,
-          max_tokens: 4000,
+          ...chatCompletionTokenParams(model, 4000),
         }),
       { maxRetries: 2 },
     );
@@ -386,6 +388,28 @@ export async function runBuildLanguageKeywords(
     return { ok: true, path: join(sqliteDir, LANG_FILE_NAME), topLanguages: ["en"], languagesAdded: 0 };
   }
 
+  const filePath = join(sqliteDir, LANG_FILE_NAME);
+  const langHash = createHash("sha256")
+    .update(JSON.stringify([...toTranslate].sort()))
+    .digest("hex")
+    .slice(0, 16);
+  try {
+    const existing = JSON.parse(readFileSync(filePath, "utf-8")) as {
+      topLanguages?: string[];
+      _langHash?: string;
+    };
+    if (existing._langHash === langHash) {
+      return {
+        ok: true,
+        path: filePath,
+        topLanguages: existing.topLanguages ?? topLanguages,
+        languagesAdded: 0,
+      };
+    }
+  } catch {
+    // File missing or malformed — proceed with full build
+  }
+
   const { translations, triggerStructures, extraction } = await generateIntentBasedLanguages(
     toTranslate.length > 0 ? toTranslate : ["en"],
     openai,
@@ -421,8 +445,7 @@ export async function runBuildLanguageKeywords(
   }
   reinforcementCategories.genericPoliteness = ["thanks", "thank you", "ok", "okay", "got it"];
 
-  const filePath = join(sqliteDir, LANG_FILE_NAME);
-  const data: LanguageKeywordsFile = {
+  const data: LanguageKeywordsFile & { _langHash?: string } = {
     version: 2,
     detectedAt: new Date().toISOString(),
     topLanguages: topLanguages.length > 0 ? topLanguages : ["en"],
@@ -432,6 +455,7 @@ export async function runBuildLanguageKeywords(
     directiveSignalsByCategory:
       Object.keys(directiveSignalsByCategory).length > 0 ? directiveSignalsByCategory : undefined,
     reinforcementCategories: Object.keys(reinforcementCategories).length > 0 ? reinforcementCategories : undefined,
+    _langHash: langHash,
   };
 
   if (opts.dryRun) {

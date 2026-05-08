@@ -3,29 +3,24 @@
  */
 
 import OpenAI from "openai";
+import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
+import { pluginLogger } from "../../utils/logger.js";
 import { capturePluginError } from "../error-reporter.js";
-import type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
+import { ChainEmbeddingProvider } from "./chain-provider.js";
+import { FallbackEmbeddingProvider } from "./fallback-provider.js";
+import { OllamaEmbeddingProvider } from "./ollama-provider.js";
+import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
+import { Embeddings } from "./openai-provider.js";
 import {
   GOOGLE_EMBEDDING_BASE_URL,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
   GOOGLE_EMBED_DEFAULT_MODEL,
   KNOWN_GOOGLE_EMBED_MODELS,
   OPENAI_ONLY_EMBED_MODELS,
+  isAzureOpenAiCompatibleEndpoint,
+  isAzureOpenAiResourceEndpoint,
 } from "./shared.js";
-import { Embeddings } from "./openai-provider.js";
-import { OllamaEmbeddingProvider } from "./ollama-provider.js";
-import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
-import { FallbackEmbeddingProvider } from "./fallback-provider.js";
-import { ChainEmbeddingProvider } from "./chain-provider.js";
-import { pluginLogger } from "../../utils/logger.js";
-import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
-
-/** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header + api-version). */
-function isAzureEmbeddingEndpoint(baseURL: string): boolean {
-  return /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)/i.test(
-    baseURL,
-  );
-}
+import type { EmbeddingConfig, EmbeddingProvider } from "./types.js";
 
 /** Classic Azure OpenAI REST (e.g. `/openai/deployments/...`) uses this query param. `/openai/v1` compat endpoints reject it (400). */
 export const AZURE_OPENAI_API_VERSION = "2024-10-21";
@@ -56,17 +51,20 @@ function openaiEmbeddingClientOpts(
     const baseURL = endpoint.trim().replace(/\/+$/, "");
     const isAzureDeploymentPath = /\/openai\/deployments\//i.test(baseURL);
     const hasOpenAiV1Path = /\/openai\/v1(?:\/|$)/i.test(baseURL);
-    if (hasOpenAiV1Path || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)) {
+    if (hasOpenAiV1Path || (isAzureOpenAiResourceEndpoint(baseURL) && isAzureDeploymentPath)) {
       opts.baseURL = baseURL;
-    } else if (isAzureEmbeddingEndpoint(baseURL) && !isAzureDeploymentPath) {
-      opts.baseURL = `${baseURL}/openai/v1`;
+    } else if (isAzureOpenAiResourceEndpoint(baseURL) && !isAzureDeploymentPath) {
+      const endsWithOpenAi = /\/openai$/i.test(baseURL);
+      opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
+    } else if (isAzureApiManagementGatewayUrl(baseURL) && isAzureDeploymentPath) {
+      opts.baseURL = baseURL;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
-      // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
-      opts.baseURL = `${baseURL}/openai/v1`;
+      const endsWithOpenAi = /\/openai$/i.test(baseURL);
+      opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
     } else {
       opts.baseURL = baseURL.includes("/v1") ? baseURL : `${baseURL}/v1`;
     }
-    if (isAzureEmbeddingEndpoint(opts.baseURL)) {
+    if (isAzureOpenAiResourceEndpoint(opts.baseURL)) {
       opts.defaultHeaders = { "api-key": apiKey };
       const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(opts.baseURL);
       // Foundry / Azure AI: `/openai/v1/*` returns 400 "API version not supported" when `api-version` is present.
@@ -78,16 +76,50 @@ function openaiEmbeddingClientOpts(
     if (opts.baseURL && isAzureApiManagementGatewayUrl(opts.baseURL)) {
       opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
       opts.fetch = createApimGatewayFetch(apiKey);
+      const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(opts.baseURL);
+      if (!openAiV1Compat) {
+        opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
+      }
     }
   }
   return opts;
 }
 
+/** Local/Ollama/ONNX embedding ids — never use as OpenAI/Azure `model` when falling back from Ollama/ONNX (#932). */
+function isLocalOnlyEmbeddingModelId(model: string | undefined): boolean {
+  if (!model) return false;
+  switch (model) {
+    case "nomic-embed-text":
+    case "mxbai-embed-large":
+    case "bge-m3":
+    case "bge-large":
+    case "bge-small-en-v1.5":
+    case "snowflake-arctic-embed":
+    case "all-minilm":
+    case "all-MiniLM-L6-v2":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** API model id(s) for OpenAI-compatible embeddings: optional Azure deployment name overrides logical `model`. */
-function openAiEmbeddingApiModels(cfg: EmbeddingConfig): string[] {
+function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback = false): string[] {
   const { model, models, deployment } = cfg;
   if (deployment && deployment.trim().length > 0) {
     return [deployment.trim()];
+  }
+  if (forFallback && !models?.length) {
+    if (model && OPENAI_ONLY_EMBED_MODELS.has(model)) {
+      return [model];
+    }
+    // Fallback path used for chain OpenAI arm and Ollama/ONNX→OpenAI fallback. Azure deployment names
+    // are often not in OPENAI_ONLY_EMBED_MODELS; do not substitute text-embedding-3-small (#932).
+    const m = typeof model === "string" ? model.trim() : "";
+    if (m && isAzureOpenAiCompatibleEndpoint(cfg.endpoint) && !isLocalOnlyEmbeddingModelId(m)) {
+      return [m];
+    }
+    return ["text-embedding-3-small"];
   }
   return models?.length ? models : [model];
 }
@@ -95,6 +127,11 @@ function openAiEmbeddingApiModels(cfg: EmbeddingConfig): string[] {
 /** When using Azure `deployment` as the API model id, pass `cfg.model` for dimension limits and `dimensions` param. */
 function azureEmbeddingLogicalModelHint(cfg: EmbeddingConfig): string | undefined {
   return cfg.deployment && cfg.deployment.trim().length > 0 ? cfg.model : undefined;
+}
+
+/** Some Azure/APIM hosts reject the optional `dimensions` field on embeddings.create (#948). */
+function omitEmbeddingDimensionsForAzure(cfg: EmbeddingConfig): boolean {
+  return isAzureOpenAiCompatibleEndpoint(cfg.endpoint);
 }
 
 /**
@@ -115,13 +152,20 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     const googleInChainWithOpenAiModel =
       preferredProviders.includes("google") && model && OPENAI_ONLY_EMBED_MODELS.has(model);
     const chainDimensions = googleInChainWithOpenAiModel ? GOOGLE_EMBED_DEFAULT_DIMENSIONS : dimensions;
+    if (googleInChainWithOpenAiModel && dimensions && dimensions !== GOOGLE_EMBED_DEFAULT_DIMENSIONS) {
+      pluginLogger.warn(
+        `memory-hybrid: embedding chain includes Google with OpenAI model '${model}' — ` +
+          `forcing dimensions to ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} (Google default) instead of ${dimensions}. ` +
+          `Set embedding.preferredProviders: ["openai"] to use ${dimensions}-dim OpenAI-only embeddings, ` +
+          `or set embedding.dimensions: ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} to acknowledge the Google chain dimensions.`,
+      );
+    }
     const ollamaModel =
       model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
         ? model
         : "nomic-embed-text";
     const googleModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : GOOGLE_EMBED_DEFAULT_MODEL;
-    const openaiChainModels =
-      model && OPENAI_ONLY_EMBED_MODELS.has(model) ? openaiApiModels : ["text-embedding-3-small"];
+    const openaiChainModels = openAiEmbeddingApiModels(cfg, true);
     for (const name of preferredProviders) {
       if (name === "ollama") {
         try {
@@ -139,7 +183,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         try {
           const client = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
           chain.push(
-            new Embeddings(client, openaiChainModels, chainDimensions, batchSize, azureEmbeddingLogicalModelHint(cfg)),
+            new Embeddings(
+              client,
+              openaiChainModels,
+              chainDimensions,
+              batchSize,
+              azureEmbeddingLogicalModelHint(cfg),
+              omitEmbeddingDimensionsForAzure(cfg),
+            ),
           );
           labels.push("openai");
         } catch (err) {
@@ -180,10 +231,11 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       try {
         const fallback = new Embeddings(
           openaiClient,
-          openaiApiModels,
+          openAiEmbeddingApiModels(cfg, true),
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
+          omitEmbeddingDimensionsForAzure(cfg),
         );
         return new FallbackEmbeddingProvider(primary, fallback, onFallback, "ollama", "openai", retryIntervalMs);
       } catch (err) {
@@ -201,7 +253,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
   if (provider === "openai") {
     if (!apiKey) throw new Error("OpenAI embedding provider requires embedding.apiKey");
     const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
-    return new Embeddings(openaiClient, openaiApiModels, dimensions, batchSize, azureEmbeddingLogicalModelHint(cfg));
+    return new Embeddings(
+      openaiClient,
+      openaiApiModels,
+      dimensions,
+      batchSize,
+      azureEmbeddingLogicalModelHint(cfg),
+      omitEmbeddingDimensionsForAzure(cfg),
+    );
   }
 
   if (provider === "google") {
@@ -224,10 +283,11 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       try {
         const fallback = new Embeddings(
           openaiClient,
-          openaiApiModels,
+          openAiEmbeddingApiModels(cfg, true),
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
+          omitEmbeddingDimensionsForAzure(cfg),
         );
         const onSwitch = (err: unknown) => {
           if (isOnnxRuntimeMissingError(err)) {

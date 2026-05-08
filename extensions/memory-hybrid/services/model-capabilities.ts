@@ -4,7 +4,14 @@
  * Used by chat.ts for distillBatchTokenLimit and distillMaxOutputTokens; can be used for context-audit or config hints.
  */
 
-export interface ModelCapabilities {
+/**
+ * Wire format for LLM requests: "chat" = standard chat.completions.create,
+ * "responses" = OpenAI Responses API (responses.create).
+ * Some Azure Foundry deployments expose reasoning-heavy models only on the Responses surface.
+ */
+export type WireApi = "chat" | "responses";
+
+interface ModelCapabilities {
   /** Context window (input + output) in tokens. */
   contextWindow: number;
   /** Max output tokens for a single completion (distill, reflection, etc.). */
@@ -20,10 +27,15 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = {
 };
 
 /** Strip provider prefix (e.g. "google/gemini-2.0-flash" → "gemini-2.0-flash") and lowercase for matching. */
-export function normalizeModelId(model: string): string {
+function normalizeModelId(model: string): string {
   const s = model.trim().toLowerCase();
   const slash = s.indexOf("/");
   return slash >= 0 ? s.slice(slash + 1) : s;
+}
+
+/** Lowercase path segments; any segment may carry the OpenAI model id (e.g. `azure-foundry/gpt-5.4-nano`). */
+function modelPathSegments(model: string): string[] {
+  return model.trim().toLowerCase().split("/").filter(Boolean);
 }
 
 type Matcher = (normalized: string) => boolean;
@@ -201,7 +213,7 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
 /**
  * Return capabilities for the given model id (with or without provider prefix), or null if unknown.
  */
-export function getModelCapabilities(model: string): ModelCapabilities | null {
+function getModelCapabilities(model: string): ModelCapabilities | null {
   const normalized = normalizeModelId(model);
   for (const { match, cap } of CAPABILITIES) {
     if (match(normalized)) return cap;
@@ -230,24 +242,58 @@ export function getDistillMaxOutputTokens(model: string): number {
 /**
  * Context window in tokens (for hints or context-audit). Returns 128_000 for unknown models.
  */
-export function getContextWindow(model: string): number {
+function getContextWindow(model: string): number {
   const cap = getModelCapabilities(model);
   return cap?.contextWindow ?? DEFAULT_CAPABILITIES.contextWindow;
 }
 
 /**
  * True for models that require `max_completion_tokens` instead of `max_tokens` in the API request
- * (e.g. GPT-5+, o-series). Used by chatComplete so direct client calls (verify, etc.) work with Azure Foundry and others.
+ * (e.g. GPT-5+, GPT-4.1*, o-series). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
  */
 export function requiresMaxCompletionTokens(model: string): boolean {
-  const bare = normalizeModelId(model);
-  return /^gpt-5/i.test(bare) || isReasoningModel(model);
+  if (isReasoningModel(model)) return true;
+  for (const seg of modelPathSegments(model)) {
+    if (/^gpt-5/i.test(seg) || /^gpt-4\.1/i.test(seg)) return true;
+  }
+  return false;
 }
 
 /**
  * True for o1, o3, o4-mini, etc. — reasoning models that reject temperature/top_p and use max_completion_tokens.
  */
 export function isReasoningModel(model: string): boolean {
-  const bare = normalizeModelId(model);
-  return /^o[0-9]+(?:-[a-z]+)?$/.test(bare);
+  return modelPathSegments(model).some((seg) => /^o[0-9]+(?:-[a-z]+)?$/.test(seg));
+}
+
+/**
+ * Models where chat.completions must not send custom `temperature` / `top_p` (omit entirely; default applies).
+ * - o-series: OpenAI reasoning models only accept default sampling.
+ * - gpt-5* on Azure Foundry/APIM: many SKUs return HTTP 400 if temperature ≠ 1; hybrid-mem verify probes use
+ *   temperature 1 for this reason (see cli/cmd-verify.ts). Reflection/distill used 0.2 and hit the same 400.
+ */
+export function shouldOmitSamplingParams(model: string): boolean {
+  if (isReasoningModel(model)) return true;
+  return modelPathSegments(model).some((seg) => /^gpt-5/i.test(seg));
+}
+
+/** OpenAI-compatible chat.completions token limit field for the given model id. */
+export function chatCompletionTokenParams(
+  model: string,
+  maxTokens: number,
+): { max_completion_tokens: number } | { max_tokens: number } {
+  return requiresMaxCompletionTokens(model) ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+}
+
+/**
+ * Determine the wire API surface for a given model.
+ * Returns "responses" when the model's provider prefix is `azure-foundry-responses`,
+ * or when an explicit `wireApi` override is provided via config.
+ * All other models default to "chat" (chat.completions.create).
+ */
+export function resolveWireApi(model: string, wireApiOverride?: WireApi): WireApi {
+  if (wireApiOverride) return wireApiOverride;
+  const segments = model.trim().toLowerCase().split("/").filter(Boolean);
+  if (segments[0] === "azure-foundry-responses") return "responses";
+  return "chat";
 }

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { normalizedHash } from "../../utils/tags.js";
-
+import { migrateEntityLayerTables } from "../facts-db/entity-layer.js";
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.
@@ -309,8 +309,6 @@ function migrateProceduresTable(db: DatabaseSync): void {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
       task_pattern,
-      content=procedures,
-      content_rowid=rowid,
       tokenize='porter unicode61'
     )
   `);
@@ -319,10 +317,10 @@ function migrateProceduresTable(db: DatabaseSync): void {
       INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
     END;
     CREATE TRIGGER IF NOT EXISTS procedures_fts_ad AFTER DELETE ON procedures BEGIN
-      INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      DELETE FROM procedures_fts WHERE rowid = old.rowid;
     END;
     CREATE TRIGGER IF NOT EXISTS procedures_fts_au AFTER UPDATE ON procedures BEGIN
-      INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      DELETE FROM procedures_fts WHERE rowid = old.rowid;
       INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
     END
   `);
@@ -404,8 +402,6 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
         why,
         key,
         value,
-        content='facts',
-        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);
@@ -418,13 +414,11 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
         INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.why, new.key, new.value);
       END
@@ -877,10 +871,19 @@ function migrateAccessCountAndLastAccessedAt(db: DatabaseSync): void {
     db.exec(
       `UPDATE facts SET last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
     );
+    // Partial index: optimizes lookups for rows with a non-null last_accessed_at. Queries that filter on
+    // last_accessed_at IS NULL cannot use this index — use last_accessed (epoch) or a full scan (#885).
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_facts_last_accessed_at ON facts(last_accessed_at) WHERE last_accessed_at IS NOT NULL",
     );
   }
+}
+
+/** Speed up cold-cache reads of superseded fact texts (#888). */
+function migrateSupersededAtLookupIndex(db: DatabaseSync): void {
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_facts_superseded_at_present ON facts(superseded_at) WHERE superseded_at IS NOT NULL",
+  );
 }
 
 // Token-budget tiered trimming (Issue #792)
@@ -940,10 +943,10 @@ function migrateEpisodesTable(db: DatabaseSync): void {
       verified_at INTEGER
     )
   `);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
+  // idx_episodes_outcome omitted: idx_episodes_outcome_timestamp (outcome, timestamp DESC) is a leading-column superset and covers the same single-column outcome filter lookups.
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
 
   // Check if episodes_fts exists with old 4-column schema (event, context, outcome, tags)
@@ -951,27 +954,33 @@ function migrateEpisodesTable(db: DatabaseSync): void {
   const ftsInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes_fts'").get() as
     | { sql?: string }
     | undefined;
+  const ftsExists = !!ftsInfo;
   const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
 
-  if (hasOldFtsSchema) {
-    // Drop old triggers and FTS table
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
-    db.exec("DROP TABLE IF EXISTS episodes_fts");
-  }
+  // Rebuild FTS index if we dropped the old table or if it was newly created
+  if (!ftsExists || hasOldFtsSchema) {
+    // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
+    const migrate = createTransaction(db, () => {
+      if (hasOldFtsSchema) {
+        // Drop old triggers and FTS table
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
+        db.exec("DROP TABLE IF EXISTS episodes_fts");
+      }
 
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
-      event,
-      context,
-      tokenize='porter unicode61'
-    )
-  `);
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+          event,
+          context,
+          tokenize='porter unicode61'
+        )
+      `);
 
-  // Rebuild FTS index if we dropped the old table
-  if (hasOldFtsSchema) {
-    db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+      // Backfill existing episodes into the new FTS index.
+      db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+    });
+    migrate();
   }
 
   db.exec(`
@@ -1013,6 +1022,134 @@ function migrateEpisodesTable(db: DatabaseSync): void {
  * Call this once after opening the database and creating the base schema
  * (facts table, FTS5 table, triggers, and basic indexes).
  */
+/** Per-source daily write counters for source profile quotas (Issue #1194). */
+function migrateDailyWritesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_writes (
+      source TEXT NOT NULL,
+      day TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      dropped INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (source, day)
+    )
+  `);
+  // #1194: distinguish quota-rejected writes (`dropped`) from quota-evicted writes
+  // (`evicted`) so dashboards / audit-health can show the difference between "we
+  // refused to write because of overflow" and "we wrote, but evicted a stale fact".
+  const cols = db.prepare("PRAGMA table_info(daily_writes)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "evicted")) {
+    db.exec("ALTER TABLE daily_writes ADD COLUMN evicted INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+/** Add provenance_json column (Issue #1195). */
+function migrateProvenanceJsonColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "provenance_json")) {
+    db.exec("ALTER TABLE facts ADD COLUMN provenance_json TEXT");
+  }
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_facts_provenance_json ON facts(provenance_json) WHERE provenance_json IS NOT NULL",
+  );
+}
+
+function parseMigrationProvenance(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeStringList(existing: unknown, additions: string[]): string[] {
+  const current = Array.isArray(existing) ? existing.filter((v): v is string => typeof v === "string") : [];
+  return [...new Set([...current, ...additions])];
+}
+
+/**
+ * Move legacy DERIVED_FROM provenance out of graph links into facts.provenance_json.
+ * memory_links is now reserved for semantic graph edges only (#1195).
+ */
+function migrateDerivedFromLinksToProvenanceJson(db: DatabaseSync): void {
+  const linkTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_links'").get();
+  if (!linkTable) return;
+
+  const rows = db
+    .prepare(
+      `SELECT
+         ml.source_fact_id AS fact_id,
+         ml.target_fact_id AS source_fact_id,
+         sf.text AS source_text,
+         sf.source AS source_source,
+         sf.category AS source_category
+       FROM memory_links ml
+       LEFT JOIN facts sf ON sf.id = ml.target_fact_id
+       WHERE ml.link_type = 'DERIVED_FROM'
+       ORDER BY ml.created_at ASC, ml.id ASC`,
+    )
+    .all() as Array<{
+    fact_id: string;
+    source_fact_id: string;
+    source_text: string | null;
+    source_source: string | null;
+    source_category: string | null;
+  }>;
+
+  if (rows.length === 0) return;
+
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const arr = grouped.get(row.fact_id) ?? [];
+    arr.push(row);
+    grouped.set(row.fact_id, arr);
+  }
+
+  const selectFact = db.prepare("SELECT provenance_json FROM facts WHERE id = ?");
+  const updateFact = db.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?");
+  const now = Math.floor(Date.now() / 1000);
+
+  const tx = createTransaction(db, () => {
+    for (const [factId, group] of grouped) {
+      const fact = selectFact.get(factId) as { provenance_json: string | null } | undefined;
+      if (!fact) continue;
+      const provenance = parseMigrationProvenance(fact.provenance_json);
+      const sourceFactIds = mergeStringList(
+        provenance.sourceFactIds,
+        group.map((r) => r.source_fact_id).filter((id) => typeof id === "string" && id.length > 0),
+      );
+      const existingSourceFacts = Array.isArray(provenance.sourceFacts)
+        ? provenance.sourceFacts.filter((v): v is Record<string, unknown> => v !== null && typeof v === "object")
+        : [];
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const source of existingSourceFacts) {
+        if (typeof source.id === "string") byId.set(source.id, source);
+      }
+      for (const source of group) {
+        byId.set(source.source_fact_id, {
+          ...byId.get(source.source_fact_id),
+          id: source.source_fact_id,
+          text: source.source_text ?? undefined,
+          source: source.source_source ?? undefined,
+          category: source.source_category ?? undefined,
+        });
+      }
+      const next = {
+        ...provenance,
+        method: typeof provenance.method === "string" ? provenance.method : "derived-from-migration",
+        migratedFromMemoryLinksAt:
+          typeof provenance.migratedFromMemoryLinksAt === "number" ? provenance.migratedFromMemoryLinksAt : now,
+        sourceFactIds,
+        sourceFacts: [...byId.values()],
+      };
+      updateFact.run(JSON.stringify(next), factId);
+    }
+    db.prepare("DELETE FROM memory_links WHERE link_type = 'DERIVED_FROM'").run();
+  });
+  tx();
+}
+
 export function runFactsMigrations(db: DatabaseSync): void {
   // Column migrations (depend on base facts table existing)
   migrateDecayColumns(db);
@@ -1063,6 +1200,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Provenance and verification
   migrateProvenanceColumns(db);
+  migrateProvenanceJsonColumn(db);
+  migrateDerivedFromLinksToProvenanceJson(db);
+  migrateDailyWritesTable(db);
   migrateVerifiedFactsTable(db);
 
   // Reinforcement log and count type migration
@@ -1077,6 +1217,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Scan cursors and access salience
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
+  migrateSupersededAtLookupIndex(db);
 
   // Token-budget tiered trimming (Issue #792)
   migratePreserveColumns(db);
@@ -1089,4 +1230,112 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Episodic memory (#781)
   migrateEpisodesTable(db);
+  // Legacy `episodes` CHECK (`failed` only) vs app enums (`failure` / `unknown`):
+  // `CREATE TABLE IF NOT EXISTS` does not upgrade CHECK. Insert-time normalization
+  // and read mapping live in `utils/sqlite-outcome-compat.ts` (used by `recordEpisode`).
+
+  // Token budget trim: index-backed ordering (Issue #838)
+  migrateTrimBudgetIndex(db);
+
+  // Contacts, organizations, NER mentions (#985–#987)
+  migrateEntityLayerTables(db);
+  migrateFactsEntityEnrichmentAt(db);
+
+  // Auto-classify skip-already-attempted
+  migrateClassifyAttemptColumn(db);
+
+  // Maintenance state KV for input-hash gating
+  migrateMaintenanceStateTable(db);
+
+  // Audit-health storage growth samples (Issue #1193)
+  migrateStorageGrowthHistoryTable(db);
+
+  // Denormalized degree columns for hub guard (#1192)
+  migrateFactDegreeColumns(db);
+}
+
+/**
+ * #1192: denormalized `out_degree` / `in_degree` columns on `facts` so the hub guard does
+ * not run a per-traversal `COUNT(*) FROM memory_links` (which is O(n) per BFS step on stores
+ * with millions of edges). The columns are refreshed by the dream-cycle's existing pass —
+ * see `services/dream-cycle.ts`.
+ */
+function migrateFactDegreeColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const have = new Set(cols.map((c) => c.name));
+  if (!have.has("out_degree")) {
+    db.exec("ALTER TABLE facts ADD COLUMN out_degree INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!have.has("in_degree")) {
+    db.exec("ALTER TABLE facts ADD COLUMN in_degree INTEGER NOT NULL DEFAULT 0");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_out_degree ON facts(out_degree)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_in_degree ON facts(in_degree)");
+}
+
+/** Weekly audit-health: snapshot SQLite/Lance sizes and link/fact counts for growth trends. */
+function migrateStorageGrowthHistoryTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS storage_growth_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recorded_at INTEGER NOT NULL,
+      sqlite_bytes INTEGER,
+      lance_bytes INTEGER,
+      link_count INTEGER,
+      fact_count INTEGER NOT NULL
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_storage_growth_recorded ON storage_growth_history(recorded_at DESC)`);
+}
+
+/** Track completion of NER/contact-org enrichment per fact (avoids re-LLM when zero entities). */
+function migrateFactsEntityEnrichmentAt(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "entity_enrichment_at")) {
+    db.exec("ALTER TABLE facts ADD COLUMN entity_enrichment_at INTEGER");
+  }
+  db.exec(`
+    UPDATE facts
+    SET entity_enrichment_at = COALESCE(
+      (SELECT MIN(created_at) FROM fact_entity_mentions WHERE fact_id = facts.id),
+      created_at
+    )
+    WHERE entity_enrichment_at IS NULL
+      AND EXISTS (SELECT 1 FROM fact_entity_mentions m WHERE m.fact_id = facts.id)
+  `);
+}
+
+/**
+ * Generic key-value table for maintenance task state (e.g. input hashes).
+ * Allows tasks like reflection to skip LLM calls when their inputs haven't changed.
+ */
+function migrateMaintenanceStateTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS maintenance_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+}
+
+/**
+ * Track when auto-classify last attempted each fact.
+ * Facts that remain "other" after a classify attempt are skipped on the next run
+ * unless their text changed (new created_at > last_classify_attempt_at).
+ */
+function migrateClassifyAttemptColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "last_classify_attempt_at")) {
+    db.exec("ALTER TABLE facts ADD COLUMN last_classify_attempt_at INTEGER");
+  }
+}
+
+/** Supports SQL ORDER BY for trimToBudget without full in-memory sort of all facts (Issue #838). */
+function migrateTrimBudgetIndex(db: DatabaseSync): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_facts_trim_budget_order
+    ON facts(superseded_at, importance, created_at, last_accessed)
+    WHERE superseded_at IS NULL
+  `);
 }

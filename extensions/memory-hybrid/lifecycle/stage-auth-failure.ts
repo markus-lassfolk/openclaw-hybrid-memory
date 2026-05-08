@@ -4,18 +4,19 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { ScopeFilter } from "../types/memory.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import {
-  detectAuthFailure,
-  buildCredentialQuery,
-  formatCredentialHint,
-  DEFAULT_AUTH_FAILURE_PATTERNS,
   type AuthFailurePattern,
+  DEFAULT_AUTH_FAILURE_PATTERNS,
+  buildCredentialQuery,
+  detectAuthFailure,
+  formatCredentialHint,
 } from "../services/auth-failure-detect.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import type { ScopeFilter } from "../types/memory.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 export function registerAuthFailureRecall(
@@ -45,10 +46,12 @@ export function registerAuthFailureRecall(
   const { resolveSessionKey, authFailureRecallsThisSession } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
-  api.on("before_agent_start", async (event: unknown) => {
+  // Two-arg hook: merge PluginHookAgentContext into api before resolveSessionKey (#1005).
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+    const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as { prompt?: string; messages?: unknown[] };
     if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
-    const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+    const sessionKey = resolveSessionKey(event, rApi) ?? currentAgentIdRef.value ?? "default";
 
     try {
       let textToScan = e.prompt || "";
@@ -96,6 +99,7 @@ export function registerAuthFailureRecall(
         scopeFilter,
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+        interactiveFtsFastPath: true,
       });
       const vector = await ctx.embeddings.embed(query);
       let lanceResults = await ctx.vectorDb.search(vector, 5, 0.3);

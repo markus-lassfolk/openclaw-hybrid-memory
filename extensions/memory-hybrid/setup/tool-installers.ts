@@ -1,26 +1,33 @@
+import { homedir } from "node:os";
+import { join as pathJoin } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
 import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { registerApitapTools } from "../tools/apitap-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
 import { type DashboardRoutesContext, registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
+import { type GoalToolsContext, registerGoalTools } from "../tools/goal-tools.js";
 import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
 import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
+import { type PublicApiRoutesContext, registerPublicApiRoutes } from "../tools/public-api-routes.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
+import { registerTaskHygieneTools, resolveActiveTaskPathForTools } from "../tools/task-hygiene-tools.js";
 import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
+import { getEnv } from "../utils/env-manager.js";
 
 export type ToolsContext = MemoryPluginAPI;
 
-export type ToolInstaller = BootstrapPhaseConfig & {
+type ToolInstaller = BootstrapPhaseConfig & {
   id: string;
   selectContext(context: ToolsContext, api: ClawdbotPluginApi): unknown;
   install(context: unknown, api: ClawdbotPluginApi): void;
@@ -82,6 +89,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     findSimilarByEmbedding,
     walWrite,
     walRemove,
+    auditStore,
   } = ctx;
 
   return {
@@ -103,9 +111,10 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
-    walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+    walWrite: (operation, data, logger, supersedeTargetId) => walWrite(wal, operation, data, logger, supersedeTargetId),
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
+    auditStore,
   };
 }
 
@@ -317,12 +326,53 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
   registerDashboardHttpRoutes({ cfg }, api);
 }
 
+function selectPublicApiRoutesContext({ cfg, factsDb, narrativesDb }: ToolsContext): PublicApiRoutesContext {
+  return { cfg, factsDb, narrativesDb };
+}
+
+function installPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
+  registerPublicApiRoutes(ctx, api);
+}
+
+function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+  const resolvedActiveTaskPath = resolveActiveTaskPathForTools(ctx.cfg, workspaceRoot);
+  return {
+    cfg: ctx.cfg,
+    goalsDir,
+    workspaceRoot,
+    resolvedActiveTaskPath,
+    factsDb: ctx.factsDb,
+    eventLog: ctx.eventLog,
+    memoryDir: pathJoin(workspaceRoot, "memory"),
+  };
+}
+
+function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
+  registerGoalTools(ctx, api);
+  registerTaskHygieneTools(
+    {
+      cfg: ctx.cfg,
+      resolvedActiveTaskPath: ctx.resolvedActiveTaskPath,
+      workspaceRoot: ctx.workspaceRoot,
+    },
+    api,
+  );
+}
+
 export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
   defineToolInstaller({
     id: "memoryCore",
     bootstrapPhase: "core",
     selectContext: (ctx) => selectMemoryCoreToolsContext(ctx),
     install: installMemoryCoreTools,
+  }),
+  defineToolInstaller({
+    id: "goalStewardship",
+    bootstrapPhase: "core",
+    selectContext: (ctx) => selectGoalToolsContext(ctx),
+    install: installGoalTools,
   }),
   defineToolInstaller({
     id: "retrievalGraph",
@@ -401,5 +451,11 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectDashboardRoutesContext(ctx),
     install: installDashboardRoutes,
+  }),
+  defineToolInstaller({
+    id: "publicApi",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectPublicApiRoutesContext(ctx),
+    install: installPublicApiRoutes,
   }),
 ]);

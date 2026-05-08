@@ -35,6 +35,46 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("FactsDB.getKnownEntities", () => {
+  it("filters common-noun entities from known entities", () => {
+    db.store({
+      text: "u",
+      entity: "User",
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.5,
+      source: "conversation",
+    });
+    db.store({
+      text: "c",
+      entity: "Credentials",
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.5,
+      source: "conversation",
+    });
+    db.store({
+      text: "x",
+      entity: "convention",
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.5,
+      source: "conversation",
+    });
+    db.store({
+      text: "d",
+      entity: "Doris",
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.5,
+      source: "conversation",
+    });
+    expect(db.getKnownEntities()).toEqual(["Doris"]);
+  });
+
   it("returns empty array when no facts exist", () => {
     expect(db.getKnownEntities()).toEqual([]);
   });

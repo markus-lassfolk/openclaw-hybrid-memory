@@ -50,7 +50,7 @@ export type BackupVerifyResult =
 // Context
 // ---------------------------------------------------------------------------
 
-export interface BackupContext {
+interface BackupContext {
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   /** Override default backup destination (~/.openclaw/backups/memory/). */

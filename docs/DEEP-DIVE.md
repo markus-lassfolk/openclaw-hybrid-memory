@@ -156,7 +156,7 @@ Each turn, before the agent sees your message:
 
 1. **Search both backends** with your prompt as the query
 2. **Merge results** (as described above)
-3. **Optional entity lookup** — if your prompt mentions a known entity (e.g. "user"), lookup facts for that entity are merged in
+3. **Optional entity lookup** — if your prompt mentions a known entity (e.g. "user"), lookup facts for that entity are merged in. Names come from `entityLookup.entities` when that list is non-empty; otherwise, with `entityLookup.autoFromFacts` true (default), from distinct `entity` values on active facts (capped by `maxAutoEntities`). See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) and [CONFIGURATION.md](CONFIGURATION.md#auto-recall-options).
 4. **Optional graph traversal** — if enabled, follow typed links from seed facts to discover related facts (zero LLM cost)
 5. **Score adjustments:**
    - `preferLongTerm` — multiply score by 1.2 for permanent facts, 1.1 for stable

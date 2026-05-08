@@ -1,14 +1,15 @@
 /**
  * Load prompt templates from prompts/ directory.
- * Uses import.meta.url to resolve path relative to this package.
+ * Resolves prompts/ relative to the plugin root (the directory containing
+ * `openclaw.plugin.json`), so paths are correct whether the runtime entry is
+ * the TS source or the compiled `dist/index.js` (issue #1174).
  */
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { findPluginRoot } from "./plugin-root.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROMPTS_DIR = join(__dirname, "..", "prompts");
+const PROMPTS_DIR = join(findPluginRoot(import.meta.url), "prompts");
 
 const cache = new Map<string, string>();
 

@@ -9,10 +9,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
-import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../config.js";
+import { getMemoryCategories, isValidCategory } from "../config.js";
+import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -76,7 +78,9 @@ async function writeLastDiscoveryTimestamp(lastRunPath: string, timestampMs: num
 /**
  * Ask the LLM to group "other" facts by topic (free-form labels). Labels with at least
  * minFactsForNewCategory facts become new categories; we do not tell the LLM the threshold.
- * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
+ * Returns proposed category labels and persists them to discoveredCategoriesPath.
+ * Discovery is intentionally non-mutating: it never writes unconfigured free-form
+ * labels into facts.category, which keeps dashboard/API category validation stable.
  */
 async function discoverCategoriesFromOther(
   factsDb: FactsDB,
@@ -133,14 +137,13 @@ async function discoverCategoriesFromOther(
             model: config.model,
             messages: [{ role: "user", content: prompt }],
             temperature: 0,
-            max_tokens: batch.length * 24,
+            ...chatCompletionTokenParams(config.model, batch.length * 24),
           }),
         { maxRetries: 2 },
       );
-      const content = resp.choices[0]?.message?.content?.trim() || "[]";
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) continue;
-      const labels: unknown[] = JSON.parse(jsonMatch[0]);
+      const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
+      const labels = tryParseFirstJsonArray(content);
+      if (!labels) continue;
       anyBatchSucceeded = true;
       for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
         const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
@@ -169,12 +172,11 @@ async function discoverCategoriesFromOther(
     if (i + DISCOVERY_BATCH_SIZE < others.length) await new Promise((r) => setTimeout(r, 400));
   }
 
-  const newCategoryNames: string[] = [];
+  const proposedCategoryNames: string[] = [];
   for (const [label, ids] of labelToIds) {
     if (existingCategories.has(label)) continue;
     if (ids.length < minForNew) continue;
-    newCategoryNames.push(label);
-    for (const id of ids) factsDb.updateCategory(id, label);
+    proposedCategoryNames.push(label);
   }
 
   // Write last-run timestamp only if at least one batch succeeded (even if no new categories were created).
@@ -185,11 +187,10 @@ async function discoverCategoriesFromOther(
     await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
   }
 
-  if (newCategoryNames.length === 0) return [];
+  if (proposedCategoryNames.length === 0) return [];
 
-  setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
   logger.info(
-    `memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`,
+    `memory-hybrid: proposed ${proposedCategoryNames.length} new categories: ${proposedCategoryNames.join(", ")} (${proposedCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} matching facts left as other)`,
   );
 
   await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
@@ -204,22 +205,29 @@ async function discoverCategoriesFromOther(
     });
     // file doesn't exist yet
   }
-  const merged = [...new Set([...existingList, ...newCategoryNames])];
+  const merged = [...new Set([...existingList, ...proposedCategoryNames])];
   await writeFile(discoveredCategoriesPath, JSON.stringify(merged, null, 2), "utf-8");
 
-  return newCategoryNames;
+  return proposedCategoryNames;
 }
 
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
- * Returns a map of factId → newCategory.
+ *
+ * Returns:
+ *   - `results`: factId → valid category (matched the configured allowlist).
+ *   - `suggestions`: factId → normalized free-form label the LLM proposed but that is not
+ *     in the configured set (#1188). Callers tag these facts with
+ *     `category-suggested:<label>` instead of silently dropping the LLM's output, so
+ *     `categories propose` can surface them.
+ *   - `success`: whether the LLM call itself succeeded.
  */
 async function classifyBatch(
   openai: OpenAI,
   model: string,
   facts: { id: string; text: string }[],
   categories: readonly string[],
-): Promise<Map<string, string>> {
+): Promise<{ results: Map<string, string>; suggestions: Map<string, string>; success: boolean }> {
   const catList = categories.filter((c) => c !== "other").join(", ");
   const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
 
@@ -241,26 +249,30 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
-          max_tokens: facts.length * 20,
+          ...chatCompletionTokenParams(model, facts.length * 20),
         }),
       { maxRetries: 2 },
     );
 
-    const content = resp.choices[0]?.message?.content?.trim() || "[]";
-    // Extract JSON array from response (handle markdown code blocks)
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return new Map();
+    const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
+    const parsed = tryParseFirstJsonArray(content);
+    if (!parsed) return { results: new Map(), suggestions: new Map(), success: false };
 
-    const results: string[] = JSON.parse(jsonMatch[0]);
+    const results: string[] = parsed as string[];
     const map = new Map<string, string>();
+    const suggestions = new Map<string, string>();
 
     for (let i = 0; i < Math.min(results.length, facts.length); i++) {
       const cat = results[i]?.toLowerCase()?.trim();
-      if (cat && cat !== "other" && isValidCategory(cat)) {
+      if (!cat || cat === "other") continue;
+      if (isValidCategory(cat)) {
         map.set(facts[i].id, cat);
+      } else {
+        const normalized = normalizeSuggestedLabel(cat);
+        if (normalized) suggestions.set(facts[i].id, normalized);
       }
     }
-    return map;
+    return { results: map, suggestions, success: true };
   } catch (err) {
     const classifyErr = err instanceof Error ? err : new Error(String(err));
     // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
@@ -278,7 +290,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
         subsystem: "classifier",
       });
     }
-    return new Map();
+    return { results: new Map(), suggestions: new Map(), success: false };
   }
 }
 
@@ -355,20 +367,28 @@ async function runClassifyForCli(
   }
 
   const numBatches = Math.ceil(others.length / config.batchSize);
-  const reporter =
-    progressReporter ??
-    (numBatches > 0
-      ? createProgressReporter({ log: (m: string) => logger.info(m) }, numBatches, "Classifying")
-      : undefined);
+  let reporter = progressReporter;
+  if (!reporter && numBatches > 0) {
+    const sink = { log: (m: string) => logger.info(m) };
+    reporter = createProgressReporter(sink, numBatches, "Classifying");
+  }
   let totalReclassified = 0;
   let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
     reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const results = await classifyBatch(openai, classifyModel, batch, categories);
+    const { results, suggestions } = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
+    }
+    if (!opts.dryRun) {
+      for (const [id, label] of suggestions) {
+        // #1188: surface invalid-but-meaningful LLM suggestions instead of silently
+        // dropping them. Operators can review with `categories propose` and promote
+        // via existing `categories remap`.
+        factsDb.addTag(id, `category-suggested:${label}`);
+      }
     }
     batchIndex++;
     if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
@@ -412,31 +432,48 @@ async function runAutoClassify(
     await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
   }
 
-  // Get all "other" facts (after discovery some may have been reclassified)
-  const others = factsDb.getByCategory("other");
+  // Only classify "other" facts that haven't been attempted yet (or were re-ingested since last attempt).
+  const others = factsDb.getUnattemptedOtherFacts();
   if (others.length === 0) {
+    const totalOther = factsDb.getByCategory("other").length;
+    if (totalOther > 0) {
+      logger.info(
+        `memory-hybrid: auto-classify — ${totalOther} "other" facts exist but all were already attempted; skipping (new/changed facts will be retried)`,
+      );
+    }
     return { reclassified: 0, suggested: [] };
   }
 
-  logger.info(`memory-hybrid: auto-classify starting on ${others.length} "other" facts`);
+  const totalOther = factsDb.getByCategory("other").length;
+  logger.info(
+    `memory-hybrid: auto-classify starting on ${others.length} unattempted "other" facts (${totalOther} total "other")`,
+  );
 
   let totalReclassified = 0;
 
-  // Process in batches
   for (let i = 0; i < others.length; i += config.batchSize) {
     const batch = others.slice(i, i + config.batchSize).map((e) => ({
       id: e.id,
       text: e.text,
     }));
 
-    const results = await classifyBatch(openai, model, batch, categories);
+    const { results, suggestions, success } = await classifyBatch(openai, model, batch, categories);
 
+    const batchIds = batch.map((b) => b.id);
     for (const [id, newCat] of results) {
       factsDb.updateCategory(id, newCat);
       totalReclassified++;
     }
+    for (const [id, label] of suggestions) {
+      // #1188: tag invalid LLM categories so they surface in `categories propose`
+      // instead of being silently dropped. The fact stays in `category=other`.
+      factsDb.addTag(id, `category-suggested:${label}`);
+    }
+    // Only mark classify attempt if the LLM call succeeded
+    if (success) {
+      factsDb.markClassifyAttempt(batchIds);
+    }
 
-    // Small delay between batches to avoid rate limits
     if (i + config.batchSize < others.length) {
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -450,4 +487,4 @@ async function runAutoClassify(
 // Exports
 // ============================================================================
 
-export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel, type ClassifyProgressReporter };
+export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel };

@@ -36,7 +36,7 @@ export interface ToolProposal {
   updatedAt: string;
 }
 
-export interface CreateToolProposalInput {
+interface CreateToolProposalInput {
   name: string;
   description: string;
   parameters: string;
@@ -45,7 +45,7 @@ export interface CreateToolProposalInput {
   implementationHint: string;
 }
 
-export interface ToolProposalFilter {
+interface ToolProposalFilter {
   status?: ToolProposalStatus;
   name?: string;
   limit?: number;
@@ -110,6 +110,7 @@ export class ToolProposalStore extends BaseSqliteStore {
         now,
       );
 
+    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.getById(id)!;
   }
 

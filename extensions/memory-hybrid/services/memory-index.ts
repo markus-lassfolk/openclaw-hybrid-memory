@@ -1,8 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { getEnv } from "../utils/env-manager.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
   LLMRetryError,
@@ -12,6 +14,7 @@ import {
   isConnectionErrorLike,
   isOllamaOOM,
 } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import { detectClusters } from "./topic-clusters.js";
 
@@ -21,15 +24,17 @@ const MAX_ENTITIES = 8;
 const MAX_PATTERNS = 5;
 const MAX_OUTPUT_CHARS = 3200;
 
-export interface MemoryIndexOptions {
+interface MemoryIndexOptions {
   workspaceRoot?: string;
   outputPath?: string;
   model?: string;
   fallbackModels?: string[];
   recentWindowDays?: number;
+  /** Extra progress lines via `logger.info` (e.g. dream-cycle `--verbose`). */
+  verbose?: boolean;
 }
 
-export interface MemoryIndexResult {
+interface MemoryIndexResult {
   path: string;
   content: string;
   usedFallback: boolean;
@@ -240,7 +245,7 @@ function sanitizeIndexMarkdown(content: string): string {
 async function synthesizeMemoryIndex(
   snapshot: MemoryIndexSnapshot,
   openai: OpenAI,
-  options: Pick<MemoryIndexOptions, "model" | "fallbackModels">,
+  options: Pick<MemoryIndexOptions, "model" | "fallbackModels" | "verbose">,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<string | null> {
   if (!options.model) return null;
@@ -249,6 +254,12 @@ async function synthesizeMemoryIndex(
     generated_at: snapshot.generatedAt,
     memory_snapshot: JSON.stringify(snapshot, null, 2),
   });
+
+  if (options.verbose) {
+    logger.info(
+      `memory-hybrid: memory-index — LLM synthesis (${prompt.length} chars in prompt, primary model=${options.model})`,
+    );
+  }
 
   try {
     const response = await chatCompleteWithRetry({
@@ -259,7 +270,7 @@ async function synthesizeMemoryIndex(
       openai,
       fallbackModels: options.fallbackModels ?? [],
       label: "memory-hybrid: memory-index",
-      feature: "reflection",
+      feature: CostFeature.memoryIndex,
     });
     return sanitizeIndexMarkdown(response);
   } catch (err) {
@@ -285,8 +296,31 @@ async function synthesizeMemoryIndex(
 
 function resolveOutputPath(options: Pick<MemoryIndexOptions, "workspaceRoot" | "outputPath">): string {
   if (options.outputPath) return options.outputPath;
-  const workspaceRoot = options.workspaceRoot ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+  const workspaceRoot = options.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
   return join(workspaceRoot, "MEMORY_INDEX.md");
+}
+
+/**
+ * Compute a stable content hash of the snapshot (ignores generatedAt which changes every run).
+ */
+function snapshotContentHash(snapshot: MemoryIndexSnapshot): string {
+  const { generatedAt: _, ...stable } = snapshot;
+  return createHash("sha256").update(JSON.stringify(stable)).digest("hex").slice(0, 16);
+}
+
+/** Path of the sidecar file that stores the last snapshot hash. */
+function hashSidecarPath(outputPath: string): string {
+  return `${outputPath.replace(/\.md$/i, "")}.hash`;
+}
+
+async function readPreviousHash(sidecarPath: string): Promise<string | null> {
+  try {
+    const raw = await readFile(sidecarPath, "utf-8");
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function writeMemoryIndex(
@@ -296,12 +330,41 @@ export async function writeMemoryIndex(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<MemoryIndexResult> {
   const snapshot = buildMemoryIndexSnapshot(factsDb, options);
+  if (options.verbose) {
+    logger.info(
+      `memory-hybrid: memory-index — snapshot: ${snapshot.clusters.length} clusters, ${snapshot.recentDecisions.length} recent decisions, ${snapshot.keyEntities.length} key entities, ${snapshot.recentPatterns.length} recent patterns/rules`,
+    );
+  }
+
+  const outputPath = resolveOutputPath(options);
+  const sidecar = hashSidecarPath(outputPath);
+  const currentHash = snapshotContentHash(snapshot);
+  const previousHash = await readPreviousHash(sidecar);
+
+  if (currentHash === previousHash) {
+    logger.info("memory-hybrid: memory-index — snapshot unchanged since last run, skipping LLM synthesis");
+    let existingContent: string | null = null;
+    try {
+      existingContent = await readFile(outputPath, "utf-8");
+    } catch {
+      // File missing — fall through to rebuild
+    }
+    if (existingContent) {
+      return { path: outputPath, content: existingContent, usedFallback: false };
+    }
+  }
+
   const llmMarkdown = await synthesizeMemoryIndex(snapshot, openai, options, logger);
   const content = llmMarkdown || renderMemoryIndexMarkdown(snapshot);
-  const outputPath = resolveOutputPath(options);
 
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, "utf-8");
+  // Only advance the snapshot hash sidecar after successful LLM synthesis. If we
+  // persist the hash on deterministic fallback, a transient LLM outage would skip
+  // future synthesis attempts while the snapshot stays unchanged.
+  if (llmMarkdown) {
+    await writeFile(sidecar, currentHash, "utf-8");
+  }
 
   logger.info(`memory-hybrid: memory-index — wrote ${outputPath}`);
 

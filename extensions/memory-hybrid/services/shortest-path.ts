@@ -53,7 +53,7 @@ export interface ShortestPathLookup {
 }
 
 /** Options for findShortestPath. */
-export interface ShortestPathOptions {
+interface ShortestPathOptions {
   /** Maximum path length in edges (default: 5, hard-capped by config). */
   maxDepth?: number;
 }

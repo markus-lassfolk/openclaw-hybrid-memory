@@ -6,7 +6,7 @@
  * batch discounts, caching, or provider changes. Do not use for billing.
  */
 
-export interface ModelPricing {
+interface ModelPricing {
   /** USD per 1M input tokens */
   inputPer1M: number;
   /** USD per 1M output tokens */
@@ -69,7 +69,7 @@ export function estimateCost(model: string, inputTokens: number, outputTokens: n
 // Config-mode cost estimates
 // ---------------------------------------------------------------------------
 
-export interface ModeEstimate {
+interface ModeEstimate {
   mode: "local" | "minimal" | "enhanced" | "complete";
   /** Human-readable description of features enabled in this mode. */
   description: string;

@@ -1,0 +1,4 @@
+New fact: "{{NEW_FACT}}"{{ENTITY_LINE}}{{KEY_LINE}}
+
+Existing similar facts:
+{{EXISTING_FACTS}}

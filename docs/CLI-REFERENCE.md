@@ -8,13 +8,14 @@ nav_order: 1
 
 All commands are available via `openclaw hybrid-mem <command>`.
 
-> **Note:** CLI subcommands require OpenClaw v2026.3.8 or later. The plugin enforces this minimum version at startup to ensure commands and config reloads work.
+> **Note:** Below OpenClaw **v2026.3.8** the plugin **warns** at startup (peer + `MIN_OPENCLAW_VERSION`); CLI subcommands and `api.version` may be missing. Prefer a **current 2026.3.x** gateway; CI uses the `openclaw` version in `extensions/memory-hybrid/package-lock.json`.
 
 ---
 
 **Tip: Verbosity level**
 CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
 
+**Agent tools (LLM):** Commands below are **CLI** entry points. Tools the agent invokes through the gateway use **underscore** names only (`memory_store`, `memory_recall`, `memory_directory`, …), with no `.` in the tool id — required by providers such as Anthropic. **`memory_directory`** lists contacts and returns **org-centric** views (people + fact ids for an organization)—stable structured data, not a replacement for ranked `memory_recall` search. See [CONFIGURATION.md § Agent tool names](CONFIGURATION.md#agent-tool-names).
 
 ## Commands by category
 
@@ -25,13 +26,13 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
 | **Store & ingestion** | `store <text>`, `ingest-files`, `distill`, `distill-window`, `record-distill`, `extract-daily`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `generate-auto-skills`, `skills-suggest`, `generate-proposals` |
-| **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages` |
+| **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages`, `enrich-entities` |
 | **Dedup & consolidation** | `find-duplicates`, `consolidate` |
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
 | **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
-| **Working memory** | `active-tasks`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks add <label> <desc>` |
+| **Goals & working memory** | `goals …`, `goals config`, `active-tasks`, `active-tasks config`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
 
 ---
 
@@ -53,6 +54,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `backfill [--dry-run] [--workspace path] [--limit N]` | Ingest facts from MEMORY.md / memory/**/*.md. Progress bar in TTY. |
 | `backfill-decay` | Backfill decay classes for existing rows. |
 | `build-languages [--dry-run] [--model M]` | Detect top 3 languages from fact samples, generate multilingual trigger/category/decay keywords via LLM, write `.language-keywords.json`. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md). |
+| `enrich-entities [--limit N] [--dry-run] [--model M]` | Backfill **PERSON**/**ORG** extraction for facts that have no stored entity-mention rows yet (same franc + LLM pipeline as store-time enrichment when `graph.enabled`). Use after upgrades or to catch up bulk imports. |
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. Progress bar in TTY. |
 | `categories` | List all configured categories with per-category fact counts. |
 | `list <type> [--limit N] [--status s]` | List items by type: **patterns**, **rules**, **directives**, **procedures**, **proposals**, or **corrections**. `--limit` caps output (default 50). For proposals/corrections, `--status` filters (e.g. pending). See [List, show, and review](#list-show-and-review-issue-56) below. |
@@ -71,8 +73,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and **maintenance cron jobs** (nightly distill, weekly reflection, weekly extract-procedures, self-correction). Idempotent. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 | `config-mode <preset>` | Set preset: **local** \| **minimal** \| **enhanced** \| **complete**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options; Minimal uses nano/flash-tier LLM only. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode complete`). |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
-| `config` | Show current configuration and feature toggles (mode, core and optional features on/off). Use **config-set** to change settings. |
-| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
+| `config` | Show current configuration and feature toggles (mode, core and optional features on/off). Includes **goal stewardship** on/off, **active task** on/off, **ledger** (`markdown` or `facts`), and resolved **ACTIVE-TASKS.md** path. Use **config-set** to change settings; use **`goals config`** / **`active-tasks config`** for full detail. |
+| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`, **`goalStewardship enabled`** / **`disabled`** (same style as `nightlyCycle`), **`activeTask enabled`** / **`disabled`**). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>] [--test-llm]` | Verify infrastructure and functionality: config (embedding key/model), SQLite, LanceDB, embedding API, credentials vault, scheduled jobs. Use **config** to view or change feature toggles. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. `--test-llm` tests each configured LLM model. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 \| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
@@ -98,11 +100,24 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `scope stats` | Show fact counts by scope (global, user, agent, session). |
 | `scope prune --scope <s> [--scope-target <id>]` | Remove all facts in a given scope (destructive). Use `--scope-target` when scope is user/agent/session. |
 | `scope promote [--dry-run] [--threshold-days N] [--min-importance 0.7]` | Promote high-importance session-scoped facts to global. Cron: weekly-deep-maintenance. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
-| `active-tasks` | List active tasks from ACTIVE-TASK.md. |
+| `goals config` | Print **goal stewardship** settings from plugin config (`goalStewardship.*`). For toggling: `config-set goalStewardship enabled` or `disabled`. |
+| `goals status` | No args: **overview** — stewardship on/off, goals directory, active goals (same columns as `goals list`). `goals status <label-or-uuid>`: full detail for one goal. **`--json`**: overview object or single goal JSON. |
+| `active-tasks` | List active tasks. With `activeTask.enabled: false`, only **`active-tasks config`** runs; enable with `config-set activeTask enabled`. With `activeTask.ledger: markdown` (default), reads `ACTIVE-TASKS.md`. With `activeTask.ledger: facts`, reads `category:project` facts (same store as `memory_store`). |
+| `active-tasks config` | Print **active task** settings from plugin config (`activeTask.*`). |
 | `active-tasks complete <label>` | Mark task Done and flush to memory log. |
 | `active-tasks stale` | Show tasks not updated within staleThreshold. |
-| `active-tasks add <label> <desc>` | Add or update a task entry. |
+| `active-tasks reconcile` | Move in-progress tasks whose OpenClaw session transcript is missing to Completed (issues #978, #981). |
+| `active-tasks add <label> <desc>` | Add or update a task entry (markdown file or project facts). |
+| `active-tasks render` | Write `ACTIVE-TASKS.md` as a projection from the facts ledger (use with `activeTask.ledger: facts`). |
+| `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). Adds `recognized: true/false` when the file is valid JSON. Use `--with-active-tasks` to merge a summary of `ACTIVE-TASKS.md` (same paths as `active-tasks`). |
+| `task-queue-touch` | Create the task-queue state dir and an idle `current.json` placeholder if missing. Use `--repair` to archive a **metadata-only** or unrecognized `current.json` to `history/` and write the canonical idle placeholder ([issue #1037](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1037)). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
+
+### Goals & active tasks — names
+
+- **Plugin JSON** uses camelCase: `goalStewardship`, `activeTask` (same as other keys under `plugins.entries[…].config`).
+- **CLI** uses kebab-case with a plural command: **`active-tasks`** (not `active-task` or `ActiveTask`).
+- **Working-memory file** default is **`ACTIVE-TASKS.md`** (`activeTask.filePath`). If you still have the legacy **`ACTIVE-TASK.md`**, rename it or set **`activeTask.filePath`** accordingly.
 
 ---
 
@@ -235,10 +250,12 @@ This adds:
 
 Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **other**, with **fixes for each**.
 
-`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs. Adds any missing maintenance cron jobs to `~/.openclaw/cron/jobs.json` (see [Maintenance cron jobs](#maintenance-cron-jobs)); does not re-enable jobs you disabled.
+`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs. Adds any missing maintenance cron jobs to `~/.openclaw/cron/jobs.json` (see [Maintenance cron jobs](#maintenance-cron-jobs)); does not re-enable jobs you disabled. It also normalizes isolated `hybrid-mem:*` jobs by removing an explicit top-level `sessionKey` so they use OpenClaw's default per-job session key (`cron:<jobId>`).
 `--log-file <path>` scans the file for memory-hybrid or cron errors.
 
-**Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect).
+**Embedding ↔ LanceDB alignment:** Verify includes a check that the **live embedding API** output dimension matches the LanceDB table width (see [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)). That implies **one real embedding request** during verify (API usage / quota), even when everything else is healthy. If the probe reports a different width than the configured provider dimension, follow the on-screen steps before relying on semantic search.
+
+**Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect). A **dimension mismatch** between embeddings and LanceDB counts as failure (`1`) so scripts and monitors can detect silent semantic-search breakage. After fixing `embedding.*` / `vector.*`, run `openclaw hybrid-mem re-index` if vectors were built with the wrong model. See [Troubleshooting — dimension mismatch](TROUBLESHOOTING.md#embedding-vs-lancedb-dimension-mismatch).
 
 ---
 
@@ -315,22 +332,26 @@ Steps through pending persona proposals and the latest correction report. For ea
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **8 jobs** (tiering, scope promote, persona proposals, dream cycle, and others; see table below).
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
+
+Default job **messages** embed a **bash harness**: one foreground shell (`set -euo pipefail`, `set -x`), per-step `hm_step` that **tees** to `HM_LOG` and appends `exit=<code>` lines to `HM_EXIT`, plus log headers (`HM_JOB`, `RUN_ID`, `openclaw --version`). Logs default to `~/.openclaw/logs/cron-hybrid-mem/` (fallback: `/tmp/openclaw-cron-hybrid-mem-$USER` if that directory is not writable). The message instructs the agent **not** to update the guard file after a failed step and to paste `HM_EXIT` in the reply.
 
 | Job (pluginJobId) | Schedule | Purpose |
 |-------------------|----------|---------|
-| `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 3 → extract-daily → resolve-contradictions. |
-| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** self-correction-run. Exit 0 if selfCorrection disabled. |
-| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** dream-cycle (prune → consolidate → reflect). Requires nightlyCycle.enabled. Exit 0 if disabled. |
-| `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect → reflect-rules → reflect-meta. Requires reflection.enabled. |
-| `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills. |
-| `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → scope promote. |
-| `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** generate-proposals (persona proposals from reflection). Requires personaProposals enabled. |
-| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay. |
+| `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 1 → extract-daily (7d) → resolve-contradictions → enrich-entities (see config skips in message). |
+| `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** `self-correction-run --verbose`. Skip if selfCorrection disabled. |
+| `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** `dream-cycle --verbose`. Requires nightlyCycle.enabled. |
+| `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect / reflect-rules / reflect-meta (each `--verbose`). Requires reflection.enabled. |
+| `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills (each `--verbose` where supported). |
+| `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → vectordb-optimize → scope promote. |
+| `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** `generate-proposals --verbose`. Requires personaProposals enabled. |
+| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit 500. |
+| `hybrid-mem:sensor-sweep` | every 4h (configurable) | **sensor-sweep:** tier 1 + tier 2. Requires sensorSweep.enabled. |
 
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
 - **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.
 - Jobs are identified by **pluginJobId** so upgrades can add new jobs without duplicating.
+- For isolated maintenance jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive chat session key). Leave `sessionKey` unset so OpenClaw uses isolated per-job keys (`cron:<jobId>`), avoiding main-session contention.
 
 **Feature-gating:** When a feature is disabled in config, the corresponding CLI command exits 0 without doing work. Leave all jobs defined; they no-op when e.g. `procedures.enabled` or `reflection.enabled` is false. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md) for full context.
 

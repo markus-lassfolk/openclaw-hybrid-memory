@@ -3,23 +3,37 @@
  * Shared context and stage result types for the staged pipeline.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import type { WriteAheadLog } from "../backends/wal.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { EventLog } from "../backends/event-log.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { WorkflowTracker } from "../services/workflow-tracker.js";
 import type OpenAI from "openai";
+import type { AuditStore } from "../backends/audit-store.js";
+import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
+import type { EventLog } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
-import type { PendingLLMWarnings } from "../services/chat.js";
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
+import type { PendingLLMWarnings } from "../services/chat.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
+import type { WorkflowTracker } from "../services/workflow-tracker.js";
+import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+
+/**
+ * Subset of OpenClaw `PluginHookAgentContext` read at the hook boundary (#1005).
+ * Parsed by `sliceHookAgentContext` in `hook-resolution-api.ts`.
+ *
+ * After `withHookResolutionApi`, values appear on `api.context`. Resolvers still prefer
+ * structured event/session fields over `api.context`, so the event payload wins when both differ.
+ */
+export type HookAgentContextSlice = {
+  agentId?: string;
+  sessionKey?: string;
+  sessionId?: string;
+};
 
 export interface LifecycleContext {
   factsDb: FactsDB;
@@ -44,6 +58,7 @@ export interface LifecycleContext {
     operation: "store" | "update",
     data: Record<string, unknown>,
     logger: { warn: (msg: string) => void },
+    supersedeTargetId?: string,
   ) => Promise<string>;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
   findSimilarByEmbedding: (
@@ -56,8 +71,11 @@ export interface LifecycleContext {
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
+  auditStore: AuditStore | null;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
   recallInFlightRef: { value: number };
+  /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
+  lastAutoRecallPromptRef: { value: string | null };
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */
@@ -71,7 +89,7 @@ export interface SessionState {
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
   pruneSessionMaps: () => void;
-  resolveSessionKey: (event: unknown, api?: { context?: { sessionId?: string } }) => string | null;
+  resolveSessionKey: (event: unknown, api?: { context?: { sessionId?: string; sessionKey?: string } }) => string | null;
   MAX_TRACKED_SESSIONS: number;
   /** Optional: clear all session maps (used by dispose). Set by hooks when creating sessionState. */
   clearAll?: () => void;
@@ -85,6 +103,7 @@ export interface RecallResult {
   hotBlock: string;
   procedureBlock: string;
   withProcedures: (s: string) => string;
+  recallSpan: string;
   recallStartMs: number;
   degradationMaxLatencyMs: number;
   injectionFormat: "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";
@@ -103,7 +122,7 @@ export interface RecallResult {
 }
 
 /** Result of injection stage. */
-export interface InjectionResult {
+interface InjectionResult {
   prependContext: string;
 }
 

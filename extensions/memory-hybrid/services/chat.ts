@@ -4,15 +4,28 @@
  */
 
 import type { OpenAI } from "openai";
+import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
+  formatProviderRateLimitHeaderSummary,
+  is403QuotaOrRateLimitLike,
+  parseGoDurationToMs,
+  parseRetryAfterMs,
+} from "./llm-rate-limit-headers.js";
+import {
+  type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
-  isReasoningModel,
   requiresMaxCompletionTokens,
+  shouldOmitSamplingParams,
+  resolveWireApi,
 } from "./model-capabilities.js";
+import { callResponsesApi } from "./responses-adapter.js";
+import { recordProviderHttpAttempt, formatRecentHttpAttemptsForRateLimitLog } from "./recent-http-attempts.js";
+
+export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -56,9 +69,6 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
   };
 }
 
-/** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
-const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
-
 /**
  * Unified 404 detection helper.
  * Checks the HTTP status code property first (reliable), then falls back to
@@ -91,16 +101,13 @@ export function is404Like(err: unknown): boolean {
 }
 
 /**
- * 403 Forbidden / access-denied detection helper.
- * A 403 is a permanent operator config issue (e.g. Google country/region restriction,
- * IP block, billing restriction) that will never be resolved by retrying.
- * Exported so embeddings.ts can treat 403 as a config error and suppress capturePluginError.
- *
- * Also detects provider-specific geo-restriction phrases that may arrive without a "403"
- * numeric prefix when the error passes through a proxy or gateway that strips HTTP status
- * from the Error object (GlitchTip #324 / issue #490).
+ * 403 Forbidden / access-denied detection helper (geo, IP block, etc.).
+ * Excludes {@link is403QuotaOrRateLimitLike} quota-style 403s.
  */
 export function is403Like(err: unknown): boolean {
+  if (err instanceof LLMRetryError) return is403Like(err.cause);
+  // Quota / rate-limit style 403 (retry-after, remaining-tokens) is not geo "forbidden".
+  if (is403QuotaOrRateLimitLike(err)) return false;
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 403 || status === "403") return true;
@@ -134,7 +141,7 @@ export function is403Like(err: unknown): boolean {
  * A 401 is a permanent operator config issue (wrong API key) that will never be resolved by retrying.
  * Exported so other modules can treat 401 as a config error and suppress capturePluginError.
  */
-export function is401Like(err: unknown): boolean {
+function is401Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 401 || status === "401") return true;
@@ -161,7 +168,7 @@ export function is401OrWrapped(err: Error): boolean {
  * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
  * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
  */
-export function is429Like(err: unknown): boolean {
+function is429Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 429 || status === "429") return true;
@@ -201,10 +208,16 @@ export function is500Like(err: unknown): boolean {
     if (typeof status === "number" && status >= 500 && status < 600) return true;
   }
   if (err instanceof Error) {
+    const m = err.message;
     // Only match HTTP 5xx patterns — not generic "internal error" from JS
-    return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(internal\s+)?(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(
-      err.message,
-    );
+    if (
+      /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(internal\s+)?(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(m)
+    ) {
+      return true;
+    }
+    // Gateway/proxy phrasing seen in production (#1010, #1013): "502 error code: 502"
+    // Single pattern: any "error code: 5xx" also covers "5xx error code: 5xx".
+    if (/\berror\s+code:\s*5\d{2}\b/i.test(m)) return true;
   }
   return false;
 }
@@ -301,6 +314,88 @@ export function isContextLengthError(err: unknown): boolean {
 }
 
 /**
+ * Mutates and returns `err` so GlitchTip/async stacks show which model/phase failed (#1010–#1011).
+ */
+function enrichLlmErrorMessage(err: Error, ctx?: { model?: string; operation?: string }): Error {
+  if (!ctx?.model && !ctx?.operation) return err;
+  if (/\[llm\s+/i.test(err.message)) return err;
+  const parts: string[] = [];
+  if (ctx.model) parts.push(`model=${ctx.model}`);
+  if (ctx.operation) parts.push(`op=${ctx.operation}`);
+  err.message = `${err.message} [llm ${parts.join(", ")}]`;
+  return err;
+}
+
+/**
+ * HTTP 400 that is not a context-length violation — retrying will not help (#1011, #1016).
+ */
+function isNonRetryableClient400(err: unknown): boolean {
+  if (isContextLengthError(err)) return false;
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 400 || status === "400") return true;
+  }
+  if (err instanceof Error) {
+    const m = err.message;
+    if (/\b400\b.*\b(?:no body|status code)\b/i.test(m)) return true;
+  }
+  return false;
+}
+
+/** Gateway/proxy may return HTTP 400 with an empty body — transient, not a plugin bug (#1157). */
+function is400EmptyBodyGatewayError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /\b400\b.*\bno body\b/i.test(err.message);
+}
+
+/** Some Azure/Foundry deployments return 400 when chat params are not supported for the model (#1165). */
+function is400UnsupportedOperationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /\b400\b.*\bunsupported\b/i.test(err.message);
+}
+
+/**
+ * Detect malformed Responses API reasoning-output sequencing errors, e.g.:
+ * "Item 'rs_...' of type 'reasoning' was provided without its required following item."
+ *
+ * This is an intermittent provider-side 400 seen with some reasoning deployments (notably some
+ * Azure Foundry o3-pro paths). Treat as transient/retryable (limited) instead of permanent bad-request.
+ *
+ * Unwraps {@link LLMRetryError} and checks `cause` so detection still works when the message is wrapped.
+ */
+export function isResponsesReasoningSequenceError(err: unknown): boolean {
+  const msg = collectErrorMessageChain(err);
+  return /\btype\s+['"]?reasoning['"]?\s+was\s+provided\s+without\s+(?:its\s+)?required\s+following\s+item\b/i.test(
+    msg,
+  );
+}
+
+function collectErrorMessageChain(err: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = err;
+  const seen = new Set<unknown>();
+  for (let i = 0; i < 8 && cur != null && !seen.has(cur); i++) {
+    seen.add(cur);
+    if (cur instanceof Error) {
+      parts.push(cur.message);
+      cur = cur.cause;
+      continue;
+    }
+    if (
+      typeof cur === "object" &&
+      cur !== null &&
+      "message" in cur &&
+      typeof (cur as { message: unknown }).message === "string"
+    ) {
+      parts.push((cur as { message: string }).message);
+      break;
+    }
+    break;
+  }
+  return parts.join(" ");
+}
+
+/**
  * Detect Ollama out-of-memory (OOM) errors from the model server.
  * Ollama returns HTTP 500 with a body like:
  *   "model requires more system memory (18.2 GiB) than is available (8.0 GiB)"
@@ -323,27 +418,6 @@ export function isOllamaOOM(err: unknown): boolean {
   );
 }
 
-/**
- * Try to parse a Retry-After delay (in ms) from an API error.
- * Returns undefined when the header is absent or unparseable.
- */
-function parseRetryAfterMs(err: unknown): number | undefined {
-  if (!err || typeof err !== "object") return undefined;
-  // OpenAI SDK exposes headers on the error response
-  const headers =
-    (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> }).response?.headers ??
-    (err as { headers?: Record<string, string> }).headers;
-  if (!headers) return undefined;
-  const raw = headers["retry-after"] ?? headers["Retry-After"];
-  if (!raw) return undefined;
-  // Retry-After can be either a delay-seconds integer or an HTTP-date
-  const secs = Number.parseInt(raw, 10);
-  if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
-  const date = Date.parse(raw);
-  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
-  return undefined;
-}
-
 export async function chatComplete(opts: {
   model: string;
   content: string;
@@ -356,8 +430,19 @@ export async function chatComplete(opts: {
   signal?: AbortSignal;
   /** Feature label for cost tracking. When set, the call is wrapped in withCostFeature() so the proxy records the correct label. */
   feature?: string;
+  /** Force a specific wire API surface ("chat" or "responses"). When unset, resolved from the model's provider prefix. */
+  wireApi?: WireApi;
 }): Promise<string> {
-  const { model, content, temperature = 0.2, maxTokens, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, signal, feature } = opts;
+  const {
+    model,
+    content,
+    temperature = 0.2,
+    maxTokens,
+    timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
+    signal,
+    feature,
+    wireApi: wireApiOverride,
+  } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -371,14 +456,29 @@ export async function chatComplete(opts: {
   }
 
   try {
-    // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
+    const wireApi = resolveWireApi(model, wireApiOverride);
+
+    if (wireApi === "responses") {
+      const doCreate = () =>
+        callResponsesApi(
+          opts.openai,
+          { model, content, temperature, maxTokens: effectiveMaxTokens },
+          { signal: controller.signal },
+        );
+      const { text } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+      clearTimeout(timeoutId);
+      if (signal) signal.removeEventListener("abort", onAbort);
+      return text;
+    }
+
+    // Standard chat.completions.create path
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
     const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
       model,
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
     };
-    if (!isReasoningModel(model)) {
+    if (!shouldOmitSamplingParams(model)) {
       body.temperature = temperature;
     }
     const doCreate = () =>
@@ -390,7 +490,7 @@ export async function chatComplete(opts: {
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = (resp as any).choices[0]?.message;
+    const msg = resp.choices?.[0]?.message;
     const msgContent = msg?.content?.trim();
     if (msgContent) return msgContent;
     // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
@@ -409,22 +509,29 @@ export async function chatComplete(opts: {
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
       : err instanceof Error
-        ? err
+        ? enrichLlmErrorMessage(err, { model, operation: "chatComplete" })
         : new Error(String(err));
     // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM, 429) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
+      msg.includes("operation was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
       msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
       isConnectionErrorLike(err) || // #703: OpenAI SDK APIConnectionError / "Connection error." is transient
       is429Like(err) || // #397: rate limit is transient
+      is403QuotaOrRateLimitLike(err) || // Azure/APIM quota as 403 + headers
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err) || // #302: OpenAI SDK InternalServerError has no numeric prefix
-      isOllamaOOM(err); // #387: Ollama OOM — model too large for available RAM, not a bug
+      isOllamaOOM(err) || // #387: Ollama OOM — model too large for available RAM, not a bug
+      isResponsesReasoningSequenceError(err) || // #1034: malformed reasoning item sequence — retryable
+      is400EmptyBodyGatewayError(error) ||
+      is400EmptyBodyGatewayError(err) || // #1157: 400 (no body) from gateway — do not GlitchTip
+      is400UnsupportedOperationError(error) ||
+      is400UnsupportedOperationError(err); // #1165: model/endpoint mismatch
     const isConfigError =
       err instanceof UnconfiguredProviderError ||
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
@@ -467,6 +574,28 @@ export class LLMRetryError extends Error {
 }
 
 /**
+ * True when an LLM call failed for abort, gateway loss, or transport — not plugin logic.
+ * Used by session narrative and similar paths to avoid noisy warns when the gateway stops.
+ */
+export function isAbortOrTransientLlmError(err: unknown): boolean {
+  if (err instanceof LLMRetryError) {
+    return isAbortOrTransientLlmError(err.cause);
+  }
+  if (err && typeof err === "object" && "cause" in err) {
+    const c = (err as { cause?: unknown }).cause;
+    if (c !== undefined && c !== null && isAbortOrTransientLlmError(c)) return true;
+  }
+  if (!(err instanceof Error)) {
+    return isConnectionErrorLike(err);
+  }
+  if (err.name === "AbortError") return true;
+  const msg = err.message;
+  if (/request was aborted|Request was aborted|The operation was aborted|operation was aborted/i.test(msg)) return true;
+  if (/gateway client stopped|gateway not reachable|not reachable\.|is it running/i.test(msg)) return true;
+  return isConnectionErrorLike(err);
+}
+
+/**
  * Retry wrapper for LLM calls with exponential backoff.
  * Retries on failure with increasing delays: 1s, 3s, 9s.
  * On final failure, throws LLMRetryError with attempt number.
@@ -474,12 +603,21 @@ export class LLMRetryError extends Error {
  */
 export async function withLLMRetry<T>(
   fn: () => Promise<T>,
-  opts?: { maxRetries?: number; signal?: AbortSignal },
+  opts?: {
+    maxRetries?: number;
+    signal?: AbortSignal;
+    /** Tags errors for triage when they surface at async boundaries (#1010, #1011). */
+    llmContext?: { model?: string; operation?: string };
+  },
 ): Promise<T> {
   const maxRetries = opts?.maxRetries ?? 3;
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    recordProviderHttpAttempt({
+      operation: opts?.llmContext?.operation,
+      model: opts?.llmContext?.model,
+    });
     try {
       return await fn();
     } catch (err) {
@@ -509,9 +647,20 @@ export async function withLLMRetry<T>(
         pluginLogger.warn(
           "memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling",
         );
-        throw lastError;
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
+      }
+      const isReasoningSequenceError = isResponsesReasoningSequenceError(lastError);
+      // Azure/OpenAI Responses API intermittent malformed reasoning item sequence:
+      // allow one retry, then fail fast so fallback model can run.
+      if (isReasoningSequenceError && attempt >= 1) {
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
+      }
+      // Other 400s (e.g. empty body from gateway) — not fixed by retry (#1011, #1016)
+      if (!isReasoningSequenceError && isNonRetryableClient400(lastError)) {
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
       const is429 = is429Like(lastError);
+      const isQuota403 = is403QuotaOrRateLimitLike(lastError);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
@@ -535,6 +684,9 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       if (attempt === maxRetries || opts?.signal?.aborted) {
+        // Capture causeMsg before enrichment to preserve end-anchored regex matching
+        const causeMsg = lastError.message.toLowerCase();
+        enrichLlmErrorMessage(lastError, opts?.llmContext);
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
           lastError,
@@ -543,10 +695,10 @@ export async function withLLMRetry<T>(
         // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
         // Note: 404 and 403 errors should never reach this branch (they exit early above),
         // but we include them as defensive safety nets in case they slip past due to future refactors.
-        const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
+          is403QuotaOrRateLimitLike(lastError) ||
           isServerError || // #302: 5xx server errors are transient
           is404Like(lastError) || // #329: defensive safety net — 404 = model not found, config issue, not a bug
           is403Like(lastError) || // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
@@ -563,23 +715,35 @@ export async function withLLMRetry<T>(
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
-          /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
+          /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
+          isResponsesReasoningSequenceError(lastError) || // #1034
+          is400EmptyBodyGatewayError(lastError) || // #1157
+          is400UnsupportedOperationError(lastError); // #1165
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",
             operation: "withLLMRetry",
             retryAttempt: attempt + 1,
+            ...(opts?.llmContext?.model ? { configShape: { model: opts.llmContext.model } } : {}),
           });
         }
         throw retryError;
       }
 
-      // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
+      // 429 / quota-style 403: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
       let delay: number;
-      if (is429) {
+      if (is429 || isQuota403) {
         const retryAfterMs = parseRetryAfterMs(err);
         delay = retryAfterMs ?? 2 ** (attempt + 1) * 1000;
-        pluginLogger.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
+        const op = opts?.llmContext?.operation;
+        const modelId = opts?.llmContext?.model;
+        const ctxTag = op || modelId ? ` [${[op, modelId].filter(Boolean).join(" · ")}]` : "";
+        const hdr = formatProviderRateLimitHeaderSummary(err);
+        const recent = formatRecentHttpAttemptsForRateLimitLog();
+        const attemptTotal = Math.max(1, maxRetries);
+        pluginLogger.warn(
+          `memory-hybrid: ${isQuota403 ? "Quota/rate limit (403)" : "Rate limited by provider"}${ctxTag} — retry ${attempt + 1}/${attemptTotal}, backing off ${delay}ms | ${hdr} | ${recent} | rolling counts = outbound HTTP attempts in this process (not token usage); use tokRem/reqRem when headers exist.`,
+        );
       } else {
         delay = 3 ** attempt * 1000; // 1s, 3s, 9s
       }
@@ -634,6 +798,40 @@ export async function chatCompleteWithRetry(opts: {
   /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
   feature?: string;
 }): Promise<string> {
+  return (await chatCompleteWithRetryDetailed(opts)).content;
+}
+
+export type ChatCompleteWithRetryDetails = {
+  content: string;
+  modelUsed: string;
+  /**
+   * Effective model attempt order (primary then fallbacks). This is the full chain that was eligible
+   * for attempts; some models may still have been skipped due to AbortSignal pre-checks.
+   */
+  attemptChain: string[];
+};
+
+/**
+ * Like {@link chatCompleteWithRetry} but returns which model actually produced the response.
+ * Used by maintenance commands to log the effective model selected after fallbacks.
+ */
+export async function chatCompleteWithRetryDetailed(opts: {
+  model: string;
+  content: string;
+  temperature?: number;
+  maxTokens?: number;
+  openai: OpenAI;
+  fallbackModels?: string[];
+  label?: string;
+  /** Timeout per model attempt (passed to chatComplete). Default 45s. */
+  timeoutMs?: number;
+  /** When aborted (e.g. parent step timeout), the request is cancelled and no fallback models are tried. */
+  signal?: AbortSignal;
+  /** Optional per-instance warning queue for missing provider keys. */
+  pendingWarnings?: PendingLLMWarnings;
+  /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
+  feature?: string;
+}): Promise<ChatCompleteWithRetryDetails> {
   const {
     fallbackModels = [],
     label: rawLabel,
@@ -649,6 +847,7 @@ export async function chatCompleteWithRetry(opts: {
 
   let lastError: Error | undefined;
   let unconfiguredCount = 0;
+  let lastAttemptedModel = opts.model;
 
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
@@ -659,12 +858,13 @@ export async function chatCompleteWithRetry(opts: {
       throw abortError;
     }
     const currentModel = modelsToTry[i];
+    lastAttemptedModel = currentModel;
     const _isFallback = i > 0;
     // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
     try {
-      return await withLLMRetry(
+      const content = await withLLMRetry(
         () =>
           chatComplete({
             ...chatOpts,
@@ -674,8 +874,13 @@ export async function chatCompleteWithRetry(opts: {
             signal,
             ...(feature != null && { feature }),
           }),
-        { maxRetries: 3, signal },
+        {
+          maxRetries: 3,
+          signal,
+          llmContext: { model: currentModel, operation: label },
+        },
       );
+      return { content, modelUsed: currentModel, attemptChain: modelsToTry };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
@@ -689,9 +894,11 @@ export async function chatCompleteWithRetry(opts: {
       const isConnectionError = isConnectionErrorLike(lastError);
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
+      const isQuota403 = is403QuotaOrRateLimitLike(lastError);
       const is401 = is401Like(lastError);
       const is500 = is500Like(lastError); // #302
       const isContextLength = isContextLengthError(lastError); // #488
+      const isReasoningSequence = isResponsesReasoningSequenceError(lastError); // #1034
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
@@ -703,15 +910,19 @@ export async function chatCompleteWithRetry(opts: {
                 ? "connection failed"
                 : is404
                   ? "model not found (404)"
-                  : is403
-                    ? "access denied (403)"
-                    : is401
-                      ? "unauthorized (401)"
-                      : is500
-                        ? "server error (500)" // #302
-                        : isContextLength
-                          ? "input too long" // #488
-                          : "failed after retries";
+                  : isQuota403
+                    ? "quota / rate limit (403)"
+                    : is403
+                      ? "access denied (403)"
+                      : is401
+                        ? "unauthorized (401)"
+                        : is500
+                          ? "server error (500)" // #302
+                          : isContextLength
+                            ? "input too long" // #488
+                            : isReasoningSequence
+                              ? "responses reasoning sequence error (400)"
+                              : "failed after retries";
           pluginLogger.warn(
             `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
           );
@@ -724,14 +935,14 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError); // #394: country/region restriction = operator config issue
+  const finalIsQuota403 = is403QuotaOrRateLimitLike(finalError);
   const finalIs401 = is401OrWrapped(finalError); // #475: invalid API key = operator config issue
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
-  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
-    finalError.message,
-  );
-  const finalIsConnectionError = isConnectionErrorLike(finalError);
+  const finalIsReasoningSequence = isResponsesReasoningSequenceError(finalError); // #1034
+  /** Unwraps LLMRetryError so "Request was aborted" in the cause is detected (#935, #936). */
+  const finalIsTransientLlm = isAbortOrTransientLlmError(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -757,11 +968,12 @@ export async function chatCompleteWithRetry(opts: {
       !finalIsOOM &&
       !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
       !finalIsUnconfigured &&
-      !finalIsTimeout &&
-      !finalIsConnectionError &&
+      !finalIsTransientLlm &&
       !finalIs403 &&
+      !finalIsQuota403 &&
       !finalIs401 &&
-      !finalIs429
+      !finalIs429 &&
+      !finalIsReasoningSequence
     ) {
       capturePluginError(finalError, {
         subsystem: "chat",
@@ -805,15 +1017,24 @@ export async function chatCompleteWithRetry(opts: {
       "⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. " +
         "Run: openclaw hybrid-mem verify --test-llm",
     );
-  } else if (finalIsTimeout) {
-    // #339: timeout errors are transient — don't report to GlitchTip
-  } else if (finalIsConnectionError) {
-    // #703: OpenAI SDK "Connection error." / APIConnectionError is transient — don't report to GlitchTip
+  } else if (finalIsTransientLlm) {
+    // #339, #703, #935, #936: abort/timeout/connection (including LLMRetryError-wrapped causes) — don't report
+  } else if (finalIsQuota403) {
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: Provider quota or rate limit (403 with Retry-After / remaining-tokens). " +
+        "Try again after the indicated window or raise quota.",
+    );
   } else if (finalIs429) {
     // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
     pendingWarnings?.add(
       "⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). " +
         "Memory features may be degraded. Try again later or upgrade your provider plan.",
+    );
+  } else if (finalIsReasoningSequence) {
+    // #1034: intermittent Responses API reasoning output sequencing failure — usually transient/provider-side
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM provider returned malformed reasoning output (400). " +
+        "This can be transient on reasoning models; a retry or fallback model is recommended.",
     );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
@@ -823,6 +1044,9 @@ export async function chatCompleteWithRetry(opts: {
       phase: "fallback-exhausted",
     });
   }
+
+  // Let callers (e.g. adaptive distill) attribute limits to the model that actually failed last.
+  Object.assign(finalError, { lastAttemptedModel });
 
   throw finalError;
 }

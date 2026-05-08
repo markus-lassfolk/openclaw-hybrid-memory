@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export interface ScanCursor {
+interface ScanCursor {
   lastSessionTs: number;
   lastRunAt: number;
   sessionsProcessed: number;

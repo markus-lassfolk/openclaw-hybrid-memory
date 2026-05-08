@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Self-Correction CLI Handlers
  *
@@ -14,13 +15,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
+import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -56,10 +59,11 @@ const DEFAULT_SELF_CORRECTION = {
  * Extract self-correction incidents from sessions.
  */
 export function runSelfCorrectionExtractForCli(
-  _ctx: HandlerContext,
+  ctx: HandlerContext,
   opts: {
     days?: number;
     outputPath?: string;
+    verbose?: boolean;
     /** Pre-filtered session file paths. When provided, skips gatherSessionFiles(). */
     filePaths?: string[];
   },
@@ -68,6 +72,16 @@ export function runSelfCorrectionExtractForCli(
     opts.filePaths ?? gatherSessionFiles({ days: opts.days ?? 3 }).map((f: { path: string; mtime: number }) => f.path);
   if (filePaths.length === 0) {
     return { incidents: [], sessionsScanned: 0 };
+  }
+  if (opts.verbose) {
+    ctx.logger.info?.(`memory-hybrid: self-correction-extract — scanning ${filePaths.length} session file(s)`);
+    const cap = 40;
+    for (let i = 0; i < Math.min(filePaths.length, cap); i++) {
+      ctx.logger.info?.(`  ${filePaths[i]}`);
+    }
+    if (filePaths.length > cap) {
+      ctx.logger.info?.(`  ... and ${filePaths.length - cap} more`);
+    }
   }
   try {
     const result = runSelfCorrectionExtract({
@@ -107,6 +121,7 @@ export async function runSelfCorrectionRunForCli(
     approve?: boolean;
     applyTools?: boolean;
     full?: boolean;
+    verbose?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
@@ -123,7 +138,7 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
     const today = new Date().toISOString().slice(0, 10);
@@ -159,7 +174,11 @@ export async function runSelfCorrectionRunForCli(
           }
         }
       }
-      const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3, filePaths: scFilePaths });
+      const extractResult = runSelfCorrectionExtractForCli(ctx, {
+        days: 3,
+        filePaths: scFilePaths,
+        verbose: opts.verbose,
+      });
       incidents = extractResult.incidents;
     }
     if (incidents.length === 0) {
@@ -179,11 +198,20 @@ export async function runSelfCorrectionRunForCli(
       }
       return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
     }
+    if (opts.verbose) {
+      logger.info?.(`memory-hybrid: ${SCAN_TYPE} — ${incidents.length} incident(s); building LLM prompt…`);
+    }
     const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
       incidents_json: JSON.stringify(incidents),
     });
     const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+    const heavyPrefWithSources = resolveTierPreferenceWithSources(cfg, "heavy");
     const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const modelSource = opts.model
+      ? "--model"
+      : heavyPrefWithSources.models[0] === model
+        ? (heavyPrefWithSources.sources[0] ?? "built-in")
+        : "built-in";
     const scFallbackModels = opts.model
       ? []
       : heavyPref.length > 1
@@ -229,7 +257,12 @@ export async function runSelfCorrectionRunForCli(
         content = (r.stdout ?? "") + (r.stderr ?? "");
         if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
       } else {
-        content = await chatCompleteWithRetry({
+        logger.info?.(`memory-hybrid: self-correction-run model tier = heavy`);
+        logger.info?.(`memory-hybrid: self-correction-run starting with model ${model} (source=${modelSource})`);
+        logger.info?.(
+          `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
+        );
+        const detail = await chatCompleteWithRetryDetailed({
           model,
           content: prompt,
           temperature: 0.2,
@@ -237,11 +270,21 @@ export async function runSelfCorrectionRunForCli(
           openai,
           fallbackModels: scFallbackModels,
           label: "memory-hybrid: self-correction analyze",
+          feature: CostFeature.selfCorrectionAnalyze,
         });
+        if (detail.modelUsed !== model) {
+          logger.info?.(`memory-hybrid: self-correction-run analysis used fallback model ${detail.modelUsed}`);
+        }
+        content = detail.content;
       }
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+      }
+      if (opts.verbose && analysed.length > 0) {
+        logger.info?.(
+          `memory-hybrid: ${SCAN_TYPE} — LLM returned ${analysed.length} remediation item(s) (before cap/filter)`,
+        );
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
@@ -271,7 +314,7 @@ export async function runSelfCorrectionRunForCli(
         const obj =
           typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
         const text = (obj.text ?? "").trim();
-        if (!text || factsDb.hasDuplicate(text)) continue;
+        if (!text || factsDb.hasDuplicate(text, "self-correction")) continue;
         let vector: number[] | null = null;
         if (scCfg.semanticDedup || !opts.dryRun) {
           try {
@@ -367,7 +410,10 @@ export async function runSelfCorrectionRunForCli(
             current_tools: currentTools,
             new_rules: toolsSuggestions.join("\n"),
           });
-          const rewritten = await chatCompleteWithRetry({
+          logger.info?.(
+            `memory-hybrid: self-correction-run rewrite-tools starting with model ${model} (source=${modelSource})`,
+          );
+          const detail = await chatCompleteWithRetryDetailed({
             model,
             content: rewritePrompt,
             temperature: 0.2,
@@ -375,8 +421,12 @@ export async function runSelfCorrectionRunForCli(
             openai,
             fallbackModels: scFallbackModels,
             label: "memory-hybrid: self-correction rewrite-tools",
+            feature: CostFeature.selfCorrectionRewriteTools,
           });
-          const cleaned = rewritten
+          if (detail.modelUsed !== model) {
+            logger.info?.(`memory-hybrid: self-correction-run rewrite-tools used fallback model ${detail.modelUsed}`);
+          }
+          const cleaned = detail.content
             .trim()
             .replace(/^```\w*\n?|```\s*$/g, "")
             .trim();

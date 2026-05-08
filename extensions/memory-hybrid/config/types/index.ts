@@ -10,63 +10,66 @@ export * from "./sensors.js";
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
 import type {
-  AutoRecallConfig,
   AutoClassifyConfig,
-  SearchConfig,
-  RetrievalConfig,
-  QueryExpansionConfig,
-  RerankingConfig,
+  AutoRecallConfig,
   ContextualVariantsConfig,
   DocumentGradingConfig,
+  QueryExpansionConfig,
+  RerankingConfig,
+  RetrievalConfig,
+  SearchConfig,
 } from "./retrieval.js";
 
-import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
+import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
 
 import type {
-  PassiveObserverConfig,
-  ReflectionConfig,
-  IdentityReflectionConfig,
-  IdentityPromotionConfig,
-  ProceduresConfig,
   ExtractionConfig,
+  IdentityPromotionConfig,
+  IdentityReflectionConfig,
+  PassiveObserverConfig,
+  ProceduresConfig,
+  ReflectionConfig,
 } from "./capture.js";
 
 import type {
-  VerificationConfig,
-  ProvenanceConfig,
-  NightlyCycleConfig,
-  HealthConfig,
-  MaintenanceConfig,
   CouncilConfig,
   CouncilProvenanceMode,
   CronReliabilityConfig,
+  HealthConfig,
+  MaintenanceConfig,
+  NightlyCycleConfig,
+  ProvenanceConfig,
+  VerificationConfig,
 } from "./maintenance.js";
 
 import type {
+  AliasesConfig,
+  AmbientConfig,
+  ApiTapConfig,
+  ClosedLoopConfig,
+  ClustersConfig,
+  CostTrackingConfig,
+  CrossAgentLearningConfig,
+  CrystallizationConfig,
+  DashboardConfig,
+  DigestConfig,
+  DocumentsConfig,
+  EntityExtractionConfig,
+  FrequencyCaptureConfig,
+  FrustrationDetectionConfig,
+  FutureDateProtectionConfig,
+  GapsConfig,
   GraphConfig,
   GraphRetrievalConfig,
-  ClustersConfig,
-  GapsConfig,
-  AliasesConfig,
-  IngestConfig,
-  MemoryTieringConfig,
-  AmbientConfig,
-  ReinforcementConfig,
-  FutureDateProtectionConfig,
-  DocumentsConfig,
-  WorkflowTrackingConfig,
-  CrystallizationConfig,
-  SelfExtensionConfig,
-  ImplicitFeedbackConfig,
-  ClosedLoopConfig,
-  FrustrationDetectionConfig,
-  CrossAgentLearningConfig,
-  ToolEffectivenessConfig,
-  CostTrackingConfig,
-  DashboardConfig,
-  ApiTapConfig,
   HumanizerConfig,
-  FrequencyCaptureConfig,
+  ImplicitFeedbackConfig,
+  IngestConfig,
+  LifecycleAdaptersConfig,
+  MemoryTieringConfig,
+  ReinforcementConfig,
+  SelfExtensionConfig,
+  ToolEffectivenessConfig,
+  WorkflowTrackingConfig,
 } from "./features.js";
 
 import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
@@ -75,7 +78,8 @@ import type { SensorSweepConfig } from "./sensors.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
-export type CronModelTier = "default" | "heavy" | "nano";
+/** "maintenance" = dedicated tier for scheduled/manual maintenance commands; falls back to "default" when unset. */
+export type CronModelTier = "default" | "maintenance" | "heavy" | "nano";
 
 /**
  * Per-provider API credentials for direct LLM calls (bypasses the gateway agent endpoint).
@@ -92,6 +96,11 @@ export type LLMProviderConfig = {
 export type LLMConfig = {
   /** Internal: set to "gateway" when auto-derived from agents.defaults.model; undefined when from plugin config. */
   _source?: "gateway";
+  /**
+   * Optional: ordered model list for maintenance/scheduled work — dream cycle, reflection, consolidation helpers.
+   * When not set, falls back to the default tier.
+   */
+  maintenance?: string[];
   /** Ordered preference for default-tier LLM calls (first available wins). */
   default: string[];
   /** Ordered preference for heavy-tier LLM calls (e.g. distill, spawn). */
@@ -239,15 +248,60 @@ export type VectorConfig = {
   autoRepair: boolean;
 };
 
-/** Active task working memory: ACTIVE-TASK.md persistence and session injection */
+/** Optional heartbeat / long-running hints for ACTIVE-TASKS.md rows (not goals). */
+export type ActiveTaskHygieneConfig = {
+  /**
+   * When the last user message matches goal stewardship heartbeat patterns,
+   * prepend an extra **task hygiene** block (stale counts, review nudge). Default: true.
+   */
+  heartbeatEscalation: boolean;
+  /**
+   * If > 0, tasks whose **updated** timestamp is older than this many **days**
+   * get a line suggesting `active_task_propose_goal` + `goal_register`. Default: 0 (off).
+   */
+  suggestGoalAfterTaskAgeDays: number;
+  /** Character budget for the heartbeat task-hygiene block. Default: 2500. */
+  heartbeatNudgeMaxChars: number;
+};
+
+export type ActiveTaskProjectionDedupeBy = "none" | "label" | "normalizedTitle";
+
+/** Facts-backed `ACTIVE-TASKS.md` projection (`hybrid-mem active-tasks render`). See docs/ACTIVE-TASKS-PROJECTION.md. */
+export type ActiveTaskProjectionConfig = {
+  /**
+   * `readable` applies filters and optional caps (default).
+   * `full` lists all rows (no title/dedupe filters); caps still apply when `maxRowsPerSection` is set.
+   */
+  mode: "readable" | "full";
+  /** Drop rows whose title resolves to the generic placeholder when `mode` is `readable` (default: true). */
+  excludeGenericTitle: boolean;
+  /** Minimum trimmed title length when > 0 (`readable` only). */
+  titleMinChars: number;
+  dedupeBy: ActiveTaskProjectionDedupeBy;
+  /** Cap per section (Active, Stale — revisit, Completed); omitted rows summarized in a footer line. */
+  maxRowsPerSection?: number;
+  /** Use sectioned layout (Active / Stale — revisit) for facts render (default: true). */
+  sectioned: boolean;
+};
+
+/** Active task working memory: ACTIVE-TASKS.md persistence and session injection */
 export type ActiveTaskConfig = {
   /** Enable active task working memory (default: true) */
   enabled: boolean;
-  /** Path to ACTIVE-TASK.md (default: "ACTIVE-TASK.md" in workspace root) */
+  /**
+   * Where the task ledger lives: `markdown` reads/writes ACTIVE-TASKS.md.
+   * `facts` uses hybrid-memory `category:project` facts (memory_store compatible).
+   * Default: markdown.
+   */
+  ledger: "markdown" | "facts";
+  /** Path to ACTIVE-TASKS.md (default: "ACTIVE-TASKS.md" in workspace root) */
   filePath: string;
   /** Auto-write task entries on subagent spawn/complete events (default: true) */
   autoCheckpoint: boolean;
-  /** Max tokens for session-start injection (default: 500) */
+  /**
+   * Max tokens for session-start injection (default: 500).
+   * Config must be a positive integer; fractional values are floored; non-positive values are not used (default applies).
+   */
   injectionBudget: number;
   /**
    * Duration before flagging a task as stale. Supports human-friendly strings:
@@ -264,6 +318,97 @@ export type ActiveTaskConfig = {
     /** Inject stale task warnings into context on before_agent_start (default: true) */
     enabled: boolean;
   };
+  /**
+   * Stronger nudges for normal tasks (docs/TASK-HYGIENE.md): heartbeat escalation,
+   * optional “consider a goal” hints for long-running tasks.
+   */
+  taskHygiene: ActiveTaskHygieneConfig;
+  /** Markdown projection when `ledger` is `facts` (render path, filters, sectioning). */
+  projection: ActiveTaskProjectionConfig;
+};
+
+/** Goal stewardship — autonomous pursuit of long-running goals (docs/GOAL-STEWARDSHIP-DESIGN.md). */
+export type GoalStewardshipDefaults = {
+  maxDispatches: number;
+  maxAssessments: number;
+  cooldownMinutes: number;
+  escalateAfterFailures: number;
+  priority: "critical" | "high" | "normal" | "low";
+};
+
+export type GoalStewardshipGlobalLimits = {
+  maxDispatchesPerHour: number;
+  maxActiveGoals: number;
+};
+
+/** Optional knobs for cross-feature escalation visibility (defaults preserve prior behavior). */
+export type GoalStewardshipEscalationPolicy = {
+  /**
+   * When heartbeat matches and task hygiene runs, append a **goal-escalation** snippet if any goal is **blocked** or **stalled**.
+   * Default: true.
+   */
+  taskHygieneOnBlockedGoals: boolean;
+};
+
+/** Trip goals stuck with unchanged blockers / no progress; escalate to human with summary (see docs/GOAL-STEWARDSHIP-OPERATOR.md). */
+export type GoalStewardshipCircuitBreakerConfig = {
+  enabled: boolean;
+  /** Consecutive assessments with the same blocker fingerprint before blocking (default: 0 = off). */
+  sameBlockerRepeatLimit: number;
+  /** Block when (assessmentCount - last progress assessment count) reaches this; 0 = off (default: 0). */
+  maxAssessmentsWithoutProgress: number;
+  /** Build human-readable summary for history / memory (default: true). */
+  composeHumanSummary: boolean;
+  /** Append escalation to workspace memory/YYYY-MM-DD.md when composeHumanSummary (default: true). */
+  appendMemoryEscalation: boolean;
+};
+
+/** Relative weights for multi-goal stewardship attention (default: critical 4, high 2, normal 1, low 0.5). */
+export type GoalStewardshipAttentionWeights = {
+  critical: number;
+  high: number;
+  normal: number;
+  low: number;
+};
+
+/** Which goal priorities require explicit `confirmed: true` on goal_register. */
+export type GoalStewardshipConfirmationPolicy = {
+  requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low">;
+};
+
+export type GoalStewardshipConfig = {
+  enabled: boolean;
+  goalsDir: string;
+  model: string | null;
+  heartbeatStewardship: boolean;
+  watchdogHealthCheck: boolean;
+  defaults: GoalStewardshipDefaults;
+  globalLimits: GoalStewardshipGlobalLimits;
+  /**
+   * Regex sources for heartbeat detection. Empty = built-in defaults (`heartbeat` and common variants).
+   */
+  heartbeatPatterns: string[];
+  attentionWeights: GoalStewardshipAttentionWeights;
+  /** Combined cap (characters) for multi-goal stewardship prepend blocks in one heartbeat. */
+  multiGoalMaxChars: number;
+  /** Max goals to include in one heartbeat after weighting. */
+  multiGoalMaxGoals: number;
+  /** On heartbeat, rewrite ACTIVE-TASKS.md with a Goals mirror section (requires activeTask.enabled). */
+  heartbeatRefreshActiveTask: boolean;
+  confirmationPolicy: GoalStewardshipConfirmationPolicy;
+  /**
+   * When true, call a nano-tier LLM once per heartbeat to refine triage. When false, heuristics only.
+   */
+  llmTriageOnHeartbeat: boolean;
+  /** When triage/heuristic indicates complex work, add a line suggesting heavy-tier reasoning for dispatch. */
+  triageSuggestHeavyDirective: boolean;
+  circuitBreaker: GoalStewardshipCircuitBreakerConfig;
+  /** Cross-layer nudges and visibility (issue #1096). */
+  escalationPolicy: GoalStewardshipEscalationPolicy;
+  /** Allow command_exit_zero verification in the watchdog (shell execution). Default: false. */
+  allowCommandVerification: boolean;
+  /** Allow pr_merged verification (GitHub API). Default: false — network + token required. */
+  allowPrVerification: boolean;
 };
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
@@ -442,6 +587,8 @@ export type HybridMemoryConfig = {
   credentials: CredentialsConfig;
   /** Graph-based spreading activation: auto-linking and graph traversal */
   graph: GraphConfig;
+  /** Entity extraction hygiene: suppress common-noun pseudo-entities (#1190). */
+  entityExtraction: EntityExtractionConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
   /** Event log archival configuration. */
@@ -486,8 +633,8 @@ export type HybridMemoryConfig = {
     reinforcementProcedureBoost?: number;
     /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
     reinforcementPromotionThreshold?: number;
-    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" or "default" saves cost and avoids locking the main model; unset = "heavy". */
-    extractionModelTier?: "nano" | "default" | "heavy";
+    /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset defaults to "nano". */
+    extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";
   };
   /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
   languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
@@ -503,8 +650,10 @@ export type HybridMemoryConfig = {
   multiAgent: MultiAgentConfig;
   /** Error reporting to GlitchTip/Sentry (opt-out, default: enabled with community DSN). Set enabled: false or consent: false to opt out. */
   errorReporting: ErrorReportingConfig;
-  /** Active task working memory — ACTIVE-TASK.md persistence and session injection (default: enabled) */
+  /** Active task working memory — ACTIVE-TASKS.md persistence and session injection (default: enabled) */
   activeTask: ActiveTaskConfig;
+  /** Goal stewardship — autonomous long-running goals (default: disabled). */
+  goalStewardship: GoalStewardshipConfig;
   /** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
   vector: VectorConfig;
   /** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */
@@ -587,6 +736,10 @@ export type HybridMemoryConfig = {
   apiTap: ApiTapConfig;
   /** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
   humanizer: HumanizerConfig;
+  /** Weekly digest delivery for cron + operator review (Issue #1197). */
+  digest: DigestConfig;
+  /** Entity lifecycle adapters — GitHub Phase 2 stub (Issue #1196). */
+  lifecycle: LifecycleAdaptersConfig;
   /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */
   frequencyCapture: FrequencyCaptureConfig;
   /**

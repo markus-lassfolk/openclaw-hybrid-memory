@@ -38,9 +38,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
+import { filterTraversableLinks } from "../services/graph-retrieval.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const { expandGraph, formatLinkPath, HOP_SCORE_DECAY, FactsDB } = _testing;
+
+describe("filterTraversableLinks", () => {
+  it("drops DERIVED_FROM links before hub-cap slicing when semantic links exist", () => {
+    const semantic = [{ id: "semantic", linkType: "RELATED_TO", strength: 1, targetFactId: "semantic-target" }];
+    const fanoutCap = 200;
+    const provenance = Array.from({ length: fanoutCap + 5 }, (_, i) => ({
+      id: `prov-${i}`,
+      linkType: "DERIVED_FROM",
+      strength: 1,
+      targetFactId: `prov-target-${i}`,
+    }));
+    const filtered = filterTraversableLinks([...provenance, ...semantic], fanoutCap);
+    expect(filtered).toEqual(semantic);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,6 +108,118 @@ function buildMockDb(
   linksTo: Record<string, Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>>,
 ) {
   const entryMap = new Map(entries.map((e) => [e.id, e]));
+
+  // Simulate the recursive CTE expansion
+  const expandGraphWithCTE = (seedFactIds: string[], maxDepth: number) => {
+    if (seedFactIds.length === 0 || maxDepth < 1) {
+      return seedFactIds.map((id) => ({
+        factId: id,
+        seedId: id,
+        hopCount: 0,
+        path: "[]",
+      }));
+    }
+
+    const results: Array<{
+      factId: string;
+      seedId: string;
+      hopCount: number;
+      path: string;
+    }> = [];
+
+    // Track best path to each node
+    const bestPath = new Map<
+      string,
+      { hopCount: number; seedId: string; path: Array<unknown>; visited: Set<string> }
+    >();
+
+    // Initialize seeds
+    for (const seedId of seedFactIds) {
+      bestPath.set(seedId, { hopCount: 0, seedId, path: [], visited: new Set([seedId]) });
+    }
+
+    // BFS expansion
+    let frontier = seedFactIds.map((id) => bestPath.get(id)!);
+    for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
+      const nextFrontier: Array<{
+        hopCount: number;
+        seedId: string;
+        path: Array<any>;
+        visited: Set<string>;
+        currentId: string;
+      }> = [];
+
+      for (const current of frontier) {
+        // Derive current ID from path or seed
+        const currentId = current.path.length > 0 ? current.path[current.path.length - 1].toFactId : current.seedId;
+
+        // Traverse outgoing links
+        const outLinks = linksFrom[currentId] ?? [];
+        for (const link of outLinks) {
+          if (link.linkType === "CONTRADICTS") continue;
+          if (current.visited.has(link.targetFactId)) continue;
+
+          const existing = bestPath.get(link.targetFactId);
+          if (!existing || hop < existing.hopCount) {
+            const newPath = [
+              ...current.path,
+              {
+                fromFactId: currentId,
+                toFactId: link.targetFactId,
+                linkType: link.linkType,
+                strength: link.strength,
+              },
+            ];
+            const newVisited = new Set([...current.visited, link.targetFactId]);
+            const newNode = { hopCount: hop, seedId: current.seedId, path: newPath, visited: newVisited };
+            bestPath.set(link.targetFactId, newNode);
+            nextFrontier.push(newNode);
+          }
+        }
+
+        // Traverse incoming links
+        const inLinks = linksTo[currentId] ?? [];
+        for (const link of inLinks) {
+          if (link.linkType === "CONTRADICTS") continue;
+          if (current.visited.has(link.sourceFactId)) continue;
+
+          const existing = bestPath.get(link.sourceFactId);
+          if (!existing || hop < existing.hopCount) {
+            const newPath = [
+              ...current.path,
+              {
+                fromFactId: currentId,
+                toFactId: link.sourceFactId,
+                linkType: link.linkType,
+                strength: link.strength,
+              },
+            ];
+            const newVisited = new Set([...current.visited, link.sourceFactId]);
+            const newNode = { hopCount: hop, seedId: current.seedId, path: newPath, visited: newVisited };
+            bestPath.set(link.sourceFactId, newNode);
+            nextFrontier.push(newNode);
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+
+    // Convert to result format
+    for (const [factId, node] of bestPath.entries()) {
+      results.push({
+        factId,
+        seedId: node.seedId,
+        hopCount: node.hopCount,
+        path: JSON.stringify(node.path),
+      });
+    }
+
+    // Sort by hopCount, then factId
+    results.sort((a, b) => (a.hopCount !== b.hopCount ? a.hopCount - b.hopCount : a.factId.localeCompare(b.factId)));
+
+    return results;
+  };
+
   return {
     getById: (id: string) => entryMap.get(id) ?? null,
     getByIds: (ids: string[]) => {
@@ -104,6 +232,7 @@ function buildMockDb(
     },
     getLinksFrom: (id: string) => linksFrom[id] ?? [],
     getLinksTo: (id: string) => linksTo[id] ?? [],
+    expandGraphWithCTE,
   };
 }
 
@@ -114,7 +243,7 @@ function buildMockDb(
 describe("expandGraph: seed handling", () => {
   it("returns empty array when seed set is empty", () => {
     const db = buildMockDb([], {}, {});
-    const result = expandGraph(db, [], {});
+    const { results: result } = expandGraph(db, [], {});
     expect(result).toHaveLength(0);
   });
 
@@ -122,7 +251,7 @@ describe("expandGraph: seed handling", () => {
     const a = makeEntry("a");
     const db = buildMockDb([a], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const seeds = [{ factId: "a", score: 0.9, entry: a }];
-    const result = expandGraph(db, seeds, { maxDepth: 0 });
+    const { results: result } = expandGraph(db, seeds, { maxDepth: 0 });
     expect(result).toHaveLength(1);
     expect(result[0].factId).toBe("a");
     expect(result[0].expansionSource).toBe("direct");
@@ -132,7 +261,7 @@ describe("expandGraph: seed handling", () => {
     const a = makeEntry("a");
     const db = buildMockDb([a], {}, {});
     const seeds = [{ factId: "a", score: 0.8, entry: a }];
-    const result = expandGraph(db, seeds, { maxDepth: 2 });
+    const { results: result } = expandGraph(db, seeds, { maxDepth: 2 });
     expect(result).toHaveLength(1);
     expect(result[0].expansionSource).toBe("direct");
     expect(result[0].hopCount).toBe(0);
@@ -147,7 +276,7 @@ describe("expandGraph: seed handling", () => {
       { factId: "a", score: 0.9, entry: a },
       { factId: "b", score: 0.7, entry: b },
     ];
-    const result = expandGraph(db, seeds, { maxDepth: 0 });
+    const { results: result } = expandGraph(db, seeds, { maxDepth: 0 });
     for (const r of result) {
       expect(r.expansionSource).toBe("direct");
       expect(r.hopCount).toBe(0);
@@ -165,7 +294,7 @@ describe("expandGraph: 1-hop expansion", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.8 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result).toHaveLength(2);
     const expanded = result.find((r) => r.factId === "b");
     expect(expanded).toBeDefined();
@@ -177,7 +306,7 @@ describe("expandGraph: 1-hop expansion", () => {
     const a = makeEntry("a");
     const c = makeEntry("c");
     const db = buildMockDb([a, c], {}, { a: [{ id: "l2", sourceFactId: "c", linkType: "CAUSED_BY", strength: 0.9 }] });
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result).toHaveLength(2);
     const expanded = result.find((r) => r.factId === "c");
     expect(expanded).toBeDefined();
@@ -189,7 +318,7 @@ describe("expandGraph: 1-hop expansion", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const aResults = result.filter((r) => r.factId === "a");
     expect(aResults).toHaveLength(1); // seed appears once
     expect(aResults[0].expansionSource).toBe("direct");
@@ -213,7 +342,7 @@ describe("expandGraph: multi-hop traversal", () => {
       },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
     const factIds = result.map((r) => r.factId);
     expect(factIds).toContain("a");
     expect(factIds).toContain("b");
@@ -233,7 +362,7 @@ describe("expandGraph: multi-hop traversal", () => {
       },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 3 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 3 });
     expect(result.find((r) => r.factId === "d")?.hopCount).toBe(3);
   });
 
@@ -248,7 +377,7 @@ describe("expandGraph: multi-hop traversal", () => {
       },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result.map((r) => r.factId)).not.toContain("c");
     expect(result.map((r) => r.factId)).toContain("b");
   });
@@ -275,7 +404,7 @@ describe("expandGraph: deduplication", () => {
       },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
     const cEntries = result.filter((r) => r.factId === "c");
     expect(cEntries).toHaveLength(1);
     // Shorter path (1-hop) should be preferred
@@ -297,7 +426,7 @@ describe("expandGraph: deduplication", () => {
       },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
     const cResult = result.find((r) => r.factId === "c");
     expect(cResult?.hopCount).toBe(1);
   });
@@ -312,7 +441,7 @@ describe("expandGraph: ranking and scoring", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 0.5, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 0.5, entry: a }], { maxDepth: 1 });
     expect(result[0].factId).toBe("a"); // direct before expanded
     expect(result[0].expansionSource).toBe("direct");
   });
@@ -322,7 +451,7 @@ describe("expandGraph: ranking and scoring", () => {
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const seedScore = 0.8;
-    const result = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 1 });
     const bResult = result.find((r) => r.factId === "b");
     expect(bResult?.score).toBeCloseTo(seedScore * HOP_SCORE_DECAY[1], 5);
   });
@@ -340,7 +469,7 @@ describe("expandGraph: ranking and scoring", () => {
       {},
     );
     const seedScore = 1.0;
-    const result = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 2 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 2 });
     const cResult = result.find((r) => r.factId === "c");
     expect(cResult?.score).toBeCloseTo(seedScore * HOP_SCORE_DECAY[2], 5);
   });
@@ -349,7 +478,7 @@ describe("expandGraph: ranking and scoring", () => {
     const a = makeEntry("a");
     const db = buildMockDb([a], {}, {});
     const seedScore = 0.732;
-    const result = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 0 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 0 });
     expect(result[0].score).toBeCloseTo(seedScore, 5);
   });
 
@@ -367,7 +496,7 @@ describe("expandGraph: ranking and scoring", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 0.9, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 0.9, entry: a }], { maxDepth: 1 });
     const directScore = result.find((r) => r.factId === "a")?.score;
     const expandedScore = result.find((r) => r.factId === "b")?.score;
     expect(directScore).toBeGreaterThan(expandedScore);
@@ -382,7 +511,7 @@ describe("expandGraph: link path annotation", () => {
   it("linkPath is empty for direct results", () => {
     const a = makeEntry("a");
     const db = buildMockDb([a], {}, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 0 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 0 });
     expect(result[0].linkPath).toHaveLength(0);
   });
 
@@ -394,7 +523,7 @@ describe("expandGraph: link path annotation", () => {
       { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.75 }] },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const bResult = result.find((r) => r.factId === "b")!;
     expect(bResult.linkPath).toHaveLength(1);
     expect(bResult.linkPath[0].fromFactId).toBe("a");
@@ -407,7 +536,7 @@ describe("expandGraph: link path annotation", () => {
     const a = makeEntry("a");
     const c = makeEntry("c");
     const db = buildMockDb([a, c], {}, { a: [{ id: "l2", sourceFactId: "c", linkType: "CAUSED_BY", strength: 0.6 }] });
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const cResult = result.find((r) => r.factId === "c")!;
     expect(cResult.linkPath).toHaveLength(1);
     expect(cResult.linkPath[0].fromFactId).toBe("a");
@@ -428,7 +557,7 @@ describe("expandGraph: link path annotation", () => {
       },
       {},
     );
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
     const cResult = result.find((r) => r.factId === "c")!;
     expect(cResult.linkPath).toHaveLength(2);
     expect(cResult.linkPath[0].linkType).toBe("RELATED_TO");
@@ -449,7 +578,7 @@ describe("expandGraph: maxExpandedResults", () => {
       a: targets.map((t, i) => ({ id: `l${i}`, targetFactId: t.id, linkType: "RELATED_TO", strength: 1.0 })),
     };
     const db = buildMockDb([a, ...targets], linksFrom, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], {
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], {
       maxDepth: 1,
       maxExpandedResults: 3,
     });
@@ -461,7 +590,7 @@ describe("expandGraph: maxExpandedResults", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], {
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], {
       maxDepth: 1,
       maxExpandedResults: 20,
     });
@@ -487,7 +616,7 @@ describe("expandGraph: multiple seeds", () => {
       },
       {},
     );
-    const result = expandGraph(
+    const { results: result } = expandGraph(
       db,
       [
         { factId: "a", score: 0.9, entry: a },
@@ -513,7 +642,8 @@ describe("expandGraph: various link types", () => {
     "PART_OF",
     "CAUSED_BY",
     "DEPENDS_ON",
-    "CONTRADICTS",
+    // CONTRADICTS is intentionally excluded from graph traversal
+    // (see FactsDB.getConnectedFactIds comment)
     "INSTANCE_OF",
     "DERIVED_FROM",
     "SUPERSEDES",
@@ -521,10 +651,70 @@ describe("expandGraph: various link types", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType, strength: 1.0 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const bResult = result.find((r) => r.factId === "b");
     expect(bResult).toBeDefined();
     expect(bResult?.linkPath[0].linkType).toBe(linkType);
+  });
+
+  it("does not expand through high-degree DERIVED_FROM provenance hubs", () => {
+    const seed = makeEntry("seed");
+    const semantic = makeEntry("semantic");
+    const entries = [seed, semantic];
+    const derivedLinks = [];
+    for (let i = 0; i < 205; i++) {
+      const id = `src-${i}`;
+      entries.push(makeEntry(id));
+      derivedLinks.push({ id: `d-${i}`, targetFactId: id, linkType: "DERIVED_FROM", strength: 1.0 });
+    }
+    const db = buildMockDb(
+      entries,
+      {
+        seed: [
+          ...derivedLinks,
+          { id: "semantic-link", targetFactId: "semantic", linkType: "RELATED_TO", strength: 1.0 },
+        ],
+      },
+      {},
+    );
+
+    const { results: result } = expandGraph(db, [{ factId: "seed", score: 1.0, entry: seed }], {
+      maxDepth: 1,
+      hubDegreeCap: 200,
+    });
+
+    expect(result.some((r) => r.factId.startsWith("src-"))).toBe(false);
+    expect(result.some((r) => r.factId === "semantic")).toBe(true);
+  });
+
+  it("does not include session heartbeat facts through high-degree DERIVED_FROM hubs at depth 2", () => {
+    const seed = makeEntry("seed");
+    const hub = makeEntry("hub", { text: "[consolidated from 205 events] session_start; session_end" });
+    const semantic = makeEntry("semantic");
+    const entries = [seed, hub, semantic];
+    const hubLinks = [];
+    for (let i = 0; i < 205; i++) {
+      const id = `heartbeat-${i}`;
+      entries.push(makeEntry(id, { text: i % 2 === 0 ? "session_start" : "session_end" }));
+      hubLinks.push({ id: `d-${i}`, targetFactId: id, linkType: "DERIVED_FROM", strength: 1.0 });
+    }
+    const db = buildMockDb(
+      entries,
+      {
+        seed: [{ id: "to-hub", targetFactId: "hub", linkType: "RELATED_TO", strength: 1.0 }],
+        hub: [...hubLinks, { id: "semantic-link", targetFactId: "semantic", linkType: "RELATED_TO", strength: 1.0 }],
+      },
+      {},
+    );
+
+    const { results: result } = expandGraph(db, [{ factId: "seed", score: 1.0, entry: seed }], {
+      maxDepth: 2,
+      hubDegreeCap: 200,
+    });
+
+    expect(result.some((r) => r.factId.startsWith("heartbeat-"))).toBe(false);
+    expect(result.some((r) => r.factId === "hub")).toBe(true);
+    expect(result.some((r) => r.factId === "semantic")).toBe(true);
   });
 });
 
@@ -537,7 +727,7 @@ describe("expandGraph: missing DB entries", () => {
     const a = makeEntry("a");
     // Link to "b" but "b" is not in DB
     const db = buildMockDb([a], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
-    const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result).toHaveLength(1); // only the seed
     expect(result[0].factId).toBe("a");
   });
@@ -608,7 +798,7 @@ describe("Integration: expandGraph with real FactsDB", () => {
     db.createLink(factA.id, factB.id, "RELATED_TO", 0.9);
 
     const aEntry = db.getById(factA.id)!;
-    const result = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
       maxDepth: 1,
     });
 
@@ -628,7 +818,7 @@ describe("Integration: expandGraph with real FactsDB", () => {
     db.createLink(factB.id, factC.id, "CAUSED_BY", 1.0);
 
     const aEntry = db.getById(factA.id)!;
-    const result = expandGraph(db, [{ factId: factA.id, score: 0.8, entry: aEntry }], {
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 0.8, entry: aEntry }], {
       maxDepth: 2,
     });
 
@@ -646,7 +836,7 @@ describe("Integration: expandGraph with real FactsDB", () => {
     db.createLink(factB.id, factC.id, "RELATED_TO", 1.0);
 
     const aEntry = db.getById(factA.id)!;
-    const result = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
       maxDepth: 1,
     });
 
@@ -659,7 +849,7 @@ describe("Integration: expandGraph with real FactsDB", () => {
     db.createLink(factA.id, factB.id, "RELATED_TO", 1.0);
 
     const aEntry = db.getById(factA.id)!;
-    const result = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
       maxDepth: 0,
     });
 
@@ -677,7 +867,7 @@ describe("Integration: expandGraph with real FactsDB", () => {
     db.createLink(factB.id, factC.id, "DEPENDS_ON", 1.0);
 
     const aEntry = db.getById(factA.id)!;
-    const result = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
       maxDepth: 2,
     });
 
@@ -686,14 +876,41 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(cResults[0].hopCount).toBe(1); // shortest path preferred
   });
 
-  it("incoming links are traversed bidirectionally in real DB", () => {
+  it("bounds real CTE expansion through a synthetic high-degree hub", () => {
+    const seed = storeFact("Seed for bounded graph");
+    const hub = storeFact("[consolidated from 10000 events] session_start; session_end");
+    const semantic = storeFact("Useful semantic neighbour");
+    db.createLink(seed.id, hub.id, "RELATED_TO", 1.0);
+    for (let i = 0; i < 600; i++) {
+      const heartbeat = storeFact(i % 2 === 0 ? "session_start" : "session_end");
+      db.getRawDb()
+        .prepare(
+          "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1.0, strftime('%s','now'))",
+        )
+        .run(`legacy-${i}`, hub.id, heartbeat.id);
+    }
+    db.createLink(hub.id, semantic.id, "RELATED_TO", 1.0);
+
+    const seedEntry = db.getById(seed.id)!;
+    const { results: result } = expandGraph(db, [{ factId: seed.id, score: 1.0, entry: seedEntry }], {
+      maxDepth: 3,
+      maxExpandedResults: 50,
+    });
+
+    expect(result.length).toBeLessThanOrEqual(51); // direct seed + maxExpandedResults
+    expect(result.some((r) => r.entry.text === "session_start" || r.entry.text === "session_end")).toBe(false);
+    expect(result.some((r) => r.factId === hub.id)).toBe(true);
+    expect(result.some((r) => r.factId === semantic.id)).toBe(true);
+  });
+
+  it("incoming semantic links are traversed bidirectionally in real DB", () => {
     const factA = storeFact("Target");
     const factB = storeFact("Source that points to target");
     // B→A (incoming to A)
-    db.createLink(factB.id, factA.id, "DERIVED_FROM", 0.8);
+    db.createLink(factB.id, factA.id, "RELATED_TO", 0.8);
 
     const aEntry = db.getById(factA.id)!;
-    const result = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
       maxDepth: 1,
     });
 
@@ -701,4 +918,45 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(bResult).toBeDefined();
     expect(bResult?.expansionSource).toBe("graph");
   });
+
+  it("bounds expansion + finishes quickly through a literal 10k-edge hub (#1192)", () => {
+    const seed = storeFact("Seed across a 10k-edge hub");
+    const hub = storeFact("[consolidated from 10000 events] session_start; session_end");
+    const semantic = storeFact("Useful semantic neighbour past the hub");
+    db.createLink(seed.id, hub.id, "RELATED_TO", 1.0);
+    db.createLink(hub.id, semantic.id, "RELATED_TO", 1.0);
+
+    // Synthesize a literal 10k-edge hub: 10000 DERIVED_FROM legacy rows hanging off the hub.
+    const insertLink = db
+      .getRawDb()
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1.0, strftime('%s','now'))",
+      );
+    db.getRawDb().exec("BEGIN");
+    try {
+      for (let i = 0; i < 10000; i++) {
+        const noise = storeFact(i % 2 === 0 ? "session_start" : "session_end");
+        insertLink.run(`hub-edge-${i}`, hub.id, noise.id);
+      }
+      db.getRawDb().exec("COMMIT");
+    } catch (err) {
+      db.getRawDb().exec("ROLLBACK");
+      throw err;
+    }
+
+    db.refreshFactDegrees();
+
+    const seedEntry = db.getById(seed.id)!;
+    const start = Date.now();
+    const { results: result } = expandGraph(db, [{ factId: seed.id, score: 1.0, entry: seedEntry }], {
+      maxDepth: 3,
+      maxExpandedResults: 20,
+      hubDegreeCap: 500,
+    });
+    const elapsedMs = Date.now() - start;
+
+    expect(result.length).toBeLessThanOrEqual(21);
+    expect(result.some((r) => r.entry.text === "session_start" || r.entry.text === "session_end")).toBe(false);
+    expect(elapsedMs).toBeLessThan(5000);
+  }, 30_000);
 });

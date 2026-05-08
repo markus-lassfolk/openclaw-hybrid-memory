@@ -12,8 +12,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: vi.fn(async (...args: any[]) => {
       const fh = await actualOpen(...(args as Parameters<typeof actualOpen>));
-      // Only intercept the 'r' (read-only) opens used by fsyncAfterWrite.
-      if (args[1] === "r") {
+      // Intercept append-mode opens used by fsyncAfterWrite.
+      if (args[1] === "r" || args[1] === "a" || args[1] === "a+") {
         const origDatasync = fh.datasync.bind(fh);
         (fh as any).datasync = async () => {
           if (fsyncError.value) {
@@ -478,9 +478,15 @@ describe("WriteAheadLog", () => {
     });
 
     it("returns only non-stale entries", async () => {
+      // Use a large maxAge so slow fsync-heavy writes on CI cannot push the "recent"
+      // entry past the staleness window before getValidEntries() runs.
+      const maxAgeMs = 60_000;
+      const localWal = new WriteAheadLog(walPath, maxAgeMs);
+      await localWal.init();
+
       const oldEntry = {
         id: randomUUID(),
-        timestamp: Date.now() - 2000, // 2 seconds old
+        timestamp: Date.now() - maxAgeMs - 1000,
         operation: "store" as const,
         data: { text: "Old", category: "general", importance: 0.7, source: "test" },
       };
@@ -492,10 +498,10 @@ describe("WriteAheadLog", () => {
         data: { text: "Recent", category: "general", importance: 0.8, source: "test" },
       };
 
-      await wal.write(oldEntry);
-      await wal.write(recentEntry);
+      await localWal.write(oldEntry);
+      await localWal.write(recentEntry);
 
-      const validEntries = await wal.getValidEntries();
+      const validEntries = await localWal.getValidEntries();
       expect(validEntries).toHaveLength(1);
       expect(validEntries[0].id).toBe(recentEntry.id);
     });

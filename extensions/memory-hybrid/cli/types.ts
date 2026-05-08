@@ -37,10 +37,35 @@ export type StoreCliResult =
   | { outcome: "stored"; id: string; textPreview: string; supersededId?: string };
 
 export type InstallCliResult =
-  | { ok: true; configPath: string; dryRun: boolean; written: boolean; configJson?: string; pluginId: string }
+  | {
+      ok: true;
+      configPath: string;
+      dryRun: boolean;
+      written: boolean;
+      configJson?: string;
+      pluginId: string;
+      /** Highest-precedence OpenClaw workspace skill path ({workspace}/skills/hybrid-memory/SKILL.md). */
+      workspaceSkillPath?: string;
+      workspaceSkillError?: string;
+      /** Workspace TOOLS.md path when the Hybrid memory managed block is applied. */
+      workspaceToolsMdPath?: string;
+      workspaceToolsMdError?: string;
+      workspaceToolsMdUpdated?: boolean;
+    }
   | { ok: false; error: string };
 
 export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
+
+export type EncryptVaultResult =
+  | { ok: true; dryRun: true; vaultPath: string; status: { kdfVersion: number; encryptedAtRest: boolean } }
+  | {
+      ok: true;
+      dryRun: false;
+      vaultPath: string;
+      migrated: number;
+      status: { kdfVersion: number; encryptedAtRest: boolean };
+    }
+  | { ok: false; vaultPath: string; error: string };
 
 export type DistillWindowResult = {
   mode: "full" | "incremental";
@@ -133,7 +158,18 @@ export type CredentialsPruneResult = {
   dryRun: boolean;
 };
 
-export type UpgradeCliResult = { ok: true; version: string; pluginDir: string } | { ok: false; error: string };
+export type UpgradeCliResult =
+  | {
+      ok: true;
+      version: string;
+      pluginDir: string;
+      workspaceSkillPath?: string;
+      workspaceSkillError?: string;
+      workspaceToolsMdPath?: string;
+      workspaceToolsMdError?: string;
+      workspaceToolsMdUpdated?: boolean;
+    }
+  | { ok: false; error: string };
 
 export type UninstallCliResult =
   | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
@@ -160,6 +196,8 @@ export type ActiveTaskListResult = {
   staleCount: number;
   filePath: string;
   fileExists: boolean;
+  /** When `facts`, list comes from category:project in SQLite */
+  ledger?: "markdown" | "facts";
 };
 
 export type ActiveTaskCompleteResult = { ok: true; label: string; flushedTo?: string } | { ok: false; error: string };
@@ -170,7 +208,7 @@ export type ActiveTaskStaleResult = {
     description: string;
     status: string;
     updated: string;
-    hoursStale: number;
+    hoursStale: number | "?";
   }>;
   total: number;
   filePath: string;

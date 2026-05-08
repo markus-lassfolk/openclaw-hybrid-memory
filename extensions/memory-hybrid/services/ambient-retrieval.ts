@@ -30,7 +30,7 @@ export interface AmbientQuery {
   entity?: string;
 }
 
-export interface AmbientContext {
+interface AmbientContext {
   /** User/author identifier (e.g. userId). */
   userId?: string;
   /** Channel or conversation identifier. */
@@ -454,12 +454,12 @@ const ERROR_KEYWORDS = [
  * Detect whether a message text contains error-like keywords that suggest
  * the user is dealing with an active problem.
  */
-export function hasErrorKeywords(text: string): boolean {
+function hasErrorKeywords(text: string): boolean {
   const lower = text.toLowerCase();
   return ERROR_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
-export interface IssueAmbientResult {
+interface IssueAmbientResult {
   /** Open issues that may be relevant to the current message. */
   openIssues: Issue[];
   /** Resolved/verified issues that may contain relevant resolution context. */

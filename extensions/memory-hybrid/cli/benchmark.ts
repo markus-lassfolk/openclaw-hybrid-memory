@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI: `openclaw benchmark run` — run the shadow evaluation benchmark suite.
  *
@@ -10,28 +11,28 @@
  *   openclaw benchmark run --iterations 100  — custom iteration count
  */
 
-import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { Chainable } from "./shared.js";
-import type { HybridMemCliContext } from "./register.js";
+import { join } from "node:path";
 import type { BenchmarkResult } from "../benchmark/shadow-eval.js";
 import {
-  runBenchmark,
-  runAllBenchmarks,
   formatBenchmarkResult,
   formatBenchmarkResults,
+  runAllBenchmarks,
+  runBenchmark,
 } from "../benchmark/shadow-eval.js";
+import type { HybridMemCliContext } from "./register.js";
+import type { Chainable } from "./shared.js";
 
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
-export type BenchmarkRunContext = {
+type BenchmarkRunContext = {
   /** Path to the SQLite database (llm_cost_log lives here) */
   dbPath: string;
 };
 
-export async function runBenchmarkCommand(
+async function runBenchmarkCommand(
   ctx: BenchmarkRunContext,
   options: {
     feature?: string;
@@ -111,7 +112,7 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
       const dbPath = (
         typeof cfg.sqlitePath === "string" && cfg.sqlitePath
           ? cfg.sqlitePath
-          : join(process.env.HOME ?? "/home/markus", ".openclaw", "memory", "facts.db")
+          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
       ) as string;
 
       await runBenchmarkCommand(

@@ -1,9 +1,10 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.3.260",
+  "version": "2026.5.70",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
+    "dist",
     "index.ts",
     "api",
     "config.ts",
@@ -18,8 +19,11 @@
     "services",
     "tools",
     "utils",
+    "benchmark",
     "types",
     "prompts",
+    "skills",
+    "workspace-snippets",
     "scripts",
     "npm-shrinkwrap.json",
     "openclaw.plugin.json",
@@ -34,16 +38,23 @@
   "peerDependencies": {
     "@sinclair/typebox": "^0.34.48",
     "openai": "^6.16.0",
-    "openclaw": ">=2026.3.8"
+    "openclaw": ">=2026.5.0 <2027"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
-    "@types/node": "^25.2.3"
+    "@types/node": "^25.2.3",
+    "franc": "^6.2.0"
+  },
+  "optionalDependencies": {
+    "onnxruntime-node": "^1.20.0"
   },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": ["./dist/index.js"],
+    "runtimeExtensions": ["./dist/index.js"]
   },
   "scripts": {
+    "build": "tsdown",
+    "build:check": "tsdown && node scripts/verify-publish.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -53,7 +64,7 @@
     "format:check": "biome format --max-diagnostics=none .",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
-    "prepack": "node scripts/manage-shrinkwrap.cjs create",
+    "prepack": "npm run build && node scripts/manage-shrinkwrap.cjs create",
     "postpack": "node scripts/manage-shrinkwrap.cjs clean",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
@@ -63,17 +74,22 @@
     "@vitest/coverage-v8": "^4.0.18",
     "commander": "^13.1.0",
     "knip": "^5.0.0",
+    "tsdown": "^0.21.10",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "overrides": {
+    "ip-address": ">=10.1.1",
     "@hono/node-server": ">=1.19.10 <2",
+    "axios": ">=1.15.0",
     "fast-xml-parser": ">=5.5.6",
+    "follow-redirects": ">=1.16.0",
     "opusscript": "0.1.1",
+    "tar": ">=7.5.11",
     "yauzl": ">=3.2.1"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.16.0"
   },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
   "bugs": {

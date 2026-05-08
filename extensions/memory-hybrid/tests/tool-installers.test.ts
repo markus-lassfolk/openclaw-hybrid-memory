@@ -7,6 +7,7 @@ describe("tool installers", () => {
   it("keeps core installers ahead of optional feature installers", () => {
     expect(toolInstallers.map((installer) => `${installer.bootstrapPhase}:${installer.id}`)).toEqual([
       "core:memoryCore",
+      "core:goalStewardship",
       "core:retrievalGraph",
       "core:memoryUtility",
       "optional:provenance",
@@ -20,6 +21,7 @@ describe("tool installers", () => {
       "optional:selfExtension",
       "optional:apitap",
       "optional:dashboard",
+      "optional:publicApi",
     ]);
   });
 
@@ -59,12 +61,14 @@ describe("tool installers", () => {
         walRemove,
         issueStore: { kind: "issues" },
         workflowStore: { kind: "workflow" },
+        auditStore: { kind: "audit" },
       } as never,
       { logger: { warn: vi.fn() } } as never,
     ) as MemoryToolsContext & Record<string, unknown>;
 
     expect(Object.keys(selected).sort()).toEqual([
       "aliasDb",
+      "auditStore",
       "buildToolScopeFilter",
       "cfg",
       "credentialsDb",
@@ -94,7 +98,7 @@ describe("tool installers", () => {
     await selected.walWrite("store", { foo: "bar" }, logger);
     await selected.walRemove("wal-id", logger);
 
-    expect(walWrite).toHaveBeenCalledWith(wal, "store", { foo: "bar" }, logger);
+    expect(walWrite).toHaveBeenCalledWith(wal, "store", { foo: "bar" }, logger, undefined);
     expect(walRemove).toHaveBeenCalledWith(wal, "wal-id", logger);
     expect(selected.buildToolScopeFilter).toBe(buildToolScopeFilter);
     expect(selected.findSimilarByEmbedding).toBe(findSimilarByEmbedding);

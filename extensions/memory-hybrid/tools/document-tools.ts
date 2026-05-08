@@ -6,31 +6,32 @@
  * Python bridge, chunks the result, and stores each chunk as a fact.
  */
 
-import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { Type } from "@sinclair/typebox";
 import type OpenAI from "openai";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { PythonBridge } from "../services/python-bridge.js";
-import { chunkMarkdown } from "../services/document-chunker.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import {
+  type HybridMemoryConfig,
+  type MemoryCategory,
   getCronModelConfig,
   getLLMModelPreference,
   getMemoryCategories,
-  type HybridMemoryConfig,
-  type MemoryCategory,
 } from "../config.js";
+import { chunkMarkdown } from "../services/document-chunker.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { chatCompletionTokenParams } from "../services/model-capabilities.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import type { PythonBridge } from "../services/python-bridge.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
-import type { ProvenanceService } from "../services/provenance.js";
 
-export interface DocumentToolsContext {
+interface DocumentToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
@@ -111,7 +112,7 @@ function createProgressTracker(logger: { info: (msg: string) => void }, label?: 
 }
 
 function isUnderAllowedPaths(realPath: string, allowedPaths?: string[]): boolean {
-  if (!allowedPaths || allowedPaths.length === 0) return true;
+  if (!allowedPaths || allowedPaths.length === 0) return false;
   return allowedPaths.some((root) => {
     try {
       const realRoot = realpathSync.native(resolve(root));
@@ -238,7 +239,7 @@ async function describeImageWithVision(opts: {
           },
         ],
         temperature: 0.2,
-        max_tokens: 800,
+        ...chatCompletionTokenParams(model, 800),
       });
       const text = resp.choices[0]?.message?.content?.trim() ?? "";
       if (!text) {
@@ -567,7 +568,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       const chunkTags = [...baseTags, ...(headingTag ? [headingTag] : []), ...extractTags(chunk.text, title)];
 
       const chunkText = chunk.text;
-      let entry: any;
+      let entry;
       try {
         entry = factsDb.store({
           text: chunkText,

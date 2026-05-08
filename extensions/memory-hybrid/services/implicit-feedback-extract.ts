@@ -7,7 +7,7 @@
 import type { ImplicitFeedbackConfig, ImplicitSignalType } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface ImplicitSignal {
+interface ImplicitSignal {
   type: ImplicitSignalType;
   confidence: number; // 0-1
   polarity: "positive" | "negative" | "neutral";

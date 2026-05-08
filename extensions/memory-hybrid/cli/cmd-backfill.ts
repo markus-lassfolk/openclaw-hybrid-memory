@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI Backfill, Ingest, and Analyze-Feedback-Phrases Handlers
  *
@@ -21,6 +22,7 @@ import { basename, dirname, join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isValidCategory } from "../config.js";
 import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
@@ -221,7 +223,7 @@ export async function runBackfillForCli(
   sink: BackfillCliSink,
 ): Promise<BackfillCliResult> {
   const { factsDb, vectorDb, embeddings } = ctx;
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const files = gatherBackfillFiles(workspaceRoot);
   if (files.length === 0) {
     sink.log(`No MEMORY.md or memory/**/*.md under ${workspaceRoot}`);
@@ -270,7 +272,7 @@ export async function runBackfillForCli(
   for (const fact of allCandidates) {
     if (limit > 0 && stored >= limit) break;
     progress.update(processed + 1);
-    if (factsDb.hasDuplicate(fact.text)) {
+    if (factsDb.hasDuplicate(fact.text, `backfill:${fact.source}`)) {
       skipped++;
       processed++;
       continue;
@@ -373,6 +375,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           openai,
           fallbackModels: nanoPref.length > 1 ? nanoPref.slice(1) : undefined,
           label: "memory-hybrid: feedback-phrases sentiment",
+          feature: CostFeature.backfillSentiment,
         });
         const lines = (content ?? "").split(/\r?\n/).map((l) => l.trim().toLowerCase());
         if (lines.length < batch.length) {
@@ -550,7 +553,7 @@ export async function runIngestFilesForCli(
   sink: IngestFilesSink,
 ): Promise<IngestFilesResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
   const ingestCfg = cfg.ingest;
   const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;
@@ -618,6 +621,7 @@ export async function runIngestFilesForCli(
         openai,
         fallbackModels: ingestFallbacks,
         label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
+        feature: CostFeature.backfillIngest,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {
@@ -658,7 +662,7 @@ export async function runIngestFilesForCli(
   let stored = 0;
   let skipped = 0;
   for (const fact of allFacts) {
-    if (factsDb.hasDuplicate(fact.text)) {
+    if (factsDb.hasDuplicate(fact.text, "ingest")) {
       skipped++;
       continue;
     }

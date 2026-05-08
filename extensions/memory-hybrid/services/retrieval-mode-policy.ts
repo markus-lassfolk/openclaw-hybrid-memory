@@ -1,6 +1,6 @@
 import type { AutoRecallConfig, HybridMemoryConfig, RetrievalConfig } from "../config.js";
 
-export type RetrievalMode = "interactive-recall" | "explicit-deep";
+export type RetrievalMode = "interactive-recall" | "explicit-deep" | "constrained-recall";
 
 /** @deprecated Use string literals directly or InteractiveRecallPolicy / ExplicitDeepRetrievalPolicy types */
 export const RETRIEVAL_MODE = {
@@ -19,6 +19,25 @@ export interface InteractiveRecallPolicy {
   degradationMaxLatencyMs: number;
   allowHyde: boolean;
   allowAmbientMultiQuery: boolean;
+  /** Resolved from `autoRecall.interactiveEnrichment` (default balanced). */
+  interactiveEnrichment: "fast" | "balanced" | "full";
+  notes: string[];
+}
+
+export interface ConstrainedRetrievalPolicy {
+  mode: "constrained-recall";
+  ownerModule: "services/retrieval-orchestrator.ts";
+  contract: "structured filter → semantic rank → hydrate for constrained recall scenarios";
+  budgetTokens: number;
+  allowHyde: boolean;
+  allowRrfFusion: boolean;
+  allowQueryExpansion: boolean;
+  allowReranking: boolean;
+  allowGraphExpansion: boolean;
+  allowAliasExpansion: boolean;
+  allowMultiModelSemantic: boolean;
+  /** Apply structured filters BEFORE ranking rather than after. */
+  filterBeforeRank: boolean;
   notes: string[];
 }
 
@@ -37,10 +56,32 @@ export interface ExplicitDeepRetrievalPolicy {
   notes: string[];
 }
 
-export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 35_000;
-export const INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS = 30_000;
-export const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH = 10;
-export const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS = 5_000;
+/** Wall-clock cap for the whole interactive recall stage (abort + return when exceeded). */
+export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 120_000;
+/** Per-vector-step cap (HyDE + embed + Lance) inside `runRecallPipelineQuery`. Kept below stage timeout to leave slack for FTS, ambient, directives. */
+const INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS = 26_000;
+const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH = 10;
+const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS = 5_000;
+const DEFAULT_CONSTRAINED_RETRIEVAL_POLICY: ConstrainedRetrievalPolicy = {
+  mode: "constrained-recall",
+  ownerModule: "services/retrieval-orchestrator.ts",
+  contract: "structured filter → semantic rank → hydrate for constrained recall scenarios",
+  budgetTokens: 4000,
+  allowHyde: true,
+  allowRrfFusion: false,
+  allowQueryExpansion: true,
+  allowReranking: true,
+  allowGraphExpansion: false,
+  allowAliasExpansion: true,
+  allowMultiModelSemantic: true,
+  filterBeforeRank: true,
+  notes: [
+    "Pre-filters candidate set via structured constraints before semantic ranking.",
+    "Use case: 'show facts about project X from the last 30 days', 'search only verified infra memories'.",
+    "RRF fusion disabled — ranking is purely semantic within the constrained candidate set.",
+    "Hydration includes provenance, graph context, supersession state, and explanation.",
+  ],
+};
 
 /**
  * Resolve the latency-bounded chat-turn policy owned by `lifecycle/stage-recall.ts`.
@@ -60,6 +101,7 @@ export const DEFAULT_INTERACTIVE_RECALL_POLICY: InteractiveRecallPolicy = {
   degradationMaxLatencyMs: DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
   allowHyde: false,
   allowAmbientMultiQuery: true,
+  interactiveEnrichment: "balanced",
   notes: [
     "Owns the hot path for chat turns.",
     "Falls back to bounded FTS-only/HOT recall under pressure.",
@@ -72,8 +114,22 @@ export function resolveInteractiveRecallPolicy(
   queryExpansion?: { enabled: boolean; skipForInteractiveTurns: boolean },
   retrieval?: { ambientBudgetTokens: number },
 ): InteractiveRecallPolicy {
-  // When queryExpansion.skipForInteractiveTurns is false, allow HyDE on interactive turns
-  const allowHyde = queryExpansion?.enabled === true && queryExpansion.skipForInteractiveTurns !== true;
+  const enrichment = cfg.interactiveEnrichment ?? "balanced";
+
+  // Baseline (balanced): HyDE on interactive turns only when QE is on and skipForInteractiveTurns is not true.
+  let allowHyde = queryExpansion?.enabled === true && queryExpansion.skipForInteractiveTurns !== true;
+  // Historically true whenever auto-recall is on; ambient multi-query still requires ambient.enabled && multiQuery in stage-recall.
+  let allowAmbientMultiQuery = cfg.enabled === true;
+
+  if (enrichment === "fast") {
+    allowHyde = false;
+    allowAmbientMultiQuery = false;
+  } else if (enrichment === "full") {
+    // HyDE whenever query expansion is enabled; ignore skipForInteractiveTurns for the hot path.
+    allowHyde = queryExpansion?.enabled === true;
+    allowAmbientMultiQuery = cfg.enabled === true;
+  }
+
   // Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
   // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
   // ceiling — the injected context must not exceed either.
@@ -83,8 +139,9 @@ export function resolveInteractiveRecallPolicy(
     contextBudgetTokens,
     degradationQueueDepth: cfg.degradationQueueDepth ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
     degradationMaxLatencyMs: cfg.degradationMaxLatencyMs ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
-    allowAmbientMultiQuery: cfg.enabled === true,
+    allowAmbientMultiQuery,
     allowHyde,
+    interactiveEnrichment: enrichment,
   };
 }
 
@@ -113,6 +170,20 @@ export function resolveExplicitDeepRetrievalPolicy(cfg: RetrievalConfig): Explic
 }
 
 /**
+ * Resolve the constrained retrieval policy for filter-before-rank scenarios.
+ * Owned by `services/retrieval-orchestrator.ts`.
+ */
+export function resolveConstrainedRetrievalPolicy(
+  cfg: RetrievalConfig,
+  requestedBudget?: number,
+): ConstrainedRetrievalPolicy {
+  return {
+    ...DEFAULT_CONSTRAINED_RETRIEVAL_POLICY,
+    budgetTokens: requestedBudget ?? cfg.explicitBudgetTokens,
+  };
+}
+
+/**
  * Resolve the interactive recall budget tokens, capping to the minimum of
  * autoRecall.maxTokens and retrieval.ambientBudgetTokens.
  */
@@ -135,7 +206,7 @@ export function resolveOrchestratorBudgetTokens(
       ? Math.min(requestedBudget, retrievalCfg.ambientBudgetTokens)
       : retrievalCfg.ambientBudgetTokens;
   }
-  return requestedBudget !== undefined ? requestedBudget : retrievalCfg.explicitBudgetTokens;
+  return requestedBudget ?? retrievalCfg.explicitBudgetTokens;
 }
 
 /**

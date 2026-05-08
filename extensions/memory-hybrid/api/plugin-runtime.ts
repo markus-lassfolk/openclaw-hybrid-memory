@@ -13,34 +13,36 @@
  */
 
 import type OpenAI from "openai";
-import type { HybridMemoryConfig } from "../config.js";
-import type { FactsDB } from "../backends/facts-db.js";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
+import type { ApitapStore } from "../backends/apitap-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
+import type { CostTracker } from "../backends/cost-tracker.js";
+import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { EdictStore } from "../backends/edict-store.js";
+import type { EventBus } from "../backends/event-bus.js";
+import type { EventLog } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { LearningsDB } from "../backends/learnings-db.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { PersonaStateStore } from "../backends/persona-state-store.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { PersonaStateStore } from "../backends/persona-state-store.js";
-import type { EventLog } from "../backends/event-log.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
-import type { AliasDB } from "../services/retrieval-aliases.js";
-import type { EventBus } from "../backends/event-bus.js";
-import type { CostTracker } from "../backends/cost-tracker.js";
-import type { IssueStore } from "../backends/issue-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { CrystallizationStore } from "../backends/crystallization-store.js";
-import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import type { LearningsDB } from "../backends/learnings-db.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import type { ApitapStore } from "../backends/apitap-store.js";
-import type { PythonBridge } from "../services/python-bridge.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
-import type { VariantGenerationQueue } from "../services/contextual-variants.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import type { VariantGenerationQueue } from "../services/contextual-variants.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import type { PythonBridge } from "../services/python-bridge.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
 
 /** All mutable per-instance state for the memory-hybrid plugin. */
 export interface PluginRuntime {
@@ -79,10 +81,18 @@ export interface PluginRuntime {
   variantQueue: VariantGenerationQueue | null;
   /** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */
   learningsDb: LearningsDB | null;
+  /** Cross-agent audit log (Issue #790). */
+  auditStore: AuditStore | null;
+  agentHealthStore: AgentHealthStore | null;
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
   lifecycleHooksHandle: LifecycleHooksHandle | null;
+  /**
+   * Resolves when async bootstrap work from `initializeDatabases` finishes (embedding/vault checks, etc.).
+   * Used to sequence CLI teardown so we do not close DBs while init I/O is still running (Issue #1039).
+   */
+  bootstrapAsyncInit: Promise<void>;
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Mutable refs (objects so that closures can share mutations) ---
@@ -92,6 +102,8 @@ export interface PluginRuntime {
   restartPendingClearedRef: { value: boolean };
   /** Count of in-flight recall operations (degradation / back-pressure). */
   recallInFlightRef: { value: number };
+  /** Last user prompt used for interactive auto-recall (issue #957 post-compaction reinjection). */
+  lastAutoRecallPromptRef: { value: string | null };
   /** Last progressive index fact IDs (1-based position → fact id). */
   lastProgressiveIndexIds: string[];
 

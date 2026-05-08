@@ -3,32 +3,43 @@
  * Owns the interactive recall path for chat turns.
  * Runs the bounded recall pipeline: degradation check, FTS+vector, ambient, directives,
  * entity lookup, scoring. Returns either degraded/empty prependContext or RecallResult for injection.
- * Config: autoRecall.enabled. Timeout: 35s.
+ * Config: autoRecall.enabled. Stage wall-clock: INTERACTIVE_RECALL_STAGE_TIMEOUT_MS (abort).
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { ScopeFilter } from "../types/memory.js";
-import type { SearchResult } from "../types/memory.js";
 import {
-  generateAmbientQueries,
-  detectTopicShift,
-  deduplicateResultsById,
   SessionSeenFacts,
+  deduplicateResultsById,
+  detectTopicShift,
+  generateAmbientQueries,
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
-import { withTimeout } from "../utils/timeout.js";
-import { estimateTokens } from "../utils/text.js";
-import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
-import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
-import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
+import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import {
   INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
+import type { ScopeFilter } from "../types/memory.js";
+import type { SearchResult } from "../types/memory.js";
+import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
+import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
+import { estimateTokens } from "../utils/text.js";
+import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 
-export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+
+function emptyRecallStage(): RecallStageResult {
+  return { kind: "empty", prependContext: undefined };
+}
+
+function recallAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
 
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
@@ -41,7 +52,22 @@ export async function runRecallStage(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<RecallStageResult | null> {
-  return withTimeout(RECALL_STAGE_TIMEOUT_MS, () => runRecall(event, api, ctx, sessionState));
+  const ac = new AbortController();
+  const { signal } = ac;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      runRecall(event, api, ctx, sessionState, signal),
+      new Promise<RecallStageResult | null>((resolve) => {
+        timer = setTimeout(() => {
+          ac.abort();
+          resolve(null);
+        }, RECALL_STAGE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function runRecall(
@@ -49,6 +75,7 @@ async function runRecall(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
+  signal?: AbortSignal,
 ): Promise<RecallStageResult> {
   const e = event as { prompt?: string };
   if (!e.prompt || e.prompt.length < 5) {
@@ -57,12 +84,42 @@ async function runRecall(
 
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
+  const recallTiming = createRecallTimingLogger({
+    logger: api.logger,
+    mode: ctx.cfg.autoRecall.recallTiming ?? "off",
+    span: createRecallSpan("recall-stage"),
+    op: "auto-recall-stage",
+  });
+  const recallStageStartedAt = recallTiming.phaseStarted("recall_stage_run", { prompt_chars: e.prompt.length });
+  let recallStageCompleted = false;
+  let recallStageFields: Record<string, string | number | boolean> | undefined;
+  const completeStage = (result: RecallStageResult): RecallStageResult => {
+    recallStageFields = {
+      result_kind: result.kind,
+      candidate_count: result.kind === "full" ? result.result.candidates.length : 0,
+      degraded: result.kind === "degraded",
+    };
+    recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, recallStageFields);
+    recallStageCompleted = true;
+    return result;
+  };
+  const recallSpan = recallTiming.span;
   try {
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+
     const { currentAgentIdRef } = ctx;
     const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen } =
       sessionState;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
+
+    if (e.prompt.length >= 5 && ctx.lastAutoRecallPromptRef) {
+      ctx.lastAutoRecallPromptRef.value = e.prompt.trim().slice(0, 12_000);
+    }
+
+    // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
+    await yieldEventLoop();
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
     const fmt = ctx.cfg.autoRecall.injectionFormat;
     const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -98,6 +155,9 @@ async function runRecall(
       ctx.cfg.queryExpansion,
       ctx.cfg.retrieval,
     );
+    api.logger.debug?.(
+      `memory-hybrid: interactive enrichment=${interactivePolicy.interactiveEnrichment} (HyDE=${interactivePolicy.allowHyde}, ambientMulti=${interactivePolicy.allowAmbientMultiQuery})`,
+    );
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
 
@@ -107,9 +167,11 @@ async function runRecall(
         scopeFilter,
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+        interactiveFtsFastPath: true,
       };
       const degradedLimit = ctx.cfg.autoRecall.limit;
       const trimmed = e.prompt.trim();
+      await yieldEventLoop();
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
       let hotPart = "";
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
@@ -152,13 +214,15 @@ async function runRecall(
       api.logger.debug?.(
         `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,
       );
-      if (block) return { kind: "degraded", prependContext: `${degradedMarker + block}\n\n` };
-      return { kind: "degraded", prependContext: `${degradedMarker}\n\n` };
+      if (block) return completeStage({ kind: "degraded", prependContext: `${degradedMarker + block}\n\n` });
+      return completeStage({ kind: "degraded", prependContext: `${degradedMarker}\n\n` });
     }
 
-    // Procedural memory
+    // Procedural memory (skip expensive FTS when injection budget is zero — issue #863)
+    const proceduresStartedAt = recallTiming.phaseStarted("procedures_block");
     let procedureBlock = "";
-    if (ctx.cfg.procedures.enabled) {
+    const procMaxTokens = ctx.cfg.procedures.maxInjectionTokens ?? 0;
+    if (ctx.cfg.procedures.enabled && procMaxTokens > 0) {
       const rankedProcs = ctx.factsDb.searchProceduresRanked(
         e.prompt,
         5,
@@ -217,9 +281,12 @@ async function runRecall(
         procedureBlock = block;
       }
     }
+    recallTiming.phaseCompleted("procedures_block", proceduresStartedAt, { injected: procedureBlock.length > 0 });
+    await yieldEventLoop();
     const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
+    const hotFactsStartedAt = recallTiming.phaseStarted("hot_facts_block");
     let hotBlock = "";
     if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
       const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
@@ -231,12 +298,17 @@ async function runRecall(
         hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
       }
     }
+    recallTiming.phaseCompleted("hot_facts_block", hotFactsStartedAt, { injected: hotBlock.length > 0 });
+
+    await yieldEventLoop();
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
     const recallOpts = {
       tierFilter,
       scopeFilter,
       reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
       diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+      interactiveFtsFastPath: true,
     };
     const hydeUsedRef = { value: false };
     const pipelineDeps: RecallPipelineDeps = {
@@ -248,6 +320,7 @@ async function runRecall(
         queryExpansion: ctx.cfg.queryExpansion,
         retrievalStrategies: ctx.cfg.retrieval.strategies,
         memoryTieringEnabled: ctx.cfg.memoryTiering.enabled,
+        recallTiming: ctx.cfg.autoRecall.recallTiming,
         rawCfg: ctx.cfg,
       },
       recallOpts,
@@ -258,6 +331,7 @@ async function runRecall(
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
+    const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
     if (!ambientSeenFactsMap.has(sessionScopeKey)) {
       ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
       ambientLastEmbeddingMap.set(sessionScopeKey, null);
@@ -273,6 +347,8 @@ async function runRecall(
     const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+
     let promptEmbedding: number[] | null = null;
     if (
       interactivePolicy.allowAmbientMultiQuery &&
@@ -287,14 +363,24 @@ async function runRecall(
       }
     }
 
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+
+    const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
     let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
       policy: interactivePolicy,
+      timingSpan: recallSpan,
+      timingOp: "auto-recall-main",
     });
+    recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
+
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
     if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
+      const ambientStartedAt = recallTiming.phaseStarted("ambient_multi_query");
+      let ambientQueriesRun = 0;
       try {
         const isTopicShift =
           ambientLastEmbedding !== null &&
@@ -314,6 +400,14 @@ async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
+            if (recallAborted(signal)) {
+              recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+                status: "aborted",
+                queries_run: ambientQueriesRun,
+              });
+              return completeStage(emptyRecallStage());
+            }
+            await yieldEventLoop();
             try {
               const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
                 entity: q.type === "entity" ? q.entity : undefined,
@@ -321,7 +415,10 @@ async function runRecall(
                 errorPrefix: `ambient-${q.type}-`,
                 limitHydeOnce: true,
                 policy: interactivePolicy,
+                timingSpan: recallSpan,
+                timingOp: `auto-recall-ambient-${q.type}`,
               });
+              ambientQueriesRun += 1;
               extraResultSets.push(qResults);
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -334,17 +431,27 @@ async function runRecall(
           const filtered = isTopicShift ? merged.filter((r) => !ambientSeenFacts.hasBeenSeen(r.entry.id)) : merged;
           candidates = filtered.slice(0, limit);
         }
+        recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+          status: "ok",
+          queries_run: ambientQueriesRun,
+          candidates: candidates.length,
+        });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "ambient-multi-query",
           subsystem: "auto-recall",
         });
         api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+        recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+          status: "error",
+          queries_run: ambientQueriesRun,
+        });
       }
     }
 
     let issueBlock = "";
     let narrativeBlock = "";
+    const issuesStartedAt = recallTiming.phaseStarted("issues_block");
     if (ambientCfg.enabled && ctx.issueStore) {
       try {
         const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
@@ -374,7 +481,9 @@ async function runRecall(
         });
       }
     }
+    recallTiming.phaseCompleted("issues_block", issuesStartedAt, { injected: issueBlock.length > 0 });
 
+    const narrativeStartedAt = recallTiming.phaseStarted("narrative_block");
     if (ctx.narrativesDb || ctx.eventLog) {
       try {
         const recentNarratives = recallNarrativeSummaries({
@@ -396,32 +505,46 @@ async function runRecall(
         });
       }
     }
+    recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
+
+    await yieldEventLoop();
+    if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
-    if (entityLookup.enabled && entityLookup.entities.length > 0) {
-      const seenIds = new Set(candidates.map((c) => c.entry.id));
-      for (const entity of entityLookup.entities) {
-        if (!promptLower.includes(entity.toLowerCase())) continue;
-        const entityResults = ctx.factsDb
-          .lookup(entity, undefined, undefined, { scopeFilter })
-          .slice(0, entityLookup.maxFactsPerEntity);
-        for (const r of entityResults) {
-          if (!seenIds.has(r.entry.id)) {
-            seenIds.add(r.entry.id);
-            candidates.push(r);
+    const entityLookupStartedAt = recallTiming.phaseStarted("entity_lookup");
+    let entityLookupHits = 0;
+    if (entityLookup.enabled) {
+      const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+      if (entityLookupNames.length > 0) {
+        const seenIds = new Set(candidates.map((c) => c.entry.id));
+        for (const entity of entityLookupNames) {
+          if (!promptLower.includes(entity.toLowerCase())) continue;
+          const entityResults = ctx.factsDb
+            .lookup(entity, undefined, undefined, { scopeFilter })
+            .slice(0, entityLookup.maxFactsPerEntity);
+          for (const r of entityResults) {
+            if (!seenIds.has(r.entry.id)) {
+              seenIds.add(r.entry.id);
+              candidates.push(r);
+              entityLookupHits += 1;
+            }
           }
         }
+        candidates.sort((a, b) => {
+          const s = b.score - a.score;
+          if (s !== 0) return s;
+          const da = a.entry.sourceDate ?? a.entry.createdAt;
+          const db = b.entry.sourceDate ?? b.entry.createdAt;
+          return db - da;
+        });
+        candidates = candidates.slice(0, limit);
       }
-      candidates.sort((a, b) => {
-        const s = b.score - a.score;
-        if (s !== 0) return s;
-        const da = a.entry.sourceDate ?? a.entry.createdAt;
-        const db = b.entry.sourceDate ?? b.entry.createdAt;
-        return db - da;
-      });
-      candidates = candidates.slice(0, limit);
     }
+    recallTiming.phaseCompleted("entity_lookup", entityLookupStartedAt, {
+      hits: entityLookupHits,
+      candidates: candidates.length,
+    });
 
     const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
     const directiveLimit = directivesCfg.limit;
@@ -447,25 +570,50 @@ async function runRecall(
       return directiveCalls < maxDirectiveCalls && candidates.length < maxDirectiveCandidates;
     }
 
+    const directivesStartedAt = recallTiming.phaseStarted("directives_loop");
+    const abortDirectives = () => {
+      recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+        enabled: directivesCfg.enabled,
+        calls: directiveCalls,
+        matches: directiveMatches.length,
+        candidates: candidates.length,
+        aborted: true,
+      });
+      return completeStage(emptyRecallStage());
+    };
     if (directivesCfg.enabled) {
       try {
-        if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
-          for (const entity of entityLookup.entities) {
-            if (!promptLower.includes(entity.toLowerCase())) continue;
-            if (!canRunDirective()) break;
-            const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
-              entity,
-              hydeLabel: "HyDE",
-              errorPrefix: "directive-",
-              limitHydeOnce: true,
-              policy: interactivePolicy,
-            });
-            directiveCalls += 1;
-            addDirectiveResults(results, `entity:${entity}`);
+        if (recallAborted(signal)) {
+          return abortDirectives();
+        }
+        if (directivesCfg.entityMentioned && entityLookup.enabled) {
+          const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+          if (entityLookupNames.length > 0) {
+            for (const entity of entityLookupNames) {
+              if (recallAborted(signal)) {
+                return abortDirectives();
+              }
+              if (!promptLower.includes(entity.toLowerCase())) continue;
+              if (!canRunDirective()) break;
+              const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
+                entity,
+                hydeLabel: "HyDE",
+                errorPrefix: "directive-",
+                limitHydeOnce: true,
+                policy: interactivePolicy,
+                timingSpan: recallSpan,
+                timingOp: "auto-recall-directive-entity",
+              });
+              directiveCalls += 1;
+              addDirectiveResults(results, `entity:${entity}`);
+            }
           }
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
+            if (recallAborted(signal)) {
+              return abortDirectives();
+            }
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
             const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -473,12 +621,17 @@ async function runRecall(
               errorPrefix: "directive-",
               limitHydeOnce: true,
               policy: interactivePolicy,
+              timingSpan: recallSpan,
+              timingOp: "auto-recall-directive-keyword",
             });
             directiveCalls += 1;
             addDirectiveResults(results, `keyword:${keyword}`);
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
+          if (recallAborted(signal)) {
+            return abortDirectives();
+          }
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
           const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -486,18 +639,24 @@ async function runRecall(
             errorPrefix: "directive-",
             limitHydeOnce: true,
             policy: interactivePolicy,
+            timingSpan: recallSpan,
+            timingOp: "auto-recall-directive-task-type",
           });
           directiveCalls += 1;
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
-          const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+          if (recallAborted(signal)) {
+            return abortDirectives();
+          }
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
               policy: interactivePolicy,
+              timingSpan: recallSpan,
+              timingOp: "auto-recall-directive-session-start",
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");
@@ -511,6 +670,12 @@ async function runRecall(
         });
       }
     }
+    recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+      enabled: directivesCfg.enabled,
+      calls: directiveCalls,
+      matches: directiveMatches.length,
+      candidates: candidates.length,
+    });
 
     if (directiveMatches.length > 0) {
       candidates = candidates.map((r) => (directivePriorityIds.has(r.entry.id) ? { ...r, score: r.score * 1.25 } : r));
@@ -525,8 +690,15 @@ async function runRecall(
     }
 
     if (candidates.length === 0) {
+      ctx.auditStore?.append({
+        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+        action: "recall:empty",
+        outcome: "partial",
+        sessionId: sessionKey,
+        context: { issueBlockInjected: issueBlock.length > 0, narrativeBlockInjected: narrativeBlock.length > 0 },
+      });
       const combinedContext = issueBlock + narrativeBlock + hotBlock;
-      return { kind: "empty", prependContext: combinedContext || undefined };
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -587,6 +759,7 @@ async function runRecall(
       hotBlock,
       procedureBlock,
       withProcedures,
+      recallSpan,
       recallStartMs,
       degradationMaxLatencyMs,
       injectionFormat: fmt,
@@ -602,7 +775,16 @@ async function runRecall(
       ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
       ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
     };
-    return { kind: "full", result };
+    return completeStage({ kind: "full", result });
+  } catch (err) {
+    if (!recallStageCompleted) {
+      recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, {
+        ...(recallStageFields ?? {}),
+        status: "error",
+      });
+      recallStageCompleted = true;
+    }
+    throw err;
   } finally {
     ctx.recallInFlightRef.value--;
   }

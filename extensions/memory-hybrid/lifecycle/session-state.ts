@@ -1,6 +1,9 @@
 /**
  * Session state for the lifecycle pipeline (Phase 2.3).
  * Creates per-session maps and helpers: touchSession, clearSessionState, pruneSessionMaps, resolveSessionKey.
+ *
+ * Typed-hook identity (`PluginHookAgentContext`) is merged into `api` at the dispatcher via
+ * `withHookResolutionApi` in `hook-resolution-api.ts` (#1005).
  */
 
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
@@ -8,6 +11,42 @@ import type { FrustrationConversationTurn } from "../services/frustration-detect
 import type { SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
+
+/** API slice used when resolving the current session key from a hook event (#990). */
+export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: string } };
+
+/**
+ * Best-effort session key string for lifecycle hooks — same precedence as
+ * {@link createSessionState}'s `resolveSessionKey` (exported for agent id parsing and tests).
+ *
+ * **Precedence (first hit wins):** `event.session` / top-level session-ish fields /
+ * `event.context`, then `api.context.sessionId`, then `api.context.sessionKey`.
+ * Callers pass `withHookResolutionApi(api, hookCtx)` so hook `sessionId`/`sessionKey` land on
+ * `api.context` and are consulted only after the event payload (#1005).
+ */
+export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
+  const ev = event as {
+    session?: Record<string, unknown>;
+    sessionKey?: string;
+    context?: Record<string, unknown>;
+  };
+  const payloadCtx = ev?.context;
+  const sessionId =
+    ev?.session?.id ??
+    ev?.session?.sessionId ??
+    ev?.session?.key ??
+    ev?.session?.label ??
+    ev?.sessionKey ??
+    (payloadCtx?.sessionId as string | undefined) ??
+    (payloadCtx?.sessionKey as string | undefined) ??
+    (payloadCtx?.key as string | undefined) ??
+    (payloadCtx?.id as string | undefined) ??
+    (payloadCtx?.label as string | undefined) ??
+    api?.context?.sessionId ??
+    api?.context?.sessionKey ??
+    null;
+  return sessionId ? String(sessionId) : null;
+}
 
 export function createSessionState(): SessionState {
   const authFailureRecallsThisSession = new Map<string, number>();
@@ -79,17 +118,8 @@ export function createSessionState(): SessionState {
     }
   }
 
-  function resolveSessionKey(event: unknown, api?: { context?: { sessionId?: string } }): string | null {
-    const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
-    const sessionId =
-      ev?.session?.id ??
-      ev?.session?.sessionId ??
-      ev?.session?.key ??
-      ev?.session?.label ??
-      ev?.sessionKey ??
-      api?.context?.sessionId ??
-      null;
-    return sessionId ? String(sessionId) : null;
+  function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
+    return resolveSessionKeyFromHookEvent(event, api);
   }
 
   const clearAll = (): void => {

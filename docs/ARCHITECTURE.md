@@ -148,6 +148,12 @@ Status emojis: 🟢 active, 🟡 paused, 🔵 completed. Keep the index under ~3
 
 ---
 
+## Goal Stewardship (optional)
+
+When enabled (`goalStewardship.enabled: true`), the plugin adds a strategic orchestration layer that autonomously pursues long-running goals across sessions and heartbeats using a deterministic health watchdog and an LLM stewardship engine. Goals are persisted as JSON in `state/goals/` and tracked via agent tools (`goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`). See [GOAL-STEWARDSHIP-DESIGN.md](GOAL-STEWARDSHIP-DESIGN.md) for the full architecture.
+
+---
+
 ## Related docs
 
 - [ARCHITECTURE-CENTER.md](ARCHITECTURE-CENTER.md) — Core runtime boundary vs adjacent subsystems

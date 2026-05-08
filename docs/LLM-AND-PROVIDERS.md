@@ -30,15 +30,17 @@ For full features you need at least one chat provider configured. The plugin wor
 
 ## How the plugin uses LLMs — tiers
 
-Every LLM feature belongs to one of three tiers. The tier determines which model list is tried first.
+Every LLM feature belongs to a tier. The tier determines which model list is tried first.
 
 | Tier | Features | Optimised for | Recommended models |
 |------|----------|---------------|-------------------|
 | **nano** | autoClassify, query expansion, classifyBeforeWrite, auto-recall summarize | Cheapest — runs on **every** chat message or write | `gemini-2.5-flash-lite`, `gpt-4.1-nano`, `claude-haiku-4-5` |
+| **maintenance** | dream cycle, reflection, consolidation helpers, session-extraction analysis | Cost-safe scheduled/manual work | `gemini-2.5-flash`, `gpt-4.1-mini`, `claude-sonnet-4-6` |
 | **default** | reflection, language keywords, general analysis | Balanced quality/cost | `gemini-2.5-flash`, `claude-sonnet-4-6`, `gpt-4.1` |
 | **heavy** | Session distillation, self-correction, persona proposals | Most capable; **long context critical** for distill | `gemini-3.1-pro-preview` (1024k), `claude-opus-4-6`, `o3` |
 
 When `llm.nano` is not configured, nano ops fall back to `llm.default[0]`.
+When `llm.maintenance` is not configured, maintenance ops fall back to `llm.default[0]`.
 
 > **Why Gemini first for heavy?** Distillation processes entire session histories — up to 500k tokens. Google's Gemini Pro is currently the only model with 1024k context at the heavy tier, making it far more effective for distill than Claude Opus (195k) or OpenAI o3 (195k).
 
@@ -232,6 +234,8 @@ This means a freshly installed plugin works with whatever models you have config
 
 **If your only model is heavy (e.g. Claude Opus):** The plugin detects when the gateway list is heavy-only and **prepends a cheap fallback** (`gpt-4.1-nano`, `gemini-2.5-flash-lite`, `claude-3-5-haiku`) to the default and nano tiers. That way maintenance tasks (classify, summarize, cron job runner, etc.) try a cheaper model first instead of running hundreds of tasks as Opus. Set **`llm.default`** and **`llm.nano`** explicitly in plugin config if you want to override. After upgrading, run **`openclaw hybrid-mem verify --fix`** so stored cron job models are re-resolved from the updated tiers.
 
+**Isolated maintenance crons:** Jobs under `hybrid-mem:*` store a per-job **`model`**. For isolated runs, that model’s **provider family** (the segment before `/`) should match **`agents.defaults.model.primary`**; otherwise the gateway may throw **`LiveSessionModelSwitchError`**. Align them and run **`openclaw hybrid-mem verify --fix`**; **`openclaw hybrid-mem verify`** warns on mismatch. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) and [issue #965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965).
+
 ---
 
 ## Provider API keys
@@ -262,6 +266,8 @@ To use **both** Azure Foundry and OpenAI (e.g. Azure for embeddings and/or `azur
 | **Azure Foundry** (Azure OpenAI / Foundry, `azure-foundry/*` models) | `AZURE_OPENAI_API_KEY` env or `llm.providers["azure-foundry"].apiKey` | Chat/completion and (if configured) embeddings when using Azure endpoint. |
 
 **Precedence:** For the **openai** provider, the plugin uses `OPENAI_API_KEY` (or explicit `llm.providers.openai.apiKey`) **before** `embedding.apiKey`. So you can set `embedding.apiKey` to your Azure key (or use `llm.providers["azure-foundry"]` for embeddings) and `OPENAI_API_KEY` for OpenAI chat — both work without conflict. For **azure-foundry** and **azure-foundry-responses**, the plugin uses `AZURE_OPENAI_API_KEY` when no key is set in `llm.providers`.
+
+In **OpenClaw host** `models.providers["azure-foundry"].apiKey`, use a **SecretRef** such as `env:AZURE_OPENAI_API_KEY` (not a bare env name string), so the gateway resolves the real key instead of sending a literal wrong value.
 
 Example (env only, no keys in config):
 
@@ -338,6 +344,44 @@ For providers not auto-detected, add them to `llm.providers`:
 - Newer models (GPT-5+) require `max_completion_tokens` instead of `max_tokens`. The plugin remaps automatically.
 - Reasoning models (`o1`, `o3`, `o4-mini`, etc.) do not accept `temperature` or `top_p`. The plugin strips these parameters automatically for any model matching `o[0-9]*`.
 
+### Azure Foundry — Responses API models
+
+Some Azure OpenAI / Azure AI Foundry deployments expose reasoning-heavy models (e.g. `o3-pro`) **only** on the OpenAI **Responses API** (`/v1/responses`), not on `/v1/chat/completions`. The plugin supports these deployments natively.
+
+**How to configure:**
+
+Use the `azure-foundry-responses` provider prefix for models that require the Responses API:
+
+```json
+{
+  "llm": {
+    "heavy": ["azure-foundry-responses/o3-pro"],
+    "providers": {
+      "azure-foundry-responses": {
+        "apiKey": "env:AZURE_OPENAI_API_KEY",
+        "baseURL": "https://YOUR_RESOURCE.openai.azure.com/"
+      }
+    }
+  }
+}
+```
+
+**How it works:**
+- Models prefixed with `azure-foundry-responses/` automatically use `client.responses.create()` instead of `client.chat.completions.create()`.
+- The same applies when code calls `openai.chat.completions.create()` directly (e.g. classification, auto-classifier): the provider proxy detects the Responses wire and routes to `responses.create`, then maps the result back to a normal `choices[0].message.content` shape.
+- The adapter translates `messages` to the Responses API `input` format and maps the response back to a plain text string — all existing call sites (`chatComplete`, `chatCompleteWithRetry`, reflection, etc.) work unchanged.
+- Cost tracking, retry logic, and error classification all apply to Responses calls identically.
+- `verify --test-llm` exercises Responses-backed models via `responses.create()` instead of skipping them.
+
+**When to use `azure-foundry-responses` vs `azure-foundry`:**
+- Use `azure-foundry-responses/MODEL` when your deployment **only** supports the Responses API (HTTP 400 "operation unsupported" on chat completions).
+- Use `azure-foundry/MODEL` for standard chat completions deployments.
+- You can mix both in the same tier list: `"heavy": ["azure-foundry-responses/o3-pro", "azure-foundry/gpt-5.4-nano"]`.
+
+**Troubleshooting:**
+- If you see HTTP 400 "The requested operation is unsupported", your deployment likely requires `azure-foundry-responses` instead of `azure-foundry`.
+- The `wireApi` override on `chatComplete` can force any model to use Responses (`wireApi: "responses"`) or Chat (`wireApi: "chat"`) regardless of prefix.
+
 ### Ollama (local models — e.g. `qwen3:8b`)
 - Configure Ollama as a provider with `baseURL: "http://localhost:11434/v1"` and a dummy `apiKey` (Ollama doesn't require a real key).
 - **Qwen3 thinking mode:** Qwen3 models running via Ollama default to `enable_thinking=true`, which places the actual response in `message.reasoning_content` (May 2025+ standard) or the legacy `message.reasoning` field while leaving `message.content` empty. The plugin automatically falls back to these fields, so agents receive the full response without any configuration change. This is transparent — no special model flag or config is required.
@@ -400,6 +444,17 @@ Embeddings are required. The plugin supports four providers — choose the one t
 | **Google** | `"google"` | Yes (Google API key) | `text-embedding-004` or `gemini-embedding-001` via Gemini API. Reuses `llm.providers.google.apiKey` or `distill.apiKey`. Not `text-embedding-3-*` (OpenAI). |
 
 **What if I have no provider that supports embeddings?** The plugin **requires** at least one valid embedding configuration to load. If you do not set any embedding provider (or the one you set is invalid — e.g. OpenAI with no key, Ollama not running), the plugin will fail at config parse or startup with a clear error (e.g. missing `embedding.apiKey`, or embedding check failed). You cannot run the plugin with zero embedding access. To avoid paid embedding APIs, use **Ollama** or **ONNX** (local only; no API key).
+
+### Inheriting from global OpenClaw (`memorySearch` + `models.providers`)
+
+When the gateway loads the plugin, hybrid-memory runs a **pre-parse merge** ([issue #1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):
+
+1. **Credentials / base URL:** Gateway **`models.providers`** (or legacy **`llm.providers`** / top-level **`providers`**) is merged into the plugin’s raw **`llm.providers`** the same way as at database bootstrap — so keys available for chat (e.g. **`azure-foundry`**, **`openai`**) are visible to the config parser before embedding resolution.
+2. **`agents.defaults.memorySearch`:** If **`enabled` is not `false`** and **`provider`** / **`model`** are set, any plugin **`embedding`** field that is still **omitted** is filled from that object: **`provider`** is mapped to hybrid-memory’s embedding provider (e.g. **`azure-foundry`** → OpenAI-compatible **`openai`** with azure-foundry credentials), **`model`** is taken as-is (with an optional `provider/` prefix stripped). **`dimensions`** are set when the model name matches the plugin’s built-in dimension table. **`deployment`** is copied from the matching gateway provider entry when present (`deployment`, `deploymentName`, or `deploymentId`).
+
+**Precedence:** Anything you set under **`plugins.entries["openclaw-hybrid-memory"].config.embedding`** (or **`llm.providers`**) still **overrides** the inherited values. Inheritance only fills **missing** fields on the raw plugin config before presets and validation run.
+
+**Scope:** Designed for OpenAI-compatible and Google paths that already use **`models.providers`**. Local-only setups (**Ollama** / **ONNX**) are unchanged unless you also set **`memorySearch`** accordingly.
 
 ---
 

@@ -9,12 +9,12 @@
  * ranked by successCount) vs. no versioning (flat list).
  */
 
-import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
-import { measureLatency, shadowMeasure } from "../shadow-eval.js";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
+import { measureLatency, shadowMeasure } from "../shadow-eval.js";
 
 function makeTempDir() {
   return mkdtempSync(join(tmpdir(), "bench-proc-"));

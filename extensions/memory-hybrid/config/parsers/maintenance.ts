@@ -32,6 +32,12 @@ export function parseVerificationConfig(cfg: Record<string, unknown>): Verificat
   };
 }
 
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim());
+  return out.length > 0 ? out : undefined;
+}
+
 export function parseProvenanceConfig(cfg: Record<string, unknown>): ProvenanceConfig {
   const provRaw = cfg.provenance as Record<string, unknown> | undefined;
   return {
@@ -71,11 +77,25 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
       typeof nightlyCycleRaw?.maxUnconsolidatedAgeDays === "number" && nightlyCycleRaw.maxUnconsolidatedAgeDays >= 1
         ? Math.min(3650, Math.floor(nightlyCycleRaw.maxUnconsolidatedAgeDays))
         : 90,
+    maxEventsPerConsolidation:
+      typeof nightlyCycleRaw?.maxEventsPerConsolidation === "number" && nightlyCycleRaw.maxEventsPerConsolidation >= 1
+        ? Math.min(1000, Math.floor(nightlyCycleRaw.maxEventsPerConsolidation))
+        : 200,
     logRetentionDays:
       typeof nightlyCycleRaw?.logRetentionDays === "number" && nightlyCycleRaw.logRetentionDays >= 0
         ? Math.min(3650, Math.floor(nightlyCycleRaw.logRetentionDays))
         : 30,
     vacuumOnCycle: nightlyCycleRaw?.vacuumOnCycle !== false,
+    reclassifyDecayOnCycle: nightlyCycleRaw?.reclassifyDecayOnCycle !== false,
+    reclassifyInactiveDays:
+      typeof nightlyCycleRaw?.reclassifyInactiveDays === "number" && nightlyCycleRaw.reclassifyInactiveDays >= 1
+        ? Math.min(3650, Math.floor(nightlyCycleRaw.reclassifyInactiveDays))
+        : 90,
+    reclassifyPromoteRecallCount:
+      typeof nightlyCycleRaw?.reclassifyPromoteRecallCount === "number" &&
+      nightlyCycleRaw.reclassifyPromoteRecallCount >= 1
+        ? Math.floor(nightlyCycleRaw.reclassifyPromoteRecallCount)
+        : 3,
     eventLogArchivalDays:
       typeof nightlyCycleRaw?.eventLogArchivalDays === "number" && nightlyCycleRaw.eventLogArchivalDays >= 0
         ? Math.floor(nightlyCycleRaw.eventLogArchivalDays)
@@ -84,6 +104,8 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
       typeof nightlyCycleRaw?.eventLogArchivePath === "string" && nightlyCycleRaw.eventLogArchivePath.trim().length > 0
         ? nightlyCycleRaw.eventLogArchivePath.trim()
         : undefined,
+    consolidationEventTypeAllow: parseStringList(nightlyCycleRaw?.consolidationEventTypeAllow),
+    consolidationEventTypeDeny: parseStringList(nightlyCycleRaw?.consolidationEventTypeDeny),
   };
 }
 
@@ -95,7 +117,7 @@ export function parseHealthConfig(cfg: Record<string, unknown>): HealthConfig {
   };
 }
 
-export function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig {
+function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig {
   const councilRaw = (cfg.maintenance as Record<string, unknown> | undefined)?.council as
     | Record<string, unknown>
     | undefined;
@@ -111,7 +133,7 @@ export function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig 
   return { provenance, sessionKeyPrefix };
 }
 
-export function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabilityConfig {
+function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabilityConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const reliabilityRaw = maintenanceRaw?.cronReliability as Record<string, unknown> | undefined;
   return {

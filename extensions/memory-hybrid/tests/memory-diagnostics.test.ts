@@ -48,7 +48,32 @@ describe("runMemoryDiagnostics", () => {
     expect(result.markerId).toMatch(/[0-9a-f-]{36}/i);
     expect(result.structured.ok).toBe(true);
     expect(result.semantic.ok).toBe(true);
+    expect(result.semantic.failReason).toBeUndefined();
     expect(result.hybrid.ok).toBe(true);
     expect(result.autoRecall.ok).toBe(true);
+  });
+
+  it("reports vector_dim_mismatch when embedding dimensions != LanceDB dimensions (#939)", async () => {
+    const mismatchedEmbeddings = {
+      dimensions: 5,
+      modelName: "mismatched-model",
+      async embed(_text: string): Promise<number[]> {
+        return [0.1, 0.2, 0.3, 0.4, 0.5];
+      },
+      async embedBatch(texts: string[]): Promise<number[][]> {
+        return texts.map(() => [0.1, 0.2, 0.3, 0.4, 0.5]);
+      },
+    };
+
+    const result = await runMemoryDiagnostics({
+      factsDb,
+      vectorDb,
+      embeddings: mismatchedEmbeddings as any,
+      minScore: 0.1,
+      autoRecallLimit: 5,
+    });
+
+    expect(result.semantic.ok).toBe(false);
+    expect(result.semantic.failReason).toBe("vector_dim_mismatch");
   });
 });

@@ -31,7 +31,7 @@ export interface FeedbackTrajectory {
   turnCount: number;
 }
 
-export interface TrajectoryBoundary {
+interface TrajectoryBoundary {
   startIndex: number;
   endIndex: number;
 }
@@ -341,7 +341,7 @@ export function serializeTrajectory(t: FeedbackTrajectory): {
  * LLM-based trajectory analysis result.
  * Returned by analyzeTrajectoriesWithLLM when LLM config is available.
  */
-export interface TrajectoryLLMAnalysis {
+interface TrajectoryLLMAnalysis {
   outcome: "success" | "partial" | "failure";
   keyLesson: string;
   pivotTurn: number | null;

@@ -8,7 +8,7 @@ Feature and fix release: LanceDB dimension-mismatch graceful fallback and auto-r
 
 - **VectorDB dimension mismatch** — When the LanceDB table dimension does not match the configured embedding model, the plugin no longer crashes: search/count/hasDuplicate return empty/0/false and log a clear warning. Set `vector.autoRepair: true` in config to drop and recreate the table with the correct dimension and trigger re-embedding from SQLite (issue #128, #129).
 - **Credentials CLI** — `openclaw hybrid-mem credentials get` and `credentials list --service <filter>` for vault inspection.
-- **Verify** — Active-task (ACTIVE-TASK.md) status is shown in `openclaw hybrid-mem verify` output.
+- **Verify** — Active-task (ACTIVE-TASKS.md) status is shown in `openclaw hybrid-mem verify` output.
 - **CI** — GitHub Actions labeler workflow for PRs; CodeQL suppressions where applicable.
 
 ### Fixed

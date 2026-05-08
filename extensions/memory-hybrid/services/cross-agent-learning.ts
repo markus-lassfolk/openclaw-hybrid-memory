@@ -8,7 +8,7 @@
  *  3. Send a batch to the LLM with the cross-agent-generalize prompt.
  *  4. For each generalised lesson, store a new global fact (category="pattern",
  *     scope="global", source="cross-agent-learning", importance boosted +0.1).
- *  5. Link new global fact → source agent facts via DERIVED_FROM.
+ *  5. Record source agent fact ids in provenance_json on the global fact.
  *  6. Return a report.
  */
 
@@ -19,23 +19,24 @@ import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt as loadPromptSync } from "../utils/prompt-loader.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 import { chatCompleteWithRetry } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface CrossAgentLearningResult {
+interface CrossAgentLearningResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
-  linksCreated: number;
+  provenanceRecorded: number;
   skippedDuplicates: number;
   errors: number;
   newFacts: Array<{ id: string; text: string; agentSources: string[] }>;
 }
 
-export interface AgentLesson {
+interface AgentLesson {
   factId: string;
   agentId: string;
   text: string;
@@ -138,19 +139,18 @@ function agentFactAlreadyGeneralised(factsDb: FactsDB, agentFactId: string): boo
   if (!db) return false;
 
   try {
-    const link = db
+    const row = db
       .prepare(
-        `SELECT ml.id
-         FROM memory_links ml
-         JOIN facts f ON f.id = ml.source_fact_id
-         WHERE ml.target_fact_id = ?
-           AND ml.link_type = 'DERIVED_FROM'
-           AND f.source = ?
-           AND f.scope = 'global'
+        `SELECT id
+         FROM facts
+         WHERE source = ?
+           AND scope = 'global'
+           AND superseded_at IS NULL
+           AND provenance_json LIKE ?
          LIMIT 1`,
       )
-      .get(agentFactId, CROSS_AGENT_SOURCE) as { id: string } | undefined;
-    return !!link;
+      .get(CROSS_AGENT_SOURCE, `%${agentFactId}%`) as { id: string } | undefined;
+    return !!row;
   } catch {
     return false;
   }
@@ -211,7 +211,7 @@ async function callLLMForGeneralisation(
     content: prompt,
     maxTokens: 2000,
     timeoutMs: 40000,
-    feature: "cross-agent-learning",
+    feature: CostFeature.crossAgentLearning,
   });
 
   if (!text || text.trim().length === 0) return [];
@@ -248,19 +248,21 @@ async function callLLMForGeneralisation(
  * @param openai     OpenAI client (multi-provider proxy).
  * @param cfg        Cross-agent learning config.
  * @param logger     Logger (warn-only needed).
+ * @param runOpts    When `verbose` is true, logs each LLM batch on `logger.info` (CLI / dream-cycle `--verbose`).
  * @returns          Summary report.
  */
 export async function runCrossAgentLearning(
   factsDb: FactsDB,
   openai: OpenAI,
   cfg: CrossAgentLearningConfig,
-  logger: { warn?: (msg: string) => void } = {},
+  logger: { warn?: (msg: string) => void; info?: (msg: string) => void } = {},
+  runOpts?: { verbose?: boolean },
 ): Promise<CrossAgentLearningResult> {
   const result: CrossAgentLearningResult = {
     agentsScanned: 0,
     lessonsConsidered: 0,
     generalisedStored: 0,
-    linksCreated: 0,
+    provenanceRecorded: 0,
     skippedDuplicates: 0,
     errors: 0,
     newFacts: [],
@@ -299,7 +301,14 @@ export async function runCrossAgentLearning(
     const model = cfg.model ?? "gpt-4o-mini";
     const fallbackModels = cfg.fallbackModels ?? [];
 
+    let batchIndex = 0;
     for (const batch of batches) {
+      batchIndex++;
+      if (runOpts?.verbose) {
+        logger.info?.(
+          `memory-hybrid: cross-agent-learning — LLM batch ${batchIndex}/${batches.length} (${batch.length} lesson(s), model=${model})`,
+        );
+      }
       try {
         const prompt = buildGeneralisePrompt(batch);
         const generalised = await callLLMForGeneralisation(openai, model, prompt, fallbackModels, logger);
@@ -335,6 +344,18 @@ export async function runCrossAgentLearning(
             source: CROSS_AGENT_SOURCE,
             tags: [CROSS_AGENT_TAG, "*", ...sourceAgentIds.slice(0, 3)],
             summary: lesson.rationale?.slice(0, 200) ?? null,
+            provenanceJson: JSON.stringify({
+              method: CROSS_AGENT_SOURCE,
+              consolidatedAt: Math.floor(Date.now() / 1000),
+              sourceFactIds: sourceFacts.map((sourceFact) => sourceFact.factId),
+              sourceFacts: sourceFacts.map((sourceFact) => ({
+                id: sourceFact.factId,
+                text: sourceFact.text.slice(0, 300),
+                source: "agent",
+                category: sourceFact.category,
+                agentId: sourceFact.agentId,
+              })),
+            }),
           });
 
           result.generalisedStored++;
@@ -344,15 +365,7 @@ export async function runCrossAgentLearning(
             agentSources: sourceAgentIds,
           });
 
-          // Link new global fact → source agent facts via DERIVED_FROM
-          for (const sourceFact of sourceFacts) {
-            try {
-              factsDb.createLink(newFact.id, sourceFact.factId, "DERIVED_FROM", 0.8);
-              result.linksCreated++;
-            } catch {
-              // Non-fatal: link already exists or fact deleted
-            }
-          }
+          result.provenanceRecorded += sourceFacts.length;
         }
       } catch (batchErr) {
         result.errors++;

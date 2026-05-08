@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Tests for persona proposals: parseSuggestedChange, buildAppliedContent,
  * and applyApprovedProposal (including non-git workspace — issue #90).
@@ -92,8 +93,8 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "proposals-apply-"));
-    originalWorkspace = process.env.OPENCLAW_WORKSPACE;
-    process.env.OPENCLAW_WORKSPACE = tmpDir;
+    originalWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
 
     const targetFile = join(tmpDir, "SOUL.md");
     writeFileSync(targetFile, "# SOUL\nInitial content.\n", "utf-8");
@@ -116,9 +117,9 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
   afterEach(() => {
     proposalsDb.close();
     if (originalWorkspace !== undefined) {
-      process.env.OPENCLAW_WORKSPACE = originalWorkspace;
+      setEnv("OPENCLAW_WORKSPACE", originalWorkspace);
     } else {
-      process.env.OPENCLAW_WORKSPACE = undefined;
+      setEnv("OPENCLAW_WORKSPACE", undefined);
     }
     rmSync(tmpDir, { recursive: true, force: true });
   });

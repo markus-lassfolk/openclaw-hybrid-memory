@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for workflow crystallization — Issue #208.
  * Covers: CrystallizationStore, PatternDetector, SkillCrystallizer,
@@ -196,16 +197,18 @@ describe("CrystallizationStore.count", () => {
 describe("CrystallizationStore.close / isOpen", () => {
   it("isOpen before close", () => expect(cStore.isOpen()).toBe(true));
 
-  it("isOpen false after close", () => {
+  it("close keeps deferred store reusable and lazy-reopens on next op", () => {
     cStore.close();
+    // Deferred-close stores now remain logically reusable between operations.
     expect(cStore.isOpen()).toBe(false);
-    cStore = new CrystallizationStore(join(tmpDir, "cs2.db"));
+
+    expect(() => cStore.list()).not.toThrow();
+    expect(cStore.isOpen()).toBe(true);
   });
 
   it("double-close does not throw", () => {
     cStore.close();
     expect(() => cStore.close()).not.toThrow();
-    cStore = new CrystallizationStore(join(tmpDir, "cs3.db"));
   });
 });
 
@@ -439,7 +442,7 @@ describe("SkillCrystallizer.crystallize", () => {
   });
 
   it("expands ~ in outputDir", () => {
-    const homeDir = process.env.HOME ?? "/root";
+    const homeDir = getEnv("HOME") ?? "/root";
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "~/.openclaw/workspace/skills/auto" };
     const crystallizer = new SkillCrystallizer(cfg);
     const pattern = {
@@ -683,7 +686,7 @@ describe("parseCrystallizationConfig", () => {
         pruneUnusedDays: 60,
       },
     });
-    expect(cfg.crystallization.enabled).toBe(false); // 2026.3.140 migration forces core-only baseline
+    expect(cfg.crystallization.enabled).toBe(true);
     expect(cfg.crystallization.minUsageCount).toBe(10);
     expect(cfg.crystallization.minSuccessRate).toBe(0.8);
     expect(cfg.crystallization.autoApprove).toBe(false);

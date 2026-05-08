@@ -39,7 +39,7 @@ export async function runStoreForCli(
 ): Promise<StoreCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
-  if (factsDb.hasDuplicate(text)) return { outcome: "duplicate" };
+  if (factsDb.hasDuplicate(text, "cli")) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
   const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
   const entity = opts.entity ?? extracted.entity ?? null;
@@ -103,6 +103,7 @@ export async function runStoreForCli(
       } catch (err) {
         // Compensating delete: vault write succeeded but pointer write failed
         try {
+          // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
           credentialsDb.delete(parsed.service, parsed.type as any);
         } catch (cleanupErr) {
           log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);

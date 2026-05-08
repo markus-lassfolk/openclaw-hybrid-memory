@@ -329,6 +329,70 @@ describe("CredentialsDB plaintext vault", () => {
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("vault status is authoritative: plaintext + configured key never reports encrypted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-status-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "v1" });
+    plainDb.close();
+
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+
+    const st = db2.getVaultStatus();
+    expect(st.kdfVersion).toBe(0);
+    expect(st.encryptedAtRest).toBe(false);
+    expect(st.configuredKeyPresent).toBe(true);
+    expect(st.keyIgnored).toBe(true);
+    expect(st.migrationRequired).toBe(true);
+
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("encrypt-vault converts plaintext vault in place and preserves values", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-encrypt-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "plain-secret" });
+    plainDb.store({ service: "svc2", type: "token", value: "another-secret" });
+    plainDb.close();
+
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+
+    const before = db2.getVaultStatus();
+    expect(before.encryptedAtRest).toBe(false);
+    expect(before.kdfVersion).toBe(0);
+
+    const res = db2.enableEncryptionAtRest(TEST_ENCRYPTION_KEY);
+    expect(res.migrated).toBe(2);
+    expect(res.kdfVersion).toBe(2);
+
+    const after = db2.getVaultStatus();
+    expect(after.encryptedAtRest).toBe(true);
+    expect(after.kdfVersion).toBe(2);
+
+    const got1 = db2.get("svc", "api_key");
+    const got2 = db2.get("svc2", "token");
+    expect(got1?.value).toBe("plain-secret");
+    expect(got2?.value).toBe("another-secret");
+
+    db2.close();
+
+    // Re-open to ensure persisted encryption metadata is honored
+    const db3 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    const st3 = db3.getVaultStatus();
+    expect(st3.encryptedAtRest).toBe(true);
+    expect(st3.kdfVersion).toBe(2);
+    expect(db3.get("svc", "api_key")?.value).toBe("plain-secret");
+    db3.close();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------

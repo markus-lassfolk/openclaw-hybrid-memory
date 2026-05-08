@@ -1,32 +1,45 @@
-import { dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
-import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import { getDefaultCronModel, getCronModelConfig } from "../config.js";
-import type { ProvenanceService } from "../services/provenance.js";
+import { dirname, isAbsolute, join } from "node:path";
+import { findPluginRoot } from "../utils/plugin-root.js";
 import type OpenAI from "openai";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import {
-  initErrorReporter,
-  isErrorReporterActive,
-  flushErrorReporter,
-  capturePluginError,
-  setErrorReporterMuted,
-} from "../services/error-reporter.js";
-import { walRemove } from "../services/wal-helpers.js";
-import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
+import type { WriteAheadLog } from "../backends/wal.js";
+import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
+import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
-import { runPassiveObserver } from "../services/passive-observer.js";
+import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
+import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import {
+  capturePluginError,
+  flushErrorReporter,
+  initErrorReporter,
+  isErrorReporterActive,
+  setErrorReporterMuted,
+} from "../services/error-reporter.js";
+import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+import { runPassiveObserver } from "../services/passive-observer.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
+import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { walRemove } from "../services/wal-helpers.js";
+import { parseDuration } from "../utils/duration.js";
+import { getEnv } from "../utils/env-manager.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import {
   type VersionCheckCacheEntry,
@@ -37,9 +50,8 @@ import {
   readVersionCheckCache,
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
-import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
-import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -60,6 +72,13 @@ export interface PluginServiceContext {
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
   provenanceService?: ProvenanceService | null;
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  // Memory Viewer stores (Issue #1023)
+  verificationStore?: VerificationStore | null;
+  issueStore?: IssueStore | null;
+  workflowStore?: WorkflowStore | null;
+  narrativesDb?: NarrativesDB | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -102,6 +121,13 @@ export function createPluginService(ctx: PluginServiceContext) {
     timers,
     provenanceService,
     costTracker,
+    auditStore,
+    agentHealthStore,
+    pythonBridge,
+    verificationStore,
+    issueStore,
+    workflowStore,
+    narrativesDb,
   } = ctx;
 
   let observerRunning = false;
@@ -116,6 +142,25 @@ export function createPluginService(ctx: PluginServiceContext) {
     id: PLUGIN_ID,
     _getVersionCheckPromise: () => versionCheckPromise,
     start: async () => {
+      // Issue #422: surface missing Python deps early; deferred from register() for lighter CLI (issue #1111).
+      if (pythonBridge) {
+        const { ok, missing, spawnError } = pythonBridge.checkDependencies();
+        if (!ok) {
+          if (spawnError) {
+            api.logger.warn(
+              `memory-hybrid: documents.enabled but Python binary not found or failed to spawn: ${spawnError.message}. ` +
+                `Check documents.pythonPath configuration (currently: ${cfg.documents.pythonPath}).`,
+            );
+          } else {
+            const pkgs = missing.join(", ");
+            api.logger.warn(
+              `memory-hybrid: documents.enabled but required Python package(s) not installed: ${pkgs}. ` +
+                `Run: ${cfg.documents.pythonPath} -m pip install ${missing.join(" ")}  (see extensions/memory-hybrid/scripts/requirements.txt)`,
+            );
+          }
+        }
+      }
+
       const sqlCount = factsDb.count();
       const expired = factsDb.countExpired();
       const versionCheckCachePath =
@@ -127,6 +172,32 @@ export function createPluginService(ctx: PluginServiceContext) {
       );
 
       checkOpenClawVersion(api.version, api.logger);
+
+      try {
+        const pluginRootDir = findPluginRoot(import.meta.url);
+        const skillOutcome = ensureHybridMemoryWorkspaceSkillIfMissing({
+          pluginRootDir,
+          mergedOpenclawConfig: loadOpenclawRootForWorkspace(),
+        });
+        if (skillOutcome.deployed) {
+          api.logger.info(`memory-hybrid: deployed bundled Agent Skill to workspace: ${skillOutcome.path}`);
+        } else if (skillOutcome.skippedReason) {
+          const benign = new Set(["already_exists", "bundled_missing", "destination_dir_exists"]);
+          if (!benign.has(skillOutcome.skippedReason)) {
+            const msg = `memory-hybrid: workspace skill bootstrap failed (${skillOutcome.skippedReason}) — ${skillOutcome.path}`;
+            api.logger.warn(msg);
+            capturePluginError(new Error(msg), {
+              subsystem: "plugin-service",
+              operation: "ensure-workspace-skill",
+            });
+          }
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "plugin-service",
+          operation: "ensure-workspace-skill",
+        });
+      }
 
       if (
         errorReportingActive &&
@@ -351,6 +422,18 @@ export function createPluginService(ctx: PluginServiceContext) {
               operation: "wal-prune-stale",
             });
           }
+          try {
+            const compacted = await wal.compactIfOversized(16 * 1024 * 1024);
+            if (compacted > 0) {
+              api.logger.info(`memory-hybrid: WAL compacted ${compacted} stale entries (oversized file, issue #903)`);
+            }
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: WAL compactIfOversized failed: ${err}`);
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
+              operation: "wal-compact-oversized",
+            });
+          }
         }
       }
 
@@ -374,6 +457,16 @@ export function createPluginService(ctx: PluginServiceContext) {
               gitRepo: cfg.dashboard.gitRepo,
               costTracker,
               logger: api.logger,
+              auditStore,
+              agentHealthStore,
+              edictStore,
+              verificationStore,
+              issueStore,
+              workflowStore,
+              narrativesDb,
+              provenanceService,
+              graphHubDegreeCap: cfg.graph.hubDegreeCap,
+              graphHubScorePenalty: cfg.graph.hubScorePenalty,
             },
             cfg.dashboard.port,
           );
@@ -393,9 +486,25 @@ export function createPluginService(ctx: PluginServiceContext) {
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
           const edictsPruned = edictStore.pruneExpired();
-          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0) {
+          let auditPruned = 0;
+          if (auditStore) {
+            try {
+              auditPruned = auditStore.prune(90);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          let healthPruned = 0;
+          if (agentHealthStore) {
+            try {
+              healthPruned = agentHealthStore.prune(30);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0 || healthPruned > 0) {
             api.logger.info(
-              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned`,
+              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}${healthPruned > 0 ? `, ${healthPruned} agent-health rows` : ""}`,
             );
           }
         } catch (err) {
@@ -560,13 +669,75 @@ export function createPluginService(ctx: PluginServiceContext) {
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
       const watchdogRun = async () => {
         try {
-          await runTaskQueueWatchdog({ repoDir: process.env.OPENCLAW_WORKSPACE ?? process.cwd() }, api.logger);
+          await runTaskQueueWatchdog({ repoDir: getEnv("OPENCLAW_WORKSPACE") ?? process.cwd() }, api.logger);
         } catch (err) {
           api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "plugin-service",
             operation: "task-queue-watchdog",
           });
+        }
+        if (cfg.activeTask.enabled) {
+          try {
+            const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+            const activeTaskFilePath = isAbsolute(cfg.activeTask.filePath)
+              ? cfg.activeTask.filePath
+              : join(workspaceRoot, cfg.activeTask.filePath);
+            const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
+            const memoryDir = join(workspaceRoot, "memory");
+            let reconciledLabels: string[] = [];
+            let wrote = false;
+            if (cfg.activeTask.ledger === "facts") {
+              const r = await reconcileActiveTaskInProgressSessionsFacts(factsDb, vectorDb, embeddings, staleMinutes, {
+                flushOnComplete: cfg.activeTask.flushOnComplete !== false,
+                memoryDir,
+              });
+              reconciledLabels = r.reconciledLabels;
+              wrote = r.wrote;
+            } else {
+              const r = await reconcileActiveTaskInProgressSessions(activeTaskFilePath, staleMinutes, {
+                flushOnComplete: cfg.activeTask.flushOnComplete !== false,
+                memoryDir,
+              });
+              reconciledLabels = r.reconciledLabels;
+              wrote = r.wrote;
+            }
+            if (wrote && reconciledLabels.length > 0) {
+              api.logger.info?.(
+                `memory-hybrid: active-task session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
+              );
+            }
+          } catch (reconcileErr) {
+            api.logger.warn?.(`memory-hybrid: active-task session reconcile failed (non-fatal): ${reconcileErr}`);
+            capturePluginError(reconcileErr instanceof Error ? reconcileErr : new Error(String(reconcileErr)), {
+              subsystem: "plugin-service",
+              operation: "active-task-session-reconcile",
+            });
+          }
+        }
+        if (cfg.goalStewardship.enabled && cfg.goalStewardship.watchdogHealthCheck) {
+          try {
+            const workspaceRootGs = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+            const goalsDir = resolveGoalsDir(workspaceRootGs, cfg.goalStewardship.goalsDir);
+            const gh = await runGoalHealthCheck({
+              goalsDir,
+              cfg: cfg.goalStewardship,
+              workspaceRoot: workspaceRootGs,
+              logger: api.logger,
+              eventLog: eventLog ?? null,
+            });
+            if (gh.goalsUpdated > 0) {
+              api.logger.info?.(
+                `memory-hybrid: goal health check — ${gh.goalsChecked} checked, ${gh.goalsUpdated} updated`,
+              );
+            }
+          } catch (ghErr) {
+            api.logger.warn?.(`memory-hybrid: goal health check failed (non-fatal): ${ghErr}`);
+            capturePluginError(ghErr instanceof Error ? ghErr : new Error(String(ghErr)), {
+              subsystem: "plugin-service",
+              operation: "goal-health-check",
+            });
+          }
         }
       };
       timers.watchdogTimer.value = setInterval(() => {
@@ -584,7 +755,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
       // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
       // Both forms can appear when the plugin config is serialized from user input before normalization.
-      const _home = process.env.HOME ?? homedir();
+      const _home = getEnv("HOME") ?? homedir();
       const versionFile = rawVersionFilePath.replace(/\$HOME/g, _home).replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;
@@ -751,6 +922,12 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
       if (proposalsDb) {
         proposalsDb.close();
+      }
+      if (auditStore) {
+        auditStore.close();
+      }
+      if (agentHealthStore) {
+        agentHealthStore.close();
       }
     },
   };

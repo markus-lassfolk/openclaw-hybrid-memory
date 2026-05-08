@@ -10,23 +10,28 @@ import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { truncateForStorage } from "../utils/text.js";
-import { extractTags } from "../utils/tags.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
 import { detectCredentialPatterns } from "../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
   getAutoCaptureExtractionMethod,
   resolveCaptureProvenance,
 } from "../services/capture-provenance.js";
-import { classifyMemoryOperation } from "../services/classification.js";
-import type { EpisodeOutcome } from "../types/memory.js";
+import {
+  type MemoryClassification,
+  classifyMemoryOperation,
+  classifyMemoryOperationsBatch,
+} from "../services/classification.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { extractStructuredFields } from "../services/fact-extraction.js";
+import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
+import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
+import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { extractTags } from "../utils/tags.js";
+import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
-import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer-score.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
@@ -206,6 +211,14 @@ async function runCapture(
         inactivePreferenceDays: ctx.cfg.memoryTiering.inactivePreferenceDays,
         hotMaxTokens: ctx.cfg.memoryTiering.hotMaxTokens,
         hotMaxFacts: ctx.cfg.memoryTiering.hotMaxFacts,
+        coldAfterInactivityDays: ctx.cfg.memoryTiering.coldAfterInactivityDays,
+        hotMinAccessCount: ctx.cfg.memoryTiering.hotMinAccessCount,
+        hotAccessWindowDays: ctx.cfg.memoryTiering.hotAccessWindowDays,
+        hotPreferenceImportance: ctx.cfg.memoryTiering.hotPreferenceImportance,
+        hotByRecallWindowDays: ctx.cfg.memoryTiering.hotByRecall.windowDays,
+        hotByRecallTopN: ctx.cfg.memoryTiering.hotByRecall.topN,
+        structuralByCategoryEnabled: ctx.cfg.memoryTiering.structuralByCategory,
+        structuralPermanentEnabled: ctx.cfg.memoryTiering.structuralPermanent,
       });
       if (counts.hot + counts.warm + counts.cold > 0) {
         api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
@@ -265,12 +278,36 @@ async function runCapture(
         : [];
       if (toCapture.length > 0) {
         let stored = 0;
+        const classifyModel = ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
+        const classifyMicroBatch = Math.max(1, Math.min(10, ctx.cfg.autoClassify?.batchSize ?? 10));
+
+        type CapturePrepared = {
+          candidate: (typeof toCapture)[number];
+          textToStore: string;
+          category: MemoryCategory;
+          extracted: ReturnType<typeof extractStructuredFields>;
+          summary: string | undefined;
+          vector: number[] | undefined;
+          similarFacts: MemoryEntry[];
+        };
+
+        const prepared: CapturePrepared[] = [];
         for (const candidate of toCapture.slice(0, 3)) {
           let textToStore = candidate.text;
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
           const extracted = extractStructuredFields(textToStore, category);
-          if (ctx.factsDb.hasDuplicate(textToStore)) continue;
+          if (ctx.factsDb.hasDuplicate(textToStore, "auto-capture")) {
+            ctx.auditStore?.append({
+              agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+              action: "auto-capture:duplicate",
+              target: textToStore.slice(0, 80),
+              outcome: "skipped",
+              sessionId: captureProvenance.sessionId ?? undefined,
+              context: { category },
+            });
+            continue;
+          }
           const summaryThreshold = ctx.cfg.autoRecall.summaryThreshold;
           const summary =
             summaryThreshold > 0 && textToStore.length > summaryThreshold
@@ -291,26 +328,76 @@ async function runCapture(
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
           }
+          let similarFacts: MemoryEntry[] = [];
           if (ctx.cfg.store.classifyBeforeWrite) {
-            let similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
+            similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
             if (similarFacts.length === 0) {
               similarFacts = ctx.factsDb.findSimilarForClassification(textToStore, extracted.entity, extracted.key, 3);
             }
+          }
+          prepared.push({ candidate, textToStore, category, extracted, summary, vector, similarFacts });
+        }
+
+        const classificationByIndex = new Map<number, MemoryClassification>();
+        if (ctx.cfg.store.classifyBeforeWrite) {
+          const withSimilar = prepared
+            .map((p, i) => (p.similarFacts.length > 0 ? i : -1))
+            .filter((i): i is number => i >= 0);
+          for (let s = 0; s < withSimilar.length; s += classifyMicroBatch) {
+            const idxs = withSimilar.slice(s, s + classifyMicroBatch);
+            const inputs = idxs.map((pi) => ({
+              candidateText: prepared[pi].textToStore,
+              candidateEntity: prepared[pi].extracted.entity,
+              candidateKey: prepared[pi].extracted.key,
+              existingFacts: prepared[pi].similarFacts,
+            }));
+            const outs = await classifyMemoryOperationsBatch(inputs, ctx.openai, classifyModel, api.logger);
+            idxs.forEach((pi, j) => classificationByIndex.set(pi, outs[j]));
+          }
+        }
+
+        for (let pi = 0; pi < prepared.length; pi++) {
+          const { candidate, textToStore, category, extracted, summary, vector, similarFacts } = prepared[pi];
+          if (ctx.cfg.store.classifyBeforeWrite) {
             if (similarFacts.length > 0) {
               try {
-                const classification = await classifyMemoryOperation(
-                  textToStore,
-                  extracted.entity,
-                  extracted.key,
-                  similarFacts,
-                  ctx.openai,
-                  ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
-                  api.logger,
-                );
-                if (classification.action === "NOOP") continue;
+                let classification = classificationByIndex.get(pi);
+                if (!classification) {
+                  api.logger.warn?.(
+                    `memory-hybrid: auto-capture missing batch classification for index ${pi}; falling back to single-call classify`,
+                  );
+                  classification = await classifyMemoryOperation(
+                    textToStore,
+                    extracted.entity,
+                    extracted.key,
+                    similarFacts,
+                    ctx.openai,
+                    classifyModel,
+                    api.logger,
+                  );
+                }
+                if (classification.action === "NOOP") {
+                  ctx.auditStore?.append({
+                    agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                    action: "auto-capture:noop",
+                    target: textToStore.slice(0, 80),
+                    outcome: "skipped",
+                    sessionId: captureProvenance.sessionId ?? undefined,
+                    context: { reason: classification.reason ?? "no-op", category },
+                  });
+                  continue;
+                }
                 if (classification.action === "DELETE" && classification.targetId) {
                   ctx.factsDb.supersede(classification.targetId, null);
                   ctx.aliasDb?.deleteByFactId(classification.targetId);
+                  ctx.auditStore?.append({
+                    agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                    action: "auto-capture:delete",
+                    target: classification.targetId,
+                    outcome: "success",
+                    sessionId: captureProvenance.sessionId ?? undefined,
+                    context: { reason: classification.reason ?? "delete", textPreview: textToStore.slice(0, 80) },
+                  });
                   api.logger.info?.(`memory-hybrid: auto-capture DELETE — retracted ${classification.targetId}`);
                   continue;
                 }
@@ -338,6 +425,7 @@ async function runCapture(
                         vector,
                       },
                       api.logger,
+                      classification.targetId,
                     );
                     const nowSec = Math.floor(Date.now() / 1000);
                     const newEntry = ctx.factsDb.store({
@@ -381,6 +469,14 @@ async function runCapture(
                       api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
                     }
                     await ctx.walRemove(walEntryId, api.logger);
+                    ctx.auditStore?.append({
+                      agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                      action: "auto-capture:updated",
+                      target: newEntry.id,
+                      outcome: "success",
+                      sessionId: captureProvenance.sessionId ?? undefined,
+                      context: { supersededId: classification.targetId, category, entity: extracted.entity },
+                    });
                     api.logger.info?.(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
@@ -392,6 +488,13 @@ async function runCapture(
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   operation: "auto-capture-classification",
                   subsystem: "auto-capture",
+                });
+                ctx.auditStore?.append({
+                  agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                  action: "auto-capture:classification-error",
+                  outcome: "failed",
+                  error: String(err).slice(0, 200),
+                  sessionId: captureProvenance.sessionId ?? undefined,
                 });
                 api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
               }
@@ -454,6 +557,14 @@ async function runCapture(
           }
           await ctx.walRemove(walEntryId, api.logger);
           stored++;
+          ctx.auditStore?.append({
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+            action: "auto-capture:stored",
+            target: storedEntry.id,
+            outcome: "success",
+            sessionId: captureProvenance.sessionId ?? undefined,
+            context: { category, entity: extracted.entity, role: candidate.role },
+          });
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }

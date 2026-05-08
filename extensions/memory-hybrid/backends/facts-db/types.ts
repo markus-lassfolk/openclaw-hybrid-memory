@@ -7,7 +7,6 @@ export const MEMORY_LINK_TYPES = [
   "DEPENDS_ON",
   "CONTRADICTS",
   "INSTANCE_OF",
-  "DERIVED_FROM",
 ] as const;
 
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];

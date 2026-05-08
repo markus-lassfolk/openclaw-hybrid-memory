@@ -18,7 +18,7 @@ import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 export type ProvenanceEdgeType = "DERIVED_FROM" | "CONSOLIDATED_FROM" | "REFLECTED_FROM";
 export type ProvenanceSourceType = "event_log" | "active_store" | "consolidation" | "reflection" | "document";
 
-export interface ProvenanceEdge {
+interface ProvenanceEdge {
   edgeType: ProvenanceEdgeType;
   sourceType: ProvenanceSourceType;
   sourceId: string;
@@ -31,7 +31,7 @@ export interface ProvenanceEdgeRecord extends ProvenanceEdge {
   createdAt: string;
 }
 
-export interface ProvenanceChain {
+interface ProvenanceChain {
   fact: { id: string; text: string; confidence: number };
   source: {
     sessionId?: string;

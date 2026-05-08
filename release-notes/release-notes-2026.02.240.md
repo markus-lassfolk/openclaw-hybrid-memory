@@ -6,7 +6,7 @@ Feature and fix release: active-task working memory for multi-step tasks (#99, #
 
 ### Added
 
-- **Active-task working memory** — Working memory for multi-step tasks: ACTIVE-TASK.md doc, heartbeat stale warnings, duration parser, `staleThreshold` config, stashCommit preservation, injection budget checks, active-task file path resolved against workspace root, original task start time preserved in subagent_start handler; legacy `staleHours` validated to reject fractional values (closes #99, #104).
+- **Active-task working memory** — Working memory for multi-step tasks: ACTIVE-TASKS.md doc, heartbeat stale warnings, duration parser, `staleThreshold` config, stashCommit preservation, injection budget checks, active-task file path resolved against workspace root, original task start time preserved in subagent_start handler; legacy `staleHours` validated to reject fractional values (closes #99, #104).
 - **Credentials** — Hardened auto-capture validation; new audit, prune, and dedup CLI commands (#98). Duplicate normalized service detection; `storeIfNew` for auto-capture; lowercase URLs and empty-string fallback; list command optimization; `runCredentialsList` in CLI context.
 
 ### Fixed

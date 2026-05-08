@@ -10,6 +10,8 @@
  */
 
 import type OpenAI from "openai";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventBus } from "../backends/event-bus.js";
@@ -47,6 +49,9 @@ export interface HandlerContext {
   costTracker?: CostTracker | null;
   /** Event Bus for sensor sweep (Issue #236). */
   eventBus?: EventBus | null;
+  /** Cross-agent audit log (Issue #790). */
+  auditStore?: AuditStore | null;
+  agentHealthStore?: AgentHealthStore | null;
 }
 
 // ---------------------------------------------------------------------------

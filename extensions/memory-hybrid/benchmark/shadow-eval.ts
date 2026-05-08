@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { chatCompletionTokenParams } from "../services/model-capabilities.js";
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Shadow Evaluation Benchmark Framework
  *
@@ -20,12 +22,12 @@
  *   4. Compare  — diff the results
  */
 
-import { performance } from "node:perf_hooks";
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { performance } from "node:perf_hooks";
+import { DatabaseSync } from "node:sqlite";
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -219,13 +221,14 @@ Respond with a JSON object and nothing else:
   try {
     // Dynamically import OpenAI to avoid a hard dependency here
     const { default: OpenAI } = (await import("openai")) as { default: typeof import("openai").default };
-    const apiKey = process.env.OPENAI_API_KEY ?? process.env.GOOGLE_API_KEY ?? undefined;
+    const apiKey = getEnv("OPENAI_API_KEY") ?? getEnv("GOOGLE_API_KEY") ?? undefined;
     if (!apiKey) {
       judgement = "No API key available (set OPENAI_API_KEY or GOOGLE_API_KEY)";
       return { score: 0.5, llmCalls, tokensUsed, judgement };
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: third-party SDK typing
     const client: any = new OpenAI({ apiKey });
     const isGoogle = judgeModel.startsWith("google/") || judgeModel.startsWith("gemini/");
     const isAnthropic = judgeModel.startsWith("anthropic/") || judgeModel.startsWith("claude/");
@@ -239,12 +242,13 @@ Respond with a JSON object and nothing else:
     const res = await client.chat.completions.create({
       model,
       messages: [{ role: "user", content: judgePrompt }],
-      max_tokens: 300,
+      ...chatCompletionTokenParams(model, 300),
       temperature: 0,
     });
 
     llmCalls = 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: LLM response typing requires any
     const resAny = res as any;
     const responseText: string = resAny.choices?.[0]?.message?.content ?? "";
     tokensUsed = resAny.usage?.total_tokens ?? 0;

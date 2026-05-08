@@ -29,7 +29,7 @@ export interface MigrateCredentialsOptions {
   writeFn?: (path: string, data: string, encoding: BufferEncoding) => void;
 }
 
-export interface MigrateCredentialsResult {
+interface MigrateCredentialsResult {
   migrated: number;
   skipped: number;
   errors: string[];

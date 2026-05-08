@@ -1,53 +1,55 @@
-# OpenClaw memory-hybrid plugin
+# OpenClaw `memory-hybrid` plugin (npm: `openclaw-hybrid-memory`)
 
-Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, **dynamic memory tiering (hot/warm/cold)**, LLM auto-classification, graph-based spreading activation for zero-LLM recall, and an optional credential vault. **Progressive disclosure** lets you inject a lightweight memory index instead of full texts—the agent uses `memory_recall` to fetch only what it needs, saving tokens. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
+This folder is the **published OpenClaw extension**: durable agent memory (structured store + semantic recall, auto-capture / auto-recall, configurable decay and maintenance, optional graph and credential vault).
 
-Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw-hybrid-memory) v3 deployment.
+**User-facing overview, scenarios, and install:** [Repository README](https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme) · **[Documentation site](https://markus-lassfolk.github.io/openclaw-hybrid-memory/)** · [Quick start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md)
 
-**Repository:** [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory) · **Docs:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) · [README](https://github.com/markus-lassfolk/openclaw-hybrid-memory#quick-start)
+---
 
-## Requirements
-
-- **Node.js `^20.19.0 || >=22.12.0`** — Node 20.0–20.18 and 22.0–22.11 are **not** supported; npm will reject the install with `EBADENGINE` on those versions.
-- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
-- **Embedding provider** — Required. The plugin needs an embedding provider to load. Four options:
-  - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). Requires an OpenAI API key.
-  - **Ollama** (local): set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — runs fully locally via a local Ollama instance.
-  - **ONNX** (local): set `embedding.provider: "onnx"` and `embedding.model` (e.g. `all-MiniLM-L6-v2`). Fully local; models auto-downloaded from HuggingFace. Requires `onnxruntime-node` (`npm i onnxruntime-node`).
-  - **Google** (Gemini API): set `embedding.provider: "google"`, `embedding.model: "text-embedding-004"`, `embedding.dimensions: 768`, and `llm.providers.google.apiKey`.
-  
-  Use `embedding.preferredProviders` (e.g. `["ollama", "openai"]`) for automatic ordered failover between providers. Optional features (auto-classify, summarize, consolidate, **memory classification**) use a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md#embedding-providers) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
-- **Build tools** for `@lancedb/lancedb`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
-
-## Installation
-
-**1. Install the plugin** (OpenClaw installs to `~/.openclaw/extensions` and runs `npm install`; a `postinstall` script rebuilds `@lancedb/lancedb` for your platform if needed):
+## Install & verify
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
+openclaw hybrid-mem install
+# Configure embedding (required) in ~/.openclaw/openclaw.json — see LLM-AND-PROVIDERS.md
+openclaw gateway stop && openclaw gateway start
+openclaw hybrid-mem verify
 ```
 
-If you see **"duplicate plugin id detected"**, remove the global copy once so only the NPM copy is used: run `./scripts/use-npm-only.sh` from the [repo root](https://github.com/markus-lassfolk/openclaw-hybrid-memory). Then use `openclaw hybrid-mem upgrade` for upgrades.
+Upgrade: `openclaw hybrid-mem upgrade` (then restart the gateway).
 
-**Upgrade to latest** — One command, no fighting:
+---
 
-```bash
-openclaw hybrid-mem upgrade
-```
+## Requirements (short)
 
-Then restart the gateway. The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart.
+| Requirement | Notes |
+|-------------|--------|
+| **Node.js** | `>=22.16.0` (`engines` in `package.json`) |
+| **OpenClaw** | v2026.3.8+ (peer); current 2026.3.x recommended |
+| **Embeddings** | Required — OpenAI, Ollama, ONNX, or Google; see [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md) |
+| **Build toolchain** | For `@lancedb/lancedb`: C++ build tools + Python 3 on the install machine |
 
-Outdated installs now check the latest published plugin version in the background. If your local version falls behind, the plugin mutes GlitchTip telemetry for that client and logs an upgrade reminder. You can tune reminder behavior with `errorReporting.updateNudge.enabled`, `errorReporting.updateNudge.intervalHours`, and `errorReporting.updateNudge.cacheTtlHours`.
+---
 
-Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
+## Agent tools
 
-**2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
+All tools use **underscore** names (`memory_store`, `memory_recall`, …). Dotted aliases are invalid for some providers.
 
-**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job).
+---
 
-**More options:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) and [Configuration](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md) (manual config merge, from-source install).
+## Package layout
 
-## Files in this directory
+| Path | Role |
+|------|------|
+| `openclaw.plugin.json` | Manifest and config schema |
+| `index.ts` | Plugin entry: stores, tools, CLI, lifecycle |
+| `config.ts` | Defaults and config parsing |
+| `backends/` | SQLite, LanceDB, event bus, etc. |
+| `tools/` | Tool implementations and dashboard routes |
+| `cli/` | `hybrid-mem` commands |
+| `skills/hybrid-memory/` | Bundled Agent Skill (`SKILL.md` + references); copied to `{workspace}/skills/hybrid-memory/` on **first plugin start** if absent (or use `hybrid-mem install` to refresh) |
+
+---
 
 | File | Description |
 |------|-------------|
@@ -58,6 +60,24 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
 | `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
 | `tools/dashboard-routes.ts` | Dashboard HTTP route registration — registers all `/plugins/memory-dashboard/*` routes with consistent auth (Issue #279) |
+| `tools/public-api-routes.ts` | Public API surface routes (`/plugins/memory-public/*`) for health/search/timeline/stats/export/fact (Issue #1027) |
+| `services/public-export-bundle.ts` | Stable export bundle builder used by `GET /plugins/memory-public/export` (Issue #1027) |
+
+| Topic | Doc |
+|--------|-----|
+| Full config | [CONFIGURATION.md](../../docs/CONFIGURATION.md) |
+| CLI | [CLI-REFERENCE.md](../../docs/CLI-REFERENCE.md) |
+| Architecture | [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) |
+| Event bus API | [docs/event-bus.md](docs/event-bus.md) |
+| Retrieval / RRF | [docs/rrf-retrieval.md](docs/rrf-retrieval.md), [RETRIEVAL-MODES.md](../../docs/RETRIEVAL-MODES.md) |
+| Graph / contacts | [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md) |
+| ONNX embeddings | [README](#local-onnx-embeddings-optional) below |
+
+### Local ONNX embeddings (optional)
+
+## Entity layer (contacts, organizations, NER)
+
+When **`graph.enabled`** is true, new facts are enriched asynchronously with **PERSON** and **ORG** mentions (language hint via **franc**, extraction via LLM). Data lives in SQLite (`organizations`, `contacts`, `fact_entity_mentions`, `org_fact_links`). The **`memory_directory`** tool exposes **`list_contacts`** and **`org_view`** for structured lists—use **`memory_recall`** for ranked semantic search. Backfill older facts with **`openclaw hybrid-mem enrich-entities`**. See [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) and [MULTILINGUAL-SUPPORT.md](../../docs/MULTILINGUAL-SUPPORT.md).
 
 ## Event Bus
 
@@ -91,6 +111,55 @@ See [`docs/event-bus.md`](docs/event-bus.md) for the full schema, API reference,
 Routes are only registered when `health.enabled` is `true` (the default). OpenClaw v2026.3.8 enforces a **consistent-auth requirement**: every route under the same path prefix must use the same `authenticated` value. `dashboard-routes.ts` satisfies this by reading `cfg.health.authenticated` once and applying it to all routes via a single shared `routeOpts` object.
 
 **Config field:** `health.authenticated` (boolean, default `true`) — controls whether dashboard routes require an authenticated session. Set to `false` only if you intentionally want unauthenticated access.
+
+## Mission Control — Memory Viewer (Issue #1023)
+
+The **Mission Control** local dashboard (`createDashboardServer`) doubles as the **Memory Viewer / Mission Control UI** for hybrid-memory. It serves a rich HTML dashboard at the root and exposes a comprehensive JSON API under `/api/viewer/`.
+
+**Access:** The dashboard runs on `127.0.0.1` only (local-only, no authentication required for local access). The HTTP server port is configured via `dashboard.port` in the plugin config (default `7700`).
+
+> **Important:** The dashboard server is registered separately from the OpenClaw HTTP gateway. It is accessible at `http://127.0.0.1:7700/` (or the configured port) — not through the OpenClaw gateway URL. This is intentional: local-only, no auth overhead, safe for operators on the same machine.
+
+### Memory Viewer API endpoints
+
+All Memory Viewer routes are served by the local Mission Control server on the dashboard port:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/viewer/stats` | GET | Overview: total facts, verified, edicts, issues, episodes, links, breakdown by category/tier/decay/source |
+| `/api/viewer/facts` | GET | Paginated facts list with optional filters: `?category=&entity=&limit=&offset=` |
+| `/api/viewer/facts/:id` | GET | Single fact detail including verification status, provenance, and decay info |
+| `/api/viewer/facts/:id/verify` | POST | Verify a fact (`{ "verifiedBy": "agent" \| "user" \| "system" }`) |
+| `/api/viewer/facts/:id/forget` | POST | Forget (soft-delete) a fact |
+| `/api/viewer/entities` | GET | Top entities by fact count with categories and tags |
+| `/api/viewer/episodes` | GET | Recent episodic memory events with outcome, duration, and session context |
+| `/api/viewer/narratives` | GET | Recent session narratives/summaries |
+| `/api/viewer/issues` | GET | All tracked issues with status, severity, and symptoms |
+| `/api/viewer/workflows` | GET | Workflow patterns and recent tool-sequence traces |
+| `/api/viewer/edicts` | GET | All edicts (verified ground-truth facts) |
+| `/api/viewer/verified` | GET | All verified facts with verification metadata |
+| `/api/viewer/links` | GET | Memory graph links (source → target with type and strength) |
+| `/api/viewer/provenance/:factId` | GET | Provenance chain for a specific fact |
+
+All responses include `Cache-Control: no-cache`. POST endpoints accept JSON body and return `{ ok: boolean, message: string }`.
+
+## Public API HTTP Routes
+
+`tools/public-api-routes.ts` registers a compact, beginner-friendly REST surface under `/plugins/memory-public/`:
+
+| Route | Description |
+|-------|-------------|
+| `GET /plugins/memory-public/health` | API surface health + version metadata |
+| `GET /plugins/memory-public/search?q=<query>&limit=<n>` | Simple full-text memory search |
+| `GET /plugins/memory-public/timeline?limit=<n>` | Reverse-chronological memory timeline |
+| `GET /plugins/memory-public/stats` | Core memory stats (facts/episodes/procedures/links) |
+| `GET /plugins/memory-public/export` | Stable JSON export bundle (facts, episodes, procedures, narratives, provenance) |
+| `GET /plugins/memory-public/fact?id=<uuid>` | Inspect a single fact plus incoming/outgoing links |
+
+Routes use the same `health.authenticated` setting to keep auth behavior consistent per prefix.
+
+See `docs/PUBLIC-API-SURFACE.md` for demo flows and payload shape details.
+
 
 ```json
 "health": {
@@ -134,10 +203,97 @@ For local embedding inference without an API key, install `onnxruntime-node` int
 npm install --prefix ~/.openclaw/extensions onnxruntime-node@^1.18.0
 ```
 
-Installing at this level means Node's module resolution finds it by traversing up from the plugin directory, and the ~513 MB binary is not removed when the plugin is reinstalled. If you install it inside the plugin's own directory (`~/.openclaw/extensions/openclaw-hybrid-memory`) instead, you will need to re-run the install after each upgrade.
+Then set `embedding.provider: "onnx"` in plugin config. See repository [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md) if loading fails.
 
-Then set `embedding.provider: "onnx"` in your plugin config. Models are auto-downloaded from HuggingFace on first use. `onnxruntime-node` is not listed as a dependency of this package — it is a ~513 MB optional native binary that most users do not need. The plugin detects its absence and shows a clear error if you configure the `onnx` provider without installing it.
+### Recall timing diagnostics
+
+Optional `autoRecall.recallTiming` (`off` | `basic` | `verbose`) — see [INTERACTIVE-RECALL-LATENCY.md](../../docs/INTERACTIVE-RECALL-LATENCY.md) and [CONFIGURATION.md](../../docs/CONFIGURATION.md).
+
+---
 
 ## Credits
 
-Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the [repo README](../../README.md) and [docs/](../../docs/).
+Design lineage and a full list of extensions in this repo: [CREDITS-AND-ATTRIBUTION.md](../../docs/CREDITS-AND-ATTRIBUTION.md). Based on [Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory) (Clawdboss.ai).
+
+
+## Operator health audit
+
+Run a one-shot store health report with:
+
+```bash
+openclaw hybrid-mem audit health
+openclaw hybrid-mem audit health --json
+openclaw hybrid-mem audit health --strict
+```
+
+The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits non-zero when warnings are present. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
+
+## Weekly pending digest (#1197)
+
+Render an at-a-glance backlog of approve/decline/defer actions across persona proposals,
+procedure promotions, tool proposals, crystallization proposals, and verified facts:
+
+```bash
+openclaw hybrid-mem digest pending --since 7d --format md
+openclaw hybrid-mem digest pending --since 7d --format json --out /tmp/pending.json
+```
+
+The JSON payload is versioned (`schemaVersion: 1`) and surfaces:
+
+- `personaProposals.pendingEntries[].evidence` — top supporting fact ids and total count derived
+  from the proposal's `evidenceSessions` join against `facts.provenance_session`.
+- `procedures.newThisWeek` — count of procedures whose `last_validated` timestamp falls within
+  the lookback window, alongside the existing `validatedNotPromoted` backlog.
+- Approve / decline / defer commands per entry so the operator can act without leaving the digest.
+
+The installer registers `hybrid-mem:weekly-pending-digest` (Mondays 08:00) and respects
+`digest.weekly.delivery.{ mode, chatId }` to optionally announce the rendered markdown body to a
+Telegram channel. Full schema and rationale: [docs/pending-digest.md](docs/pending-digest.md).
+
+## Maintenance log format & analyzer
+
+Hybrid-memory maintenance cron jobs write structured run artifacts under:
+
+```text
+$HOME/.openclaw/logs/cron-hybrid-mem/YYYYMMDD/
+  <job>-<timestamp>-<pid>.log
+  <job>-<timestamp>-<pid>.exit.txt
+```
+
+Each `.exit.txt` file contains one line per step:
+
+```text
+2026-05-07T02:10:21Z prune exit=0
+2026-05-07T02:11:02Z distill exit=1
+```
+
+Use the analyzer to classify failures, persist regression history, emit an operator digest, and optionally report plugin/orchestration bugs through the existing GlitchTip path:
+
+```bash
+openclaw hybrid-mem analyze-maintenance-logs --since 24h --digest md
+openclaw hybrid-mem analyze-maintenance-logs --since 7d --format json --out /tmp/maintenance-findings.json
+openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --strict
+```
+
+Rules are data-driven in [`services/maintenance-rules.json`](services/maintenance-rules.json), so operators can inspect or extend classifications without changing analyzer code. Findings are persisted in `maintenance-findings.db` table `maintenance_finding`, enabling week-over-week trend output for `--since 7d` / `--trend` runs.
+
+The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the nightly chain and announce the rendered digest to the operator.
+
+### Auto-fix whitelist (#1199)
+
+`--auto-fix` applies **only** safe, idempotent actions implemented in [`services/maintenance-auto-fix.ts`](services/maintenance-auto-fix.ts):
+
+- **Stale scan lock files**: when a finding includes a `*.lock` absolute path and the recorded PID is not running, the lock file is removed.
+- **Retry-once marker**: for transient LLM / network rules, the finding is annotated (`auto-fixed-retry-once`) so the next cron tick can retry — **no** extra shell commands are executed.
+
+Add **`--auto-fix-all`** together with `--auto-fix` to opt into heavier remediation (still scoped to the maintenance analyzer):
+
+- **Vacuum-on-busy**: when at least two `SQLITE_BUSY` / “database is locked” findings fall within the configured persistence window (historical rows in `maintenance-findings.db` plus the current batch), runs `VACUUM` + WAL checkpoint on the open facts DB and invokes `openclaw hybrid-mem vectordb-optimize`.
+- **Re-embed vectorless**: when an `embedding-auth` rule matches in the current batch, runs `openclaw hybrid-mem reembed-vectorless --limit 200 --apply` once (useful after credentials were fixed).
+
+Override the CLI binary with `OPENCLAW_BIN` if `openclaw` is not on `PATH`.
+
+### Resolved-issue suppression
+
+[`services/maintenance-resolved.json`](services/maintenance-resolved.json) maps **finding fingerprints** to `{ resolvedInVersion, note }`. When the log’s parsed `pluginVersion` is `>= resolvedInVersion` (dotted numeric comparison), matching findings are dropped from the analyzer output to cut noise after a release fix.
+

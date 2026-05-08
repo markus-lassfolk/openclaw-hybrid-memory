@@ -10,6 +10,7 @@
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
 
@@ -17,7 +18,7 @@ import type { VerificationStore, VerifiedFact } from "./verification-store.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type VerificationOutcome = "CONFIRMED" | "STALE" | "UNCERTAIN";
+type VerificationOutcome = "CONFIRMED" | "STALE" | "UNCERTAIN";
 
 export interface VerificationCycleResult {
   checked: number;
@@ -34,6 +35,11 @@ export interface ContinuousVerifierOptions {
   verificationModel?: string;
   /** Per-fact LLM timeout in ms (default: 15000). */
   timeoutMs?: number;
+  /**
+   * Progress hook for long cycles (e.g. `hybrid-mem dream-cycle --verbose`).
+   * Throttled when many facts are due: first, last, every 10th, and all when ≤25 due.
+   */
+  onProgress?: (message: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +83,8 @@ export function parseVerificationOutcome(response: string): VerificationOutcome 
 const DEFAULT_MODEL = "openai/gpt-4.1-nano";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const RECENT_FACTS_DAYS = 90;
+const MAX_CONTEXT_PER_ENTITY = 20;
+const MAX_CONTEXT_CHARS_PER_FACT = 500;
 // Confidence assigned to facts the LLM determines are stale. Kept below 0.3
 // so that natural decay cycles will eventually remove them, while still
 // preventing immediate deletion (threshold is < 0.1). Previously 0.5, which
@@ -90,6 +98,7 @@ export class ContinuousVerifier {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly cycleDays: number | undefined;
+  private readonly onProgress?: (message: string) => void;
   private lastRunDate: number | null = null;
 
   constructor(store: VerificationStore, factsDb: FactsDB, openai: OpenAI, options?: ContinuousVerifierOptions) {
@@ -99,6 +108,7 @@ export class ContinuousVerifier {
     this.model = options?.verificationModel ?? DEFAULT_MODEL;
     this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.cycleDays = options?.cycleDays;
+    this.onProgress = options?.onProgress;
   }
 
   /**
@@ -114,6 +124,7 @@ export class ContinuousVerifier {
       maxTokens: 256,
       openai: this.openai,
       timeoutMs: this.timeoutMs,
+      feature: CostFeature.continuousVerifier,
     });
     return parseVerificationOutcome(response);
   }
@@ -170,13 +181,24 @@ export class ContinuousVerifier {
       return result;
     }
 
+    if (due.length === 0) {
+      return result;
+    }
+
     const recentEntries = this.factsDb.getRecentFacts(RECENT_FACTS_DAYS);
     const recentByEntity = new Map<string, string[]>();
     for (const e of recentEntries) {
       const entity = e.entity?.toLowerCase() ?? "";
       if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
-      recentByEntity.get(entity)?.push(e.text);
+      const arr = recentByEntity.get(entity)!;
+      if (arr.length < MAX_CONTEXT_PER_ENTITY) {
+        arr.push(e.text.slice(0, MAX_CONTEXT_CHARS_PER_FACT));
+      }
     }
+
+    this.onProgress?.(
+      `memory-hybrid: continuous-verification — ${due.length} fact(s) due, ${recentEntries.length} recent facts loaded for context`,
+    );
 
     for (const fact of due) {
       result.checked++;
@@ -185,6 +207,21 @@ export class ContinuousVerifier {
         const entity = underlying?.entity ?? null;
         const entityKey = entity?.toLowerCase() ?? "";
         const recentFacts = recentByEntity.get(entityKey) ?? [];
+
+        if (recentFacts.length === 0 && entityKey.length > 0) {
+          if (underlying) {
+            this.factsDb.addTag(underlying.id, "review-needed");
+          }
+          result.uncertain++;
+          const n = result.checked;
+          const total = due.length;
+          if (this.onProgress && (total <= 25 || n === 1 || n === total || n % 10 === 0)) {
+            this.onProgress(
+              `memory-hybrid: continuous-verification — ${n}/${total} (UNCERTAIN/no-context) fact=${fact.factId.slice(0, 8)}…`,
+            );
+          }
+          continue;
+        }
 
         let outcome: VerificationOutcome;
         try {
@@ -213,6 +250,14 @@ export class ContinuousVerifier {
             this.factsDb.addTag(underlying.id, "review-needed");
           }
           result.uncertain++;
+        }
+
+        const n = result.checked;
+        const total = due.length;
+        if (this.onProgress && (total <= 25 || n === 1 || n === total || n % 10 === 0)) {
+          this.onProgress(
+            `memory-hybrid: continuous-verification — ${n}/${total} (${outcome}) fact=${fact.factId.slice(0, 8)}…`,
+          );
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {

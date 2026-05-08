@@ -9,11 +9,15 @@ concurrency:
   group: workflow-sanity-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install actionlint
         run: |
           ACTIONLINT_VERSION="1.7.11"

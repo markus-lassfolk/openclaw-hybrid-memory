@@ -27,6 +27,7 @@ const fullDefaults = {
       "memory-hybrid": {
         enabled: true,
         config: {
+          mode: "local",
           embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
           distill: { defaultModel: "gemini-3.1-pro-preview" },
           autoCapture: true,

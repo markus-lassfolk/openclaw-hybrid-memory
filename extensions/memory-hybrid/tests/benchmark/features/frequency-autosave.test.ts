@@ -2,10 +2,10 @@
  * Benchmark: frequency-autosave feature — integration tests
  */
 
-import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { benchmark, shadowBenchmark, testAccuracy } from "../../../benchmark/features/frequency-autosave.js";
 import type { BenchmarkContext } from "../../../benchmark/shadow-eval.js";

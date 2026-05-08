@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for the passive observer service.
  * Uses mocked LLM calls, storage, and file system to test all core logic paths.
@@ -15,11 +16,39 @@ import {
   extractTextFromJsonlChunk,
   getCursorsPath,
   isIdentityFact,
+  isPassiveObserverTranscriptCandidate,
   loadCursors,
   parseObserverResponse,
   runPassiveObserver,
   saveCursors,
 } from "../services/passive-observer.js";
+
+// ---------------------------------------------------------------------------
+// 0. Session file eligibility (OpenClaw checkpoint sidecars)
+// ---------------------------------------------------------------------------
+
+describe("isPassiveObserverTranscriptCandidate", () => {
+  it("accepts normal session jsonl basenames", () => {
+    expect(isPassiveObserverTranscriptCandidate("01d6694a-aaea-473e-a97f-fcd76fb89644.jsonl")).toBe(true);
+    expect(isPassiveObserverTranscriptCandidate("s1.jsonl")).toBe(true);
+  });
+
+  it("rejects OpenClaw checkpoint sidecars", () => {
+    expect(
+      isPassiveObserverTranscriptCandidate(
+        "01d6694a-aaea-473e-a97f-fcd76fb89644.checkpoint.de0ef775-ae23-4c65-931f-b744f0d11862.jsonl",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects deleted tombstones", () => {
+    expect(isPassiveObserverTranscriptCandidate(".deleted-someid.jsonl")).toBe(false);
+  });
+
+  it("rejects non-jsonl", () => {
+    expect(isPassiveObserverTranscriptCandidate("readme.txt")).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // 1. JSONL text extraction tests
@@ -936,7 +965,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
 
-  it("parses passiveObserver config (2026.3.140 migration forces enabled: false)", async () => {
+  it("parses passiveObserver config with enabled true", async () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
@@ -950,7 +979,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
         sessionsDir: "/tmp/sessions",
       },
     });
-    expect(cfg.passiveObserver.enabled).toBe(false);
+    expect(cfg.passiveObserver.enabled).toBe(true);
     expect(cfg.passiveObserver.intervalMinutes).toBe(30);
     expect(cfg.passiveObserver.model).toBe("google/gemini-2.5-flash");
     expect(cfg.passiveObserver.maxCharsPerChunk).toBe(4000);
@@ -998,7 +1027,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
 
   it("expands $HOME in passiveObserver.sessionsDir", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const home = process.env.HOME ?? require("node:os").homedir();
+    const home = getEnv("HOME") ?? require("node:os").homedir();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       passiveObserver: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
@@ -1018,7 +1047,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
 
   it("expands $HOME in procedures.sessionsDir", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const home = process.env.HOME ?? require("node:os").homedir();
+    const home = getEnv("HOME") ?? require("node:os").homedir();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       procedures: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },

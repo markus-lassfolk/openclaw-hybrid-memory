@@ -1,83 +1,87 @@
-import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../utils.js";
-import { versionInfo } from "../../versionInfo.js";
-import { isVersionAtLeast } from "../../utils/version-check.js";
-import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
 import { pluginLogger } from "../../utils/logger.js";
+import type { ConfigMode, EmbeddingModelConfig, HybridMemoryConfig } from "../types/index.js";
+import { PRESET_OVERRIDES, getMemoryCategories, setMemoryCategories } from "../utils.js";
 import {
-  DEFAULT_MODEL,
+  parseExtractionConfig,
+  parseIdentityPromotionConfig,
+  parseIdentityReflectionConfig,
+  parsePassiveObserverConfig,
+  parseProceduresConfig,
+  parseReflectionConfig,
+} from "./capture.js";
+import {
   DEFAULT_LANCE_PATH,
+  DEFAULT_MODEL,
   DEFAULT_SQLITE_PATH,
   EMBEDDING_DIMENSIONS,
   OPENAI_MODELS,
+  isEmbeddingApiKeyExecSecretRef,
+  parseActiveTaskConfig,
+  parseAuthConfig,
+  parseCredentialsConfig,
+  parseEventLogConfig,
+  parseGatewayConfig,
+  parseGoalStewardshipConfig,
+  parseLLMConfig,
+  parsePathConfig,
+  parseSelfCorrectionConfig,
+  parseStoreConfig,
+  parseVectorConfig,
+  parseWALConfig,
+  resolveEmbeddingApiKeyInput,
   resolveEnvVars,
   resolveSecretRef,
-  parseStoreConfig,
-  parseWALConfig,
-  parseEventLogConfig,
-  parsePathConfig,
-  parseVectorConfig,
-  parseCredentialsConfig,
-  parseActiveTaskConfig,
-  parseSelfCorrectionConfig,
-  parseLLMConfig,
-  parseGatewayConfig,
-  parseAuthConfig,
 } from "./core.js";
+import {
+  parseAliasesConfig,
+  parseAmbientConfig,
+  parseApiTapConfig,
+  parseClosedLoopConfig,
+  parseClustersConfig,
+  parseCostTrackingConfig,
+  parseCrossAgentLearningConfig,
+  parseCrystallizationConfig,
+  parseDashboardConfig,
+  parseDigestConfig,
+  parseDocumentsConfig,
+  parseEntityExtractionConfig,
+  parseErrorReportingConfig,
+  parseFrequencyCaptureConfig,
+  parseFrustrationDetectionConfig,
+  parseFutureDateProtectionConfig,
+  parseGapsConfig,
+  parseGraphConfig,
+  parseGraphRetrievalConfig,
+  parseHumanizerConfig,
+  parseImplicitFeedbackConfig,
+  parseIngestConfig,
+  parseLifecycleConfig,
+  parseMemoryTieringConfig,
+  parseMultiAgentConfig,
+  parsePersonaProposalsConfig,
+  parseReinforcementConfig,
+  parseSelfExtensionConfig,
+  parseToolEffectivenessConfig,
+  parseWorkflowTrackingConfig,
+} from "./features.js";
+import {
+  parseHealthConfig,
+  parseMaintenanceConfig,
+  parseNightlyCycleConfig,
+  parseProvenanceConfig,
+  parseVerificationConfig,
+} from "./maintenance.js";
 import {
   parseAutoClassifyConfig,
   parseAutoRecallConfig,
-  parseRetrievalConfig,
-  parseSearchConfig,
-  parseQueryExpansionConfig,
-  parseRerankingConfig,
   parseContextualVariantsConfig,
   parseDocumentGradingConfig,
+  parseQueryExpansionConfig,
+  parseRerankingConfig,
+  parseRetrievalConfig,
+  parseSearchConfig,
 } from "./retrieval.js";
-import {
-  parsePassiveObserverConfig,
-  parseReflectionConfig,
-  parseIdentityReflectionConfig,
-  parseIdentityPromotionConfig,
-  parseProceduresConfig,
-  parseExtractionConfig,
-} from "./capture.js";
-import {
-  parseVerificationConfig,
-  parseProvenanceConfig,
-  parseNightlyCycleConfig,
-  parseHealthConfig,
-  parseMaintenanceConfig,
-} from "./maintenance.js";
 import { parseSensorSweepConfig } from "./sensors.js";
-import {
-  parseGraphConfig,
-  parseGraphRetrievalConfig,
-  parseClustersConfig,
-  parseGapsConfig,
-  parseAliasesConfig,
-  parseIngestConfig,
-  parseMemoryTieringConfig,
-  parseAmbientConfig,
-  parseReinforcementConfig,
-  parseFutureDateProtectionConfig,
-  parseDocumentsConfig,
-  parsePersonaProposalsConfig,
-  parseMultiAgentConfig,
-  parseErrorReportingConfig,
-  parseWorkflowTrackingConfig,
-  parseCrystallizationConfig,
-  parseSelfExtensionConfig,
-  parseImplicitFeedbackConfig,
-  parseClosedLoopConfig,
-  parseFrustrationDetectionConfig,
-  parseCrossAgentLearningConfig,
-  parseToolEffectivenessConfig,
-  parseCostTrackingConfig,
-  parseDashboardConfig,
-  parseApiTapConfig,
-  parseHumanizerConfig,
-  parseFrequencyCaptureConfig,
-} from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
 function deepMergePreset(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
@@ -151,50 +155,6 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
   return !deepEqual(userVal, presetVal);
 }
 
-/**
- * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
- * Overrides user-set values to establish consistent baseline.
- */
-function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
-  cfg.queryExpansion = {
-    ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}),
-    enabled: false,
-  } as Record<string, unknown>;
-  const forceDisabledKeys = [
-    "frustrationDetection",
-    "nightlyCycle",
-    "passiveObserver",
-    "workflowTracking",
-    "selfExtension",
-    "crystallization",
-    "verification",
-    "provenance",
-    "aliases",
-    "crossAgentLearning",
-    "reranking",
-    "contextualVariants",
-    "documents",
-    "personaProposals",
-  ];
-  for (const key of forceDisabledKeys) {
-    const existing = cfg[key];
-    const base =
-      typeof existing === "object" && existing !== null && !Array.isArray(existing)
-        ? (existing as Record<string, unknown>)
-        : {};
-    (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
-  }
-  const g = cfg.graph as Record<string, unknown> | undefined;
-  if (g && typeof g === "object") {
-    cfg.graph = { ...g, strengthenOnRecall: false };
-  }
-  // Credential auto-detect: make opt-in (recommendations §2 resolution)
-  const cred = cfg.credentials as Record<string, unknown> | undefined;
-  if (cred && typeof cred === "object") {
-    cfg.credentials = { ...cred, autoDetect: false };
-  }
-}
-
 export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
   if (!dims) {
@@ -216,6 +176,27 @@ function readAzureFoundryBaseUrl(
   if (!af) return undefined;
   const u = typeof af.baseURL === "string" ? af.baseURL : typeof af.baseUrl === "string" ? af.baseUrl : undefined;
   return u?.trim() || undefined;
+}
+
+/** Raw `llm.providers` may use mixed-case keys (e.g. `OpenAI`) before parseLLMConfig normalizes them. */
+function getLlmProviderEntryCaseInsensitive(
+  providers: Record<string, unknown> | undefined,
+  normalizedName: string,
+): { apiKey?: string; baseURL?: string; baseUrl?: string } | undefined {
+  if (!providers || typeof providers !== "object") return undefined;
+  const hit = Object.keys(providers).find((k) => k.toLowerCase() === normalizedName);
+  if (!hit) return undefined;
+  const v = providers[hit];
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  return v as { apiKey?: string; baseURL?: string; baseUrl?: string };
+}
+
+/** Normalize embedding.apiKey from string or OpenClaw SecretRef object for parsing (Issue #833). */
+function resolveUserEmbeddingApiKeyRaw(embedding: Record<string, unknown> | undefined): string {
+  if (!embedding?.apiKey) return "";
+  const k = embedding.apiKey;
+  if (typeof k === "string") return k.trim();
+  return resolveEmbeddingApiKeyInput(k)?.trim() ?? "";
 }
 
 export function parseConfig(value: unknown): HybridMemoryConfig {
@@ -257,10 +238,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   userRaw.mode = undefined;
   cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
   cfg.mode = undefined;
-  // Phase 1 (2026.3.140+): force core-only baseline for all installations (overrides user-set values too)
-  if (isVersionAtLeast(versionInfo.pluginVersion, "2026.3.140")) {
-    applyPhase1CoreOnlyMigration(cfg);
-  }
   // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
   for (const key of Object.keys(preset)) {
     if (!(key in userRaw)) continue;
@@ -287,6 +264,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     typeof azureFoundryForEmbed.apiKey === "string" &&
     azureFoundryForEmbed.apiKey.trim().length >= 10 &&
     !!azureFoundryBaseForEmbed;
+  const llmOpenAiForEmbed = getLlmProviderEntryCaseInsensitive(
+    llmProvidersForEmbed as Record<string, unknown> | undefined,
+    "openai",
+  );
+  const hasLlmOpenAiKeyForEmbed =
+    !!llmOpenAiForEmbed && typeof llmOpenAiForEmbed.apiKey === "string" && llmOpenAiForEmbed.apiKey.trim().length >= 10;
   // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
   // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
   const looksLikeSecretRefOrKey = (k: string) =>
@@ -301,7 +284,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
-    const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
+    const rawApiKey = resolveUserEmbeddingApiKeyRaw(embedding);
     const hasApiKey =
       rawApiKey &&
       (rawApiKey.startsWith("env:") || rawApiKey.startsWith("file:") || rawApiKey.length >= 10) &&
@@ -315,7 +298,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
     if (hasApiKey && modelStr && isOpenAIModel(modelStr)) {
       embeddingProvider = "openai";
-    } else if (!hasApiKey && hasAzureFoundryForEmbed && modelStr && isOpenAIModel(modelStr)) {
+    } else if (
+      !hasApiKey &&
+      (hasAzureFoundryForEmbed || hasLlmOpenAiKeyForEmbed) &&
+      modelStr &&
+      isOpenAIModel(modelStr)
+    ) {
       embeddingProvider = "openai";
     } else if (!hasApiKey && !hasOllamaInLlmForProvider && hasGoogleKey) {
       embeddingProvider = "google";
@@ -329,16 +317,20 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     }
   }
 
-  // apiKey is required for openai provider only (or use llm.providers["azure-foundry"] when unset)
+  // apiKey is required for openai provider only (or use llm.providers["azure-foundry"] / ["openai"] when unset)
   let resolvedApiKey: string | undefined;
   let embeddingEndpointOverride: string | undefined;
   if (embeddingProvider === "openai") {
-    const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
-    const llmProvidersForOpenAiEmbed = (
-      cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string; baseUrl?: string }> } | undefined
-    )?.providers;
-    const azureFoundry = llmProvidersForOpenAiEmbed?.["azure-foundry"];
-    const azureFoundryBaseUrl = readAzureFoundryBaseUrl(llmProvidersForOpenAiEmbed);
+    const rawEmbedKey = resolveUserEmbeddingApiKeyRaw(embedding);
+    const llmProvidersForOpenAiEmbed = (cfg.llm as { providers?: Record<string, unknown> } | undefined)?.providers as
+      | Record<string, unknown>
+      | undefined;
+    const azureFoundry = llmProvidersForOpenAiEmbed?.["azure-foundry"] as
+      | { apiKey?: string; baseURL?: string; baseUrl?: string }
+      | undefined;
+    const azureFoundryBaseUrl = readAzureFoundryBaseUrl(
+      llmProvidersForOpenAiEmbed as Record<string, { baseURL?: string; baseUrl?: string }> | undefined,
+    );
     const hasAzureFoundry =
       azureFoundry &&
       typeof azureFoundry.apiKey === "string" &&
@@ -383,14 +375,44 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       pluginLogger.info(
         'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
       );
+    } else if (hasLlmOpenAiKeyForEmbed && llmOpenAiForEmbed) {
+      const rawKey = (llmOpenAiForEmbed.apiKey ?? "").trim();
+      const resolvedKey =
+        rawKey.startsWith("env:") || rawKey.startsWith("file:") ? resolveSecretRef(rawKey) : resolveEnvVars(rawKey);
+      if (!resolvedKey || resolvedKey.length < 10) {
+        throw new Error(
+          'embedding (openai) with llm.providers["openai"]: apiKey could not be resolved or is invalid. Set embedding.apiKey or fix the openai provider key.',
+        );
+      }
+      resolvedApiKey = resolvedKey;
+      const openAiBase =
+        (typeof llmOpenAiForEmbed.baseURL === "string" && llmOpenAiForEmbed.baseURL.trim()) ||
+        (typeof llmOpenAiForEmbed.baseUrl === "string" && llmOpenAiForEmbed.baseUrl.trim()) ||
+        undefined;
+      if (openAiBase) {
+        embeddingEndpointOverride = openAiBase;
+        pluginLogger.info(
+          'memory-hybrid: using llm.providers["openai"] for embeddings (API key and base URL). Set embedding.endpoint and embedding.apiKey to override.',
+        );
+      } else {
+        pluginLogger.info(
+          'memory-hybrid: using llm.providers["openai"] API key for embeddings. Set embedding.apiKey to override.',
+        );
+      }
     } else {
+      const ak = embedding?.apiKey;
+      if (isEmbeddingApiKeyExecSecretRef(ak)) {
+        throw new Error(
+          "embedding.apiKey exec SecretRef is not resolved inside the plugin. Use env: or file: string refs, a plaintext string key for development, or ensure the host resolves secrets before plugin load. See Issue #833.",
+        );
+      }
       throw new Error(
-        'embedding.apiKey is required. Set it in plugins.entries["openclaw-hybrid-memory"].config.embedding, or configure llm.providers["azure-foundry"] with apiKey and baseURL to use Azure Foundry for embeddings. Run \'openclaw hybrid-mem verify --fix\' for help.',
+        'embedding.apiKey is required. Set it in plugins.entries["openclaw-hybrid-memory"].config.embedding, configure llm.providers["openai"] with apiKey (gateway inheritance / issue #1002), or llm.providers["azure-foundry"] with apiKey and baseURL for Azure Foundry. Run \'openclaw hybrid-mem verify --fix\' for help.',
       );
     }
-  } else if (embedding && typeof embedding.apiKey === "string") {
+  } else if (embedding?.apiKey) {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
-    const rawKey = (embedding.apiKey as string).trim();
+    const rawKey = resolveUserEmbeddingApiKeyRaw(embedding);
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       const resolved = resolveSecretRef(rawKey);
       if (!resolved) {
@@ -550,13 +572,18 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     embeddingEndpointOverride ??
     (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
+      : undefined) ??
+    (embeddingProvider === "openai"
+      ? readAzureFoundryBaseUrl(
+          (cfg.llm as { providers?: Record<string, { baseURL?: string; baseUrl?: string }> } | undefined)?.providers,
+        )
       : undefined);
   const resolvedDeployment =
     typeof embedding?.deployment === "string" && embedding.deployment.trim().length > 0
       ? embedding.deployment.trim()
       : undefined;
   const resolvedBatchSize =
-    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
+    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 40;
 
   // preferredProviders: explicit list or infer from LLM config (align with failover / Ollama-as-tier)
   const preferredProvidersRaw = embedding?.preferredProviders;
@@ -577,7 +604,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const hasOllamaInLlm = llmLists.some((list) => list.some((m) => typeof m === "string" && m.startsWith("ollama/")));
     if (hasOllamaInLlm || embeddingProvider === "ollama") inferred.push("ollama");
     if (resolvedApiKey && resolvedApiKey.length >= 10) inferred.push("openai");
-    if (hasGoogleKey) inferred.push("google");
+    // Only add google to the embedding chain when the embedding provider IS google.
+    // A Google LLM key (distill/llm.providers.google) should NOT activate the embedding
+    // chain — doing so forces 768-dim vectors which silently break LanceDB tables built
+    // for the configured OpenAI model dimensions (e.g. 3072). Issue #939.
+    if (hasGoogleKey && embeddingProvider === "google") inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
@@ -706,7 +737,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
               typeof distillRaw.extractionModelTier === "string"
                 ? distillRaw.extractionModelTier.trim().toLowerCase()
                 : "";
-            return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
+            return v === "nano" || v === "maintenance" || v === "default" || v === "heavy"
+              ? (v as "nano" | "maintenance" | "default" | "heavy")
+              : undefined;
           })(),
         }
       : undefined;
@@ -739,6 +772,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     store: parseStoreConfig(cfg),
     credentials: parseCredentialsConfig(cfg),
     graph: parseGraphConfig(cfg),
+    entityExtraction: parseEntityExtractionConfig(cfg),
     wal: parseWALConfig(cfg),
     eventLog: parseEventLogConfig(cfg),
     personaProposals: parsePersonaProposalsConfig(cfg),
@@ -760,6 +794,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     multiAgent: parseMultiAgentConfig(cfg),
     errorReporting: parseErrorReportingConfig(cfg),
     activeTask: parseActiveTaskConfig(cfg),
+    goalStewardship: parseGoalStewardshipConfig(cfg),
     vector: parseVectorConfig(cfg),
     ambient: parseAmbientConfig(cfg),
     graphRetrieval: parseGraphRetrievalConfig(cfg),
@@ -789,6 +824,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     provenance: parseProvenanceConfig(cfg),
     costTracking: parseCostTrackingConfig(cfg),
     dashboard: parseDashboardConfig(cfg),
+    digest: parseDigestConfig(cfg),
+    lifecycle: parseLifecycleConfig(cfg),
     sensorSweep: parseSensorSweepConfig(cfg),
     apiTap: parseApiTapConfig(cfg),
     humanizer: parseHumanizerConfig(cfg),

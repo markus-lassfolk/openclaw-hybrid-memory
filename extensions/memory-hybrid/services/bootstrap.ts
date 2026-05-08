@@ -1,11 +1,11 @@
+import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { FactsDB } from "../backends/facts-db.js";
 import { EdictStore } from "../backends/edict-store.js";
+import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import type { BootstrapPhaseConfig, EmbeddingModelConfig, HybridMemoryConfig } from "../config.js";
-import { buildEmbeddingRegistry, type EmbeddingRegistry } from "./embedding-registry.js";
-import { createEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
-import { join, dirname } from "node:path";
+import { type EmbeddingRegistry, buildEmbeddingRegistry } from "./embedding-registry.js";
+import { type EmbeddingProvider, createEmbeddingProvider } from "./embeddings.js";
 
 export interface CoreBootstrapContext {
   cfg: HybridMemoryConfig;
@@ -22,10 +22,19 @@ export interface CoreBootstrapServices {
   embeddingRegistry: EmbeddingRegistry;
 }
 
-export type CoreBootstrapInstaller = BootstrapPhaseConfig & {
+type CoreBootstrapInstaller = BootstrapPhaseConfig & {
   id: string;
   install(context: CoreBootstrapContext): CoreBootstrapServices;
 };
+
+/** Fail fast before LanceDB when the active embedding provider reports invalid width (#944). Exported for tests. */
+export function assertEmbeddingDimensionsForVectorDb(dim: number): void {
+  if (!Number.isFinite(dim) || !Number.isInteger(dim) || dim <= 0) {
+    throw new Error(
+      `Invalid embedding dimensions: ${String(dim)}. Set embedding.dimensions to a positive integer matching your provider output.`,
+    );
+  }
+}
 
 function resolveEmbeddingRegistryModels(
   embedding: HybridMemoryConfig["embedding"],
@@ -48,6 +57,7 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
     try {
       factsDb = new FactsDB(resolvedSqlitePath, {
         fuzzyDedupe: cfg.store.fuzzyDedupe,
+        storeConfig: cfg.store,
       });
     } catch (err) {
       api.logger.error(`memory-hybrid: core bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -58,14 +68,37 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
     const edictStorePath = join(dirname(resolvedSqlitePath), "edicts.db");
     const edictStore = new EdictStore(edictStorePath);
 
-    const vectorDb = new VectorDB(resolvedLancePath, cfg.embedding.dimensions, cfg.vector.autoRepair);
-    vectorDb.setLogger(api.logger);
-
+    // Instantiate EmbeddingProvider FIRST so VectorDB always uses the actual runtime
+    // dimensions. When a ChainEmbeddingProvider is active (e.g. Google in chain with
+    // OpenAI model), the chain may output different dimensions (768) than the catalog
+    // model dimensions (3072). Using cfg.embedding.dimensions directly caused a silent
+    // mismatch where VectorDB.search() returned [] on every query. Issue #939.
     const embeddings = createEmbeddingProvider(cfg.embedding, (err) => {
       api.logger.warn(
         `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
       );
     });
+
+    const effectiveDimensions = embeddings.dimensions;
+    try {
+      assertEmbeddingDimensionsForVectorDb(effectiveDimensions);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      api.logger.error(`memory-hybrid: ${msg}`);
+      throw err;
+    }
+    if (effectiveDimensions !== cfg.embedding.dimensions) {
+      api.logger.warn(
+        `memory-hybrid: embedding provider dimensions (${effectiveDimensions}) differ from config dimensions (${cfg.embedding.dimensions}). ` +
+          `Using provider dimensions (${effectiveDimensions}) for LanceDB. ` +
+          `To silence this warning, set embedding.dimensions: ${effectiveDimensions} in plugin config, ` +
+          `or set embedding.preferredProviders explicitly to control which providers are used.`,
+      );
+    }
+
+    const vectorDb = new VectorDB(resolvedLancePath, effectiveDimensions, cfg.vector.autoRepair);
+    vectorDb.setLogger(api.logger);
+
     const embeddingRegistry = buildEmbeddingRegistry(
       embeddings,
       cfg.embedding.model,

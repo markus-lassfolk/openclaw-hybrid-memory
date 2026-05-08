@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Extract CLI Handler Functions
  *
@@ -21,8 +22,9 @@ import {
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
-import { classifyMemoryOperation } from "../services/classification.js";
+import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
+import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -37,9 +39,11 @@ import { type ReinforcementExtractResult, runReinforcementExtract } from "../ser
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -209,6 +213,7 @@ export async function runExtractDirectivesForCli(
 ): Promise<DirectiveExtractResult & { stored?: number }> {
   const { factsDb, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
+  logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
   const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
@@ -263,7 +268,7 @@ export async function runExtractDirectivesForCli(
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
-          if (factsDb.hasDuplicate(incident.extractedRule)) continue;
+          if (factsDb.hasDuplicate(incident.extractedRule, `directive:${incident.sessionFile}`)) continue;
           const category = incident.categories.includes("preference")
             ? "preference"
             : incident.categories.includes("absolute_rule")
@@ -339,7 +344,7 @@ export async function runExtractReinforcementForCli(
     } else {
       filePaths = getSessionFilePathsSince(sessionDir, days);
     }
-    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
     // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
@@ -397,11 +402,24 @@ export async function runExtractReinforcementForCli(
           incidents_json: JSON.stringify(result.incidents),
         });
         const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+        const tierPrefWithSources = resolveTierPreferenceWithSources(
+          cfg,
+          extractionTier as "nano" | "default" | "heavy",
+        );
         const cronCfg = getCronModelConfig(cfg);
         const tierPref = getLLMModelPreference(cronCfg, extractionTier);
         const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
         const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
-        const content = await chatCompleteWithRetry({
+        const modelSource =
+          tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
+        logger.info?.(`memory-hybrid: extract-reinforcement analysis tier = ${extractionTier}`);
+        logger.info?.(
+          `memory-hybrid: extract-reinforcement analysis starting with model ${model} (source=${modelSource})`,
+        );
+        logger.info?.(
+          `memory-hybrid: extract-reinforcement analysis fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+        );
+        const detail = await chatCompleteWithRetryDetailed({
           model,
           content: prompt,
           temperature: 0.2,
@@ -409,8 +427,14 @@ export async function runExtractReinforcementForCli(
           openai,
           fallbackModels,
           label: "memory-hybrid: reinforcement analyze",
+          feature: CostFeature.extractReinforcement,
         });
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (detail.modelUsed !== model) {
+          logger.info?.(
+            `memory-hybrid: extract-reinforcement analysis succeeded with fallback model ${detail.modelUsed}`,
+          );
+        }
+        const jsonMatch = detail.content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
           analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
@@ -486,7 +510,7 @@ export async function runExtractReinforcementForCli(
                 ? (c as { text?: string; entity?: string; key?: string; tags?: string[] })
                 : { text: String(c) };
             const text = (obj.text ?? "").trim();
-            if (!text || factsDb.hasDuplicate(text)) continue;
+            if (!text || factsDb.hasDuplicate(text, "reinforcement-analysis")) continue;
             let vector: number[] | null = null;
             try {
               vector = await embeddings.embed(text);
@@ -766,7 +790,7 @@ export async function runGenerateProposalsForCli(
   const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []);
   let rawResponse: string;
   try {
-    rawResponse = await chatCompleteWithRetry({
+    const detail = await chatCompleteWithRetryDetailed({
       model,
       content: prompt,
       temperature: 0.3,
@@ -774,7 +798,9 @@ export async function runGenerateProposalsForCli(
       openai,
       fallbackModels,
       label: "memory-hybrid: generate-proposals",
+      feature: CostFeature.generateProposals,
     });
+    rawResponse = detail.content;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(
@@ -824,7 +850,7 @@ export async function runGenerateProposalsForCli(
     if (recentCount + created >= limit) break;
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
-    const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const snapshot = getFileSnapshot(join(workspace, targetFile));
     let confidence = Number(item.confidence);
     if (!Number.isFinite(confidence)) continue;
@@ -881,6 +907,106 @@ export async function runExtractDailyForCli(
   const daysBack = opts.days;
   let totalExtracted = 0;
   let totalStored = 0;
+  const classifyMicroBatch = Math.max(1, Math.min(10, cfg.autoClassify?.batchSize ?? 10));
+  const classifyModelForExtract = cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+  type PendingExtractClassify = {
+    trimmed: string;
+    extracted: ReturnType<typeof extractStructuredFields>;
+    category: MemoryCategory;
+    storePayload: {
+      text: string;
+      category: MemoryCategory;
+      importance: number;
+      entity: string | null;
+      key: string | null;
+      value: string | null;
+      source: `daily-scan:${string}`;
+      sourceDate: number;
+      tags: string[];
+    };
+    sourceDateSec: number;
+    vecForStore: number[];
+    similarFacts: MemoryEntry[];
+  };
+  const pendingExtractClassify: PendingExtractClassify[] = [];
+
+  async function flushPendingExtractClassify(): Promise<void> {
+    while (pendingExtractClassify.length > 0) {
+      const chunk = pendingExtractClassify.splice(0, classifyMicroBatch);
+      const inputs = chunk.map((c) => ({
+        candidateText: c.trimmed,
+        candidateEntity: c.extracted.entity,
+        candidateKey: c.extracted.key,
+        existingFacts: c.similarFacts,
+      }));
+      const results = await classifyMemoryOperationsBatch(inputs, openai, classifyModelForExtract, sink);
+      for (let j = 0; j < chunk.length; j++) {
+        const c = chunk[j];
+        const classification: MemoryClassification = results[j];
+        const { trimmed, extracted, category, storePayload, sourceDateSec, vecForStore } = c;
+        if (classification.action === "NOOP") continue;
+        if (classification.action === "DELETE" && classification.targetId) {
+          factsDb.supersede(classification.targetId, null);
+          aliasDb?.deleteByFactId(classification.targetId);
+          continue;
+        }
+        if (classification.action === "UPDATE" && classification.targetId) {
+          const oldFact = factsDb.getById(classification.targetId);
+          if (oldFact) {
+            const newEntry = factsDb.store({
+              ...storePayload,
+              entity: extracted.entity ?? oldFact.entity,
+              key: extracted.key ?? oldFact.key,
+              value: extracted.value ?? oldFact.value,
+              validFrom: sourceDateSec,
+              supersedesId: classification.targetId,
+            });
+            factsDb.supersede(classification.targetId, newEntry.id);
+            aliasDb?.deleteByFactId(classification.targetId);
+            try {
+              factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+              if (!(await vectorDb.hasDuplicate(vecForStore))) {
+                await vectorDb.store({
+                  text: trimmed,
+                  vector: vecForStore,
+                  importance: BATCH_STORE_IMPORTANCE,
+                  category,
+                  id: newEntry.id,
+                });
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractDailyForCli:vector-store-update",
+              });
+            }
+            totalStored++;
+            continue;
+          }
+        }
+        const entry = factsDb.store(storePayload);
+        try {
+          const vector = vecForStore;
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+          if (!(await vectorDb.hasDuplicate(vector))) {
+            await vectorDb.store({
+              text: trimmed,
+              vector,
+              importance: BATCH_STORE_IMPORTANCE,
+              category,
+              id: entry.id,
+            });
+          }
+        } catch (err) {
+          sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-final" });
+        }
+        totalStored++;
+      }
+    }
+  }
+
   for (let d = 0; d < daysBack; d++) {
     const date = new Date();
     date.setDate(date.getDate() - d);
@@ -986,7 +1112,7 @@ export async function runExtractDailyForCli(
         );
         continue;
       }
-      if (factsDb.hasDuplicate(trimmed)) continue;
+      if (factsDb.hasDuplicate(trimmed, `daily-scan:${dateStr}`)) continue;
       const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
       const storePayload = {
         text: trimmed,
@@ -1013,64 +1139,21 @@ export async function runExtractDailyForCli(
             similarFacts = factsDb.findSimilarForClassification(trimmed, extracted.entity, extracted.key, 3);
           }
           if (similarFacts.length > 0) {
-            try {
-              const classification = await classifyMemoryOperation(
-                trimmed,
-                extracted.entity,
-                extracted.key,
-                similarFacts,
-                openai,
-                cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
-                sink,
-              );
-              if (classification.action === "NOOP") continue;
-              if (classification.action === "DELETE" && classification.targetId) {
-                factsDb.supersede(classification.targetId, null);
-                aliasDb?.deleteByFactId(classification.targetId);
-                continue;
-              }
-              if (classification.action === "UPDATE" && classification.targetId) {
-                const oldFact = factsDb.getById(classification.targetId);
-                if (oldFact) {
-                  const newEntry = factsDb.store({
-                    ...storePayload,
-                    entity: extracted.entity ?? oldFact.entity,
-                    key: extracted.key ?? oldFact.key,
-                    value: extracted.value ?? oldFact.value,
-                    validFrom: sourceDateSec,
-                    supersedesId: classification.targetId,
-                  });
-                  factsDb.supersede(classification.targetId, newEntry.id);
-                  aliasDb?.deleteByFactId(classification.targetId);
-                  try {
-                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
-                    if (!(await vectorDb.hasDuplicate(vecForStore))) {
-                      await vectorDb.store({
-                        text: trimmed,
-                        vector: vecForStore,
-                        importance: BATCH_STORE_IMPORTANCE,
-                        category,
-                        id: newEntry.id,
-                      });
-                    }
-                  } catch (err) {
-                    sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                    capturePluginError(err as Error, {
-                      subsystem: "cli",
-                      operation: "runExtractDailyForCli:vector-store-update",
-                    });
-                  }
-                  totalStored++;
-                  continue;
-                }
-              }
-            } catch (err) {
-              sink.warn(`memory-hybrid: extract-daily classification failed: ${err}`);
-              capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:classify" });
-            }
+            pendingExtractClassify.push({
+              trimmed,
+              extracted,
+              category,
+              storePayload,
+              sourceDateSec,
+              vecForStore,
+              similarFacts,
+            });
+            if (pendingExtractClassify.length >= classifyMicroBatch) await flushPendingExtractClassify();
+            continue;
           }
         }
       }
+      await flushPendingExtractClassify();
       const entry = factsDb.store(storePayload);
       try {
         const vector = vecForStore ?? (await embeddings.embed(trimmed));
@@ -1084,6 +1167,8 @@ export async function runExtractDailyForCli(
       }
       totalStored++;
     }
+    await flushPendingExtractClassify();
   }
+  await flushPendingExtractClassify();
   return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun };
 }

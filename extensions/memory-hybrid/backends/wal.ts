@@ -4,16 +4,21 @@
  */
 
 import { mkdirSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
+export const WAL_ENTRY_SCHEMA_VERSION = 1;
+
 export type WALEntry = {
+  schemaVersion?: number;
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
+  targetId?: string;
   data: {
     text: string;
     category?: string;
@@ -32,14 +37,20 @@ export type WALEntry = {
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
 export function isWalEntry(obj: unknown): obj is WALEntry {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "timestamp" in obj &&
-    "operation" in obj &&
-    ["store", "delete", "update"].includes((obj as WALEntry).operation)
-  );
+  if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
+    return false;
+  }
+  const sv = (obj as WALEntry).schemaVersion;
+  if (sv !== undefined && (typeof sv !== "number" || !Number.isFinite(sv) || sv < 1)) {
+    return false;
+  }
+  const op = (obj as WALEntry).operation;
+  if (!["store", "delete", "update"].includes(op)) return false;
+  if ("targetId" in obj && (obj as WALEntry).targetId !== undefined) {
+    const tid = (obj as WALEntry).targetId;
+    if (typeof tid !== "string" || tid.length === 0) return false;
+  }
+  return true;
 }
 
 export class WriteAheadLog {
@@ -75,6 +86,7 @@ export class WriteAheadLog {
       } catch {
         this.activeIds = new Set();
       } finally {
+        // biome-ignore lint/style/noNonNullAssertion: Synchronous
         releaseLock!();
       }
     })();
@@ -92,14 +104,15 @@ export class WriteAheadLog {
   private async fsyncAfterWrite(): Promise<void> {
     let fh: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      fh = await open(this.walPath, "r");
+      // "a+" read+append so fdatasync works on more filesystems than read-only or append-only edge cases (issue #854).
+      fh = await open(this.walPath, "a+");
       await fh.datasync();
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
-        // read-only file descriptor.  The data has already been written by
-        // appendFile / writeFile; skipping fsync here is safe and the
+        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync on the WAL
+        // or do not fully support POSIX sync semantics. The data has already been
+        // written by appendFile / writeFile; skipping datasync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
         if (!this.fsyncWarnEmitted) {
           pluginLogger.warn(
@@ -135,6 +148,7 @@ export class WriteAheadLog {
       });
       throw new Error(`WAL write failed: ${err}`);
     } finally {
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
     }
   }
@@ -229,6 +243,7 @@ export class WriteAheadLog {
       });
       throw new Error(`WAL remove failed: ${err}`);
     } finally {
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
     }
   }
@@ -257,6 +272,7 @@ export class WriteAheadLog {
       await prevLock;
       await this._clearInternal();
     } finally {
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
     }
   }
@@ -296,7 +312,22 @@ export class WriteAheadLog {
       }
       return pruned;
     } finally {
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
+    }
+  }
+
+  async compactIfOversized(maxBytes: number): Promise<number> {
+    try {
+      if (!existsSync(this.walPath)) return 0;
+      const st = statSync(this.walPath);
+      if (st.size <= maxBytes) return 0;
+      return await this.pruneStale();
+    } catch (err) {
+      pluginLogger.info(
+        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
     }
   }
 }

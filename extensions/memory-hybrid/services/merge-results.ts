@@ -13,12 +13,12 @@ import type { ScopeFilter, SearchResult } from "../types/memory.js";
 export const RRF_K_DEFAULT = 60;
 
 /** Optional provider for superseded fact texts (e.g. FactsDB). */
-export interface SupersededProvider {
+interface SupersededProvider {
   getSupersededTexts(): Set<string>;
 }
 
 /** Optional merge options (RRF k constant). */
-export interface MergeOptions {
+interface MergeOptions {
   /** RRF constant for rank fusion (default 60) */
   k?: number;
 }

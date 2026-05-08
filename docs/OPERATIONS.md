@@ -32,11 +32,13 @@ These are **not** required for core functionality but enhance the system for lon
 
 **How to enable when "not defined":**
 
-1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds any missing maintenance jobs (9 canonical jobs) when they are missing (without overwriting existing jobs) to `~/.openclaw/cron/jobs.json` (and, if present, the `jobs` array in `~/.openclaw/openclaw.json`). See [CLI-REFERENCE.md § Maintenance cron jobs](CLI-REFERENCE.md#maintenance-cron-jobs) for the full table (nightly-memory-sweep, self-correction-analysis, nightly-dream-cycle, weekly-reflection, weekly-extract-procedures, weekly-deep-maintenance, weekly-persona-proposals, monthly-consolidation).
+1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds any missing maintenance jobs (9 canonical jobs) when they are missing (without overwriting existing jobs) to `~/.openclaw/cron/jobs.json` (and, if present, the `jobs` array in `~/.openclaw/openclaw.json`), and ensures `~/.openclaw/logs/cron-hybrid-mem/` exists. See [CLI-REFERENCE.md § Maintenance cron jobs](CLI-REFERENCE.md#maintenance-cron-jobs) for the full table (nightly-memory-sweep, self-correction-analysis, nightly-dream-cycle, weekly-reflection, weekly-extract-procedures, weekly-deep-maintenance, weekly-persona-proposals, monthly-consolidation, sensor-sweep).
 2. **Or** add the job definitions manually to `~/.openclaw/openclaw.json` (under a top-level `jobs` array if your OpenClaw version uses it) or to `~/.openclaw/cron/jobs.json` (see snippets below).
 3. **Or** run the standalone install script from the repo: `node scripts/install-hybrid-config.mjs` (merges full defaults including jobs into openclaw.json).
 
 After adding jobs, the gateway will pick them up on next start (or according to your host’s job reload behavior). No plugin restart needed for cron store changes in many setups.
+
+For isolated `hybrid-mem:*` jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive session key). Leave `sessionKey` unset so OpenClaw resolves per-job isolated keys (`cron:<jobId>`). `verify --fix` strips bad top-level `sessionKey` values for isolated hybrid-mem jobs.
 
 ### Nightly session distillation
 
@@ -123,7 +125,7 @@ The **weekly-extract-procedures** job (Sunday 04:00 by default) runs four steps 
 **Why "step 3 running in the background"?** OpenClaw's cron runner may send a status update after steps 1 and 2. At that moment step 3 is still running, so you see "extract-reinforcement: Currently running in the background" and "generate-auto-skills: Pending". The plugin runs all four commands sequentially in one process; "background" here means step 3 is in progress. A single "all done" notification would require OpenClaw's job runner to report only when the full chain exits.
 
 - **Job model:** The job is scheduled with the **nano** tier, so the agent that runs these steps uses a cheap model (e.g. gpt-4.1-nano). Your primary model stays free for interactive use.
-- **extract-reinforcement LLM:** The only step that calls an LLM is **extract-reinforcement**. Its model is set by **`distill.extractionModelTier`**: unset → **nano** tier (e.g. gpt-4.1-nano); **`"default"`** (Expert/Full presets) → default tier; **`"nano"`** → nano tier. Set to `"default"` or `"nano"` to avoid using your best model. Run **`openclaw hybrid-mem verify`** to see the current tier under "Ingestion & Distillation".
+- **extract-reinforcement LLM:** The only step that calls an LLM is **extract-reinforcement**. Its model is set by **`distill.extractionModelTier`**: unset → **nano** tier (e.g. gpt-4.1-nano); **`"maintenance"`** → maintenance tier; **`"default"`** → default tier; **`"heavy"`** → heavy tier. Prefer `"nano"` or `"maintenance"` for cost safety. Run **`openclaw hybrid-mem config`** to see the effective routing and **`openclaw hybrid-mem verify`** for warnings.
 - **When it runs:** The job is already at night (Sunday 04:00). Ensure your OpenClaw cron/scheduler runs at that time so the pipeline doesn’t run during active use. After upgrading, if you run **`openclaw hybrid-mem verify --fix`**, the job is re-created with the nano model; existing jobs keep their current model until you re-run install or verify --fix.
 
 ---
@@ -181,6 +183,27 @@ NODE_PATH="$EXT_DIR/node_modules" node scripts/backfill-memory.mjs --dry-run
 |----------|---------|---------|
 | `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | Workspace root to scan for memory files |
 | `OPENCLAW_EXTENSION_DIR` | Auto-detected | Extension dir for loading deps |
+
+### Task queue runner (`scripts/task-queue.sh`)
+
+Cron and autonomous jobs (for example strategic-thinking) need a stable **`state/task-queue/current.json`** so prompts and dashboards see queue state. The plugin’s gateway watchdog can create an idle placeholder, but hosts that run jobs **without** the gateway still need a runner. This script delegates **`touch`** and **`status`** to **`openclaw hybrid-mem task-queue-touch`** / **`task-queue-status`**, and implements **`run`** so a shell command gets a proper lifecycle: claim the queue (after `flock`), write **`current.json`** with the child **PID**, move the finished entry under **`history/`**, then restore the idle placeholder. Concurrent mutating runs are skipped via **`flock`** (exit **0** for `touch` when another instance holds the lock; exit **2** for `run` so callers know work did not start). See [issue #1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000).
+
+**Setup:** copy from the repo and mark executable: `cp scripts/task-queue.sh ~/.openclaw/scripts/ && chmod +x ~/.openclaw/scripts/task-queue.sh`.
+
+```bash
+# Ensure idle current.json exists (e.g. every 10 minutes)
+*/10 * * * * OPENCLAW_HOME=$HOME/.openclaw $HOME/.openclaw/scripts/task-queue.sh touch >>$HOME/.openclaw/logs/task-queue.log 2>&1
+
+# JSON for prompts (same as hybrid-mem task-queue-status)
+$HOME/.openclaw/scripts/task-queue.sh status
+
+# Wrap a job (PID recorded; history on exit)
+$HOME/.openclaw/scripts/task-queue.sh run --title "Strategic thinking" --issue 1000 -- your-command.sh
+```
+
+**Environment:** `OPENCLAW_HOME` (default `~/.openclaw`), `TASK_QUEUE_STATE_DIR` (optional override for `state/task-queue`), `OPENCLAW_CMD` (default `openclaw`), `TASK_QUEUE_LOCKFILE` (default `/tmp/openclaw-task-queue.lock`).
+
+**Valid `current.json`:** The hybrid-memory plugin treats the file as a **single current task** or the **canonical idle** snapshot (`status: "idle"`, `producer: "openclaw-hybrid-memory"`). External tools sometimes write **metadata-only** JSON (for example `updatedAt`, `repo`, `maxForge`) with no queue semantics. That is not a valid task payload and breaks automation that expects a real idle or work entry. The **task-queue watchdog** (gateway, every 5 minutes) archives such snapshots to `history/*-degenerate.json` and restores the idle placeholder; you can also run `openclaw hybrid-mem task-queue-touch --repair`. For planning visibility into **ACTIVE-TASKS.md** alongside the file, use `openclaw hybrid-mem task-queue-status --with-active-tasks`. See [issue #1037](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1037).
 
 ### Session distillation scripts
 
@@ -276,6 +299,7 @@ These are optional but recommended for long-running systems:
 | **Review stats** | Weekly | `openclaw hybrid-mem stats` |
 | **Find duplicates** | Monthly | `openclaw hybrid-mem find-duplicates --threshold 0.92` |
 | **Consolidate** | Monthly (after review) | `openclaw hybrid-mem consolidate --dry-run` then `consolidate` |
+| **Entity / contact NER backfill** | Monthly or after bulk import | `openclaw hybrid-mem enrich-entities --limit 500` (fills PERSON/ORG rows when `graph.enabled`; see [GRAPH-MEMORY.md](GRAPH-MEMORY.md)) |
 | **Review memory files** | Monthly | Read recent `memory/YYYY-MM-DD.md`, update `memory/` files |
 | **Update MEMORY.md index** | When files change | Edit `MEMORY.md` to reflect current structure |
 | **Archive completed projects** | When done | Move from `memory/projects/` to `memory/archive/` |
@@ -301,6 +325,20 @@ These are optional but recommended for long-running systems:
 | Upgrade scripts | `~/.openclaw/scripts/` | Copy from repo `scripts/` |
 
 For **what to back up** and how to restore, see [BACKUP.md](BACKUP.md).
+
+---
+
+## Gateway health polling (`openclaw gateway status`)
+
+When you **poll** `/ monitor` the gateway with `openclaw gateway status`, the CLI uses a **default `--timeout` of 10000 ms** (10s) for the WebSocket RPC probe. During **warm-up** (plugins loading, hybrid-memory databases opening), a single sample can exceed that window and report a probe failure even though the process is healthy.
+
+**Recommended for scripts and dashboards:** use a longer timeout, for example:
+
+```bash
+openclaw gateway status --timeout 45000
+```
+
+**Retry** before treating a failure as real (e.g. 3 attempts with ~8s between samples). Full context and the misleading **"Port 18789 is already in use"** line when the probe path is unhappy: [TROUBLESHOOTING.md § RPC health probe timeout](TROUBLESHOOTING.md#rpc-health-probe-timeout-openclaw-gateway-status) ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)).
 
 ---
 

@@ -11,7 +11,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import { extractGoalKeywords } from "../backends/workflow-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-export interface WorkflowToolsContext {
+interface WorkflowToolsContext {
   workflowStore: WorkflowStore;
 }
 
@@ -105,12 +105,25 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
           details: filtered,
         };
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        const e = err instanceof Error ? err : new Error(String(err));
+        capturePluginError(e, {
           subsystem: "workflows",
           operation: "memory-workflows",
           phase: "runtime",
         });
-        throw err;
+        const msg = e.message;
+        if (/not open|connection is not open|The database connection is not open/i.test(msg)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Workflow patterns are temporarily unavailable (database not ready). Try again in a moment.",
+              },
+            ],
+            details: [],
+          };
+        }
+        throw e;
       }
     },
   });

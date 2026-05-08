@@ -9,25 +9,21 @@
  * This module enforces that guarantee by reading `cfg.health.authenticated`
  * once and applying it uniformly to every route.
  *
+ * All routes are registered through {@link createSafeRegisterHttpRoute} so
+ * that the OpenClaw 2026.5.4+ gateway no longer emits
+ * `http route registration missing path` warnings (issue #1173): paths are
+ * trimmed, normalized (no trailing slash on the dashboard root), and
+ * validated to be non-empty before they reach the gateway.
+ *
  * Routes:
- *   GET /plugins/memory-dashboard/          — HTML dashboard shell
+ *   GET /plugins/memory-dashboard          — HTML dashboard shell
  *   GET /plugins/memory-dashboard/api/health — JSON health report
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HealthConfig } from "../config/types/maintenance.js";
-
-/** Minimal type for the registerHttpRoute API available in OpenClaw v2026.3.8+. */
-export interface HttpRouteOptions {
-  /** Whether the route requires an authenticated session. Must be the same for all sibling routes. */
-  authenticated: boolean;
-}
-
-export type HttpRequestHandler = (req: {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-}) => Promise<{ status: number; headers?: Record<string, string>; body: string }>;
+import type { HttpRouteOptions } from "./http-route-types.js";
+import { type SafeRouteLogger, createSafeRegisterHttpRoute } from "./safe-register-http-route.js";
 
 export interface DashboardRoutesContext {
   cfg: Pick<{ health: HealthConfig }, "health">;
@@ -36,9 +32,17 @@ export interface DashboardRoutesContext {
 /** Path prefix for all dashboard routes (plugin-scoped by OpenClaw gateway). */
 export const DASHBOARD_PREFIX = "/plugins/memory-dashboard";
 
-/** Sub-paths registered under DASHBOARD_PREFIX. */
+/**
+ * Sub-paths registered under DASHBOARD_PREFIX.
+ *
+ * Note: `root` is the empty string (not `"/"`) so the registered path is
+ * `/plugins/memory-dashboard` rather than `/plugins/memory-dashboard/`. The
+ * OpenClaw 2026.5.4+ gateway treats a trailing slash as a separate empty
+ * sub-path and warns about "missing path" (issue #1173); the safe wrapper
+ * also normalizes trailing slashes defensively.
+ */
 export const DASHBOARD_PATHS = {
-  root: "/",
+  root: "",
   healthApi: "/api/health",
 } as const;
 
@@ -52,18 +56,20 @@ export const DASHBOARD_PATHS = {
  */
 export function registerDashboardHttpRoutes(ctx: DashboardRoutesContext, api: ClawdbotPluginApi): void {
   if (!ctx.cfg.health.enabled) return;
-
   if (typeof api.registerHttpRoute !== "function") return;
 
   const routeOpts: HttpRouteOptions = {
     authenticated: ctx.cfg.health.authenticated,
   };
 
+  const logger = (api.logger ?? { warn: () => {} }) as SafeRouteLogger;
+  const register = createSafeRegisterHttpRoute(api, logger, "memory-dashboard");
+
   // All routes MUST use the same routeOpts to satisfy the consistent-auth
   // requirement. Do not pass different options to any of these calls.
 
-  // GET /plugins/memory-dashboard/ — dashboard HTML shell
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  // GET /plugins/memory-dashboard — dashboard HTML shell
+  register(
     `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`,
     async (_req) => ({
       status: 200,
@@ -74,7 +80,7 @@ export function registerDashboardHttpRoutes(ctx: DashboardRoutesContext, api: Cl
   );
 
   // GET /plugins/memory-dashboard/api/health — JSON health summary
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  register(
     `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`,
     async (_req) => ({
       status: 200,

@@ -101,4 +101,56 @@ describe("facts-db links module", () => {
     const ids = getConnectedFactIds(db, ["a"], 3).sort();
     expect(ids).toEqual(["a", "b"]);
   });
+
+  it("hubDegreeCap null disables high-degree hub skipping (explicit null is not coerced to 500)", () => {
+    db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE memory_links (
+        id TEXT PRIMARY KEY,
+        source_fact_id TEXT NOT NULL,
+        target_fact_id TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        strength REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    createLink(db, "s", "hub", "RELATED_TO", 1);
+    for (let i = 0; i < 501; i++) {
+      createLink(db, "hub", `leaf${i}`, "RELATED_TO", 0.5);
+    }
+    createLink(db, "hub", "target", "RELATED_TO", 1);
+
+    const capped = getConnectedFactIds(db, ["s"], 4);
+    const uncapped = getConnectedFactIds(db, ["s"], 4, { hubDegreeCap: null });
+
+    expect(capped.includes("target")).toBe(false);
+    expect(uncapped.includes("target")).toBe(true);
+  });
+
+  it("with hubDegreeCap null, BFS LIMIT uses live counts so stale denormalized degrees never truncate", () => {
+    db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE facts (
+        id TEXT PRIMARY KEY,
+        out_degree INTEGER NOT NULL DEFAULT 0,
+        in_degree INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE memory_links (
+        id TEXT PRIMARY KEY,
+        source_fact_id TEXT NOT NULL,
+        target_fact_id TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        strength REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    db.prepare(`INSERT INTO facts (id, out_degree, in_degree) VALUES ('s', 0, 0), ('hub', 1, 1)`).run();
+    createLink(db, "s", "hub", "RELATED_TO", 1);
+    for (let i = 0; i < 20; i++) {
+      createLink(db, "hub", `t${i}`, "RELATED_TO", 0.5);
+    }
+    const ids = getConnectedFactIds(db, ["s"], 2, { hubDegreeCap: null });
+    expect(ids.sort()).toEqual(["hub", "s", ...Array.from({ length: 20 }, (_, i) => `t${i}`)].sort());
+  });
 });

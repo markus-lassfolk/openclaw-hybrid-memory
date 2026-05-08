@@ -5,9 +5,10 @@ import type { IdentityReflectionStore } from "../backends/identity-reflection-st
 import type { ScopeFilter } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface IdentityReflectionQuestion {
+interface IdentityReflectionQuestion {
   key: string;
   prompt: string;
 }
@@ -20,7 +21,7 @@ export const DEFAULT_IDENTITY_REFLECTION_QUESTIONS: IdentityReflectionQuestion[]
   { key: "durability", prompt: "Which insights feel temporary vs durable?" },
 ];
 
-export interface IdentityReflectionConfig {
+interface IdentityReflectionConfig {
   enabled: boolean;
   model?: string;
   defaultWindow: number;
@@ -29,7 +30,7 @@ export interface IdentityReflectionConfig {
   questions: IdentityReflectionQuestion[];
 }
 
-export interface IdentityReflectionOptions {
+interface IdentityReflectionOptions {
   dryRun: boolean;
   model: string;
   window?: number;
@@ -46,7 +47,7 @@ interface ParsedIdentityItem {
   evidence: string[];
 }
 
-export interface IdentityReflectionResult {
+interface IdentityReflectionResult {
   insightsExtracted: number;
   insightsStored: number;
   questionsAsked: number;
@@ -56,7 +57,7 @@ function normalizeForDedupe(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-export function parseIdentityReflectionResponse(raw: string): ParsedIdentityItem[] {
+function parseIdentityReflectionResponse(raw: string): ParsedIdentityItem[] {
   const firstBracket = raw.indexOf("[");
   const lastBracket = raw.lastIndexOf("]");
   const json =
@@ -164,7 +165,7 @@ export async function runIdentityReflection(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-identity",
-      feature: "identity-reflection",
+      feature: CostFeature.identityReflection,
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-identity LLM failed: ${err}`);

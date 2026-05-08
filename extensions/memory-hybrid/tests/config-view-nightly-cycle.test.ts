@@ -1,6 +1,7 @@
 // @ts-nocheck
 import * as fs from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -24,12 +25,18 @@ function makeCtx(enabled: boolean): HandlerContext {
     selfExtension: { enabled: true },
     crystallization: { enabled: true },
     extraction: { extractionPasses: true },
-    activeTask: { enabled: true },
+    goalStewardship: { enabled: false },
+    activeTask: { enabled: true, ledger: "markdown", filePath: "ACTIVE-TASKS.md" },
     frustrationDetection: { enabled: false },
     crossAgentLearning: { enabled: true },
     toolEffectiveness: { enabled: true },
     documents: { enabled: true },
     provenance: { enabled: true },
+    workflowTracking: { enabled: false },
+    verification: { enabled: false },
+    aliases: { enabled: false },
+    reranking: { enabled: false },
+    contextualVariants: { enabled: false },
     errorReporting: { enabled: false },
     costTracking: { enabled: true },
     queryExpansion: { enabled: true },
@@ -37,6 +44,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
   return {
     cfg,
+    // @ts-expect-error
     dataDir: ".",
     noEmoji: false,
     logger: {
@@ -49,8 +57,12 @@ function makeCtx(enabled: boolean): HandlerContext {
 }
 
 describe("runConfigViewForCli nightlyCycle output", () => {
+  beforeEach(() => {
+    setEnv("OPENCLAW_CONFIG", "/tmp/test-openclaw-missing.json");
+  });
+
   afterEach(() => {
-    process.env.OPENCLAW_CONFIG = undefined;
+    setEnv("OPENCLAW_CONFIG", undefined);
     try {
       fs.unlinkSync("/tmp/test-openclaw.json");
     } catch {
@@ -72,25 +84,11 @@ describe("runConfigViewForCli nightlyCycle output", () => {
     expect(logs.some((l) => l.includes("Nightly dream cycle: off"))).toBe(true);
   });
 
-  it("shows on when raw config has nightlyCycle.enabled = true even if cfg is false", () => {
+  it("shows goal stewardship and active task ledger line", () => {
     const logs: string[] = [];
-    // Mock getPluginConfigFromFile by setting env var
-    process.env.OPENCLAW_CONFIG = "/tmp/test-openclaw.json";
-    require("node:fs").writeFileSync(
-      "/tmp/test-openclaw.json",
-      JSON.stringify({
-        plugins: {
-          entries: {
-            "openclaw-hybrid-memory": {
-              config: {
-                nightlyCycle: { enabled: true },
-              },
-            },
-          },
-        },
-      }),
-    );
-    runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
-    expect(logs.some((l) => l.includes("Nightly dream cycle: on"))).toBe(true);
+    runConfigViewForCli(makeCtx(true), { log: (line) => logs.push(line) });
+
+    expect(logs.some((l) => l.includes("Goal stewardship:"))).toBe(true);
+    expect(logs.some((l) => l.includes("ledger: markdown"))).toBe(true);
   });
 });

@@ -1,18 +1,18 @@
 import { Type } from "@sinclair/typebox";
+import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
-import type OpenAI from "openai";
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { HybridMemoryConfig } from "../config.js";
-import { resolveReflectionModelAndFallbacks, isCompactVerbosity } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
-import type { ProvenanceService } from "../services/provenance.js";
+import type { HybridMemoryConfig } from "../config.js";
+import { isCompactVerbosity, resolveReflectionModelAndFallbacks } from "../config.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { detectClusters } from "../services/topic-clusters.js";
 import { analyzeKnowledgeGaps } from "../services/knowledge-gaps.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import { detectClusters } from "../services/topic-clusters.js";
 
 export interface PluginContext {
   factsDb: FactsDB;

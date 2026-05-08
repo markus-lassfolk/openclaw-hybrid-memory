@@ -1,5 +1,5 @@
 /**
- * Tests for Issue #155 — Edge Types: CONTRADICTS, INSTANCE_OF, DERIVED_FROM.
+ * Tests for graph edge types: CONTRADICTS, INSTANCE_OF, and #1195 provenance separation.
  *
  * Coverage:
  *   - CONTRADICTS: bidirectional creation on recordContradiction
@@ -10,14 +10,12 @@
  *   - INSTANCE_OF: auto-detection via "type of" pattern
  *   - INSTANCE_OF: no link created when type not in known entities
  *   - INSTANCE_OF: no duplicate links created
- *   - DERIVED_FROM: manual creation via createLink
- *   - DERIVED_FROM: queryable via getLinksFrom/getLinksTo
- *   - DERIVED_FROM: multiple sources tracked per target
+ *   - DERIVED_FROM: no longer accepted in memory_links; provenance lives on facts.provenance_json
  *   - Retrieval: contradicted facts marked with WARNING in serialized output
  *   - Retrieval: non-contradicted facts not marked
  *   - Retrieval: packIntoBudget passes contradiction marker through
  *   - Invalid edge types rejected at TypeScript level (compile-time only via type check)
- *   - MEMORY_LINK_TYPES array includes all 8 types
+ *   - MEMORY_LINK_TYPES array includes semantic graph types only
  *   - New types accepted by createLink without errors
  *   - INSTANCE_OF links visible in getLinksFrom/getLinksTo
  *   - autoDetectInstanceOf returns correct linked count
@@ -104,14 +102,14 @@ describe("MEMORY_LINK_TYPES", () => {
     expect(MEMORY_LINK_TYPES).toContain("INSTANCE_OF");
   });
 
-  it("includes DERIVED_FROM", async () => {
+  it("excludes DERIVED_FROM from graph link types", async () => {
     const { MEMORY_LINK_TYPES } = await import("../backends/facts-db.js");
-    expect(MEMORY_LINK_TYPES).toContain("DERIVED_FROM");
+    expect(MEMORY_LINK_TYPES).not.toContain("DERIVED_FROM");
   });
 
-  it("has exactly 8 types", async () => {
+  it("has exactly 7 semantic graph types", async () => {
     const { MEMORY_LINK_TYPES } = await import("../backends/facts-db.js");
-    expect(MEMORY_LINK_TYPES).toHaveLength(8);
+    expect(MEMORY_LINK_TYPES).toHaveLength(7);
   });
 });
 
@@ -316,80 +314,16 @@ describe("autoDetectInstanceOf", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DERIVED_FROM — manual creation and retrieval
+// DERIVED_FROM — provenance separation (#1195)
 // ---------------------------------------------------------------------------
 
-describe("DERIVED_FROM", () => {
-  it("createLink accepts DERIVED_FROM type without error", () => {
-    const source1 = storeFact("Event A happened");
-    const source2 = storeFact("Event B happened");
-    const merged = storeFact("Events A and B are related");
+describe("DERIVED_FROM provenance separation", () => {
+  it("createLink rejects DERIVED_FROM so memory_links stays semantic-only", () => {
+    const source = storeFact("Event A happened");
+    const derived = storeFact("Events A and B are related");
 
-    expect(() => {
-      db.createLink(merged.id, source1.id, "DERIVED_FROM", 1.0);
-      db.createLink(merged.id, source2.id, "DERIVED_FROM", 1.0);
-    }).not.toThrow();
-  });
-
-  it("DERIVED_FROM links visible in getLinksFrom", () => {
-    const source1 = storeFact("Observation 1");
-    const source2 = storeFact("Observation 2");
-    const derived = storeFact("Conclusion from observations");
-
-    db.createLink(derived.id, source1.id, "DERIVED_FROM", 1.0);
-    db.createLink(derived.id, source2.id, "DERIVED_FROM", 1.0);
-
-    const links = db.getLinksFrom(derived.id).filter((l) => l.linkType === "DERIVED_FROM");
-    expect(links).toHaveLength(2);
-    const targetIds = links.map((l) => l.targetFactId);
-    expect(targetIds).toContain(source1.id);
-    expect(targetIds).toContain(source2.id);
-  });
-
-  it("DERIVED_FROM links visible in getLinksTo (reverse lookup)", () => {
-    const source = storeFact("Raw data point");
-    const derived = storeFact("Aggregated insight");
-
-    db.createLink(derived.id, source.id, "DERIVED_FROM", 1.0);
-
-    const inbound = db.getLinksTo(source.id).filter((l) => l.linkType === "DERIVED_FROM");
-    expect(inbound).toHaveLength(1);
-    expect(inbound[0].sourceFactId).toBe(derived.id);
-  });
-
-  it("DERIVED_FROM provenance chain — multiple levels", () => {
-    const raw = storeFact("Raw measurement");
-    const processed = storeFact("Processed metric");
-    const insight = storeFact("High-level insight");
-
-    db.createLink(processed.id, raw.id, "DERIVED_FROM", 1.0);
-    db.createLink(insight.id, processed.id, "DERIVED_FROM", 1.0);
-
-    // Chain: insight → processed → raw
-    const level1 = db.getLinksFrom(insight.id).filter((l) => l.linkType === "DERIVED_FROM");
-    expect(level1[0].targetFactId).toBe(processed.id);
-
-    const level2 = db.getLinksFrom(processed.id).filter((l) => l.linkType === "DERIVED_FROM");
-    expect(level2[0].targetFactId).toBe(raw.id);
-  });
-
-  it("DERIVED_FROM links survive when target fact is deleted (provenance preservation)", () => {
-    const source1 = storeFact("Source fact 1");
-    const source2 = storeFact("Source fact 2");
-    const merged = storeFact("Merged fact");
-
-    // Create DERIVED_FROM links: merged ← source1, merged ← source2
-    db.createLink(merged.id, source1.id, "DERIVED_FROM", 1.0);
-    db.createLink(merged.id, source2.id, "DERIVED_FROM", 1.0);
-
-    // Delete source facts (simulating consolidation cleanup)
-    db.delete(source1.id);
-    db.delete(source2.id);
-
-    // DERIVED_FROM links should still exist for provenance tracking
-    const links = db.getLinksFrom(merged.id).filter((l) => l.linkType === "DERIVED_FROM");
-    expect(links).toHaveLength(2);
-    expect(links.map((l) => l.targetFactId).sort()).toEqual([source1.id, source2.id].sort());
+    expect(() => db.createLink(derived.id, source.id, "DERIVED_FROM" as never, 1.0)).toThrow(/provenance_json/);
+    expect(db.getLinksFrom(derived.id)).toHaveLength(0);
   });
 });
 
@@ -455,40 +389,27 @@ describe("packIntoBudget with contradictedIds", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DERIVED_FROM — consolidation regression (finding #7)
+// Provenance JSON — consolidation regression (#1195)
 // ---------------------------------------------------------------------------
 
-describe("runConsolidate DERIVED_FROM regression", () => {
-  it("DERIVED_FROM links survive after source facts are hard-deleted during consolidation", async () => {
-    // Store two similar source facts
+describe("runConsolidate provenance JSON regression", () => {
+  it("stores source fact ids on provenance_json after source facts are hard-deleted during consolidation", async () => {
     const source1 = storeFact("The sky appears blue during daylight hours", "sky", null, null);
     const source2 = storeFact("Sky looks blue when sun is up", "sky", null, null);
 
-    // Mock dependencies for runConsolidate.
-    // cosineSimilarity in consolidation.ts computes raw dot product (expects unit vectors),
-    // so use a unit vector: dot([1,0,0],[1,0,0]) = 1.0 ≥ threshold 0.99 → cluster forms.
     const mockVector = [1, 0, 0];
-    const mockEmbeddings = {
-      embed: async (_text: string) => mockVector,
-    };
-    const mockVectorDb = {
-      store: async () => undefined,
-    };
+    const mockEmbeddings = { embed: async (_text: string) => mockVector };
+    const mockVectorDb = { store: async () => undefined };
     const mergedText = "The sky is blue during daylight.";
     const mockOpenAI = {
       chat: {
         completions: {
-          create: async () => ({
-            choices: [{ message: { content: mergedText } }],
-          }),
+          create: async () => ({ choices: [{ message: { content: mergedText } }] }),
         },
       },
     } as unknown;
     const logger = { info: () => {}, warn: () => {} };
 
-    // Pre-seed embeddings so cosineSimilarity triggers cluster formation:
-    // We mock the embed function to return a very similar vector for both facts.
-    // With threshold=0.99 and identical vectors the similarity is 1.0 >= 0.99.
     const result = await runConsolidate(
       db as never,
       mockVectorDb as never,
@@ -500,22 +421,20 @@ describe("runConsolidate DERIVED_FROM regression", () => {
 
     expect(result.merged).toBeGreaterThanOrEqual(1);
     expect(result.deleted).toBe(2);
-
-    // Source facts should be deleted
     expect(db.getById(source1.id)).toBeNull();
     expect(db.getById(source2.id)).toBeNull();
 
-    // Find the merged fact (it has a DERIVED_FROM link pointing to source1 or source2)
-    const linksToSource1 = db.getLinksTo(source1.id).filter((l) => l.linkType === "DERIVED_FROM");
-    const linksToSource2 = db.getLinksTo(source2.id).filter((l) => l.linkType === "DERIVED_FROM");
+    const mergedFacts = db.getByCategory("fact").filter((f) => f.source === "consolidation");
+    expect(mergedFacts.length).toBeGreaterThanOrEqual(1);
+    const provenance = JSON.parse(mergedFacts[0]?.provenanceJson ?? "{}");
+    expect(provenance.method).toBe("consolidation");
+    expect(provenance.sourceFactIds.sort()).toEqual([source1.id, source2.id].sort());
+    expect(provenance.sourceFacts).toHaveLength(2);
 
-    // DERIVED_FROM links must survive even though source facts are deleted (provenance trail)
-    expect(linksToSource1.length + linksToSource2.length).toBe(2);
-
-    // Verify the merged fact exists and has outbound DERIVED_FROM links
-    const mergedFactId = linksToSource1[0]?.sourceFactId ?? linksToSource2[0]?.sourceFactId;
-    expect(mergedFactId).toBeDefined();
-    const outbound = db.getLinksFrom(mergedFactId!).filter((l) => l.linkType === "DERIVED_FROM");
-    expect(outbound).toHaveLength(2);
+    const derivedRows = db
+      .getRawDb()
+      .prepare("SELECT COUNT(*) AS count FROM memory_links WHERE link_type = 'DERIVED_FROM'")
+      .get() as { count: number };
+    expect(derivedRows.count).toBe(0);
   });
 });

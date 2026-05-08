@@ -10,12 +10,17 @@ import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
-import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
+import {
+  type MessageLike,
+  sanitizeMessagesForClaude,
+  sanitizeMessagesForOpenAIResponses,
+} from "../utils/sanitize-messages.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
-export type HooksContext = MemoryPluginAPI;
+type HooksContext = MemoryPluginAPI;
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
 export interface LifecycleHooksHandle {
@@ -55,14 +60,17 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
-      walWrite: (operation, data, logger) => ctx.walWrite(ctx.wal, operation, data, logger),
+      walWrite: (operation, data, logger, supersedeTargetId) =>
+        ctx.walWrite(ctx.wal, operation, data, logger, supersedeTargetId),
       walRemove: (id, logger) => ctx.walRemove(ctx.wal, id, logger),
       findSimilarByEmbedding: ctx.findSimilarByEmbedding,
       shouldCapture: ctx.shouldCapture,
       detectCategory: ctx.detectCategory,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
+      auditStore: ctx.auditStore ?? null,
       issueStore: ctx.issueStore,
       recallInFlightRef: ctx.recallInFlightRef,
+      lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -115,11 +123,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   });
 
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
+  // Strip OpenAI Responses `reasoning` blocks (rs_*) so replay does not 400 (openclaw-maeve#23).
   // Mutates event.historyMessages in place so OpenClaw core uses the sanitized array.
   api.on("llm_input", (ev: unknown) => {
     const event = ev as { historyMessages?: unknown[] };
     if (!event?.historyMessages || !Array.isArray(event.historyMessages)) return;
-    const sanitized = sanitizeMessagesForClaude(event.historyMessages as MessageLike[]);
+    let sanitized = sanitizeMessagesForClaude(event.historyMessages as MessageLike[]);
+    sanitized = sanitizeMessagesForOpenAIResponses(sanitized);
     if (sanitized !== event.historyMessages) {
       event.historyMessages.length = 0;
       for (const m of sanitized) event.historyMessages.push(m);
@@ -162,9 +172,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       ].join("\n");
     };
 
-    // Register a before_prompt_build hook that injects static memory instructions.
-    // Uses prependContext — the only field supported by the current SDK (see TODO above).
-    // The content is built once and cached to minimise per-turn overhead.
+    // Current SDKs only support `prependContext` for injecting additional context into
+    // the prompt build. When a reliable capability signal for `appendSystemContext`
+    // becomes available in the plugin SDK, this hook can be extended to prefer that
+    // field without risking duplicate instructions.
     api.on("before_prompt_build", (): undefined | { prependContext: string } => {
       if (!staticMemoryInstructions) {
         staticMemoryInstructions = buildStaticInstructions();
@@ -255,31 +266,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     api.logger.debug?.(`memory-hybrid: before_compaction hook not available (${err})`);
   }
 
-  try {
-    api.on("before_consolidation", async (event: unknown) => {
-      const ev = event as {
-        candidateCount?: number;
-        source?: string;
-        sessionFile?: string;
-      };
-
-      await runPreConsolidationFlush(
-        { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
-        api.logger,
-        "before_consolidation",
-      );
-
-      api.logger.info?.(
-        `memory-hybrid: before_consolidation — candidates=${ev.candidateCount ?? "?"} source=${ev.source ?? "?"}`,
-      );
-    });
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "lifecycle",
-      operation: "register-before_consolidation",
-    });
-    api.logger.debug?.(`memory-hybrid: before_consolidation hook not available (${err})`);
-  }
+  // Issue #966: Do not register `before_consolidation` — it is not in OpenClaw's PLUGIN_HOOK_NAMES (ignored + noisy).
+  // WAL flush before compaction-style work is handled solely by `before_compaction` above (runPreConsolidationFlush).
 
   try {
     api.on("after_compaction", async (event: unknown): Promise<undefined | { prependContext: string }> => {
@@ -318,9 +306,25 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       // Inject the top-N most recent/important facts so the agent's first post-compaction
       // response references the right state.
       //
+      // Issue #957: When auto-recall is on, re-run the recall pipeline against the last user
+      // prompt (see lastAutoRecallPromptRef) so semantic/FTS matches are not lost after compaction.
+      //
       // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
       // The return value is a best-effort injection — older runtimes will silently ignore it.
       try {
+        const blocks: string[] = [];
+
+        if (ctx.cfg.autoRecall.enabled) {
+          const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
+          if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
+            const recallBlock = await buildPostCompactionRecallSnippet(lifecycleContext, api, lastPrompt);
+            if (recallBlock) {
+              blocks.push(recallBlock);
+              api.logger.debug?.("memory-hybrid: after_compaction — injecting post-compaction recall snippet (#957)");
+            }
+          }
+        }
+
         const summaryFacts = ctx.factsDb.list(8);
         const summaryLines: string[] = [];
 
@@ -355,10 +359,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
 
         if (summaryLines.length > 0) {
           summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
+          blocks.push(summaryLines.join("\n"));
+        }
+
+        if (blocks.length > 0) {
           api.logger.debug?.(
-            `memory-hybrid: after_compaction — injecting memory summary (${summaryFacts.length} facts)`,
+            `memory-hybrid: after_compaction — injecting post-compaction context (${summaryFacts.length} summary facts)`,
           );
-          return { prependContext: summaryLines.join("\n") };
+          return { prependContext: blocks.join("\n\n") };
         }
       } catch {
         // Non-fatal — summary injection failure should not disrupt normal operation

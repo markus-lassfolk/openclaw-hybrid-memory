@@ -13,13 +13,14 @@
  * Addresses Product Goal 4: Autonomous Maintenance
  */
 
-import { execFile as execFileCb } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { readJsonFile } from "../utils/fs.js";
+import { execFile as execFileCb } from "../utils/process-runner.js";
+import { stableStringify } from "../utils/stable-stringify.js";
 import { capturePluginError } from "./error-reporter.js";
 import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
 
@@ -44,13 +45,13 @@ export interface TaskQueueWatchdogConfig {
   checkBranch?: boolean;
 }
 
-export type WatchdogAction =
+type WatchdogAction =
   | "no-current" // No active current.json found
   | "ok" // Entry is healthy, no action needed
   | "cleared" // Stale entry moved to history (will be retried)
   | "quarantined"; // Entry exceeded retry limit; moved to quarantine
 
-export interface WatchdogResult {
+interface WatchdogResult {
   /** What the watchdog decided to do */
   action: WatchdogAction;
   /** Human-readable explanation for the action */
@@ -71,10 +72,13 @@ export interface TaskQueueItem {
   dispatchToken?: string;
   pid?: number;
   started?: string;
+  /** When set to `idle`, the entry is a placeholder (no factory task yet) — see #983. */
   status?: string;
   completed?: string;
   exit_code?: number;
   details?: string;
+  /** Set on idle placeholders written by hybrid-mem so consumers can distinguish them. */
+  producer?: string;
   /** Retry counter attached by the watchdog on successive clears */
   retryCount?: number;
   /** ISO timestamp when the watchdog last intervened */
@@ -88,6 +92,20 @@ export interface TaskQueueItem {
 // ---------------------------------------------------------------------------
 // Internal helpers (exported for testing)
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns true when `current` is the same queue task as `stale` for safe replacement of current.json.
+ * When pid/started are absent, pid/start equality must not be used (undefined === undefined is always true).
+ */
+export function taskQueueItemMatchesStale(current: TaskQueueItem, stale: TaskQueueItem): boolean {
+  const hasPidOrStarted = stale.pid != null || stale.started != null;
+  if (hasPidOrStarted) {
+    return current.pid === stale.pid && current.started === stale.started;
+  }
+  return (
+    current.issue === stale.issue && current.dispatchToken === stale.dispatchToken && current.branch === stale.branch
+  );
+}
 
 /**
  * Returns true if the given PID is alive on this system.
@@ -151,6 +169,95 @@ async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
   await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
+export const TASK_QUEUE_IDLE_PRODUCER = "openclaw-hybrid-memory";
+
+const IDLE_DETAILS =
+  "Placeholder: no autonomous queue task is active. The factory overwrites this file when work is dispatched.";
+
+/** Status values that imply a real queue entry when combined with producer/title/branch. */
+const TASK_QUEUE_STATUS_WITH_PAYLOAD = new Set([
+  "running",
+  "completed",
+  "failed",
+  "dispatched",
+  "queued",
+  "blocked",
+  "cancelled",
+]);
+
+function buildIdleTaskQueuePayload(): TaskQueueItem {
+  return {
+    status: "idle",
+    producer: TASK_QUEUE_IDLE_PRODUCER,
+    details: IDLE_DETAILS,
+  };
+}
+
+/**
+ * Returns true when `item` looks like a real task-queue snapshot (idle sentinel, running work,
+ * forge issue, shell runner, etc.). Returns false for metadata-only shells such as
+ * `{ updatedAt, repo, maxForge }` written by external tools (#1037).
+ */
+export function taskQueueItemHasRecognizedSemantics(item: TaskQueueItem): boolean {
+  if (item.status === "idle" && item.producer === TASK_QUEUE_IDLE_PRODUCER) return true;
+  if (typeof item.issue === "number" && Number.isFinite(item.issue) && item.issue > 0) return true;
+  if (typeof item.pid === "number" && item.pid > 0) {
+    if (typeof item.started === "string" && item.started.length > 0) return true;
+  }
+  if (item.dispatchToken != null && String(item.dispatchToken).trim().length > 0) return true;
+  const st = item.status != null ? String(item.status).toLowerCase() : "";
+  if (st && TASK_QUEUE_STATUS_WITH_PAYLOAD.has(st)) {
+    if (item.producer != null && String(item.producer).trim().length > 0) return true;
+  }
+  if (item.branch != null && String(item.branch).trim().length > 0) {
+    if (item.title != null && String(item.title).trim().length > 0) return true;
+    if (typeof item.issue === "number" && item.issue > 0) return true;
+  }
+  if (item.title != null && String(item.title).trim().length > 0 && item.producer != null) {
+    return String(item.producer).trim().length > 0;
+  }
+  return false;
+}
+
+/**
+ * Write the canonical idle `current.json` (overwrites). Use after clearing a degenerate snapshot
+ * so cron and prompts always see a valid hybrid-memory placeholder (#983, #1037).
+ */
+export async function writeCanonicalIdleTaskQueueFile(
+  stateDir: string,
+  logger?: { info?: (msg: string) => void },
+): Promise<void> {
+  await mkdir(stateDir, { recursive: true });
+  const currentPath = join(stateDir, "current.json");
+  const body = JSON.stringify(buildIdleTaskQueuePayload(), null, 2);
+  await writeFile(currentPath, body, { encoding: "utf-8" });
+  logger?.info?.(`memory-hybrid: wrote canonical idle task-queue file at ${currentPath}`);
+}
+
+/**
+ * When `current.json` is absent, write a minimal idle sentinel so tools and cron jobs can read
+ * JSON from the canonical path without ENOENT (#983). Real factory tasks overwrite this file.
+ *
+ * @returns true when a new file was written.
+ */
+export async function ensureTaskQueueIdlePlaceholder(
+  stateDir: string,
+  logger?: { info?: (msg: string) => void },
+): Promise<boolean> {
+  await mkdir(stateDir, { recursive: true });
+  const currentPath = join(stateDir, "current.json");
+  const body = JSON.stringify(buildIdleTaskQueuePayload(), null, 2);
+  try {
+    await writeFile(currentPath, body, { encoding: "utf-8", flag: "wx" });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return false;
+    throw err;
+  }
+  logger?.info?.(`memory-hybrid: wrote task-queue idle placeholder at ${currentPath}`);
+  return true;
+}
+
 /**
  * Build a timestamped history filename.
  * Format: YYYY-MM-DDTHH-MM-SS-{suffix}.json
@@ -210,6 +317,9 @@ export async function runTaskQueueWatchdog(
   const currentPath = join(stateDir, "current.json");
   const historyDir = join(stateDir, "history");
 
+  await mkdir(stateDir, { recursive: true });
+  await ensureTaskQueueIdlePlaceholder(stateDir, logger);
+
   // Keep lease registry fresh even when there is no active current.json.
   try {
     await expireDispatchLeases(stateDir);
@@ -217,13 +327,65 @@ export async function runTaskQueueWatchdog(
     // Non-fatal: watchdog should still function for current.json hygiene.
   }
 
-  if (!existsSync(currentPath)) {
-    return { action: "no-current" };
-  }
-
   const item = await readJsonFile<TaskQueueItem>(currentPath);
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     return { action: "no-current" };
+  }
+
+  // Idle placeholder — never treat as a stale factory run (#983).
+  if (item.status === "idle" && item.producer === TASK_QUEUE_IDLE_PRODUCER) {
+    return { action: "ok", item };
+  }
+
+  // Metadata-only or unknown shapes (e.g. external tools writing { updatedAt, repo, maxForge })
+  // are not valid queue tasks — archive and restore canonical idle so automation sees a real sentinel (#1037).
+  if (!taskQueueItemHasRecognizedSemantics(item)) {
+    const recheckBefore = await readJsonFile<TaskQueueItem>(currentPath);
+    if (recheckBefore != null && taskQueueItemHasRecognizedSemantics(recheckBefore)) {
+      return { action: "ok", item: recheckBefore };
+    }
+    // Concurrent writers can replace the file between the initial read and this pass — do not archive/overwrite.
+    if (recheckBefore == null || stableStringify(recheckBefore) !== stableStringify(item)) {
+      return { action: "ok", item: recheckBefore ?? item };
+    }
+
+    const now = new Date().toISOString();
+    const degenerateReason =
+      "current.json has no recognizable task-queue payload (metadata-only shell or unknown shape; issue #1037)";
+    await mkdir(historyDir, { recursive: true });
+    const historyFilename = buildHistoryFilename("degenerate");
+    const historyPath = join(historyDir, historyFilename);
+    const archived: TaskQueueItem = {
+      ...item,
+      watchdogClearedAt: now,
+      watchdogReason: degenerateReason,
+    };
+    await writeJsonFile(historyPath, archived);
+    try {
+      const recheckAfter = await readJsonFile<TaskQueueItem>(currentPath);
+      const stillSameSnapshot = recheckAfter != null && stableStringify(recheckAfter) === stableStringify(item);
+      if (stillSameSnapshot) {
+        await unlink(currentPath);
+        await writeCanonicalIdleTaskQueueFile(stateDir, logger);
+        const logMsg = `memory-hybrid: task-queue-watchdog — cleared degenerate current.json → idle placeholder (${historyFilename})`;
+        logger?.info(logMsg);
+        return {
+          action: "cleared",
+          reason: degenerateReason,
+          item: archived,
+          historyPath,
+        };
+      }
+      return { action: "ok", item: recheckAfter ?? item };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "task-queue-watchdog",
+          operation: "unlink-degenerate-current",
+        });
+      }
+      return { action: "ok", item };
+    }
   }
 
   // ── Health checks ─────────────────────────────────────────────────────────
@@ -297,13 +459,7 @@ export async function runTaskQueueWatchdog(
   // was written between our initial read and this unlink.
   try {
     const recheck = await readJsonFile<TaskQueueItem>(currentPath);
-    // Guard is only meaningful if we have at least one identity field to compare.
-    // When both pid and started are undefined, the comparison is always true and
-    // provides no protection. In such cases, also check branch to ensure identity.
-    const hasPidOrStarted = item.pid != null || item.started != null;
-    const identityMatches = hasPidOrStarted
-      ? recheck && recheck.pid === item.pid && recheck.started === item.started
-      : recheck && recheck.pid === item.pid && recheck.started === item.started && recheck.branch === item.branch;
+    const identityMatches = recheck != null && taskQueueItemMatchesStale(recheck, item);
     if (identityMatches) {
       await unlink(currentPath);
     }

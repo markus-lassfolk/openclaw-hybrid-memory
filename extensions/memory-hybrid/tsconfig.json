@@ -20,6 +20,7 @@
     "backends/**/*.ts",
     "benchmark/**/*.ts",
     "cli/**/*.ts",
+    "contracts/**/*.ts",
     "services/**/*.ts",
     "tools/**/*.ts",
     "utils/**/*.ts",

@@ -9,8 +9,10 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
+import { assertValidCredentialRow } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
+import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -25,20 +27,29 @@ const CRED_ALGO = "aes-256-gcm";
 const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
 const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
-/** Derive encryption key using scrypt.
- *  v1: legacy SHA-256 (kept for backward compatibility with existing encrypted vaults).
- *  v2: recommended scrypt parameters (N=16384, r=8, p=1).
- */
+/** Log once per vault path: legacy v1 KDF is weak; opening triggers migration to scrypt when possible. */
+const _v1KdfWarnedPaths = new Set<string>();
+
+/** v1 only: legacy SHA-256 KDF (weak). Existing vaults cannot be decrypted with another KDF. */
+function deriveKeyV1Legacy(password: string): Buffer {
+  // codeql[js/insufficient-password-hash]
+  // Legacy v1 on-disk format only; new vaults use deriveKeyV2 (scrypt). Changing this breaks existing vaults.
+  return createHash("sha256").update(password, "utf8").digest();
+}
+
+/** v2: scrypt (N=16384, r=8, p=1). */
+function deriveKeyV2(password: string, salt: Buffer): Buffer {
+  return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
+}
+
+/** Dispatch v1 (legacy) vs v2 (scrypt). Prefer deriveKeyV2 for new material when version is known. */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
-    // lgtm[js/insufficient-password-hash]
-    // Legacy SHA-256 KDF (weak, kept for backward compatibility with existing encrypted vaults).
-    // New vaults use v2 with scrypt. Existing v1 vaults encrypted with SHA-256 cannot be
-    // decrypted with a different KDF, so we must preserve this for backward compatibility.
-    return createHash("sha256").update(password, "utf8").digest();
+    // codeql[js/insufficient-password-hash]
+    // Password only flows to the intentional legacy KDF above; v2 uses scrypt.
+    return deriveKeyV1Legacy(password);
   }
-  // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
-  return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
+  return deriveKeyV2(password, salt);
 }
 
 function encryptValue(plaintext: string, key: Buffer): Buffer {
@@ -74,20 +85,24 @@ export class CredentialsDB extends BaseSqliteStore {
   private key!: Buffer;
   private kdfVersion!: number;
   private salt!: Buffer;
-  /** When false, values are stored and read as plaintext (no encryption). */
-  private readonly encrypted: boolean;
+  /** When false, values are stored and read as plaintext (no encryption). Mutable when DB metadata overrides key length heuristics. */
+  private storesEncryptedValues: boolean;
+  /** True when a 16+ character encryption key was provided to the constructor. */
+  private readonly configuredKeyPresent: boolean;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
   private password: string | null;
 
   constructor(dbPath: string, encryptionKey: string) {
-    const encrypted = encryptionKey.length >= 16;
+    const keyLooksEncrypted = encryptionKey.length >= 16;
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     super(db);
     this.dbPath = dbPath;
-    this.encrypted = encrypted;
+    this.configuredKeyPresent = keyLooksEncrypted;
+    tryRestrictSqliteDbFileMode(dbPath);
+    this.storesEncryptedValues = keyLooksEncrypted;
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS vault_meta (
@@ -120,7 +135,7 @@ export class CredentialsDB extends BaseSqliteStore {
       | { value: Uint8Array | Buffer }
       | undefined;
 
-    if (!encrypted) {
+    if (!keyLooksEncrypted) {
       // Plaintext vault: no key derived
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
@@ -149,8 +164,8 @@ export class CredentialsDB extends BaseSqliteStore {
 
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] === CRED_KDF_PLAINTEXT) {
-      // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      (this as any).encrypted = false;
+      // DB metadata says plaintext — never treat as encrypted regardless of key length (Issue #835).
+      this.storesEncryptedValues = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
@@ -158,7 +173,8 @@ export class CredentialsDB extends BaseSqliteStore {
       // Optionally warn that key is being ignored
       if (encryptionKey.length >= 16) {
         pluginLogger.warn(
-          "Credentials vault is in plaintext mode (kdf_version=0). The provided encryption key is being ignored.",
+          "Credentials vault is in plaintext mode (kdf_version=0). The configured encryption key is being ignored. " +
+            "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --yes",
         );
       }
       return;
@@ -189,12 +205,102 @@ export class CredentialsDB extends BaseSqliteStore {
       this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
       this.password = this.kdfVersion === 1 ? encryptionKey : null;
     }
+
+    if (this.storesEncryptedValues && this.kdfVersion === 1 && !_v1KdfWarnedPaths.has(dbPath)) {
+      _v1KdfWarnedPaths.add(dbPath);
+      pluginLogger.warn(
+        "memory-hybrid: credentials vault uses legacy key derivation (v1 / SHA-256). This is weak against offline attacks. " +
+          "The vault will migrate to scrypt (v2) automatically after the next successful unlock. " +
+          "Set a strong OPENCLAW_CRED_KEY and restart, or rotate secrets after migration.",
+      );
+    }
   }
 
   protected getSubsystemName(): string {
     return "credentials";
   }
 
+  getVaultStatus(): {
+    dbPath: string;
+    kdfVersion: number;
+    encryptedAtRest: boolean;
+    configuredKeyPresent: boolean;
+    keyIgnored: boolean;
+    migrationRequired: boolean;
+  } {
+    const encryptedAtRest = this.kdfVersion !== CRED_KDF_PLAINTEXT;
+    const keyIgnored = this.kdfVersion === CRED_KDF_PLAINTEXT && this.configuredKeyPresent;
+    const migrationRequired = keyIgnored;
+    return {
+      dbPath: this.dbPath,
+      kdfVersion: this.kdfVersion,
+      encryptedAtRest,
+      configuredKeyPresent: this.configuredKeyPresent,
+      keyIgnored,
+      migrationRequired,
+    };
+  }
+
+  /**
+   * Encrypt an existing plaintext vault in place.
+   * Requires a 16+ character encryption key. Safe and idempotent:
+   * - Throws if vault is already encrypted
+   * - Performs an in-DB transaction so it cannot partially convert rows
+   */
+  enableEncryptionAtRest(encryptionKey: string): { migrated: number; kdfVersion: number } {
+    const keyLooksEncrypted = encryptionKey.length >= 16;
+    if (!keyLooksEncrypted) {
+      throw new Error(
+        "Encryption key is missing or too short. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY before encrypting the vault.",
+      );
+    }
+    if (this.kdfVersion !== CRED_KDF_PLAINTEXT) {
+      throw new Error(`Credentials vault is already encrypted (kdf_version=${this.kdfVersion}).`);
+    }
+
+    const newSalt = randomBytes(32);
+    const newKdfVersion = CRED_KDF_VERSION;
+    const newKey = deriveKey(encryptionKey, newSalt, newKdfVersion);
+
+    let migratedCount = 0;
+    const migrate = createTransaction(
+      this.liveDb,
+      () => {
+        const rows = this.liveDb.prepare("SELECT service, type, value FROM credentials").all() as Array<{
+          service: string;
+          type: string;
+          value: Uint8Array | Buffer;
+        }>;
+        migratedCount = rows.length;
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const r of rows) {
+          const plaintext = toBuffer(r.value).toString("utf8");
+          const encrypted = encryptValue(plaintext, newKey);
+          updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
+        }
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([newKdfVersion]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
+      },
+      "IMMEDIATE",
+    );
+
+    migrate();
+
+    this.kdfVersion = newKdfVersion;
+    this.salt = newSalt;
+    this.key = newKey;
+    this.password = null;
+    this.storesEncryptedValues = true;
+
+    return { migrated: migratedCount, kdfVersion: this.kdfVersion };
+  }
+
+  /**
+   * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
+   * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
+   */
   store(entry: {
     service: string;
     type: CredentialType;
@@ -204,7 +310,7 @@ export class CredentialsDB extends BaseSqliteStore {
     expires?: number | null;
   }): CredentialEntry {
     const now = Math.floor(Date.now() / 1000);
-    const stored = this.encrypted ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
+    const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
@@ -239,7 +345,7 @@ export class CredentialsDB extends BaseSqliteStore {
           .get(service) as Record<string, unknown> | undefined);
     if (!row) return null;
     const buf = toBuffer(row.value as Uint8Array | Buffer);
-    const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
+    const value = this.storesEncryptedValues ? decryptValue(buf, this.key) : buf.toString("utf8");
 
     if (this.kdfVersion === 1) {
       try {
@@ -254,7 +360,7 @@ export class CredentialsDB extends BaseSqliteStore {
       }
     }
 
-    return {
+    const out = {
       service: row.service as string,
       type: row.type as string as CredentialType,
       value,
@@ -264,6 +370,8 @@ export class CredentialsDB extends BaseSqliteStore {
       updated: row.updated as number,
       expires: (row.expires as number) ?? null,
     };
+    assertValidCredentialRow(out);
+    return out;
   }
 
   /** Migrate legacy SHA-256 vault to scrypt. Called after first successful decryption. */
@@ -272,32 +380,34 @@ export class CredentialsDB extends BaseSqliteStore {
       throw new Error("Migration requires password");
     }
 
-    // Fetch all credentials (will be decrypted with old key)
-    const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
+    // Generate new salt and derive new key with scrypt (avoid deriveKey dispatcher so static analysis sees only scrypt here)
+    const migrationSalt = randomBytes(32);
+    const newKey = deriveKeyV2(this.password, migrationSalt);
 
-    // Generate new salt and derive new key with scrypt
-    this.salt = randomBytes(32);
-    const newKey = deriveKey(this.password, this.salt, CRED_KDF_VERSION);
+    // Wrap read + mutations in one transaction (IMMEDIATE) so new rows cannot appear after the snapshot.
+    const migrate = createTransaction(
+      this.liveDb,
+      () => {
+        const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const row of rows) {
+          const oldBuf = toBuffer(row.value as Uint8Array | Buffer);
+          const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
+          const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
+          updateStmt.run(newEncrypted as unknown as Uint8Array, row.service as string, row.type as string);
+        }
 
-    // Wrap all mutations in a transaction to prevent partial migration
-    const migrate = createTransaction(this.liveDb, () => {
-      // Re-encrypt all credentials with new key
-      const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
-      for (const row of rows) {
-        const oldBuf = toBuffer(row.value as Uint8Array | Buffer);
-        const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
-        const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
-        updateStmt.run(newEncrypted as unknown as Uint8Array, row.service as string, row.type as string);
-      }
-
-      // Update metadata
-      this.liveDb
-        .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
-        .run(Buffer.from([CRED_KDF_VERSION]));
-      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
-    });
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([CRED_KDF_VERSION]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(migrationSalt);
+      },
+      "IMMEDIATE",
+    );
 
     migrate();
+
+    this.salt = migrationSalt;
 
     // Update instance state
     this.kdfVersion = CRED_KDF_VERSION;
@@ -335,7 +445,7 @@ export class CredentialsDB extends BaseSqliteStore {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const stored = this.encrypted ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
+    const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     const result = this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
@@ -379,20 +489,32 @@ export class CredentialsDB extends BaseSqliteStore {
     const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<
       Record<string, unknown>
     >;
-    return rows.map((row) => {
-      const buf = toBuffer(row.value as Uint8Array | Buffer);
-      const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
-      return {
-        service: row.service as string,
-        type: row.type as string as CredentialType,
-        value,
-        url: (row.url as string) ?? null,
-        notes: (row.notes as string) ?? null,
-        created: row.created as number,
-        updated: row.updated as number,
-        expires: (row.expires as number) ?? null,
-      };
-    });
+    const out: CredentialEntry[] = [];
+    for (const row of rows) {
+      try {
+        const buf = toBuffer(row.value as Uint8Array | Buffer);
+        const value = this.storesEncryptedValues ? decryptValue(buf, this.key) : buf.toString("utf8");
+        const entry: CredentialEntry = {
+          service: row.service as string,
+          type: row.type as string as CredentialType,
+          value,
+          url: (row.url as string) ?? null,
+          notes: (row.notes as string) ?? null,
+          created: row.created as number,
+          updated: row.updated as number,
+          expires: (row.expires as number) ?? null,
+        };
+        assertValidCredentialRow(entry);
+        out.push(entry);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "credentials",
+          operation: "list-all-skip-row",
+          severity: "warning",
+        });
+      }
+    }
+    return out;
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {

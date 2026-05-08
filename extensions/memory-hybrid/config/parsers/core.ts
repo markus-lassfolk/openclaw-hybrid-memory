@@ -3,13 +3,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
-import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
+import type { EventLogConfig, PathConfig, StoreConfig, StoreSourceProfile, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
+  ActiveTaskProjectionConfig,
   AuthOrderConfig,
   CredentialAutoCaptureConfig,
   CredentialsConfig,
   GatewayConfig,
+  GoalStewardshipConfig,
   LLMConfig,
   LLMProviderConfig,
   ResolvedGatewayAuthConfig,
@@ -20,7 +22,7 @@ import type {
 export const DEFAULT_MODEL = "text-embedding-3-small";
 export const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
 export const DEFAULT_SQLITE_PATH = join(homedir(), ".openclaw", "memory", "facts.db");
-export const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
+const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
 
 export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-small": 1536,
@@ -72,12 +74,51 @@ export function resolveEnvVars(value: string): string {
   });
 }
 
+function parseStoreSourceProfile(raw: unknown): StoreSourceProfile | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  const onDuplicate =
+    obj.onDuplicate === "skip" ||
+    obj.onDuplicate === "boost" ||
+    obj.onDuplicate === "merge" ||
+    obj.onDuplicate === "store"
+      ? obj.onDuplicate
+      : undefined;
+  return {
+    vectorThreshold:
+      typeof obj.vectorThreshold === "number" && obj.vectorThreshold > 0 && obj.vectorThreshold <= 1
+        ? obj.vectorThreshold
+        : undefined,
+    lexicalJaccard:
+      typeof obj.lexicalJaccard === "number" && obj.lexicalJaccard > 0 && obj.lexicalJaccard <= 1
+        ? obj.lexicalJaccard
+        : undefined,
+    maxPerDay: typeof obj.maxPerDay === "number" && obj.maxPerDay > 0 ? Math.floor(obj.maxPerDay) : undefined,
+    onDuplicate,
+    boostBy: typeof obj.boostBy === "number" && obj.boostBy > 0 ? Math.min(1, obj.boostBy) : undefined,
+    onOverflow: obj.onOverflow === "drop" || obj.onOverflow === "evict-lowest-confidence" ? obj.onOverflow : undefined,
+  };
+}
+
+function parseSourceProfiles(raw: unknown): Record<string, StoreSourceProfile> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, StoreSourceProfile> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!key.trim()) continue;
+    const parsed = parseStoreSourceProfile(value);
+    if (parsed) out[key.trim()] = parsed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function parseStoreConfig(cfg: Record<string, unknown>): StoreConfig {
   const storeRaw = cfg.store as Record<string, unknown> | undefined;
   return {
     fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
     classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : undefined,
+    sourceProfiles: parseSourceProfiles(storeRaw?.sourceProfiles),
+    defaultProfile: parseStoreSourceProfile(storeRaw?.defaultProfile),
   };
 }
 
@@ -166,9 +207,11 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
   let credentials: CredentialsConfig;
   if (shouldEnable) {
     const opts = parseCredentialOptions(credRaw);
-    // M1 FIX: Log info message when plaintext mode is chosen explicitly
-    if (!hasValidKey && credRaw?.enabled === true) {
-      pluginLogger.info("Credentials vault enabled (plaintext mode — no encryption key set)");
+    if (!hasValidKey) {
+      pluginLogger.warn(
+        "memory-hybrid: credentials vault is enabled without encryption at rest (set credentials.encryptionKey with 16+ characters, or OPENCLAW_CRED_KEY / env:VAR for a strong key). " +
+          "Until then, stored secrets are written as plaintext in the vault database — restrict filesystem access to that path, or add a key when you are ready.",
+      );
     }
     credentials = {
       enabled: true,
@@ -219,13 +262,39 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
   }
 
   const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
+  const thRaw = activeTaskRaw?.taskHygiene as Record<string, unknown> | undefined;
+  const suggestDays =
+    typeof thRaw?.suggestGoalAfterTaskAgeDays === "number" && thRaw.suggestGoalAfterTaskAgeDays >= 0
+      ? Math.floor(thRaw.suggestGoalAfterTaskAgeDays)
+      : 0;
+  const heartbeatNudgeMaxChars =
+    typeof thRaw?.heartbeatNudgeMaxChars === "number" && thRaw.heartbeatNudgeMaxChars >= 200
+      ? Math.floor(thRaw.heartbeatNudgeMaxChars)
+      : 2500;
+  const ledgerRaw = activeTaskRaw?.ledger;
+  const ledger = ledgerRaw === "facts" ? "facts" : "markdown";
+  const projRaw = activeTaskRaw?.projection as Record<string, unknown> | undefined;
+  const projection: ActiveTaskProjectionConfig = {
+    mode: projRaw?.mode === "full" ? "full" : "readable",
+    excludeGenericTitle: projRaw?.excludeGenericTitle !== false,
+    titleMinChars:
+      typeof projRaw?.titleMinChars === "number" && projRaw.titleMinChars > 0 ? Math.floor(projRaw.titleMinChars) : 0,
+    dedupeBy: projRaw?.dedupeBy === "label" || projRaw?.dedupeBy === "normalizedTitle" ? projRaw.dedupeBy : "none",
+    maxRowsPerSection:
+      typeof projRaw?.maxRowsPerSection === "number" && projRaw.maxRowsPerSection > 0
+        ? Math.floor(projRaw.maxRowsPerSection)
+        : undefined,
+    sectioned: projRaw?.sectioned !== false,
+  };
   return {
     enabled: activeTaskRaw?.enabled !== false,
+    ledger,
     filePath:
       typeof activeTaskRaw?.filePath === "string" && activeTaskRaw.filePath.trim().length > 0
         ? activeTaskRaw.filePath.trim()
-        : "ACTIVE-TASK.md",
+        : "ACTIVE-TASKS.md",
     autoCheckpoint: activeTaskRaw?.autoCheckpoint !== false,
+    // Positive numbers only; floor fractions. Non-positive or missing → default (align openclaw.plugin.json: integer, minimum 1).
     injectionBudget:
       typeof activeTaskRaw?.injectionBudget === "number" && activeTaskRaw.injectionBudget > 0
         ? Math.floor(activeTaskRaw.injectionBudget)
@@ -235,6 +304,131 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
     staleWarning: {
       enabled: staleWarningRaw?.enabled !== false, // default: true
     },
+    taskHygiene: {
+      heartbeatEscalation: thRaw?.heartbeatEscalation !== false,
+      suggestGoalAfterTaskAgeDays: suggestDays,
+      heartbeatNudgeMaxChars,
+    },
+    projection,
+  };
+}
+
+export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalStewardshipConfig {
+  const raw = cfg.goalStewardship as Record<string, unknown> | undefined;
+  const defaults = raw?.defaults as Record<string, unknown> | undefined;
+  const limits = raw?.globalLimits as Record<string, unknown> | undefined;
+  const goalsDir =
+    typeof raw?.goalsDir === "string" && raw.goalsDir.trim().length > 0 ? raw.goalsDir.trim() : "state/goals";
+  const priorityRaw = defaults?.priority;
+  const priority =
+    priorityRaw === "critical" || priorityRaw === "high" || priorityRaw === "low" || priorityRaw === "normal"
+      ? priorityRaw
+      : "normal";
+  const patternsRaw = raw?.heartbeatPatterns;
+  const heartbeatPatterns: string[] = [];
+  if (Array.isArray(patternsRaw)) {
+    for (const p of patternsRaw) {
+      if (typeof p === "string" && p.trim().length > 0) heartbeatPatterns.push(p.trim());
+    }
+  }
+
+  const aw = raw?.attentionWeights as Record<string, unknown> | undefined;
+  const attentionWeights = {
+    critical: typeof aw?.critical === "number" && aw.critical > 0 ? aw.critical : 4,
+    high: typeof aw?.high === "number" && aw.high > 0 ? aw.high : 2,
+    normal: typeof aw?.normal === "number" && aw.normal > 0 ? aw.normal : 1,
+    low: typeof aw?.low === "number" && aw.low > 0 ? aw.low : 0.5,
+  };
+
+  const multiGoalMaxChars =
+    typeof raw?.multiGoalMaxChars === "number" && raw.multiGoalMaxChars >= 500
+      ? Math.floor(raw.multiGoalMaxChars)
+      : 12_000;
+  const multiGoalMaxGoals =
+    typeof raw?.multiGoalMaxGoals === "number" && raw.multiGoalMaxGoals >= 1 ? Math.floor(raw.multiGoalMaxGoals) : 8;
+
+  const confRaw = raw?.confirmationPolicy as Record<string, unknown> | undefined;
+  const reqAck = confRaw?.requireRegisterAckForPriorities;
+  const requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low"> = [];
+  if (Array.isArray(reqAck)) {
+    for (const pr of reqAck) {
+      if (pr === "critical" || pr === "high" || pr === "normal" || pr === "low") {
+        requireRegisterAckForPriorities.push(pr);
+      }
+    }
+  }
+  if (requireRegisterAckForPriorities.length === 0) {
+    requireRegisterAckForPriorities.push("critical", "high");
+  }
+
+  const escPolRaw = raw?.escalationPolicy as Record<string, unknown> | undefined;
+  const cbRaw = raw?.circuitBreaker as Record<string, unknown> | undefined;
+  const sameBlockerRepeatLimit =
+    typeof cbRaw?.sameBlockerRepeatLimit === "number" && cbRaw.sameBlockerRepeatLimit >= 1
+      ? Math.floor(cbRaw.sameBlockerRepeatLimit)
+      : 0;
+  const maxAssessmentsWithoutProgress =
+    typeof cbRaw?.maxAssessmentsWithoutProgress === "number" && cbRaw.maxAssessmentsWithoutProgress >= 1
+      ? Math.floor(cbRaw.maxAssessmentsWithoutProgress)
+      : 0;
+
+  return {
+    enabled: raw?.enabled === true,
+    goalsDir,
+    model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : null,
+    heartbeatStewardship: raw?.heartbeatStewardship !== false,
+    watchdogHealthCheck: raw?.watchdogHealthCheck !== false,
+    defaults: {
+      maxDispatches:
+        typeof defaults?.maxDispatches === "number" && defaults.maxDispatches >= 1
+          ? Math.floor(defaults.maxDispatches)
+          : 20,
+      maxAssessments:
+        typeof defaults?.maxAssessments === "number" && defaults.maxAssessments >= 1
+          ? Math.floor(defaults.maxAssessments)
+          : 50,
+      cooldownMinutes:
+        typeof defaults?.cooldownMinutes === "number" && defaults.cooldownMinutes >= 1
+          ? Math.floor(defaults.cooldownMinutes)
+          : 10,
+      escalateAfterFailures:
+        typeof defaults?.escalateAfterFailures === "number" && defaults.escalateAfterFailures >= 1
+          ? Math.floor(defaults.escalateAfterFailures)
+          : 3,
+      priority,
+    },
+    globalLimits: {
+      maxDispatchesPerHour:
+        typeof limits?.maxDispatchesPerHour === "number" && limits.maxDispatchesPerHour >= 1
+          ? Math.floor(limits.maxDispatchesPerHour)
+          : 6,
+      maxActiveGoals:
+        typeof limits?.maxActiveGoals === "number" && limits.maxActiveGoals >= 1
+          ? Math.floor(limits.maxActiveGoals)
+          : 5,
+    },
+    heartbeatPatterns,
+    attentionWeights,
+    multiGoalMaxChars,
+    multiGoalMaxGoals,
+    heartbeatRefreshActiveTask: raw?.heartbeatRefreshActiveTask !== false,
+    confirmationPolicy: {
+      requireRegisterAckForPriorities,
+    },
+    llmTriageOnHeartbeat: raw?.llmTriageOnHeartbeat === true,
+    triageSuggestHeavyDirective: raw?.triageSuggestHeavyDirective !== false,
+    escalationPolicy: {
+      taskHygieneOnBlockedGoals: escPolRaw?.taskHygieneOnBlockedGoals !== false,
+    },
+    circuitBreaker: {
+      enabled: cbRaw?.enabled === true,
+      sameBlockerRepeatLimit,
+      maxAssessmentsWithoutProgress,
+      composeHumanSummary: cbRaw?.composeHumanSummary !== false,
+      appendMemoryEscalation: cbRaw?.appendMemoryEscalation !== false,
+    },
+    allowCommandVerification: raw?.allowCommandVerification === true,
+    allowPrVerification: raw?.allowPrVerification === true,
   };
 }
 
@@ -322,6 +516,10 @@ export function parseAuthConfig(cfg: Record<string, unknown>): AuthOrderConfig |
 
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {
   const llmRaw = cfg.llm as Record<string, unknown> | undefined;
+  const maintenanceList =
+    llmRaw && Array.isArray(llmRaw.maintenance)
+      ? (llmRaw.maintenance as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : [];
   const defaultList =
     llmRaw && Array.isArray(llmRaw.default)
       ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
@@ -344,11 +542,16 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
                 `memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`,
               );
             }
+            // Accept both camelCase `baseUrl` (OpenClaw convention) and kebab-case `baseURL`.
+            // OpenClaw `openclaw.json` uses `baseUrl` under `models.providers.*`.
+            const baseURLRaw =
+              (typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined) ??
+              (typeof pv.baseUrl === "string" && pv.baseUrl.trim().length > 0 ? pv.baseUrl.trim() : undefined);
             return [
               k.toLowerCase(),
               {
                 apiKey: validKey,
-                baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
+                baseURL: baseURLRaw,
               } as LLMProviderConfig,
             ];
           }),
@@ -367,6 +570,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           .map((p) => p.trim().toLowerCase())
       : [];
   const llm: LLMConfig | undefined =
+    maintenanceList.length > 0 ||
     defaultList.length > 0 ||
     heavyList.length > 0 ||
     nanoList.length > 0 ||
@@ -374,6 +578,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
     localAutoStart ||
     disabledProviders.length > 0
       ? {
+          ...(maintenanceList.length > 0 ? { maintenance: maintenanceList } : {}),
           default: defaultList,
           heavy: heavyList,
           ...(nanoList.length > 0 ? { nano: nanoList } : {}),
@@ -433,6 +638,52 @@ export function resolveSecretRef(value: string): string | undefined {
     }
   }
   return v;
+}
+
+/** Matches OpenClaw `isSecretRef` / SecretRef object shape (openclaw/plugin-sdk config types). */
+function isOpenClawSecretRefObject(
+  raw: unknown,
+): raw is { source: "env" | "file" | "exec"; provider: string; id: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
+  if (Object.keys(raw as object).length !== 3) return false;
+  const o = raw as Record<string, unknown>;
+  return (
+    (o.source === "env" || o.source === "file" || o.source === "exec") &&
+    typeof o.provider === "string" &&
+    o.provider.trim().length > 0 &&
+    typeof o.id === "string" &&
+    o.id.trim().length > 0
+  );
+}
+
+/**
+ * Resolve `embedding.apiKey` from either a string (env:/file:/templates) or an OpenClaw SecretRef object (Issue #833).
+ * `source: "exec"` refs are only available when the host resolves secrets; unresolved here → undefined.
+ */
+export function resolveEmbeddingApiKeyInput(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "string") return resolveSecretRef(raw);
+  if (!isOpenClawSecretRefObject(raw)) return undefined;
+  const ref = raw;
+  if (ref.source === "env") {
+    return normalizeResolvedSecretValue(process.env[ref.id]);
+  }
+  if (ref.source === "file") {
+    if (ref.id.startsWith("/") || ref.id.startsWith("./")) {
+      try {
+        const contents = readFileSync(ref.id, "utf-8").trim();
+        return contents || undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+export function isEmbeddingApiKeyExecSecretRef(raw: unknown): boolean {
+  return isOpenClawSecretRefObject(raw) && raw.source === "exec";
 }
 
 /**

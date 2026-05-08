@@ -8,13 +8,36 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { acquireDispatchLease, getDispatchLease } from "../services/task-queue-leases.js";
 import {
+  TASK_QUEUE_IDLE_PRODUCER,
   type TaskQueueItem,
   type TaskQueueWatchdogConfig,
   getActiveWorktreeBranches,
   isPidAlive,
   isRuntimeExceeded,
   runTaskQueueWatchdog,
+  taskQueueItemHasRecognizedSemantics,
+  taskQueueItemMatchesStale,
 } from "../services/task-queue-watchdog.js";
+
+// ---------------------------------------------------------------------------
+// taskQueueItemMatchesStale
+// ---------------------------------------------------------------------------
+
+describe("taskQueueItemMatchesStale", () => {
+  it("matches by pid and started when present (branch not part of identity)", () => {
+    const stale: TaskQueueItem = { pid: 42, started: "2026-01-01T00:00:00.000Z" };
+    expect(taskQueueItemMatchesStale({ ...stale }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ ...stale, branch: "other" }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ pid: 43, started: stale.started }, stale)).toBe(false);
+  });
+
+  it("without pid/started, matches issue, dispatchToken, and branch (not undefined===undefined)", () => {
+    const stale: TaskQueueItem = { issue: 99, dispatchToken: "tok", branch: "feat/x" };
+    expect(taskQueueItemMatchesStale({ ...stale }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ ...stale, issue: 100 }, stale)).toBe(false);
+    expect(taskQueueItemMatchesStale({ issue: 99, dispatchToken: "tok", branch: "feat/y" }, stale)).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isPidAlive tests
@@ -69,6 +92,45 @@ describe("isRuntimeExceeded", () => {
   it("returns true for tasks started in the past beyond the threshold", () => {
     const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
     expect(isRuntimeExceeded(yesterday, 4 * 60 * 60 * 1000)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// taskQueueItemHasRecognizedSemantics (#1037)
+// ---------------------------------------------------------------------------
+
+describe("taskQueueItemHasRecognizedSemantics", () => {
+  it("rejects metadata-only shells", () => {
+    expect(
+      taskQueueItemHasRecognizedSemantics({
+        updatedAt: "2026-04-04T20:44:39+02:00",
+        repo: "markus-lassfolk/openclaw-hybrid-memory",
+        maxForge: 3,
+      } as unknown as TaskQueueItem),
+    ).toBe(false);
+  });
+
+  it("accepts canonical idle placeholder", () => {
+    expect(
+      taskQueueItemHasRecognizedSemantics({
+        status: "idle",
+        producer: TASK_QUEUE_IDLE_PRODUCER,
+        details: "x",
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts issue-based forge tasks", () => {
+    expect(taskQueueItemHasRecognizedSemantics({ issue: 1037, status: "running" })).toBe(true);
+  });
+
+  it("accepts pid+started runner tasks", () => {
+    expect(
+      taskQueueItemHasRecognizedSemantics({
+        pid: process.pid,
+        started: new Date().toISOString(),
+      }),
+    ).toBe(true);
   });
 });
 
@@ -129,11 +191,16 @@ describe("runTaskQueueWatchdog", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  // ── No-current ──────────────────────────────────────────────────────────
+  // ── No-current / idle placeholder (#983) ──────────────────────────────
 
-  it("returns no-current when current.json does not exist", async () => {
+  it("writes an idle placeholder and returns ok when current.json was missing", async () => {
     const result = await runTaskQueueWatchdog(makeConfig(), noopLogger);
-    expect(result.action).toBe("no-current");
+    expect(result.action).toBe("ok");
+    expect(result.item?.status).toBe("idle");
+    expect(result.item?.producer).toBe("openclaw-hybrid-memory");
+    const raw = await readFile(join(stateDir, "current.json"), "utf-8");
+    expect(JSON.parse(raw).status).toBe("idle");
+    expect(noopLogger.info).toHaveBeenCalled();
   });
 
   it("returns no-current when current.json is malformed", async () => {
@@ -222,6 +289,24 @@ describe("runTaskQueueWatchdog", () => {
     expect(lease?.reason).toContain("PID 999999999");
   });
 
+  it("clears metadata-only current.json, archives, and writes canonical idle (#1037)", async () => {
+    await writeCurrentJson({
+      updatedAt: "2026-04-04T20:44:39+02:00",
+      repo: "markus-lassfolk/openclaw-hybrid-memory",
+      maxForge: 3,
+    } as unknown as TaskQueueItem);
+
+    const result = await runTaskQueueWatchdog(makeConfig(), noopLogger);
+    expect(result.action).toBe("cleared");
+    expect(result.reason).toContain("metadata-only");
+    expect(result.historyPath).toBeDefined();
+
+    const idleRaw = await readFile(join(stateDir, "current.json"), "utf-8");
+    const idle = JSON.parse(idleRaw) as TaskQueueItem;
+    expect(idle.status).toBe("idle");
+    expect(idle.producer).toBe(TASK_QUEUE_IDLE_PRODUCER);
+  });
+
   it("moves current.json to history on dead PID", async () => {
     const recentStart = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     await writeCurrentJson({
@@ -238,7 +323,8 @@ describe("runTaskQueueWatchdog", () => {
     expect(existsSync(join(stateDir, "current.json"))).toBe(false);
 
     // history file should exist and contain the enriched item
-    const historyContent = JSON.parse(await readFile(result.historyPath!, "utf-8")) as TaskQueueItem;
+    if (result.historyPath == null) throw new Error("expected historyPath");
+    const historyContent = JSON.parse(await readFile(result.historyPath, "utf-8")) as TaskQueueItem;
     expect(historyContent.issue).toBe(201);
     expect(historyContent.watchdogReason).toContain("PID 999999999");
     expect(historyContent.watchdogClearedAt).toBeDefined();

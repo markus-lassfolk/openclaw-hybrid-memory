@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" fill="none">
+  <rect width="1200" height="760" fill="#0B1220"/>
+  <rect x="40" y="40" width="1120" height="680" rx="28" fill="#101A2F" stroke="#24324D" stroke-width="2"/>
+  <text x="80" y="110" fill="#F8FAFC" font-size="34" font-family="Arial, Helvetica, sans-serif" font-weight="700">Hybrid Memory product architecture</text>
+  <text x="80" y="145" fill="#93A4BF" font-size="19" font-family="Arial, Helvetica, sans-serif">The product story is not just storage. It is capture → store → recall → inspect → control.</text>
+
+  <rect x="80" y="205" width="190" height="120" rx="22" fill="#1D4ED8"/>
+  <text x="175" y="254" text-anchor="middle" fill="#EFF6FF" font-size="26" font-family="Arial, Helvetica, sans-serif" font-weight="700">Capture</text>
+  <text x="175" y="286" text-anchor="middle" fill="#DBEAFE" font-size="17" font-family="Arial, Helvetica, sans-serif">facts, preferences,</text>
+  <text x="175" y="308" text-anchor="middle" fill="#DBEAFE" font-size="17" font-family="Arial, Helvetica, sans-serif">decisions, workflows</text>
+
+  <rect x="292" y="205" width="190" height="120" rx="22" fill="#0F766E"/>
+  <text x="387" y="254" text-anchor="middle" fill="#ECFEFF" font-size="26" font-family="Arial, Helvetica, sans-serif" font-weight="700">Store</text>
+  <text x="387" y="286" text-anchor="middle" fill="#CCFBF1" font-size="17" font-family="Arial, Helvetica, sans-serif">SQLite + vectors +</text>
+  <text x="387" y="308" text-anchor="middle" fill="#CCFBF1" font-size="17" font-family="Arial, Helvetica, sans-serif">provenance metadata</text>
+
+  <rect x="504" y="205" width="190" height="120" rx="22" fill="#7C3AED"/>
+  <text x="599" y="254" text-anchor="middle" fill="#F5F3FF" font-size="26" font-family="Arial, Helvetica, sans-serif" font-weight="700">Recall</text>
+  <text x="599" y="286" text-anchor="middle" fill="#EDE9FE" font-size="17" font-family="Arial, Helvetica, sans-serif">structured lookup +</text>
+  <text x="599" y="308" text-anchor="middle" fill="#EDE9FE" font-size="17" font-family="Arial, Helvetica, sans-serif">semantic retrieval</text>
+
+  <rect x="716" y="205" width="190" height="120" rx="22" fill="#EA580C"/>
+  <text x="811" y="254" text-anchor="middle" fill="#FFF7ED" font-size="26" font-family="Arial, Helvetica, sans-serif" font-weight="700">Inspect</text>
+  <text x="811" y="286" text-anchor="middle" fill="#FFEDD5" font-size="17" font-family="Arial, Helvetica, sans-serif">verify, search, stats,</text>
+  <text x="811" y="308" text-anchor="middle" fill="#FFEDD5" font-size="17" font-family="Arial, Helvetica, sans-serif">export, dashboards</text>
+
+  <rect x="928" y="205" width="190" height="120" rx="22" fill="#BE123C"/>
+  <text x="1023" y="254" text-anchor="middle" fill="#FFF1F2" font-size="26" font-family="Arial, Helvetica, sans-serif" font-weight="700">Control</text>
+  <text x="1023" y="286" text-anchor="middle" fill="#FFE4E6" font-size="17" font-family="Arial, Helvetica, sans-serif">config, backup,</text>
+  <text x="1023" y="308" text-anchor="middle" fill="#FFE4E6" font-size="17" font-family="Arial, Helvetica, sans-serif">restore, delete</text>
+
+  <g stroke="#5B6B86" stroke-width="4" stroke-linecap="round">
+    <line x1="270" y1="265" x2="292" y2="265"/>
+    <line x1="482" y1="265" x2="504" y2="265"/>
+    <line x1="694" y1="265" x2="716" y2="265"/>
+    <line x1="906" y1="265" x2="928" y2="265"/>
+  </g>
+
+  <rect x="80" y="385" width="1038" height="255" rx="24" fill="#0F172A" stroke="#24324D" stroke-width="2"/>
+  <text x="110" y="432" fill="#E2E8F0" font-size="26" font-family="Arial, Helvetica, sans-serif" font-weight="700">Why this feels like a product rather than a pile of features</text>
+
+  <rect x="110" y="470" width="300" height="130" rx="18" fill="#132238" stroke="#2C4163"/>
+  <text x="140" y="514" fill="#F8FAFC" font-size="24" font-family="Arial, Helvetica, sans-serif" font-weight="700">Local-first by default</text>
+  <text x="140" y="548" fill="#C7D2E1" font-size="18" font-family="Arial, Helvetica, sans-serif">Memory lives on your machine unless</text>
+  <text x="140" y="572" fill="#C7D2E1" font-size="18" font-family="Arial, Helvetica, sans-serif">you deliberately choose otherwise.</text>
+
+  <rect x="450" y="470" width="300" height="130" rx="18" fill="#132238" stroke="#2C4163"/>
+  <text x="480" y="514" fill="#F8FAFC" font-size="24" font-family="Arial, Helvetica, sans-serif" font-weight="700">Inspectable and controllable</text>
+  <text x="480" y="548" fill="#C7D2E1" font-size="18" font-family="Arial, Helvetica, sans-serif">You can verify, search, export, back up,</text>
+  <text x="480" y="572" fill="#C7D2E1" font-size="18" font-family="Arial, Helvetica, sans-serif">and delete it with explicit paths.</text>
+
+  <rect x="790" y="470" width="298" height="130" rx="18" fill="#132238" stroke="#2C4163"/>
+  <text x="820" y="514" fill="#F8FAFC" font-size="24" font-family="Arial, Helvetica, sans-serif" font-weight="700">Hybrid retrieval</text>
+  <text x="820" y="548" fill="#C7D2E1" font-size="18" font-family="Arial, Helvetica, sans-serif">Structured facts and semantic recall</text>
+  <text x="820" y="572" fill="#C7D2E1" font-size="18" font-family="Arial, Helvetica, sans-serif">work together instead of competing.</text>
+</svg>

@@ -1,46 +1,51 @@
 // @ts-nocheck
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Build HybridMemCliContext from handler context and services.
  * Moves CLI wiring out of index.ts so the plugin entry stays small.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
-import type { ActiveTaskContext } from "../cli/active-tasks.js";
-import { parseDuration } from "../utils/duration.js";
+import { dirname, isAbsolute, join } from "node:path";
 import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { registerHybridMemCli, type HybridMemCliContext } from "../cli/register.js";
+import type { ActiveTaskContext } from "../cli/active-tasks.js";
+import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { applyApprovedProposal } from "../cli/proposals.js";
+import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
-import { runFindDuplicates } from "../services/find-duplicates.js";
-import { runConsolidate } from "../services/consolidation.js";
-import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
-import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js";
-import { runVerificationCycle, type VerificationCycleResult } from "../services/continuous-verifier.js";
-import { runClassifyForCli } from "../services/auto-classifier.js";
-import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
-import { runExport } from "../services/export-memory.js";
-import { mergeResults } from "../services/merge-results.js";
-import { parseSourceDate } from "../utils/dates.js";
 import {
-  getMemoryCategories,
-  getDefaultCronModel,
+  hybridConfigSchema,
   getCronModelConfig,
+  getDefaultCronModel,
+  getMemoryCategories,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
-import { versionInfo } from "../versionInfo.js";
+import { runClassifyForCli } from "../services/auto-classifier.js";
+import { runConsolidate } from "../services/consolidation.js";
+import { type VerificationCycleResult, runVerificationCycle } from "../services/continuous-verifier.js";
+import { readGuardTimestampMs } from "../services/cron-guard.js";
+import { type DreamCycleResult, runDreamCycle } from "../services/dream-cycle.js";
+import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { applyApprovedProposal } from "../cli/proposals.js";
-import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
-import { pluginLogger } from "../utils/logger.js";
+import { runExport } from "../services/export-memory.js";
+import { runFindDuplicates } from "../services/find-duplicates.js";
+import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+import { mergeResults } from "../services/merge-results.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
+import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { parseSourceDate } from "../utils/dates.js";
+import { parseDuration } from "../utils/duration.js";
+import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
+import { versionInfo } from "../versionInfo.js";
 
 /** Help text shown after hybrid-mem commands list */
-export const HYBRID_MEM_HELP_GROUPED = `
+const HYBRID_MEM_HELP_GROUPED = `
 Commands by category:
 
   Setup & installation
@@ -65,6 +70,7 @@ Commands by category:
     lookup <id>          Get fact by ID
     list                 List recent facts (--limit, --category, --tier, etc.)
     show <id>            Show fact or proposal by ID
+    dump                 Print rows from a SQLite table (--type, --limit, --order, --json)
     categories           List categories present in memory
 
   Proposals & corrections
@@ -94,6 +100,7 @@ Commands by category:
     reflect-meta         Extract meta-patterns
     classify             Reclassify facts with LLM
     build-languages      Build language keywords for self-correction
+    enrich-entities      Backfill PERSON/ORG extraction for facts missing NER rows
 
   Dedup & consolidation
     find-duplicates      Find near-duplicate facts (--threshold)
@@ -125,80 +132,45 @@ Commands by category:
 `;
 
 const HYBRID_MEM_HELP_ACTIVE_TASKS = `
-  Working memory
-    active-tasks                   List active tasks from ACTIVE-TASK.md
+  Goals & working memory
+    goals config                   Show goal stewardship settings (goalStewardship.*); toggle: config-set goalStewardship
+    goals list | status [label] | audit | …  Tracked goals (status alone = overview; status <label> = detail)
+    active-tasks config            Show active-task settings (activeTask.*)
+    active-tasks                   List tasks. When activeTask.enabled is false, only config works
     active-tasks complete <label>  Mark task as Done and flush to memory log
     active-tasks stale             Show tasks not updated within staleThreshold
+    active-tasks reconcile         Complete in-progress rows whose session transcript is gone (#978)
     active-tasks add <label> <desc>  Add or update a task entry
+    active-tasks render            Write ACTIVE-TASKS.md from facts (when activeTask.ledger: facts)
+    task-queue-status            Print task-queue JSON + recognized flag; --with-active-tasks (#1037)
+    task-queue-touch             Create idle current.json if missing; --repair for bad snapshots (#1037)
 `;
 
-export const HYBRID_MEM_CLI_COMMANDS = [
-  "hybrid-mem",
-  "hybrid-mem dashboard",
-  "hybrid-mem run-all",
-  "hybrid-mem install",
-  "hybrid-mem stats",
-  "hybrid-mem test",
-  "hybrid-mem context-audit",
-  "hybrid-mem compact",
-  "hybrid-mem prune",
-  "hybrid-mem checkpoint",
-  "hybrid-mem backfill-decay",
-  "hybrid-mem backfill",
-  "hybrid-mem ingest-files",
-  "hybrid-mem distill",
-  "hybrid-mem extract-daily",
-  "hybrid-mem extract-procedures",
-  "hybrid-mem generate-auto-skills",
-  "hybrid-mem generate-proposals",
-  "hybrid-mem extract-directives",
-  "hybrid-mem extract-reinforcement",
-  "hybrid-mem search",
-  "hybrid-mem lookup",
-  "hybrid-mem list",
-  "hybrid-mem show",
-  "hybrid-mem proposals list",
-  "hybrid-mem proposals show",
-  "hybrid-mem proposals approve",
-  "hybrid-mem proposals reject",
-  "hybrid-mem corrections list",
-  "hybrid-mem corrections approve",
-  "hybrid-mem review",
-  "hybrid-mem store",
-  "hybrid-mem classify",
-  "hybrid-mem build-languages",
-  "hybrid-mem self-correction-extract",
-  "hybrid-mem self-correction-run",
-  "hybrid-mem analyze-feedback-phrases",
-  "hybrid-mem categories",
-  "hybrid-mem find-duplicates",
-  "hybrid-mem consolidate",
-  "hybrid-mem reflect",
-  "hybrid-mem reflect-rules",
-  "hybrid-mem reflect-meta",
-  "hybrid-mem dream-cycle",
-  "hybrid-mem resolve-contradictions",
-  "hybrid-mem config",
-  "hybrid-mem verify",
-  "hybrid-mem credentials migrate-to-vault",
-  "hybrid-mem distill-window",
-  "hybrid-mem record-distill",
-  "hybrid-mem scope prune-session",
-  "hybrid-mem scope promote",
-  "hybrid-mem uninstall",
-  "hybrid-mem active-tasks",
-  "hybrid-mem active-tasks complete",
-  "hybrid-mem active-tasks stale",
-  "hybrid-mem active-tasks add",
-  "hybrid-mem cost-report",
-  "hybrid-mem tool-effectiveness",
-  "hybrid-mem cross-agent-learning",
-  "hybrid-mem sensor-sweep",
-  "hybrid-mem sensor-events",
-] as const;
+/**
+ * Root command descriptor for OpenClaw lazy CLI registration (parse-time contract).
+ * Subcommands are registered when the full plugin `register()` runs or when the lazy CLI fires.
+ */
+export const HYBRID_MEM_CLI_ROOT_DESCRIPTOR = {
+  name: "hybrid-mem",
+  description: "Hybrid memory (SQLite + LanceDB): maintenance, verify, search, diagnostics, and ingestion",
+  hasSubcommands: true,
+};
+
+/**
+ * `loadOpenClawPluginCliRegistry` calls `register()` with `registrationMode: "cli-metadata"` only to
+ * collect CLI metadata without activating the full plugin (issue #1111).
+ */
+export function registerHybridMemCliMetadataOnly(api: ClawdbotPluginApi): void {
+  api.registerCli(
+    () => {
+      // Full Commander wiring runs on full registration or when a lazy placeholder loads this plugin.
+    },
+    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
+  );
+}
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
-export interface CliContextServices {
+interface CliContextServices {
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -232,13 +204,34 @@ export interface CliContextServices {
     total: number;
     breakdown?: Record<string, number>;
   }>;
-  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  runCompaction: (opts?: { apply?: boolean }) => Promise<{
+    hot: number;
+    warm: number;
+    cold: number;
+    structural: number;
+    changed?: number;
+    examined?: number;
+    apply?: boolean;
+  }>;
   runBuildLanguageKeywords: (opts: {
     model?: string;
     dryRun?: boolean;
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+  }) => Promise<{
+    pending: number;
+    processed: number;
+    factsEnriched: number;
+    skipped?: boolean;
+    pendingFactIds?: string[];
+    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
+  }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
@@ -246,8 +239,8 @@ export interface CliContextServices {
     sources?: string[];
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
-  runDreamCycle: () => Promise<DreamCycleResult>;
-  runContinuousVerification: () => Promise<VerificationCycleResult>;
+  runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
+  runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -283,6 +276,9 @@ export interface HybridMemCliRegistrationContext {
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   /** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
   eventBus?: import("../backends/event-bus.js").EventBus | null;
+  /** Audit log (Issue #790). */
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
 function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
@@ -311,7 +307,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: async (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const result = await runReflection(
         factsDb,
         vectorDb,
@@ -322,7 +318,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           minObservations: cfg.reflection.minObservations,
           enabled: cfg.reflection.enabled,
         },
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -339,25 +335,25 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       return result;
     },
     runReflectionRules: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       return runReflectionRules(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
     },
     runReflectionMeta: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       return runReflectionMeta(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { ...opts, model: opts.model ?? defaultModel, fallbackModels },
+        { ...opts, model: effectiveModel, fallbackModels },
         logSink,
         provenanceService,
       );
@@ -392,19 +388,32 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
       }
       return result;
     },
-    runCompaction: () =>
+    runCompaction: (opts?: { apply?: boolean }) =>
       Promise.resolve(
-        factsDb.runCompaction({
-          inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
-          hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
-          hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
-        }),
+        factsDb.retier(
+          {
+            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+            coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
+            hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
+            hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
+            hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
+            hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
+            hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
+            structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
+            structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
+          },
+          opts?.apply !== false,
+        ),
       ),
     runBuildLanguageKeywords: (opts) =>
       runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
-        model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "default").defaultModel,
+        model:
+          opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
         dryRun: opts.dryRun,
       }),
+    runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
     runExport: (opts) =>
       Promise.resolve(
         runExport(factsDb, opts, {
@@ -412,10 +421,35 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           schemaVersion: versionInfo.schemaVersion,
         }),
       ),
-    runDreamCycle: async () => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+    runDreamCycle: async (opts?: { verbose?: boolean }) => {
+      const verbose = !!opts?.verbose;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
-      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "dream_cycle_consolidation");
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const dreamSource =
+        typeof cfg.nightlyCycle.model === "string" && cfg.nightlyCycle.model.trim().length > 0
+          ? "nightlyCycle.model"
+          : tierPref.models[0] === dreamModel
+            ? (tierPref.sources[0] ?? "built-in")
+            : "built-in";
+      pluginLogger.info("memory-hybrid: dream-cycle model tier = default");
+      pluginLogger.info(`memory-hybrid: dream-cycle starting with model ${dreamModel} (source=${dreamSource})`);
+      pluginLogger.info(
+        `memory-hybrid: dream-cycle fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
+      if (verbose) {
+        pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
+      }
+      const flush = await runPreConsolidationFlush(
+        { wal, factsDb, vectorDb, embeddings },
+        api.logger,
+        "dream_cycle_consolidation",
+      );
+      if (verbose) {
+        pluginLogger.info(
+          `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped})`,
+        );
+      }
       return runDreamCycle(
         factsDb,
         vectorDb,
@@ -433,20 +467,37 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          maxEventsPerConsolidation: cfg.nightlyCycle.maxEventsPerConsolidation,
           logRetentionDays: cfg.nightlyCycle.logRetentionDays,
           vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
+          reclassifyDecayOnCycle: cfg.nightlyCycle.reclassifyDecayOnCycle,
+          reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
+          reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
+          verbose,
+          episodicConsolidationEventTypes: {
+            allow: cfg.nightlyCycle.consolidationEventTypeAllow,
+            deny: cfg.nightlyCycle.consolidationEventTypeDeny,
+          },
         },
         logSink,
         provenanceService,
       );
     },
-    runContinuousVerification: async () => {
+    runContinuousVerification: async (opts?: { verbose?: boolean }) => {
       if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
         return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
       }
+      const verbose = !!opts?.verbose;
       return runVerificationCycle(verificationStore, factsDb, openai, {
         cycleDays: cfg.verification.cycleDays,
         verificationModel: cfg.verification.verificationModel,
+        ...(verbose
+          ? {
+              onProgress: (message: string) => {
+                pluginLogger.info(message);
+              },
+            }
+          : {}),
       });
     },
     runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
@@ -457,11 +508,24 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
   };
 }
 
+export type RegisterHybridMemCliWithApiOptions = {
+  /**
+   * Called after a `hybrid-mem` subcommand action completes (Commander `postAction` on the
+   * `hybrid-mem` command). Used to close LanceDB/SQLite and dispose timers so one-shot CLI
+   * processes can exit (Issue #1039).
+   */
+  onHybridMemCliComplete?: () => void | Promise<void>;
+};
+
 /**
  * Register hybrid-mem CLI with the API. Call from index after DB init.
  * Builds handler context and services inside setup so index stays a thin orchestrator.
  */
-export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridMemCliRegistrationContext): void {
+export function registerHybridMemCliWithApi(
+  api: ClawdbotPluginApi,
+  ctx: HybridMemCliRegistrationContext,
+  options?: RegisterHybridMemCliWithApiOptions,
+): void {
   const handlerCtx: HandlerContext = {
     ...ctx,
     logger: api.logger,
@@ -472,7 +536,7 @@ export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridM
     ({ program }: { program: Command }) => {
       try {
         const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
-        registerCliWithHelp(program, cliCtx);
+        registerCliWithHelp(program, cliCtx, options);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "registration",
@@ -481,12 +545,92 @@ export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridM
         throw err;
       }
     },
-    { commands: [...HYBRID_MEM_CLI_COMMANDS] },
+    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
+  );
+}
+
+/**
+ * Help-only CLI wiring for `openclaw hybrid-mem --help` (and subcommand help).
+ *
+ * When OpenClaw prints help, no Commander action runs; `postAction` teardown hooks never fire.
+ * If the plugin bootstraps databases or starts async background checks during register(), those
+ * handles can keep the process alive and make help look hung (issue #<hang-help>).
+ *
+ * This registers the full Commander command tree without initializing DBs, native deps, or any
+ * background checks. It intentionally ignores the user's plugin config so help is deterministic
+ * even when config secrets (env:/file:) are missing.
+ */
+export function registerHybridMemCliHelpOnlyWithApi(api: ClawdbotPluginApi): void {
+  // Silence config-parser telemetry so help output stays clean.
+  resetPluginLogger();
+  let cfg: HandlerContext["cfg"];
+  try {
+    cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "openai",
+        apiKey: "sk-help-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+    });
+  } catch {
+    // Fallback that does not require credentials (still needs a model name for provider != openai).
+    cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "ollama",
+        model: "nomic-embed-text",
+      },
+    });
+  } finally {
+    restoreDefaultLogger();
+  }
+
+  const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
+  const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
+
+  const stub: unknown = {};
+  const cliRegistrationCtx: HybridMemCliRegistrationContext = {
+    factsDb: stub as HandlerContext["factsDb"],
+    vectorDb: stub as HandlerContext["vectorDb"],
+    embeddings: stub as HandlerContext["embeddings"],
+    openai: stub as HandlerContext["openai"],
+    cfg,
+    credentialsDb: null,
+    aliasDb: null,
+    wal: null,
+    proposalsDb: null,
+    identityReflectionStore: null,
+    personaStateStore: null,
+    verificationStore: null,
+    provenanceService: null,
+    resolvedSqlitePath,
+    resolvedLancePath,
+    pluginId: "openclaw-hybrid-memory",
+    detectCategory: (() => "fact") as HandlerContext["detectCategory"],
+    eventLog: null,
+    costTracker: null,
+    eventBus: null,
+    auditStore: null,
+    agentHealthStore: null,
+  };
+
+  const handlerCtx: HandlerContext = {
+    ...cliRegistrationCtx,
+    logger: api.logger,
+    api,
+  };
+
+  const services = buildCliContextServices(cliRegistrationCtx, api);
+  api.registerCli(
+    ({ program }: { program: Command }) => {
+      const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
+      registerCliWithHelp(program, cliCtx);
+    },
+    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
   );
 }
 
 function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliContext["richStatsExtras"]> {
-  const { credentialsDb, proposalsDb, wal, resolvedSqlitePath, resolvedLancePath } = ctx;
+  const { credentialsDb, proposalsDb, wal, factsDb, resolvedSqlitePath, resolvedLancePath } = ctx;
   const memoryDir = dirname(resolvedSqlitePath);
   return {
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
@@ -520,12 +664,17 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getStorageSizes: async () => {
       let sqliteBytes: number | undefined;
       let lanceBytes: number | undefined;
-      async function dirSizeAsync(p: string): Promise<number> {
+      let lanceBytesTimedOut = false;
+      async function dirSizeAsync(p: string): Promise<number | "timeout"> {
         try {
           const { execFile } = await import("node:child_process");
-          return await new Promise<number>((resolve) => {
-            execFile("du", ["-sk", p], (error, stdout) => {
+          return await new Promise<number | "timeout">((resolve) => {
+            execFile("du", ["-sk", p], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
               if (error) {
+                if ("killed" in error && error.killed) {
+                  resolve("timeout");
+                  return;
+                }
                 try {
                   const st = statSync(p);
                   resolve(st.isDirectory() ? 0 : st.size);
@@ -553,17 +702,31 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         }
       }
       try {
-        if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+        const est = factsDb.estimateStorageBytes();
+        sqliteBytes = est.sqliteBytes + est.walBytes + est.shmBytes;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "stat-check",
+          operation: "facts-storage-estimate",
           severity: "info",
           subsystem: "cli",
         });
-        /* ignore */
+        try {
+          if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+        } catch (statErr) {
+          capturePluginError(statErr instanceof Error ? statErr : new Error(String(statErr)), {
+            operation: "stat-check",
+            severity: "info",
+            subsystem: "cli",
+          });
+          /* ignore */
+        }
       }
       try {
-        if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
+        if (existsSync(resolvedLancePath)) {
+          const lz = await dirSizeAsync(resolvedLancePath);
+          if (lz === "timeout") lanceBytesTimedOut = true;
+          else lanceBytes = lz;
+        }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "dir-size",
@@ -572,7 +735,53 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         });
         /* ignore */
       }
-      return { sqliteBytes, lanceBytes };
+      return { sqliteBytes, lanceBytes, lanceBytesTimedOut };
+    },
+    getCronJobsStatus: () => {
+      const owHome =
+        process.env.OPENCLAW_HOME?.trim() || join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".openclaw");
+      const cronStorePath = join(owHome, "cron", "jobs.json");
+      if (!existsSync(cronStorePath)) return [];
+      let store: { jobs?: unknown[] };
+      try {
+        store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "stats-read-jobs-json",
+          severity: "info",
+          subsystem: "cli",
+        });
+        return [];
+      }
+      if (!Array.isArray(store.jobs)) return [];
+      const out: Array<{
+        name: string;
+        pluginJobId: string;
+        enabled: boolean;
+        scheduleExpr: string | null;
+        lastRunAtMs: number | null;
+      }> = [];
+      for (const j of store.jobs as Array<Record<string, unknown>>) {
+        if (!j || typeof j !== "object") continue;
+        const pluginJobId = typeof j.pluginJobId === "string" ? j.pluginJobId : "";
+        if (!pluginJobId.startsWith("hybrid-mem:")) continue;
+        const sched = j.schedule as { expr?: string } | string | undefined;
+        const scheduleExpr = typeof sched === "string" ? sched : typeof sched?.expr === "string" ? sched.expr : null;
+        const state = (typeof j.state === "object" && j.state !== null ? j.state : {}) as Record<string, unknown>;
+        const stateLast = typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : null;
+        const jobName = typeof j.name === "string" ? j.name : pluginJobId;
+        const guardMs = readGuardTimestampMs(jobName.replace(/\s+/g, "-"), owHome);
+        const lastRunAtMs =
+          stateLast != null && guardMs != null ? Math.max(stateLast, guardMs) : (stateLast ?? guardMs);
+        out.push({
+          name: jobName,
+          pluginJobId,
+          enabled: j.enabled !== false,
+          scheduleExpr,
+          lastRunAtMs,
+        });
+      }
+      return out;
     },
   };
 }
@@ -582,7 +791,7 @@ function buildListCommands(
   api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
   const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
-  const workspaceRoot = () => process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = () => getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
 
   function parseReportProposedSections(content: string): string[] {
@@ -749,7 +958,7 @@ function buildListCommands(
  * Resolves file paths against the workspace root.
  */
 function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContext {
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const { activeTask } = handlerCtx.cfg;
   // Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
   const activeTaskFilePath = isAbsolute(activeTask.filePath)
@@ -761,6 +970,11 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
     staleMinutes: parseDuration(activeTask.staleThreshold),
     flushOnComplete: activeTask.flushOnComplete,
     memoryDir,
+    ledger: activeTask.ledger,
+    projection: activeTask.projection,
+    factsDb: handlerCtx.factsDb,
+    vectorDb: handlerCtx.vectorDb,
+    embeddings: handlerCtx.embeddings,
   };
 }
 
@@ -768,7 +982,7 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
  * Build the full CLI context passed to registerHybridMemCli.
  * Uses handlers from cli/handlers.ts and services for reflection/consolidation/export etc.
  */
-export function createHybridMemCliContext(
+function createHybridMemCliContext(
   handlerCtx: HandlerContext,
   api: ClawdbotPluginApi,
   services: CliContextServices,
@@ -797,13 +1011,14 @@ export function createHybridMemCliContext(
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
+    runEncryptVault: (opts) => handlers.runEncryptVaultForCli(handlerCtx, opts),
     runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
     runCredentialsGet: (opts) => handlers.runCredentialsGetForCli(handlerCtx, opts),
     runCredentialsAudit: () => handlers.runCredentialsAuditForCli(handlerCtx),
     runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
     runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
     runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
-    runConfigView: (sink) => handlers.runConfigViewForCli(handlerCtx, sink),
+    runConfigView: (sink, opts) => handlers.runConfigViewForCli(handlerCtx, sink, opts),
     runConfigMode: (mode) => Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),
     runConfigSet: (key, value) => Promise.resolve(handlers.runConfigSetForCli(handlerCtx, key, value)),
     runConfigSetHelp: (key) => Promise.resolve(handlers.runConfigSetHelpForCli(handlerCtx, key)),
@@ -817,7 +1032,7 @@ export function createHybridMemCliContext(
     runResolveContradictions: services.runResolveContradictions,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
-      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "default"),
+      model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),
     },
     runClassify: services.runClassify,
     autoClassifyConfig: {
@@ -826,13 +1041,14 @@ export function createHybridMemCliContext(
     },
     runCompaction: services.runCompaction,
     runBuildLanguageKeywords: services.runBuildLanguageKeywords,
+    runEntityEnrichment: services.runEntityEnrichment,
     runSelfCorrectionExtract: (opts) => Promise.resolve(handlers.runSelfCorrectionExtractForCli(handlerCtx, opts)),
     runSelfCorrectionRun: (opts) => handlers.runSelfCorrectionRunForCli(handlerCtx, opts),
     runAnalyzeFeedbackPhrases: (opts) => handlers.runAnalyzeFeedbackPhrasesForCli(handlerCtx, opts),
     runExtractDirectives: (opts) => handlers.runExtractDirectivesForCli(handlerCtx, opts),
     runExtractReinforcement: (opts) => handlers.runExtractReinforcementForCli(handlerCtx, opts),
     runExtractImplicitFeedback: (opts) => handlers.runExtractImplicitFeedbackForCli(handlerCtx, opts),
-    runCrossAgentLearning: () => handlers.runCrossAgentLearningForCli(handlerCtx),
+    runCrossAgentLearning: (opts) => handlers.runCrossAgentLearningForCli(handlerCtx, opts),
     runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
     runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
     pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),
@@ -854,15 +1070,36 @@ export function createHybridMemCliContext(
     runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
     activeTask: handlerCtx.cfg.activeTask.enabled ? buildActiveTaskCliContext(handlerCtx) : undefined,
     eventBus: handlerCtx.eventBus ?? null,
+    auditStore: handlerCtx.auditStore ?? null,
+    agentHealthStore: handlerCtx.agentHealthStore ?? null,
   };
 }
 
 /** Register hybrid-mem CLI with the program subcommand and help text */
-export function registerCliWithHelp(
+function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,
+  options?: RegisterHybridMemCliWithApiOptions,
 ): void {
-  const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands");
+  const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands") as Command;
+  mem.option(
+    "-v, --verbose",
+    "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
+    false,
+  );
+  const onComplete = options?.onHybridMemCliComplete;
+  if (onComplete && typeof mem.hook === "function") {
+    mem.hook("postAction", async () => {
+      try {
+        await onComplete();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "hybrid-mem-post-action-teardown",
+        });
+      }
+    });
+  }
   try {
     registerHybridMemCli(mem as Parameters<typeof registerHybridMemCli>[0], ctx);
   } catch (err) {
@@ -873,7 +1110,7 @@ export function registerCliWithHelp(
     throw err;
   }
   if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
-    const helpText = ctx.activeTask ? HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS : HYBRID_MEM_HELP_GROUPED;
+    const helpText = HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS;
     (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", helpText);
   }
 }

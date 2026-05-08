@@ -19,10 +19,11 @@ import { withCostFeature } from "./cost-context.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 import type { ProvenanceService } from "./provenance.js";
-import { dotProductSimilarity, normalizeVector } from "./reflection.js";
+import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 
-export interface ConsolidateOptions {
+interface ConsolidateOptions {
   threshold: number;
   includeStructured: boolean;
   dryRun: boolean;
@@ -30,7 +31,7 @@ export interface ConsolidateOptions {
   model: string;
 }
 
-export interface ConsolidateResult {
+interface ConsolidateResult {
   clustersFound: number;
   merged: number;
   deleted: number;
@@ -144,30 +145,16 @@ export async function runConsolidate(
   const idToFact = new Map(candidateFacts.map((f) => [f.id, f]));
   const ids = candidateFacts.map((f) => f.id);
 
-  logger.info(`memory-hybrid: consolidate — embedding ${ids.length} facts...`);
-  const vectors: number[][] = [];
-  for (let i = 0; i < ids.length; i += 20) {
-    const batch = ids.slice(i, i + 20);
-    for (const id of batch) {
-      const f = idToFact.get(id)!;
-      try {
-        const vec = await embeddings.embed(f.text);
-        vectors.push(normalizeVector(vec));
-      } catch (err) {
-        logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
-        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "consolidate-embed",
-            subsystem: "embeddings",
-            factId: id,
-          });
-        }
-        vectors.push([]);
-      }
-    }
-    if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
-  }
+  logger.info(`memory-hybrid: consolidate — loading vectors for ${ids.length} facts (Lance index + embedding API)...`);
+  const vectorResults = await loadReflectionDedupeCorpusVectors(
+    candidateFacts as MemoryEntry[],
+    embeddings,
+    vectorDb,
+    logger,
+    "memory-hybrid: consolidate",
+    "consolidate-embed",
+  );
+  const vectors = vectorResults.map((v) => (v === null ? [] : v));
 
   const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const edges: Array<[string, string]> = [];
@@ -213,7 +200,7 @@ export async function runConsolidate(
               model: opts.model,
               messages: [{ role: "user", content: prompt }],
               temperature: 0,
-              max_tokens: 300,
+              ...chatCompletionTokenParams(opts.model, 300),
             }),
           { maxRetries: 2 },
         ),
@@ -261,6 +248,17 @@ export async function runConsolidate(
       tags: mergedTags.length > 0 ? mergedTags : undefined,
       extractionMethod: "consolidation",
       extractionConfidence: BATCH_STORE_IMPORTANCE,
+      provenanceJson: JSON.stringify({
+        method: "consolidation",
+        consolidatedAt: Math.floor(Date.now() / 1000),
+        sourceFactIds: clusterIds,
+        sourceFacts: clusterFacts.map((sourceFact) => ({
+          id: sourceFact.id,
+          text: sourceFact.text.slice(0, 300),
+          source: sourceFact.source,
+          category: sourceFact.category,
+        })),
+      }),
     });
     if (provenanceService && consolidationRunId) {
       try {
@@ -304,10 +302,7 @@ export async function runConsolidate(
         });
       }
     }
-    // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
-    for (const id of clusterIds) {
-      factsDb.createLink(entry.id, id, "DERIVED_FROM", 1.0);
-    }
+    // Source lineage is stored on facts.provenance_json. memory_links is reserved for semantic edges.
     if (provenanceService) {
       for (const sourceFact of clusterFacts) {
         try {

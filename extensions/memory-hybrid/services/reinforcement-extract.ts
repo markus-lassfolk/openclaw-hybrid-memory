@@ -171,7 +171,7 @@ function calculateReinforcementConfidence(userText: string, agentText: string): 
   return Math.max(0, Math.min(1.0, confidence));
 }
 
-export type RunReinforcementExtractOpts = {
+type RunReinforcementExtractOpts = {
   filePaths: string[];
   reinforcementRegex: RegExp;
 };

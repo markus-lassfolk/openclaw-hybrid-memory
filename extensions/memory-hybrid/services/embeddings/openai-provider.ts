@@ -5,16 +5,43 @@
 import OpenAI from "openai";
 import { withLLMRetry } from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
-import { EMBEDDING_CACHE_MAX, makeCacheKey, shouldSuppressEmbeddingError, truncateForEmbedding } from "./shared.js";
+import {
+  AsyncSemaphore,
+  EMBEDDING_CACHE_MAX,
+  makeCacheKey,
+  shouldSuppressEmbeddingError,
+  truncateForEmbedding,
+} from "./shared.js";
 import type { EmbeddingProvider } from "./types.js";
+
+/** Validate OpenAI-style embedding payload before indexing (#969). */
+function vectorFromEmbeddingResponse(
+  resp: unknown,
+  provider: string,
+  endpoint: string,
+  model: string,
+  context: "embed" | "embedBatch",
+): number[] {
+  const data = (resp as { data?: unknown } | undefined)?.data;
+  const row0 = Array.isArray(data) ? (data[0] as { embedding?: number[] } | undefined) : undefined;
+  const emb = row0?.embedding;
+  if (!emb || !Array.isArray(emb)) {
+    throw new Error(
+      `Embedding response missing data[0].embedding (${context}, provider=${provider}, endpoint=${endpoint}, model=${model}, hasData=${Boolean(Array.isArray(data) && data.length > 0)})`,
+    );
+  }
+  return emb;
+}
 
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
  */
 export class Embeddings implements EmbeddingProvider {
+  private readonly providerName = "openai-compatible";
   private client: OpenAI;
   private cache = new Map<string, number[]>();
+  private readonly endpoint: string;
   /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
   private readonly models: string[];
   /**
@@ -25,6 +52,13 @@ export class Embeddings implements EmbeddingProvider {
   readonly dimensions: number;
   modelName: string;
   private readonly batchSize: number;
+  /**
+   * When true, do not send optional `dimensions` on embeddings.create (#948).
+   * Required for some Azure/APIM/Foundry routes that reject the field even for text-embedding-3-*.
+   */
+  private readonly omitDimensionsInRequest: boolean;
+  /** Serializes OpenAI embedding API calls (#840); release always runs via try/finally. */
+  private readonly apiSemaphore = new AsyncSemaphore(1);
 
   constructor(
     clientOrApiKey: OpenAI | string,
@@ -32,14 +66,18 @@ export class Embeddings implements EmbeddingProvider {
     dimensions?: number,
     batchSize?: number,
     logicalModelForEmbedding?: string,
+    omitDimensionsInRequest = false,
   ) {
     this.client = typeof clientOrApiKey === "string" ? new OpenAI({ apiKey: clientOrApiKey }) : clientOrApiKey;
+    const maybeClient = this.client as unknown as { baseURL?: string; _options?: { baseURL?: string } };
+    this.endpoint = maybeClient.baseURL ?? maybeClient._options?.baseURL ?? "default";
     this.models = Array.isArray(modelOrModels) ? modelOrModels : [modelOrModels];
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
     this.logicalModelForEmbedding = logicalModelForEmbedding;
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
     this.batchSize = batchSize || 2048;
+    this.omitDimensionsInRequest = omitDimensionsInRequest;
 
     // Validate dimensions against known model limits and capabilities
     const modelMaxDimensions: Record<string, number> = {
@@ -83,55 +121,64 @@ export class Embeddings implements EmbeddingProvider {
       }
     }
 
-    let lastErr: Error | undefined;
-    for (const model of this.models) {
-      const cacheKey = makeCacheKey(model, text);
-      const cached = this.cache.get(cacheKey);
-      if (cached !== undefined) {
-        this.cache.delete(cacheKey);
-        this.cache.set(cacheKey, cached);
-        this.modelName = model;
-        return cached;
-      }
-      try {
-        const effective = this.logicalModelForEmbedding ?? model;
-        const supportsDimensions = effective.startsWith("text-embedding-3-");
-        // Truncate to stay within the 8192-token OpenAI embedding limit (#442)
-        const input = truncateForEmbedding(text);
-        const resp = await withLLMRetry(
-          () =>
-            this.client.embeddings.create({
-              model,
-              input,
-              ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
-            }),
-          { maxRetries: 2 },
-        );
-        const vector = resp.data[0].embedding;
-        if (this.cache.size >= EMBEDDING_CACHE_MAX) {
-          const firstKey = this.cache.keys().next().value;
-          if (firstKey !== undefined) this.cache.delete(firstKey);
+    await this.apiSemaphore.acquire();
+    try {
+      let lastErr: Error | undefined;
+      for (const model of this.models) {
+        const cacheKey = makeCacheKey(model, text);
+        const cached = this.cache.get(cacheKey);
+        if (cached !== undefined) {
+          this.cache.delete(cacheKey);
+          this.cache.set(cacheKey, cached);
+          this.modelName = model;
+          return cached;
         }
-        const storeCacheKey = makeCacheKey(model, text);
-        this.cache.set(storeCacheKey, vector);
-        this.modelName = model;
-        return vector;
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
+        try {
+          const effective = this.logicalModelForEmbedding ?? model;
+          const supportsDimensions = effective.startsWith("text-embedding-3-");
+          // Truncate to stay within the 8192-token OpenAI embedding limit (#442)
+          const input = truncateForEmbedding(text);
+          const includeDims = supportsDimensions && !this.omitDimensionsInRequest;
+          const resp = await withLLMRetry(
+            () =>
+              this.client.embeddings.create({
+                model,
+                input,
+                ...(includeDims ? { dimensions: this.dimensions } : {}),
+              }),
+            {
+              maxRetries: 2,
+              llmContext: { operation: "memory-hybrid: embeddings.create", model },
+            },
+          );
+          const vector = vectorFromEmbeddingResponse(resp, this.providerName, this.endpoint, model, "embed");
+          if (this.cache.size >= EMBEDDING_CACHE_MAX) {
+            const firstKey = this.cache.keys().next().value;
+            if (firstKey !== undefined) this.cache.delete(firstKey);
+          }
+          const storeCacheKey = makeCacheKey(model, text);
+          this.cache.set(storeCacheKey, vector);
+          this.modelName = model;
+          return vector;
+        } catch (err) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+        }
       }
+      // lastErr is always defined here: constructor enforces models.length >= 1, so
+      // the loop always runs at least once; either it returns early (success) or
+      // sets lastErr on every iteration before reaching this point.
+      // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure), 429 (rate limit), and 500 errors — operator config issues or transient errors, not bugs (#329, #394, #397, #385, #739).
+      if (!shouldSuppressEmbeddingError(lastErr!)) {
+        capturePluginError(lastErr!, {
+          subsystem: "embeddings",
+          operation: "embed",
+          phase: "fallback-exhausted",
+        });
+      }
+      throw lastErr!;
+    } finally {
+      this.apiSemaphore.release();
     }
-    // lastErr is always defined here: constructor enforces models.length >= 1, so
-    // the loop always runs at least once; either it returns early (success) or
-    // sets lastErr on every iteration before reaching this point.
-    // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure), 429 (rate limit), and 500 errors — operator config issues or transient errors, not bugs (#329, #394, #397, #385, #739).
-    if (!shouldSuppressEmbeddingError(lastErr!)) {
-      capturePluginError(lastErr!, {
-        subsystem: "embeddings",
-        operation: "embed",
-        phase: "fallback-exhausted",
-      });
-    }
-    throw lastErr!;
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -169,60 +216,93 @@ export class Embeddings implements EmbeddingProvider {
     // Phase 2: Batch-embed only the uncached texts, chunked by batchSize.
     const uncachedTexts = uncachedIndices.map((i) => texts[i]);
     const freshVectors: number[][] = [];
-    for (let i = 0; i < uncachedTexts.length; i += this.batchSize) {
-      const batch = uncachedTexts.slice(i, i + this.batchSize);
+    await this.apiSemaphore.acquire();
+    try {
+      for (let i = 0; i < uncachedTexts.length; i += this.batchSize) {
+        const batch = uncachedTexts.slice(i, i + this.batchSize);
 
-      let lastErr: Error | undefined;
-      let resp: Awaited<ReturnType<typeof this.client.embeddings.create>> | undefined;
-      let succeededModel: string | undefined;
-      for (const model of this.models) {
-        try {
-          const effective = this.logicalModelForEmbedding ?? model;
-          const supportsDimensions = effective.startsWith("text-embedding-3-");
-          // Truncate each item to stay within the 8192-token OpenAI embedding limit (#442)
-          const truncatedBatch = batch.map(truncateForEmbedding);
-          resp = await withLLMRetry(
-            () =>
-              this.client.embeddings.create({
-                model,
-                input: truncatedBatch,
-                ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
-              }),
-            { maxRetries: 2 },
-          );
-          succeededModel = model;
-          this.modelName = model;
-          break;
-        } catch (err) {
-          lastErr = err instanceof Error ? err : new Error(String(err));
-        }
-      }
-      if (resp !== undefined && succeededModel !== undefined) {
-        if (resp.data.length !== batch.length) {
-          throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
-        }
-        const sorted = resp.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
-        // Write fresh vectors into the cache keyed by the model that succeeded (#589)
-        for (let j = 0; j < batch.length; j++) {
-          if (this.cache.size >= EMBEDDING_CACHE_MAX) {
-            const firstKey = this.cache.keys().next().value;
-            if (firstKey !== undefined) this.cache.delete(firstKey);
+        let lastErr: Error | undefined;
+        let resp: Awaited<ReturnType<typeof this.client.embeddings.create>> | undefined;
+        let succeededModel: string | undefined;
+        for (const model of this.models) {
+          try {
+            const effective = this.logicalModelForEmbedding ?? model;
+            const supportsDimensions = effective.startsWith("text-embedding-3-");
+            // Truncate each item to stay within the 8192-token OpenAI embedding limit (#442)
+            const truncatedBatch = batch.map(truncateForEmbedding);
+            const includeDimsBatch = supportsDimensions && !this.omitDimensionsInRequest;
+            resp = await withLLMRetry(
+              () =>
+                this.client.embeddings.create({
+                  model,
+                  input: truncatedBatch,
+                  ...(includeDimsBatch ? { dimensions: this.dimensions } : {}),
+                }),
+              {
+                maxRetries: 2,
+                llmContext: {
+                  operation: "memory-hybrid: embeddings.create (batch)",
+                  model,
+                },
+              },
+            );
+            succeededModel = model;
+            this.modelName = model;
+            break;
+          } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
           }
-          this.cache.set(makeCacheKey(succeededModel, uncachedTexts[i + j]), sorted[j]);
         }
-        freshVectors.push(...sorted);
-      }
-      if (lastErr !== undefined && freshVectors.length === i) {
-        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure), 429 (rate limit), and 500 errors — operator config issues or transient errors, not bugs (#329, #394, #397, #385, #739).
-        if (!shouldSuppressEmbeddingError(lastErr)) {
-          capturePluginError(lastErr, {
-            subsystem: "embeddings",
-            operation: "embedBatch",
-            phase: "fallback-exhausted",
-          });
+        if (resp !== undefined && succeededModel !== undefined) {
+          if (!resp.data || !Array.isArray(resp.data) || resp.data.length !== batch.length) {
+            throw new Error(
+              `Embedding response missing or wrong-length data[] (embedBatch, provider=${this.providerName}, endpoint=${this.endpoint}, model=${succeededModel}, got=${resp.data?.length ?? 0}, expected=${batch.length})`,
+            );
+          }
+          const data = resp.data;
+          for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
+            const row = data[rowIdx];
+            if (!row || typeof row.index !== "number") {
+              throw new Error(
+                `Embedding response contained row with missing or non-numeric index (embedBatch, provider=${this.providerName}, endpoint=${this.endpoint}, model=${succeededModel}, row=${rowIdx})`,
+              );
+            }
+          }
+          const sorted = data
+            .sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0))
+            .map((item) => {
+              const emb = item?.embedding;
+              if (!emb || !Array.isArray(emb)) {
+                throw new Error(
+                  `Embedding response missing embedding for batch row (embedBatch, provider=${this.providerName}, endpoint=${this.endpoint}, model=${succeededModel}, index=${item?.index ?? "?"})`,
+                );
+              }
+              return emb;
+            });
+          // Write fresh vectors into the cache keyed by the model that succeeded (#589)
+          for (let j = 0; j < batch.length; j++) {
+            if (this.cache.size >= EMBEDDING_CACHE_MAX) {
+              const firstKey = this.cache.keys().next().value;
+              if (firstKey !== undefined) this.cache.delete(firstKey);
+            }
+            this.cache.set(makeCacheKey(succeededModel, uncachedTexts[i + j]), sorted[j]);
+          }
+          freshVectors.push(...sorted);
         }
-        throw lastErr;
+        if (lastErr !== undefined && freshVectors.length === i) {
+          // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure), 429 (rate limit), and 500 errors — operator config issues or transient errors, not bugs (#329, #394, #397, #385, #739).
+          if (!shouldSuppressEmbeddingError(lastErr)) {
+            capturePluginError(lastErr, {
+              subsystem: "embeddings",
+              operation: "embedBatch",
+              phase: "fallback-exhausted",
+            });
+          }
+          throw lastErr;
+        }
       }
+    } finally {
+      this.apiSemaphore.release();
     }
 
     // Phase 3: Reconstruct the full result array in original input order.

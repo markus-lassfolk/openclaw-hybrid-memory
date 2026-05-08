@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Config CLI Handlers
  *
@@ -7,16 +8,27 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
-import { hybridConfigSchema, PRESET_OVERRIDES, type ConfigMode } from "../config.js";
+import { findPluginRoot } from "../utils/plugin-root.js";
+import {
+  type ConfigMode,
+  PRESET_OVERRIDES,
+  getCronModelConfig,
+  getDefaultCronModel,
+  getLLMModelPreference,
+  resolveReflectionModelAndFallbacks,
+  hybridConfigSchema,
+} from "../config.js";
+import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
+import { getPluginConfigFromFile } from "./cmd-install.js";
+import { resolvedActiveTaskFilePath } from "./config-feature-summaries.js";
 import type { HandlerContext } from "./handlers.js";
 import type { ConfigCliResult, VerifyCliSink } from "./types.js";
-import { getPluginConfigFromFile } from "./cmd-install.js";
 
 const MAX_DESC_LEN = 280;
 
@@ -72,18 +84,29 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
   if (last === "__proto__" || last === "constructor" || last === "prototype") {
     return false;
   }
-  const v =
-    value === "true" || value === "enabled"
-      ? true
-      : value === "false" || value === "disabled"
-        ? false
-        : value === "null"
-          ? null
-          : /^-?\d+$/.test(String(value))
-            ? Number.parseInt(String(value), 10)
-            : /^-?\d*\.\d+$/.test(String(value))
-              ? Number.parseFloat(String(value))
-              : value;
+  const rawStr = String(value).trim();
+  let v: unknown = value;
+  if ((rawStr.startsWith("[") && rawStr.endsWith("]")) || (rawStr.startsWith("{") && rawStr.endsWith("}"))) {
+    try {
+      v = JSON.parse(rawStr) as unknown;
+    } catch {
+      v = value;
+    }
+  }
+  if (v === value && typeof v === "string") {
+    v =
+      v === "true" || v === "enabled"
+        ? true
+        : v === "false" || v === "disabled"
+          ? false
+          : v === "null"
+            ? null
+            : /^-?\d+$/.test(v)
+              ? Number.parseInt(v, 10)
+              : /^-?\d*\.\d+$/.test(v)
+                ? Number.parseFloat(v)
+                : v;
+  }
   (cur as any)[last] = v;
   return true;
 }
@@ -106,18 +129,83 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
  * Config view — show current settings in a simple, scannable format.
  * Focus on what's on/off so users can understand and change via config-set.
  */
-export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): void {
+export function runConfigViewForCli(
+  ctx: HandlerContext,
+  sink: VerifyCliSink,
+  opts?: { format?: "text" | "json"; featuresOnly?: boolean },
+): void {
   const { cfg } = ctx;
   const log = sink.log;
-  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const format = opts?.format ?? "text";
+
+  // If JSON format requested, output machine-readable JSON
+  if (format === "json") {
+    const features = {
+      nightlyCycle: cfg.nightlyCycle?.enabled ?? false,
+      passiveObserver: cfg.passiveObserver?.enabled ?? false,
+      reflection: cfg.reflection.enabled,
+      personaProposals: cfg.personaProposals.enabled,
+      selfCorrection: !!cfg.selfCorrection,
+      selfExtension: cfg.selfExtension?.enabled ?? false,
+      crystallization: cfg.crystallization?.enabled ?? false,
+      extraction: !!cfg.extraction?.extractionPasses,
+      goalStewardship: cfg.goalStewardship?.enabled ?? false,
+      activeTask: cfg.activeTask.enabled,
+      frustrationDetection: cfg.frustrationDetection.enabled,
+      crossAgentLearning: cfg.crossAgentLearning.enabled,
+      toolEffectiveness: cfg.toolEffectiveness.enabled,
+      workflowTracking: cfg.workflowTracking.enabled,
+      documents: cfg.documents.enabled,
+      provenance: cfg.provenance.enabled,
+      verification: cfg.verification.enabled,
+      aliases: cfg.aliases.enabled,
+      reranking: cfg.reranking.enabled,
+      contextualVariants: cfg.contextualVariants.enabled,
+      errorReporting: cfg.errorReporting?.enabled ?? false,
+      costTracking: cfg.costTracking?.enabled ?? false,
+      wal: cfg.wal.enabled,
+      ambient: cfg.ambient.enabled,
+      futureDateProtection: cfg.futureDateProtection.enabled,
+    };
+    if (opts?.featuresOnly) {
+      log(JSON.stringify(features, null, 2));
+      return;
+    }
+    const jsonOutput = {
+      schemaVersion: 1,
+      contract: "openclaw.hybrid-mem.config-view.summary.v1",
+      mode: cfg.mode && cfg.mode !== "custom" ? cfg.mode : "custom",
+      verbosity: cfg.verbosity ?? "normal",
+      core: {
+        autoCapture: cfg.autoCapture,
+        autoRecall: cfg.autoRecall.enabled,
+        credentials: cfg.credentials.enabled,
+        procedures: cfg.procedures.enabled,
+        memoryTiering: cfg.memoryTiering.enabled,
+        graph: cfg.graph.enabled,
+        autoClassify: cfg.autoClassify.enabled,
+      },
+      features,
+      advanced: {
+        queryExpansion: cfg.queryExpansion.enabled,
+        retrievalDirectives: cfg.autoRecall.retrievalDirectives?.enabled ?? false,
+        entityLookup: cfg.autoRecall.entityLookup?.enabled ?? false,
+      },
+    };
+    log(JSON.stringify(jsonOutput, null, 2));
+    return;
+  }
+
+  // Otherwise, show human-readable text format
+  const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const ON = noEmoji ? "[on]" : "on";
   const OFF = noEmoji ? "[off]" : "off";
   const on = (b: boolean) => (b ? ON : OFF);
 
-  // Read raw config from file to bypass migration overrides (like nightlyCycle forced to false in 2026.3.140)
+  // Read raw config from file for keys where we show file vs parsed (optional toggles)
   let rawCfg: Record<string, unknown> = {};
   try {
-    const configPath = process.env.OPENCLAW_CONFIG || join(homedir(), ".openclaw", "openclaw.json");
+    const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
     if (existsSync(configPath)) {
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
@@ -149,35 +237,151 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("");
 
   log("Optional features");
-  log(`  Nightly dream cycle: ${on(rawEnabled("nightlyCycle", cfg.nightlyCycle?.enabled ?? false))}`);
-  log(`  Passive observer: ${on(rawEnabled("passiveObserver", cfg.passiveObserver?.enabled ?? false))}`);
+  log(`  Nightly dream cycle: ${on(cfg.nightlyCycle?.enabled ?? false)}`);
+  log(`  Passive observer: ${on(cfg.passiveObserver?.enabled ?? false)}`);
   log(`  Reflection (patterns/rules): ${on(rawEnabled("reflection", cfg.reflection.enabled))}`);
-  log(`  Persona proposals: ${on(rawEnabled("personaProposals", cfg.personaProposals.enabled))}`);
+  log(`  Persona proposals: ${on(cfg.personaProposals.enabled)}`);
   log(`  Self-correction: ${on(rawEnabled("selfCorrection", !!cfg.selfCorrection))}`);
-  log(`  Self-extension (tool proposals): ${on(rawEnabled("selfExtension", cfg.selfExtension?.enabled ?? false))}`);
-  log(
-    `  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`,
-  );
+  log(`  Self-extension (tool proposals): ${on(cfg.selfExtension?.enabled ?? false)}`);
+  log(`  Crystallization (skill proposals): ${on(cfg.crystallization?.enabled ?? false)}`);
   log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
-  log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
-  log(`  Frustration detection: ${on(rawEnabled("frustrationDetection", cfg.frustrationDetection.enabled))}`);
-  log(`  Cross-agent learning: ${on(rawEnabled("crossAgentLearning", cfg.crossAgentLearning.enabled))}`);
+  log(`  Goal stewardship: ${on(rawEnabled("goalStewardship", cfg.goalStewardship?.enabled ?? false))}`);
+  {
+    const at = cfg.activeTask;
+    const atPath = resolvedActiveTaskFilePath(at);
+    log(`  Active task: ${on(rawEnabled("activeTask", at.enabled))} — ledger: ${at.ledger} — file: ${atPath}`);
+  }
+  log(`  Frustration detection: ${on(cfg.frustrationDetection.enabled)}`);
+  log(`  Cross-agent learning: ${on(cfg.crossAgentLearning.enabled)}`);
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
-  log(`  Documents (MarkItDown): ${on(rawEnabled("documents", cfg.documents.enabled))}`);
-  log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
+  log(`  Workflow tracking: ${on(cfg.workflowTracking.enabled)}`);
+  log(`  Documents (MarkItDown): ${on(cfg.documents.enabled)}`);
+  log(`  Provenance: ${on(cfg.provenance.enabled)}`);
+  log(`  Verification store: ${on(cfg.verification.enabled)}`);
+  log(`  Retrieval aliases: ${on(cfg.aliases.enabled)}`);
+  log(`  Query reranking: ${on(cfg.reranking.enabled)}`);
+  log(`  Contextual variants (index-time): ${on(cfg.contextualVariants.enabled)}`);
   log(`  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))}`);
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
+  log("");
+
+  log("LLM tiers (keep cheap models first; heavy only for quality-critical steps)");
+  try {
+    const cronCfg = getCronModelConfig(cfg);
+    const nano = getLLMModelPreference(cronCfg, "nano");
+    const maintenance = getLLMModelPreference(cronCfg, "maintenance");
+    const def = getLLMModelPreference(cronCfg, "default");
+    const heavy = getLLMModelPreference(cronCfg, "heavy");
+    const fmt = (arr: string[]) =>
+      arr.length === 0 ? "—" : arr.length === 1 ? arr[0] : `${arr[0]} (+${arr.length - 1} more)`;
+    log(`  nano (HyDE, classify, summarize): ${fmt(nano)}`);
+    log(`  maintenance (dream cycle, reflection, consolidation): ${fmt(maintenance)}`);
+    log(`  default (general): ${fmt(def)}`);
+    log(`  heavy (distill, self-correction, hard tasks): ${fmt(heavy)}`);
+    if (cfg.nightlyCycle?.model?.trim()) {
+      log(`  nightlyCycle.model (overrides dream / MEMORY_INDEX LLM): ${cfg.nightlyCycle.model.trim()}`);
+    }
+    const extTier = cfg.distill?.extractionModelTier ?? "nano";
+    log(`  distill.extractionModelTier (session extraction): ${extTier}`);
+
+    log("");
+    log("Maintenance command routing (cron wrapper model affects only the wrapper agent turn):");
+    const first = (arr: string[]) => (arr.length > 0 ? arr[0] : "—");
+    const tierFirst = (tier: "nano" | "maintenance" | "default" | "heavy") =>
+      first(getLLMModelPreference(cronCfg, tier));
+    log(`  distill extraction (directives/reinforcement): tier=${extTier} -> ${tierFirst(extTier)}`);
+    const dreamDefault = tierFirst("maintenance");
+    log(
+      `  dream-cycle + MEMORY_INDEX: nightlyCycle.model=${cfg.nightlyCycle?.model?.trim() ? cfg.nightlyCycle.model.trim() : "(unset)"} -> ${cfg.nightlyCycle?.model?.trim() ? cfg.nightlyCycle.model.trim() : dreamDefault}`,
+    );
+    const reflectDefault = cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : tierFirst("maintenance");
+    log(
+      `  reflect / reflect-rules / reflect-meta: reflection.model=${cfg.reflection.model?.trim() ? cfg.reflection.model.trim() : "(unset)"} -> ${reflectDefault}`,
+    );
+  } catch {
+    log("  (could not resolve tiers — check plugin config)");
+  }
+  log("");
+
+  log("Maintenance routing");
+  try {
+    const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+    const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const distillFallbacks = distillResolved.fallbackModels ?? [];
+    log(
+      `  distill: llm.heavy (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
+    );
+    const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+    const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
+    const extractionModel =
+      extractionResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), extractionTier);
+    log(`  extract-reinforcement: distill.extractionModelTier=${extractionTier} (primary=${extractionModel})`);
+    log(`  extract-directives: regex only (no LLM)`);
+    const reflectResolved = resolveReflectionModelAndFallbacks(cfg, "default");
+    log(`  reflect/reflect-rules/reflect-meta: llm.default (primary=${reflectResolved.defaultModel})`);
+    log(`  dream-cycle: llm.default (or nightlyCycle.model override)`);
+    log(`  self-correction-run: llm.heavy (primary=${distillModel})`);
+  } catch {
+    log("  (could not resolve maintenance routing — check plugin config)");
+  }
+  log("");
+
+  log("Adaptive distill sizing");
+  {
+    const enabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+    const envState = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE") ?? "").trim();
+    const inferredState =
+      typeof ctx.resolvedSqlitePath === "string" && ctx.resolvedSqlitePath.length > 0
+        ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+        : "";
+    const statePath = envState || inferredState;
+    log(`  enabled: ${enabled ? "yes" : "no"} (env: OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL)`);
+    log(
+      `  state: ${statePath || "(unset — set OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL_STATE or run with resolved SQLite path)"}`,
+    );
+    try {
+      if (!statePath) throw new Error("no adaptive distill state path");
+      const state = loadAdaptiveModelLimits(statePath);
+      const distillResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+      const effective = getEffectiveModelLimits({
+        state,
+        model,
+        catalogBatchTokenLimit: distillBatchTokenLimit(model),
+        catalogMaxOutputTokens: distillMaxOutputTokens(model),
+      });
+      log(
+        `  ${model}: batchTokenLimit=${effective.batchTokenLimit}, maxOutputTokens=${effective.maxOutputTokens} (source=${effective.source})`,
+      );
+    } catch {
+      // ignore
+    }
+  }
   log("");
 
   log("Advanced");
   log(`  Query expansion: ${on(cfg.queryExpansion.enabled)}`);
   log(`  Retrieval directives: ${on(cfg.autoRecall.retrievalDirectives?.enabled ?? false)}`);
-  log(`  Entity lookup: ${on(cfg.autoRecall.entityLookup.enabled)}`);
+  const el = cfg.autoRecall.entityLookup;
+  const entityNames = Array.isArray(el?.entities) ? el.entities : [];
+  const autoFromFacts = el?.autoFromFacts !== false;
+  const maxAutoEntities = typeof el?.maxAutoEntities === "number" && el.maxAutoEntities > 0 ? el.maxAutoEntities : 500;
+  const entitySrc =
+    entityNames.length > 0
+      ? `${entityNames.length} configured name(s)`
+      : autoFromFacts
+        ? `auto from facts (cap ${maxAutoEntities})`
+        : "manual list empty (auto off)";
+  log(`  Entity lookup: ${on(el?.enabled ?? false)} — ${entitySrc}`);
   log("");
 
   log("To change a setting: openclaw hybrid-mem config-set <key> <value>");
   log("Example (toggle): openclaw hybrid-mem config-set nightlyCycle enabled");
+  log("Example (goals): openclaw hybrid-mem config-set goalStewardship enabled");
+  log("Example (LLM tier lists as JSON): openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'");
+  log("Example (maintenance tier): openclaw hybrid-mem config-set llm.maintenance '[\"azure-foundry/gpt-4.1-mini\"]'");
   log("Help for a key: openclaw hybrid-mem help config-set <key>");
+  log("Detail: openclaw hybrid-mem goals config   |   openclaw hybrid-mem active-tasks config");
 }
 
 /**
@@ -195,7 +399,7 @@ export function runConfigSetHelpForCli(_ctx: HandlerContext, key: string): Confi
     current === undefined ? "(not set)" : typeof current === "string" ? current : JSON.stringify(current);
   let desc = "";
   try {
-    const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const extDir = findPluginRoot(import.meta.url);
     const pluginPath = join(extDir, "openclaw.plugin.json");
     if (existsSync(pluginPath)) {
       const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as {
@@ -343,6 +547,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
     { key: "futureDateProtection", prop: "enabled" },
     { key: "path", prop: "enabled" },
     { key: "activeTask", prop: "enabled" },
+    { key: "goalStewardship", prop: "enabled" },
   ];
   for (const { key, prop } of objectToggles) {
     if (k === key && !k.includes(".")) {
@@ -404,7 +609,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
   }
   // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
   const enumKeys: Record<string, string[]> = {
-    "distill.extractionModelTier": ["nano", "default", "heavy"],
+    "distill.extractionModelTier": ["nano", "maintenance", "default", "heavy"],
   };
   let valueToSet: unknown = value;
   if (enumKeys[k]) {

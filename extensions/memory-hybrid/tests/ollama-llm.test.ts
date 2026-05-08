@@ -175,3 +175,95 @@ describe("parseLLMConfig — localAutoStart", () => {
     expect(result?.localAutoStart).toBe(true);
   });
 });
+
+describe("parseLLMConfig — provider baseURL / baseUrl", () => {
+  it("accepts camelCase `baseUrl` in provider config (OpenClaw convention)", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseUrl: "https://my-foundry.openai.azure.com",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://my-foundry.openai.azure.com");
+  });
+
+  it("accepts kebab-case `baseURL` in provider config", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseURL: "https://my-foundry.openai.azure.com",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://my-foundry.openai.azure.com");
+  });
+
+  it("prefers kebab-case `baseURL` over camelCase `baseUrl` when both are set", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseURL: "https://kebab.example.com",
+            baseUrl: "https://camel.example.com",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://kebab.example.com");
+  });
+
+  it("strips whitespace from baseUrl and baseURL", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseUrl: "  https://spaces.example.com  ",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://spaces.example.com");
+  });
+
+  it("returns undefined baseURL when neither baseUrl nor baseURL is set", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBeUndefined();
+  });
+
+  it("returns undefined baseURL when baseUrl is an empty string", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseUrl: "   ",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBeUndefined();
+  });
+});

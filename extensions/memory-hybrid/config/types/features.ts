@@ -1,3 +1,9 @@
+/** Entity extraction hygiene: stop words for structured/NER entity fields. */
+export type EntityExtractionConfig = {
+  /** Additional entity labels to suppress, merged with DEFAULT_ENTITY_STOP_WORDS (#1190). */
+  stopWords: string[];
+};
+
 /** Graph-based spreading activation: auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;
@@ -12,6 +18,21 @@ export type GraphConfig = {
   autoSupersede: boolean;
   /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default false to avoid read-path mutation. */
   strengthenOnRecall: boolean;
+  /**
+   * Graph hub guard threshold (default 500):
+   * - SQLite / CTE expansion skips traversing nodes whose total degree (in+out, excluding CONTRADICTS/DERIVED_FROM) exceeds this value.
+   * - Per-hop link fanout uses the same cap when trimming high-degree neighbours (see `filterTraversableLinks`).
+   * `null` disables both checks (not recommended on large stores).
+   */
+  hubDegreeCap: number | null;
+  /**
+   * Optional per-hop score penalty applied to neighbours of nodes whose out-degree exceeds
+   * `hubDegreeCap` (#1192). Default `null` (skip mode — drop the link entirely). When set to a
+   * positive number, hub neighbours are *kept* but their composite recall score is multiplied
+   * by `(1 - hubScorePenalty)` per traversal hop, so noisy mega-hubs attenuate gracefully
+   * instead of being hard-blocked.
+   */
+  hubScorePenalty: number | null;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
@@ -66,7 +87,7 @@ export type IngestConfig = {
   overlap: number;
 };
 
-/** Dynamic memory tiering (hot/warm/cold). */
+/** Dynamic memory tiering (hot/warm/cold/structural). */
 export type MemoryTieringConfig = {
   enabled: boolean;
   /** Max tokens for HOT tier always loaded at session start (default: 2000). */
@@ -75,8 +96,33 @@ export type MemoryTieringConfig = {
   compactionOnSessionEnd: boolean;
   /** Days without access to treat preference as inactive -> warm (default: 7). */
   inactivePreferenceDays: number;
-  /** Cap HOT tier to this many facts when promoting blockers (default: 50). */
+  /** Cap HOT tier to this many facts when promoting blockers/recently recalled facts (default: 50). */
   hotMaxFacts: number;
+  /** Days of inactivity before unrecalled/unpinned facts are moved to COLD (default: 30). */
+  coldAfterInactivityDays: number;
+  /** Recall/access threshold for HOT promotion within the recent access window (default: 3). */
+  hotMinAccessCount: number;
+  /** Recent access window for HOT promotion, in days (default: 7). */
+  hotAccessWindowDays: number;
+  /** Importance threshold for recently accessed preferences to be HOT candidates (default: 0.7). */
+  hotPreferenceImportance: number;
+  /**
+   * #1187: Top-N facts by `recall_count` over `hotByRecall.windowDays` are forced HOT.
+   * Set `topN` to 0 to disable. Default: { windowDays: 7, topN: 20 }.
+   */
+  hotByRecall: {
+    windowDays: number;
+    topN: number;
+  };
+  /**
+   * #1187: Treat schematic categories (entity/person/place/project) as structural even when
+   * the fact has only `key` (no `value`). Default: true.
+   */
+  structuralByCategory: boolean;
+  /**
+   * #1187: Treat `decay_class='permanent'` rows as structural. Default: false (keeps existing behavior).
+   */
+  structuralPermanent: boolean;
 };
 
 /** Enhanced ambient retrieval with multi-query generation (Issue #156). */
@@ -171,7 +217,10 @@ export type DocumentsConfig = {
   visionEnabled: boolean;
   /** Optional vision model (default: resolved from llm.default) */
   visionModel?: string;
-  /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
+  /**
+   * Non-empty allowlist of absolute directory paths. When omitted or empty, document ingestion
+   * denies every path (default-safe); configure explicit roots before using ingest tools.
+   */
   allowedPaths?: string[];
 };
 
@@ -221,6 +270,14 @@ export type ImplicitFeedbackConfig = {
   feedToSelfCorrection: boolean;
   /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
   trajectoryLLMAnalysis: boolean;
+  /** Maximum implicit-feedback lessons to store per UTC day (default: 50). */
+  maxLessonsPerDay: number;
+  /** Token-Jaccard threshold for implicit-feedback lesson near-duplicate suppression (default: 0.8). */
+  lessonDedupeJaccard: number;
+  /** Collapse historical near-duplicate implicit-feedback facts after extraction (default: true). */
+  autoCleanup: boolean;
+  /** Maximum historical implicit-feedback facts to scan per cleanup run (default: 1000). */
+  cleanupLimit: number;
 };
 
 /** Frustration signal weights override (Issue #263 — Phase 1). */
@@ -360,6 +417,50 @@ export type HumanizerConfig = {
   modelTag?: string;
   /** Optional skill/context tag for the stored fact. */
   skillTag?: string;
+};
+
+/** Weekly pending-review digest delivery channel (Issue #1197). */
+export type DigestWeeklyDeliveryConfig = {
+  mode: "telegram" | "system" | "none";
+  /** Required when mode is `telegram` — destination chat id or handle understood by the gateway. */
+  chatId?: string;
+};
+
+/** Operator digest configuration (cron + CLI). */
+export type DigestConfig = {
+  weekly: {
+    delivery: DigestWeeklyDeliveryConfig;
+  };
+};
+
+/**
+ * Decay-class action applied to a fact whose lifecycle event matched (#1196).
+ * - `expire-now`: set `expires_at` to now (eligible for the next prune).
+ * - `expire-soon`: set `expires_at` to `now + 7 days`.
+ * - `keep-stable`: leave the row's TTL alone (still records `last_lifecycle_synced_at`).
+ */
+export type LifecycleGitHubAction = "expire-now" | "expire-soon" | "keep-stable";
+
+/** GitHub lifecycle adapter (Phase 2 — Issue #1196). */
+export type LifecycleGitHubAdapterConfig = {
+  enabled: boolean;
+  /** Single repo (legacy) — kept for backwards compatibility. */
+  repo?: string;
+  /** Multiple repos in `owner/name` form. Takes precedence over `repo` when both are set. */
+  repos?: string[];
+  tokenRef?: string;
+  /** Action when a PR is merged. Default `expire-soon`. */
+  onMerged?: LifecycleGitHubAction;
+  /** Action when an Issue/PR is closed without merging. Default `expire-now`. */
+  onClosed?: LifecycleGitHubAction;
+  /** Action when an Issue/PR is open. Default `keep-stable`. */
+  onOpen?: LifecycleGitHubAction;
+};
+
+export type LifecycleAdaptersConfig = {
+  adapters: {
+    github: LifecycleGitHubAdapterConfig;
+  };
 };
 
 /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784). */

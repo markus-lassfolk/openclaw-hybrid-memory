@@ -10,7 +10,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { SECONDS_PER_DAY } from "./constants.js";
 
 /** Default half-life in days: after this many days without access, salience halves. */
-export const SALIENCE_DECAY_HALF_LIFE_DAYS = 30;
+const SALIENCE_DECAY_HALF_LIFE_DAYS = 30;
 
 /**
  * Compute dynamic salience multiplier for a base score.

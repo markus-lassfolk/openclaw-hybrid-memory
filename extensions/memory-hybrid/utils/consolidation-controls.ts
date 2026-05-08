@@ -1,7 +1,7 @@
 import type { DecayClass } from "../config.js";
 
 export const CONSOLIDATED_FACT_DECAY_CLASS: DecayClass = "durable";
-export const CONSOLIDATED_RETRIEVAL_SCORE_MULTIPLIER = 0.85;
+const CONSOLIDATED_RETRIEVAL_SCORE_MULTIPLIER = 0.85;
 
 type ConsolidatedFactLike = {
   source?: string | null;

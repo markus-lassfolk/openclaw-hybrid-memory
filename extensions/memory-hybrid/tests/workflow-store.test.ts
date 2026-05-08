@@ -332,6 +332,15 @@ describe("WorkflowStore.getPatterns", () => {
     const patterns = store.getPatterns({ limit: 1 });
     expect(patterns.length).toBeLessThanOrEqual(1);
   });
+
+  it("reopens and returns results when native DB handle was unexpectedly closed", () => {
+    const db = (store as any).db as import("node:sqlite").DatabaseSync;
+    db.close();
+
+    expect(() => store.getPatterns()).not.toThrow();
+    const patterns = store.getPatterns();
+    expect(Array.isArray(patterns)).toBe(true);
+  });
 });
 
 describe("WorkflowStore.prune", () => {
@@ -567,7 +576,7 @@ describe("parseWorkflowTrackingConfig", () => {
         goalExtractionModel: "google/gemini-2.0-flash",
       },
     });
-    expect(cfg.workflowTracking.enabled).toBe(false); // 2026.3.140 baseline
+    expect(cfg.workflowTracking.enabled).toBe(true);
     expect(cfg.workflowTracking.maxTracesPerDay).toBe(200);
     expect(cfg.workflowTracking.retentionDays).toBe(30);
     expect(cfg.workflowTracking.goalExtractionModel).toBe("google/gemini-2.0-flash");

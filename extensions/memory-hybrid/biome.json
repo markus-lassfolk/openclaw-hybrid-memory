@@ -1,17 +1,18 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.cjs", "**/*.mjs"],
     "ignore": [
       "dist/**",
       "node_modules/**",
       "scripts/**",
       "coverage/**",
-      "tsconfig*.json",
       "**/*.tgz",
       "**/*.bak",
       "**/*.txt",
       "**/*.log",
-      "VERSION"
+      "VERSION",
+      "tsconfig*.json"
     ]
   },
   "formatter": {
@@ -33,22 +34,22 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "off",
+        "noExplicitAny": "warn",
         "noConsole": "error",
-        "noImplicitAnyLet": "off",
-        "noAssignInExpressions": "off",
-        "noMisleadingCharacterClass": "off",
-        "noControlCharactersInRegex": "off",
+        "noImplicitAnyLet": "warn",
+        "noAssignInExpressions": "warn",
+        "noMisleadingCharacterClass": "warn",
+        "noControlCharactersInRegex": "warn",
         "noConfusingVoidType": "warn",
         "noGlobalIsNan": "error"
       },
       "correctness": {
-        "noUnusedVariables": "off"
+        "noUnusedVariables": "warn"
       },
       "style": {
         "useConst": "warn",
         "noVar": "error",
-        "noNonNullAssertion": "off",
+        "noNonNullAssertion": "warn",
         "noParameterAssign": "warn",
         "noUnusedTemplateLiteral": "warn",
         "useTemplate": "warn",
@@ -58,7 +59,7 @@
         "useSingleVarDeclarator": "warn"
       },
       "complexity": {
-        "noForEach": "off",
+        "noForEach": "warn",
         "useLiteralKeys": "warn",
         "useOptionalChain": "warn"
       },
@@ -66,9 +67,6 @@
         "noDelete": "warn"
       }
     }
-  },
-  "organizeImports": {
-    "enabled": false
   },
   "overrides": [
     {

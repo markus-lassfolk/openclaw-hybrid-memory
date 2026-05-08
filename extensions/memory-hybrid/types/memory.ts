@@ -8,7 +8,7 @@ import type { DecayClass, MemoryCategory } from "../config.js";
 export type { MemoryCategory, DecayClass };
 
 /** Memory tier for dynamic tiering (hot = always loaded, warm = semantic search, cold = archived). */
-export type MemoryTier = "hot" | "warm" | "cold";
+export type MemoryTier = "hot" | "warm" | "cold" | "structural";
 
 export type MemoryEntry = {
   id: string;
@@ -70,6 +70,11 @@ export type MemoryEntry = {
   lastReinforcedAt?: number | null;
   /** Array of user praise quotes that reinforced this fact. */
   reinforcedQuotes?: string[] | null;
+  /**
+   * Structured provenance JSON stored on the fact row itself (Issue #1195).
+   * E.g. { "sourceFactIds": ["..."], "consolidatedAt": 1700000000, "method": "dream-cycle" }
+   */
+  provenanceJson?: string | null;
   /**
    * Future-date decay freeze: epoch seconds until which confidence decay is paused.
    * Set when the fact text contains a future date (reminder, deadline, event).

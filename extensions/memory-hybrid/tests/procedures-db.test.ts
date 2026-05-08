@@ -1,8 +1,8 @@
-// @ts-nocheck
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+// @ts-nocheck
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 
 let tmpDir: string;
@@ -210,7 +210,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent should have higher score due to recency
-    expect(recent?.relevanceScore).toBeGreaterThan(old?.relevanceScore);
+    expect(recent?.relevanceScore ?? 0).toBeGreaterThan(old?.relevanceScore ?? 0);
     // Old procedure should have at least 0.3 recency factor
     expect(old?.relevanceScore).toBeGreaterThan(0);
   });
@@ -240,7 +240,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(high).toBeDefined();
     expect(low).toBeDefined();
     // High success rate should have higher score
-    expect(high?.relevanceScore).toBeGreaterThan(low?.relevanceScore);
+    expect(high?.relevanceScore).toBeGreaterThan(low?.relevanceScore ?? 0);
   });
 
   it("penalizes procedures that failed in last 7 days (0.5 multiplier)", () => {
@@ -271,7 +271,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent failure should have lower score (penalty applied)
-    expect(recent?.relevanceScore).toBeLessThan(old?.relevanceScore);
+    expect(recent?.relevanceScore ?? 0).toBeLessThan(old?.relevanceScore ?? 0);
   });
 
   it("penalizes never-validated procedures (30% penalty)", () => {
@@ -295,9 +295,9 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(val).toBeDefined();
     expect(never).toBeDefined();
     // Validated should have higher score
-    expect(val?.relevanceScore).toBeGreaterThan(never?.relevanceScore);
+    expect(val?.relevanceScore ?? 0).toBeGreaterThan(never?.relevanceScore ?? 0);
     // Never-validated should have ~70% of validated score (30% penalty)
-    expect(never?.relevanceScore).toBeLessThan(val?.relevanceScore * 0.75);
+    expect(never?.relevanceScore ?? 0).toBeLessThan((val?.relevanceScore ?? 0) * 0.75);
   });
 
   it("returns procedures matching FTS query", () => {
@@ -687,11 +687,16 @@ describe("FactsDB procedureFeedback", () => {
     expect(failures.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("enrichProcedureWithFeedback computes successRate from procedure table counts", () => {
+  it("enrichProcedureWithFeedback computes successRate from procedure table counts", async () => {
     const proc = db.upsertProcedure({ taskPattern: "Rate test", recipeJson: "[]", procedureType: "positive" });
     // Record 2 successes followed by 1 failure
     db.procedureFeedback({ procedureId: proc.id, success: true, context: "ok1" });
     db.procedureFeedback({ procedureId: proc.id, success: true, context: "ok2" });
+    // procedureFeedback stores last_validated / last_failed as Unix seconds. Without a gap, the
+    // failure can land in the same second as the successes (tie → enrichProcedureWithFeedback
+    // treats lastOutcome as success) or in the next second (lastFailed > lastValidated → failure),
+    // which flakes across CI runners. Sleep so the failure second is strictly after successes.
+    await new Promise((r) => setTimeout(r, 1100));
     db.procedureFeedback({ procedureId: proc.id, success: false, context: "fail1", failedAtStep: 1 });
 
     const result = db.getProcedureById(proc.id);
@@ -699,9 +704,8 @@ describe("FactsDB procedureFeedback", () => {
     // version records: v1(success_count=2), v2(failure_count=1)
     // successRate = (3 + 2) / (3 + 2 + 1 + 1) = 5/7 ≈ 71.4%
     expect(result?.successRate).toBeCloseTo(0.71, 1);
-    // lastValidated is set by the last success call (after lastFailed from failure call)
-    // So lastValidated > lastFailed → lastOutcome = "success"
-    expect(result?.lastOutcome).toBe("success");
+    // Most recent feedback was a failure; last_failed is after last_validated (distinct seconds)
+    expect(result?.lastOutcome).toBe("failure");
   });
 
   it("enrichProcedureWithFeedback sets lastOutcome to failure when lastFailed > lastValidated", () => {

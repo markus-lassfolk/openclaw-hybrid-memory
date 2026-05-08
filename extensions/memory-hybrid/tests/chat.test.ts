@@ -8,13 +8,20 @@ import {
   distillBatchTokenLimit,
   distillMaxOutputTokens,
   is403Like,
+  is403QuotaOrRateLimitLike,
   is404Like,
   is500Like,
+  isAbortOrTransientLlmError,
   isConnectionErrorLike,
   isContextLengthError,
   isOllamaOOM,
+  isResponsesReasoningSequenceError,
+  parseGoDurationToMs,
+  parseRetryAfterMs,
   withLLMRetry,
 } from "../services/chat.js";
+import { formatProviderRateLimitHeaderSummary, inferRateLimitBucket } from "../services/llm-rate-limit-headers.js";
+import { isReasoningModel, requiresMaxCompletionTokens, resolveWireApi } from "../services/model-capabilities.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -415,6 +422,171 @@ describe("is403Like", () => {
     expect(is403Like(new Error("401 Unauthorized"))).toBe(false);
     expect(is403Like(new Error("404 Not Found"))).toBe(false);
     expect(is403Like(new Error("500 Internal Server Error"))).toBe(false);
+  });
+});
+
+describe("is403QuotaOrRateLimitLike", () => {
+  it("detects 403 with Retry-After and excludes from is403Like (geo)", () => {
+    const err = Object.assign(new Error("403 status code (no body)"), {
+      status: 403,
+      headers: new Headers({ "retry-after": "1282" }),
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+
+  it("detects 403 with remaining-tokens: 0", () => {
+    const err = Object.assign(new Error("Forbidden"), {
+      status: 403,
+      headers: new Headers({ "remaining-tokens": "0" }),
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+
+  it("unwraps LLMRetryError so wrapped quota 403 is not classified as geo 403", () => {
+    const cause = Object.assign(new Error("403 status code (no body)"), {
+      status: 403,
+      headers: new Headers({ "retry-after": "60", "remaining-tokens": "0" }),
+    });
+    const wrapped = new LLMRetryError(`Failed after 4 attempts: ${cause.message}`, cause, 4);
+    expect(is403QuotaOrRateLimitLike(wrapped)).toBe(true);
+    expect(is403Like(wrapped)).toBe(false);
+  });
+
+  it("detects Azure-style remaining-tokens: 0 via plain Record headers (#940)", () => {
+    const err = Object.assign(new Error("Forbidden"), {
+      status: 403,
+      headers: { "remaining-tokens": "0" } as Record<string, string>,
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+
+  it("detects Azure retry-after via plain Record headers (#940)", () => {
+    const err = Object.assign(new Error("Forbidden"), {
+      status: 403,
+      headers: { "retry-after": "30" } as Record<string, string>,
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+});
+
+describe("parseGoDurationToMs / parseRetryAfterMs (OpenAI x-ratelimit-reset-* #941)", () => {
+  it("parses OpenAI-documented Go durations (not integer seconds)", () => {
+    expect(parseGoDurationToMs("6m0s")).toBe(360_000);
+    expect(parseGoDurationToMs("1s")).toBe(1000);
+    expect(parseGoDurationToMs("500ms")).toBe(500);
+  });
+
+  it("uses x-ratelimit-reset-tokens as duration, not parseInt(6m0s)===6 seconds", () => {
+    const err = { headers: { "x-ratelimit-reset-tokens": "6m0s" } };
+    expect(parseRetryAfterMs(err)).toBe(360_000);
+  });
+
+  it("prefers Retry-After over x-ratelimit-reset when both present", () => {
+    const err = {
+      headers: {
+        "retry-after": "5",
+        "x-ratelimit-reset-tokens": "6m0s",
+      },
+    };
+    expect(parseRetryAfterMs(err)).toBe(5000);
+  });
+
+  it("parses plain retry-after seconds only when the value is all digits", () => {
+    expect(parseRetryAfterMs({ headers: { "retry-after": "1282" } })).toBe(1_282_000);
+  });
+});
+
+describe("formatProviderRateLimitHeaderSummary / inferRateLimitBucket", () => {
+  it("infers token bucket when remaining-tokens is 0", () => {
+    const headers = {
+      "x-ratelimit-remaining-tokens": "0",
+      "x-ratelimit-remaining-requests": "500",
+    };
+    expect(inferRateLimitBucket(headers)).toBe("tokens");
+  });
+
+  it("infers requests bucket when remaining-requests is 0", () => {
+    const headers = {
+      "x-ratelimit-remaining-requests": "0",
+      "x-ratelimit-remaining-tokens": "80000",
+    };
+    expect(inferRateLimitBucket(headers)).toBe("requests");
+  });
+
+  it("reads headers from nested response.headers", () => {
+    const err = Object.assign(new Error("429"), {
+      status: 429,
+      response: {
+        headers: {
+          "x-ratelimit-remaining-requests": "0",
+          "x-ratelimit-limit-requests": "500",
+          "x-request-id": "req-abc",
+        },
+      },
+    });
+    const summary = formatProviderRateLimitHeaderSummary(err);
+    expect(summary).toContain("reqRem=0");
+    expect(summary).toContain("reqLim=500");
+    expect(summary).toContain("reqId=req-abc");
+    expect(summary).toMatch(/request budget/i);
+  });
+
+  it("unwraps LLMRetryError cause for header summary", () => {
+    const inner = Object.assign(new Error("429"), {
+      response: {
+        headers: {
+          "x-ratelimit-remaining-tokens": "0",
+          "x-ratelimit-limit-tokens": "80000",
+        },
+      },
+    });
+    const wrapped = new LLMRetryError("fail", inner, 2);
+    const summary = formatProviderRateLimitHeaderSummary(wrapped);
+    expect(summary).toContain("tokRem=0");
+    expect(summary).toMatch(/token budget/i);
+  });
+});
+
+describe("withLLMRetry — quota 403 retries (#940)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("retries on quota 403 (remaining-tokens: 0) and succeeds on later attempt", async () => {
+    let attempt = 0;
+    const fn = vi.fn().mockImplementation(async () => {
+      attempt++;
+      if (attempt <= 2) {
+        throw Object.assign(new Error("403 status code (no body)"), {
+          status: 403,
+          headers: { "remaining-tokens": "0", "retry-after": "1" },
+        });
+      }
+      return "success";
+    });
+
+    const promise = withLLMRetry(fn);
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await promise;
+    expect(result).toBe("success");
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("does NOT retry on geo 403 (no retry-after/remaining-tokens headers)", async () => {
+    const fn = vi.fn().mockRejectedValue(Object.assign(new Error("403 Forbidden"), { status: 403 }));
+
+    await expect(withLLMRetry(fn)).rejects.toThrow("403 Forbidden");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1019,6 +1191,80 @@ describe("is500Like (#387)", () => {
   it("does not match connection errors", () => {
     expect(is500Like(new Error("ECONNREFUSED"))).toBe(false);
   });
+
+  it("#1010: matches gateway phrasing '502 error code: 502'", () => {
+    expect(is500Like(new Error("502 error code: 502"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withLLMRetry — non-retryable 400 (#1011, #1016)
+// ---------------------------------------------------------------------------
+
+describe("withLLMRetry — non-retryable 400 (#1011)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#1165: does not retry generic 400 unsupported operation (single attempt)", async () => {
+    const err = Object.assign(new Error("400 The requested operation is unsupported."), { status: 400 });
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow(/unsupported/i);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry 400 with empty body phrasing; enriches message with llmContext", async () => {
+    const err = Object.assign(new Error("400 status code (no body)"), { status: 400 });
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(
+      withLLMRetry(fn, {
+        maxRetries: 3,
+        llmContext: { model: "azure/test", operation: "unit" },
+      }),
+    ).rejects.toThrow(/400 status code.*\[llm model=azure\/test/);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1034: retries once for Responses API malformed reasoning sequence error", async () => {
+    const err = Object.assign(
+      new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item."),
+      { status: 400 },
+    );
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce("ok");
+
+    const promise = withLLMRetry(fn, {
+      maxRetries: 3,
+      llmContext: { model: "azure-foundry/o3-pro", operation: "unit" },
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await promise;
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("#1034: stops after one retry when malformed reasoning sequence persists", async () => {
+    const err = Object.assign(
+      new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item."),
+      { status: 400 },
+    );
+    const fn = vi.fn().mockRejectedValue(err);
+
+    const promise = withLLMRetry(fn, {
+      maxRetries: 3,
+      llmContext: { model: "azure-foundry/o3-pro", operation: "unit" },
+    });
+    const expectation = expect(promise).rejects.toThrow("required following item");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expectation;
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1122,6 +1368,71 @@ describe("chatCompleteWithRetry — OOM falls through to next model (#387)", () 
     await expectation;
     // OOM is a 500-like transient error — must NOT be reported to GlitchTip
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatCompleteWithRetry — Responses reasoning sequence fallback (#1034)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("isResponsesReasoningSequenceError matches LLMRetryError wrapping the provider message", () => {
+    const inner = new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item.");
+    const wrapped = new LLMRetryError(`Failed after 2 attempts: ${inner.message}`, inner, 2);
+    expect(isResponsesReasoningSequenceError(wrapped)).toBe(true);
+  });
+
+  it("#1034: matches variant phrasing without 'its' before required", () => {
+    const msg = "Item 'rs_abc' of type 'reasoning' was provided without required following item.";
+    expect(isResponsesReasoningSequenceError(new Error(msg))).toBe(true);
+  });
+
+  it("#1034: isResponsesReasoningSequenceError returns false for unrelated errors", () => {
+    expect(isResponsesReasoningSequenceError(new Error("400 invalid_request_error"))).toBe(false);
+    expect(isResponsesReasoningSequenceError(new Error("context length exceeded"))).toBe(false);
+  });
+
+  it("azure-foundry/o3-pro uses reasoning model token params", () => {
+    expect(isReasoningModel("azure-foundry/o3-pro")).toBe(true);
+    expect(requiresMaxCompletionTokens("azure-foundry/o3-pro")).toBe(true);
+  });
+
+  it("falls back after one retry when primary hits malformed reasoning sequence 400", async () => {
+    const err = Object.assign(
+      new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item."),
+      { status: 400 },
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(err)
+            .mockRejectedValueOnce(err)
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: "fallback ok" } }],
+            }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "azure-foundry/o3-pro",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["azure-foundry/o3"],
+      label: "test",
+    });
+
+    await vi.advanceTimersByTimeAsync(1100);
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -1577,5 +1888,137 @@ describe("chatCompleteWithRetry — connection error (#703)", () => {
     await vi.runAllTimersAsync();
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#935 #936: does not report to GlitchTip when retries exhaust on Request was aborted", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("Request was aborted")),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: [],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("Request was aborted");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("isAbortOrTransientLlmError", () => {
+  it("detects Request was aborted", () => {
+    expect(isAbortOrTransientLlmError(new Error("Request was aborted."))).toBe(true);
+  });
+
+  it("detects gateway stopped / unreachable phrasing", () => {
+    expect(isAbortOrTransientLlmError(new Error("gateway client stopped"))).toBe(true);
+    expect(isAbortOrTransientLlmError(new Error("Gateway not reachable. Is it running?"))).toBe(true);
+  });
+
+  it("unwraps LLMRetryError cause", () => {
+    const inner = new Error("Request was aborted.");
+    expect(isAbortOrTransientLlmError(new LLMRetryError("wrap", inner, 1))).toBe(true);
+  });
+
+  it("returns false for arbitrary model failure", () => {
+    expect(isAbortOrTransientLlmError(new Error("model not found"))).toBe(false);
+  });
+});
+
+describe("resolveWireApi", () => {
+  it('returns "responses" for azure-foundry-responses prefix', () => {
+    expect(resolveWireApi("azure-foundry-responses/o3-pro")).toBe("responses");
+    expect(resolveWireApi("azure-foundry-responses/gpt-5.4-pro")).toBe("responses");
+  });
+
+  it('returns "chat" for standard providers', () => {
+    expect(resolveWireApi("openai/gpt-4o")).toBe("chat");
+    expect(resolveWireApi("google/gemini-2.0-flash")).toBe("chat");
+    expect(resolveWireApi("azure-foundry/gpt-5.4-nano")).toBe("chat");
+    expect(resolveWireApi("anthropic/claude-sonnet-4-5")).toBe("chat");
+  });
+
+  it("respects explicit wireApi override", () => {
+    expect(resolveWireApi("openai/gpt-4o", "responses")).toBe("responses");
+    expect(resolveWireApi("azure-foundry-responses/o3-pro", "chat")).toBe("chat");
+  });
+
+  it('defaults to "chat" for bare model names', () => {
+    expect(resolveWireApi("gpt-4o")).toBe("chat");
+    expect(resolveWireApi("o3-pro")).toBe("chat");
+  });
+});
+
+describe("chatComplete with wireApi='responses'", () => {
+  const mockResponsesCreate = vi.fn().mockResolvedValue({
+    id: "resp_123",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Response from Responses API" }],
+      },
+    ],
+    usage: { input_tokens: 10, output_tokens: 5 },
+  });
+
+  const mockOpenaiWithResponses = {
+    chat: {
+      completions: {
+        create: vi.fn(),
+      },
+    },
+    responses: {
+      create: mockResponsesCreate,
+    },
+  } as unknown as import("openai").default;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses responses.create when wireApi is 'responses'", async () => {
+    const result = await chatComplete({
+      model: "azure-foundry-responses/o3-pro",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+      wireApi: "responses",
+    });
+    expect(result).toBe("Response from Responses API");
+    expect(mockResponsesCreate).toHaveBeenCalled();
+    expect(mockOpenaiWithResponses.chat.completions.create).not.toHaveBeenCalled();
+  });
+
+  it("auto-detects responses wire for azure-foundry-responses prefix", async () => {
+    const result = await chatComplete({
+      model: "azure-foundry-responses/o3-pro",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+    });
+    expect(result).toBe("Response from Responses API");
+    expect(mockResponsesCreate).toHaveBeenCalled();
+  });
+
+  it("still uses chat.completions.create for standard models", async () => {
+    vi.mocked(mockOpenaiWithResponses.chat.completions.create).mockResolvedValue({
+      choices: [{ message: { content: "Hello from Chat" } }],
+    } as any);
+
+    const result = await chatComplete({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+    });
+    expect(result).toBe("Hello from Chat");
+    expect(mockOpenaiWithResponses.chat.completions.create).toHaveBeenCalled();
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
   });
 });

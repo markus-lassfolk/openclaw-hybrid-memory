@@ -7,7 +7,7 @@
  * - No surprises: expected response shapes and persistence across tool calls
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ const { FactsDB, VectorDB, findSimilarByEmbedding, VerificationStore } = _testin
 const EMBEDDING_DIM = 1536; // text-embedding-3-small
 
 function makeMockApi() {
+  let registeredService: { stop?: () => unknown } | null = null;
   const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();
   return {
     registerTool(opts: Record<string, unknown>, _options?: unknown) {
@@ -36,7 +37,10 @@ function makeMockApi() {
     getTool(name: string) {
       return tools.get(name);
     },
-    registerService: vi.fn(),
+    registerService: vi.fn((svc) => {
+      registeredService = svc;
+    }),
+    _stopRegisteredService: () => registeredService?.stop?.(),
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
     registerHttpRoute: vi.fn(),
@@ -138,6 +142,7 @@ describe("Plugin registration e2e", () => {
   });
 
   afterEach(() => {
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -149,6 +154,7 @@ describe("Plugin registration e2e", () => {
     const mockApi = {
       ...api,
       pluginConfig,
+      registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
     expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
@@ -158,6 +164,50 @@ describe("Plugin registration e2e", () => {
     expect(mockApi.getTool("memory_recall_timeline")).toBeDefined();
     expect(mockApi.getTool("memory_forget")).toBeDefined();
     expect(mockApi.getTool("memory_promote")).toBeDefined();
+  });
+
+  it("full register() creates on-disk database paths (heavy bootstrap)", () => {
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lancePath = join(tmpDir, "lancedb");
+    const pluginConfig = getMinimalConfig({
+      sqlitePath,
+      lanceDbPath: lancePath,
+    });
+    const mockApi = {
+      ...api,
+      pluginConfig,
+      registrationMode: "full" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    memoryHybridPlugin.register(mockApi as never);
+    expect(existsSync(sqlitePath)).toBe(true);
+  });
+
+  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", () => {
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lancePath = join(tmpDir, "lancedb");
+    const pluginConfig = getMinimalConfig({
+      sqlitePath,
+      lanceDbPath: lancePath,
+    });
+    const registerCli = vi.fn();
+    const registerTool = vi.fn();
+    const registerService = vi.fn();
+    const mockApi = {
+      ...api,
+      registerCli,
+      registerTool,
+      registerService,
+      pluginConfig,
+      registrationMode: "cli-metadata" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    memoryHybridPlugin.register(mockApi as never);
+    expect(existsSync(sqlitePath)).toBe(false);
+    expect(existsSync(lancePath)).toBe(false);
+    expect(registerCli).toHaveBeenCalled();
+    expect(registerTool).not.toHaveBeenCalled();
+    expect(registerService).not.toHaveBeenCalled();
   });
 });
 
@@ -189,6 +239,7 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -276,6 +327,51 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(texts.some((t) => t.includes("banana server port 9999"))).toBe(true);
   });
 
+  it("memory_recall exposes constrained-recall mode with filter and rank explanation", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+
+    await storeTool?.execute("call-constrained-1", {
+      text: "UX preference: user prefers compact dashboards",
+      importance: 0.9,
+      category: "preference",
+      entity: "ux",
+    });
+    await storeTool?.execute("call-constrained-2", {
+      text: "UX fact: dashboard service listens on port 8080",
+      importance: 0.8,
+      category: "fact",
+      entity: "ux",
+    });
+
+    const constrainedResult = (await recallTool?.execute("call-constrained-3", {
+      query: "compact dashboard preference",
+      entity: "ux",
+      category: "preference",
+      retrievalMode: "constrained-recall",
+      limit: 5,
+    })) as {
+      content?: { type: string; text: string }[];
+      details?: {
+        count: number;
+        memories?: { text: string }[];
+        retrieval?: { mode?: string; filterBasis?: string[]; rankBasis?: string };
+      };
+    };
+
+    expect(constrainedResult.details?.count).toBeGreaterThanOrEqual(1);
+    const texts = (constrainedResult.details?.memories ?? []).map((m) => m.text);
+    expect(texts.some((t) => t.includes("prefers compact dashboards"))).toBe(true);
+    expect(texts.some((t) => t.includes("listens on port 8080"))).toBe(false);
+    expect(constrainedResult.content?.[0]?.text).toContain("Retrieval: constrained-recall");
+    expect(constrainedResult.content?.[0]?.text).toContain("Filter basis:");
+    expect(constrainedResult.content?.[0]?.text).toContain("Rank basis:");
+    expect(constrainedResult.details?.retrieval?.mode).toBe("constrained-recall");
+    expect(constrainedResult.details?.retrieval?.filterBasis).toContain("category=preference");
+  });
+
   it("memory_forget by memoryId removes the fact", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 
@@ -312,6 +408,7 @@ describe("Init-databases e2e", () => {
   });
 
   afterEach(() => {
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -388,6 +485,7 @@ describe("Core and common flows e2e", () => {
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -532,7 +630,7 @@ describe("Advanced features e2e", () => {
       clusters: { enabled: true, minClusterSize: 2, refreshIntervalDays: 0, labelModel: null },
       gaps: { enabled: true, similarityThreshold: 0.8 },
     });
-    // 2026.3.140 migration forces verification off; override so advanced e2e tests can exercise the feature
+    // Ensure verification is on for advanced e2e tests
     cfg.verification!.enabled = true;
     factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false });
     vectorDb = new VectorDB(lancePath, EMBEDDING_DIM, false);
@@ -542,6 +640,7 @@ describe("Advanced features e2e", () => {
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

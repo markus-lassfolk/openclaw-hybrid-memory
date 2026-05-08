@@ -14,9 +14,9 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
-import { getDirSizeSync, getFileSize } from "../utils/fs.js";
+import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
 
-export interface HealthPluginContext {
+interface HealthPluginContext {
   factsDb: FactsDB;
   cfg: HybridMemoryConfig;
   resolvedSqlitePath: string;
@@ -24,7 +24,7 @@ export interface HealthPluginContext {
   initialized?: Promise<void>;
 }
 
-export interface HealthReport {
+interface HealthReport {
   totalFacts: number;
   activeFacts: number;
   supersededFacts: number;
@@ -36,6 +36,15 @@ export interface HealthReport {
   staleFacts: number;
   avgLinksPerFact: number;
   totalLinks: number;
+  /**
+   * #1195: link-type histogram split between graph edges (`memory_links`) and JSON-backed
+   * provenance (`facts.provenance_json`). The legacy histogram only counted `memory_links`,
+   * which under-reported the real edge count after DERIVED_FROM was migrated into JSON.
+   */
+  linkTypeHistogram: {
+    graph: Record<string, number>;
+    provenance: { sourceEvents: number; factsWithProvenance: number };
+  };
   retrievalHitRate7d: number;
   topClusters: Array<{ id: string; label: string; factCount: number }>;
   unresolvedContradictions: number;
@@ -49,12 +58,12 @@ export interface HealthReport {
   generatedAt: string;
 }
 
-export function buildHealthReport(
+export async function buildHealthReport(
   factsDb: FactsDB,
   resolvedSqlitePath: string,
   resolvedLancePath: string,
   cfg?: Pick<HybridMemoryConfig, "clusters">,
-): HealthReport {
+): Promise<HealthReport> {
   const db = factsDb.getRawDb();
   const nowSec = Math.floor(Date.now() / 1000);
 
@@ -170,6 +179,41 @@ export function buildHealthReport(
     .get(nowSec, nowSec, nowSec, nowSec) as { cnt: number };
   const totalLinks = linksRow.cnt;
 
+  // #1195: per-link-type breakdown (graph table) + provenance count (JSON column).
+  const linkTypeRows = db
+    .prepare("SELECT link_type AS linkType, COUNT(*) AS cnt FROM memory_links GROUP BY link_type")
+    .all() as Array<{ linkType: string; cnt: number }>;
+  const graphLinkHistogram: Record<string, number> = {};
+  for (const row of linkTypeRows) {
+    graphLinkHistogram[row.linkType] = Number(row.cnt ?? 0);
+  }
+  const provenanceFactsRow = db.prepare("SELECT COUNT(*) AS cnt FROM facts WHERE provenance_json IS NOT NULL").get() as
+    | { cnt: number }
+    | undefined;
+  // Best-effort: count `sourceEventIds` lengths via JSON helpers; falls back to fact count when
+  // json_each is unavailable (older sqlite builds).
+  let provenanceSourceEvents = 0;
+  try {
+    const jsonRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(json_array_length(json_extract(provenance_json, '$.sourceEventIds'))), 0) AS cnt
+         FROM facts
+         WHERE provenance_json IS NOT NULL
+           AND json_extract(provenance_json, '$.sourceEventIds') IS NOT NULL`,
+      )
+      .get() as { cnt: number } | undefined;
+    provenanceSourceEvents = Number(jsonRow?.cnt ?? 0);
+  } catch {
+    provenanceSourceEvents = Number(provenanceFactsRow?.cnt ?? 0);
+  }
+  const linkTypeHistogram = {
+    graph: graphLinkHistogram,
+    provenance: {
+      sourceEvents: provenanceSourceEvents,
+      factsWithProvenance: Number(provenanceFactsRow?.cnt ?? 0),
+    },
+  };
+
   // Avg links per active fact
   const avgLinksPerFact = activeFacts > 0 ? Math.round((totalLinks * 2 * 1000) / activeFacts) / 1000 : 0;
 
@@ -217,13 +261,14 @@ export function buildHealthReport(
     .get(nowSec) as { last_at: number | null };
   const lastPruneAt = pruneRow.last_at != null ? new Date(pruneRow.last_at * 1000).toISOString() : null;
 
-  // Storage sizes
-  const sqliteSize = getFileSize(resolvedSqlitePath);
-  // Also count WAL / SHM sidecars
-  const sqliteWalSize = getFileSize(`${resolvedSqlitePath}-wal`);
-  const sqliteShmSize = getFileSize(`${resolvedSqlitePath}-shm`);
+  // Storage sizes (async I/O — avoids sync stat hot-path blocking; Issue #880)
+  const [sqliteSize, sqliteWalSize, sqliteShmSize, lanceSize] = await Promise.all([
+    getFileSizeAsync(resolvedSqlitePath),
+    getFileSizeAsync(`${resolvedSqlitePath}-wal`),
+    getFileSizeAsync(`${resolvedSqlitePath}-shm`),
+    getDirSize(resolvedLancePath),
+  ]);
   const totalSqliteSize = sqliteSize + sqliteWalSize + sqliteShmSize;
-  const lanceSize = getDirSizeSync(resolvedLancePath);
 
   return {
     totalFacts,
@@ -237,6 +282,7 @@ export function buildHealthReport(
     staleFacts,
     avgLinksPerFact,
     totalLinks,
+    linkTypeHistogram,
     retrievalHitRate7d,
     topClusters,
     unresolvedContradictions,
@@ -272,7 +318,7 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
           if (ctx.initialized) {
             await ctx.initialized;
           }
-          const report = buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath, cfg);
+          const report = await buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath, cfg);
 
           const lines: string[] = [
             `Memory Health Dashboard (${report.generatedAt})`,
@@ -285,6 +331,14 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
             `Unresolved contradictions: ${report.unresolvedContradictions}`,
             "",
             `Links: ${report.totalLinks} total, ${report.avgLinksPerFact.toFixed(2)} avg per active fact`,
+            `Link types (graph): ${
+              Object.keys(report.linkTypeHistogram.graph).length === 0
+                ? "none"
+                : Object.entries(report.linkTypeHistogram.graph)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(", ")
+            }`,
+            `Provenance (JSON): ${report.linkTypeHistogram.provenance.factsWithProvenance} facts cover ${report.linkTypeHistogram.provenance.sourceEvents} source events (#1195)`,
             "",
             `Categories: ${Object.entries(report.categoryDistribution)
               .map(([k, v]) => `${k}=${v}`)

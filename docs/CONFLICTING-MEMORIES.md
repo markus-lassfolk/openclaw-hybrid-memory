@@ -43,6 +43,16 @@ Classification uses a dedicated prompt (e.g. `memory-classify`) and a configurab
 - **CLI** — `hybrid-mem store` (when classifyBeforeWrite is enabled).
 - **extract-daily** — Daily scan / batch extraction uses classification when classifyBeforeWrite is enabled.
 
+### Performance warning: batch imports and classify-before-write
+
+> **Warning:** Classification is implemented **one new fact at a time**: each candidate store runs `classifyMemoryOperation`, which issues **at least one chat completion** to decide ADD / UPDATE / DELETE / NOOP. On **batch or scripted paths** (extract-daily, repeated CLI `store`, or any loop that stores many facts), enabling `classifyBeforeWrite` therefore causes **O(n) LLM calls** for n facts—higher latency, cost, and risk of **provider rate limits**. Interactive auto-capture only considers a **small capped number** of messages per turn, so the blast radius there is limited.
+
+**Mitigations you can use today:**
+
+- Turn off `store.classifyBeforeWrite` for a one-off bulk import, then re-enable afterward.
+- Prefer smaller extract windows or fewer facts per run when classification must stay on.
+- Track [issue #862](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/862) for future **batched** classification (multiple facts per LLM request).
+
 ### Config
 
 | Option | Default | Description |

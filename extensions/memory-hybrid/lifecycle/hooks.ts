@@ -1,27 +1,32 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Lifecycle Hooks (Phase 2.3: staged pipeline).
  *
- * Dispatcher: registers before_agent_start, agent_end, subagent, and frustration handlers.
+ * Dispatcher: registers before_agent_start, agent_end, and frustration handlers (subagent hooks: stage-cleanup).
  * All stage logic lives in stage-*.ts and session-state.ts; this file stays <200 lines.
  */
 
-import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { runSetupStage } from "./stage-setup.js";
-import { runRecallStage } from "./stage-recall.js";
-import { runInjectionStage } from "./stage-injection.js";
-import { runCaptureStage } from "./stage-capture.js";
-import { registerCleanupHandlers, createStaleSweepTimer, getDispose } from "./stage-cleanup.js";
-import { registerActiveTaskInjection } from "./stage-active-task.js";
-import { registerAuthFailureRecall } from "./stage-auth-failure.js";
-import { registerCredentialHint } from "./stage-credential-hint.js";
-import { registerFrustrationHandlers } from "./stage-frustration.js";
-import { createSessionState } from "./session-state.js";
-import type { LifecycleContext, SessionState } from "./types.js";
+import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
+import { createSessionState } from "./session-state.js";
+import { registerActiveTaskInjection } from "./stage-active-task.js";
+import { registerAuthFailureRecall } from "./stage-auth-failure.js";
+import { runCaptureStage } from "./stage-capture.js";
+import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
+import { registerCredentialHint } from "./stage-credential-hint.js";
+import { registerFrustrationHandlers } from "./stage-frustration.js";
+import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
+import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
+import { runInjectionStage } from "./stage-injection.js";
+import { runRecallStage } from "./stage-recall.js";
+import { runSetupStage } from "./stage-setup.js";
+import type { LifecycleContext, SessionState } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
 
@@ -29,20 +34,24 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState();
   const staleSweepTimer = createStaleSweepTimer(sessionState);
 
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
     ? ctx.cfg.activeTask.filePath
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);
 
   const onAgentStart = (api: ClawdbotPluginApi) => {
-    api.on("before_agent_start", async (event: unknown) => {
-      await runSetupStage(event, api, ctx, sessionState);
+    // OpenClaw typed hooks: (event, PluginHookAgentContext). Second arg must be declared so
+    // sessionKey/sessionId/agentId reach resolvers via withHookResolutionApi (#1005).
+    api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+      const rApi = withHookResolutionApi(api, hookCtx);
+      await runSetupStage(event, rApi, ctx, sessionState);
     });
 
     if (ctx.cfg.autoRecall.enabled) {
-      api.on("before_agent_start", async (event: unknown) => {
+      api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+        const rApi = withHookResolutionApi(api, hookCtx);
         try {
-          const recallStageResult = await runRecallStage(event, api, ctx, sessionState);
+          const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
           if (!recallStageResult) return undefined;
           if (recallStageResult.kind === "degraded") {
             return { prependContext: recallStageResult.prependContext };
@@ -50,7 +59,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (recallStageResult.kind === "empty") {
             return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
           }
-          const inj = await runInjectionStage(recallStageResult.result, api, ctx);
+          const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
           return inj ?? undefined;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -63,7 +72,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath);
+    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
+    const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
+    registerGoalStewardshipInjection(
+      api,
+      ctx,
+      resolvedGoalsDir,
+      ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
+    );
+    registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
     // event listeners whose bodies immediately return when disabled (#581).
@@ -84,14 +101,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
-    api.on("agent_end", async (event: unknown) => {
+    // Same typed-hook shape as before_agent_start (#1005).
+    api.on("agent_end", async (event: unknown, hookCtx: unknown) => {
+      const rApi = withHookResolutionApi(api, hookCtx);
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
         try {
           const ev = event as { messages?: unknown[]; success?: boolean };
           const messages = ev?.messages ?? [];
-          const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+          const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
 
           // Extract goal from first user message (used as trace label)
           let goal = "unknown";
@@ -134,14 +153,47 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "workflow-tracking",
             operation: "agent-end-track-workflow",
-            sessionId: sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default",
+            sessionId: sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default",
           });
           api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
         }
       }
 
-      await runCaptureStage(event, api, ctx, sessionState);
-      const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+      await runCaptureStage(event, rApi, ctx, sessionState);
+      const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+      if (ctx.cfg.goalStewardship?.enabled) {
+        try {
+          const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
+          const gDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+          const activeGoals = await listActiveGoals(gDir);
+          if (activeGoals.length > 0) {
+            api.logger.debug?.(
+              `memory-hybrid: active goals at session end: ${activeGoals.map((g) => `${g.label}(${g.status})`).join(", ")}`,
+            );
+            try {
+              ctx.eventLog?.append({
+                sessionId,
+                timestamp: new Date().toISOString(),
+                eventType: "action_taken",
+                content: {
+                  kind: "goal.session_summary",
+                  activeGoals: activeGoals.map((g) => ({
+                    id: g.id,
+                    label: g.label,
+                    status: g.status,
+                    assessments: g.assessmentCount,
+                  })),
+                },
+              });
+            } catch {
+              /* non-fatal */
+            }
+          }
+        } catch (err) {
+          api.logger.debug?.(`memory-hybrid: goal session summary failed (non-fatal): ${String(err)}`);
+        }
+      }
+
       try {
         await buildDailyNarrative({
           sessionId,
@@ -154,12 +206,20 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           fallbackModels: [],
         });
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "narratives",
-          operation: "agent-end-build-narrative",
-          sessionId,
-        });
-        api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+        const transient = isAbortOrTransientLlmError(err);
+        if (!transient) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "narratives",
+            operation: "agent-end-build-narrative",
+            sessionId,
+          });
+        }
+        const detail = err instanceof Error ? err.message : String(err);
+        if (transient) {
+          api.logger.info?.(`memory-hybrid: session narrative skipped (LLM unavailable or aborted): ${detail}`);
+        } else {
+          api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+        }
       }
     });
   };

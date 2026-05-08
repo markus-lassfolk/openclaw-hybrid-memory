@@ -1,36 +1,55 @@
-import type {
-  GraphConfig,
-  GraphRetrievalConfig,
-  ClustersConfig,
-  GapsConfig,
-  AliasesConfig,
-  IngestConfig,
-  MemoryTieringConfig,
-  AmbientConfig,
-  ReinforcementConfig,
-  FutureDateProtectionConfig,
-  DocumentsConfig,
-  WorkflowTrackingConfig,
-  CrystallizationConfig,
-  SelfExtensionConfig,
-  ImplicitFeedbackConfig,
-  ImplicitSignalType,
-  ClosedLoopConfig,
-  FrustrationDetectionConfig,
-  FrustrationSignalWeights,
-  CrossAgentLearningConfig,
-  ToolEffectivenessConfig,
-  CostTrackingConfig,
-  DashboardConfig,
-  ApiTapConfig,
-  HumanizerConfig,
-  FrequencyCaptureConfig,
-} from "../types/features.js";
-import type { PersonaProposalsConfig } from "../types/agents.js";
-import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
-import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
 import { pluginLogger } from "../../utils/logger.js";
+import type { PersonaProposalsConfig } from "../types/agents.js";
+import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
+import type {
+  AliasesConfig,
+  AmbientConfig,
+  ApiTapConfig,
+  ClosedLoopConfig,
+  ClustersConfig,
+  CostTrackingConfig,
+  CrossAgentLearningConfig,
+  CrystallizationConfig,
+  DashboardConfig,
+  DigestConfig,
+  DigestWeeklyDeliveryConfig,
+  DocumentsConfig,
+  EntityExtractionConfig,
+  FrequencyCaptureConfig,
+  FrustrationDetectionConfig,
+  FrustrationSignalWeights,
+  FutureDateProtectionConfig,
+  GapsConfig,
+  GraphConfig,
+  GraphRetrievalConfig,
+  HumanizerConfig,
+  ImplicitFeedbackConfig,
+  ImplicitSignalType,
+  IngestConfig,
+  LifecycleAdaptersConfig,
+  MemoryTieringConfig,
+  ReinforcementConfig,
+  SelfExtensionConfig,
+  ToolEffectivenessConfig,
+  WorkflowTrackingConfig,
+} from "../types/features.js";
+import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
+
+export function parseEntityExtractionConfig(cfg: Record<string, unknown>): EntityExtractionConfig {
+  const raw = cfg.entityExtraction as Record<string, unknown> | undefined;
+  const stopWords = Array.isArray(raw?.stopWords)
+    ? [
+        ...new Set(
+          (raw.stopWords as unknown[])
+            .filter((v): v is string => typeof v === "string")
+            .map((v) => v.trim())
+            .filter(Boolean),
+        ),
+      ]
+    : [];
+  return { stopWords };
+}
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
@@ -58,6 +77,16 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
         : 0.3,
     autoSupersede: graphRaw?.autoSupersede !== false,
     strengthenOnRecall: graphRaw?.strengthenOnRecall === true,
+    hubDegreeCap:
+      graphRaw?.hubDegreeCap === null
+        ? null
+        : typeof graphRaw?.hubDegreeCap === "number" && graphRaw.hubDegreeCap > 0
+          ? Math.floor(graphRaw.hubDegreeCap)
+          : 500,
+    hubScorePenalty:
+      typeof graphRaw?.hubScorePenalty === "number" && graphRaw.hubScorePenalty > 0 && graphRaw.hubScorePenalty < 1
+        ? graphRaw.hubScorePenalty
+        : null,
   };
 }
 
@@ -134,6 +163,7 @@ export function parseIngestConfig(cfg: Record<string, unknown>): IngestConfig | 
 
 export function parseMemoryTieringConfig(cfg: Record<string, unknown>): MemoryTieringConfig {
   const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
+  const hotByRecallRaw = tierRaw?.hotByRecall as Record<string, unknown> | undefined;
   return {
     enabled: tierRaw?.enabled !== false,
     hotMaxTokens:
@@ -145,6 +175,31 @@ export function parseMemoryTieringConfig(cfg: Record<string, unknown>): MemoryTi
         : 7,
     hotMaxFacts:
       typeof tierRaw?.hotMaxFacts === "number" && tierRaw.hotMaxFacts > 0 ? Math.floor(tierRaw.hotMaxFacts) : 50,
+    coldAfterInactivityDays:
+      typeof tierRaw?.coldAfterInactivityDays === "number" && tierRaw.coldAfterInactivityDays >= 0
+        ? Math.floor(tierRaw.coldAfterInactivityDays)
+        : 30,
+    hotMinAccessCount:
+      typeof tierRaw?.hotMinAccessCount === "number" && tierRaw.hotMinAccessCount > 0
+        ? Math.floor(tierRaw.hotMinAccessCount)
+        : 3,
+    hotAccessWindowDays:
+      typeof tierRaw?.hotAccessWindowDays === "number" && tierRaw.hotAccessWindowDays >= 0
+        ? Math.floor(tierRaw.hotAccessWindowDays)
+        : 7,
+    hotPreferenceImportance:
+      typeof tierRaw?.hotPreferenceImportance === "number" && tierRaw.hotPreferenceImportance >= 0
+        ? Math.min(1, tierRaw.hotPreferenceImportance)
+        : 0.7,
+    hotByRecall: {
+      windowDays:
+        typeof hotByRecallRaw?.windowDays === "number" && hotByRecallRaw.windowDays >= 0
+          ? Math.floor(hotByRecallRaw.windowDays)
+          : 7,
+      topN: typeof hotByRecallRaw?.topN === "number" && hotByRecallRaw.topN >= 0 ? Math.floor(hotByRecallRaw.topN) : 20,
+    },
+    structuralByCategory: tierRaw?.structuralByCategory !== false,
+    structuralPermanent: tierRaw?.structuralPermanent === true,
   };
 }
 
@@ -558,6 +613,19 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
     // Issue #754: top-level takes precedence; fall back to nested with deprecation warning
     feedToSelfCorrection:
       topLevelFeedToSelfCorrection !== undefined ? topLevelFeedToSelfCorrection : raw?.feedToSelfCorrection !== false,
+    maxLessonsPerDay:
+      typeof raw?.maxLessonsPerDay === "number" && raw.maxLessonsPerDay >= 0
+        ? Math.min(1000, Math.floor(raw.maxLessonsPerDay))
+        : 50,
+    lessonDedupeJaccard:
+      typeof raw?.lessonDedupeJaccard === "number" && raw.lessonDedupeJaccard > 0 && raw.lessonDedupeJaccard <= 1
+        ? raw.lessonDedupeJaccard
+        : 0.8,
+    autoCleanup: raw?.autoCleanup !== false,
+    cleanupLimit:
+      typeof raw?.cleanupLimit === "number" && raw.cleanupLimit >= 0
+        ? Math.min(10000, Math.floor(raw.cleanupLimit))
+        : 1000,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
   };
@@ -752,5 +820,64 @@ export function parseFrequencyCaptureConfig(cfg: Record<string, unknown>): Frequ
         : 0.6,
     captureCredentials: raw?.captureCredentials !== false,
     ttlDays: typeof raw?.ttlDays === "number" && raw.ttlDays >= 1 ? Math.floor(raw.ttlDays) : 30,
+  };
+}
+
+/** Safe parse for cron install paths that do not run the full hybrid config validator. */
+export function parseDigestWeeklyDeliveryOnly(cfg: Record<string, unknown>): DigestWeeklyDeliveryConfig {
+  const digest = cfg.digest as Record<string, unknown> | undefined;
+  const weekly = digest?.weekly as Record<string, unknown> | undefined;
+  const delivery = weekly?.delivery as Record<string, unknown> | undefined;
+  const modeRaw = delivery?.mode;
+  const valid = ["telegram", "system", "none"] as const;
+  let mode: (typeof valid)[number] = "system";
+  if (typeof modeRaw === "string" && (valid as readonly string[]).includes(modeRaw)) {
+    mode = modeRaw as (typeof valid)[number];
+  } else if (modeRaw !== undefined) {
+    pluginLogger.warn(
+      `memory-hybrid: invalid digest.weekly.delivery.mode "${modeRaw}"; expected telegram|system|none. Using "system".`,
+    );
+  }
+  const chatId =
+    typeof delivery?.chatId === "string" && delivery.chatId.trim().length > 0 ? delivery.chatId.trim() : undefined;
+  if (mode === "telegram" && !chatId) {
+    pluginLogger.warn(
+      `memory-hybrid: digest.weekly.delivery.mode is "telegram" but chatId is missing; using "system".`,
+    );
+    return { mode: "system" };
+  }
+  return { mode, ...(chatId ? { chatId } : {}) };
+}
+
+export function parseDigestConfig(cfg: Record<string, unknown>): DigestConfig {
+  return { weekly: { delivery: parseDigestWeeklyDeliveryOnly(cfg) } };
+}
+
+export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAdaptersConfig {
+  const raw = cfg.lifecycle as Record<string, unknown> | undefined;
+  const adapters = raw?.adapters as Record<string, unknown> | undefined;
+  const github = adapters?.github as Record<string, unknown> | undefined;
+  const validAction = (value: unknown): "expire-now" | "expire-soon" | "keep-stable" | undefined =>
+    value === "expire-now" || value === "expire-soon" || value === "keep-stable" ? value : undefined;
+  const repos = Array.isArray(github?.repos)
+    ? (github!.repos as unknown[])
+        .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+        .map((r) => r.trim())
+    : undefined;
+  return {
+    adapters: {
+      github: {
+        enabled: github?.enabled === true,
+        repo: typeof github?.repo === "string" && github.repo.trim().length > 0 ? github.repo.trim() : undefined,
+        repos: repos && repos.length > 0 ? repos : undefined,
+        tokenRef:
+          typeof github?.tokenRef === "string" && github.tokenRef.trim().length > 0
+            ? github.tokenRef.trim()
+            : undefined,
+        onMerged: validAction(github?.onMerged),
+        onClosed: validAction(github?.onClosed),
+        onOpen: validAction(github?.onOpen),
+      },
+    },
   };
 }

@@ -12,7 +12,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
 
 ## Prerequisites
 
-- **OpenClaw v2026.3.8+** (required) - the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
+- **OpenClaw v2026.3.8+** (minimum — matches plugin peer dependency and startup warning): use a **recent 2026.3.x** release in practice; CI resolves a specific `openclaw` in `extensions/memory-hybrid/package-lock.json`.
 - **Embedding access** (required): configure `embedding.provider` and related settings so the plugin can generate embedding vectors. Four providers are supported:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`).
   - **Ollama**: set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — Ollama must be running locally.
@@ -21,7 +21,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
   
   Use `embedding.preferredProviders` for automatic failover between providers (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full details.
 - **Chat/completion** (optional for basic memory): needed for distillation, reflection, auto-classify, etc. Any provider the OpenClaw gateway supports works; optional **`llm`** config sets model preference lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
-- **Node.js** with npm.
+- **Node.js `>=22.16.0`** with npm (plugin `engines` field).
 
 ---
 
@@ -77,6 +77,8 @@ Then set your **embedding** config (required) and optionally **LLM** preferences
 # - llm.default / llm.heavy (optional) for chat model preference lists - see LLM-AND-PROVIDERS.md
 # Or use env: e.g. embedding.apiKey = "env:OPENAI_API_KEY"
 ```
+
+If you run isolated maintenance jobs (`hybrid-mem:*` in `~/.openclaw/cron/jobs.json`), keep `agents.defaults.model.primary` and each job `model`/`payload.model` on the same provider family (for example `azure-foundry/...` for both). Mixed families (for example `minimax/...` primary with `google/...` cron model) can fail with `LiveSessionModelSwitchError`. After changing primary, run `openclaw hybrid-mem verify --fix` to refresh job models.
 
 For manual configuration and all options (including `llm` and legacy `distill`), see [CONFIGURATION.md](CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 
@@ -161,6 +163,7 @@ Restart the gateway after backfill so memorySearch re-indexes.
 - [FAQ.md](FAQ.md) - Common questions and quick answers
 - [CONFIGURATION.md](CONFIGURATION.md) - Full config reference
 - [FEATURES.md](FEATURES.md) - Categories, decay, tags, auto-classify
-- [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands (including `enrich-entities` for contact/org NER backfill)
 - [OPERATIONS.md](OPERATIONS.md) - Background jobs, scripts, upgrades
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
+

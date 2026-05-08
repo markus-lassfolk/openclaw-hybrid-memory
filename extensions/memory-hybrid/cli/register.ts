@@ -6,47 +6,49 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { filterByScope, type mergeResults } from "../services/merge-results.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
-import { type mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { registerVerifyCommands, type VerifyContext } from "./verify.js";
-import { registerDistillCommands, type DistillContext } from "./distill.js";
-import { registerManageCommands, type ManageContext } from "./manage.js";
-import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
+import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import type { HybridMemoryConfig } from "../config.js";
+import { type DistillContext, registerDistillCommands } from "./distill.js";
+import { registerGoalCommands } from "./goals.js";
+import { type ManageContext, registerManageCommands } from "./manage.js";
+import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
 import type {
-  FindDuplicatesResult,
-  StoreCliOpts,
-  StoreCliResult,
-  InstallCliResult,
-  VerifyCliSink,
+  AnalyzeFeedbackPhrasesResult,
+  BackfillCliResult,
+  BackfillCliSink,
+  ConfigCliResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
+  DistillCliResult,
+  DistillCliSink,
   DistillWindowResult,
-  RecordDistillResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
+  FindDuplicatesResult,
   GenerateAutoSkillsResult,
-  BackfillCliResult,
-  BackfillCliSink,
   IngestFilesResult,
   IngestFilesSink,
-  DistillCliResult,
-  DistillCliSink,
+  InstallCliResult,
+  MigrateToVaultResult,
+  RecordDistillResult,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
-  AnalyzeFeedbackPhrasesResult,
-  MigrateToVaultResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  UpgradeCliResult,
+  StoreCliOpts,
+  StoreCliResult,
   UninstallCliResult,
-  ConfigCliResult,
+  UpgradeCliResult,
+  VerifyCliSink,
 } from "./types.js";
+import { type VerifyContext, registerVerifyCommands } from "./verify.js";
 
 export type {
   FindDuplicatesResult,
@@ -90,7 +92,10 @@ export type HybridMemCliContext = {
   cfg: HybridMemoryConfig;
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
-  runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
+  runVerify: (
+    opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
+    sink: VerifyCliSink,
+  ) => Promise<void>;
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (
@@ -173,8 +178,10 @@ export type HybridMemCliContext = {
     metaStored: number;
   }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
-  runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
-  runContinuousVerification: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
+  runDreamCycle: (opts?: { verbose?: boolean }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runContinuousVerification: (opts?: {
+    verbose?: boolean;
+  }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -185,11 +192,36 @@ export type HybridMemCliContext = {
     breakdown?: Record<string, number>;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
-  runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
+  runCompaction: (opts?: { apply?: boolean }) => Promise<{
+    hot: number;
+    warm: number;
+    cold: number;
+    structural: number;
+    changed?: number;
+    examined?: number;
+    apply?: boolean;
+  }>;
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+  }) => Promise<{
+    pending: number;
+    processed: number;
+    factsEnriched: number;
+    skipped?: boolean;
+    pendingFactIds?: string[];
+    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
+  }>;
+  runSelfCorrectionExtract: (opts: {
+    days?: number;
+    outputPath?: string;
+    verbose?: boolean;
+  }) => Promise<SelfCorrectionExtractResult>;
   runSelfCorrectionRun: (opts: {
     extractPath?: string;
     incidents?: Array<{
@@ -205,6 +237,7 @@ export type HybridMemCliContext = {
     approve?: boolean;
     applyTools?: boolean;
     full?: boolean;
+    verbose?: boolean;
   }) => Promise<SelfCorrectionRunResult>;
   runAnalyzeFeedbackPhrases: (opts: {
     days?: number;
@@ -264,9 +297,20 @@ export type HybridMemCliContext = {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
     getProposalsAvailable: () => boolean;
-    getWalPending: () => number;
+    getWalPending: () => Promise<number> | number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
-    getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
+    getStorageSizes: () => Promise<{
+      sqliteBytes?: number;
+      lanceBytes?: number;
+      lanceBytesTimedOut?: boolean;
+    }>;
+    getCronJobsStatus?: () => Array<{
+      name: string;
+      pluginJobId: string;
+      enabled: boolean;
+      scheduleExpr: string | null;
+      lastRunAtMs: number | null;
+    }>;
   };
   listCommands?: {
     listProposals: (opts: { status?: string }) => Promise<
@@ -283,7 +327,9 @@ export type HybridMemCliContext = {
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
-  runCrossAgentLearning?: () => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
+  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<
+    import("../cli/handlers.js").CrossAgentLearningCliResult
+  >;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;
@@ -293,6 +339,9 @@ export type HybridMemCliContext = {
   runBackup?: (opts?: { backupDir?: string }) => Promise<import("../cli/backup.js").BackupCliResult>;
   /** Verify SQLite DB integrity without creating a backup (Issue #276). */
   runBackupVerify?: () => import("../cli/backup.js").BackupVerifyResult;
+  /** Cross-agent audit log (Issue #790). */
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 };
 
 /** Chainable command type (Commander-style). */
@@ -354,16 +403,34 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     throw err;
   }
 
-  if (ctx.activeTask) {
-    try {
-      registerActiveTaskCommands(mem, ctx.activeTask);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "registration",
-        operation: "register-cli:active-tasks",
-      });
-      throw err;
-    }
+  try {
+    registerTaskQueueStatusCommands(mem);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:task-queue-status",
+    });
+    throw err;
+  }
+
+  try {
+    registerActiveTaskCommands(mem, ctx.cfg, ctx.activeTask);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:active-tasks",
+    });
+    throw err;
+  }
+
+  try {
+    registerGoalCommands(mem, ctx);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:goals",
+    });
+    throw err;
   }
 
   try {

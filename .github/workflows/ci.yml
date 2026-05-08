@@ -16,6 +16,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Least-privilege default for the GITHUB_TOKEN (explicit jobs may override).
+# actions:write — required for actions/cache and actions/upload-artifact when permissions are explicit.
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
 jobs:
   changes:
     name: Detect Changes
@@ -23,8 +33,8 @@ jobs:
     outputs:
       code: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name != 'workflow_call'
         with:
@@ -34,22 +44,28 @@ jobs:
               - 'extensions/memory-hybrid/package*.json'
               - 'extensions/memory-hybrid/tsconfig*.json'
               - '.github/workflows/ci.yml'
+              - '.nvmrc'
 
   typecheck:
-    name: Type Check (Node ${{ matrix.node-version }})
+    name: Type Check (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          # Install >=22.16 (node:sqlite + FTS5; see nodejs/node#57621); keep job name "Node 22" for branch protection.
+          - node-version: '22.16'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -61,20 +77,24 @@ jobs:
         run: cd extensions/memory-hybrid && npx tsc --noEmit
 
   lint:
-    name: Lint (Node ${{ matrix.node-version }})
+    name: Lint (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: '22.16'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -86,20 +106,24 @@ jobs:
         run: cd extensions/memory-hybrid && npm run lint
 
   test:
-    name: Test (Node ${{ matrix.node-version }})
+    name: Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: '22.16'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -116,23 +140,23 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.16'
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.16-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run tests with coverage
         run: cd extensions/memory-hybrid && npm run test:coverage
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: extensions/memory-hybrid/coverage/
@@ -145,17 +169,17 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.16'
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.16-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run knip
@@ -167,16 +191,40 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.16'
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm ci
       - name: Check formatting
         run: cd extensions/memory-hybrid && npm run format:check
+
+  # Ensures package.json "files" covers all runtime imports (incl. cli → benchmark/).
+  # Vitest always runs in a full checkout; this catches omissions visible only in npm pack.
+  publish-invariants:
+    name: Publish manifest (npm files[])
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.16'
+      - name: Cache node_modules
+        uses: actions/cache@v5
+        with:
+          path: extensions/memory-hybrid/node_modules
+          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-22.16-
+      - name: Install and build (dist/ required by verify-publish)
+        run: cd extensions/memory-hybrid && npm ci && npm run build
+      - name: verify-publish invariants
+        run: cd extensions/memory-hybrid && node scripts/verify-publish.cjs
 
   strict-typecheck:
     name: Strict TypeScript Check
@@ -185,52 +233,107 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22.16'
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
+            ${{ runner.os }}-node-22.16-
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Strict type check
         run: cd extensions/memory-hybrid && (npx tsc --noEmit -p tsconfig.strict.json || true)
 
   install-smoke:
-    name: Install Smoke Test
+    # Issue #1172: catches `npm install` regressions before they reach npm
+    # (notably the `@duckflux/core@^0.1.0` ETARGET that broke the peer-resolved
+    # `openclaw` tree before the peer range was tightened).
+    # Issue #1171: also asserts the published tarball contains `dist/index.js`.
+    name: Install Smoke Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node-version: '22.16'
+            job-name-suffix: '22'
+          - node-version: '24'
+            job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-22-
-      - name: Install dependencies
-        run: cd extensions/memory-hybrid && npm install
-      - name: Pack and test install
+            ${{ runner.os }}-node-${{ matrix.node-version }}-
+      - name: Install dependencies (with optional)
+        run: cd extensions/memory-hybrid && npm install --include=optional
+      - name: Build dist/ (tsdown)
+        run: cd extensions/memory-hybrid && npm run build
+      - name: Pack
+        id: pack
         run: |
           cd extensions/memory-hybrid
-          npm pack
-          TARBALL=$(find . -maxdepth 1 -name "openclaw-hybrid-memory-*.tgz" -printf '%f\n' | head -1)
-          TARBALL_PATH="$(pwd)/$TARBALL"
+          # Avoid picking a stale .tgz from a previous run (find | head -1 is non-deterministic).
+          rm -f openclaw-hybrid-memory-*.tgz
+          TARBALL=$(npm pack 2>&1 | grep '\.tgz$' | tail -1)
+          test -n "$TARBALL" || { echo 'FAIL: npm pack did not report a .tgz filename'; exit 1; }
+          echo "tarball=$(pwd)/$TARBALL" >> "$GITHUB_OUTPUT"
+      - name: Install in clean tmpdir with peer (issue #1172)
+        run: |
+          set -euo pipefail
+          TARBALL_PATH="${{ steps.pack.outputs.tarball }}"
           mkdir -p /tmp/smoke-test && cd /tmp/smoke-test
-          npm init -y
-          npm install "$TARBALL_PATH" --ignore-scripts
-          node -e "const pkg = require('./node_modules/openclaw-hybrid-memory/package.json'); console.log('Import OK:', pkg.name, pkg.version)"
+          rm -rf node_modules package-lock.json
+          npm init -y >/dev/null
+          # Install both the plugin tarball and the peer (matching the tightened
+          # peerDependency range). `--foreground-scripts` surfaces postinstall
+          # errors; `--ignore-scripts=false` ensures the postinstall rebuild
+          # actually runs so we exercise the same path real users hit.
+          npm install "$TARBALL_PATH" 'openclaw@>=2026.5.0 <2027' \
+            --foreground-scripts --ignore-scripts=false
+      - name: Assert no @duckflux/core ETARGET path in tree (issue #1172)
+        run: |
+          cd /tmp/smoke-test
+          # If npm install succeeds, the only UNMET lines should be platform-
+          # specific OPTIONAL bindings (e.g. macOS / Windows). Match only
+          # required UNMET / ETARGET / @duckflux occurrences.
+          OUTPUT="$(npm ls --all 2>&1 || true)"
+          echo "$OUTPUT" | head -200
+          if echo "$OUTPUT" | grep -E '(@duckflux/core|ETARGET|UNMET DEPENDENCY)' >/dev/null; then
+            echo 'FAIL: install tree contains @duckflux/core / ETARGET / required UNMET'
+            exit 1
+          fi
+      - name: Assert published layout includes dist/index.js (issue #1171)
+        run: |
+          cd /tmp/smoke-test
+          test -f node_modules/openclaw-hybrid-memory/dist/index.js || \
+            { echo 'FAIL: dist/index.js missing from published tarball'; exit 1; }
+          test -f node_modules/openclaw-hybrid-memory/dist/index.d.ts || \
+            { echo 'FAIL: dist/index.d.ts missing from published tarball'; exit 1; }
+          # Source tree must still ship for editor / debugging consumers.
+          test -f node_modules/openclaw-hybrid-memory/benchmark/shadow-eval.ts || \
+            { echo 'FAIL: benchmark/shadow-eval.ts missing from npm pack (check package.json files[])'; exit 1; }
+          # package.json#openclaw.extensions must point at the compiled artifact.
+          node -e "const p = require('openclaw-hybrid-memory/package.json'); const ext = p.openclaw && p.openclaw.extensions || []; if (!ext.includes('./dist/index.js')) { console.error('FAIL: openclaw.extensions does not include ./dist/index.js, got', ext); process.exit(1); }"
+      - name: Smoke-load dist/index.js
+        run: |
+          cd /tmp/smoke-test
+          # Just import the compiled entry — verifies the bundle is at least
+          # syntactically valid and resolvable on this Node version.
+          node --input-type=module -e "import('openclaw-hybrid-memory/dist/index.js').then(m => { if (typeof m.default !== 'object' && typeof m.default !== 'function') { console.error('FAIL: default export missing'); process.exit(1); } console.log('OK: dist/index.js loaded, default=', typeof m.default); }).catch(e => { console.error('FAIL:', e.message); process.exit(1); })"
 
   lint-arch:
     name: Architectural Lint
@@ -239,7 +342,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run architectural lint
         run: cd extensions/memory-hybrid && npm run lint:arch
 
@@ -287,6 +390,14 @@ jobs:
 
   test-pass-24:
     name: Test (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  publish-invariants-pass:
+    name: Publish manifest (npm files[])
     needs: changes
     if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest

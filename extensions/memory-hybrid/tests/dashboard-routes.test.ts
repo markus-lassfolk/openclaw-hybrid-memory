@@ -17,16 +17,17 @@
  *   - DASHBOARD_PATHS: root is / and healthApi is /api/health
  */
 
-import { describe, it, expect } from "vitest";
-import {
-  registerDashboardHttpRoutes,
-  DASHBOARD_PREFIX,
-  DASHBOARD_PATHS,
-  type HttpRouteOptions,
-  type HttpRequestHandler,
-} from "../tools/dashboard-routes.js";
-import { parseHealthConfig } from "../config/parsers/maintenance.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { describe, expect, it } from "vitest";
+import { parseHealthConfig } from "../config/parsers/maintenance.js";
+import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
+import type { RegisterHttpRouteGatewayParams } from "../tools/http-route-types.js";
+import {
+  DASHBOARD_PATHS,
+  DASHBOARD_PREFIX,
+  type HttpRouteOptions,
+  registerDashboardHttpRoutes,
+} from "../tools/dashboard-routes.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,15 +35,19 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 interface RouteRegistration {
   path: string;
-  handler: HttpRequestHandler;
+  handler: RegisterHttpRouteGatewayParams["handler"];
   opts: HttpRouteOptions;
 }
 
 function makeApi(): { api: ClawdbotPluginApi; routes: RouteRegistration[] } {
   const routes: RouteRegistration[] = [];
   const api = {
-    registerHttpRoute: (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => {
-      routes.push({ path, handler, opts });
+    registerHttpRoute: (params: RegisterHttpRouteGatewayParams) => {
+      routes.push({
+        path: params.path,
+        handler: params.handler,
+        opts: { authenticated: params.auth === "gateway" },
+      });
     },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   } as unknown as ClawdbotPluginApi;
@@ -101,7 +106,7 @@ describe("registerDashboardHttpRoutes", () => {
     registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const rootRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`);
     expect(rootRoute).toBeDefined();
-    const response = await rootRoute?.handler(fakeReq());
+    const response = await invokeNodeHttpRoute(rootRoute!.handler, fakeReq());
     expect(response.status).toBe(200);
     expect(response.headers?.["Content-Type"]).toMatch(/text\/html/);
     expect(response.body).toContain("<!DOCTYPE html>");
@@ -112,7 +117,7 @@ describe("registerDashboardHttpRoutes", () => {
     registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const healthRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`);
     expect(healthRoute).toBeDefined();
-    const response = await healthRoute?.handler(fakeReq());
+    const response = await invokeNodeHttpRoute(healthRoute!.handler, fakeReq());
     expect(response.status).toBe(200);
     expect(response.headers?.["Content-Type"]).toMatch(/application\/json/);
     const body = JSON.parse(response.body) as { status: string; generatedAt: string };
@@ -156,11 +161,22 @@ describe("DASHBOARD_PREFIX and DASHBOARD_PATHS", () => {
     expect(DASHBOARD_PREFIX).toBe("/plugins/memory-dashboard");
   });
 
-  it("DASHBOARD_PATHS.root is /", () => {
-    expect(DASHBOARD_PATHS.root).toBe("/");
+  it("DASHBOARD_PATHS.root is the empty string (issue #1173: no trailing slash)", () => {
+    // Concatenated with DASHBOARD_PREFIX this yields `/plugins/memory-dashboard`
+    // — without the trailing slash that the OpenClaw 2026.5.4+ gateway rejects
+    // as "missing path".
+    expect(DASHBOARD_PATHS.root).toBe("");
   });
 
   it("DASHBOARD_PATHS.healthApi is /api/health", () => {
     expect(DASHBOARD_PATHS.healthApi).toBe("/api/health");
+  });
+
+  it("registers the dashboard root without a trailing slash (issue #1173)", () => {
+    const { api, routes } = makeApi();
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
+    const paths = routes.map((r) => r.path);
+    expect(paths).toContain("/plugins/memory-dashboard");
+    expect(paths).not.toContain("/plugins/memory-dashboard/");
   });
 });

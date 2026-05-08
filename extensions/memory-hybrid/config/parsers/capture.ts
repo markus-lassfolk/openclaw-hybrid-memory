@@ -141,7 +141,7 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
     requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     maxInjectionTokens:
       typeof proceduresRaw?.maxInjectionTokens === "number" &&
-      proceduresRaw.maxInjectionTokens > 0 &&
+      proceduresRaw.maxInjectionTokens >= 0 &&
       Number.isFinite(proceduresRaw.maxInjectionTokens)
         ? Math.floor(proceduresRaw.maxInjectionTokens)
         : 500,
@@ -184,7 +184,9 @@ export function parseExtractionConfig(cfg: Record<string, unknown>): ExtractionC
         typeof extractionRaw?.extractionModelTier === "string"
           ? extractionRaw.extractionModelTier.trim().toLowerCase()
           : "";
-      return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
+      return v === "nano" || v === "maintenance" || v === "default" || v === "heavy"
+        ? (v as "nano" | "maintenance" | "default" | "heavy")
+        : undefined;
     })(),
   };
 }

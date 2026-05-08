@@ -38,12 +38,8 @@ body:
         If applicable, show how you'd expect to call or configure the new feature.
       render: typescript
       placeholder: |
-        // Example of desired API
-        const results = await memory.search({
-          query: "...",
-          filter: { tag: "project-x" },
-          topK: 5,
-        });
+        // Example: agent tool call (names use underscores only; no dots in tool names)
+        // e.g. memory_recall({ query: "...", limit: 5 })
 
   - type: checkboxes
     id: contribution
