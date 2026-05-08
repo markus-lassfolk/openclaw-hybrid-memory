@@ -1765,7 +1765,12 @@ describe("FactsDB category drift audit/remap", () => {
 
     expect(report.hasDrift).toBe(true);
     expect(report.unknown).toEqual([
-      expect.objectContaining({ category: "monitoring", count: 1, examples: [entry.id] }),
+      expect.objectContaining({
+        category: "monitoring",
+        count: 1,
+        examples: [entry.id],
+        examplePreviews: ["Legacy monitoring fact"],
+      }),
     ]);
     expect(report.configuredOnly).toContain("preference");
   });

@@ -817,9 +817,14 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .command("resolve-contradictions")
     .description("Resolve unresolved contradictions (auto-resolve obvious cases, report ambiguous pairs)")
     .option("--verbose", "List every auto-resolved pair and all ambiguous pairs")
+    .option(
+      "--details",
+      "For ambiguous pairs, print entity/key/value summaries (not only UUIDs); implies listing all ambiguous rows",
+    )
     .action(
-      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      withExit(async (opts?: { verbose?: boolean; details?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        const details = !!opts?.details;
         let res;
         try {
           res = await ctx.runResolveContradictions();
@@ -840,13 +845,54 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           }
         }
         if (res.ambiguous.length > 0) {
-          console.log("Ambiguous pairs (manual review recommended):");
-          const ambiguousList = verbose ? res.ambiguous : res.ambiguous.slice(0, 10);
-          for (const a of ambiguousList) {
-            console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+          const trunc = (s: string | null | undefined, n: number): string => {
+            if (s == null || s === "") return "(empty)";
+            const t = s.replace(/\s+/g, " ").trim();
+            return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
+          };
+          const ambiguousList = verbose || details ? res.ambiguous : res.ambiguous.slice(0, 10);
+          if (details) {
+            console.log("Ambiguous pairs (same entity + key, different value — pick which fact stays current):");
+            for (const a of ambiguousList) {
+              const newF = factsDb.getById(a.factIdNew);
+              const oldF = factsDb.getById(a.factIdOld);
+              const entity = newF?.entity ?? oldF?.entity ?? "?";
+              const key = newF?.key ?? oldF?.key ?? "?";
+              const newBits = newF
+                ? `value=${trunc(newF.value, 48)} | text=${trunc(newF.text, 72)} | conf=${(newF.confidence ?? 0).toFixed(2)} | src=${newF.source}`
+                : "(newer fact row missing)";
+              const oldBits = oldF
+                ? `value=${trunc(oldF.value, 48)} | text=${trunc(oldF.text, 72)} | conf=${(oldF.confidence ?? 0).toFixed(2)} | src=${oldF.source}`
+                : "(older fact row missing)";
+              console.log(`  · [${entity}] ${key}`);
+              console.log(`      newer fact ${a.factIdNew}: ${newBits}`);
+              console.log(`      older fact ${a.factIdOld}: ${oldBits}`);
+              console.log(`      contradiction row ${a.contradictionId}`);
+            }
+          } else {
+            console.log("Ambiguous pairs (manual review recommended):");
+            for (const a of ambiguousList) {
+              console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+            }
           }
-          if (!verbose && res.ambiguous.length > 10) {
+          if (!verbose && !details && res.ambiguous.length > 10) {
             console.log(`  ...and ${res.ambiguous.length - 10} more`);
+          }
+          console.log("");
+          console.log(
+            "What this means: each line is two stored facts with the same entity and key but different values. " +
+              "Auto-resolution only runs when the newer fact is clearly stronger (newer, higher confidence, and from conversation or CLI).",
+          );
+          console.log("What to do:");
+          console.log(
+            "  1. Inspect: openclaw hybrid-mem show <fact-id>   (left/newer id first, then older id in each pair)",
+          );
+          console.log(
+            "  2. Fix memory: if the newer statement is right, add or correct with store --supersedes <older-fact-id>; " +
+              "if the older one is right, supersede or remove the newer fact (e.g. prune), then re-run this command.",
+          );
+          if (!details) {
+            console.log("  3. Easier scan: openclaw hybrid-mem resolve-contradictions --details");
           }
         }
       }),
