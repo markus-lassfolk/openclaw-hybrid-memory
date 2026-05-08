@@ -76,19 +76,37 @@ export function buildHybridMemCronBashBody(jobSlug: string, steps: HybridMemCron
  */
 export function buildHybridMemCronTaskMessage(
   jobSlug: string,
-  options: { preamble?: string; steps: HybridMemCronStep[] },
+  options: { preamble?: string; steps: HybridMemCronStep[]; requiredSteps?: string[] },
 ): string {
   const preamble = options.preamble?.trim();
   const bash = buildHybridMemCronBashBody(jobSlug, options.steps);
+
+  // Build list of required steps for validation
+  const requiredSteps = options.requiredSteps ?? options.steps.map((s) => s.name);
+  const requiredStepsList = requiredSteps.map((s) => `"${s}"`).join(", ");
+
   const orchestration = [
     "EXECUTION (durable logs + per-step exits)",
     "Run the bash below in ONE foreground shell session and wait until it exits. Do not background this work and end the turn while commands are still running.",
     "- HM_LOG: full stdout/stderr for the run. HM_EXIT: one line per hm_step with UTC timestamp and exit= (first command in the pipeline).",
-    "- Only after every hm_step succeeds (exit 0), perform the GUARD CHECK timestamp write. If any hm_step fails, do NOT update the guard file; reply with paths to HM_LOG and HM_EXIT and paste the full contents of HM_EXIT.",
     "",
     "```bash",
     bash,
     "```",
+    "",
+    "VALIDATION & GUARD UPDATE (Issue: cron jobs report OK despite failures)",
+    `After the bash script completes, validate that ALL required steps [${requiredStepsList}] appear in HM_EXIT with exit=0.`,
+    "- If ANY required step is missing from HM_EXIT, has exit≠0, or the log contains 'unknown command', this job has FAILED.",
+    "- If a step is replaced with a config-skip variant (e.g., 'distill-skipped' exit=0 when distill.enabled is false), that counts as present.",
+    "- Only after ALL required steps are validated successful: perform the GUARD CHECK timestamp write.",
+    "- If validation fails, do NOT update the guard file.",
+    "",
+    "REPLY FORMAT:",
+    "1. State the overall result: SUCCESS, FAILED, or SKIPPED",
+    "2. List HM_EXIT path and paste its full contents",
+    "3. List HM_LOG path (do not paste log unless there are errors)",
+    "4. If any step failed or is missing, explain which steps and why",
+    "5. State whether guard file was updated (yes/no)",
   ].join("\n");
   return [preamble, orchestration].filter(Boolean).join("\n\n");
 }

@@ -14,6 +14,7 @@ import { registerManageDigest } from "./manage/register-digest.js";
 import { registerExpireBySourceCommands, registerLifecycleSyncCommands } from "./manage/register-lifecycle.js";
 import { registerAnalyzeMaintenanceLogsCommand } from "./manage/register-analyze-maintenance-logs.js";
 import { registerManageStorageAndStats } from "./manage/register-storage-and-stats.js";
+import { registerValidateCronExit } from "./manage/register-validate-cron-exit.js";
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
   const b = buildManageBindings(ctx);
@@ -28,4 +29,5 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageCouncil(mem, b);
   registerManageDigest(mem, b);
   registerAnalyzeMaintenanceLogsCommand(mem, b);
+  registerValidateCronExit(mem);
 }

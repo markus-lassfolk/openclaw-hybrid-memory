@@ -810,10 +810,19 @@ export function ensureMaintenanceCronJobs(
             if (!normalized.includes(name)) normalized.push(name);
           }
         }
-        if (messageOverrides?.[id] && existing.message !== messageOverrides[id]) {
-          existing.message = messageOverrides[id];
-          jobsChanged = true;
-          if (!normalized.includes(name)) normalized.push(name);
+        if (messageOverrides?.[id]) {
+          const payOv = existing.payload as { message?: string } | undefined;
+          if (payOv && typeof payOv.message === "string") {
+            if (payOv.message !== messageOverrides[id]) {
+              payOv.message = messageOverrides[id];
+              jobsChanged = true;
+              if (!normalized.includes(name)) normalized.push(name);
+            }
+          } else if (typeof existing.message === "string" && existing.message !== messageOverrides[id]) {
+            existing.message = messageOverrides[id];
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
@@ -929,6 +938,39 @@ export function ensureMaintenanceCronJobs(
             setCronStoreJobModelFields(existing, desired);
             jobsChanged = true;
             if (!normalized.includes(name)) normalized.push(name);
+          }
+        }
+        // Fix: Update message to match current definition to remove obsolete command references.
+        // Skip when the caller supplied messageOverrides for this job — those must win over canonical text.
+        if (!messageOverrides?.[id]) {
+          const currentDef = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery);
+          const defMessage = currentDef.message as string | undefined;
+          const payload = existing.payload as { message?: string; kind?: string } | undefined;
+          if (defMessage && payload && typeof payload.message === "string") {
+            // Extract the guard prefix from existing message (if present) and body from new definition
+            const guardPrefixMatch = payload.message.match(/^(GUARD CHECK.*?\n\n)/s);
+            const guardPrefix = guardPrefixMatch ? guardPrefixMatch[1] : "";
+            const defBody = defMessage.includes("GUARD CHECK")
+              ? defMessage.replace(/^GUARD CHECK.*?\n\n/s, "")
+              : defMessage;
+            const expectedMessage = guardPrefix + defBody;
+            if (payload.message !== expectedMessage) {
+              payload.message = expectedMessage;
+              jobsChanged = true;
+              if (!normalized.includes(name)) normalized.push(name);
+            }
+          } else if (defMessage && typeof existing.message === "string") {
+            const guardPrefixMatch = existing.message.match(/^(GUARD CHECK.*?\n\n)/s);
+            const guardPrefix = guardPrefixMatch ? guardPrefixMatch[1] : "";
+            const defBody = defMessage.includes("GUARD CHECK")
+              ? defMessage.replace(/^GUARD CHECK.*?\n\n/s, "")
+              : defMessage;
+            const expectedMessage = guardPrefix + defBody;
+            if (existing.message !== expectedMessage) {
+              existing.message = expectedMessage;
+              jobsChanged = true;
+              if (!normalized.includes(name)) normalized.push(name);
+            }
           }
         }
       }

@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Maintenance LLM tier** (`llm.maintenance`): dedicated ordered model list for scheduled/maintenance commands; `CronModelTier` includes `"maintenance"`; `hybrid-mem verify` warns on cron vs maintenance routing mismatches.
+- **Cron exit ledger validation** ([#1203](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1203)): structured validation of maintenance step exit lines, `validate-cron-exit` CLI, bash harness guidance, and normalization of obsolete cron command references in managed job messages.
 
 ### Changed
 
