@@ -48,16 +48,16 @@ function scanJsonObjects(text: string): string[] {
 function findJsonObjectEnd(text: string, startIdx: number): number | null {
   let depth = 0;
   let inString = false;
-  let escape = false;
+  let escaped = false;
   for (let i = startIdx; i < text.length; i++) {
     const ch = text[i];
     if (inString) {
-      if (escape) {
-        escape = false;
+      if (escaped) {
+        escaped = false;
         continue;
       }
       if (ch === "\\") {
-        escape = true;
+        escaped = true;
         continue;
       }
       if (ch === '"') {
