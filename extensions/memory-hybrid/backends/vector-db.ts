@@ -16,10 +16,13 @@ import {
   UUID_REGEX,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
+  VECTORDB_INIT_TIMEOUT_MS,
+  VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
   VECTORDB_READER_DRAIN_TIMEOUT_MS,
 } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
+import { withTimeout } from "../utils/timeout.js";
 
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
@@ -58,6 +61,7 @@ export class VectorDB {
   private logger: VectorDBLogger | null = null;
   private storeCount = 0;
   private optimizePromise: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
+  private initGeneration = 0;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -222,9 +226,7 @@ export class VectorDB {
         // The catch handler inside the promise chain already cleared initPromise on failure;
         // fall through so we can attempt a fresh init below.
       }
-      // Clear after a successful await: _doClose() intentionally preserves the resolved
-      // promise so concurrent callers can serialize on it here, but once awaited it is no
-      // longer needed and would block reconnection if left in place (table may be null).
+      if (this.table && this.semanticQueryCacheTable) return;
       this.initPromise = null;
     }
 
@@ -256,21 +258,46 @@ export class VectorDB {
     if (this.initPromise) return this.initPromise;
     // Note: this handler marks persistent failure (lanceInitFailed). Transient init errors
     // from hot-reload races are handled via close()+ensureInitialized() or resetTableForReindex().
-    this.initPromise = this.doInitialize().catch((err) => {
+
+    // Wrap doInitialize with a timeout to prevent indefinite hangs. Late resolutions are
+    // guarded by an init-generation token so a timed-out init cannot resurrect db/table state.
+    const initGeneration = ++this.initGeneration;
+    const initWithTimeout = async () => {
+      const initTask = this.doInitialize(initGeneration);
+      const result = await withTimeout(VECTORDB_INIT_TIMEOUT_MS, () => initTask);
+      if (result === null) {
+        // Prevent any late doInitialize() continuation from committing state.
+        if (this.initGeneration === initGeneration) this.initGeneration++;
+        try {
+          this.db?.close();
+        } catch {
+          /* ignore close on timeout */
+        }
+        this.db = null;
+        this.table = null;
+        this.semanticQueryCacheTable = null;
+        throw new Error(`VectorDB initialization timed out after ${VECTORDB_INIT_TIMEOUT_MS}ms`);
+      }
+      return result;
+    };
+
+    this.initPromise = initWithTimeout().catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
       const msg = e.message;
       const isHotReloadRace = msg.includes("concurrent re-registration") || msg.includes("initialization aborted");
+      const isTimeout = msg.includes("timed out");
       if (!isHotReloadRace) {
         capturePluginError(e, {
           operation: "vector-db-init",
           subsystem: "vector",
+          timeout: isTimeout,
         });
       } else {
         this.logWarn(`memory-hybrid: VectorDB init aborted during hot reload (benign): ${msg}`);
       }
       this.initPromise = null;
       this.lanceDbAvailable = false;
-      this.lanceInitFailed = true;
+      this.lanceInitFailed = !isTimeout;
       this.schemaValid = false;
       this.table = null;
       this.semanticQueryCacheTable = null;
@@ -289,7 +316,12 @@ export class VectorDB {
     return !this.lanceInitFailed && this.table !== null;
   }
 
-  private async doInitialize(): Promise<void> {
+  private async doInitialize(initGeneration: number): Promise<void> {
+    const assertInitGeneration = () => {
+      if (this.initGeneration !== initGeneration || this.closed) {
+        throw new Error("VectorDB initialization aborted: superseded/timed out during init generation");
+      }
+    };
     this.lanceInitFailed = false;
     this.lanceDbAvailable = true;
     // Reset schema validity on each (re-)init so a fixed table is detected correctly.
@@ -304,6 +336,7 @@ export class VectorDB {
 
     try {
       this.db = await lancedb.connect(resolvedPath);
+      assertInitGeneration();
     } catch (connectErr) {
       // LanceDB is unavailable (e.g., native module failed to load, path is inaccessible,
       // or the storage backend is not supported on this platform). Log a warning and enter
@@ -319,19 +352,23 @@ export class VectorDB {
     }
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
+    assertInitGeneration();
     // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
     if (this.closed)
       throw new Error("VectorDB initialization aborted: closed during connect (concurrent re-registration).");
     const tables = await this.db.tableNames();
+    assertInitGeneration();
     // Guard again after the tableNames() await for the same reason.
     if (!this.db || this.closed)
       throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
+      assertInitGeneration();
       if (!this.db || this.closed)
         throw new Error("VectorDB initialization aborted: closed during openTable (concurrent re-registration).");
       await this.validateOrRepairSchema();
+      assertInitGeneration();
       if (!this.db || this.closed)
         throw new Error(
           "VectorDB initialization aborted: closed during validateOrRepairSchema (concurrent re-registration).",
@@ -348,6 +385,7 @@ export class VectorDB {
           createdAt: 0,
         },
       ]);
+      assertInitGeneration();
       try {
         await this.table.delete('id = "__schema__"');
       } catch (deleteErr) {
@@ -1311,21 +1349,49 @@ export class VectorDB {
       const unique = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
       const CHUNK = 300;
       const acquired = this.acquireReader();
+      let timedOut = false;
       try {
         const table = this.getTable();
+        let processedChunks = 0;
+        const totalChunks = Math.ceil(unique.length / CHUNK);
+
         for (let offset = 0; offset < unique.length; offset += CHUNK) {
           const chunk = unique.slice(offset, offset + CHUNK);
           const inList = chunk.map((id) => `'${this.escapeSqlString(id)}'`).join(", ");
-          const rows = await table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
+
+          const queryPromise = table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
+          const rows = await withTimeout(VECTORDB_GET_VECTORS_TIMEOUT_MS, () => queryPromise);
+
+          if (rows === null) {
+            timedOut = true;
+            this.logWarn(
+              `memory-hybrid: VectorDB getVectorsByFactIds query timed out after ${VECTORDB_GET_VECTORS_TIMEOUT_MS}ms (chunk ${processedChunks + 1}/${totalChunks}, offset=${offset}, size=${chunk.length})`,
+            );
+            // The Lance query is not cancellable. Keep the reader slot until it settles so
+            // optimize/read-drain accounting remains correct even after returning partial results.
+            queryPromise.finally(() => this.releaseReader(acquired)).catch(() => this.releaseReader(acquired));
+            break;
+          }
+
           for (const row of rows) {
             const id = String((row as { id?: unknown }).id ?? "").toLowerCase();
             if (!UUID_REGEX.test(id)) continue;
             const vec = this.vectorColumnToNumbers((row as { vector?: unknown }).vector);
             if (vec && vec.length === this.vectorDim) out.set(id, vec);
           }
+
+          processedChunks++;
+          // Log progress for large batches (every 5 chunks or at the end)
+          if (totalChunks > 10 && (processedChunks % 5 === 0 || processedChunks === totalChunks)) {
+            this.logWarn(
+              `memory-hybrid: VectorDB getVectorsByFactIds progress: ${processedChunks}/${totalChunks} chunks (${out.size} vectors loaded)`,
+            );
+          }
         }
       } finally {
-        this.releaseReader(acquired);
+        // If a chunk timed out, ownership of the reader slot was transferred to the
+        // in-flight query promise's finally handler above.
+        if (typeof timedOut === "undefined" || !timedOut) this.releaseReader(acquired);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1405,6 +1471,7 @@ export class VectorDB {
 
   private _doClose(): void {
     this.closed = true;
+    this.initGeneration++;
     this.closeGeneration++;
     this.lanceInitFailed = false;
     this.lanceDbAvailable = true;
@@ -1418,9 +1485,10 @@ export class VectorDB {
       }
     }
     this.db = null;
-    // Intentionally NOT clearing initPromise here. If doInitialize() is in-flight, the
-    // next ensureInitialized() call will await it before resetting state — preventing a
-    // second concurrent doInitialize() and the associated connection leak / race condition.
+    // Close invalidates any in-flight or previously-resolved init. The generation guard
+    // prevents late init continuations from committing state, and the next caller will
+    // create a single fresh initPromise that concurrent callers share.
+    this.initPromise = null;
   }
 
   /**
@@ -1434,7 +1502,6 @@ export class VectorDB {
     // A persistent connection, once closed (gateway shutdown), should not be
     // re-promoted to managed-lifecycle mode by any remaining callers.
     this.sessionCount = 0;
-    this.closeGeneration++;
     this._doClose();
   }
 

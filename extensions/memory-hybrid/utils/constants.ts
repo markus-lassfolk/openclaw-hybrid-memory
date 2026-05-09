@@ -108,6 +108,18 @@ export const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 /** Timeout (ms) for vectorDB reader drain. */
 export const VECTORDB_READER_DRAIN_TIMEOUT_MS = 30_000;
 
+/** Timeout (ms) for VectorDB initialization (connect + table open). */
+export const VECTORDB_INIT_TIMEOUT_MS = 60_000;
+
+/** Timeout (ms) for VectorDB getVectorsByFactIds batch query. */
+export const VECTORDB_GET_VECTORS_TIMEOUT_MS = 45_000;
+
+/** Timeout (ms) for reflection dedupe corpus loading (all batches).
+ * Set to 900s (15 minutes) to handle large corpora (e.g., 10,687 patterns) with API rate limiting.
+ * With 200ms pause per 20-item batch, this allows ~7,500 API-embedded patterns plus overhead.
+ */
+export const REFLECTION_DEDUPE_LOAD_TIMEOUT_MS = 900_000;
+
 /** LanceDB semantic search: maximum rows to request from vectorSearch (#882). */
 export const LANCE_VECTOR_SEARCH_MAX_LIMIT = 1000;
 
