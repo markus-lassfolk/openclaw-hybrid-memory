@@ -86,6 +86,12 @@ export const NARRATIVE_CHAT_TIMEOUT_MS = 120_000;
 // VectorDB constants
 /** Threshold for warning about consecutive optimize failures. */
 export const VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
+/** Retryable LanceDB commit conflicts: max write retries before surfacing failure. */
+export const VECTORDB_WRITE_CONFLICT_MAX_RETRIES = 4;
+/** Retryable LanceDB commit conflicts: initial backoff delay (ms). */
+export const VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS = 50;
+/** Retryable LanceDB commit conflicts: cap backoff delay (ms). */
+export const VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS = 1000;
 /** Maximum retries for VectorDB initialization during concurrent re-registration. */
 export const VECTORDB_INIT_MAX_RETRIES = 10;
 /** Delay between VectorDB initialization retries (ms). */

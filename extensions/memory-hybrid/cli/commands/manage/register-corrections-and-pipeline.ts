@@ -800,6 +800,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           let res;
+          const followUpFailures: Array<{ phase: string; error: string }> = [];
           try {
             res = await runDreamCycle(verbose ? { verbose: true } : undefined);
           } catch (err) {
@@ -943,6 +944,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
                 subsystem: "cli",
                 operation: "dream-cycle:tool-effectiveness",
               });
+              followUpFailures.push({
+                phase: "tool effectiveness",
+                error: err instanceof Error ? err.message : String(err),
+              });
             }
           }
           // Cost log pruning (Issue #270)
@@ -962,6 +967,13 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
                 subsystem: "cli",
                 operation: "dream-cycle:cost-log-prune",
               });
+            }
+          }
+
+          if (!res.skipped && followUpFailures.length > 0) {
+            console.log(`Dream cycle follow-ups: ${followUpFailures.length} failure(s)`);
+            for (const f of followUpFailures) {
+              console.log(`  - ${f.phase}: ${f.error}`);
             }
           }
         }),

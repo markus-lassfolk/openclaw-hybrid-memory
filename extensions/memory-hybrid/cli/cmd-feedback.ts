@@ -841,7 +841,16 @@ export async function runToolEffectivenessForCli(
   const workflowDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-workflows.db");
   const effectivenessDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
 
-  const effStore = new ToolEffectivenessStore(effectivenessDbPath);
+  let effStore: ToolEffectivenessStore;
+  try {
+    effStore = new ToolEffectivenessStore(effectivenessDbPath);
+  } catch (err) {
+    const baseError = err instanceof Error ? err : new Error(String(err));
+    throw new Error(
+      `tool-effectiveness: failed to open effectiveness DB at ${effectivenessDbPath} (workflowDb=${workflowDbPath}): ${baseError.message}`,
+      { cause: baseError },
+    );
+  }
   try {
     const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
 
