@@ -65,12 +65,22 @@ export function isEmbeddingRateLimitError(err: unknown): boolean {
   return is429OrWrapped(e) || is403QuotaOrRateLimitLike(err);
 }
 
+export interface DedupeHydrationFailedRow {
+  attempts: number;
+  /** Unix seconds. While in the future, this row is skipped so it does not block later rows. */
+  nextRetryAt: number;
+}
+
 export interface DedupeHydrationCheckpoint {
   v: number;
   fp: string;
   model: string;
-  /** Progress into the sorted need-embed index list (0 = none done). */
+  /** Legacy progress into the sorted need-embed index list (0 = none done). */
   nextNeedIdx: number;
+  /** Fact ids known to have been durably hydrated to Lance for this corpus/model. */
+  doneIds?: string[];
+  /** Rows that failed with non-rate-limit errors and should be retried later without blocking the tail. */
+  failed?: Record<string, DedupeHydrationFailedRow>;
   updatedAt: number;
 }
 
@@ -105,11 +115,31 @@ export function readDedupeHydrationCheckpoint(factsDb: FactsDB, stateKey: string
       return null;
     }
     if (typeof o.nextNeedIdx !== "number" || !Number.isFinite(o.nextNeedIdx) || o.nextNeedIdx < 0) return null;
+    const doneIds = Array.isArray(o.doneIds)
+      ? [
+          ...new Set(o.doneIds.filter((id): id is string => typeof id === "string").map((id) => id.toLowerCase())),
+        ].sort()
+      : undefined;
+    const failed: Record<string, DedupeHydrationFailedRow> = {};
+    if (o.failed && typeof o.failed === "object" && !Array.isArray(o.failed)) {
+      for (const [id, raw] of Object.entries(o.failed as Record<string, unknown>)) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+        const r = raw as Partial<DedupeHydrationFailedRow>;
+        if (typeof r.attempts !== "number" || !Number.isFinite(r.attempts)) continue;
+        if (typeof r.nextRetryAt !== "number" || !Number.isFinite(r.nextRetryAt)) continue;
+        failed[id.toLowerCase()] = {
+          attempts: Math.max(1, Math.floor(r.attempts)),
+          nextRetryAt: Math.max(0, Math.floor(r.nextRetryAt)),
+        };
+      }
+    }
     return {
       v: REFLECTION_DEDUPE_CHECKPOINT_VERSION,
       fp: o.fp,
       model: o.model,
       nextNeedIdx: Math.floor(o.nextNeedIdx),
+      doneIds: doneIds && doneIds.length > 0 ? doneIds : undefined,
+      failed: Object.keys(failed).length > 0 ? failed : undefined,
       updatedAt: typeof o.updatedAt === "number" ? o.updatedAt : Math.floor(Date.now() / 1000),
     };
   } catch {

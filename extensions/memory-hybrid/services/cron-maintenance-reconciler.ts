@@ -367,13 +367,11 @@ export function reconcileHybridMemCronMaintenanceOutcomes(
           .split("\n")
           .filter((line) => line.trim().length > 0)
           .map((line) => readJsonString(line) ?? line);
-        const patchedByTs = new Map(records.map((r) => [String(r.ts ?? `${r.jobId}:${r.summary}`), r]));
-        const merged = allRecords.map((entry) => {
+        const tailStart = Math.max(0, allRecords.length - records.length);
+        const merged = allRecords.map((entry, idx) => {
           if (typeof entry === "string") return entry;
-          const key = String(
-            (entry as CronRunRecord).ts ?? `${(entry as CronRunRecord).jobId}:${(entry as CronRunRecord).summary}`,
-          );
-          return patchedByTs.get(key) ?? entry;
+          if (idx < tailStart) return entry;
+          return records[idx - tailStart] ?? entry;
         });
         writeFileSync(
           runPath,

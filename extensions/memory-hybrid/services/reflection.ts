@@ -40,6 +40,7 @@ import {
   readDedupeHydrationCheckpoint,
   REFLECTION_DEDUPE_CHECKPOINT_VERSION,
   reflectionLexicalNearDuplicateAgainstFact,
+  type DedupeHydrationFailedRow,
   writeDedupeHydrationCheckpoint,
   type DedupeCorpusCheckpointKind,
   type ReflectionDedupeHydrationResolved,
@@ -132,6 +133,8 @@ export interface ReflectionDedupeCorpusOptions {
   progressLabel?: string;
   /** When set, persist/resume hydration cursor across runs (#1229). */
   checkpoint?: ReflectionDedupeCorpusCheckpointOpts;
+  /** When false, checkpoint state is read for resume but never mutated (dry-run semantics). */
+  persistCheckpoint?: boolean;
   /** Throttle + cap; default depends on checkpoint (dream-cycle vs consolidate). */
   hydrationPolicy?: ReflectionDedupeHydrationResolved;
 }
@@ -183,21 +186,35 @@ export async function loadReflectionDedupeCorpusVectors(
       ) => Promise<Map<string, number[]>>;
       isMemoriesVectorSchemaValid?: () => boolean;
       isLanceAvailable?: () => boolean;
+      isLanceDbAvailable?: () => boolean;
+      store?: (entry: {
+        text: string;
+        vector: number[];
+        importance: number;
+        category: string;
+        id: string;
+      }) => Promise<string>;
     };
     const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
     let byId = new Map<string, number[]>();
     const lanceSchemaOk =
       typeof vdb.isMemoriesVectorSchemaValid === "function" ? vdb.isMemoriesVectorSchemaValid() : true;
-    const lanceUp = typeof vdb.isLanceAvailable === "function" ? vdb.isLanceAvailable() : true;
+    const lanceDbAvailable =
+      typeof vdb.isLanceDbAvailable === "function"
+        ? vdb.isLanceDbAvailable()
+        : typeof vdb.isLanceAvailable === "function"
+          ? vdb.isLanceAvailable()
+          : true;
 
     if (verbose && facts.length > 0) {
       logger.info(
-        `${logPrefix} — ${progressLabel}: starting (${facts.length} row(s); Lance available=${lanceUp}, memories vector schema valid=${lanceSchemaOk}, embedModel=${embeddings.modelName ?? "unknown"}; maxEmbedsPerRun=${policy.maxEmbedsPerRun || "∞"}, minIntervalMs=${policy.minIntervalMsBetweenEmbeds})`,
+        `${logPrefix} — ${progressLabel}: starting (${facts.length} row(s); Lance DB available=${lanceDbAvailable}, memories vector schema valid=${lanceSchemaOk}, embedModel=${embeddings.modelName ?? "unknown"}; maxEmbedsPerRun=${policy.maxEmbedsPerRun || "∞"}, minIntervalMs=${policy.minIntervalMsBetweenEmbeds})`,
       );
     }
 
     const prefetchStart = Date.now();
     if (typeof vdb.getVectorsByFactIds === "function") {
+      let lanceBulkFetchFailed = false;
       try {
         if (verbose) {
           logger.info(
@@ -216,10 +233,17 @@ export async function loadReflectionDedupeCorpusVectors(
               }
             : undefined,
         );
-      } catch {
+      } catch (err) {
+        lanceBulkFetchFailed = true;
         byId = new Map();
+        if (verbose) {
+          const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+          logWarn(
+            `${logPrefix} — ${progressLabel}: Lance bulk fetch failed — falling back to embedding API/lexical fallback where needed, elapsed=${formatElapsedSec(prefetchStart)}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
-      if (verbose) {
+      if (verbose && !lanceBulkFetchFailed) {
         logger.info(
           `${logPrefix} — ${progressLabel}: Lance bulk fetch done — ${byId.size} vector(s) present in Lance for requested ids, elapsed=${formatElapsedSec(prefetchStart)}`,
         );
@@ -254,18 +278,25 @@ export async function loadReflectionDedupeCorpusVectors(
     const fp = computeDedupeCorpusFingerprint(sortedIds, modelKey);
     const stateKey = corpusOpts?.checkpoint ? dedupeHydrationStateKey(corpusOpts.checkpoint.kind) : "";
 
-    let nextK = 0;
+    let failedRows: Record<string, DedupeHydrationFailedRow> = {};
+    let doneIds = new Set<string>();
     if (corpusOpts?.checkpoint) {
       const cp = readDedupeHydrationCheckpoint(corpusOpts.checkpoint.factsDb, stateKey);
       if (cp && cp.fp === fp && cp.model === modelKey) {
-        nextK = Math.min(cp.nextNeedIdx, needEmbedIndices.length);
+        failedRows = { ...(cp.failed ?? {}) };
+        doneIds = new Set((cp.doneIds ?? []).map((id) => id.toLowerCase()));
       }
     }
 
-    let checkpointNextIdx = nextK;
+    for (let j = 0; j < facts.length; j++) {
+      if (result[j] !== null) doneIds.add(facts[j]!.id.toLowerCase());
+    }
+
+    let checkpointNextIdx = 0;
     let apiEmbedsThisRun = 0;
     let deferredDueToRateLimit = false;
     let deferredDueToCap = false;
+    let deferredDueToEmbeddingFailure = false;
     let lastEmbedAt = 0;
     let consecutive429 = 0;
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -273,17 +304,40 @@ export async function loadReflectionDedupeCorpusVectors(
     hb.needTotal = needEmbedIndices.length;
 
     const persistCheckpoint = (nextNeedIdx: number) => {
-      checkpointNextIdx = nextNeedIdx;
-      if (!corpusOpts?.checkpoint) return;
+      checkpointNextIdx = Math.max(checkpointNextIdx, nextNeedIdx);
+      if (!corpusOpts?.checkpoint || corpusOpts.persistCheckpoint === false) return;
+      const failed = Object.fromEntries(Object.entries(failedRows).sort(([a], [b]) => a.localeCompare(b)));
       writeDedupeHydrationCheckpoint(corpusOpts.checkpoint.factsDb, stateKey, {
         v: REFLECTION_DEDUPE_CHECKPOINT_VERSION,
         fp,
         model: modelKey,
-        nextNeedIdx,
+        nextNeedIdx: checkpointNextIdx,
+        doneIds: [...doneIds].sort(),
+        failed: Object.keys(failed).length > 0 ? failed : undefined,
       });
     };
 
-    for (let kk = nextK; kk < needEmbedIndices.length; kk++) {
+    const retryDelaySec = (attempts: number) => Math.min(24 * 60 * 60, 60 * 2 ** Math.max(0, attempts - 1));
+    const nowSecForRetry = () => Math.floor(Date.now() / 1000);
+    const markEmbeddingFailure = (factId: string, kk: number) => {
+      const id = factId.toLowerCase();
+      const prev = failedRows[id];
+      const attempts = (prev?.attempts ?? 0) + 1;
+      failedRows[id] = { attempts, nextRetryAt: nowSecForRetry() + retryDelaySec(attempts) };
+      persistCheckpoint(kk + 1);
+    };
+
+    const workKs: number[] = [];
+    const nowRetry = nowSecForRetry();
+    for (let kk = 0; kk < needEmbedIndices.length; kk++) {
+      const f = facts[needEmbedIndices[kk]!]!;
+      const failed = failedRows[f.id.toLowerCase()];
+      const retryDue = !failed || failed.nextRetryAt <= nowRetry;
+      if (doneIds.has(f.id.toLowerCase()) && !failed) continue;
+      if (retryDue) workKs.push(kk);
+    }
+
+    for (const kk of workKs) {
       hb.needK = kk;
       if (policy.maxEmbedsPerRun > 0 && apiEmbedsThisRun >= policy.maxEmbedsPerRun) {
         deferredDueToCap = true;
@@ -302,9 +356,38 @@ export async function loadReflectionDedupeCorpusVectors(
       let done = false;
       while (!done && !deferredDueToRateLimit) {
         try {
-          const vec = await embeddings.embed(f.text);
-          result[j] = normalizeVector(vec);
           apiEmbedsThisRun++;
+          hb.apiEmbeds = apiEmbedsThisRun;
+          const vec = await embeddings.embed(f.text);
+          const normVec = normalizeVector(vec);
+          // If we are going to advance a durable checkpoint, the newly-hydrated vector
+          // must be durable too. Otherwise a later run resumes past this row while Lance
+          // still lacks the vector, permanently forcing lexical fallback for that prefix.
+          if (corpusOpts?.checkpoint && corpusOpts.persistCheckpoint !== false && typeof vdb.store === "function") {
+            try {
+              await vdb.store({
+                id: f.id,
+                text: f.text,
+                vector: normVec,
+                importance: f.importance ?? 0.5,
+                category: f.category,
+              });
+            } catch (storeErr) {
+              const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+              logWarn(
+                `${logPrefix} — ${progressLabel}: vector persistence failed for hydrated backlog item ${kk + 1}/${needEmbedIndices.length} (factId=${f.id}); leaving checkpoint at ${kk} so it can be retried next run: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`,
+              );
+              result[j] = normVec;
+              consecutive429 = 0;
+              deferredDueToEmbeddingFailure = true;
+              markEmbeddingFailure(f.id, kk);
+              done = true;
+              break;
+            }
+          }
+          result[j] = normVec;
+          doneIds.add(f.id.toLowerCase());
+          delete failedRows[f.id.toLowerCase()];
           consecutive429 = 0;
           lastEmbedAt = Date.now();
           done = true;
@@ -341,8 +424,14 @@ export async function loadReflectionDedupeCorpusVectors(
                 factId: f.id,
               });
             }
+            const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+            logWarn(
+              `${logPrefix} — ${progressLabel}: embedding failed for backlog item ${kk + 1}/${needEmbedIndices.length} (factId=${f.id}); leaving checkpoint at ${kk} so it can be retried next run: ${err instanceof Error ? err.message : String(err)}`,
+            );
             result[j] = null;
             consecutive429 = 0;
+            deferredDueToEmbeddingFailure = true;
+            markEmbeddingFailure(f.id, kk);
             done = true;
           }
         }
@@ -360,15 +449,25 @@ export async function loadReflectionDedupeCorpusVectors(
       }
     }
 
+    if (!deferredDueToRateLimit && !deferredDueToCap) {
+      persistCheckpoint(needEmbedIndices.length);
+    }
+
+    checkpointNextIdx = needEmbedIndices.filter((idx) => doneIds.has(facts[idx]!.id.toLowerCase())).length;
+    const failedRowCount = Object.keys(failedRows).length;
     const nonNull = result.filter((v) => v !== null).length;
-    const complete = !deferredDueToRateLimit && !deferredDueToCap;
+    const complete =
+      !deferredDueToRateLimit &&
+      !deferredDueToCap &&
+      failedRowCount === 0 &&
+      checkpointNextIdx >= needEmbedIndices.length;
     const remainingNeed = Math.max(0, needEmbedIndices.length - checkpointNextIdx);
 
     if (facts.length > 0) {
       logger.info(
-        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbedsThisRun} via embedding API, ${nonNull}/${facts.length} non-null for cosine check` +
-          (deferredDueToRateLimit || deferredDueToCap
-            ? ` | backlog need_embed_total=${needEmbedIndices.length} remaining=${remainingNeed} checkpoint_nextNeedIdx=${checkpointNextIdx} deferred429=${deferredDueToRateLimit ? 1 : 0} deferredCap=${deferredDueToCap ? 1 : 0} (#1229)`
+        `${logPrefix} — ${progressLabel}: ${lanceHits} vector(s) reused from Lance index, ${apiEmbedsThisRun} via embedding API, ${nonNull}/${facts.length} non-null for cosine check` +
+          (deferredDueToRateLimit || deferredDueToCap || deferredDueToEmbeddingFailure || failedRowCount > 0
+            ? ` | backlog need_embed_total=${needEmbedIndices.length} remaining=${remainingNeed} checkpoint_nextNeedIdx=${checkpointNextIdx} deferred429=${deferredDueToRateLimit ? 1 : 0} deferredCap=${deferredDueToCap ? 1 : 0} failedRows=${failedRowCount} (#1229)`
             : ""),
       );
     }
@@ -585,6 +684,7 @@ export async function runReflection(
         verbose: opts.verbose,
         progressLabel: "reflection dedupe (existing corpus)",
         checkpoint: { factsDb, kind: "pattern" },
+        persistCheckpoint: !opts.dryRun,
         hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
       },
     );
@@ -864,6 +964,7 @@ export async function runReflectionRules(
         verbose: opts.verbose,
         progressLabel: "reflect-rules dedupe (existing corpus)",
         checkpoint: { factsDb, kind: "rule" },
+        persistCheckpoint: !opts.dryRun,
         hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
       },
     );
@@ -1130,6 +1231,7 @@ export async function runReflectionMeta(
         verbose: opts.verbose,
         progressLabel: "reflect-meta dedupe (existing corpus)",
         checkpoint: { factsDb, kind: "meta" },
+        persistCheckpoint: !opts.dryRun,
         hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
       },
     );

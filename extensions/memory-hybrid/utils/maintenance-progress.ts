@@ -27,7 +27,12 @@ export async function withVerboseHeartbeat<T>(opts: {
   const intervalMs = opts.intervalMs ?? MAINTENANCE_VERBOSE_HEARTBEAT_MS;
   const phaseStart = Date.now();
   const id = setInterval(() => {
-    opts.log(`${opts.prefix} — heartbeat elapsed=${formatElapsedSec(phaseStart)} | ${opts.detail()}`);
+    try {
+      opts.log(`${opts.prefix} — heartbeat elapsed=${formatElapsedSec(phaseStart)} | ${opts.detail()}`);
+    } catch {
+      // Heartbeats are best-effort observability only; never let a logging/detail
+      // failure crash the maintenance task that the heartbeat is observing.
+    }
   }, intervalMs);
   try {
     return await opts.fn();

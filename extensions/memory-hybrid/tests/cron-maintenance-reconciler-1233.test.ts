@@ -115,6 +115,54 @@ describe("cron maintenance outcome reconciler (#1233)", () => {
     expect(readJson(join(cronDir, "jobs.json")).jobs[0].state.consecutiveErrors).toBe(3);
   });
 
+  it("patches duplicate-timestamp run records by tail position, not by timestamp key", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-cron-reconcile-"));
+    const cronDir = join(openclawDir, "cron");
+    const runsDir = join(cronDir, "runs");
+    mkdirSync(runsDir, { recursive: true });
+    const runAtMs = Date.now();
+    writeFileSync(
+      join(cronDir, "jobs.json"),
+      JSON.stringify({
+        jobs: [{ id: "hybrid-mem:nightly-dream-cycle", state: { lastRunAtMs: runAtMs, consecutiveErrors: 0 } }],
+      }),
+      "utf-8",
+    );
+    const goodSummary = "SUCCESS";
+    const badSummary = `1. **FAILED**
+
+\`\`\`json
+${JSON.stringify({ maintenanceStatus: "failed", error: "Missing steps: dream-cycle", missingSteps: ["dream-cycle"] })}
+\`\`\``;
+    const runPath = join(runsDir, "hybrid-mem:nightly-dream-cycle.jsonl");
+    writeFileSync(
+      runPath,
+      [
+        JSON.stringify({
+          ts: runAtMs,
+          jobId: "hybrid-mem:nightly-dream-cycle",
+          status: "ok",
+          summary: goodSummary,
+          runAtMs,
+        }),
+        JSON.stringify({
+          ts: runAtMs,
+          jobId: "hybrid-mem:nightly-dream-cycle",
+          status: "ok",
+          summary: badSummary,
+          runAtMs,
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const result = reconcileHybridMemCronMaintenanceOutcomes({}, { openclawDir, nowMs: runAtMs + 1000 });
+    const [first, second] = readJsonl(runPath);
+    expect(result.runsCorrected).toBe(1);
+    expect(first.status).toBe("ok");
+    expect(second.status).toBe("error");
+  });
+
   it("leaves successful ok runs unchanged", () => {
     const openclawDir = mkdtempSync(join(tmpdir(), "hm-cron-reconcile-"));
     const cronDir = join(openclawDir, "cron");
