@@ -6,7 +6,7 @@
  * re-index aborts partway through embedding migration.
  */
 
-import { existsSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -106,7 +106,7 @@ describe("VectorDB shadow table creation", () => {
     // Create a second shadow table - should get a different timestamp and succeed
     // (timestamps are millisecond precision, but tests run fast enough they might collide)
     // Wait a millisecond to ensure different timestamp
-    await new Promise(resolve => setTimeout(resolve, 2));
+    await new Promise((resolve) => setTimeout(resolve, 2));
     const shadowTableName2 = await vectorDb.createShadowTable();
 
     // Verify we got two different shadow tables
@@ -160,7 +160,7 @@ describe("VectorDB shadow table swap", () => {
     expect(mainTableRowCountAfter).toBe(12);
 
     // Verify old table directory was removed
-    const oldTablePattern = new RegExp(`memories_old_\\d+\\.lance`);
+    const oldTablePattern = /memories_old_\d+\.lance/;
     const files = existsSync(testDbPath) ? readdirSync(testDbPath) : [];
     const oldTableExists = files.some((f: string) => oldTablePattern.test(f));
     expect(oldTableExists).toBe(false);
