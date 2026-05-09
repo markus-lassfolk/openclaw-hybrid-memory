@@ -221,11 +221,17 @@ export async function loadReflectionDedupeCorpusVectors(
                   category: f.category,
                   id: f.id,
                 });
-                if (embeddings.modelName && markEmbeddingModel) {
-                  markEmbeddingModel(f.id, embeddings.modelName);
-                }
                 apiPersisted++;
                 batchPersisted++;
+                if (embeddings.modelName && markEmbeddingModel) {
+                  try {
+                    markEmbeddingModel(f.id, embeddings.modelName);
+                  } catch (markErr) {
+                    logger.info(
+                      `${logPrefix} — dedupe corpus: failed to mark embedding model for persisted fact ${f.id}: ${markErr}`,
+                    );
+                  }
+                }
               } catch (storeErr) {
                 apiPersistFailures++;
                 batchPersistFailures++;
