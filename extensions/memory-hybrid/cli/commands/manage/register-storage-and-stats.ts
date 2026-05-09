@@ -1161,52 +1161,58 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const errors: string[] = [];
           let embedded = 0;
           let skipped = 0;
+          let storeFailures = 0;
+          let embedFailures = 0;
           if (opts?.apply) {
-            for (let offset = 0; offset < candidates.length; offset += batchSize) {
-              const batch = candidates.slice(offset, offset + batchSize);
-              let vectors: (number[] | null)[];
-              try {
-                vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
-              } catch (err) {
-                vectors = [];
-                for (const fact of batch) {
-                  try {
-                    vectors.push(await embeddings.embed(fact.text));
-                  } catch (singleErr) {
-                    errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
-                    vectors.push(null);
-                  }
-                }
-              }
-              for (let i = 0; i < batch.length; i++) {
-                const fact = batch[i];
-                const vec = vectors[i];
-                if (!vec || vec.length === 0) {
-                  skipped++;
-                  continue;
-                }
+            await vectorDb.runWithAutoOptimizePaused(async () => {
+              for (let offset = 0; offset < candidates.length; offset += batchSize) {
+                const batch = candidates.slice(offset, offset + batchSize);
+                let vectors: (number[] | null)[];
                 try {
-                  try {
-                    await vectorDb.delete(fact.id);
-                  } catch {
-                    // Missing Lance row is the normal case for vectorless repair.
-                  }
-                  await vectorDb.store({
-                    id: fact.id,
-                    text: fact.text,
-                    vector: vec,
-                    importance: 0.5,
-                    category: fact.category,
-                  });
-                  factsDb.storeEmbedding(fact.id, embeddings.modelName, "canonical", new Float32Array(vec), vec.length);
-                  factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
-                  embedded++;
+                  vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
                 } catch (err) {
-                  errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
-                  skipped++;
+                  vectors = [];
+                  for (const fact of batch) {
+                    try {
+                      vectors.push(await embeddings.embed(fact.text));
+                    } catch (singleErr) {
+                      errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
+                      embedFailures++;
+                      vectors.push(null);
+                    }
+                  }
+                }
+                for (let i = 0; i < batch.length; i++) {
+                  const fact = batch[i];
+                  const vec = vectors[i];
+                  if (!vec || vec.length === 0) {
+                    skipped++;
+                    continue;
+                  }
+                  try {
+                    try {
+                      await vectorDb.delete(fact.id);
+                    } catch {
+                      // Missing Lance row is the normal case for vectorless repair.
+                    }
+                    await vectorDb.store({
+                      id: fact.id,
+                      text: fact.text,
+                      vector: vec,
+                      importance: 0.5,
+                      category: fact.category,
+                    });
+                    factsDb.storeEmbedding(fact.id, embeddings.modelName, "canonical", new Float32Array(vec), vec.length);
+                    factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+                    embedded++;
+                  } catch (err) {
+                    errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
+                    storeFailures++;
+                    skipped++;
+                  }
                 }
               }
-            }
+            });
           }
           const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
           const report = {
@@ -1216,15 +1222,20 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             considered: candidates.length,
             embedded,
             skipped,
+            embedFailures,
+            storeFailures,
             errors,
             after,
           };
+          if (opts?.apply && storeFailures > 0) {
+            process.exitCode = 2;
+          }
           if (opts?.json) {
             console.log(JSON.stringify(report, null, 2));
             return;
           }
           console.log(
-            `Reembed vectorless ${report.apply ? "applied" : "dry-run"}: before ${before}, candidates ${candidates.length}, embedded ${embedded}, skipped ${skipped}, after ${after}`,
+            `Reembed vectorless ${report.apply ? "applied" : "dry-run"}: before ${before}, candidates ${candidates.length}, embedded ${embedded}, skipped ${skipped}, storeFailures ${storeFailures}, after ${after}`,
           );
           if (candidates.length > 0 && !opts?.apply) {
             console.log("Examples:");
@@ -1236,6 +1247,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           if (errors.length > 0) {
             console.warn(`Errors: ${errors.length}`);
             for (const err of errors.slice(0, 10)) console.warn(`  - ${err}`);
+          }
+          if (opts?.apply && storeFailures > 0) {
+            console.warn(`Partial success: ${storeFailures} vector store failure(s) remained after retries (exit=2).`);
           }
         },
       ),
