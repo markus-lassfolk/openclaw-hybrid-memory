@@ -35,6 +35,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -671,6 +672,15 @@ export async function runReflection(
         category: "pattern",
         id: entry.id,
       });
+      persistCanonicalFactEmbedding(
+        factsDb,
+        entry.id,
+        embeddings.modelName,
+        vec,
+        "reflection-fact-embeddings",
+        "reflection",
+        logger.warn?.bind(logger),
+      );
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
@@ -917,6 +927,15 @@ export async function runReflectionRules(
         category: "rule",
         id: entry.id,
       });
+      persistCanonicalFactEmbedding(
+        factsDb,
+        entry.id,
+        embeddings.modelName,
+        vec,
+        "reflection-fact-embeddings",
+        "reflection",
+        logger.warn?.bind(logger),
+      );
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
@@ -1144,6 +1163,15 @@ export async function runReflectionMeta(
         category: "pattern",
         id: entry.id,
       });
+      persistCanonicalFactEmbedding(
+        factsDb,
+        entry.id,
+        embeddings.modelName,
+        vec,
+        "reflection-fact-embeddings",
+        "reflection",
+        logger.warn?.bind(logger),
+      );
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);

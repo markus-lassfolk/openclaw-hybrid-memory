@@ -10,7 +10,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildAuditHealthReport } from "../cli/commands/manage/register-storage-and-stats.js";
+import {
+  buildAuditHealthReport,
+  recordStorageGrowthSample,
+} from "../cli/commands/manage/register-storage-and-stats.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -55,6 +58,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
       implicitFeedbackPrefixHistogram: expect.any(Array),
     });
     expect(Array.isArray(report.entityStopwordMatches)).toBe(true);
+    expect(Array.isArray(report.topEntitiesFiltered)).toBe(true);
     expect(report.storage).toMatchObject({
       sqliteBytes: expect.any(Number),
       lanceBytes: 4096,
@@ -155,6 +159,33 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(report.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(report.errors.some((e) => e.message.includes("timeout budget exceeded"))).toBe(true);
     expect(report.categories.unknown).toEqual([{ category: "off-roster", count: 0 }]);
+    db.close();
+  });
+
+  it("suggests reflect-meta collapse when implicit-feedback pattern bloat is high", () => {
+    const db = new FactsDB(":memory:");
+    for (let i = 0; i < 1001; i++) {
+      db.store({
+        text: `implicit feedback pattern text ${i} for histogram`,
+        category: "pattern",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "implicit-feedback",
+      });
+    }
+    const report = buildAuditHealthReport(db as never, () => ["pattern"], [], 500);
+    expect(report.remediation.some((r) => r.includes("reflect-meta --collapse-implicit-feedback"))).toBe(true);
+    db.close();
+  });
+
+  it("recordStorageGrowthSample inserts once per UTC day", () => {
+    const db = new FactsDB(":memory:");
+    const a = recordStorageGrowthSample(db as never, 4096);
+    expect(a.inserted).toBe(true);
+    const b = recordStorageGrowthSample(db as never, 8192);
+    expect(b.inserted).toBe(false);
     db.close();
   });
 });

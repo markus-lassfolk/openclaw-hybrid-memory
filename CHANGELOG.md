@@ -29,8 +29,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Per-run row limit of 2000 prevents unbounded backlog work
   - Enhanced logging shows 429 counts, throttle delays, and deferred rows
   - New test suite validates throttling behavior
+- **`record-storage-sample` CLI** and **daily cron** (`daily-storage-growth-sample`) so `audit health` can compute **7d storage deltas** without relying on weekly audit-only inserts.
+- **Sunday maintenance crons**: `weekly-implicit-feedback-collapse` (`reflect-meta --collapse-implicit-feedback --include-legacy`) and `weekly-vectordb-optimize-sunday`.
+- **Default memory categories**: `forge`, `monitoring`, `ops_status`, `ops_summary`, `coding_task`, `quality_loop`, `topic_labels` (remap legacy `forge_*` → `forge` via `categories remap`).
+- **Operator doc**: `docs/AUDIT-REMEDIATION-SPIKES.md` (runbook + spike notes).
 
 ### Changed
+
+- **Audit health**: larger implicit-feedback prefix histogram cap (20k), truncation message includes total pattern count; **reflect-meta collapse** remediation; **top entities (filtered)** line; drop confusing `legacy ok=` markdown suffix; JSON adds `topEntitiesFiltered`.
+- **Canonical embeddings on ingest**: auto-capture + reflection now call `factsDb.storeEmbedding` when embedding, aligning Lance with `fact_embeddings` / vectorless audit.
+- **Procedure triage**: implied success when `last_validated` is set but `success_count` and version successes are still zero (fixes spurious `low_recall`).
+- **SDK types**: optional `registerContextEngine` on `openclaw/plugin-sdk/core` shim.
 
 ---
 

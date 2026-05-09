@@ -10,6 +10,14 @@ export const DEFAULT_MEMORY_CATEGORIES = [
   "rule",
   "edict",
   "other",
+  /** Operational / agent categories (audit #1193 — avoids “unknown category” drift on long-lived stores). Remap legacy `forge_*` → `forge` via `categories remap`. */
+  "forge",
+  "monitoring",
+  "ops_status",
+  "ops_summary",
+  "coding_task",
+  "quality_loop",
+  "topic_labels",
 ] as const;
 
 /** Runtime categories: starts as defaults, extended by config */

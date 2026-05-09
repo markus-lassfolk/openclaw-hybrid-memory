@@ -406,6 +406,62 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Daily 04:05 | daily-storage-growth-sample | record-storage-sample (7d deltas in audit-health)
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}daily-storage-growth-sample`,
+    sessionTarget: "isolated",
+    name: "daily-storage-growth-sample",
+    schedule: { kind: "cron", expr: "5 4 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("daily-storage-growth-sample", {
+      preamble:
+        "Daily hybrid-memory storage sample. Idempotent per UTC day; ensures audit-health can compute 7d growth deltas.",
+      steps: [{ name: "record-storage-sample", cmd: "openclaw hybrid-mem record-storage-sample" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
+  // Sunday 04:30 | weekly-implicit-feedback-collapse | reflect-meta collapse (before audit-health)
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-implicit-feedback-collapse`,
+    sessionTarget: "isolated",
+    name: "weekly-implicit-feedback-collapse",
+    schedule: { kind: "cron", expr: "30 4 * * 0" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-implicit-feedback-collapse", {
+      preamble:
+        "Collapse near-duplicate implicit-feedback patterns. Omit dry-run — this job applies mutations. Log scanned/collapsed counts.",
+      steps: [
+        {
+          name: "reflect-meta-collapse",
+          cmd: "openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy --threshold 0.8 --limit 1000",
+        },
+      ],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+  // Sunday 04:45 | weekly-vectordb-optimize-sunday | Lance compact + prune (before audit-health)
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-vectordb-optimize-sunday`,
+    sessionTarget: "isolated",
+    name: "weekly-vectordb-optimize-sunday",
+    schedule: { kind: "cron", expr: "45 4 * * 0" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-vectordb-optimize-sunday", {
+      preamble: "Weekly LanceDB optimize (Sunday). Report compacted fragments and bytes freed.",
+      steps: [{ name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize --older-than-days 7" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
   // Sunday 05:00 | weekly-audit-health | audit health --strict --json
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`,

@@ -28,10 +28,11 @@ import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
@@ -459,6 +460,15 @@ async function runCapture(
                             category,
                             id: newEntry.id,
                           });
+                          persistCanonicalFactEmbedding(
+                            ctx.factsDb,
+                            newEntry.id,
+                            ctx.embeddings.modelName,
+                            vector,
+                            "auto-capture-fact-embeddings",
+                            "auto-capture",
+                            api.logger.warn?.bind(api.logger),
+                          );
                         }
                       }
                     } catch (vecErr) {
@@ -546,6 +556,15 @@ async function runCapture(
                   category,
                   id: storedEntry.id,
                 });
+                persistCanonicalFactEmbedding(
+                  ctx.factsDb,
+                  storedEntry.id,
+                  ctx.embeddings.modelName,
+                  vector,
+                  "auto-capture-fact-embeddings",
+                  "auto-capture",
+                  api.logger.warn?.bind(api.logger),
+                );
               }
             }
           } catch (vecErr) {
@@ -805,6 +824,15 @@ async function runCapture(
                       category: "technical",
                       id: entry.id,
                     });
+                    persistCanonicalFactEmbedding(
+                      ctx.factsDb,
+                      entry.id,
+                      ctx.embeddings.modelName,
+                      vector,
+                      "auto-capture-fact-embeddings",
+                      "auto-capture",
+                      api.logger.warn?.bind(api.logger),
+                    );
                   }
                 } catch (err) {
                   const asErr = err instanceof Error ? err : new Error(String(err));
