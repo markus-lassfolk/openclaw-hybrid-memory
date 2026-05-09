@@ -1240,7 +1240,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
   mem
     .command("re-index")
     .description(
-      "Reset LanceDB vector index and re-embed all facts from SQLite (use after switching embedding model, e.g. to a larger one).",
+      "Re-embed all facts into a shadow table, validate, and atomically swap into place. Non-destructive: aborted runs preserve the live vector store (use after switching embedding model, e.g. to a larger one).",
     )
     .option("--batch-size <n>", "Facts per embed batch (default: 50)", "50")
     .option(
@@ -1248,49 +1248,156 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       "Pause between embedding batches in ms (default: 0). On Azure/APIM with tight RPM, try 2000 — see docs/TROUBLESHOOTING.md and issue #940.",
       "0",
     )
+    .option(
+      "--min-fraction-success <n>",
+      "Minimum fraction of facts that must be successfully embedded (0.0-1.0, default: 0.95). Re-index aborts without swapping if fewer facts are migrated.",
+      "0.95",
+    )
     .action(
-      withExit(async (opts?: { batchSize?: string; delayMsBetweenBatches?: string }) => {
-        const batchSize = Math.max(1, Math.min(500, Number.parseInt(String(opts?.batchSize ?? "50"), 10) || 50));
-        const delayMsBetweenBatches = Math.max(
-          0,
-          Math.min(120_000, Number.parseInt(String(opts?.delayMsBetweenBatches ?? "0"), 10) || 0),
-        );
-        console.log("Re-index: resetting LanceDB table...");
-        await vectorDb.resetTableForReindex();
-        console.log("Re-index: re-embedding all facts (this may take a while)...");
-        const result = await migrateEmbeddings({
-          factsDb,
-          vectorDb,
-          embeddings,
-          batchSize,
-          delayMsBetweenBatches,
-          onProgress: (completed, total) => {
-            if (total > 0 && completed % Math.max(1, Math.floor(total / 10)) === 0) {
-              process.stdout.write(`  ${completed}/${total} facts embedded...\r`);
-            }
-          },
-          logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
-        });
-        if (result.aborted) {
-          console.error(
-            `Re-index FAILED: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
-              `(processed ${result.processed}/${result.total}) — vector store is in a partial state.`,
+      withExit(
+        async (opts?: {
+          batchSize?: string;
+          delayMsBetweenBatches?: string;
+          minFractionSuccess?: string;
+        }) => {
+          const batchSize = Math.max(1, Math.min(500, Number.parseInt(String(opts?.batchSize ?? "50"), 10) || 50));
+          const delayMsBetweenBatches = Math.max(
+            0,
+            Math.min(120_000, Number.parseInt(String(opts?.delayMsBetweenBatches ?? "0"), 10) || 0),
           );
-          console.error(`Reason: ${result.abortReason ?? "unknown"}`);
-          console.error("Recommendation: Re-run 'openclaw hybrid-mem re-index' to complete the migration.");
-          process.exitCode = 1;
-          return;
-        }
-        console.log(
-          `Re-index complete: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors.`,
-        );
-        if (result.errors.length > 0 && result.errors.length <= 10) {
-          for (const e of result.errors) console.warn(`  - ${e}`);
-        } else if (result.errors.length > 10) {
-          console.warn(`  (${result.errors.length} errors; first 5:)`);
-          for (const e of result.errors.slice(0, 5)) console.warn(`  - ${e}`);
-        }
-      }),
+          const minFractionSuccess = Math.max(
+            0.0,
+            Math.min(1.0, Number.parseFloat(String(opts?.minFractionSuccess ?? "0.95")) || 0.95),
+          );
+
+          // Get total facts for validation
+          const totalFacts =
+            typeof (factsDb as { getCount?: unknown }).getCount === "function"
+              ? (factsDb as { getCount: (opts: { includeSuperseded: boolean }) => number }).getCount({
+                  includeSuperseded: false,
+                })
+              : factsDb.getAll({ includeSuperseded: false }).length;
+
+          console.log(`Re-index: starting non-destructive re-index of ${totalFacts} facts...`);
+          console.log(`Re-index: creating shadow table for safe rebuild...`);
+
+          let shadowTableName: string;
+          try {
+            shadowTableName = await vectorDb.createShadowTable();
+          } catch (err) {
+            console.error(`Re-index failed: unable to create shadow table: ${err}`);
+            process.exit(1);
+          }
+
+          console.log(`Re-index: embedding all facts into shadow table (this may take a while)...`);
+          const result = await migrateEmbeddings({
+            factsDb,
+            vectorDb,
+            embeddings,
+            batchSize,
+            delayMsBetweenBatches,
+            targetTableName: shadowTableName,
+            onProgress: (completed, total) => {
+              if (total > 0 && completed % Math.max(1, Math.floor(total / 10)) === 0) {
+                process.stdout.write(`  ${completed}/${total} facts embedded...\r`);
+              }
+            },
+            logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+          });
+
+          console.log(
+            `\nRe-index: migration complete — ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors.`,
+          );
+
+          if (result.errors.length > 0 && result.errors.length <= 10) {
+            for (const e of result.errors) console.warn(`  - ${e}`);
+          } else if (result.errors.length > 10) {
+            console.warn(`  (${result.errors.length} errors; first 5:)`);
+            for (const e of result.errors.slice(0, 5)) console.warn(`  - ${e}`);
+          }
+
+          // Hard abort (e.g. VectorDB closed mid-run, see #1247): never swap a
+          // partial shadow table into place — that would defeat the whole
+          // build-then-swap point. The live table was untouched, so we just
+          // surface the failure, leave the shadow table for inspection, and
+          // exit non-zero.
+          if (result.aborted) {
+            console.error(
+              `\nRe-index FAILED: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
+                `(processed ${result.processed}/${result.total}) — migration aborted before completion.`,
+            );
+            console.error(`Reason: ${result.abortReason ?? "unknown"}`);
+            console.error("Live vector store was NOT modified.");
+            console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+            console.error("Recommendation: Re-run 'openclaw hybrid-mem re-index' to complete the migration.");
+            process.exit(1);
+          }
+
+          // Validate row count before swapping
+          const minRequired = Math.ceil(totalFacts * minFractionSuccess);
+          if (result.migrated < minRequired) {
+            console.error(
+              `\nRe-index validation failed: ${result.migrated} migrated < required minimum ${minRequired} ` +
+                `(${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts} facts).`,
+            );
+            console.error("Aborting swap to preserve live vector store.");
+            console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+            console.error("To retry, clean up shadow table and run re-index again.");
+            process.exit(1);
+          }
+
+          console.log(
+            `Re-index: validation passed — ${result.migrated} >= ${minRequired} required (${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts})`,
+          );
+          console.log(`Re-index: swapping shadow table into place...`);
+
+          try {
+            await vectorDb.swapShadowTable(shadowTableName, minFractionSuccess, totalFacts);
+          } catch (err) {
+            console.error(`\nRe-index failed: shadow table swap failed: ${err}`);
+            console.error(`Live vector store was NOT modified.`);
+            console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+            process.exit(1);
+          }
+
+          // Update embedding metadata in SQLite (batch update for all facts)
+          console.log(`Re-index: updating embedding metadata in SQLite...`);
+          const allFacts =
+            typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
+              ? (() => {
+                  const facts: Array<{ id: string }> = [];
+                  let offset = 0;
+                  const batchSize = 500;
+                  while (true) {
+                    const batch = (
+                      factsDb as {
+                        getBatch: (
+                          offset: number,
+                          limit: number,
+                          opts: { includeSuperseded: boolean },
+                        ) => Array<{ id: string }>;
+                      }
+                    ).getBatch(offset, batchSize, { includeSuperseded: false });
+                    if (batch.length === 0) break;
+                    facts.push(...batch);
+                    offset += batch.length;
+                  }
+                  return facts;
+                })()
+              : factsDb.getAll({ includeSuperseded: false });
+
+          for (const fact of allFacts) {
+            try {
+              factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+            } catch {
+              // ignore per-fact metadata update errors (non-fatal)
+            }
+          }
+
+          console.log(`\nRe-index complete: ${result.migrated} facts successfully re-indexed.`);
+          console.log("Live vector store updated atomically. Semantic search is fully operational.");
+        },
+      ),
     );
 
   const entitiesCommand = mem.command("entities").description("Inspect and clean entity labels");

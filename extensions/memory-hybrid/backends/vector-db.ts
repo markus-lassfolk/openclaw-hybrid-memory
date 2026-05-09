@@ -644,6 +644,8 @@ export class VectorDB {
    *
    * Uses filesystem removal instead of db.dropTable() because LanceDB 0.27.x dropTable()
    * calls rmdir() which fails with ENOTEMPTY on non-empty table directories (issue #770).
+   *
+   * @deprecated Use reindexIntoShadowTable() for non-destructive re-indexing (issue #1246).
    */
   async resetTableForReindex(): Promise<void> {
     // Retry loop: OpenClaw calls register() multiple times during startup, each time closing
@@ -717,6 +719,204 @@ export class VectorDB {
     this.closed = false;
     this.initPromise = null;
     await this.ensureInitialized();
+  }
+
+  /**
+   * Create a shadow table for non-destructive re-indexing.
+   * Returns the shadow table name. Caller is responsible for populating it and calling swapShadowTable().
+   *
+   * Implementation: Creates a timestamped shadow table (e.g. `memories_reindex_1715260800000`)
+   * with the current vector dimension schema.
+   *
+   * @returns Shadow table name for embedding population
+   * @throws If shadow table already exists or connection fails
+   */
+  async createShadowTable(): Promise<string> {
+    await this.ensureInitialized();
+    if (!this.db) {
+      throw new Error("VectorDB connection not available for shadow table creation");
+    }
+
+    const timestamp = Date.now();
+    const shadowTableName = `${LANCE_TABLE}_reindex_${timestamp}`;
+    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const shadowTableDir = join(resolvedPath, `${shadowTableName}.lance`);
+
+    // Verify shadow table doesn't already exist
+    if (existsSync(shadowTableDir)) {
+      throw new Error(
+        `Shadow table directory already exists: ${shadowTableName}. Clean up previous failed re-index first.`,
+      );
+    }
+
+    // Create shadow table with same schema as main table
+    this.logWarn(`memory-hybrid: creating shadow table ${shadowTableName} for non-destructive re-index...`);
+    const shadowTable = await this.db.createTable(shadowTableName, [
+      {
+        id: "__schema__",
+        text: "",
+        why: "",
+        vector: new Array(this.vectorDim).fill(0),
+        importance: 0,
+        category: "other",
+        createdAt: 0,
+      },
+    ]);
+
+    // Delete schema seed row
+    try {
+      await shadowTable.delete('id = "__schema__"');
+    } catch (deleteErr) {
+      this.logWarn(`memory-hybrid: failed to delete shadow table schema seed row (non-fatal): ${deleteErr}`);
+    }
+
+    return shadowTableName;
+  }
+
+  /**
+   * Swap the shadow table into place as the main memories table.
+   * Performs atomic rename: main → old, shadow → main, then removes old.
+   *
+   * @param shadowTableName The shadow table name returned by createShadowTable()
+   * @param minFractionSuccess Minimum fraction of expected rows (0.0-1.0). Default 0.95 (95%).
+   * @param expectedRows Expected row count for validation. If 0, uses current main table count.
+   * @throws If validation fails or swap operations fail
+   */
+  async swapShadowTable(shadowTableName: string, minFractionSuccess = 0.95, expectedRows = 0): Promise<void> {
+    if (!this.db) {
+      throw new Error("VectorDB connection not available for shadow table swap");
+    }
+
+    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const shadowTableDir = join(resolvedPath, `${shadowTableName}.lance`);
+    const mainTableDir = join(resolvedPath, `${LANCE_TABLE}.lance`);
+    const oldTableName = `${LANCE_TABLE}_old_${Date.now()}`;
+    const oldTableDir = join(resolvedPath, `${oldTableName}.lance`);
+
+    // Verify shadow table exists
+    if (!existsSync(shadowTableDir)) {
+      throw new Error(`Shadow table directory not found: ${shadowTableName}`);
+    }
+
+    // Get expected row count from current main table if not provided
+    if (expectedRows === 0 && this.table) {
+      try {
+        expectedRows = await this.table.countRows();
+      } catch (err) {
+        this.logWarn(
+          `memory-hybrid: failed to get main table row count for validation, proceeding without validation: ${err}`,
+        );
+      }
+    }
+
+    // Open shadow table and validate row count
+    const shadowTable = await this.db.openTable(shadowTableName);
+    const shadowRowCount = await shadowTable.countRows();
+
+    if (expectedRows > 0) {
+      const minRequired = Math.ceil(expectedRows * minFractionSuccess);
+      if (shadowRowCount < minRequired) {
+        throw new Error(
+          `Shadow table validation failed: ${shadowRowCount} rows < required minimum ${minRequired} ` +
+            `(${(minFractionSuccess * 100).toFixed(1)}% of ${expectedRows} expected rows). ` +
+            `Aborting swap to preserve live data. Shadow table preserved: ${shadowTableName}`,
+        );
+      }
+      this.logWarn(
+        `memory-hybrid: shadow table validation passed: ${shadowRowCount} rows >= ${minRequired} required (${(minFractionSuccess * 100).toFixed(1)}% of ${expectedRows})`,
+      );
+    }
+
+    // Perform atomic swap: close connection, rename directories, reconnect
+    this.logWarn(`memory-hybrid: swapping shadow table ${shadowTableName} into place...`);
+
+    try {
+      this.db.close();
+    } catch {
+      // ignore close errors
+    }
+    this.db = null;
+    this.table = null;
+    this.semanticQueryCacheTable = null;
+
+    // Rename main → old (if main exists)
+    if (existsSync(mainTableDir)) {
+      try {
+        rmSync(oldTableDir, { recursive: true, force: true }); // Clean up any stale old table
+      } catch {
+        // ignore
+      }
+      await import("node:fs/promises").then((fs) => fs.rename(mainTableDir, oldTableDir));
+    }
+
+    // Rename shadow → main
+    await import("node:fs/promises").then((fs) => fs.rename(shadowTableDir, mainTableDir));
+
+    // Reconnect to new main table
+    this.lanceInitFailed = false;
+    this.lanceDbAvailable = true;
+    this.closed = false;
+    this.initPromise = null;
+    await this.ensureInitialized();
+
+    // Remove old table directory (best effort, non-fatal)
+    if (existsSync(oldTableDir)) {
+      try {
+        rmSync(oldTableDir, { recursive: true, force: true });
+        this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
+      } catch (rmErr) {
+        this.logWarn(
+          `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
+        );
+      }
+    }
+
+    this.logWarn(`memory-hybrid: shadow table swap completed successfully`);
+  }
+
+  /**
+   * Get the name of the active main table (for embedding migration to target shadow table).
+   * @returns The main table name constant
+   */
+  getMainTableName(): string {
+    return LANCE_TABLE;
+  }
+
+  /**
+   * Store a vector into a specific table (used for shadow table population during re-index).
+   * @param tableName Target table name (use getMainTableName() for main table, or shadow table name)
+   * @param entry Vector entry to store
+   */
+  async storeToTable(
+    tableName: string,
+    entry: { id: string; text: string; vector: number[]; importance: number; category: string; why?: string },
+  ): Promise<void> {
+    if (!this.db) {
+      throw new Error("VectorDB connection not available");
+    }
+
+    const table = await this.db.openTable(tableName);
+    const row = {
+      id: entry.id.toLowerCase(),
+      text: entry.text,
+      why: entry.why ?? "",
+      vector: entry.vector,
+      importance: entry.importance,
+      category: entry.category,
+      createdAt: Date.now(),
+    };
+
+    try {
+      await table.add([row]);
+    } catch (err) {
+      // Handle duplicate ID race condition (concurrent re-index)
+      if (this.isVectorDuplicateIdError(err) && UUID_REGEX.test(entry.id)) {
+        await table.delete(`id = '${entry.id.toLowerCase()}'`);
+        await table.add([row]);
+        return;
+      }
+      throw err;
+    }
   }
 
   /** Get initialized table or throw descriptive error. */
