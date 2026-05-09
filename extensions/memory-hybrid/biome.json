@@ -70,7 +70,7 @@
   },
   "overrides": [
     {
-      "include": ["cli/**", "tests/**", "utils/logger.ts"],
+      "include": ["cli/**", "tests/**", "utils/logger.ts", "utils/hybrid-mem-json-cli.ts"],
       "linter": {
         "rules": {
           "suspicious": {
