@@ -82,6 +82,25 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
   return base;
 }
 
+export function shouldReportVectorDedupeFallback(input: {
+  source?: string | null;
+  fuzzyDedupe: boolean;
+  storeConfig?: StoreConfig;
+  embedding?: Float32Array | null;
+  vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
+}): boolean {
+  if (!input.fuzzyDedupe) return false;
+  const profile = resolveDedupeProfile(input.source, input.storeConfig ?? { fuzzyDedupe: input.fuzzyDedupe });
+  if (profile.onDuplicate === "store") return false;
+  return (
+    profile.vectorThreshold != null &&
+    profile.vectorThreshold > 0 &&
+    profile.vectorThreshold <= 1 &&
+    (input.embedding == null || input.embedding.length === 0) &&
+    !input.vectorCandidates
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Write-time dedupe (Issue #1194): normalized hash + same-source token Jaccard
 // ---------------------------------------------------------------------------

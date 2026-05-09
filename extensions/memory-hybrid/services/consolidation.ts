@@ -239,34 +239,37 @@ export async function runConsolidate(
     }
 
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store({
-      text: mergedText,
-      category,
-      importance: BATCH_STORE_IMPORTANCE,
-      entity: first?.entity ?? null,
-      key: mergedKey,
-      value: mergedValue,
-      source: "consolidation",
-      decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
-      sourceDate: maxSourceDate,
-      tags: mergedTags.length > 0 ? mergedTags : undefined,
-      extractionMethod: "consolidation",
-      extractionConfidence: BATCH_STORE_IMPORTANCE,
-      provenanceJson: JSON.stringify({
-        method: "consolidation",
-        consolidatedAt: Math.floor(Date.now() / 1000),
-        sourceFactIds: clusterIds,
-        sourceFacts: clusterFacts.map((sourceFact) => ({
-          id: sourceFact.id,
-          text: sourceFact.text.slice(0, 300),
-          source: sourceFact.source,
-          category: sourceFact.category,
-        })),
-      }),
-    }, {
-      warnContext: "consolidation",
-      suppressVectorFallbackWarning: true,
-    });
+    const entry = factsDb.store(
+      {
+        text: mergedText,
+        category,
+        importance: BATCH_STORE_IMPORTANCE,
+        entity: first?.entity ?? null,
+        key: mergedKey,
+        value: mergedValue,
+        source: "consolidation",
+        decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
+        sourceDate: maxSourceDate,
+        tags: mergedTags.length > 0 ? mergedTags : undefined,
+        extractionMethod: "consolidation",
+        extractionConfidence: BATCH_STORE_IMPORTANCE,
+        provenanceJson: JSON.stringify({
+          method: "consolidation",
+          consolidatedAt: Math.floor(Date.now() / 1000),
+          sourceFactIds: clusterIds,
+          sourceFacts: clusterFacts.map((sourceFact) => ({
+            id: sourceFact.id,
+            text: sourceFact.text.slice(0, 300),
+            source: sourceFact.source,
+            category: sourceFact.category,
+          })),
+        }),
+      },
+      {
+        warnContext: "consolidation",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && consolidationRunId) {
       try {
         provenanceService.addEdge(entry.id, {

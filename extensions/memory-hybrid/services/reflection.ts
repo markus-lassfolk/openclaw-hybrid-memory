@@ -632,22 +632,25 @@ export async function runReflection(
     }
 
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store({
-      text: patternText,
-      category: "pattern" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    }, {
-      warnContext: "reflection",
-      suppressVectorFallbackWarning: true,
-    });
+    const entry = factsDb.store(
+      {
+        text: patternText,
+        category: "pattern" as MemoryCategory,
+        importance: REFLECTION_IMPORTANCE,
+        entity: null,
+        key: null,
+        value: null,
+        source: "reflection",
+        decayClass: "permanent",
+        tags: ["reflection", "pattern"],
+        extractionMethod: "reflection",
+        extractionConfidence: REFLECTION_IMPORTANCE,
+      },
+      {
+        warnContext: "reflection",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -897,22 +900,25 @@ export async function runReflectionRules(
       continue;
     }
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store({
-      text: ruleText,
-      category: "rule" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "rule"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    }, {
-      warnContext: "reflect-rules",
-      suppressVectorFallbackWarning: true,
-    });
+    const entry = factsDb.store(
+      {
+        text: ruleText,
+        category: "rule" as MemoryCategory,
+        importance: REFLECTION_IMPORTANCE,
+        entity: null,
+        key: null,
+        value: null,
+        source: "reflection",
+        decayClass: "permanent",
+        tags: ["reflection", "rule"],
+        extractionMethod: "reflection",
+        extractionConfidence: REFLECTION_IMPORTANCE,
+      },
+      {
+        warnContext: "reflect-rules",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -1143,22 +1149,25 @@ export async function runReflectionMeta(
       continue;
     }
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store({
-      text: metaText,
-      category: "pattern" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern", "meta"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    }, {
-      warnContext: "reflect-meta",
-      suppressVectorFallbackWarning: true,
-    });
+    const entry = factsDb.store(
+      {
+        text: metaText,
+        category: "pattern" as MemoryCategory,
+        importance: REFLECTION_IMPORTANCE,
+        entity: null,
+        key: null,
+        value: null,
+        source: "reflection",
+        decayClass: "permanent",
+        tags: ["reflection", "pattern", "meta"],
+        extractionMethod: "reflection",
+        extractionConfidence: REFLECTION_IMPORTANCE,
+      },
+      {
+        warnContext: "reflect-meta",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {

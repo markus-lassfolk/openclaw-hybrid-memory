@@ -39,6 +39,7 @@ import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { type ReinforcementExtractResult, runReinforcementExtract } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
@@ -290,20 +291,29 @@ export async function runExtractDirectivesForCli(
                           : incident.categories.includes("explicit_memory")
                             ? "fact"
                             : "other";
-          factsDb.store({
-            text: incident.extractedRule,
-            category: category as MemoryCategory,
-            importance: 0.8,
-            entity: null,
-            key: null,
-            value: null,
-            source: `directive:${incident.sessionFile}`,
-            confidence: incident.confidence,
-          }, {
-            warnContext: "extract-directives",
-            suppressVectorFallbackWarning: true,
+          const source = `directive:${incident.sessionFile}`;
+          const shouldCountVectorFallback = shouldReportVectorDedupeFallback({
+            source,
+            fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
+            storeConfig: cfg.store,
           });
-          storeDedupeVectorFallbackSuppressed++;
+          factsDb.store(
+            {
+              text: incident.extractedRule,
+              category: category as MemoryCategory,
+              importance: 0.8,
+              entity: null,
+              key: null,
+              value: null,
+              source,
+              confidence: incident.confidence,
+            },
+            {
+              warnContext: "extract-directives",
+              suppressVectorFallbackWarning: true,
+            },
+          );
+          if (shouldCountVectorFallback) storeDedupeVectorFallbackSuppressed++;
           stored++;
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });

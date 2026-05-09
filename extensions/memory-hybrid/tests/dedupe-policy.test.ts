@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseStoreConfig } from "../config/parsers/core.js";
-import { resolveDedupeProfile } from "../services/dedupe-policy.js";
+import { resolveDedupeProfile, shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { normalizedHash } from "../utils/tags.js";
 
 describe("dedupe policy", () => {
@@ -366,6 +366,41 @@ describe("FactsDB sourceProfiles write path", () => {
       db.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("reports vector fallback telemetry only when the policy can actually fall back to lexical-only", () => {
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: true,
+        storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+        source: "directive:session.jsonl",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: false,
+        storeConfig: { fuzzyDedupe: false, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+        source: "directive:session.jsonl",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: true,
+        storeConfig: { fuzzyDedupe: true, sourceProfiles: { "directive:*": { onDuplicate: "store" } } },
+        source: "directive:session.jsonl",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: true,
+        storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+        source: "directive:session.jsonl",
+        vectorCandidates: [{ id: "existing", score: 0.95 }],
+      }),
+    ).toBe(false);
   });
 
   it("emits vector-candidates-missing warning once per warnContext and supports suppression (#1194)", () => {
