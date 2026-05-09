@@ -277,6 +277,7 @@ export type HybridMemCliContext = {
     dryRun?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
+    onProgress?: (snapshot: import("./cmd-feedback.js").ExtractImplicitFeedbackProgressSnapshot) => void;
   }) => Promise<{
     signalsExtracted: number;
     positiveCount: number;

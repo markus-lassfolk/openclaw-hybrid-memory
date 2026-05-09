@@ -291,6 +291,23 @@ export function cleanupImplicitFeedbackDuplicates(
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
 
+export interface ExtractImplicitFeedbackProgressSnapshot {
+  stage: "scan-sessions" | "cleanup-duplicates" | "closed-loop" | "done";
+  sessionsDiscovered: number;
+  sessionsVisited: number;
+  sessionsProcessed: number;
+  sessionsReadErrors: number;
+  sessionsTooShort: number;
+  currentSession?: string;
+  signalsExtracted: number;
+  positiveCount: number;
+  negativeCount: number;
+  trajectoriesBuilt: number;
+  cleanupCollapsed: number;
+  cleanupScanned: number;
+  cleanupBatches: number;
+}
+
 /**
  * Extract implicit feedback signals from recent sessions.
  * Signals are routed to the reinforcement pipeline (positive) or stored as
@@ -305,6 +322,7 @@ export async function runExtractImplicitFeedbackForCli(
     dryRun?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
+    onProgress?: (snapshot: ExtractImplicitFeedbackProgressSnapshot) => void;
   },
 ): Promise<{
   signalsExtracted: number;
@@ -318,6 +336,34 @@ export async function runExtractImplicitFeedbackForCli(
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
   const filePaths = getSessionFilePathsSince(sessionDir, days);
+
+  const progress: ExtractImplicitFeedbackProgressSnapshot = {
+    stage: "scan-sessions",
+    sessionsDiscovered: filePaths.length,
+    sessionsVisited: 0,
+    sessionsProcessed: 0,
+    sessionsReadErrors: 0,
+    sessionsTooShort: 0,
+    currentSession: undefined,
+    signalsExtracted: 0,
+    positiveCount: 0,
+    negativeCount: 0,
+    trajectoriesBuilt: 0,
+    cleanupCollapsed: 0,
+    cleanupScanned: 0,
+    cleanupBatches: 0,
+  };
+
+  const emitProgress = (): void => {
+    if (!opts.onProgress) return;
+    try {
+      opts.onProgress({ ...progress });
+    } catch {
+      // Progress callbacks must never affect extraction.
+    }
+  };
+
+  emitProgress();
 
   const implicitCfg = cfg.implicitFeedback ?? {
     enabled: true,
@@ -335,6 +381,8 @@ export async function runExtractImplicitFeedbackForCli(
   };
 
   if (implicitCfg.enabled === false) {
+    progress.stage = "done";
+    emitProgress();
     return { signalsExtracted: 0, positiveCount: 0, negativeCount: 0, trajectoriesBuilt: 0, sessionsScanned: 0 };
   }
 
@@ -346,21 +394,30 @@ export async function runExtractImplicitFeedbackForCli(
   const rawDb = factsDb.getRawDb();
 
   for (const filePath of filePaths) {
+    progress.sessionsVisited++;
     let lines: string[];
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
+      progress.sessionsReadErrors++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "runExtractImplicitFeedbackForCli:read-file",
         severity: "info",
         subsystem: "implicit-feedback",
       });
+      emitProgress();
       continue;
     }
 
     const sessionFile = basename(filePath);
+    progress.currentSession = sessionFile;
     const turns = parseSessionTurns(lines);
-    if (turns.length < 3) continue;
+    if (turns.length < 3) {
+      progress.sessionsTooShort++;
+      emitProgress();
+      continue;
+    }
+    progress.sessionsProcessed++;
 
     /**
      * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
@@ -385,6 +442,12 @@ export async function runExtractImplicitFeedbackForCli(
       if (sig.polarity === "positive") positiveCount++;
       else if (sig.polarity === "negative") negativeCount++;
     }
+
+    progress.signalsExtracted = totalSignals;
+    progress.positiveCount = positiveCount;
+    progress.negativeCount = negativeCount;
+    progress.trajectoriesBuilt = trajectoriesBuilt;
+    emitProgress();
 
     if (!opts.dryRun && rawDb) {
       // Store raw signals in implicit_signals table
@@ -497,6 +560,8 @@ export async function runExtractImplicitFeedbackForCli(
       try {
         const trajectories = buildTrajectories(turns, sessionFile);
         trajectoriesBuilt += trajectories.length;
+        progress.trajectoriesBuilt = trajectoriesBuilt;
+        emitProgress();
 
         const insertTraj = rawDb.prepare(`
           INSERT OR REPLACE INTO feedback_trajectories
@@ -616,10 +681,13 @@ export async function runExtractImplicitFeedbackForCli(
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
     try {
+      progress.stage = "cleanup-duplicates";
       const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
       const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
       let afterRowid = 0;
       let totalCollapsed = 0;
+      let totalScanned = 0;
+      let batches = 0;
       let carryCanonical: Array<{ id: string; text: string }> | undefined;
       for (;;) {
         const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
@@ -629,7 +697,13 @@ export async function runExtractImplicitFeedbackForCli(
           seedCanonical: carryCanonical,
         });
         totalCollapsed += cleanup.collapsed;
+        totalScanned += cleanup.scanned;
+        batches++;
         carryCanonical = cleanup.carryCanonical;
+        progress.cleanupCollapsed = totalCollapsed;
+        progress.cleanupScanned = totalScanned;
+        progress.cleanupBatches = batches;
+        emitProgress();
         if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
         afterRowid = cleanup.resumeAfterRowid;
       }
@@ -649,6 +723,8 @@ export async function runExtractImplicitFeedbackForCli(
   let closedLoopReport: string | undefined;
   if (opts.includeClosedLoop !== false && !opts.dryRun) {
     try {
+      progress.stage = "closed-loop";
+      emitProgress();
       const clCfg = cfg.closedLoop ?? { enabled: true };
       if (clCfg.enabled !== false) {
         const report = runClosedLoopAnalysis(factsDb, clCfg);
@@ -670,6 +746,8 @@ export async function runExtractImplicitFeedbackForCli(
     }
   }
 
+  progress.stage = "done";
+  emitProgress();
   return {
     signalsExtracted: totalSignals,
     positiveCount,

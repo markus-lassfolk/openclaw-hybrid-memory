@@ -5,6 +5,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 // biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
 import { mergeResults } from "../services/merge-results.js";
+import type { ExtractImplicitFeedbackProgressSnapshot } from "./cmd-feedback.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
   BackfillCliResult,
@@ -247,6 +248,7 @@ export type ManageContext = {
     dryRun?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
+    onProgress?: (snapshot: ExtractImplicitFeedbackProgressSnapshot) => void;
   }) => Promise<{
     signalsExtracted: number;
     positiveCount: number;
