@@ -1202,7 +1202,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
                       importance: 0.5,
                       category: fact.category,
                     });
-                    factsDb.storeEmbedding(fact.id, embeddings.modelName, "canonical", new Float32Array(vec), vec.length);
+                    factsDb.storeEmbedding(
+                      fact.id,
+                      embeddings.modelName,
+                      "canonical",
+                      new Float32Array(vec),
+                      vec.length,
+                    );
                     factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
                     embedded++;
                   } catch (err) {
@@ -1249,7 +1255,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             for (const err of errors.slice(0, 10)) console.warn(`  - ${err}`);
           }
           if (opts?.apply && storeFailures > 0) {
-            console.warn(`Partial success: ${storeFailures} vector store failure(s) remained after retries (exit=2).`);
+            console.warn(
+              `Partial success: ${storeFailures} write failure(s) occurred during vector re-embedding; retryable LanceDB conflicts were retried where applicable (exit=2).`,
+            );
           }
         },
       ),

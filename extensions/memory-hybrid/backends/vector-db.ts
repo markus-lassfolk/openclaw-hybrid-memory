@@ -1166,7 +1166,9 @@ export class VectorDB {
         await this.sleep(delayMs);
       }
     }
-    throw lastErr instanceof Error ? lastErr : new Error(`memory-hybrid: retry loop failed for operation "${operation}"`);
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`memory-hybrid: retry loop failed for operation "${operation}"`);
   }
 
   /**
@@ -1219,7 +1221,8 @@ export class VectorDB {
           // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
           if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
             const lid = id;
-            if (!UUID_REGEX.test(lid)) throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
+            if (!UUID_REGEX.test(lid))
+              throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
             await this.getTable().delete(`id = '${lid}'`);
             await this.getTable().add([row]);
           } else {
@@ -1483,7 +1486,13 @@ export class VectorDB {
       const normalizedId = id.toLowerCase();
       if (!UUID_REGEX.test(normalizedId)) return false;
       if (this.optimizePromise) {
-        await this.optimizePromise;
+        try {
+          await this.optimizePromise;
+        } catch (optimizeErr) {
+          this.logWarn(
+            `memory-hybrid: auto-optimize failed before LanceDB delete; continuing with delete anyway (non-fatal). Error: ${optimizeErr}`,
+          );
+        }
       }
       await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
         await this.getTable().delete(`id = '${normalizedId}'`);
