@@ -142,6 +142,7 @@ export async function loadReflectionDedupeCorpusVectors(
     const result: (number[] | null)[] = new Array(facts.length);
     let lanceHits = 0;
     let apiEmbeds = 0;
+    let embedAttemptsThisRun = 0;
 
     logger.info(`${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20...`);
 
@@ -193,7 +194,7 @@ export async function loadReflectionDedupeCorpusVectors(
     if (facts.length > 0) {
       const ok = result.filter((v) => v !== null).length;
       logger.info(
-        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
+        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${ok}/${facts.length} non-null for cosine check`,
       );
     }
     return result;
