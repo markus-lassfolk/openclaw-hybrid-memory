@@ -119,6 +119,7 @@ export async function loadReflectionDedupeCorpusVectors(
   logPrefix: string,
   captureOperation: string,
   markEmbeddingModel?: (factId: string, model: string) => void,
+  dryRun = false,
 ): Promise<(number[] | null)[]> {
   const loadWithTimeout = async (): Promise<(number[] | null)[]> => {
     const vdb = vectorDb as VectorDB & {
@@ -161,7 +162,7 @@ export async function loadReflectionDedupeCorpusVectors(
     let lastProgressAt = startedAt;
 
     logger.info(
-      `${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20 (checkpointing API-hydrated vectors)`,
+      `${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20 (${dryRun ? "dry-run: no Lance checkpoint / metadata writes" : "checkpointing API-hydrated vectors"})`,
     );
 
     for (let i = 0; i < facts.length; i += 20) {
@@ -189,7 +190,7 @@ export async function loadReflectionDedupeCorpusVectors(
           if (modelOk) lanceModelOkHits++;
           else if (!f.embeddingModel) {
             lanceModelMissingHits++;
-            if (embeddings.modelName && markEmbeddingModel) {
+            if (!dryRun && embeddings.modelName && markEmbeddingModel) {
               try {
                 markEmbeddingModel(f.id, embeddings.modelName);
               } catch (markErr) {
@@ -212,7 +213,7 @@ export async function loadReflectionDedupeCorpusVectors(
             batchApi++;
             hadApiEmbed = true;
 
-            if (typeof vdb.store === "function") {
+            if (!dryRun && typeof vdb.store === "function") {
               try {
                 await vdb.store({
                   text: f.text,
@@ -470,6 +471,7 @@ export async function runReflection(
       "memory-hybrid: reflection",
       "reflection-embed-existing",
       (factId, model) => factsDb.setEmbeddingModel(factId, model),
+      opts.dryRun,
     );
   } else {
     logger.info("memory-hybrid: reflection — no existing pattern facts for dedupe; embedding new candidates only");
@@ -704,6 +706,7 @@ export async function runReflectionRules(
       "memory-hybrid: reflect-rules",
       "reflection-rules-embed-existing",
       (factId, model) => factsDb.setEmbeddingModel(factId, model),
+      opts.dryRun,
     );
   } else {
     logger.info("memory-hybrid: reflect-rules — no existing rule facts for dedupe; embedding new candidates only");
@@ -930,6 +933,7 @@ export async function runReflectionMeta(
       "memory-hybrid: reflect-meta",
       "reflection-meta-embed-existing",
       (factId, model) => factsDb.setEmbeddingModel(factId, model),
+      opts.dryRun,
     );
   } else {
     logger.info("memory-hybrid: reflect-meta — no existing meta-patterns for dedupe; embedding new candidates only");

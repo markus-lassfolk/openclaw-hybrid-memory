@@ -101,6 +101,35 @@ describe("loadReflectionDedupeCorpusVectors", () => {
     expect(logger.info.mock.calls.some(([msg]) => msg.includes("API 1, persisted 1"))).toBe(true);
   });
 
+  it("skips Lance checkpoint and metadata writes in dry-run", async () => {
+    const facts = [makeFact({ id: "fact-dry", text: "Dry run hydrate", embeddingModel: "old-model" })];
+    const embeddings = makeEmbeddings(vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([1, 0]));
+    const vectorDb = {
+      getVectorDim: () => 2,
+      getVectorsByFactIds: vi.fn().mockResolvedValue(new Map()),
+      store: vi.fn().mockResolvedValue("fact-dry"),
+    };
+    const logger = makeLogger();
+    const markEmbeddingModel = vi.fn<(_: string, __: string) => void>();
+
+    const vectors = await loadReflectionDedupeCorpusVectors(
+      facts,
+      embeddings,
+      vectorDb as never,
+      logger,
+      "memory-hybrid: reflection",
+      "test-dedupe",
+      markEmbeddingModel,
+      true,
+    );
+
+    expect(embeddings.embed).toHaveBeenCalled();
+    expect(vectorDb.store).not.toHaveBeenCalled();
+    expect(markEmbeddingModel).not.toHaveBeenCalled();
+    expect(vectors[0]).toEqual([1, 0]);
+    expect(logger.info.mock.calls.some(([msg]) => msg.includes("dry-run: no Lance checkpoint"))).toBe(true);
+  });
+
   it("logs and continues when persisting a hydrated vector fails", async () => {
     const facts = [makeFact({ id: "fact-c", text: "Hydrate but persist fails" })];
     const embeddings = makeEmbeddings(vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([1, 0]));
