@@ -185,6 +185,7 @@ export async function runConsolidate(
 
   let merged = 0;
   let deleted = 0;
+  let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
   for (const clusterIds of clusters) {
     const texts = clusterIds.map((id) => idToFact.get(id)?.text);
@@ -237,6 +238,7 @@ export async function runConsolidate(
       continue;
     }
 
+    storeDedupeVectorFallbackSuppressed++;
     const entry = factsDb.store({
       text: mergedText,
       category,
@@ -261,6 +263,9 @@ export async function runConsolidate(
           category: sourceFact.category,
         })),
       }),
+    }, {
+      warnContext: "consolidation",
+      suppressVectorFallbackWarning: true,
     });
     if (provenanceService && consolidationRunId) {
       try {
@@ -331,5 +336,10 @@ export async function runConsolidate(
     merged++;
   }
 
+  if (storeDedupeVectorFallbackSuppressed > 0) {
+    logger.info(
+      `memory-hybrid: consolidate — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectors are embedded/stored after insert in this pipeline)`,
+    );
+  }
   return { clustersFound: clusters.length, merged, deleted };
 }

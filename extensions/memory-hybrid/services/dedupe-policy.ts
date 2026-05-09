@@ -105,6 +105,15 @@ export type ApplyDedupeContext = {
    * but not required.
    */
   vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
+  /**
+   * Emit a warning once per unique key. Used to avoid per-store spam when vector
+   * dedupe is configured but callers haven't plumbed `vectorCandidates` yet.
+   */
+  warnOnce?: (key: string, message: string) => void;
+  /** Optional namespace used when constructing warn-once keys (e.g. "reflection"). */
+  warnOnceKey?: string;
+  /** When true, suppress the vector-candidates-missing warning entirely. */
+  suppressVectorFallbackWarning?: boolean;
   warn?: (message: string) => void;
 };
 
@@ -200,10 +209,20 @@ export function applyDedupe(
     (ctx.embedding == null || ctx.embedding.length === 0) &&
     !ctx.vectorCandidates
   ) {
-    // Caller asked for vector dedupe but supplied neither candidates nor an embedding.
-    ctx.warn?.(
-      `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe.`,
-    );
+    if (!ctx.suppressVectorFallbackWarning) {
+      // Caller asked for vector dedupe but supplied neither candidates nor an embedding.
+      // (Write-time vector cosine requires caller-supplied `vectorCandidates` because `applyDedupe` is synchronous.)
+      const message =
+        `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe.` +
+        ` (Hint: plumb vector neighbour candidates into FactsDB.store(..., { vectorCandidates }) to enable synchronous cosine checks.)`;
+      const keyBase = (ctx.warnOnceKey?.trim() || profile.sourcePattern).slice(0, 80);
+      const warnKey = `store-dedupe-vector-fallback:${keyBase}:${profile.vectorThreshold}`;
+      if (ctx.warnOnce) {
+        ctx.warnOnce(warnKey, message);
+      } else {
+        ctx.warn?.(message);
+      }
+    }
   }
 
   if (typeof profile.lexicalJaccard === "number" && profile.lexicalJaccard > 0 && profile.lexicalJaccard <= 1) {

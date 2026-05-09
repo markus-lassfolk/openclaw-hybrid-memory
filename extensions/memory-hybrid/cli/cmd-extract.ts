@@ -266,6 +266,7 @@ export async function runExtractDirectivesForCli(
 
     // Store directives as facts if not dry-run
     let stored = 0;
+    let storeDedupeVectorFallbackSuppressed = 0;
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
@@ -298,7 +299,11 @@ export async function runExtractDirectivesForCli(
             value: null,
             source: `directive:${incident.sessionFile}`,
             confidence: incident.confidence,
+          }, {
+            warnContext: "extract-directives",
+            suppressVectorFallbackWarning: true,
           });
+          storeDedupeVectorFallbackSuppressed++;
           stored++;
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
@@ -306,6 +311,11 @@ export async function runExtractDirectivesForCli(
       }
     }
 
+    if (storeDedupeVectorFallbackSuppressed > 0) {
+      logger.info?.(
+        `memory-hybrid: extract-directives — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectorCandidates not wired for this CLI path yet)`,
+      );
+    }
     const returnVal = { ...result, stored };
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);

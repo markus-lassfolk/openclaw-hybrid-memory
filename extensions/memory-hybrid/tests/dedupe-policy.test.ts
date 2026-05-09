@@ -367,4 +367,76 @@ describe("FactsDB sourceProfiles write path", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("emits vector-candidates-missing warning once per warnContext and supports suppression (#1194)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-warn-once-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+    });
+    const warn = console.warn;
+    const warns: string[] = [];
+    console.warn = (msg: unknown) => {
+      warns.push(String(msg));
+    };
+    try {
+      db.store(
+        {
+          text: "first fact no vector candidates",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-a" },
+      );
+      db.store(
+        {
+          text: "second fact same phase no vector candidates",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-a" },
+      );
+      db.store(
+        {
+          text: "third fact different phase no vector candidates",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-b" },
+      );
+      db.store(
+        {
+          text: "fourth fact suppressed warning",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-c", suppressVectorFallbackWarning: true },
+      );
+
+      expect(warns.length).toBe(2);
+      expect(warns[0]).toMatch(/store dedupe/i);
+      expect(warns[0]).toMatch(/vectorThreshold=0.9/);
+      expect(warns[1]).toMatch(/store dedupe/i);
+    } finally {
+      console.warn = warn;
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

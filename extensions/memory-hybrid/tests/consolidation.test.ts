@@ -68,7 +68,10 @@ describe("runConsolidate", () => {
       { info: () => undefined, warn: () => undefined },
     );
 
-    expect(factsDb.store).toHaveBeenCalledWith(expect.objectContaining({ key: "language", value: "Rust" }));
+    expect(factsDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "language", value: "Rust" }),
+      expect.objectContaining({ warnContext: "consolidation", suppressVectorFallbackWarning: true }),
+    );
   });
 
   it("stores consolidated facts with derived-source controls", async () => {
@@ -101,6 +104,7 @@ describe("runConsolidate", () => {
         decayClass: "durable",
         tags: expect.arrayContaining(["consolidated"]),
       }),
+      expect.objectContaining({ warnContext: "consolidation", suppressVectorFallbackWarning: true }),
     );
   });
 
