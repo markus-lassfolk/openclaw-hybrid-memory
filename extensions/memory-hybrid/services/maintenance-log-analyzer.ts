@@ -12,6 +12,10 @@ export type MaintenanceClassification =
   | "provider-auth"
   | "infra"
   | "plugin-bug"
+  | "command-crash"
+  | "json-parse-failure"
+  | "health-warnings"
+  | "health-errors"
   | "smoke-only"
   | "orchestration-bug"
   | "unclassified";
@@ -161,11 +165,18 @@ function loadMaintenanceRules(): MaintenanceRule[] {
 const RULES = loadMaintenanceRules();
 const STRICT_CLASSES = new Set<MaintenanceClassification>([
   "plugin-bug",
+  "command-crash",
+  "json-parse-failure",
   "orchestration-bug",
   "provider-auth",
   "env-misconfig",
 ]);
-const GLITCHTIP_CLASSES = new Set<MaintenanceClassification>(["plugin-bug", "orchestration-bug"]);
+const GLITCHTIP_CLASSES = new Set<MaintenanceClassification>([
+  "plugin-bug",
+  "command-crash",
+  "json-parse-failure",
+  "orchestration-bug",
+]);
 
 export function maintenanceRules(): MaintenanceRule[] {
   return RULES.slice();
@@ -237,6 +248,8 @@ export function classifyMaintenanceFailure(input: {
   line?: string;
   rules?: MaintenanceRule[];
 }): MaintenanceRule {
+  const auditRule = classifyAuditHealthFailure(input.step, input.exitCode, input.logContent);
+  if (auditRule) return auditRule;
   const text = `${input.step ?? ""}\nexit=${input.exitCode ?? ""}\n${input.line ?? ""}\n${input.logContent ?? ""}`;
   for (const rule of input.rules ?? RULES) {
     if (new RegExp(rule.pattern, "ims").test(text)) return rule;
@@ -249,6 +262,149 @@ export function classifyMaintenanceFailure(input: {
     severity: "low",
     suggestedAction: "Inspect the raw maintenance log and decide whether this needs a fix or can be deferred.",
   };
+}
+
+function classifyAuditHealthFailure(
+  step: string | undefined,
+  exitCode: number | undefined,
+  logContent: string | undefined,
+): MaintenanceRule | null {
+  if (!step || step !== "audit-health") return null;
+  if (!exitCode || exitCode === 0) return null;
+  const content = logContent ?? "";
+
+  const extracted = extractAuditHealthJsonFromLog(content);
+  if (extracted.kind === "not_found") {
+    return {
+      id: "audit-health-command-crash",
+      pattern: "",
+      classification: "command-crash",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "Audit health exited non-zero but no report JSON was found in the log. Treat as a command crash: inspect stack traces and rerun `openclaw hybrid-mem audit health --strict --json --verbose`.",
+    };
+  }
+  if (extracted.kind === "parse_error") {
+    return {
+      id: "audit-health-json-parse-failure",
+      pattern: "",
+      classification: "json-parse-failure",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "Audit health exited non-zero and a JSON block was present but could not be parsed. Inspect the raw log for mixed stdout/stderr or truncated JSON; rerun with `--json --verbose` and report as a plugin bug if reproducible.",
+    };
+  }
+
+  const exitReason = typeof extracted.value.exitReason === "string" ? extracted.value.exitReason : "";
+  const warningCount =
+    typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
+  const errorCount = typeof extracted.value.errorCount === "number" ? Math.max(0, extracted.value.errorCount) : 0;
+  const strictFailureReason =
+    typeof extracted.value.strictFailureReason === "string" ? extracted.value.strictFailureReason : null;
+
+  if (exitReason === "strict_warnings" || (exitCode === 2 && errorCount === 0 && warningCount > 0)) {
+    return {
+      id: "audit-health-strict-warnings",
+      pattern: "",
+      classification: "health-warnings",
+      defaultAction: "user-digest",
+      severity: "info",
+      suggestedAction:
+        strictFailureReason ??
+        "Audit health strict mode failed due to warnings. Review `warnings[]` and run the suggested remediation commands from the report.",
+    };
+  }
+  if (exitReason === "strict_errors" || (exitCode === 2 && errorCount > 0)) {
+    return {
+      id: "audit-health-strict-errors",
+      pattern: "",
+      classification: "health-errors",
+      defaultAction: "user-digest",
+      severity: "medium",
+      suggestedAction:
+        strictFailureReason ??
+        "Audit health strict mode failed due to report errors. Review `errors[]` in the JSON and rerun the audit to confirm whether this is transient or a persistent health issue.",
+    };
+  }
+
+  return null;
+}
+
+type ExtractedAuditHealthJson =
+  | { kind: "ok"; value: Record<string, unknown> }
+  | { kind: "not_found" }
+  | { kind: "parse_error" };
+
+function extractAuditHealthJsonFromLog(logContent: string): ExtractedAuditHealthJson {
+  const candidates = scanJsonObjects(logContent);
+  const likelyAuditHealth = /"schemaVersion"\s*:\s*1/.test(logContent) && /"activeFacts"\s*:/.test(logContent);
+  if (candidates.length === 0) return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
+  for (const raw of candidates) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { schemaVersion?: unknown }).schemaVersion === 1 &&
+        typeof (parsed as { activeFacts?: unknown }).activeFacts === "number" &&
+        Array.isArray((parsed as { warnings?: unknown }).warnings) &&
+        Array.isArray((parsed as { errors?: unknown }).errors)
+      ) {
+        return { kind: "ok", value: parsed };
+      }
+    } catch {
+      // keep scanning
+    }
+  }
+  return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
+}
+
+function scanJsonObjects(text: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    const end = findJsonObjectEnd(text, i);
+    if (end == null) continue;
+    out.push(text.slice(i, end + 1));
+    i = end;
+  }
+  return out;
+}
+
+function findJsonObjectEnd(text: string, startIdx: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+      if (depth < 0) return null;
+    }
+  }
+  return null;
 }
 
 function extractPluginVersion(logContent: string): string | null {

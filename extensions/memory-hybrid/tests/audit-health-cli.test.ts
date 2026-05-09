@@ -39,6 +39,8 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(report.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(report.status).toMatch(/^(ok|partial|failed)$/);
     expect(typeof report.ok).toBe("boolean");
+    expect(typeof report.warningCount).toBe("number");
+    expect(typeof report.errorCount).toBe("number");
     expect(report.activeFacts).toBeGreaterThanOrEqual(1);
     expect(report.storeAgeDays).toBeGreaterThanOrEqual(0);
     expect(report.canonicalEmbeddings).toBeGreaterThanOrEqual(0);

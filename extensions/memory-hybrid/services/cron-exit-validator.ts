@@ -15,6 +15,8 @@ export interface ExitStep {
   step: string;
   exitCode: number;
   line: string;
+  failureReason?: string;
+  strictFailureReason?: string;
 }
 
 export interface ExitValidationResult {
@@ -206,6 +208,16 @@ export function validateMaintenanceExecution(
     }
   }
 
+  if (logPath && failedSteps.some((s) => s.step === "audit-health")) {
+    const logContent = safeReadLog(logPath);
+    for (const step of failedSteps) {
+      if (step.step !== "audit-health") continue;
+      const inferred = inferAuditHealthFailureReason(step.exitCode, logContent);
+      step.failureReason = inferred.failureReason;
+      step.strictFailureReason = inferred.strictFailureReason;
+    }
+  }
+
   // Determine overall status
   let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
 
@@ -239,7 +251,11 @@ export function validateMaintenanceExecution(
       parts.push(`Missing steps: ${missingSteps.join(", ")}`);
     }
     if (failedSteps.length > 0) {
-      parts.push(`Failed steps: ${failedSteps.map((s) => `${s.step} (exit=${s.exitCode})`).join(", ")}`);
+      parts.push(
+        `Failed steps: ${failedSteps
+          .map((s) => `${s.step} (exit=${s.exitCode}${s.failureReason ? ` ${s.failureReason}` : ""})`)
+          .join(", ")}`,
+      );
     }
     error = parts.join("; ");
   } else if (maintenanceStatus === "skipped") {
@@ -274,7 +290,14 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
       failedSteps: validation.failedSteps.map((s) => ({
         name: s.step,
         exit: s.exitCode,
-        error: s.exitCode !== 0 ? "Non-zero exit code" : undefined,
+        reason: s.failureReason,
+        strictFailureReason: s.strictFailureReason,
+        error:
+          s.exitCode !== 0
+            ? s.failureReason
+              ? `Non-zero exit code (${s.failureReason})`
+              : "Non-zero exit code"
+            : undefined,
       })),
       guardUpdated: validation.guardUpdated,
       logPath: validation.logPath,
@@ -284,4 +307,119 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
     null,
     2,
   );
+}
+
+function safeReadLog(logPath: string): string {
+  try {
+    return existsSync(logPath) ? readFileSync(logPath, "utf-8") : "";
+  } catch {
+    return "";
+  }
+}
+
+function inferAuditHealthFailureReason(
+  exitCode: number,
+  logContent: string,
+): { failureReason: string; strictFailureReason?: string } {
+  const extracted = extractAuditHealthJsonFromLog(logContent);
+  if (extracted.kind === "not_found") return { failureReason: "command_crash" };
+  if (extracted.kind === "parse_error") return { failureReason: "json_parse_failure" };
+
+  const exitReason = extracted.value.exitReason;
+  if (typeof exitReason === "string" && exitReason.trim()) {
+    return {
+      failureReason: exitReason.trim(),
+      strictFailureReason:
+        typeof extracted.value.strictFailureReason === "string" ? extracted.value.strictFailureReason : undefined,
+    };
+  }
+
+  const warningCount =
+    typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
+  const errorCount = typeof extracted.value.errorCount === "number" ? Math.max(0, extracted.value.errorCount) : 0;
+
+  if (exitCode === 2) {
+    if (errorCount > 0) return { failureReason: "strict_errors" };
+    if (warningCount > 0) return { failureReason: "strict_warnings" };
+  }
+  return { failureReason: "nonzero_exit" };
+}
+
+type ExtractedAuditHealthJson =
+  | { kind: "ok"; value: Record<string, unknown> }
+  | { kind: "not_found" }
+  | { kind: "parse_error" };
+
+function extractAuditHealthJsonFromLog(logContent: string): ExtractedAuditHealthJson {
+  // Attempt to locate the audit-health JSON payload in a mixed cron log. We avoid regex-only
+  // extraction because nested JSON contains braces and newlines.
+  const candidates = scanJsonObjects(logContent);
+  const likelyAuditHealth = /"schemaVersion"\s*:\s*1/.test(logContent) && /"activeFacts"\s*:/.test(logContent);
+  if (candidates.length === 0) return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
+
+  for (const raw of candidates) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { schemaVersion?: unknown }).schemaVersion === 1 &&
+        typeof (parsed as { activeFacts?: unknown }).activeFacts === "number" &&
+        Array.isArray((parsed as { warnings?: unknown }).warnings) &&
+        Array.isArray((parsed as { errors?: unknown }).errors)
+      ) {
+        return { kind: "ok", value: parsed };
+      }
+    } catch {
+      // Keep scanning; a later JSON block might be the actual audit-health payload.
+    }
+  }
+
+  return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
+}
+
+function scanJsonObjects(text: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    const end = findJsonObjectEnd(text, i);
+    if (end == null) continue;
+    out.push(text.slice(i, end + 1));
+    i = end;
+  }
+  return out;
+}
+
+function findJsonObjectEnd(text: string, startIdx: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+      if (depth < 0) return null;
+    }
+  }
+  return null;
 }

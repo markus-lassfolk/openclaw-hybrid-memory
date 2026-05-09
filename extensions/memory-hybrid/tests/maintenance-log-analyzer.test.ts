@@ -75,6 +75,35 @@ describe("maintenance log analyzer", () => {
     }
   });
 
+  it("distinguishes audit-health strict failures from command crashes", () => {
+    const strictWarnings = JSON.stringify(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-05-09T15:06:34Z",
+        status: "partial",
+        ok: false,
+        warningCount: 2,
+        errorCount: 0,
+        activeFacts: 1,
+        warnings: ["w1", "w2"],
+        remediation: [],
+        errors: [],
+        exitCode: 2,
+        exitReason: "strict_warnings",
+        strictFailureReason: "2 warning(s) present and --strict was set",
+      },
+      null,
+      2,
+    );
+    const a = classifyMaintenanceFailure({ step: "audit-health", exitCode: 2, logContent: strictWarnings });
+    expect(a.classification).toBe("health-warnings");
+    expect(a.id).toBe("audit-health-strict-warnings");
+
+    const crash = classifyMaintenanceFailure({ step: "audit-health", exitCode: 2, logContent: "no json here" });
+    expect(crash.classification).toBe("command-crash");
+    expect(crash.id).toBe("audit-health-command-crash");
+  });
+
   it("walks exit/log siblings, detects non-zero and exit=0 orchestration heuristics, and emits digest JSON shape", () => {
     const root = tmpRoot();
     const day = join(root, "20260507");

@@ -9,6 +9,7 @@ import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
+import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
@@ -106,6 +107,8 @@ export type AuditHealthReport = {
   status: "ok" | "partial" | "failed";
   /** @deprecated Use `status` instead. Kept for backward compatibility. */
   ok: boolean;
+  warningCount: number;
+  errorCount: number;
   activeFacts: number;
   /** Age (in days) of the oldest active fact. Used to gate sparse-store warnings (#1193). */
   storeAgeDays: number;
@@ -593,6 +596,8 @@ export function buildAuditHealthReport(
     generatedAt: new Date().toISOString(),
     status,
     ok: warnings.length === 0 && errors.length === 0,
+    warningCount: warnings.length,
+    errorCount: errors.length,
     activeFacts,
     storeAgeDays: Number(storeAgeDays.toFixed(2)),
     canonicalEmbeddings,
@@ -1903,7 +1908,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       }),
     );
 
-  const runAuditHealth = async (opts?: { json?: boolean; format?: string; strict?: boolean; timeoutMs?: string }) => {
+  const runAuditHealth = async (
+    opts?: { json?: boolean; format?: string; strict?: boolean; timeoutMs?: string },
+    cmd?: CommanderOptsParent,
+  ) => {
     const parsedTimeoutMs = Number.parseInt(String(opts?.timeoutMs ?? "30000"), 10);
     const timeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0 ? parsedTimeoutMs : 30000;
     const startedAtMs = Date.now();
@@ -1959,13 +1967,49 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       cfg.graph.hubDegreeCap,
       { lanceBytes, preReportErrors, timeoutMs, startedAtMs, deadlineMs },
     );
+    const strict = opts?.strict === true;
+    const exitInfo = buildAuditHealthExitInfo({
+      strict,
+      warningCount: report.warningCount,
+      errorCount: report.errorCount,
+      ok: report.ok,
+      status: report.status,
+    });
+    const verbose = readHybridMemVerbose(cmd) || getEnv("HYBRID_MEMORY_VERBOSE") === "1";
     if (wantsJson) {
-      console.log(JSON.stringify(report, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            ...report,
+            exitCode: exitInfo.exitCode,
+            exitReason: exitInfo.exitReason,
+            strictFailureReason: exitInfo.strictFailureReason,
+          },
+          null,
+          2,
+        ),
+      );
     } else {
       printAuditHealthMarkdown(report);
     }
-    // Exit non-zero if strict mode and either warnings present or status is partial/failed
-    if (opts?.strict && (report.status !== "ok" || !report.ok)) process.exitCode = 2;
+    if (strict && exitInfo.exitCode !== 0) {
+      process.exitCode = exitInfo.exitCode;
+      if (verbose) {
+        if (exitInfo.exitReason === "strict_warnings") {
+          console.error(
+            `audit health: strict mode failed because ${report.warningCount} warning(s) were present; errors=${report.errorCount}`,
+          );
+        } else if (exitInfo.exitReason === "strict_errors") {
+          console.error(
+            `audit health: strict mode failed because ${report.errorCount} error(s) were present; warnings=${report.warningCount}`,
+          );
+        } else {
+          console.error(
+            `audit health: strict mode failed (${exitInfo.exitReason}); warnings=${report.warningCount} errors=${report.errorCount}`,
+          );
+        }
+      }
+    }
   };
 
   mem
@@ -1974,7 +2018,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--json", "Emit versioned JSON instead of markdown")
     .option("--format <format>", "Output format: markdown or json", "markdown")
     .option("--timeout-ms <n>", "Overall audit budget in milliseconds (default: 30000)", "30000")
-    .option("--strict", "Exit non-zero when warnings or partial/failed status are present")
+    .option(
+      "--strict",
+      "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
+    )
     .action(withExit(runAuditHealth));
 
   const audit = mem.command("audit").description("Audit hybrid-memory health and maintenance state");
@@ -1984,7 +2031,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--json", "Emit versioned JSON instead of markdown")
     .option("--format <format>", "Output format: markdown or json", "markdown")
     .option("--timeout-ms <n>", "Overall audit budget in milliseconds (default: 30000)", "30000")
-    .option("--strict", "Exit non-zero when warnings or partial/failed status are present")
+    .option(
+      "--strict",
+      "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
+    )
     .action(withExit(runAuditHealth));
 
   audit
