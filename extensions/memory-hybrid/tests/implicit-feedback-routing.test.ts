@@ -11,7 +11,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupImplicitFeedbackDuplicates,
   type HandlerContext,
@@ -460,6 +460,53 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
 // ---------------------------------------------------------------------------
 // Tests — dry-run mode
 // ---------------------------------------------------------------------------
+
+describe("implicit feedback routing — cleanup progress reporting", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ifr-cleanup-progress-"));
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("emits a cleanup-duplicates progress snapshot immediately when entering the phase", async () => {
+    const db = makeDb(tmpDir);
+    writeNegativeSession(sessionsDir, "2026-01-03-session.jsonl");
+
+    const snapshots: Array<{
+      stage?: string;
+      cleanupScanned?: number;
+      cleanupCollapsed?: number;
+      cleanupBatches?: number;
+    }> = [];
+    const ctx = makeCtx(db, sessionsDir, {
+      feedToSelfCorrection: true,
+      autoCleanup: true,
+      cleanupLimit: 1,
+    });
+
+    await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      dryRun: false,
+      verbose: true,
+      onProgress: (snapshot) => snapshots.push(snapshot),
+    });
+
+    const firstCleanupSnapshot = snapshots.find((snapshot) => snapshot.stage === "cleanup-duplicates");
+
+    expect(firstCleanupSnapshot).toBeDefined();
+    expect(firstCleanupSnapshot?.cleanupScanned).toBe(0);
+    expect(firstCleanupSnapshot?.cleanupCollapsed).toBe(0);
+    expect(firstCleanupSnapshot?.cleanupBatches).toBe(0);
+  });
+});
 
 describe("implicit feedback routing — dry-run mode", () => {
   let tmpDir: string;
