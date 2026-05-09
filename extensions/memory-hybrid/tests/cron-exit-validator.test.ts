@@ -167,6 +167,45 @@ error: unknown command 'bar'
       expect(result.error).toContain("strict_warnings");
     });
 
+    it("should annotate audit-health strict failures when JSON contains escaped quotes and braces", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, `2024-05-08T02:01:00Z audit-health exit=2\n`);
+      writeFileSync(
+        logPath,
+        [
+          "some preamble",
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              generatedAt: "2026-05-09T15:06:34Z",
+              status: "partial",
+              ok: false,
+              warningCount: 1,
+              errorCount: 0,
+              activeFacts: 1,
+              warnings: ['warning with "quoted { brace }" text'],
+              remediation: [],
+              errors: [],
+              exitCode: 2,
+              exitReason: "strict_warnings",
+              strictFailureReason: '1 warning(s) with "quoted { text }" and --strict was set',
+            },
+            null,
+            2,
+          ),
+          "tail",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["audit-health"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failedSteps[0].failureReason).toBe("strict_warnings");
+      expect(result.failedSteps[0].strictFailureReason).toContain("quoted { text }");
+    });
+
     it("should report partial when steps are missing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");

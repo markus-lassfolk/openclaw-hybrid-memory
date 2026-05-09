@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 
 export interface ExitStep {
   timestamp: string;
@@ -334,8 +335,7 @@ function inferAuditHealthFailureReason(
     };
   }
 
-  const warningCount =
-    typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
+  const warningCount = typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
   const errorCount = typeof extracted.value.errorCount === "number" ? Math.max(0, extracted.value.errorCount) : 0;
 
   if (exitCode === 2) {
@@ -343,83 +343,4 @@ function inferAuditHealthFailureReason(
     if (warningCount > 0) return { failureReason: "strict_warnings" };
   }
   return { failureReason: "nonzero_exit" };
-}
-
-type ExtractedAuditHealthJson =
-  | { kind: "ok"; value: Record<string, unknown> }
-  | { kind: "not_found" }
-  | { kind: "parse_error" };
-
-function extractAuditHealthJsonFromLog(logContent: string): ExtractedAuditHealthJson {
-  // Attempt to locate the audit-health JSON payload in a mixed cron log. We avoid regex-only
-  // extraction because nested JSON contains braces and newlines.
-  const candidates = scanJsonObjects(logContent);
-  const likelyAuditHealth = /"schemaVersion"\s*:\s*1/.test(logContent) && /"activeFacts"\s*:/.test(logContent);
-  if (candidates.length === 0) return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
-
-  for (const raw of candidates) {
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        (parsed as { schemaVersion?: unknown }).schemaVersion === 1 &&
-        typeof (parsed as { activeFacts?: unknown }).activeFacts === "number" &&
-        Array.isArray((parsed as { warnings?: unknown }).warnings) &&
-        Array.isArray((parsed as { errors?: unknown }).errors)
-      ) {
-        return { kind: "ok", value: parsed };
-      }
-    } catch {
-      // Keep scanning; a later JSON block might be the actual audit-health payload.
-    }
-  }
-
-  return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
-}
-
-function scanJsonObjects(text: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== "{") continue;
-    const end = findJsonObjectEnd(text, i);
-    if (end == null) continue;
-    out.push(text.slice(i, end + 1));
-    i = end;
-  }
-  return out;
-}
-
-function findJsonObjectEnd(text: string, startIdx: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = startIdx; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (ch === "\\\\") {
-        escape = true;
-        continue;
-      }
-      if (ch === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === "\"") {
-      inString = true;
-      continue;
-    }
-    if (ch === "{") depth++;
-    if (ch === "}") {
-      depth--;
-      if (depth === 0) return i;
-      if (depth < 0) return null;
-    }
-  }
-  return null;
 }

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MaintenanceClassification =
@@ -250,10 +251,16 @@ export function classifyMaintenanceFailure(input: {
 }): MaintenanceRule {
   const auditRule = classifyAuditHealthFailure(input.step, input.exitCode, input.logContent);
   if (auditRule) return auditRule;
+
   const text = `${input.step ?? ""}\nexit=${input.exitCode ?? ""}\n${input.line ?? ""}\n${input.logContent ?? ""}`;
   for (const rule of input.rules ?? RULES) {
     if (new RegExp(rule.pattern, "ims").test(text)) return rule;
   }
+
+  if (input.step === "audit-health" && input.exitCode != null && input.exitCode !== 0) {
+    return auditHealthCommandCrashRule();
+  }
+
   return {
     id: "unclassified",
     pattern: ".*",
@@ -274,17 +281,7 @@ function classifyAuditHealthFailure(
   const content = logContent ?? "";
 
   const extracted = extractAuditHealthJsonFromLog(content);
-  if (extracted.kind === "not_found") {
-    return {
-      id: "audit-health-command-crash",
-      pattern: "",
-      classification: "command-crash",
-      defaultAction: "glitchtip+digest",
-      severity: "high",
-      suggestedAction:
-        "Audit health exited non-zero but no report JSON was found in the log. Treat as a command crash: inspect stack traces and rerun `openclaw hybrid-mem audit health --strict --json --verbose`.",
-    };
-  }
+  if (extracted.kind === "not_found") return null;
   if (extracted.kind === "parse_error") {
     return {
       id: "audit-health-json-parse-failure",
@@ -298,8 +295,7 @@ function classifyAuditHealthFailure(
   }
 
   const exitReason = typeof extracted.value.exitReason === "string" ? extracted.value.exitReason : "";
-  const warningCount =
-    typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
+  const warningCount = typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
   const errorCount = typeof extracted.value.errorCount === "number" ? Math.max(0, extracted.value.errorCount) : 0;
   const strictFailureReason =
     typeof extracted.value.strictFailureReason === "string" ? extracted.value.strictFailureReason : null;
@@ -332,79 +328,16 @@ function classifyAuditHealthFailure(
   return null;
 }
 
-type ExtractedAuditHealthJson =
-  | { kind: "ok"; value: Record<string, unknown> }
-  | { kind: "not_found" }
-  | { kind: "parse_error" };
-
-function extractAuditHealthJsonFromLog(logContent: string): ExtractedAuditHealthJson {
-  const candidates = scanJsonObjects(logContent);
-  const likelyAuditHealth = /"schemaVersion"\s*:\s*1/.test(logContent) && /"activeFacts"\s*:/.test(logContent);
-  if (candidates.length === 0) return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
-  for (const raw of candidates) {
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        (parsed as { schemaVersion?: unknown }).schemaVersion === 1 &&
-        typeof (parsed as { activeFacts?: unknown }).activeFacts === "number" &&
-        Array.isArray((parsed as { warnings?: unknown }).warnings) &&
-        Array.isArray((parsed as { errors?: unknown }).errors)
-      ) {
-        return { kind: "ok", value: parsed };
-      }
-    } catch {
-      // keep scanning
-    }
-  }
-  return likelyAuditHealth ? { kind: "parse_error" } : { kind: "not_found" };
-}
-
-function scanJsonObjects(text: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== "{") continue;
-    const end = findJsonObjectEnd(text, i);
-    if (end == null) continue;
-    out.push(text.slice(i, end + 1));
-    i = end;
-  }
-  return out;
-}
-
-function findJsonObjectEnd(text: string, startIdx: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = startIdx; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (ch === "\\\\") {
-        escape = true;
-        continue;
-      }
-      if (ch === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === "\"") {
-      inString = true;
-      continue;
-    }
-    if (ch === "{") depth++;
-    if (ch === "}") {
-      depth--;
-      if (depth === 0) return i;
-      if (depth < 0) return null;
-    }
-  }
-  return null;
+function auditHealthCommandCrashRule(): MaintenanceRule {
+  return {
+    id: "audit-health-command-crash",
+    pattern: "",
+    classification: "command-crash",
+    defaultAction: "glitchtip+digest",
+    severity: "high",
+    suggestedAction:
+      "Audit health exited non-zero but no report JSON was found in the log and no generic maintenance rule matched. Treat as a command crash: inspect stack traces and rerun `openclaw hybrid-mem audit health --strict --json --verbose`.",
+  };
 }
 
 function extractPluginVersion(logContent: string): string | null {
