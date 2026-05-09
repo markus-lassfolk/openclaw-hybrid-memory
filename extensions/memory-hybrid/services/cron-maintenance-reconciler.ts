@@ -6,9 +6,9 @@
  * shows missing required steps or failures.
  */
 
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
-import { validateMaintenanceExecution, type ExitValidationResult } from "./cron-exit-validator.js";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { type ExitValidationResult, validateMaintenanceExecution } from "./cron-exit-validator.js";
 
 export interface CronRunLedgerEntry {
   ts: number;
@@ -49,9 +49,18 @@ export function parseCronRunLedger(ledgerPath: string): CronRunLedgerEntry[] {
 
   try {
     const content = readFileSync(ledgerPath, "utf-8");
-    const lines = content.trim().split("\n").filter((l) => l.trim());
-    return lines.map((line) => JSON.parse(line) as CronRunLedgerEntry);
-  } catch (err) {
+    const out: CronRunLedgerEntry[] = [];
+    for (const line of content.split("\n")) {
+      const t = line.trim();
+      if (!t) continue;
+      try {
+        out.push(JSON.parse(t) as CronRunLedgerEntry);
+      } catch {
+        // Skip malformed lines; keep the rest of the ledger usable.
+      }
+    }
+    return out;
+  } catch {
     return [];
   }
 }
@@ -60,8 +69,58 @@ export function parseCronRunLedger(ledgerPath: string): CronRunLedgerEntry[] {
  * Write ledger entries back to a JSONL file.
  */
 export function writeCronRunLedger(ledgerPath: string, entries: CronRunLedgerEntry[]): void {
-  const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  const content = `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
   writeFileSync(ledgerPath, content, "utf-8");
+}
+
+/** Ledger "finished" ts is often near run end; run-id time is start — allow long jobs and small clock skew. */
+const LEDGER_FINISH_SKEW_BEFORE_START_MS = 120_000;
+const MAX_MAINTENANCE_RUN_DURATION_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Parse run ID timestamp (format: YYYYMMDDTHHMMSSz) to milliseconds since epoch.
+ */
+function parseRunIdTimestamp(runIdPrefix: string): number {
+  const match = runIdPrefix.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) return 0;
+
+  const [, year, month, day, hour, minute, second] = match;
+  return Date.UTC(
+    Number.parseInt(year, 10),
+    Number.parseInt(month, 10) - 1,
+    Number.parseInt(day, 10),
+    Number.parseInt(hour, 10),
+    Number.parseInt(minute, 10),
+    Number.parseInt(second, 10),
+  );
+}
+
+/**
+ * Pick the maintenance artifact pair most likely tied to a finished ledger row.
+ * Prefer the latest run start that still plausibly completed by ledgerFinishTs.
+ */
+function pickMaintenanceArtifactForFinishedEntry(
+  artifacts: Array<{ exitPath: string; logPath: string; runId: string }>,
+  ledgerFinishTs: number,
+): { exitPath: string; logPath: string; runId: string } | undefined {
+  const scored = artifacts
+    .map((a) => {
+      const runIdMatch = a.runId.match(/^(\d{8}T\d{6}Z)/);
+      if (!runIdMatch) return null;
+      const runTs = parseRunIdTimestamp(runIdMatch[1]);
+      const delta = ledgerFinishTs - runTs;
+      if (delta < -LEDGER_FINISH_SKEW_BEFORE_START_MS || delta > MAX_MAINTENANCE_RUN_DURATION_MS) {
+        return null;
+      }
+      return { ...a, runTs };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  if (scored.length === 0) return undefined;
+
+  scored.sort((a, b) => b.runTs - a.runTs);
+  const best = scored[0];
+  return { exitPath: best.exitPath, logPath: best.logPath, runId: best.runId };
 }
 
 /**
@@ -171,17 +230,7 @@ export function reconcileCronRunLedger(
       const jobSlug = entry.jobId.replace(/^hybrid-mem:/, "");
       const artifacts = findMaintenanceArtifacts(logDir, jobSlug);
 
-      // Find artifact closest to this entry's timestamp
-      const closestArtifact = artifacts
-        .map((a) => {
-          const runIdMatch = a.runId.match(/^(\d{8}T\d{6}Z)/);
-          if (!runIdMatch) return null;
-          const runTs = parseRunIdTimestamp(runIdMatch[1]);
-          const diff = Math.abs(runTs - entry.ts);
-          return { ...a, diff };
-        })
-        .filter((a): a is NonNullable<typeof a> => a !== null && a.diff < 60000) // Within 60 seconds
-        .sort((a, b) => a.diff - b.diff)[0];
+      const closestArtifact = pickMaintenanceArtifactForFinishedEntry(artifacts, entry.ts);
 
       if (closestArtifact) {
         exitPath = closestArtifact.exitPath;
@@ -229,25 +278,6 @@ export function reconcileCronRunLedger(
   }
 
   return result;
-}
-
-/**
- * Parse run ID timestamp (format: YYYYMMDDTHHMMSSz) to milliseconds since epoch.
- */
-function parseRunIdTimestamp(runIdPrefix: string): number {
-  // Format: 20260509T024520Z
-  const match = runIdPrefix.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (!match) return 0;
-
-  const [, year, month, day, hour, minute, second] = match;
-  return Date.UTC(
-    Number.parseInt(year, 10),
-    Number.parseInt(month, 10) - 1,
-    Number.parseInt(day, 10),
-    Number.parseInt(hour, 10),
-    Number.parseInt(minute, 10),
-    Number.parseInt(second, 10),
-  );
 }
 
 /**

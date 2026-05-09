@@ -9,24 +9,13 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Chainable, withExit } from "../../shared.js";
 import {
+  type ReconciliationResult,
   reconcileAllCronRunLedgers,
   reconcileCronRunLedger,
-  type ReconciliationResult,
 } from "../../../services/cron-maintenance-reconciler.js";
-
-/**
- * Default job step mappings for hybrid-mem maintenance jobs.
- */
-const DEFAULT_JOB_STEPS: Record<string, string[]> = {
-  "hybrid-mem:nightly-memory-sweep": ["prune", "distill", "extract-daily", "resolve-contradictions", "enrich-entities"],
-  "hybrid-mem:nightly-dream-cycle": ["dream-cycle"],
-  "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules"],
-  "hybrid-mem:nightly-self-correction": ["self-correct"],
-  "hybrid-mem:weekly-sensor-sweep": ["sensor-sweep"],
-  "hybrid-mem:weekly-persona-proposals": ["persona-proposals"],
-};
+import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
+import { type Chainable, withExit } from "../../shared.js";
 
 export function registerReconcileCronLedgers(hybrid: Chainable): void {
   hybrid
@@ -77,7 +66,7 @@ export function registerReconcileCronLedgers(hybrid: Chainable): void {
               return;
             }
 
-            const requiredSteps = opts.requiredSteps || DEFAULT_JOB_STEPS[opts.jobId];
+            const requiredSteps = opts.requiredSteps || HYBRID_MEM_CRON_DEFAULT_JOB_STEPS[opts.jobId];
             if (!requiredSteps || requiredSteps.length === 0) {
               console.error(
                 `Error: No required steps provided for job ${opts.jobId}. Use --required-steps or ensure job is in default mappings.`,
@@ -89,7 +78,7 @@ export function registerReconcileCronLedgers(hybrid: Chainable): void {
             result = reconcileCronRunLedger(ledgerPath, logDir, requiredSteps, !!opts.dryRun);
           } else {
             // Reconcile all jobs
-            result = reconcileAllCronRunLedgers(cronRunsDir, logDir, DEFAULT_JOB_STEPS, !!opts.dryRun);
+            result = reconcileAllCronRunLedgers(cronRunsDir, logDir, HYBRID_MEM_CRON_DEFAULT_JOB_STEPS, !!opts.dryRun);
           }
 
           if (opts.json) {
@@ -123,9 +112,7 @@ function printReconciliationResult(result: ReconciliationResult, dryRun: boolean
         console.log(`  Missing steps: ${correction.validationResult.missingSteps.join(", ")}`);
       }
       if (correction.validationResult.failedSteps.length > 0) {
-        console.log(
-          `  Failed steps: ${correction.validationResult.failedSteps.map((s) => s.step).join(", ")}`,
-        );
+        console.log(`  Failed steps: ${correction.validationResult.failedSteps.map((s) => s.step).join(", ")}`);
       }
     }
   }

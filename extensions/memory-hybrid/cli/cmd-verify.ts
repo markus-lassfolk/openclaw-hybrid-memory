@@ -42,6 +42,7 @@ import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared
 import { capturePluginError } from "../services/error-reporter.js";
 import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../services/cron-job-bash-harness.js";
 import { reconcileAllCronRunLedgers } from "../services/cron-maintenance-reconciler.js";
+import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../services/hybrid-mem-cron-default-job-steps.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
@@ -1970,8 +1971,8 @@ export async function runVerifyForCli(
     }
   }
 
-  // ───── Cron Ledger Reconciliation ─────
-  if (opts.reconcile || opts.fix) {
+  // ───── Cron Ledger Reconciliation (explicit --reconcile only; optional --fix to write) ─────
+  if (opts.reconcile) {
     log("\n───── Cron Maintenance Ledger Reconciliation ─────");
     try {
       const cronRunsDir = join(openclawDir, "cron", "runs");
@@ -1982,17 +1983,7 @@ export async function runVerifyForCli(
       } else if (!existsSync(logDir)) {
         log(`${PAUSE} Log directory not found: ${logDir}`);
       } else {
-        // Default job step mappings for hybrid-mem maintenance jobs
-        const jobStepMap: Record<string, string[]> = {
-          "hybrid-mem:nightly-memory-sweep": ["prune", "distill", "extract-daily", "resolve-contradictions", "enrich-entities"],
-          "hybrid-mem:nightly-dream-cycle": ["dream-cycle"],
-          "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules"],
-          "hybrid-mem:nightly-self-correction": ["self-correct"],
-          "hybrid-mem:weekly-sensor-sweep": ["sensor-sweep"],
-          "hybrid-mem:weekly-persona-proposals": ["persona-proposals"],
-        };
-
-        const result = reconcileAllCronRunLedgers(cronRunsDir, logDir, jobStepMap, !opts.fix);
+        const result = reconcileAllCronRunLedgers(cronRunsDir, logDir, HYBRID_MEM_CRON_DEFAULT_JOB_STEPS, !opts.fix);
 
         if (result.examined === 0) {
           log(`${PAUSE} No cron runs found to examine`);
@@ -2002,7 +1993,9 @@ export async function runVerifyForCli(
           log(`${FAIL} Found ${result.falseOk} false-OK run(s) out of ${result.examined} examined`);
           if (opts.fix) {
             log(`  → Corrected ${result.corrected} ledger entr${result.corrected === 1 ? "y" : "ies"}`);
-            fixes.push(`Corrected ${result.corrected} false-OK cron run ledger entr${result.corrected === 1 ? "y" : "ies"}`);
+            fixes.push(
+              `Corrected ${result.corrected} false-OK cron run ledger entr${result.corrected === 1 ? "y" : "ies"}`,
+            );
           } else {
             log(`  → Run with --fix to correct ledger entries`);
             issues.push(`${result.falseOk} cron run(s) incorrectly recorded as OK despite validation failures`);
@@ -2010,10 +2003,14 @@ export async function runVerifyForCli(
 
           if (result.corrections.length > 0 && result.corrections.length <= 5) {
             for (const correction of result.corrections) {
-              log(`  • ${correction.jobId} @ ${new Date(correction.timestamp).toISOString()}: ${correction.validationResult.error || "validation failed"}`);
+              log(
+                `  • ${correction.jobId} @ ${new Date(correction.timestamp).toISOString()}: ${correction.validationResult.error || "validation failed"}`,
+              );
             }
           } else if (result.corrections.length > 5) {
-            log(`  • ${result.corrections.length} corrections (run 'openclaw hybrid-mem reconcile-cron-ledgers' for details)`);
+            log(
+              `  • ${result.corrections.length} corrections (run 'openclaw hybrid-mem reconcile-cron-ledgers' for details)`,
+            );
           }
         }
       }

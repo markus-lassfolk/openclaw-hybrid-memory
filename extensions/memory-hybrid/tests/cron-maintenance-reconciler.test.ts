@@ -5,18 +5,18 @@
  * are correctly identified and repaired.
  */
 
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  parseCronRunLedger,
-  writeCronRunLedger,
+  type CronRunLedgerEntry,
   extractArtifactPathsFromSummary,
   findMaintenanceArtifacts,
-  reconcileCronRunLedger,
+  parseCronRunLedger,
   reconcileAllCronRunLedgers,
-  type CronRunLedgerEntry,
+  reconcileCronRunLedger,
+  writeCronRunLedger,
 } from "../services/cron-maintenance-reconciler.js";
 
 let tmpDir: string;
@@ -62,6 +62,16 @@ describe("parseCronRunLedger", () => {
 
     const parsed = parseCronRunLedger(ledgerPath);
     expect(parsed).toHaveLength(2);
+  });
+
+  it("should skip invalid JSON lines and keep valid ones", () => {
+    const ledgerPath = join(tmpDir, "test.jsonl");
+    const good = JSON.stringify({ ts: 1000, jobId: "test", action: "started" });
+    writeFileSync(ledgerPath, `${good}\nnot-json{{{`);
+
+    const parsed = parseCronRunLedger(ledgerPath);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].ts).toBe(1000);
   });
 });
 
@@ -253,6 +263,38 @@ describe("reconcileCronRunLedger", () => {
 
     expect(result.examined).toBe(0);
     expect(result.falseOk).toBe(0);
+  });
+
+  it("should match artifacts by run id when finish time is long after run start", () => {
+    const ledgerPath = join(cronRunsDir, "hybrid-mem:nightly-dream-cycle.jsonl");
+    rmSync(cronRunsDir, { recursive: true, force: true });
+    mkdirSync(cronRunsDir, { recursive: true });
+    rmSync(logDir, { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+
+    const runPrefix = "20260509T024520Z";
+    const runTs = Date.UTC(2026, 4, 9, 2, 45, 20);
+    const finishTs = runTs + 45 * 60 * 1000;
+
+    writeCronRunLedger(ledgerPath, [
+      {
+        ts: finishTs,
+        jobId: "hybrid-mem:nightly-dream-cycle",
+        action: "finished",
+        status: "ok",
+        summary: "No HM paths in summary",
+      },
+    ]);
+
+    const slug = "nightly-dream-cycle";
+    writeFileSync(join(logDir, `${slug}-${runPrefix}-999.exit.txt`), "");
+    writeFileSync(join(logDir, `${slug}-${runPrefix}-999.log`), "timeout");
+
+    const result = reconcileCronRunLedger(ledgerPath, logDir, ["dream-cycle"], false);
+
+    expect(result.examined).toBe(1);
+    expect(result.falseOk).toBe(1);
+    expect(result.corrected).toBe(1);
   });
 
   it("should respect dry-run mode", () => {
