@@ -39,6 +39,12 @@ export interface MigrateEmbeddingsOptions {
   onProgress?: (completed: number, total: number) => void;
   /** Logger for structured output. Falls back to console when not provided. */
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
+  /**
+   * Target table name for shadow-table re-indexing. When provided, embeddings are written
+   * to this table instead of the main table. Caller is responsible for swapping the shadow
+   * table into place after successful migration. Default: undefined (write to main table).
+   */
+  targetTableName?: string;
 }
 
 interface MigrateEmbeddingsResult {
@@ -106,9 +112,22 @@ interface EmbeddingMaintenanceResult {
  *
  * Aborts early with a warning if the VectorDB is closed mid-run (hot-reload / shutdown).
  * Progress is emitted after every batch via `onProgress` and logged via `logger`.
+ *
+ * Shadow-table support: When `targetTableName` is provided, vectors are written to that table
+ * instead of the main table. This enables non-destructive re-indexing where the shadow table
+ * is validated and swapped atomically after successful population.
  */
 export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise<MigrateEmbeddingsResult> {
-  const { factsDb, vectorDb, embeddings, batchSize = 40, delayMsBetweenBatches = 0, onProgress, logger } = opts;
+  const {
+    factsDb,
+    vectorDb,
+    embeddings,
+    batchSize = 40,
+    delayMsBetweenBatches = 0,
+    onProgress,
+    logger,
+    targetTableName,
+  } = opts;
 
   const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 
@@ -126,12 +145,34 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
 
   log.info(
     `memory-hybrid: embedding-migration: starting — ${total} facts, ` +
-      `model=${embeddings.modelName}, batchSize=${batchSize}`,
+      `model=${embeddings.modelName}, batchSize=${batchSize}` +
+      (targetTableName ? `, targetTable=${targetTableName}` : ""),
   );
 
   const initialGeneration = vectorDb.getCloseGeneration();
   let offset = 0;
   const facts = useBatched ? null : factsDb.getAll({ includeSuperseded: false });
+
+  // Helper to store to target table or main table
+  const storeVector = async (entry: {
+    id: string;
+    text: string;
+    vector: number[];
+    importance: number;
+    category: string;
+  }) => {
+    if (targetTableName) {
+      await (vectorDb as { storeToTable?: (name: string, entry: unknown) => Promise<void> }).storeToTable?.(
+        targetTableName,
+        entry,
+      );
+    } else {
+      await vectorDb.store(entry);
+    }
+  };
+
+  // For shadow-table migration, skip duplicate checks (we're rebuilding from scratch)
+  const checkDuplicate = targetTableName ? async () => false : (vec: number[]) => vectorDb.hasDuplicate(vec);
 
   while (offset < total) {
     // Abort if the VectorDB was closed (hot-reload or shutdown)
@@ -245,22 +286,27 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       try {
         // Check for duplicate BEFORE deleting old vector: if a different fact already has
         // a similar embedding, skip rather than removing the existing entry unnecessarily.
-        const isDuplicate = await vectorDb.hasDuplicate(vec);
+        const isDuplicate = await checkDuplicate(vec);
         if (!isDuplicate) {
-          // Remove stale entry so dimension-changed stores succeed
-          try {
-            await vectorDb.delete(fact.id);
-          } catch {
-            // Entry may not exist — expected on first migration
+          // Remove stale entry so dimension-changed stores succeed (only for main table)
+          if (!targetTableName) {
+            try {
+              await vectorDb.delete(fact.id);
+            } catch {
+              // Entry may not exist — expected on first migration
+            }
           }
-          await vectorDb.store({
+          await storeVector({
             id: fact.id,
             text: fact.text,
             vector: vec,
             importance: fact.importance ?? 0.5,
             category: fact.category,
           });
-          factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+          // Update SQLite metadata (only when writing to main table, not shadow)
+          if (!targetTableName) {
+            factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+          }
           migrated++;
         } else {
           skipped++;
