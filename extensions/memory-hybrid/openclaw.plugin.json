@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.5.81",
+  "version": "2026.5.92",
   "contracts": {
     "tools": [
       "active_task_propose_goal",
@@ -660,7 +660,16 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "enum": [
+          "essential",
+          "normal",
+          "expert",
+          "full",
+          "local",
+          "minimal",
+          "enhanced",
+          "complete"
+        ],
         "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
@@ -670,7 +679,12 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["openai", "ollama", "onnx", "google"],
+            "enum": [
+              "openai",
+              "ollama",
+              "onnx",
+              "google"
+            ],
             "default": "openai",
             "description": "Embedding provider. 'openai'/'google' require apiKey. 'ollama' and 'onnx' run locally without an API key."
           },
@@ -710,7 +724,11 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["openai", "google", "ollama"]
+              "enum": [
+                "openai",
+                "google",
+                "ollama"
+              ]
             },
             "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported — ensure all listed providers produce the same dimensions as your stored vectors."
           },
@@ -749,7 +767,13 @@
               },
               "injectionFormat": {
                 "type": "string",
-                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
+                "enum": [
+                  "full",
+                  "short",
+                  "minimal",
+                  "progressive",
+                  "progressive_hybrid"
+                ]
               },
               "recallTiming": {
                 "oneOf": [
@@ -758,7 +782,11 @@
                   },
                   {
                     "type": "string",
-                    "enum": ["off", "basic", "verbose"]
+                    "enum": [
+                      "off",
+                      "basic",
+                      "verbose"
+                    ]
                   }
                 ],
                 "description": "Structured recall timing logs: false/off=disabled, true/basic=completed events only, verbose=started+completed with timestamps."
@@ -870,7 +898,11 @@
               },
               "interactiveEnrichment": {
                 "type": "string",
-                "enum": ["fast", "balanced", "full"],
+                "enum": [
+                  "fast",
+                  "balanced",
+                  "full"
+                ],
                 "description": "Unified control for interactive auto-recall: fast = lowest latency/cost (no HyDE, no ambient multi-query); balanced = default; full = richer (HyDE + ambient multi when configured)."
               },
               "authFailure": {
@@ -973,7 +1005,12 @@
                 },
                 "onDuplicate": {
                   "type": "string",
-                  "enum": ["skip", "boost", "merge", "store"]
+                  "enum": [
+                    "skip",
+                    "boost",
+                    "merge",
+                    "store"
+                  ]
                 },
                 "boostBy": {
                   "type": "number",
@@ -1004,7 +1041,12 @@
               },
               "onDuplicate": {
                 "type": "string",
-                "enum": ["skip", "boost", "merge", "store"]
+                "enum": [
+                  "skip",
+                  "boost",
+                  "merge",
+                  "store"
+                ]
               },
               "boostBy": {
                 "type": "number",
@@ -1024,7 +1066,9 @@
           },
           "store": {
             "type": "string",
-            "enum": ["sqlite"]
+            "enum": [
+              "sqlite"
+            ]
           },
           "encryptionKey": {
             "type": "string",
@@ -1076,7 +1120,10 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["community", "self-hosted"],
+            "enum": [
+              "community",
+              "self-hosted"
+            ],
             "default": "community",
             "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
           },
@@ -1129,7 +1176,10 @@
             "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
           }
         },
-        "required": ["enabled", "consent"],
+        "required": [
+          "enabled",
+          "consent"
+        ],
         "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
@@ -1167,7 +1217,12 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "maintenance", "default", "heavy"],
+            "enum": [
+              "nano",
+              "maintenance",
+              "default",
+              "heavy"
+            ],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset defaults to nano (same as CLI/runtime ?? \"nano\")."
           }
         }
@@ -1297,7 +1352,11 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["SOUL.md", "IDENTITY.md", "USER.md"]
+              "enum": [
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md"
+              ]
             },
             "description": "Identity files that can be modified via proposals"
           },
@@ -1359,7 +1418,10 @@
                   "type": "string"
                 }
               },
-              "required": ["key", "prompt"]
+              "required": [
+                "key",
+                "prompt"
+              ]
             },
             "description": "Recurring identity reflection questions"
           }
@@ -1380,7 +1442,11 @@
                 "properties": {
                   "mode": {
                     "type": "string",
-                    "enum": ["telegram", "system", "none"],
+                    "enum": [
+                      "telegram",
+                      "system",
+                      "none"
+                    ],
                     "description": "Weekly pending-review digest delivery: system (default) uses gateway announce; telegram requires chatId; none disables delivery"
                   },
                   "chatId": {
@@ -1410,8 +1476,12 @@
                     "type": "boolean",
                     "description": "Enable GitHub lifecycle sync (Phase 2 — not implemented in this release)"
                   },
-                  "repo": { "type": "string" },
-                  "tokenRef": { "type": "string" }
+                  "repo": {
+                    "type": "string"
+                  },
+                  "tokenRef": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -1454,7 +1524,10 @@
             "description": "Strengthen RELATED_TO links when facts are recalled together (default: false)"
           },
           "hubDegreeCap": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 1,
             "description": "Hub guard: skip nodes above this total link degree and cap per-hop traversable fanout (default: 500; null disables)"
           }
@@ -1567,7 +1640,11 @@
           },
           "defaultStoreScope": {
             "type": "string",
-            "enum": ["global", "agent", "auto"],
+            "enum": [
+              "global",
+              "agent",
+              "auto"
+            ],
             "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
           }
         },
@@ -1670,7 +1747,11 @@
           },
           "pruneMode": {
             "type": "string",
-            "enum": ["expired", "decay", "both"]
+            "enum": [
+              "expired",
+              "decay",
+              "both"
+            ]
           },
           "model": {
             "type": "string"
@@ -1692,12 +1773,16 @@
           },
           "consolidationEventTypeAllow": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Optional allow-list of event_log.event_type values for episodic consolidation (#1185)"
           },
           "consolidationEventTypeDeny": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Extra event_type deny list merged with built-in session/heartbeat filter (#1185)"
           }
         },
@@ -1752,7 +1837,12 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "maintenance", "default", "heavy"]
+            "enum": [
+              "nano",
+              "maintenance",
+              "default",
+              "heavy"
+            ]
           },
           "preFilter": {
             "type": "object",
@@ -1947,14 +2037,16 @@
           },
           "ledger": {
             "type": "string",
-            "enum": ["markdown", "facts"],
+            "enum": [
+              "markdown",
+              "facts"
+            ],
             "description": "Task ledger backend. \"markdown\" = legacy ACTIVE-TASKS.md file ledger (default). \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection via hybrid-mem active-tasks render."
           },
           "filePath": {
             "type": "string",
             "description": "Path to ACTIVE-TASKS.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASKS.md)"
           },
-
           "staleThreshold": {
             "type": "string",
             "description": "Duration string after which a task row is stale (e.g. 24h, 7d)"
@@ -2008,7 +2100,10 @@
             "properties": {
               "mode": {
                 "type": "string",
-                "enum": ["readable", "full"],
+                "enum": [
+                  "readable",
+                  "full"
+                ],
                 "description": "readable = apply title filters and dedupe (default). full = list all rows (caps still apply when maxRowsPerSection is set)."
               },
               "excludeGenericTitle": {
@@ -2022,7 +2117,11 @@
               },
               "dedupeBy": {
                 "type": "string",
-                "enum": ["none", "label", "normalizedTitle"],
+                "enum": [
+                  "none",
+                  "label",
+                  "normalizedTitle"
+                ],
                 "description": "De-duplicate rows after filters (default: none)."
               },
               "maxRowsPerSection": {
@@ -2058,7 +2157,10 @@
             "description": "Relative to workspace; goal JSON store (default: state/goals)"
           },
           "model": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Optional dedicated stewardship model (default: null = cron default)"
           },
           "heartbeatStewardship": {
@@ -2087,7 +2189,12 @@
               },
               "priority": {
                 "type": "string",
-                "enum": ["critical", "high", "normal", "low"]
+                "enum": [
+                  "critical",
+                  "high",
+                  "normal",
+                  "low"
+                ]
               }
             },
             "description": "Per-goal defaults when registering"
@@ -2149,7 +2256,12 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": ["critical", "high", "normal", "low"]
+                  "enum": [
+                    "critical",
+                    "high",
+                    "normal",
+                    "low"
+                  ]
                 }
               }
             }
@@ -2211,6 +2323,8 @@
         "description": "Long-running goal registry, stewardship injection, and watchdog (see docs/GOAL-STEWARDSHIP-DESIGN.md)"
       }
     },
-    "required": ["embedding"]
+    "required": [
+      "embedding"
+    ]
   }
 }
