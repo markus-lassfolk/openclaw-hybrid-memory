@@ -298,7 +298,7 @@ export type HybridMemCliContext = {
     getProposalsPending: () => number;
     getProposalsAvailable: () => boolean;
     getWalPending: () => Promise<number> | number;
-    getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
+    getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string; vectordbOptimize?: string };
     getStorageSizes: () => Promise<{
       sqliteBytes?: number;
       lanceBytes?: number;

@@ -12,17 +12,17 @@ import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
-import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
+import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
 import {
-  hybridConfigSchema,
   getCronModelConfig,
   getDefaultCronModel,
   getMemoryCategories,
+  hybridConfigSchema,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
@@ -41,8 +41,8 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
-import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
+import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 import { versionInfo } from "../versionInfo.js";
 
 /** Help text shown after hybrid-mem commands list */
@@ -56,7 +56,8 @@ Commands by category:
 
   Maintenance (run regularly or use run-all)
     run-all              Run all maintenance tasks in optimal order (see below)
-    compact              Tier compaction: move facts between hot/warm/cold
+    tier-compact         Tier compaction: move facts between hot/warm/cold/structural
+    vectordb-optimize    Compact LanceDB fragments and prune old versions (reclaims disk space)
     prune                Remove expired (decayed) facts
     checkpoint           Checkpoint vector DB to disk
     re-index             Reset LanceDB and re-embed all facts (after changing embedding model)
@@ -676,11 +677,12 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getProposalsAvailable: () => !!proposalsDb,
     getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
     getLastRunTimestamps: () => {
-      const out: { distill?: string; reflect?: string; compact?: string } = {};
+      const out: { distill?: string; reflect?: string; compact?: string; vectordbOptimize?: string } = {};
       for (const [key, file] of [
         ["distill", ".distill_last_run"],
         ["reflect", ".reflect_last_run"],
         ["compact", ".compact_last_run"],
+        ["vectordbOptimize", ".vectordb_optimize_last_run"],
       ] as const) {
         const path = join(memoryDir, file);
         if (existsSync(path)) {
