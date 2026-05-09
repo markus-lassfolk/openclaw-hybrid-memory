@@ -285,7 +285,7 @@ export function reconcileCronRunLedger(
  *
  * @param cronRunsDir - Directory containing *.jsonl ledger files (e.g., ~/.openclaw/cron/runs)
  * @param logDir - Directory containing HM_EXIT and HM_LOG files (e.g., ~/.openclaw/logs/cron-hybrid-mem)
- * @param jobStepMap - Map of jobId to required steps (e.g., {"hybrid-mem:nightly-memory-sweep": ["prune", "distill"]})
+ * @param jobStepMap - Map of jobId to required steps (e.g., {"hybrid-mem:nightly-distill": ["prune", "distill"]})
  * @param dryRun - If true, don't modify any files
  * @returns Combined reconciliation results
  */
@@ -310,7 +310,7 @@ export function reconcileAllCronRunLedgers(
     const files = readdirSync(cronRunsDir).filter((f) => f.endsWith(".jsonl"));
 
     for (const file of files) {
-      // Extract job ID from filename (e.g., "hybrid-mem:nightly-memory-sweep.jsonl")
+      // Extract job ID from filename (e.g., "hybrid-mem:nightly-distill.jsonl")
       const jobId = basename(file, ".jsonl");
       const requiredSteps = jobStepMap[jobId];
 
