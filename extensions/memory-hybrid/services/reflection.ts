@@ -118,11 +118,19 @@ export async function loadReflectionDedupeCorpusVectors(
   logger: { info: (msg: string) => void },
   logPrefix: string,
   captureOperation: string,
+  markEmbeddingModel?: (factId: string, model: string) => void,
 ): Promise<(number[] | null)[]> {
   const loadWithTimeout = async (): Promise<(number[] | null)[]> => {
     const vdb = vectorDb as VectorDB & {
       getVectorDim?: () => number;
       getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
+      store?: (entry: {
+        text: string;
+        vector: number[];
+        importance: number;
+        category: string;
+        id?: string;
+      }) => Promise<string>;
     };
     const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
     let byId = new Map<string, number[]>();
@@ -141,30 +149,84 @@ export async function loadReflectionDedupeCorpusVectors(
 
     const result: (number[] | null)[] = new Array(facts.length);
     let lanceHits = 0;
+    let lanceModelOkHits = 0;
+    let lanceModelMissingHits = 0;
+    let lanceModelMismatchHits = 0;
     let apiEmbeds = 0;
-    let embedAttemptsThisRun = 0;
+    let apiPersisted = 0;
+    let apiPersistFailures = 0;
+    let embedFailures = 0;
+    const startedAt = Date.now();
+    let lastProgressAt = startedAt;
 
-    logger.info(`${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20...`);
+    logger.info(
+      `${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20 (checkpointing API-hydrated vectors)`,
+    );
 
     for (let i = 0; i < facts.length; i += 20) {
+      const batchStartedAt = Date.now();
       const end = Math.min(i + 20, facts.length);
       let hadApiEmbed = false;
+      let batchLance = 0;
+      let batchApi = 0;
+      let batchPersisted = 0;
+      let batchFailures = 0;
+
       for (let j = i; j < end; j++) {
         const f = facts[j]!;
-        const cached = byId.get(f.id.toLowerCase());
-        const modelOk =
-          f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
-        const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
+        const cached = byId.get(f.id.toLowerCase()) ?? byId.get(f.id);
+        const modelKnown = f.embeddingModel != null && embeddings.modelName != null;
+        const modelOk = modelKnown && f.embeddingModel === embeddings.modelName;
+        const useCache = dim > 0 && cached != null && cached.length === dim && (!modelKnown || modelOk);
         if (useCache) {
           result[j] = normalizeVector(cached);
           lanceHits++;
+          batchLance++;
+          if (modelOk) lanceModelOkHits++;
+          else if (!f.embeddingModel) {
+            lanceModelMissingHits++;
+            if (embeddings.modelName && markEmbeddingModel) {
+              try {
+                markEmbeddingModel(f.id, embeddings.modelName);
+              } catch (markErr) {
+                logger.info(
+                  `${logPrefix} — dedupe corpus: failed to mark embedding model for cached fact ${f.id}: ${markErr}`,
+                );
+              }
+            }
+          } else lanceModelMismatchHits++;
         } else {
           try {
             const vec = await embeddings.embed(f.text);
             result[j] = normalizeVector(vec);
             apiEmbeds++;
+            batchApi++;
             hadApiEmbed = true;
+
+            if (typeof vdb.store === "function") {
+              try {
+                await vdb.store({
+                  text: f.text,
+                  vector: vec,
+                  importance: typeof f.importance === "number" ? f.importance : REFLECTION_IMPORTANCE,
+                  category: f.category,
+                  id: f.id,
+                });
+                if (embeddings.modelName && markEmbeddingModel) {
+                  markEmbeddingModel(f.id, embeddings.modelName);
+                }
+                apiPersisted++;
+                batchPersisted++;
+              } catch (storeErr) {
+                apiPersistFailures++;
+                logger.info(
+                  `${logPrefix} — dedupe corpus: failed to persist hydrated vector for fact ${f.id}: ${storeErr}`,
+                );
+              }
+            }
           } catch (err) {
+            embedFailures++;
+            batchFailures++;
             if (!shouldSuppressEmbeddingError(err)) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: captureOperation,
@@ -178,11 +240,22 @@ export async function loadReflectionDedupeCorpusVectors(
         }
       }
 
-      // Log progress for large batches (every 500 facts or at the end)
-      if (facts.length > 1000 && (end % 500 === 0 || end === facts.length)) {
-        const ok = result.slice(0, end).filter((v) => v !== null).length;
+      const elapsedMs = Date.now() - startedAt;
+      const batchMs = Date.now() - batchStartedAt;
+      const processed = end;
+      const remaining = facts.length - end;
+      const ok = result.slice(0, end).filter((v) => v !== null).length;
+      const shouldLog =
+        facts.length > 1000 ||
+        batchApi > 0 ||
+        batchMs >= 5000 ||
+        Date.now() - lastProgressAt >= 10_000 ||
+        end === facts.length;
+
+      if (shouldLog) {
+        lastProgressAt = Date.now();
         logger.info(
-          `${logPrefix} — dedupe corpus progress: ${end}/${facts.length} facts processed (${lanceHits} from Lance, ${apiEmbeds} via API, ${ok} non-null)`,
+          `${logPrefix} — dedupe corpus progress: ${processed}/${facts.length} processed, ${remaining} remaining; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, failures ${batchFailures}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch ${lanceModelMismatchHits}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, non-null ${ok}; elapsed=${elapsedMs}ms`,
         );
       }
 
@@ -194,7 +267,7 @@ export async function loadReflectionDedupeCorpusVectors(
     if (facts.length > 0) {
       const ok = result.filter((v) => v !== null).length;
       logger.info(
-        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${ok}/${facts.length} non-null for cosine check`,
+        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch ${lanceModelMismatchHits}), ${apiEmbeds} row(s) hydrated via embedding API, ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${ok}/${facts.length} non-null for cosine check`,
       );
     }
     return result;
@@ -380,6 +453,7 @@ export async function runReflection(
       logger,
       "memory-hybrid: reflection",
       "reflection-embed-existing",
+      (factId, model) => factsDb.setEmbeddingModel(factId, model),
     );
   } else {
     logger.info("memory-hybrid: reflection — no existing pattern facts for dedupe; embedding new candidates only");
@@ -613,6 +687,7 @@ export async function runReflectionRules(
       logger,
       "memory-hybrid: reflect-rules",
       "reflection-rules-embed-existing",
+      (factId, model) => factsDb.setEmbeddingModel(factId, model),
     );
   } else {
     logger.info("memory-hybrid: reflect-rules — no existing rule facts for dedupe; embedding new candidates only");
@@ -838,6 +913,7 @@ export async function runReflectionMeta(
       logger,
       "memory-hybrid: reflect-meta",
       "reflection-meta-embed-existing",
+      (factId, model) => factsDb.setEmbeddingModel(factId, model),
     );
   } else {
     logger.info("memory-hybrid: reflect-meta — no existing meta-patterns for dedupe; embedding new candidates only");
