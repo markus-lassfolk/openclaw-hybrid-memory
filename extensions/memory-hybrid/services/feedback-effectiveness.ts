@@ -35,6 +35,12 @@ interface ClosedLoopReport {
   measurements: FeedbackEffectiveness[];
 }
 
+interface ClosedLoopRunOptions {
+  verbose?: boolean;
+  logger?: (message: string) => void;
+  progressEvery?: number;
+}
+
 /**
  * Count feedback events (corrections/praise/implicit) in a time window.
  * Uses the reinforcement_log for praise, self_correction_log equivalent for corrections,
@@ -178,10 +184,18 @@ export function measureRuleEffectiveness(
   }
 }
 
+function formatErrorForLog(err: unknown): string {
+  return err instanceof Error ? (err.stack ?? err.message) : String(err);
+}
+
 /**
  * Run closed-loop analysis across all relevant rules/patterns created in last 30 days.
  */
-export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLoopConfig>): ClosedLoopReport {
+export function runClosedLoopAnalysis(
+  factsDb: FactsDB,
+  config: Partial<ClosedLoopConfig>,
+  options: ClosedLoopRunOptions = {},
+): ClosedLoopReport {
   const report: ClosedLoopReport = {
     measuredAt: Math.floor(Date.now() / 1000),
     rulesAnalyzed: 0,
@@ -198,6 +212,10 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
   const windowDays = config.measurementWindowDays ?? 7;
   const lookbackSec = 30 * 24 * 60 * 60;
   const cutoff = Math.floor(Date.now() / 1000) - lookbackSec;
+  const progressEvery = Math.max(1, options.progressEvery ?? 500);
+  const log = (message: string) => {
+    if (options.verbose) options.logger?.(message);
+  };
 
   try {
     // Find rules/patterns created in last 30 days
@@ -210,52 +228,65 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       )
       .all(cutoff) as Array<{ id: string }>;
 
+    log(`memory-hybrid: closed-loop — ${rows.length} candidate rule/pattern fact(s) to measure`);
+
+    let processed = 0;
+    let tooYoung = 0;
+    let belowSample = 0;
     for (const row of rows) {
-      const m = measureRuleEffectiveness(row.id, factsDb, config);
-      if (!m) continue;
-
-      // Only act on rules with enough age (at least windowDays old)
-      const ageSec = report.measuredAt - m.createdAt;
-      const minAgeSec = windowDays * 24 * 60 * 60;
-      if (ageSec < minAgeSec) continue;
-      if (m.sampleSize < minSampleSize) continue;
-
-      report.rulesAnalyzed++;
-      report.measurements.push(m);
-
-      // Auto-deprecate harmful rules
-      if (m.effectScore < deprecateThreshold) {
-        try {
-          // Lower confidence to 0.1 to effectively deprecate the rule
-          db.prepare("UPDATE facts SET importance = 0.1 WHERE id = ?").run(row.id);
-          report.deprecated++;
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runClosedLoopAnalysis:deprecate",
-            severity: "warning",
-            subsystem: "feedback-effectiveness",
-          });
-        }
-      }
-
-      // Auto-boost proven rules
-      if (m.effectScore > boostThreshold) {
-        try {
-          db.prepare("UPDATE facts SET importance = MIN(1.0, importance + 0.2) WHERE id = ?").run(row.id);
-          report.boosted++;
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runClosedLoopAnalysis:boost",
-            severity: "warning",
-            subsystem: "feedback-effectiveness",
-          });
-        }
-      }
-
-      // Persist measurement
+      processed++;
       try {
-        db.prepare(
-          `
+        const m = measureRuleEffectiveness(row.id, factsDb, config);
+        if (!m) continue;
+
+        // Only act on rules with enough age (at least windowDays old)
+        const ageSec = report.measuredAt - m.createdAt;
+        const minAgeSec = windowDays * 24 * 60 * 60;
+        if (ageSec < minAgeSec) {
+          tooYoung++;
+          continue;
+        }
+        if (m.sampleSize < minSampleSize) {
+          belowSample++;
+          continue;
+        }
+
+        report.rulesAnalyzed++;
+        report.measurements.push(m);
+
+        // Auto-deprecate harmful rules
+        if (m.effectScore < deprecateThreshold) {
+          try {
+            // Lower confidence to 0.1 to effectively deprecate the rule
+            db.prepare("UPDATE facts SET importance = 0.1 WHERE id = ?").run(row.id);
+            report.deprecated++;
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runClosedLoopAnalysis:deprecate",
+              severity: "warning",
+              subsystem: "feedback-effectiveness",
+            });
+          }
+        }
+
+        // Auto-boost proven rules
+        if (m.effectScore > boostThreshold) {
+          try {
+            db.prepare("UPDATE facts SET importance = MIN(1.0, importance + 0.2) WHERE id = ?").run(row.id);
+            report.boosted++;
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runClosedLoopAnalysis:boost",
+              severity: "warning",
+              subsystem: "feedback-effectiveness",
+            });
+          }
+        }
+
+        // Persist measurement
+        try {
+          db.prepare(
+            `
           INSERT OR REPLACE INTO feedback_effectiveness (
             rule_id, rule_text, created_at, window_start, window_end,
             corrections_before, corrections_after, praise_before, praise_after,
@@ -264,35 +295,46 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
             effect_score, confidence, sample_size, measured_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        ).run(
-          m.ruleId,
-          m.ruleText,
-          m.createdAt,
-          m.windowStart,
-          m.windowEnd,
-          m.correctionsBeforeRule,
-          m.correctionsAfterRule,
-          m.praiseBeforeRule,
-          m.praiseAfterRule,
-          m.implicitPositiveBefore,
-          m.implicitPositiveAfter,
-          m.implicitNegativeBefore,
-          m.implicitNegativeAfter,
-          m.effectScore,
-          m.confidence,
-          m.sampleSize,
-          report.measuredAt,
-        );
-      } catch {
-        // table may not exist yet, skip silently
+          ).run(
+            m.ruleId,
+            m.ruleText,
+            m.createdAt,
+            m.windowStart,
+            m.windowEnd,
+            m.correctionsBeforeRule,
+            m.correctionsAfterRule,
+            m.praiseBeforeRule,
+            m.praiseAfterRule,
+            m.implicitPositiveBefore,
+            m.implicitPositiveAfter,
+            m.implicitNegativeBefore,
+            m.implicitNegativeAfter,
+            m.effectScore,
+            m.confidence,
+            m.sampleSize,
+            report.measuredAt,
+          );
+        } catch {
+          // table may not exist yet, skip silently
+        }
+      } finally {
+        if (processed === 1 || processed % progressEvery === 0 || processed === rows.length) {
+          log(
+            `memory-hybrid: closed-loop — progress ${processed}/${rows.length} candidates; measured=${report.rulesAnalyzed}, tooYoung=${tooYoung}, belowSample=${belowSample}, deprecated=${report.deprecated}, boosted=${report.boosted}`,
+          );
+        }
       }
     }
+    log(
+      `memory-hybrid: closed-loop — finished: processed=${rows.length}, measured=${report.rulesAnalyzed}, deprecated=${report.deprecated}, boosted=${report.boosted}, measurements=${report.measurements.length}`,
+    );
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "runClosedLoopAnalysis",
       severity: "warning",
       subsystem: "feedback-effectiveness",
     });
+    log(`memory-hybrid: closed-loop — failed: ${formatErrorForLog(err)}`);
   }
 
   return report;

@@ -17,6 +17,39 @@ import type {
 } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 
+function formatFollowUpError(err: unknown): string {
+  return err instanceof Error ? (err.stack ?? err.message) : String(err);
+}
+
+async function runVerboseFollowUp<T>(label: string, verbose: boolean, fn: () => Promise<T> | T): Promise<T> {
+  const started = Date.now();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  if (verbose) {
+    console.log(`[dream-cycle] ${label} — start`);
+    heartbeat = setInterval(() => {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      console.log(`[dream-cycle] ${label} — still running after ${elapsedSec}s`);
+    }, 60_000);
+    heartbeat.unref?.();
+  }
+  try {
+    const result = await fn();
+    if (verbose) {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      console.log(`[dream-cycle] ${label} — complete in ${elapsedSec}s`);
+    }
+    return result;
+  } catch (err) {
+    if (verbose) {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      console.error(`[dream-cycle] ${label} — failed after ${elapsedSec}s: ${formatFollowUpError(err)}`);
+    }
+    throw err;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
+}
+
 export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
@@ -744,12 +777,11 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.verification.enabled &&
             cfg.verification.continuousVerification
           ) {
-            if (verbose) {
-              console.log("[dream-cycle] Continuous verification (plugin logs show per-fact progress when --verbose)…");
-            }
             let verificationRes;
             try {
-              verificationRes = await runContinuousVerification(verbose ? { verbose: true } : undefined);
+              verificationRes = await runVerboseFollowUp("continuous verification", verbose, () =>
+                runContinuousVerification(verbose ? { verbose: true } : undefined),
+              );
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -767,16 +799,15 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
 
           // Extract implicit feedback signals as part of nightly cycle
           if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
-            if (verbose) {
-              console.log("[dream-cycle] Extract implicit feedback…");
-            }
             try {
-              const implRes = await runExtractImplicitFeedback({
-                days: 3,
-                dryRun: false,
-                includeClosedLoop: false,
-                verbose,
-              });
+              const implRes = await runVerboseFollowUp("extract implicit feedback", verbose, () =>
+                runExtractImplicitFeedback({
+                  days: 3,
+                  dryRun: false,
+                  includeClosedLoop: false,
+                  verbose,
+                }),
+              );
               console.log(
                 `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`,
               );
@@ -790,11 +821,13 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
 
           // Closed-loop effectiveness analysis
           if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
-            if (verbose) {
-              console.log("[dream-cycle] Closed-loop effectiveness (local analysis, no LLM)…");
-            }
             try {
-              const clReport = runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true });
+              const clReport = await runVerboseFollowUp("closed-loop effectiveness", verbose, () =>
+                runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true }, {
+                  verbose,
+                  logger: (msg) => console.log(msg),
+                }),
+              );
               console.log(
                 `Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`,
               );
@@ -817,11 +850,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.crossAgentLearning?.enabled &&
             cfg.crossAgentLearning?.runInNightlyCycle !== false
           ) {
-            if (verbose) {
-              console.log("[dream-cycle] Cross-agent learning…");
-            }
             try {
-              const caRes = await runCrossAgentLearning(verbose ? { verbose: true } : undefined);
+              const caRes = await runVerboseFollowUp("cross-agent learning", verbose, () =>
+                runCrossAgentLearning(verbose ? { verbose: true } : undefined),
+              );
               console.log(
                 `Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`,
               );
@@ -841,7 +873,9 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.toolEffectiveness?.runInNightlyCycle !== false
           ) {
             try {
-              const teOutput = await runToolEffectiveness({ verbose });
+              const teOutput = await runVerboseFollowUp("tool effectiveness", verbose, () =>
+                runToolEffectiveness({ verbose }),
+              );
               if (teOutput && !teOutput.startsWith("No tool")) {
                 console.log(`Tool effectiveness: ${teOutput.split("\n")[0]}`);
               }
@@ -859,11 +893,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.costTracking?.enabled !== false &&
             cfg.costTracking?.pruneInNightlyCycle !== false
           ) {
-            if (verbose) {
-              console.log("[dream-cycle] Prune old cost log rows…");
-            }
             try {
-              const pruned = pruneCostLog(cfg.costTracking?.retainDays);
+              const pruned = await runVerboseFollowUp("cost log prune", verbose, () =>
+                pruneCostLog(cfg.costTracking?.retainDays),
+              );
               if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
