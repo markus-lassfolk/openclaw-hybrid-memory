@@ -409,11 +409,12 @@ describe("FactsDB sourceProfiles write path", () => {
       fuzzyDedupe: true,
       storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
     });
-    const warn = console.warn;
+    const stderrWrite = process.stderr.write;
     const warns: string[] = [];
-    console.warn = (msg: unknown) => {
-      warns.push(String(msg));
-    };
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      warns.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
     try {
       db.store(
         {
@@ -469,7 +470,7 @@ describe("FactsDB sourceProfiles write path", () => {
       expect(warns[0]).toMatch(/vectorThreshold=0.9/);
       expect(warns[1]).toMatch(/store dedupe/i);
     } finally {
-      console.warn = warn;
+      process.stderr.write = stderrWrite;
       db.close();
       rmSync(dir, { recursive: true, force: true });
     }

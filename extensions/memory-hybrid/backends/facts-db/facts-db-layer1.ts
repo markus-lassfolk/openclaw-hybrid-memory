@@ -232,7 +232,8 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     const warnOnce = (key: string, message: string): void => {
       if (this.storeDedupeWarnedKeys.has(key)) return;
       this.storeDedupeWarnedKeys.add(key);
-      console.warn(message);
+      process.stderr.write(`${message}
+`);
     };
     return storeFact(
       {
