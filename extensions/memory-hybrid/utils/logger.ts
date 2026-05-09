@@ -85,10 +85,6 @@ export function createJsonCliStderrLogger(): Required<PluginLoggerApi> {
   };
 }
 
-export function initPluginLoggerForJsonCli(): void {
-  activeLogger = createJsonCliStderrLogger();
-}
-
 /**
  * Reset the plugin logger to the silent no-op.
  * Used in unit tests to isolate logging side effects.
