@@ -144,7 +144,55 @@ describe("loadReflectionDedupeCorpusVectors checkpoint semantics", () => {
     const cp = JSON.parse(factsDb.state.get(stateKey) ?? "{}");
     expect(res.hydration.complete).toBe(true);
     expect(cp.failed).toBeUndefined();
-    expect(cp.doneIds).toEqual([id1]);
+    expect(cp.doneIds ?? []).toEqual([]);
+  });
+
+  it("rehydrates a row when a stale doneId exists but Lance no longer has the vector", async () => {
+    const factsDb = factsDbStub();
+    const id1 = "00000000-0000-4000-8000-000000000001";
+    const stateKey = dedupeHydrationStateKey("pattern");
+    const fp = computeDedupeCorpusFingerprint([id1], "m");
+    factsDb.state.set(
+      stateKey,
+      JSON.stringify({
+        v: 1,
+        fp,
+        model: "m",
+        nextNeedIdx: 1,
+        doneIds: [id1],
+        updatedAt: 1,
+      }),
+    );
+    let embedCalls = 0;
+
+    await loadReflectionDedupeCorpusVectors(
+      [fact(id1, "lost vector")],
+      {
+        modelName: "m",
+        embed: async () => {
+          embedCalls++;
+          return [1, 0, 0];
+        },
+      } as never,
+      vectorDbStub({
+        getVectorsByFactIds: async () => new Map<string, number[]>(),
+        store: async (entry: { id: string }) => entry.id,
+      }) as never,
+      { info: () => undefined, warn: () => undefined },
+      "test",
+      "test-op",
+      {
+        checkpoint: { factsDb: factsDb as never, kind: "pattern" },
+        hydrationPolicy: {
+          maxEmbedsPerRun: 10,
+          minIntervalMsBetweenEmbeds: 0,
+          maxConsecutive429BeforeDefer: 1,
+          baseBackoffMsAfter429: 500,
+        },
+      },
+    );
+
+    expect(embedCalls).toBe(1);
   });
 
   it("counts failed embed attempts toward maxEmbedsPerRun", async () => {

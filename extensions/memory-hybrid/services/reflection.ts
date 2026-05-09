@@ -289,10 +289,16 @@ export async function loadReflectionDedupeCorpusVectors(
     }
 
     for (let j = 0; j < facts.length; j++) {
+      const id = facts[j]!.id.toLowerCase();
       if (result[j] !== null) {
-        const id = facts[j]!.id.toLowerCase();
-        doneIds.add(id);
+        // Lance already has a usable vector. Clear stale failure quarantine, but do
+        // not add a cache hit to doneIds: if Lance later loses that vector, the row
+        // must be eligible for rehydration instead of being permanently skipped.
         delete failedRows[id];
+      } else {
+        // If an older checkpoint marked this id as done but Lance no longer has the
+        // vector, discard the stale marker and rehydrate normally.
+        doneIds.delete(id);
       }
     }
 
@@ -337,7 +343,6 @@ export async function loadReflectionDedupeCorpusVectors(
       const f = facts[needEmbedIndices[kk]!]!;
       const failed = failedRows[f.id.toLowerCase()];
       const retryDue = !failed || failed.nextRetryAt <= nowRetry;
-      if (doneIds.has(f.id.toLowerCase()) && !failed) continue;
       if (retryDue) workKs.push(kk);
     }
 
