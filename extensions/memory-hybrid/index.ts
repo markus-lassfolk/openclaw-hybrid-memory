@@ -161,6 +161,7 @@ import {
   dotProductSimilarity,
   normalizeVector,
   parsePatternsFromReflectionResponse,
+  loadReflectionDedupeCorpusVectors,
   runReflection,
   runReflectionMeta,
   runReflectionRules,
@@ -907,6 +908,7 @@ export const _testing = {
   findSimilarByEmbedding,
   // Reflection parsing (for tests) - re-exported from service
   parsePatternsFromReflectionResponse,
+  loadReflectionDedupeCorpusVectors,
   normalizeVector,
   dotProductSimilarity,
   // FTS5 search service (Issue #151)

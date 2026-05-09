@@ -153,6 +153,8 @@ export async function runConsolidate(
     logger,
     "memory-hybrid: consolidate",
     "consolidate-embed",
+    undefined,
+    opts.dryRun,
   );
   const vectors = vectorResults.map((v) => (v === null ? [] : v));
 
