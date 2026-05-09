@@ -9,12 +9,15 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 
 export interface ExitStep {
   timestamp: string;
   step: string;
   exitCode: number;
   line: string;
+  failureReason?: string;
+  strictFailureReason?: string;
 }
 
 export interface ExitValidationResult {
@@ -206,6 +209,16 @@ export function validateMaintenanceExecution(
     }
   }
 
+  if (logPath && failedSteps.some((s) => s.step === "audit-health")) {
+    const logContent = safeReadLog(logPath);
+    for (const step of failedSteps) {
+      if (step.step !== "audit-health") continue;
+      const inferred = inferAuditHealthFailureReason(step.exitCode, logContent);
+      step.failureReason = inferred.failureReason;
+      step.strictFailureReason = inferred.strictFailureReason;
+    }
+  }
+
   // Determine overall status
   let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
 
@@ -239,7 +252,11 @@ export function validateMaintenanceExecution(
       parts.push(`Missing steps: ${missingSteps.join(", ")}`);
     }
     if (failedSteps.length > 0) {
-      parts.push(`Failed steps: ${failedSteps.map((s) => `${s.step} (exit=${s.exitCode})`).join(", ")}`);
+      parts.push(
+        `Failed steps: ${failedSteps
+          .map((s) => `${s.step} (exit=${s.exitCode}${s.failureReason ? ` ${s.failureReason}` : ""})`)
+          .join(", ")}`,
+      );
     }
     error = parts.join("; ");
   } else if (maintenanceStatus === "skipped") {
@@ -274,7 +291,14 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
       failedSteps: validation.failedSteps.map((s) => ({
         name: s.step,
         exit: s.exitCode,
-        error: s.exitCode !== 0 ? "Non-zero exit code" : undefined,
+        reason: s.failureReason,
+        strictFailureReason: s.strictFailureReason,
+        error:
+          s.exitCode !== 0
+            ? s.failureReason
+              ? `Non-zero exit code (${s.failureReason})`
+              : "Non-zero exit code"
+            : undefined,
       })),
       guardUpdated: validation.guardUpdated,
       logPath: validation.logPath,
@@ -284,4 +308,39 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
     null,
     2,
   );
+}
+
+function safeReadLog(logPath: string): string {
+  try {
+    return existsSync(logPath) ? readFileSync(logPath, "utf-8") : "";
+  } catch {
+    return "";
+  }
+}
+
+function inferAuditHealthFailureReason(
+  exitCode: number,
+  logContent: string,
+): { failureReason: string; strictFailureReason?: string } {
+  const extracted = extractAuditHealthJsonFromLog(logContent);
+  if (extracted.kind === "not_found") return { failureReason: "command_crash" };
+  if (extracted.kind === "parse_error") return { failureReason: "json_parse_failure" };
+
+  const exitReason = extracted.value.exitReason;
+  if (typeof exitReason === "string" && exitReason.trim()) {
+    return {
+      failureReason: exitReason.trim(),
+      strictFailureReason:
+        typeof extracted.value.strictFailureReason === "string" ? extracted.value.strictFailureReason : undefined,
+    };
+  }
+
+  const warningCount = typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
+  const errorCount = typeof extracted.value.errorCount === "number" ? Math.max(0, extracted.value.errorCount) : 0;
+
+  if (exitCode === 2) {
+    if (errorCount > 0) return { failureReason: "strict_errors" };
+    if (warningCount > 0) return { failureReason: "strict_warnings" };
+  }
+  return { failureReason: "nonzero_exit" };
 }

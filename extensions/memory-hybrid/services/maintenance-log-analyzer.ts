@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MaintenanceClassification =
@@ -12,6 +13,10 @@ export type MaintenanceClassification =
   | "provider-auth"
   | "infra"
   | "plugin-bug"
+  | "command-crash"
+  | "json-parse-failure"
+  | "health-warnings"
+  | "health-errors"
   | "smoke-only"
   | "orchestration-bug"
   | "unclassified";
@@ -161,11 +166,18 @@ function loadMaintenanceRules(): MaintenanceRule[] {
 const RULES = loadMaintenanceRules();
 const STRICT_CLASSES = new Set<MaintenanceClassification>([
   "plugin-bug",
+  "command-crash",
+  "json-parse-failure",
   "orchestration-bug",
   "provider-auth",
   "env-misconfig",
 ]);
-const GLITCHTIP_CLASSES = new Set<MaintenanceClassification>(["plugin-bug", "orchestration-bug"]);
+const GLITCHTIP_CLASSES = new Set<MaintenanceClassification>([
+  "plugin-bug",
+  "command-crash",
+  "json-parse-failure",
+  "orchestration-bug",
+]);
 
 export function maintenanceRules(): MaintenanceRule[] {
   return RULES.slice();
@@ -237,10 +249,18 @@ export function classifyMaintenanceFailure(input: {
   line?: string;
   rules?: MaintenanceRule[];
 }): MaintenanceRule {
+  const auditRule = classifyAuditHealthFailure(input.step, input.exitCode, input.logContent);
+  if (auditRule) return auditRule;
+
   const text = `${input.step ?? ""}\nexit=${input.exitCode ?? ""}\n${input.line ?? ""}\n${input.logContent ?? ""}`;
   for (const rule of input.rules ?? RULES) {
     if (new RegExp(rule.pattern, "ims").test(text)) return rule;
   }
+
+  if (input.step === "audit-health" && input.exitCode != null && input.exitCode !== 0) {
+    return auditHealthCommandCrashRule();
+  }
+
   return {
     id: "unclassified",
     pattern: ".*",
@@ -248,6 +268,75 @@ export function classifyMaintenanceFailure(input: {
     defaultAction: "user-digest",
     severity: "low",
     suggestedAction: "Inspect the raw maintenance log and decide whether this needs a fix or can be deferred.",
+  };
+}
+
+function classifyAuditHealthFailure(
+  step: string | undefined,
+  exitCode: number | undefined,
+  logContent: string | undefined,
+): MaintenanceRule | null {
+  if (!step || step !== "audit-health") return null;
+  if (!exitCode || exitCode === 0) return null;
+  const content = logContent ?? "";
+
+  const extracted = extractAuditHealthJsonFromLog(content);
+  if (extracted.kind === "not_found") return null;
+  if (extracted.kind === "parse_error") {
+    return {
+      id: "audit-health-json-parse-failure",
+      pattern: "",
+      classification: "json-parse-failure",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "Audit health exited non-zero and a JSON block was present but could not be parsed. Inspect the raw log for mixed stdout/stderr or truncated JSON; rerun with `--json --verbose` and report as a plugin bug if reproducible.",
+    };
+  }
+
+  const exitReason = typeof extracted.value.exitReason === "string" ? extracted.value.exitReason : "";
+  const warningCount = typeof extracted.value.warningCount === "number" ? Math.max(0, extracted.value.warningCount) : 0;
+  const errorCount = typeof extracted.value.errorCount === "number" ? Math.max(0, extracted.value.errorCount) : 0;
+  const strictFailureReason =
+    typeof extracted.value.strictFailureReason === "string" ? extracted.value.strictFailureReason : null;
+
+  if (exitReason === "strict_warnings" || (exitCode === 2 && errorCount === 0 && warningCount > 0)) {
+    return {
+      id: "audit-health-strict-warnings",
+      pattern: "",
+      classification: "health-warnings",
+      defaultAction: "user-digest",
+      severity: "info",
+      suggestedAction:
+        strictFailureReason ??
+        "Audit health strict mode failed due to warnings. Review `warnings[]` and run the suggested remediation commands from the report.",
+    };
+  }
+  if (exitReason === "strict_errors" || (exitCode === 2 && errorCount > 0)) {
+    return {
+      id: "audit-health-strict-errors",
+      pattern: "",
+      classification: "health-errors",
+      defaultAction: "user-digest",
+      severity: "medium",
+      suggestedAction:
+        strictFailureReason ??
+        "Audit health strict mode failed due to report errors. Review `errors[]` in the JSON and rerun the audit to confirm whether this is transient or a persistent health issue.",
+    };
+  }
+
+  return null;
+}
+
+function auditHealthCommandCrashRule(): MaintenanceRule {
+  return {
+    id: "audit-health-command-crash",
+    pattern: "",
+    classification: "command-crash",
+    defaultAction: "glitchtip+digest",
+    severity: "high",
+    suggestedAction:
+      "Audit health exited non-zero but no report JSON was found in the log and no generic maintenance rule matched. Treat as a command crash: inspect stack traces and rerun `openclaw hybrid-mem audit health --strict --json --verbose`.",
   };
 }
 

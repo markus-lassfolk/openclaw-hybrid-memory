@@ -111,6 +111,10 @@ Any step missing or non-zero exit:
 - `guardUpdated`: `false`
 - Cron status should be: `error` (agent must signal failure)
 
+#### Audit health strict mode
+
+`openclaw hybrid-mem audit health --strict --json` intentionally exits `2` when warnings/errors are present. The JSON payload includes `exitReason` / `strictFailureReason` so log analyzers can distinguish strict health failures (e.g. `strict_warnings`) from command crashes.
+
 ### All required steps missing (empty or incomplete ledger)
 
 When the exit file exists but **none** of the required steps appear in the ledger (including an empty file), validation returns **`failed`**. That pattern matches an abort before the first `hm_step` wrote to `HM_EXIT`, and must not be treated as a successful skip.

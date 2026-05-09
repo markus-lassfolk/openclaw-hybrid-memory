@@ -226,7 +226,7 @@ openclaw hybrid-mem audit health --json
 openclaw hybrid-mem audit health --strict
 ```
 
-The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits non-zero when warnings are present. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
+The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits `2` when warnings/errors are present; JSON includes `exitCode`, `exitReason`, `warningCount`, and `errorCount` so cron/automation can treat strict health failures differently from command crashes. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
 
 ## Weekly pending digest (#1197)
 
@@ -296,4 +296,3 @@ Override the CLI binary with `OPENCLAW_BIN` if `openclaw` is not on `PATH`.
 ### Resolved-issue suppression
 
 [`services/maintenance-resolved.json`](services/maintenance-resolved.json) maps **finding fingerprints** to `{ resolvedInVersion, note }`. When the log’s parsed `pluginVersion` is `>= resolvedInVersion` (dotted numeric comparison), matching findings are dropped from the analyzer output to cut noise after a release fix.
-
