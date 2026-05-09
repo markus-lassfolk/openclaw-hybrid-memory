@@ -35,6 +35,12 @@ interface ClosedLoopReport {
   measurements: FeedbackEffectiveness[];
 }
 
+interface ClosedLoopRunOptions {
+  verbose?: boolean;
+  logger?: (message: string) => void;
+  progressEvery?: number;
+}
+
 /**
  * Count feedback events (corrections/praise/implicit) in a time window.
  * Uses the reinforcement_log for praise, self_correction_log equivalent for corrections,
@@ -181,7 +187,11 @@ export function measureRuleEffectiveness(
 /**
  * Run closed-loop analysis across all relevant rules/patterns created in last 30 days.
  */
-export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLoopConfig>): ClosedLoopReport {
+export function runClosedLoopAnalysis(
+  factsDb: FactsDB,
+  config: Partial<ClosedLoopConfig>,
+  options: ClosedLoopRunOptions = {},
+): ClosedLoopReport {
   const report: ClosedLoopReport = {
     measuredAt: Math.floor(Date.now() / 1000),
     rulesAnalyzed: 0,
@@ -198,6 +208,10 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
   const windowDays = config.measurementWindowDays ?? 7;
   const lookbackSec = 30 * 24 * 60 * 60;
   const cutoff = Math.floor(Date.now() / 1000) - lookbackSec;
+  const progressEvery = Math.max(1, options.progressEvery ?? 500);
+  const log = (message: string) => {
+    if (options.verbose) options.logger?.(message);
+  };
 
   try {
     // Find rules/patterns created in last 30 days
@@ -210,15 +224,32 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       )
       .all(cutoff) as Array<{ id: string }>;
 
+    log(`memory-hybrid: closed-loop — ${rows.length} candidate rule/pattern fact(s) to measure`);
+
+    let processed = 0;
+    let tooYoung = 0;
+    let belowSample = 0;
     for (const row of rows) {
+      processed++;
+      if (processed === 1 || processed % progressEvery === 0 || processed === rows.length) {
+        log(
+          `memory-hybrid: closed-loop — progress ${processed}/${rows.length} candidates; measured=${report.rulesAnalyzed}, tooYoung=${tooYoung}, belowSample=${belowSample}, deprecated=${report.deprecated}, boosted=${report.boosted}`,
+        );
+      }
       const m = measureRuleEffectiveness(row.id, factsDb, config);
       if (!m) continue;
 
       // Only act on rules with enough age (at least windowDays old)
       const ageSec = report.measuredAt - m.createdAt;
       const minAgeSec = windowDays * 24 * 60 * 60;
-      if (ageSec < minAgeSec) continue;
-      if (m.sampleSize < minSampleSize) continue;
+      if (ageSec < minAgeSec) {
+        tooYoung++;
+        continue;
+      }
+      if (m.sampleSize < minSampleSize) {
+        belowSample++;
+        continue;
+      }
 
       report.rulesAnalyzed++;
       report.measurements.push(m);
@@ -287,12 +318,16 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
         // table may not exist yet, skip silently
       }
     }
+    log(
+      `memory-hybrid: closed-loop — finished: processed=${rows.length}, measured=${report.rulesAnalyzed}, deprecated=${report.deprecated}, boosted=${report.boosted}, measurements=${report.measurements.length}`,
+    );
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "runClosedLoopAnalysis",
       severity: "warning",
       subsystem: "feedback-effectiveness",
     });
+    log(`memory-hybrid: closed-loop — failed: ${err}`);
   }
 
   return report;
