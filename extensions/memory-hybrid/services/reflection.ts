@@ -289,7 +289,11 @@ export async function loadReflectionDedupeCorpusVectors(
     }
 
     for (let j = 0; j < facts.length; j++) {
-      if (result[j] !== null) doneIds.add(facts[j]!.id.toLowerCase());
+      if (result[j] !== null) {
+        const id = facts[j]!.id.toLowerCase();
+        doneIds.add(id);
+        delete failedRows[id];
+      }
     }
 
     let checkpointNextIdx = 0;
