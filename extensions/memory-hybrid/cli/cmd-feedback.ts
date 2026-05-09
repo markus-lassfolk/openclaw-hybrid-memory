@@ -395,6 +395,9 @@ export async function runExtractImplicitFeedbackForCli(
 
   for (const filePath of filePaths) {
     progress.sessionsVisited++;
+    const sessionFile = basename(filePath);
+    progress.currentSession = sessionFile;
+    emitProgress();
     let lines: string[];
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
@@ -409,8 +412,6 @@ export async function runExtractImplicitFeedbackForCli(
       continue;
     }
 
-    const sessionFile = basename(filePath);
-    progress.currentSession = sessionFile;
     const turns = parseSessionTurns(lines);
     if (turns.length < 3) {
       progress.sessionsTooShort++;
