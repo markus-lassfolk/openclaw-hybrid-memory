@@ -122,6 +122,7 @@ export async function loadReflectionDedupeCorpusVectors(
   dryRun = false,
 ): Promise<(number[] | null)[]> {
   const loadWithTimeout = async (): Promise<(number[] | null)[]> => {
+    const startMs = Date.now();
     const vdb = vectorDb as VectorDB & {
       getVectorDim?: () => number;
       getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
@@ -141,7 +142,10 @@ export async function loadReflectionDedupeCorpusVectors(
     if (typeof vdb.getVectorsByFactIds === "function") {
       try {
         byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
-        logger.info(`${logPrefix} — dedupe corpus: loaded ${byId.size} vector(s) from Lance index`);
+        const elapsedS = ((Date.now() - startMs) / 1000).toFixed(1);
+        logger.info(
+          `${logPrefix} — dedupe corpus: loaded ${byId.size} vector(s) from Lance index (elapsed: ${elapsedS}s)`,
+        );
       } catch (err) {
         logger.info(`${logPrefix} — dedupe corpus: Lance index load failed, will use embedding API for all: ${err}`);
         byId = new Map();
@@ -158,6 +162,7 @@ export async function loadReflectionDedupeCorpusVectors(
     let apiPersistFailures = 0;
     let embedFailures = 0;
     let nonNullSoFar = 0;
+    let embedAttemptsThisRun = 0;
     const startedAt = Date.now();
     let lastProgressAt = startedAt;
 
@@ -165,9 +170,13 @@ export async function loadReflectionDedupeCorpusVectors(
       `${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20 (${dryRun ? "dry-run: no Lance checkpoint / metadata writes" : "checkpointing API-hydrated vectors"})`,
     );
 
+    const totalBatches = Math.ceil(facts.length / 20);
+    let batchNumber = 0;
+
     for (let i = 0; i < facts.length; i += 20) {
       const batchStartedAt = Date.now();
       const end = Math.min(i + 20, facts.length);
+      batchNumber++;
       let hadApiEmbed = false;
       let batchLance = 0;
       let batchApi = 0;
@@ -206,6 +215,7 @@ export async function loadReflectionDedupeCorpusVectors(
             batchMismatchSkips++;
           }
           try {
+            embedAttemptsThisRun++;
             const vec = await embeddings.embed(f.text);
             result[j] = normalizeVector(vec);
             nonNullSoFar++;
@@ -262,7 +272,17 @@ export async function loadReflectionDedupeCorpusVectors(
       const processed = end;
       const remaining = facts.length - end;
       const ok = nonNullSoFar;
+      const elapsedS = (elapsedMs / 1000).toFixed(1);
+      // Periodic batch logs (small/medium/large corpora) plus event-driven lines (API work, slow batches, heartbeat).
+      const periodicBatchLog =
+        (facts.length <= 500 && (batchNumber % 5 === 0 || end === facts.length)) ||
+        (facts.length > 500 &&
+          facts.length <= 1000 &&
+          (batchNumber % 10 === 0 || end % 200 === 0 || end === facts.length)) ||
+        (facts.length > 1000 && (batchNumber % 20 === 0 || end % 400 === 0 || end === facts.length));
+
       const shouldLog =
+        periodicBatchLog ||
         facts.length > 1000 ||
         batchApi > 0 ||
         batchMs >= 5000 ||
@@ -272,7 +292,7 @@ export async function loadReflectionDedupeCorpusVectors(
       if (shouldLog) {
         lastProgressAt = Date.now();
         logger.info(
-          `${logPrefix} — dedupe corpus progress: ${processed}/${facts.length} processed, ${remaining} remaining; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, non-null ${ok}; elapsed=${elapsedMs}ms`,
+          `${logPrefix} — dedupe corpus progress: batch ${batchNumber}/${Math.max(1, totalBatches)}, ${processed}/${facts.length} processed, ${remaining} remaining; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, non-null ${ok}; elapsed=${elapsedMs}ms (${elapsedS}s)`,
         );
       }
 
@@ -283,8 +303,9 @@ export async function loadReflectionDedupeCorpusVectors(
 
     if (facts.length > 0) {
       const ok = result.filter((v) => v !== null).length;
+      const elapsedS = ((Date.now() - startMs) / 1000).toFixed(1);
       logger.info(
-        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API, ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${ok}/${facts.length} non-null for cosine check`,
+        `${logPrefix} — dedupe corpus: completed ${Math.max(1, totalBatches)} batch(es), ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${ok}/${facts.length} non-null for cosine check (elapsed: ${elapsedS}s)`,
       );
     }
     return result;
@@ -485,7 +506,11 @@ export async function runReflection(
   let duplicatesSkipped = 0;
   let newPatternEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const candidateStartMs = Date.now();
+  let candidateIndex = 0;
+
   for (const patternText of uniqueNewPatterns) {
+    candidateIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(patternText);
@@ -577,6 +602,19 @@ export async function runReflection(
     }
     existingVectors.push(normVec);
     stored++;
+
+    // Progress logging during per-candidate dedupe (every 3 candidates or at the end)
+    // This is especially helpful when checking against a large existing corpus
+    if (
+      opts.verbose &&
+      existingPatternFacts.length > 100 &&
+      (candidateIndex % 3 === 0 || candidateIndex === uniqueNewPatterns.length)
+    ) {
+      const elapsedS = ((Date.now() - candidateStartMs) / 1000).toFixed(1);
+      logger.info(
+        `memory-hybrid: reflection — dedupe progress: ${candidateIndex}/${uniqueNewPatterns.length} candidates processed, ${stored} stored, ${duplicatesSkipped} duplicates, ${newPatternEmbedFailures} embed failures (elapsed: ${elapsedS}s)`,
+      );
+    }
   }
 
   if (!opts.dryRun) {

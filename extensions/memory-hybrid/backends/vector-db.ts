@@ -234,7 +234,7 @@ export class VectorDB {
     // a deferred SIGUSR1 restart, or register() called again on hot-reload), reset state and
     // reconnect. Mirrors the FactsDB/CredentialsDB liveDb() pattern for post-restart recovery.
     if (this.closed) {
-      this.logWarn("memory-hybrid: VectorDB was closed; reconnecting...");
+      this.logWarn("memory-hybrid: VectorDB was closed; reconnecting... (this may take up to 60 seconds)");
       this.closed = false;
       // Allow a fresh connection attempt after an explicit close/reopen cycle
       // (e.g., plugin reload). Clear both degraded-mode signals so doInitialize() can retry.
@@ -394,6 +394,8 @@ export class VectorDB {
     }
 
     await this.ensureSemanticQueryCacheTable();
+    // Log successful reconnect completion for operational visibility (#1212)
+    this.logWarn("memory-hybrid: VectorDB reconnect completed successfully");
   }
 
   private async ensureSemanticQueryCacheTable(): Promise<void> {
