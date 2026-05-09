@@ -17,6 +17,10 @@ import type {
 } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 
+function formatFollowUpError(err: unknown): string {
+  return err instanceof Error ? (err.stack ?? err.message) : String(err);
+}
+
 async function runVerboseFollowUp<T>(label: string, verbose: boolean, fn: () => Promise<T> | T): Promise<T> {
   const started = Date.now();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -38,7 +42,7 @@ async function runVerboseFollowUp<T>(label: string, verbose: boolean, fn: () => 
   } catch (err) {
     if (verbose) {
       const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.log(`[dream-cycle] ${label} — failed after ${elapsedSec}s: ${err}`);
+      console.error(`[dream-cycle] ${label} — failed after ${elapsedSec}s: ${formatFollowUpError(err)}`);
     }
     throw err;
   } finally {
