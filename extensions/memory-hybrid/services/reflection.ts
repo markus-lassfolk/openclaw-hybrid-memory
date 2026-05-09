@@ -181,7 +181,7 @@ export async function loadReflectionDedupeCorpusVectors(
       if (facts.length > 1000 && (end % 500 === 0 || end === facts.length)) {
         const ok = result.slice(0, end).filter((v) => v !== null).length;
         logger.info(
-          `${logPrefix} — dedupe corpus progress: ${end}/${facts.length} facts processed (${lanceHits} from Lance, ${apiEmbeds} via API, ${ok} non-null)`
+          `${logPrefix} — dedupe corpus progress: ${end}/${facts.length} facts processed (${lanceHits} from Lance, ${apiEmbeds} via API, ${ok} non-null)`,
         );
       }
 
@@ -204,7 +204,7 @@ export async function loadReflectionDedupeCorpusVectors(
 
   if (result === null) {
     logger.info(
-      `${logPrefix} — dedupe corpus: timed out after ${REFLECTION_DEDUPE_LOAD_TIMEOUT_MS}ms while loading ${facts.length} vectors; falling back to empty corpus (dedupe disabled for this run)`
+      `${logPrefix} — dedupe corpus: timed out after ${REFLECTION_DEDUPE_LOAD_TIMEOUT_MS}ms while loading ${facts.length} vectors; falling back to empty corpus (dedupe disabled for this run)`,
     );
     return new Array(facts.length).fill(null);
   }

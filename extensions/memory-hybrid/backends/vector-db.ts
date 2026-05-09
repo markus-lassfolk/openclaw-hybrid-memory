@@ -61,6 +61,7 @@ export class VectorDB {
   private logger: VectorDBLogger | null = null;
   private storeCount = 0;
   private optimizePromise: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
+  private initGeneration = 0;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -260,12 +261,27 @@ export class VectorDB {
     // Note: this handler marks persistent failure (lanceInitFailed). Transient init errors
     // from hot-reload races are handled via close()+ensureInitialized() or resetTableForReindex().
 
-    // Wrap doInitialize with a timeout to prevent indefinite hangs
+    // Wrap doInitialize with a timeout to prevent indefinite hangs. Late resolutions are
+    // guarded by an init-generation token so a timed-out init cannot resurrect db/table state.
+    const initGeneration = ++this.initGeneration;
     const initWithTimeout = async () => {
-      const result = await withTimeout(VECTORDB_INIT_TIMEOUT_MS, () => this.doInitialize());
+      const initTask = this.doInitialize(initGeneration);
+      const result = await withTimeout(VECTORDB_INIT_TIMEOUT_MS, () => initTask);
       if (result === null) {
+        // Prevent any late doInitialize() continuation from committing state.
+        if (this.initGeneration === initGeneration) this.initGeneration++;
+        this.closed = true;
+        try {
+          this.db?.close();
+        } catch {
+          /* ignore close on timeout */
+        }
+        this.db = null;
+        this.table = null;
+        this.semanticQueryCacheTable = null;
         throw new Error(`VectorDB initialization timed out after ${VECTORDB_INIT_TIMEOUT_MS}ms`);
       }
+      return result;
     };
 
     this.initPromise = initWithTimeout().catch((err) => {
@@ -303,7 +319,12 @@ export class VectorDB {
     return !this.lanceInitFailed && this.table !== null;
   }
 
-  private async doInitialize(): Promise<void> {
+  private async doInitialize(initGeneration: number): Promise<void> {
+    const assertInitGeneration = () => {
+      if (this.initGeneration !== initGeneration || this.closed) {
+        throw new Error("VectorDB initialization aborted: superseded/timed out during init generation");
+      }
+    };
     this.lanceInitFailed = false;
     this.lanceDbAvailable = true;
     // Reset schema validity on each (re-)init so a fixed table is detected correctly.
@@ -318,6 +339,7 @@ export class VectorDB {
 
     try {
       this.db = await lancedb.connect(resolvedPath);
+      assertInitGeneration();
     } catch (connectErr) {
       // LanceDB is unavailable (e.g., native module failed to load, path is inaccessible,
       // or the storage backend is not supported on this platform). Log a warning and enter
@@ -333,19 +355,23 @@ export class VectorDB {
     }
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
+    assertInitGeneration();
     // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
     if (this.closed)
       throw new Error("VectorDB initialization aborted: closed during connect (concurrent re-registration).");
     const tables = await this.db.tableNames();
+    assertInitGeneration();
     // Guard again after the tableNames() await for the same reason.
     if (!this.db || this.closed)
       throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
+      assertInitGeneration();
       if (!this.db || this.closed)
         throw new Error("VectorDB initialization aborted: closed during openTable (concurrent re-registration).");
       await this.validateOrRepairSchema();
+      assertInitGeneration();
       if (!this.db || this.closed)
         throw new Error(
           "VectorDB initialization aborted: closed during validateOrRepairSchema (concurrent re-registration).",
@@ -362,6 +388,7 @@ export class VectorDB {
           createdAt: 0,
         },
       ]);
+      assertInitGeneration();
       try {
         await this.table.delete('id = "__schema__"');
       } catch (deleteErr) {
@@ -1343,7 +1370,7 @@ export class VectorDB {
 
           if (rows === null) {
             this.logWarn(
-              `memory-hybrid: VectorDB getVectorsByFactIds query timed out after ${VECTORDB_GET_VECTORS_TIMEOUT_MS}ms (chunk ${processedChunks + 1}/${totalChunks}, offset=${offset}, size=${chunk.length})`
+              `memory-hybrid: VectorDB getVectorsByFactIds query timed out after ${VECTORDB_GET_VECTORS_TIMEOUT_MS}ms (chunk ${processedChunks + 1}/${totalChunks}, offset=${offset}, size=${chunk.length})`,
             );
             // Continue with partial results instead of failing entirely
             break;
@@ -1360,7 +1387,7 @@ export class VectorDB {
           // Log progress for large batches (every 5 chunks or at the end)
           if (totalChunks > 10 && (processedChunks % 5 === 0 || processedChunks === totalChunks)) {
             this.logWarn(
-              `memory-hybrid: VectorDB getVectorsByFactIds progress: ${processedChunks}/${totalChunks} chunks (${out.size} vectors loaded)`
+              `memory-hybrid: VectorDB getVectorsByFactIds progress: ${processedChunks}/${totalChunks} chunks (${out.size} vectors loaded)`,
             );
           }
         }
