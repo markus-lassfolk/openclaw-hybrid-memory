@@ -5,7 +5,7 @@
 
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
+import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -21,15 +21,64 @@ function formatFollowUpError(err: unknown): string {
   return err instanceof Error ? (err.stack ?? err.message) : String(err);
 }
 
-async function runVerboseFollowUp<T>(label: string, verbose: boolean, fn: () => Promise<T> | T): Promise<T> {
+export type FollowUpProgressSupplier = () => string | undefined;
+
+export interface RunVerboseFollowUpOptions {
+  progressSupplier?: FollowUpProgressSupplier;
+  heartbeatIntervalMs?: number;
+}
+
+function formatExtractImplicitFeedbackProgress(
+  snapshot: ExtractImplicitFeedbackProgressSnapshot | undefined,
+): string | undefined {
+  if (!snapshot) return undefined;
+  const parts: string[] = [`stage=${snapshot.stage}`];
+
+  if (snapshot.stage === "scan-sessions") {
+    parts.push(`sessions=${snapshot.sessionsVisited}/${snapshot.sessionsDiscovered}`);
+    if (snapshot.sessionsProcessed !== snapshot.sessionsVisited) {
+      parts.push(`processed=${snapshot.sessionsProcessed}`);
+    }
+    const skipped = snapshot.sessionsReadErrors + snapshot.sessionsTooShort;
+    if (skipped > 0) parts.push(`skipped=${skipped}`);
+    if (snapshot.currentSession) parts.push(`current=${snapshot.currentSession}`);
+    parts.push(`signals=${snapshot.signalsExtracted} (${snapshot.positiveCount}+/${snapshot.negativeCount}-)`);
+    if (snapshot.trajectoriesBuilt > 0) parts.push(`traj=${snapshot.trajectoriesBuilt}`);
+  } else if (snapshot.stage === "cleanup-duplicates") {
+    parts.push(`collapsed=${snapshot.cleanupCollapsed}`);
+    if (snapshot.cleanupScanned > 0) parts.push(`scanned=${snapshot.cleanupScanned}`);
+    if (snapshot.cleanupBatches > 0) parts.push(`batches=${snapshot.cleanupBatches}`);
+  } else if (snapshot.stage === "closed-loop") {
+    parts.push(`signals=${snapshot.signalsExtracted} (${snapshot.positiveCount}+/${snapshot.negativeCount}-)`);
+    if (snapshot.trajectoriesBuilt > 0) parts.push(`traj=${snapshot.trajectoriesBuilt}`);
+  }
+
+  return parts.join("; ");
+}
+
+export async function runVerboseFollowUp<T>(
+  label: string,
+  verbose: boolean,
+  fn: () => Promise<T> | T,
+  opts: RunVerboseFollowUpOptions = {},
+): Promise<T> {
   const started = Date.now();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   if (verbose) {
     console.log(`[dream-cycle] ${label} — start`);
     heartbeat = setInterval(() => {
       const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.log(`[dream-cycle] ${label} — still running after ${elapsedSec}s`);
-    }, 60_000);
+      let progressSuffix = "";
+      if (opts.progressSupplier) {
+        try {
+          const progress = opts.progressSupplier();
+          if (progress) progressSuffix = ` — ${progress}`;
+        } catch {
+          // Ignore progress supplier failures; heartbeat should never crash the process.
+        }
+      }
+      console.log(`[dream-cycle] ${label} — still running after ${elapsedSec}s${progressSuffix}`);
+    }, opts.heartbeatIntervalMs ?? 60_000);
     heartbeat.unref?.();
   }
   try {
@@ -801,13 +850,23 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           // Extract implicit feedback signals as part of nightly cycle
           if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
             try {
-              const implRes = await runVerboseFollowUp("extract implicit feedback", verbose, () =>
-                runExtractImplicitFeedback({
-                  days: 3,
-                  dryRun: false,
-                  includeClosedLoop: false,
-                  verbose,
-                }),
+              let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
+              const implRes = await runVerboseFollowUp(
+                "extract implicit feedback",
+                verbose,
+                () =>
+                  runExtractImplicitFeedback({
+                    days: 3,
+                    dryRun: false,
+                    includeClosedLoop: false,
+                    verbose,
+                    onProgress: (snapshot) => {
+                      latestProgress = snapshot;
+                    },
+                  }),
+                {
+                  progressSupplier: () => formatExtractImplicitFeedbackProgress(latestProgress),
+                },
               );
               console.log(
                 `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`,
