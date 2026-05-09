@@ -1672,6 +1672,16 @@ export class VectorDB {
   }
 
   private _doClose(): void {
+    // Debug instrumentation: trace the caller of close() when
+    // OPENCLAW_HYBRID_MEM_DEBUG_CLOSE=1 is set, so we can identify rogue
+    // close() callers during long-running operations like re-index (#1248).
+    // The stack is collapsed to a single tagged line so it doesn't get
+    // mistaken for a real production warning by log aggregators.
+    if (process.env.OPENCLAW_HYBRID_MEM_DEBUG_CLOSE === "1") {
+      const stack = new Error().stack ?? "(no stack available)";
+      const singleLineStack = stack.replace(/\n\s*/g, " | ").trim();
+      this.logWarn(`[debug-close] memory-hybrid: VectorDB._doClose() called — stack: ${singleLineStack}`);
+    }
     this.closed = true;
     this.initGeneration++;
     this.closeGeneration++;

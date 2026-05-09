@@ -27,6 +27,8 @@ type MockFactsDB = {
 
 type MockVectorDB = {
   getCloseGeneration: ReturnType<typeof vi.fn>;
+  ensureInitialized: ReturnType<typeof vi.fn>;
+  isLanceAvailable: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   hasDuplicate: ReturnType<typeof vi.fn>;
   store: ReturnType<typeof vi.fn>;
@@ -50,6 +52,8 @@ function makeFactsDB(overrides: Partial<MockFactsDB> = {}): MockFactsDB {
 function makeVectorDB(overrides: Partial<MockVectorDB> = {}): MockVectorDB {
   return {
     getCloseGeneration: vi.fn().mockReturnValue(0),
+    ensureInitialized: vi.fn().mockResolvedValue(undefined),
+    isLanceAvailable: vi.fn().mockReturnValue(true),
     delete: vi.fn().mockResolvedValue(true),
     hasDuplicate: vi.fn().mockResolvedValue(false),
     store: vi.fn().mockResolvedValue("id"),
@@ -309,14 +313,110 @@ describe("migrateEmbeddings — error handling", () => {
     expect(result.errors[0]).toContain("storefail");
   });
 
-  it("aborts when VectorDB is closed mid-migration", async () => {
+  it("transparently reconnects when VectorDB closeGeneration advances mid-migration (issue #1248)", async () => {
+    const facts = [makeFact("a"), makeFact("b"), makeFact("c")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    let generation = 0;
+    const vectorDb = makeVectorDB({
+      getCloseGeneration: vi.fn(() => generation),
+      ensureInitialized: vi.fn().mockResolvedValue(undefined),
+      store: vi.fn().mockImplementation(async () => {
+        if (generation === 0) generation++; // simulate close after first store
+        return "id";
+      }),
+    });
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi
+        .fn()
+        .mockResolvedValueOnce([Array(1536).fill(0.1)])
+        .mockResolvedValueOnce([Array(1536).fill(0.2)])
+        .mockResolvedValueOnce([Array(1536).fill(0.3)]),
+    });
+    const logger = silentLogger();
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 1,
+      logger,
+    });
+
+    // All 3 facts should be migrated (transparent reconnect on generation change).
+    // The previous behaviour (hard abort on closeGeneration bump from #1247)
+    // is now replaced by a transparent reconnect — see #1248.
+    expect(result.migrated).toBe(3);
+    expect(result.aborted).toBe(false);
+    expect(result.processed).toBe(3);
+    expect(result.total).toBe(3);
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("closeGeneration advanced"));
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("reconnect successful"));
+    expect(vectorDb.ensureInitialized).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts (does not silently succeed) when reconnect leaves LanceDB in degraded mode", async () => {
+    // `ensureInitialized()` resolves successfully even when LanceDB stays in
+    // degraded/FTS-only mode (`lanceInitFailed === true`). In that state
+    // `vectorDb.store()` is a silent no-op, so we MUST treat the reconnect
+    // as a hard abort instead of logging "reconnect successful" and writing
+    // vectors into the void. (Copilot review on PR #1252.)
+    const facts = [makeFact("a"), makeFact("b"), makeFact("c")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    let generation = 0;
+    let lanceUp = true;
+    const vectorDb = makeVectorDB({
+      getCloseGeneration: vi.fn(() => generation),
+      // Reconnect resolves but LanceDB never came back up.
+      ensureInitialized: vi.fn().mockResolvedValue(undefined),
+      isLanceAvailable: vi.fn(() => lanceUp),
+      store: vi.fn().mockImplementation(async () => {
+        if (generation === 0) {
+          generation++;
+          lanceUp = false;
+        }
+        return "id";
+      }),
+    });
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi
+        .fn()
+        .mockResolvedValueOnce([Array(1536).fill(0.1)])
+        .mockResolvedValueOnce([Array(1536).fill(0.2)])
+        .mockResolvedValueOnce([Array(1536).fill(0.3)]),
+    });
+    const logger = silentLogger();
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 1,
+      logger,
+    });
+
+    expect(result.aborted).toBe(true);
+    expect(result.abortReason).toContain("LanceDB is unavailable (degraded mode)");
+    expect(result.migrated).toBe(1);
+    expect(result.processed).toBe(1);
+    expect(result.total).toBe(3);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("aborted at 1/3 — VectorDB reconnected but LanceDB is unavailable"),
+    );
+    // Crucially, we must NOT have logged the success line in this case.
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("reconnect successful"));
+  });
+
+  it("aborts with a clear reason when reconnect itself throws", async () => {
     const facts = [makeFact("a"), makeFact("b")];
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
     let generation = 0;
     const vectorDb = makeVectorDB({
       getCloseGeneration: vi.fn(() => generation),
+      ensureInitialized: vi.fn().mockRejectedValue(new Error("connection refused")),
       store: vi.fn().mockImplementation(async () => {
-        generation++; // simulate close after first store
+        if (generation === 0) generation++;
         return "id";
       }),
     });
@@ -337,19 +437,10 @@ describe("migrateEmbeddings — error handling", () => {
       logger,
     });
 
-    // Only first batch ran before generation changed
-    expect(result.migrated).toBe(1);
     expect(result.aborted).toBe(true);
-    expect(result.abortReason).toBe("VectorDB closed during migration");
-    expect(result.processed).toBe(1);
+    expect(result.abortReason).toContain("VectorDB reconnect failed: connection refused");
+    expect(result.migrated).toBe(1);
     expect(result.total).toBe(2);
-    // Verify abort log was called
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("aborted at 1/2 — VectorDB closed during migration"),
-    );
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("ABORTED at 1/2 — VectorDB closed during migration; 1 facts not re-embedded"),
-    );
   });
 
   it("ends early (without aborting) when batched data source drains mid-run due to expiry/supersede", async () => {
