@@ -672,7 +672,7 @@ export async function runReflection(
         vec,
         "reflection-fact-embeddings",
         "reflection",
-        logger.warn,
+        logger.warn?.bind(logger),
       );
       await vectorDb.store({
         text: patternText,
@@ -927,7 +927,7 @@ export async function runReflectionRules(
         vec,
         "reflection-fact-embeddings",
         "reflection",
-        logger.warn,
+        logger.warn?.bind(logger),
       );
       await vectorDb.store({
         text: ruleText,
@@ -1163,7 +1163,7 @@ export async function runReflectionMeta(
         vec,
         "reflection-fact-embeddings",
         "reflection",
-        logger.warn,
+        logger.warn?.bind(logger),
       );
       await vectorDb.store({
         text: metaText,
