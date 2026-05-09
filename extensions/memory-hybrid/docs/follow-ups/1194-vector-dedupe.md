@@ -1,6 +1,8 @@
 # Follow-up: per-source vector cosine dedupe at write time (#1194-vector)
 
-`storeFact` / `applyDedupe` run synchronously on the SQLite path, while embeddings are produced asynchronously. When a dedupe profile sets `vectorThreshold`, the runtime emits a warning and skips cosine matching until this gap is closed.
+`storeFact` / `applyDedupe` run synchronously on the SQLite path, while embeddings are produced asynchronously. When a dedupe profile sets `vectorThreshold`, write-time cosine matching requires caller-supplied `vectorCandidates` (vector neighbour ids + cosine scores). Until that is plumbed, the store path falls back to lexical-only dedupe.
+
+To keep logs readable during maintenance sweeps, the fallback warning is emitted at most once per phase (or suppressed and summarised by the caller).
 
 **Proposed work**
 

@@ -39,6 +39,7 @@ import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { type ReinforcementExtractResult, runReinforcementExtract } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
@@ -266,6 +267,7 @@ export async function runExtractDirectivesForCli(
 
     // Store directives as facts if not dry-run
     let stored = 0;
+    let storeDedupeVectorFallbackSuppressed = 0;
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
@@ -289,16 +291,29 @@ export async function runExtractDirectivesForCli(
                           : incident.categories.includes("explicit_memory")
                             ? "fact"
                             : "other";
-          factsDb.store({
-            text: incident.extractedRule,
-            category: category as MemoryCategory,
-            importance: 0.8,
-            entity: null,
-            key: null,
-            value: null,
-            source: `directive:${incident.sessionFile}`,
-            confidence: incident.confidence,
+          const source = `directive:${incident.sessionFile}`;
+          const shouldCountVectorFallback = shouldReportVectorDedupeFallback({
+            source,
+            fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
+            storeConfig: cfg.store,
           });
+          factsDb.store(
+            {
+              text: incident.extractedRule,
+              category: category as MemoryCategory,
+              importance: 0.8,
+              entity: null,
+              key: null,
+              value: null,
+              source,
+              confidence: incident.confidence,
+            },
+            {
+              warnContext: "extract-directives",
+              suppressVectorFallbackWarning: true,
+            },
+          );
+          if (shouldCountVectorFallback) storeDedupeVectorFallbackSuppressed++;
           stored++;
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
@@ -306,6 +321,11 @@ export async function runExtractDirectivesForCli(
       }
     }
 
+    if (storeDedupeVectorFallbackSuppressed > 0) {
+      logger.info?.(
+        `memory-hybrid: extract-directives — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectorCandidates not wired for this CLI path yet)`,
+      );
+    }
     const returnVal = { ...result, stored };
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);

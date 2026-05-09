@@ -71,6 +71,9 @@ export type StoreFactContext = {
   storeConfig?: StoreConfig;
   getById: (id: string) => MemoryEntry | null;
   invalidateSupersededCache: () => void;
+  warnOnce?: (key: string, message: string) => void;
+  warnOnceKey?: string;
+  suppressVectorFallbackWarning?: boolean;
   /**
    * Pre-computed vector neighbour candidates for the new fact's embedding (#1186, #1194).
    * Caller is expected to populate this when the embedding is known and the policy has
@@ -95,6 +98,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       nowSec,
       fuzzyDedupe: ctx.fuzzyDedupe,
       vectorCandidates: ctx.vectorCandidates,
+      warnOnce: ctx.warnOnce,
+      warnOnceKey: ctx.warnOnceKey,
+      suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
       warn: (m) => console.warn(m),
     },
   );

@@ -83,6 +83,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   protected readonly fuzzyDedupe: boolean;
   protected readonly storeConfig?: StoreConfig;
   protected readonly supersededTextsCacheMgr = new SupersededTextsCache(5 * 60_000);
+  private readonly storeDedupeWarnedKeys = new Set<string>();
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean; storeConfig?: StoreConfig }) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -217,8 +218,23 @@ export class FactsDBLayer1 extends BaseSqliteStore {
 
   store(
     entry: StoreFactInput,
-    options?: { vectorCandidates?: ReadonlyArray<{ id: string; score: number }> },
+    options?: {
+      vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
+      /**
+       * Namespace for warn-once keys when store dedupe falls back to lexical-only because
+       * no `vectorCandidates` were provided (e.g. "reflection", "extract-directives").
+       */
+      warnContext?: string;
+      /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
+      suppressVectorFallbackWarning?: boolean;
+    },
   ): MemoryEntry {
+    const warnOnce = (key: string, message: string): void => {
+      if (this.storeDedupeWarnedKeys.has(key)) return;
+      this.storeDedupeWarnedKeys.add(key);
+      process.stderr.write(`${message}
+`);
+    };
     return storeFact(
       {
         db: this.liveDb,
@@ -229,6 +245,9 @@ export class FactsDBLayer1 extends BaseSqliteStore {
           this.supersededTextsCacheMgr.invalidate();
         },
         vectorCandidates: options?.vectorCandidates,
+        warnOnce,
+        warnOnceKey: options?.warnContext,
+        suppressVectorFallbackWarning: options?.suppressVectorFallbackWarning,
       },
       entry,
     );

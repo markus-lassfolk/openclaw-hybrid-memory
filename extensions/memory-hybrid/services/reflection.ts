@@ -586,6 +586,7 @@ export async function runReflection(
   let stored = 0;
   let duplicatesSkipped = 0;
   let newPatternEmbedFailures = 0;
+  let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const candidateStartMs = Date.now();
   let candidateIndex = 0;
@@ -630,19 +631,26 @@ export async function runReflection(
       continue;
     }
 
-    const entry = factsDb.store({
-      text: patternText,
-      category: "pattern" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    });
+    storeDedupeVectorFallbackSuppressed++;
+    const entry = factsDb.store(
+      {
+        text: patternText,
+        category: "pattern" as MemoryCategory,
+        importance: REFLECTION_IMPORTANCE,
+        entity: null,
+        key: null,
+        value: null,
+        source: "reflection",
+        decayClass: "permanent",
+        tags: ["reflection", "pattern"],
+        extractionMethod: "reflection",
+        extractionConfidence: REFLECTION_IMPORTANCE,
+      },
+      {
+        warnContext: "reflection",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -713,6 +721,11 @@ export async function runReflection(
   logger.info(
     `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
   );
+  if (storeDedupeVectorFallbackSuppressed > 0) {
+    logger.info(
+      `memory-hybrid: reflection — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (phase-level cosine dedupe already handled near-duplicates)`,
+    );
+  }
 
   return {
     factsAnalyzed: recentFacts.length,
@@ -847,6 +860,7 @@ export async function runReflectionRules(
   let stored = 0;
   let rulesDuplicatesSkipped = 0;
   let newRuleEmbedFailures = 0;
+  let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const ruleText of uniqueRules) {
     let vec: number[];
@@ -885,19 +899,26 @@ export async function runReflectionRules(
       stored++;
       continue;
     }
-    const entry = factsDb.store({
-      text: ruleText,
-      category: "rule" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "rule"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    });
+    storeDedupeVectorFallbackSuppressed++;
+    const entry = factsDb.store(
+      {
+        text: ruleText,
+        category: "rule" as MemoryCategory,
+        importance: REFLECTION_IMPORTANCE,
+        entity: null,
+        key: null,
+        value: null,
+        source: "reflection",
+        decayClass: "permanent",
+        tags: ["reflection", "rule"],
+        extractionMethod: "reflection",
+        extractionConfidence: REFLECTION_IMPORTANCE,
+      },
+      {
+        warnContext: "reflect-rules",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -952,6 +973,11 @@ export async function runReflectionRules(
   logger.info(
     `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`,
   );
+  if (storeDedupeVectorFallbackSuppressed > 0) {
+    logger.info(
+      `memory-hybrid: reflect-rules — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (phase-level cosine dedupe already handled near-duplicates)`,
+    );
+  }
 
   return { rulesExtracted: rules.length, rulesStored: stored };
 }
@@ -1083,6 +1109,7 @@ export async function runReflectionMeta(
   let stored = 0;
   let metaDuplicatesSkipped = 0;
   let newMetaEmbedFailures = 0;
+  let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const metaText of uniqueMetas) {
     let vec: number[];
@@ -1121,19 +1148,26 @@ export async function runReflectionMeta(
       stored++;
       continue;
     }
-    const entry = factsDb.store({
-      text: metaText,
-      category: "pattern" as MemoryCategory,
-      importance: REFLECTION_IMPORTANCE,
-      entity: null,
-      key: null,
-      value: null,
-      source: "reflection",
-      decayClass: "permanent",
-      tags: ["reflection", "pattern", "meta"],
-      extractionMethod: "reflection",
-      extractionConfidence: REFLECTION_IMPORTANCE,
-    });
+    storeDedupeVectorFallbackSuppressed++;
+    const entry = factsDb.store(
+      {
+        text: metaText,
+        category: "pattern" as MemoryCategory,
+        importance: REFLECTION_IMPORTANCE,
+        entity: null,
+        key: null,
+        value: null,
+        source: "reflection",
+        decayClass: "permanent",
+        tags: ["reflection", "pattern", "meta"],
+        extractionMethod: "reflection",
+        extractionConfidence: REFLECTION_IMPORTANCE,
+      },
+      {
+        warnContext: "reflect-meta",
+        suppressVectorFallbackWarning: true,
+      },
+    );
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -1188,6 +1222,11 @@ export async function runReflectionMeta(
   logger.info(
     `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total`,
   );
+  if (storeDedupeVectorFallbackSuppressed > 0) {
+    logger.info(
+      `memory-hybrid: reflect-meta — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (phase-level cosine dedupe already handled near-duplicates)`,
+    );
+  }
 
   return { metaExtracted: metas.length, metaStored: stored };
 }

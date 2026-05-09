@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseStoreConfig } from "../config/parsers/core.js";
-import { resolveDedupeProfile } from "../services/dedupe-policy.js";
+import { resolveDedupeProfile, shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { normalizedHash } from "../utils/tags.js";
 
 describe("dedupe policy", () => {
@@ -363,6 +363,114 @@ describe("FactsDB sourceProfiles write path", () => {
       expect((stored.recallCount ?? 0) - initialRecall).toBeGreaterThanOrEqual(1);
       expect(db.count()).toBe(1);
     } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports vector fallback telemetry only when the policy can actually fall back to lexical-only", () => {
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: true,
+        storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+        source: "directive:session.jsonl",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: false,
+        storeConfig: { fuzzyDedupe: false, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+        source: "directive:session.jsonl",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: true,
+        storeConfig: { fuzzyDedupe: true, sourceProfiles: { "directive:*": { onDuplicate: "store" } } },
+        source: "directive:session.jsonl",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldReportVectorDedupeFallback({
+        fuzzyDedupe: true,
+        storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+        source: "directive:session.jsonl",
+        vectorCandidates: [{ id: "existing", score: 0.95 }],
+      }),
+    ).toBe(false);
+  });
+
+  it("emits vector-candidates-missing warning once per warnContext and supports suppression (#1194)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-warn-once-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: { fuzzyDedupe: true, defaultProfile: { vectorThreshold: 0.9, onDuplicate: "skip" } },
+    });
+    const stderrWrite = process.stderr.write;
+    const warns: string[] = [];
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      warns.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      db.store(
+        {
+          text: "first fact no vector candidates",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-a" },
+      );
+      db.store(
+        {
+          text: "second fact same phase no vector candidates",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-a" },
+      );
+      db.store(
+        {
+          text: "third fact different phase no vector candidates",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-b" },
+      );
+      db.store(
+        {
+          text: "fourth fact suppressed warning",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "warn-test",
+        },
+        { warnContext: "phase-c", suppressVectorFallbackWarning: true },
+      );
+
+      expect(warns.length).toBe(2);
+      expect(warns[0]).toMatch(/store dedupe/i);
+      expect(warns[0]).toMatch(/vectorThreshold=0.9/);
+      expect(warns[1]).toMatch(/store dedupe/i);
+    } finally {
+      process.stderr.write = stderrWrite;
       db.close();
       rmSync(dir, { recursive: true, force: true });
     }
