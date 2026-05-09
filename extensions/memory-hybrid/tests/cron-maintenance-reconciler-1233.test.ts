@@ -98,7 +98,9 @@ describe("cron maintenance outcome reconciler (#1233)", () => {
     writeFileSync(logPath, "ok so far\n", "utf-8");
     writeFileSync(
       join(cronDir, "jobs.json"),
-      JSON.stringify({ jobs: [{ id: "hybrid-mem:nightly-distill", state: { lastRunAtMs: runAtMs, consecutiveErrors: 2 } }] }),
+      JSON.stringify({
+        jobs: [{ id: "hybrid-mem:nightly-distill", state: { lastRunAtMs: runAtMs, consecutiveErrors: 2 } }],
+      }),
       "utf-8",
     );
     writeFileSync(
@@ -119,7 +121,13 @@ describe("cron maintenance outcome reconciler (#1233)", () => {
     const runsDir = join(cronDir, "runs");
     mkdirSync(runsDir, { recursive: true });
     const runAtMs = Date.now();
-    writeFileSync(join(cronDir, "jobs.json"), JSON.stringify({ jobs: [{ id: "hybrid-mem:weekly-deep-maintenance", state: { lastRunAtMs: runAtMs, consecutiveErrors: 0 } }] }), "utf-8");
+    writeFileSync(
+      join(cronDir, "jobs.json"),
+      JSON.stringify({
+        jobs: [{ id: "hybrid-mem:weekly-deep-maintenance", state: { lastRunAtMs: runAtMs, consecutiveErrors: 0 } }],
+      }),
+      "utf-8",
+    );
     writeFileSync(
       join(runsDir, "hybrid-mem:weekly-deep-maintenance.jsonl"),
       `${JSON.stringify({ ts: runAtMs, jobId: "hybrid-mem:weekly-deep-maintenance", status: "ok", summary: "SUCCESS", runAtMs })}\n`,

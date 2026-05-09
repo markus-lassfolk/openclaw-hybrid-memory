@@ -859,7 +859,7 @@ export function isHybridMemJsonCliInvocation(argv: string[]): boolean {
   for (let i = hybridIdx + 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--") return false;
-    if (a === "--json" || a === "--format=json" || a === "--format" && argv[i + 1] === "json") return true;
+    if (a === "--json" || a === "--format=json" || (a === "--format" && argv[i + 1] === "json")) return true;
   }
   return false;
 }

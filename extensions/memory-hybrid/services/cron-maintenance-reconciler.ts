@@ -145,7 +145,10 @@ function evidenceFromStructuredStatus(obj: Record<string, unknown>): FailureEvid
 }
 
 function extractPath(summary: string, label: "HM_EXIT" | "HM_LOG"): string | undefined {
-  const re = new RegExp(`${label}[^\n]*?(?:path)?[^\n]*?[:\\n]\\s*\`?([^\`\n]+?${label === "HM_EXIT" ? "\\.exit\\.txt" : "\\.log"})\`?`, "i");
+  const re = new RegExp(
+    `${label}[^\n]*?(?:path)?[^\n]*?[:\\n]\\s*\`?([^\`\n]+?${label === "HM_EXIT" ? "\\.exit\\.txt" : "\\.log"})\`?`,
+    "i",
+  );
   const match = summary.match(re);
   return match?.[1]?.trim();
 }
@@ -261,9 +264,10 @@ function patchJobState(job: CronJobRecord, run: CronRunRecord, evidence: Failure
     return false;
   }
 
-  const previousErrors = typeof state.consecutiveErrors === "number" && Number.isFinite(state.consecutiveErrors)
-    ? Math.max(0, Math.floor(state.consecutiveErrors))
-    : 0;
+  const previousErrors =
+    typeof state.consecutiveErrors === "number" && Number.isFinite(state.consecutiveErrors)
+      ? Math.max(0, Math.floor(state.consecutiveErrors))
+      : 0;
   job.state = {
     ...state,
     lastRunStatus: "error",
@@ -366,10 +370,16 @@ export function reconcileHybridMemCronMaintenanceOutcomes(
         const patchedByTs = new Map(records.map((r) => [String(r.ts ?? `${r.jobId}:${r.summary}`), r]));
         const merged = allRecords.map((entry) => {
           if (typeof entry === "string") return entry;
-          const key = String((entry as CronRunRecord).ts ?? `${(entry as CronRunRecord).jobId}:${(entry as CronRunRecord).summary}`);
+          const key = String(
+            (entry as CronRunRecord).ts ?? `${(entry as CronRunRecord).jobId}:${(entry as CronRunRecord).summary}`,
+          );
           return patchedByTs.get(key) ?? entry;
         });
-        writeFileSync(runPath, `${merged.map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry))).join("\n")}\n`, "utf-8");
+        writeFileSync(
+          runPath,
+          `${merged.map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry))).join("\n")}\n`,
+          "utf-8",
+        );
       } catch (err) {
         result.errors.push(`${runPath}: failed to write patched run records: ${err}`);
       }
@@ -389,7 +399,9 @@ export function reconcileHybridMemCronMaintenanceOutcomes(
       `memory-hybrid: reconciled ${result.runsCorrected} false-ok cron run(s) and ${result.jobsCorrected} job state(s) from maintenance validation failures`,
     );
   } else {
-    logger.debug?.(`memory-hybrid: cron maintenance outcome reconciliation inspected ${result.inspectedRuns} ok run(s); no false-ok records found`);
+    logger.debug?.(
+      `memory-hybrid: cron maintenance outcome reconciliation inspected ${result.inspectedRuns} ok run(s); no false-ok records found`,
+    );
   }
 
   return result;
