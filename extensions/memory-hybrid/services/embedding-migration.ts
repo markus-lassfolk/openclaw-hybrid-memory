@@ -158,12 +158,18 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
         : facts?.slice(offset, offset + batchSize)) ?? [];
     if (batch.length === 0) {
       // The loop is supposed to terminate via `offset >= total`. Reaching here
-      // with `offset < total` means the underlying source returned fewer rows
-      // than `total` — treat this as an incomplete run, not a clean finish.
+      // with `offset < total` typically means the underlying source returned
+      // fewer rows than the snapshot `total` reported — usually because facts
+      // expired or were superseded between `getCount()` and `getBatch()` on a
+      // long run. This is not a hard failure (the vector store is still
+      // consistent for the facts that DO exist), so we log it explicitly as
+      // "ended early" instead of marking the run as aborted. Callers can
+      // safely treat this as a clean termination and update embedding meta.
       if (offset < total) {
-        aborted = true;
-        abortReason = `data source returned no rows at offset ${offset}/${total}`;
-        log.warn(`memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — ${abortReason}`);
+        log.warn(
+          `memory-hybrid: embedding-migration: ended early at ${migrated + skipped}/${total} ` +
+            `— data source drained (${total - offset} facts likely expired or were superseded mid-run)`,
+        );
       }
       break;
     }

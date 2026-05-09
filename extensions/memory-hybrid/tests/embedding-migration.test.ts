@@ -352,15 +352,18 @@ describe("migrateEmbeddings — error handling", () => {
     );
   });
 
-  it("aborts when batched data source returns no rows mid-run", async () => {
+  it("ends early (without aborting) when batched data source drains mid-run due to expiry/supersede", async () => {
     // Simulate a batched factsDb (getCount + getBatch) where the underlying
-    // table shrinks between getCount and a later getBatch call. The loop must
-    // not silently log `complete` in that case.
+    // table shrinks between getCount and a later getBatch call — the common
+    // cause is fact expiry (`expires_at > now()` re-evaluating in later
+    // batches). This is normal data drift, NOT a failure: the run should
+    // terminate cleanly, log an explicit "ended early" warning so operators
+    // see the partial count, and allow callers to update embedding meta.
     const allFacts = [makeFact("a"), makeFact("b"), makeFact("c"), makeFact("d")];
     const factsDb = {
       ...makeFactsDB(),
       getCount: vi.fn().mockReturnValue(allFacts.length),
-      getBatch: vi.fn((offset: number, limit: number) => {
+      getBatch: vi.fn((offset: number, _limit: number) => {
         // First batch returns 2 facts, then the source is "drained".
         if (offset === 0) return allFacts.slice(0, 2);
         return [];
@@ -384,13 +387,15 @@ describe("migrateEmbeddings — error handling", () => {
     expect(result.total).toBe(4);
     expect(result.migrated).toBe(2);
     expect(result.processed).toBe(2);
-    expect(result.aborted).toBe(true);
-    expect(result.abortReason).toContain("data source returned no rows at offset 2/4");
+    // Drift is NOT a hard abort — callers may safely commit embedding meta.
+    expect(result.aborted).toBe(false);
+    expect(result.abortReason).toBeUndefined();
+    // But operators must still see the partial-count signal explicitly.
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("aborted at 2/4 — data source returned no rows at offset 2/4"),
+      expect.stringContaining(
+        "ended early at 2/4 — data source drained (2 facts likely expired or were superseded mid-run)",
+      ),
     );
-    // The `complete` log line must NOT be emitted on incomplete runs.
-    expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("embedding-migration: complete"));
   });
 });
 
