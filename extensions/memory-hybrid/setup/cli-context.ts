@@ -12,17 +12,17 @@ import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
-import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
+import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
 import {
-  hybridConfigSchema,
   getCronModelConfig,
   getDefaultCronModel,
   getMemoryCategories,
+  hybridConfigSchema,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
@@ -41,8 +41,8 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
-import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
+import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 import { versionInfo } from "../versionInfo.js";
 
 /** Help text shown after hybrid-mem commands list */

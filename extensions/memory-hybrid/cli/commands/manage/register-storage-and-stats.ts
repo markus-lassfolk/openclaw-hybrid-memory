@@ -3,9 +3,8 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { dirname, join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-
+import { dirname, join } from "node:path";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
@@ -49,7 +48,6 @@ function recordMaintenanceTimestamp(resolvedSqlitePath: string, filename: string
     // Non-fatal: don't throw, just log the error
   }
 }
-
 
 /**
  * Insert one `storage_growth_history` row per UTC calendar day (idempotent).
@@ -746,34 +744,38 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     auditStore,
   } = b;
 
-  mem
+  const tierCompactCmd = mem
     .command("tier-compact")
-    .alias("compact")
-    .description("Tier compaction: move facts between hot/warm/cold/structural (does NOT shrink LanceDB — see vectordb-optimize)")
-    .option("--dry-run", "Preview tier changes without mutating facts")
-    .action(
-      withExit(async (opts?: { dryRun?: boolean }) => {
-        let counts;
-        try {
-          counts = await runCompaction({ apply: opts?.dryRun !== true });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "compact",
-          });
-          throw err;
-        }
-        // Record timestamp after successful compaction (not for dry-run)
-        if (opts?.dryRun !== true && ctx.resolvedSqlitePath) {
-          recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".compact_last_run");
-        }
-        const mode = opts?.dryRun ? "dry-run" : "apply";
-        const changed = counts.changed == null ? "" : ` changed=${counts.changed}/${counts.examined ?? "?"}`;
-        console.log(
-          `Tier compaction (${mode}): hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} structural=${counts.structural}${changed}`,
-        );
-      }),
-    );
+    .description(
+      "Tier compaction: move facts between hot/warm/cold/structural (does NOT shrink LanceDB — see vectordb-optimize)",
+    )
+    .option("--dry-run", "Preview tier changes without mutating facts");
+  // Keep the legacy `compact` name working as a deprecated alias so existing
+  // cron jobs and operator muscle memory don't break (#1249).
+  tierCompactCmd.alias?.("compact");
+  tierCompactCmd.action(
+    withExit(async (opts?: { dryRun?: boolean }) => {
+      let counts;
+      try {
+        counts = await runCompaction({ apply: opts?.dryRun !== true });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "compact",
+        });
+        throw err;
+      }
+      // Record timestamp after successful compaction (not for dry-run)
+      if (opts?.dryRun !== true && ctx.resolvedSqlitePath) {
+        recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".compact_last_run");
+      }
+      const mode = opts?.dryRun ? "dry-run" : "apply";
+      const changed = counts.changed == null ? "" : ` changed=${counts.changed}/${counts.examined ?? "?"}`;
+      console.log(
+        `Tier compaction (${mode}): hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} structural=${counts.structural}${changed}`,
+      );
+    }),
+  );
 
   mem
     .command("retier")
