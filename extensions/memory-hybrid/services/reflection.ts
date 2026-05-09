@@ -140,8 +140,16 @@ export async function loadReflectionDedupeCorpusVectors(
         category: string;
         id?: string;
       }) => Promise<string>;
+      isLanceDbAvailable?: () => boolean;
+      isLanceAvailable?: () => boolean;
     };
     const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
+    const canPersistToLance =
+      typeof vdb.isLanceDbAvailable === "function"
+        ? vdb.isLanceDbAvailable()
+        : typeof vdb.isLanceAvailable === "function"
+          ? vdb.isLanceAvailable()
+          : true;
     let byId = new Map<string, number[]>();
 
     const maxRowsThisRun = REFLECTION_DEDUPE_MAX_ROWS_PER_RUN;
@@ -247,31 +255,35 @@ export async function loadReflectionDedupeCorpusVectors(
             consecutive429s = 0;
 
             if (!dryRun && typeof vdb.store === "function") {
-              try {
-                await vdb.store({
-                  text: f.text,
-                  vector: vec,
-                  importance: typeof f.importance === "number" ? f.importance : REFLECTION_IMPORTANCE,
-                  category: f.category,
-                  id: f.id,
-                });
-                apiPersisted++;
-                batchPersisted++;
-                if (embeddings.modelName && markEmbeddingModel) {
-                  try {
-                    markEmbeddingModel(f.id, embeddings.modelName);
-                  } catch (markErr) {
-                    logger.info(
-                      `${logPrefix} — dedupe corpus: failed to mark embedding model for persisted fact ${f.id}: ${markErr}`,
-                    );
-                  }
+              let persistSucceeded = !canPersistToLance;
+              if (canPersistToLance) {
+                try {
+                  await vdb.store({
+                    text: f.text,
+                    vector: vec,
+                    importance: typeof f.importance === "number" ? f.importance : REFLECTION_IMPORTANCE,
+                    category: f.category,
+                    id: f.id,
+                  });
+                  apiPersisted++;
+                  batchPersisted++;
+                  persistSucceeded = true;
+                } catch (storeErr) {
+                  apiPersistFailures++;
+                  batchPersistFailures++;
+                  logger.info(
+                    `${logPrefix} — dedupe corpus: failed to persist hydrated vector for fact ${f.id}: ${storeErr}`,
+                  );
                 }
-              } catch (storeErr) {
-                apiPersistFailures++;
-                batchPersistFailures++;
-                logger.info(
-                  `${logPrefix} — dedupe corpus: failed to persist hydrated vector for fact ${f.id}: ${storeErr}`,
-                );
+              }
+              if (persistSucceeded && embeddings.modelName && markEmbeddingModel) {
+                try {
+                  markEmbeddingModel(f.id, embeddings.modelName);
+                } catch (markErr) {
+                  logger.info(
+                    `${logPrefix} — dedupe corpus: failed to mark embedding model for hydrated fact ${f.id}: ${markErr}`,
+                  );
+                }
               }
             }
           } catch (err) {
