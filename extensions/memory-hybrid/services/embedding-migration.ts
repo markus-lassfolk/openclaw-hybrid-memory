@@ -46,10 +46,28 @@ interface MigrateEmbeddingsResult {
   total: number;
   /** Facts successfully re-embedded and stored in LanceDB. */
   migrated: number;
-  /** Facts skipped (near-duplicate already present, or embed returned empty). */
+  /**
+   * Facts skipped (near-duplicate already present, embed returned empty, or
+   * a recoverable error occurred). Note: facts that produced an entry in
+   * `errors` are also counted here, so `errors.length <= skipped`.
+   */
   skipped: number;
   /** Per-fact error strings for failures that were recoverable. */
   errors: string[];
+  /**
+   * `true` when migration did not reach `total` facts. This includes both
+   * VectorDB close mid-run and any other early loop exit (e.g. the underlying
+   * data shrank between `getCount` and `getBatch`). Callers MUST treat this
+   * as a non-success and surface a partial-state warning.
+   */
+  aborted: boolean;
+  /** Human-readable reason for abort when `aborted` is `true`. */
+  abortReason?: string;
+  /**
+   * Facts handled by the run (`migrated + skipped`). Equals `total` on a
+   * fully successful run; less than `total` when `aborted` is `true`.
+   */
+  processed: number;
 }
 
 export interface EmbeddingMaintenanceOptions extends MigrateEmbeddingsOptions {
@@ -103,6 +121,8 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   let migrated = 0;
   let skipped = 0;
   const errors: string[] = [];
+  let aborted = false;
+  let abortReason: string | undefined;
 
   log.info(
     `memory-hybrid: embedding-migration: starting — ${total} facts, ` +
@@ -116,6 +136,8 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   while (offset < total) {
     // Abort if the VectorDB was closed (hot-reload or shutdown)
     if (vectorDb.getCloseGeneration() !== initialGeneration) {
+      aborted = true;
+      abortReason = "VectorDB closed during migration";
       log.warn(
         `memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — VectorDB closed during migration`,
       );
@@ -134,7 +156,23 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
             }
           ).getBatch(offset, batchSize, { includeSuperseded: false })
         : facts?.slice(offset, offset + batchSize)) ?? [];
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      // The loop is supposed to terminate via `offset >= total`. Reaching here
+      // with `offset < total` typically means the underlying source returned
+      // fewer rows than the snapshot `total` reported — usually because facts
+      // expired or were superseded between `getCount()` and `getBatch()` on a
+      // long run. This is not a hard failure (the vector store is still
+      // consistent for the facts that DO exist), so we log it explicitly as
+      // "ended early" instead of marking the run as aborted. Callers can
+      // safely treat this as a clean termination and update embedding meta.
+      if (offset < total) {
+        log.warn(
+          `memory-hybrid: embedding-migration: ended early at ${migrated + skipped}/${total} ` +
+            `— data source drained (${total - offset} facts likely expired or were superseded mid-run)`,
+        );
+      }
+      break;
+    }
     const texts = batch.map((f) => f.text);
 
     // Attempt batch embed first; fall back to per-fact embeds on failure
@@ -254,11 +292,19 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     }
   }
 
-  log.info(
-    `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
-  );
+  const processed = migrated + skipped;
 
-  return { total, migrated, skipped, errors };
+  if (aborted) {
+    log.warn(
+      `memory-hybrid: embedding-migration: ABORTED at ${processed}/${total} — ${abortReason}; ${total - processed} facts not re-embedded`,
+    );
+  } else {
+    log.info(
+      `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
+    );
+  }
+
+  return { total, migrated, skipped, errors, aborted, abortReason, processed };
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +367,19 @@ export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions)
 
   try {
     const result = await migrateEmbeddings(opts);
-    // Only update meta after successful migration
+    // Only update meta after a fully successful (non-aborted) migration so the
+    // next restart will retry. Still surface that the migration was attempted
+    // (`migrated: true`) and propagate `result` so callers can inspect
+    // `result.aborted` and the partial counts.
+    if (result.aborted) {
+      log.warn(
+        `memory-hybrid: embedding-migration: maintenance run aborted — meta not updated. ` +
+          `${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
+          `(processed ${result.processed}/${result.total}). ` +
+          `Re-run maintenance or re-index to complete.`,
+      );
+      return { changed: true, migrated: true, result };
+    }
     factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: true, result };
   } catch (err) {

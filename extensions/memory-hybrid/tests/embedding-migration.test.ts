@@ -112,6 +112,8 @@ describe("migrateEmbeddings — basic behavior", () => {
     expect(result.migrated).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.errors).toHaveLength(0);
+    expect(result.aborted).toBe(false);
+    expect(result.processed).toBe(0);
   });
 
   it("embeds and stores each fact", async () => {
@@ -134,6 +136,8 @@ describe("migrateEmbeddings — basic behavior", () => {
     expect(result.migrated).toBe(3);
     expect(result.skipped).toBe(0);
     expect(result.errors).toHaveLength(0);
+    expect(result.aborted).toBe(false);
+    expect(result.processed).toBe(3);
     expect(vectorDb.store).toHaveBeenCalledTimes(3);
     expect(factsDb.setEmbeddingModel).toHaveBeenCalledTimes(3);
     expect(factsDb.setEmbeddingModel).toHaveBeenCalledWith("a", "test-model");
@@ -322,6 +326,7 @@ describe("migrateEmbeddings — error handling", () => {
         .mockResolvedValueOnce([Array(1536).fill(0.1)])
         .mockResolvedValueOnce([Array(1536).fill(0.2)]),
     });
+    const logger = silentLogger();
 
     const result = await migrateEmbeddings({
       factsDb: factsDb as any,
@@ -329,11 +334,68 @@ describe("migrateEmbeddings — error handling", () => {
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       batchSize: 1,
-      logger: silentLogger(),
+      logger,
     });
 
     // Only first batch ran before generation changed
     expect(result.migrated).toBe(1);
+    expect(result.aborted).toBe(true);
+    expect(result.abortReason).toBe("VectorDB closed during migration");
+    expect(result.processed).toBe(1);
+    expect(result.total).toBe(2);
+    // Verify abort log was called
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("aborted at 1/2 — VectorDB closed during migration"),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("ABORTED at 1/2 — VectorDB closed during migration; 1 facts not re-embedded"),
+    );
+  });
+
+  it("ends early (without aborting) when batched data source drains mid-run due to expiry/supersede", async () => {
+    // Simulate a batched factsDb (getCount + getBatch) where the underlying
+    // table shrinks between getCount and a later getBatch call — the common
+    // cause is fact expiry (`expires_at > now()` re-evaluating in later
+    // batches). This is normal data drift, NOT a failure: the run should
+    // terminate cleanly, log an explicit "ended early" warning so operators
+    // see the partial count, and allow callers to update embedding meta.
+    const allFacts = [makeFact("a"), makeFact("b"), makeFact("c"), makeFact("d")];
+    const factsDb = {
+      ...makeFactsDB(),
+      getCount: vi.fn().mockReturnValue(allFacts.length),
+      getBatch: vi.fn((offset: number, _limit: number) => {
+        // First batch returns 2 facts, then the source is "drained".
+        if (offset === 0) return allFacts.slice(0, 2);
+        return [];
+      }),
+    } as any;
+    const vectorDb = makeVectorDB();
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn().mockResolvedValue([Array(1536).fill(0.1), Array(1536).fill(0.2)]),
+    });
+    const logger = silentLogger();
+
+    const result = await migrateEmbeddings({
+      factsDb,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 2,
+      logger,
+    });
+
+    expect(result.total).toBe(4);
+    expect(result.migrated).toBe(2);
+    expect(result.processed).toBe(2);
+    // Drift is NOT a hard abort — callers may safely commit embedding meta.
+    expect(result.aborted).toBe(false);
+    expect(result.abortReason).toBeUndefined();
+    // But operators must still see the partial-count signal explicitly.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "ended early at 2/4 — data source drained (2 facts likely expired or were superseded mid-run)",
+      ),
+    );
   });
 });
 
@@ -535,6 +597,50 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     expect(result.changed).toBe(true);
     // Migration ran but all facts failed — migrated=true (the attempt was made), result.errors has entries
     expect(result.result?.errors).toBeDefined();
+  });
+
+  it("returns migrated=true with result.aborted=true when migration is aborted, and does not update meta", async () => {
+    const facts = [makeFact("m1"), makeFact("m2")];
+    const factsDb = makeFactsDB({
+      getAll: vi.fn().mockReturnValue(facts),
+      getEmbeddingMeta: vi.fn().mockReturnValue({ provider: "ollama", model: "old" }),
+    });
+    let generation = 0;
+    const vectorDb = makeVectorDB({
+      getCloseGeneration: vi.fn(() => generation),
+      store: vi.fn().mockImplementation(async () => {
+        generation++; // simulate close after first store
+        return "id";
+      }),
+    });
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi
+        .fn()
+        .mockResolvedValueOnce([Array(1536).fill(0.1)])
+        .mockResolvedValueOnce([Array(1536).fill(0.2)]),
+    });
+
+    const result = await runEmbeddingMaintenance({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      currentProvider: "openai",
+      currentModel: "text-embedding-3-small",
+      autoMigrate: true,
+      batchSize: 1,
+      logger: silentLogger(),
+    });
+
+    expect(result.changed).toBe(true);
+    // Migration was attempted, even though it aborted — surface that to callers.
+    expect(result.migrated).toBe(true);
+    expect(result.result?.aborted).toBe(true);
+    expect(result.result?.migrated).toBe(1);
+    expect(result.result?.processed).toBe(1);
+    expect(result.result?.total).toBe(2);
+    // Meta MUST NOT be updated on abort, so the next run will retry.
+    expect(factsDb.setEmbeddingMeta).not.toHaveBeenCalled();
   });
 
   it("returns changed=false when getEmbeddingMeta throws", async () => {
