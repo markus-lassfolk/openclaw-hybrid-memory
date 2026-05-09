@@ -51,8 +51,8 @@ function summarizeFailedChecks(checkRuns) {
     .filter((run) => {
       if (!run || typeof run !== 'object') return false;
       if (run.status !== 'completed') return false;
-      if (SELF_CHECK_NAMES.has(String(run.name ?? ''))) return false;
       const conclusion = String(run.conclusion ?? '').toLowerCase();
+      if (SELF_CHECK_NAMES.has(String(run.name ?? '')) && conclusion === 'cancelled') return false;
       return conclusion && !PASSING_CONCLUSIONS.has(conclusion);
     })
     .slice(0, DEFAULT_MAX_ITEMS_PER_SECTION)
