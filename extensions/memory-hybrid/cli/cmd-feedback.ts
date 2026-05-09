@@ -683,6 +683,7 @@ export async function runExtractImplicitFeedbackForCli(
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
     try {
       progress.stage = "cleanup-duplicates";
+      emitProgress();
       const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
       const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
       let afterRowid = 0;
