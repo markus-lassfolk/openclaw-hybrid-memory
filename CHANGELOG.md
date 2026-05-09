@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Reflection dedupe throttling** ([#1229](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1229)): Adaptive backoff and circuit breaker for embedding-backed reflection dedupe during dream-cycle when provider returns 429s.
+  - Circuit breaker triggers after 10 consecutive 429s, stops processing and defers remaining rows to next run
+  - Adaptive throttle increases from 200ms baseline to 10s maximum after each 429
+  - Per-run row limit of 2000 prevents unbounded backlog work
+  - Enhanced logging shows 429 counts, throttle delays, and deferred rows
+  - New test suite validates throttling behavior
+
 ### Changed
 
 ---

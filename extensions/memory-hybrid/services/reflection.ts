@@ -15,6 +15,9 @@ import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import {
   REFLECTION_DEDUPE_THRESHOLD,
   REFLECTION_DEDUPE_LOAD_TIMEOUT_MS,
+  REFLECTION_DEDUPE_MAX_ROWS_PER_RUN,
+  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD,
+  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS,
   REFLECTION_IMPORTANCE,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
   REFLECTION_MAX_FACT_LENGTH,
@@ -25,7 +28,7 @@ import {
 import { getEnv } from "../utils/env-manager.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { withTimeout } from "../utils/timeout.js";
-import { LLMRetryError } from "./chat.js";
+import { is429OrWrapped, is403QuotaOrRateLimitLike, LLMRetryError } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -108,14 +111,17 @@ export function dotProductSimilarity(a: number[], b: number[]): number {
 
 /**
  * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
- * else call the embedding API. Batches API calls (20) with a short pause only when a batch used the API.
+ * else call the embedding API. Batches API calls (20) with adaptive throttle based on rate limits.
  * Wrapped with timeout to prevent indefinite hangs during VectorDB operations.
+ *
+ * Implements circuit breaker: after N consecutive 429s, pauses and returns partial results.
+ * Supports resumable processing via checkpoint cursor (future enhancement).
  */
 export async function loadReflectionDedupeCorpusVectors(
   facts: MemoryEntry[],
   embeddings: EmbeddingProvider,
   vectorDb: VectorDB,
-  logger: { info: (msg: string) => void },
+  logger: { info: (msg: string) => void; warn?: (msg: string) => void },
   logPrefix: string,
   captureOperation: string,
   markEmbeddingModel?: (factId: string, model: string) => void,
@@ -123,6 +129,7 @@ export async function loadReflectionDedupeCorpusVectors(
 ): Promise<(number[] | null)[]> {
   const loadWithTimeout = async (): Promise<(number[] | null)[]> => {
     const startMs = Date.now();
+    const logWarn = (msg: string) => (logger.warn ?? logger.info)(msg);
     const vdb = vectorDb as VectorDB & {
       getVectorDim?: () => number;
       getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
@@ -137,11 +144,22 @@ export async function loadReflectionDedupeCorpusVectors(
     const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
     let byId = new Map<string, number[]>();
 
-    logger.info(`${logPrefix} — dedupe corpus: loading vectors from Lance index for ${facts.length} fact(s)...`);
+    const maxRowsThisRun = REFLECTION_DEDUPE_MAX_ROWS_PER_RUN;
+    const effectiveFacts = facts.length > maxRowsThisRun ? facts.slice(0, maxRowsThisRun) : facts;
+
+    if (facts.length > maxRowsThisRun) {
+      logWarn(
+        `${logPrefix} — dedupe corpus: limiting to ${maxRowsThisRun} rows (total ${facts.length}) to prevent unbounded backlog work. Remaining ${facts.length - maxRowsThisRun} rows will be processed in future runs.`,
+      );
+    }
+
+    logger.info(
+      `${logPrefix} — dedupe corpus: loading vectors from Lance index for ${effectiveFacts.length} fact(s)${facts.length > effectiveFacts.length ? ` (capped from ${facts.length})` : ""}...`,
+    );
 
     if (typeof vdb.getVectorsByFactIds === "function") {
       try {
-        byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
+        byId = await vdb.getVectorsByFactIds(effectiveFacts.map((f) => f.id));
         const elapsedS = ((Date.now() - startMs) / 1000).toFixed(1);
         logger.info(
           `${logPrefix} — dedupe corpus: loaded ${byId.size} vector(s) from Lance index (elapsed: ${elapsedS}s)`,
@@ -163,21 +181,25 @@ export async function loadReflectionDedupeCorpusVectors(
     let embedFailures = 0;
     let nonNullSoFar = 0;
     let embedAttemptsThisRun = 0;
+    let consecutive429s = 0;
+    let total429s = 0;
+    let throttleDelayMs = 200;
     const startedAt = Date.now();
     let lastProgressAt = startedAt;
 
     logger.info(
-      `${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20 (${dryRun ? "dry-run: no Lance checkpoint / metadata writes" : "checkpointing API-hydrated vectors"})`,
+      `${logPrefix} — dedupe corpus: processing ${effectiveFacts.length} facts in batches of 20 (${dryRun ? "dry-run: no Lance checkpoint / metadata writes" : "checkpointing API-hydrated vectors"})`,
     );
 
-    const totalBatches = Math.ceil(facts.length / 20);
+    const totalBatches = Math.ceil(effectiveFacts.length / 20);
     let batchNumber = 0;
 
-    for (let i = 0; i < facts.length; i += 20) {
+    for (let i = 0; i < effectiveFacts.length; i += 20) {
       const batchStartedAt = Date.now();
-      const end = Math.min(i + 20, facts.length);
+      const end = Math.min(i + 20, effectiveFacts.length);
       batchNumber++;
       let hadApiEmbed = false;
+      let had429ThisBatch = false;
       let batchLance = 0;
       let batchApi = 0;
       let batchPersisted = 0;
@@ -186,7 +208,7 @@ export async function loadReflectionDedupeCorpusVectors(
       let batchMismatchSkips = 0;
 
       for (let j = i; j < end; j++) {
-        const f = facts[j]!;
+        const f = effectiveFacts[j]!;
         const cached = byId.get(f.id.toLowerCase()) ?? byId.get(f.id);
         const modelKnown = f.embeddingModel != null && embeddings.modelName != null;
         const modelOk = modelKnown && f.embeddingModel === embeddings.modelName;
@@ -222,6 +244,7 @@ export async function loadReflectionDedupeCorpusVectors(
             apiEmbeds++;
             batchApi++;
             hadApiEmbed = true;
+            consecutive429s = 0;
 
             if (!dryRun && typeof vdb.store === "function") {
               try {
@@ -252,8 +275,41 @@ export async function loadReflectionDedupeCorpusVectors(
               }
             }
           } catch (err) {
-            embedFailures++;
-            batchEmbedFailures++;
+            const isRateLimit =
+              is429OrWrapped(err instanceof Error ? err : new Error(String(err))) || is403QuotaOrRateLimitLike(err);
+
+            if (isRateLimit) {
+              consecutive429s++;
+              total429s++;
+              had429ThisBatch = true;
+
+              if (consecutive429s >= REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD) {
+                const failedAtRow = j;
+                const remainingInSlice = effectiveFacts.length - failedAtRow;
+                logWarn(
+                  `[embedding-quota] ${logPrefix} — circuit breaker triggered: ${consecutive429s} consecutive 429s. ` +
+                    `Stopped at row ${failedAtRow}/${effectiveFacts.length} in this run, deferring ${remainingInSlice}. ` +
+                    `Total 429s this run: ${total429s}. Will resume in next dream-cycle.`,
+                );
+                for (let k = j; k < effectiveFacts.length; k++) {
+                  result[k] = null;
+                }
+                for (let k = effectiveFacts.length; k < facts.length; k++) {
+                  result[k] = null;
+                }
+                return result;
+              }
+
+              throttleDelayMs = Math.min(throttleDelayMs * 2, 10_000);
+              logWarn(
+                `[embedding-quota] ${logPrefix} — 429 rate limit (${consecutive429s} consecutive, ${total429s} total) — ` +
+                  `increasing throttle to ${throttleDelayMs}ms`,
+              );
+            } else {
+              embedFailures++;
+              batchEmbedFailures++;
+            }
+
             if (!shouldSuppressEmbeddingError(err)) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: captureOperation,
@@ -270,42 +326,54 @@ export async function loadReflectionDedupeCorpusVectors(
       const elapsedMs = Date.now() - startedAt;
       const batchMs = Date.now() - batchStartedAt;
       const processed = end;
-      const remaining = facts.length - end;
+      const remainingSlice = effectiveFacts.length - end;
       const ok = nonNullSoFar;
       const elapsedS = (elapsedMs / 1000).toFixed(1);
-      // Periodic batch logs (small/medium/large corpora) plus event-driven lines (API work, slow batches, heartbeat).
+      const capDeferred = facts.length - effectiveFacts.length;
       const periodicBatchLog =
-        (facts.length <= 500 && (batchNumber % 5 === 0 || end === facts.length)) ||
-        (facts.length > 500 &&
-          facts.length <= 1000 &&
-          (batchNumber % 10 === 0 || end % 200 === 0 || end === facts.length)) ||
-        (facts.length > 1000 && (batchNumber % 20 === 0 || end % 400 === 0 || end === facts.length));
+        (effectiveFacts.length <= 500 && (batchNumber % 5 === 0 || end === effectiveFacts.length)) ||
+        (effectiveFacts.length > 500 &&
+          effectiveFacts.length <= 1000 &&
+          (batchNumber % 10 === 0 || end % 200 === 0 || end === effectiveFacts.length)) ||
+        (effectiveFacts.length > 1000 && (batchNumber % 20 === 0 || end % 400 === 0 || end === effectiveFacts.length));
 
       const shouldLog =
         periodicBatchLog ||
-        facts.length > 1000 ||
+        effectiveFacts.length > 1000 ||
         batchApi > 0 ||
+        had429ThisBatch ||
         batchMs >= 5000 ||
         Date.now() - lastProgressAt >= 10_000 ||
-        end === facts.length;
+        end === effectiveFacts.length;
 
       if (shouldLog) {
         lastProgressAt = Date.now();
         logger.info(
-          `${logPrefix} — dedupe corpus progress: batch ${batchNumber}/${Math.max(1, totalBatches)}, ${processed}/${facts.length} processed, ${remaining} remaining; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, non-null ${ok}; elapsed=${elapsedMs}ms (${elapsedS}s)`,
+          `${logPrefix} — dedupe corpus progress: batch ${batchNumber}/${Math.max(1, totalBatches)}, ${processed}/${effectiveFacts.length} processed, ${remainingSlice} remaining this run` +
+            (capDeferred > 0 ? ` (${capDeferred} row(s) capped for next run)` : "") +
+            `; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, 429s=${total429s}, throttle=${throttleDelayMs}ms, non-null ${ok}; elapsed=${elapsedMs}ms (${elapsedS}s)`,
         );
       }
 
-      if (hadApiEmbed && end < facts.length) {
-        await new Promise((r) => setTimeout(r, 200));
+      if (hadApiEmbed && end < effectiveFacts.length) {
+        const batchDelay = had429ThisBatch
+          ? Math.max(throttleDelayMs, REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS / 3)
+          : throttleDelayMs;
+        await new Promise((r) => setTimeout(r, batchDelay));
       }
     }
 
-    if (facts.length > 0) {
+    for (let idx = effectiveFacts.length; idx < facts.length; idx++) {
+      result[idx] = null;
+    }
+
+    if (effectiveFacts.length > 0) {
       const ok = result.filter((v) => v !== null).length;
       const elapsedS = ((Date.now() - startMs) / 1000).toFixed(1);
+      const deferredCap = facts.length - effectiveFacts.length;
       logger.info(
-        `${logPrefix} — dedupe corpus: completed ${Math.max(1, totalBatches)} batch(es), ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${ok}/${facts.length} non-null for cosine check (elapsed: ${elapsedS}s)`,
+        `${logPrefix} — dedupe corpus: completed ${Math.max(1, totalBatches)} batch(es), ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${total429s} embedding rate-limit event(s), throttle=${throttleDelayMs}ms, ${ok}/${facts.length} non-null for cosine check (elapsed: ${elapsedS}s)` +
+          (deferredCap > 0 ? `; ${deferredCap} row(s) deferred to next run (per-run cap)` : ""),
       );
     }
     return result;
@@ -315,7 +383,7 @@ export async function loadReflectionDedupeCorpusVectors(
   const result = await withTimeout(REFLECTION_DEDUPE_LOAD_TIMEOUT_MS, loadWithTimeout);
 
   if (result === null) {
-    logger.info(
+    (logger.warn ?? logger.info)(
       `${logPrefix} — dedupe corpus: timed out after ${REFLECTION_DEDUPE_LOAD_TIMEOUT_MS}ms while loading ${facts.length} vectors; falling back to empty corpus (dedupe disabled for this run)`,
     );
     return new Array(facts.length).fill(null);

@@ -120,6 +120,15 @@ export const VECTORDB_GET_VECTORS_TIMEOUT_MS = 45_000;
  */
 export const REFLECTION_DEDUPE_LOAD_TIMEOUT_MS = 900_000;
 
+/** Maximum rows to process per dream-cycle reflection dedupe run (prevents unbounded backlog work). */
+export const REFLECTION_DEDUPE_MAX_ROWS_PER_RUN = 2000;
+
+/** Circuit breaker: max consecutive 429s before pausing reflection dedupe for this run. */
+export const REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD = 10;
+
+/** Circuit breaker: backoff delay (ms) after hitting 429 threshold. */
+export const REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS = 30_000;
+
 /** LanceDB semantic search: maximum rows to request from vectorSearch (#882). */
 export const LANCE_VECTOR_SEARCH_MAX_LIMIT = 1000;
 
