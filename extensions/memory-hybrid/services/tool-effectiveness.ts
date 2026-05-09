@@ -13,7 +13,7 @@
  * Low scorers can be flagged in CLI output.
  */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
@@ -490,7 +490,20 @@ export async function computeToolEffectiveness(
   let ownedEffStore = false;
   let effStore = effectivenessDb;
 
+  const isMemoryDb = workflowDbPath === ":memory:";
+  const isUriPath = workflowDbPath.startsWith("file:");
+  const shouldProbeFilesystem = !isMemoryDb && !isUriPath;
+
   try {
+    if (shouldProbeFilesystem) {
+      // Ensure parent dirs exist so a valid configured path doesn't fail solely due to missing directories.
+      mkdirSync(dirname(workflowDbPath), { recursive: true });
+      if (!existsSync(workflowDbPath)) {
+        logger.warn?.(`tool-effectiveness: workflow traces DB not found at ${workflowDbPath} — no traces recorded yet`);
+        return report;
+      }
+    }
+
     traceDb = new DatabaseSync(workflowDbPath, { readOnly: true });
     traceDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
@@ -541,8 +554,13 @@ export async function computeToolEffectiveness(
     report.lowScoreTools = allScores.filter((m) => m.compositeScore < lowScoreThreshold && m.totalCalls >= minCalls);
     report.recommendations = generateRecommendations(allScores, lowScoreThreshold);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "tool-effectiveness" });
-    logger.warn?.(`tool-effectiveness: error computing scores: ${err}`);
+    const baseError = err instanceof Error ? err : new Error(String(err));
+
+    const resolvedWorkflowDb = workflowDbPath;
+    const message = `tool-effectiveness: failed to compute scores (workflowDb=${resolvedWorkflowDb}): ${baseError.message}`;
+    logger.warn?.(message);
+
+    throw new Error(message, { cause: baseError });
   } finally {
     try {
       traceDb?.close();
