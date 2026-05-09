@@ -1273,10 +1273,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         });
         if (result.aborted) {
           console.error(
-            `Re-index FAILED: ${result.processed} of ${result.total} facts re-embedded — vector store is in a partial state.`,
+            `Re-index FAILED: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
+              `(processed ${result.processed}/${result.total}) — vector store is in a partial state.`,
           );
           console.error(`Reason: ${result.abortReason ?? "unknown"}`);
-          console.error(`Recommendation: Re-run 'openclaw hybrid-mem re-index' to complete the migration.`);
+          console.error("Recommendation: Re-run 'openclaw hybrid-mem re-index' to complete the migration.");
           process.exitCode = 1;
           return;
         }

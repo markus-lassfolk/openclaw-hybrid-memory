@@ -351,6 +351,47 @@ describe("migrateEmbeddings — error handling", () => {
       expect.stringContaining("ABORTED at 1/2 — VectorDB closed during migration; 1 facts not re-embedded"),
     );
   });
+
+  it("aborts when batched data source returns no rows mid-run", async () => {
+    // Simulate a batched factsDb (getCount + getBatch) where the underlying
+    // table shrinks between getCount and a later getBatch call. The loop must
+    // not silently log `complete` in that case.
+    const allFacts = [makeFact("a"), makeFact("b"), makeFact("c"), makeFact("d")];
+    const factsDb = {
+      ...makeFactsDB(),
+      getCount: vi.fn().mockReturnValue(allFacts.length),
+      getBatch: vi.fn((offset: number, limit: number) => {
+        // First batch returns 2 facts, then the source is "drained".
+        if (offset === 0) return allFacts.slice(0, 2);
+        return [];
+      }),
+    } as any;
+    const vectorDb = makeVectorDB();
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn().mockResolvedValue([Array(1536).fill(0.1), Array(1536).fill(0.2)]),
+    });
+    const logger = silentLogger();
+
+    const result = await migrateEmbeddings({
+      factsDb,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 2,
+      logger,
+    });
+
+    expect(result.total).toBe(4);
+    expect(result.migrated).toBe(2);
+    expect(result.processed).toBe(2);
+    expect(result.aborted).toBe(true);
+    expect(result.abortReason).toContain("data source returned no rows at offset 2/4");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("aborted at 2/4 — data source returned no rows at offset 2/4"),
+    );
+    // The `complete` log line must NOT be emitted on incomplete runs.
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("embedding-migration: complete"));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -551,6 +592,50 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     expect(result.changed).toBe(true);
     // Migration ran but all facts failed — migrated=true (the attempt was made), result.errors has entries
     expect(result.result?.errors).toBeDefined();
+  });
+
+  it("returns migrated=true with result.aborted=true when migration is aborted, and does not update meta", async () => {
+    const facts = [makeFact("m1"), makeFact("m2")];
+    const factsDb = makeFactsDB({
+      getAll: vi.fn().mockReturnValue(facts),
+      getEmbeddingMeta: vi.fn().mockReturnValue({ provider: "ollama", model: "old" }),
+    });
+    let generation = 0;
+    const vectorDb = makeVectorDB({
+      getCloseGeneration: vi.fn(() => generation),
+      store: vi.fn().mockImplementation(async () => {
+        generation++; // simulate close after first store
+        return "id";
+      }),
+    });
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi
+        .fn()
+        .mockResolvedValueOnce([Array(1536).fill(0.1)])
+        .mockResolvedValueOnce([Array(1536).fill(0.2)]),
+    });
+
+    const result = await runEmbeddingMaintenance({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      currentProvider: "openai",
+      currentModel: "text-embedding-3-small",
+      autoMigrate: true,
+      batchSize: 1,
+      logger: silentLogger(),
+    });
+
+    expect(result.changed).toBe(true);
+    // Migration was attempted, even though it aborted — surface that to callers.
+    expect(result.migrated).toBe(true);
+    expect(result.result?.aborted).toBe(true);
+    expect(result.result?.migrated).toBe(1);
+    expect(result.result?.processed).toBe(1);
+    expect(result.result?.total).toBe(2);
+    // Meta MUST NOT be updated on abort, so the next run will retry.
+    expect(factsDb.setEmbeddingMeta).not.toHaveBeenCalled();
   });
 
   it("returns changed=false when getEmbeddingMeta throws", async () => {
