@@ -1152,20 +1152,21 @@ export class VectorDB {
 
   private async withRetryableWriteConflictRetry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
     const maxAttempts = VECTORDB_WRITE_CONFLICT_MAX_RETRIES + 1;
-    let attempt = 1;
-    while (true) {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         return await fn();
       } catch (err) {
+        lastErr = err;
         if (!this.isRetryableCommitConflictError(err) || attempt >= maxAttempts) throw err;
         const delayMs = this.getWriteConflictRetryDelayMs(attempt);
         this.logWarn(
           `memory-hybrid: ${operation} hit retryable commit conflict (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
         );
         await this.sleep(delayMs);
-        attempt++;
       }
     }
+    throw lastErr instanceof Error ? lastErr : new Error(`memory-hybrid: retry loop failed for operation "${operation}"`);
   }
 
   /**
@@ -1218,9 +1219,8 @@ export class VectorDB {
           // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
           if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
             const lid = id;
-            await this.withRetryableWriteConflictRetry("LanceDB duplicate-id cleanup", async () => {
-              await this.getTable().delete(`id = '${lid}'`);
-            });
+            if (!UUID_REGEX.test(lid)) throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
+            await this.getTable().delete(`id = '${lid}'`);
             await this.getTable().add([row]);
           } else {
             throw err;
@@ -1480,11 +1480,13 @@ export class VectorDB {
       if (!this.lanceDbAvailable) return false;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
+      const normalizedId = id.toLowerCase();
+      if (!UUID_REGEX.test(normalizedId)) return false;
       if (this.optimizePromise) {
         await this.optimizePromise;
       }
       await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
-        await this.getTable().delete(`id = '${id.toLowerCase()}'`);
+        await this.getTable().delete(`id = '${normalizedId}'`);
       });
       return true;
     } catch (err) {
