@@ -56,6 +56,36 @@ openclaw hybrid-mem validate-cron-exit \
 
 Returns exit code 1 if validation fails.
 
+### 5. Cron Ledger Reconciliation (`services/cron-maintenance-reconciler.ts`)
+
+New reconciliation system that repairs past false-OK entries:
+- Scans cron run ledgers (`~/.openclaw/cron/runs/*.jsonl`)
+- Validates maintenance artifacts (HM_EXIT, HM_LOG) for each run
+- Identifies false-OK entries (status:"ok" despite validation failures)
+- Corrects ledger entries by updating status to "error"
+- Appends reconciliation note to summary
+
+Reconciliation CLI command:
+```bash
+# Reconcile all jobs (dry-run)
+openclaw hybrid-mem reconcile-cron-ledgers --dry-run
+
+# Reconcile specific job and apply corrections
+openclaw hybrid-mem reconcile-cron-ledgers --job-id hybrid-mem:nightly-dream-cycle
+
+# Reconcile all jobs and apply corrections
+openclaw hybrid-mem reconcile-cron-ledgers
+```
+
+Integrated into verify command:
+```bash
+# Check for false-OK entries (dry-run)
+openclaw hybrid-mem verify --reconcile
+
+# Check and fix false-OK entries
+openclaw hybrid-mem verify --fix
+```
+
 ## Expected Behavior
 
 ### Success
@@ -128,7 +158,16 @@ Comprehensive tests in `tests/cron-exit-validator.test.ts`:
 - Skip variant handling
 - Missing file handling
 
-All 14 tests pass.
+Comprehensive tests in `tests/cron-maintenance-reconciler.test.ts`:
+- Ledger parsing and writing
+- Artifact path extraction from summaries
+- Artifact discovery by run timestamp
+- False-OK identification
+- Single and multi-job reconciliation
+- Dry-run mode
+- Correction logic
+
+All 31 tests pass (14 validator + 17 reconciler).
 
 ## Acceptance Criteria Met
 
@@ -138,12 +177,20 @@ All 14 tests pass.
 ✅ Empty or incomplete ledgers do not produce a false `ok` / skip outcome
 ✅ Message normalization removes obsolete commands
 ✅ Validation instructions embedded in all cron messages
+✅ **Reconciler repairs false-OK entries in past runs**
+✅ **False-OK runs correctly identified and corrected**
+✅ **Integration with verify command for automated reconciliation**
+✅ **Regression coverage with simulated maintenance failures**
 
 ## Future Work
 
-To fully close the loop, OpenClaw cron core would need to:
+The reconciler now addresses the immediate problem by retroactively fixing false-OK entries. For complete prevention, OpenClaw cron core would need to:
 1. Accept structured status from agent (not just text response)
 2. Map `maintenanceStatus` → cron `status` (`success`→`ok`, `failed`/`partial`→`error`)
 3. Update `lastRunStatus` and `consecutiveErrors` based on maintenance outcome
 
-Until then, agents must signal failure explicitly (e.g., by mentioning "FAILED" in response or exiting with error) when validation fails.
+Until then, the reconciler provides:
+- Retroactive correction of false-OK entries
+- Automated detection via `verify --reconcile` and `verify --fix`
+- Standalone CLI for manual reconciliation
+- Comprehensive test coverage for regression prevention
