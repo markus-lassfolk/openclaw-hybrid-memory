@@ -9,7 +9,7 @@
  *   - formatToolEffectivenessReport: output format
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import {
   ToolEffectivenessStore,
   type ToolMetrics,
   aggregateTraceRows,
+  computeToolEffectiveness,
   formatToolEffectivenessReport,
   generateMonthlyReport,
   generateRecommendations,
@@ -295,6 +296,48 @@ describe("ToolEffectivenessStore", () => {
     store.upsert(makeMetrics({ tool: "sr_tool", totalCalls: 10, successCalls: 7, compositeScore: 0.5 }));
     const result = store.getByTool("sr_tool");
     expect(result?.successRate).toBeCloseTo(0.7, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeToolEffectiveness: DB path handling
+// ---------------------------------------------------------------------------
+
+describe("computeToolEffectiveness (DB path handling)", () => {
+  it("creates parent directory and warns when workflow DB is missing", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "tool-eff-workflow-missing-"));
+    const workflowDbPath = join(tmpDir, "nested", "workflows.db");
+    const store = makeStore(tmpDir);
+
+    const warns: string[] = [];
+    const report = await computeToolEffectiveness(workflowDbPath, store, {}, { warn: (msg) => warns.push(msg) });
+
+    expect(existsSync(join(tmpDir, "nested"))).toBe(true);
+    expect(report.toolsScored).toBe(0);
+    expect(warns.some((w) => w.includes(workflowDbPath))).toBe(true);
+
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("throws a path-rich error when workflow DB path exists but is not openable", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "tool-eff-workflow-unopenable-"));
+    const workflowDbPath = join(tmpDir, "workflows.db");
+    mkdirSync(workflowDbPath); // directory at file path → DatabaseSync open should fail
+    const store = makeStore(tmpDir);
+
+    await expect(computeToolEffectiveness(workflowDbPath, store)).rejects.toThrow(workflowDbPath);
+
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
