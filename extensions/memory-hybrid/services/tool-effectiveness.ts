@@ -499,9 +499,7 @@ export async function computeToolEffectiveness(
       // Ensure parent dirs exist so a valid configured path doesn't fail solely due to missing directories.
       mkdirSync(dirname(workflowDbPath), { recursive: true });
       if (!existsSync(workflowDbPath)) {
-        logger.warn?.(
-          `tool-effectiveness: workflow traces DB not found at ${workflowDbPath} — no traces recorded yet`,
-        );
+        logger.warn?.(`tool-effectiveness: workflow traces DB not found at ${workflowDbPath} — no traces recorded yet`);
         return report;
       }
     }
@@ -557,7 +555,6 @@ export async function computeToolEffectiveness(
     report.recommendations = generateRecommendations(allScores, lowScoreThreshold);
   } catch (err) {
     const baseError = err instanceof Error ? err : new Error(String(err));
-    capturePluginError(baseError, { operation: "tool-effectiveness" });
 
     const resolvedWorkflowDb = workflowDbPath;
     const message = `tool-effectiveness: failed to compute scores (workflowDb=${resolvedWorkflowDb}): ${baseError.message}`;

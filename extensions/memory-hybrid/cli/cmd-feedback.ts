@@ -767,10 +767,6 @@ export async function runToolEffectivenessForCli(
     effStore = new ToolEffectivenessStore(effectivenessDbPath);
   } catch (err) {
     const baseError = err instanceof Error ? err : new Error(String(err));
-    capturePluginError(baseError, {
-      operation: "tool-effectiveness:open-effectiveness-db",
-      subsystem: "tool-effectiveness",
-    });
     throw new Error(
       `tool-effectiveness: failed to open effectiveness DB at ${effectivenessDbPath} (workflowDb=${workflowDbPath}): ${baseError.message}`,
       { cause: baseError },
