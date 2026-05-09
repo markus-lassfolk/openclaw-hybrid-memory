@@ -3,6 +3,9 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { dirname, join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
@@ -25,6 +28,28 @@ import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
 export const IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP = 20_000;
+
+/**
+ * Record a maintenance command run timestamp to the memory directory.
+ * Similar to runRecordDistillForCli but generic for any maintenance command.
+ */
+function recordMaintenanceTimestamp(resolvedSqlitePath: string, filename: string): void {
+  const memoryDir = dirname(resolvedSqlitePath);
+  mkdirSync(memoryDir, { recursive: true });
+  const path = join(memoryDir, filename);
+  const ts = new Date().toISOString();
+  try {
+    writeFileSync(path, `${ts}\n`, "utf-8");
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "recordMaintenanceTimestamp",
+      severity: "info",
+    });
+    // Non-fatal: don't throw, just log the error
+  }
+}
+
 
 /**
  * Insert one `storage_growth_history` row per UTC calendar day (idempotent).
@@ -722,8 +747,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
   } = b;
 
   mem
-    .command("compact")
-    .description("Retier facts by structural shape, salience, and inactivity")
+    .command("tier-compact")
+    .alias("compact")
+    .description("Tier compaction: move facts between hot/warm/cold/structural (does NOT shrink LanceDB — see vectordb-optimize)")
     .option("--dry-run", "Preview tier changes without mutating facts")
     .action(
       withExit(async (opts?: { dryRun?: boolean }) => {
@@ -736,6 +762,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             operation: "compact",
           });
           throw err;
+        }
+        // Record timestamp after successful compaction (not for dry-run)
+        if (opts?.dryRun !== true && ctx.resolvedSqlitePath) {
+          recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".compact_last_run");
         }
         const mode = opts?.dryRun ? "dry-run" : "apply";
         const changed = counts.changed == null ? "" : ` changed=${counts.changed}/${counts.examined ?? "?"}`;
@@ -775,6 +805,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         const olderThanMs = parsedDays * 24 * 60 * 60 * 1000;
         try {
           const stats = await vectorDb.optimize(olderThanMs);
+          // Record timestamp after successful optimization
+          if (ctx.resolvedSqlitePath) {
+            recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+          }
           console.log(
             `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
           );
@@ -1028,6 +1062,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Last distill: ${timestamps.distill ?? "(never)"}`);
           console.log(`Last reflect: ${timestamps.reflect ?? "(never)"}`);
           console.log(`Last compact: ${timestamps.compact ?? "(never)"}`);
+          console.log(`Last vectordb-optimize: ${timestamps.vectordbOptimize ?? "(never)"}`);
           console.log("");
           if (sizes.sqliteBytes != null) console.log(`SQLite size: ${(sizes.sqliteBytes / 1024 / 1024).toFixed(2)} MB`);
           if (sizes.lanceBytes != null) console.log(`LanceDB size: ${(sizes.lanceBytes / 1024 / 1024).toFixed(2)} MB`);

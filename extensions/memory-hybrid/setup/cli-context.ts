@@ -56,7 +56,8 @@ Commands by category:
 
   Maintenance (run regularly or use run-all)
     run-all              Run all maintenance tasks in optimal order (see below)
-    compact              Tier compaction: move facts between hot/warm/cold
+    tier-compact         Tier compaction: move facts between hot/warm/cold/structural
+    vectordb-optimize    Compact LanceDB fragments and prune old versions (reclaims disk space)
     prune                Remove expired (decayed) facts
     checkpoint           Checkpoint vector DB to disk
     re-index             Reset LanceDB and re-embed all facts (after changing embedding model)
@@ -676,11 +677,12 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getProposalsAvailable: () => !!proposalsDb,
     getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
     getLastRunTimestamps: () => {
-      const out: { distill?: string; reflect?: string; compact?: string } = {};
+      const out: { distill?: string; reflect?: string; compact?: string; vectordbOptimize?: string } = {};
       for (const [key, file] of [
         ["distill", ".distill_last_run"],
         ["reflect", ".reflect_last_run"],
         ["compact", ".compact_last_run"],
+        ["vectordbOptimize", ".vectordb_optimize_last_run"],
       ] as const) {
         const path = join(memoryDir, file);
         if (existsSync(path)) {
