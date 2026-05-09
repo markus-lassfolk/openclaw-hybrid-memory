@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.5.92",
+  "version": "2026.5.94",
   "contracts": {
     "tools": [
       "active_task_propose_goal",

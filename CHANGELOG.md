@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+<!-- Add changes here until the next version cut. -->
+
+---
+
+## [2026.5.94] - 2026-05-09
+
+### Fixed
+
+- **Re-index safety** ([#1246](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1246), [#1250](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1250)): non-destructive shadow-table rebuild with validation before atomic swap; live LanceDB is not wiped on partial failure.
+- **Embedding migration & CLI** ([#1247](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1247), [#1251](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1251)): `aborted` / `abortReason` / `processed` on `migrateEmbeddings`; re-index exits non-zero and refuses swap when migration aborts; clearer operator messaging.
+- **VectorDB reconnect during migration** ([#1248](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1248), [#1252](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1252)): tolerate routine `closeGeneration` bumps with transparent reconnect; verify Lance is writable after reconnect; optional `OPENCLAW_HYBRID_MEM_DEBUG_CLOSE=1` stack on `VectorDB` close.
+- **Tier compact vs LanceDB optimize** ([#1249](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1249), [#1253](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1253)): primary command `tier-compact` with `compact` alias; maintenance overview lists `vectordb-optimize`; stats shows `Last vectordb-optimize`; timestamp files for both commands.
+
 ### Added
 
 - **Reflection dedupe throttling** ([#1229](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1229)): Adaptive backoff and circuit breaker for embedding-backed reflection dedupe during dream-cycle when provider returns 429s.
@@ -40,6 +53,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Canonical embeddings on ingest**: auto-capture + reflection now call `factsDb.storeEmbedding` when embedding, aligning Lance with `fact_embeddings` / vectorless audit.
 - **Procedure triage**: implied success when `last_validated` is set but `success_count` and version successes are still zero (fixes spurious `low_recall`).
 - **SDK types**: optional `registerContextEngine` on `openclaw/plugin-sdk/core` shim.
+- Bump plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.5.94** (lockfile aligned).
 
 ---
 
