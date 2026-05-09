@@ -16,10 +16,13 @@ import {
   UUID_REGEX,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
+  VECTORDB_INIT_TIMEOUT_MS,
+  VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
   VECTORDB_READER_DRAIN_TIMEOUT_MS,
 } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
+import { withTimeout } from "../utils/timeout.js";
 
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
@@ -256,14 +259,25 @@ export class VectorDB {
     if (this.initPromise) return this.initPromise;
     // Note: this handler marks persistent failure (lanceInitFailed). Transient init errors
     // from hot-reload races are handled via close()+ensureInitialized() or resetTableForReindex().
-    this.initPromise = this.doInitialize().catch((err) => {
+
+    // Wrap doInitialize with a timeout to prevent indefinite hangs
+    const initWithTimeout = async () => {
+      const result = await withTimeout(VECTORDB_INIT_TIMEOUT_MS, () => this.doInitialize());
+      if (result === null) {
+        throw new Error(`VectorDB initialization timed out after ${VECTORDB_INIT_TIMEOUT_MS}ms`);
+      }
+    };
+
+    this.initPromise = initWithTimeout().catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
       const msg = e.message;
       const isHotReloadRace = msg.includes("concurrent re-registration") || msg.includes("initialization aborted");
+      const isTimeout = msg.includes("timed out");
       if (!isHotReloadRace) {
         capturePluginError(e, {
           operation: "vector-db-init",
           subsystem: "vector",
+          timeout: isTimeout,
         });
       } else {
         this.logWarn(`memory-hybrid: VectorDB init aborted during hot reload (benign): ${msg}`);
@@ -1313,15 +1327,41 @@ export class VectorDB {
       const acquired = this.acquireReader();
       try {
         const table = this.getTable();
+        let processedChunks = 0;
+        const totalChunks = Math.ceil(unique.length / CHUNK);
+
         for (let offset = 0; offset < unique.length; offset += CHUNK) {
           const chunk = unique.slice(offset, offset + CHUNK);
           const inList = chunk.map((id) => `'${this.escapeSqlString(id)}'`).join(", ");
-          const rows = await table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
+
+          // Add timeout per batch query to prevent indefinite hang
+          const queryWithTimeout = async () => {
+            return table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
+          };
+
+          const rows = await withTimeout(VECTORDB_GET_VECTORS_TIMEOUT_MS, queryWithTimeout);
+
+          if (rows === null) {
+            this.logWarn(
+              `memory-hybrid: VectorDB getVectorsByFactIds query timed out after ${VECTORDB_GET_VECTORS_TIMEOUT_MS}ms (chunk ${processedChunks + 1}/${totalChunks}, offset=${offset}, size=${chunk.length})`
+            );
+            // Continue with partial results instead of failing entirely
+            break;
+          }
+
           for (const row of rows) {
             const id = String((row as { id?: unknown }).id ?? "").toLowerCase();
             if (!UUID_REGEX.test(id)) continue;
             const vec = this.vectorColumnToNumbers((row as { vector?: unknown }).vector);
             if (vec && vec.length === this.vectorDim) out.set(id, vec);
+          }
+
+          processedChunks++;
+          // Log progress for large batches (every 5 chunks or at the end)
+          if (totalChunks > 10 && (processedChunks % 5 === 0 || processedChunks === totalChunks)) {
+            this.logWarn(
+              `memory-hybrid: VectorDB getVectorsByFactIds progress: ${processedChunks}/${totalChunks} chunks (${out.size} vectors loaded)`
+            );
           }
         }
       } finally {

@@ -14,6 +14,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import {
   REFLECTION_DEDUPE_THRESHOLD,
+  REFLECTION_DEDUPE_LOAD_TIMEOUT_MS,
   REFLECTION_IMPORTANCE,
   REFLECTION_MAX_FACTS_PER_CATEGORY,
   REFLECTION_MAX_FACT_LENGTH,
@@ -23,6 +24,7 @@ import {
 } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { withTimeout } from "../utils/timeout.js";
 import { LLMRetryError } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { CostFeature } from "./cost-feature-labels.js";
@@ -107,6 +109,7 @@ export function dotProductSimilarity(a: number[], b: number[]): number {
 /**
  * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
  * else call the embedding API. Batches API calls (20) with a short pause only when a batch used the API.
+ * Wrapped with timeout to prevent indefinite hangs during VectorDB operations.
  */
 export async function loadReflectionDedupeCorpusVectors(
   facts: MemoryEntry[],
@@ -116,66 +119,96 @@ export async function loadReflectionDedupeCorpusVectors(
   logPrefix: string,
   captureOperation: string,
 ): Promise<(number[] | null)[]> {
-  const vdb = vectorDb as VectorDB & {
-    getVectorDim?: () => number;
-    getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
-  };
-  const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
-  let byId = new Map<string, number[]>();
-  if (typeof vdb.getVectorsByFactIds === "function") {
-    try {
-      byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
-    } catch {
-      byId = new Map();
-    }
-  }
+  const loadWithTimeout = async (): Promise<(number[] | null)[]> => {
+    const vdb = vectorDb as VectorDB & {
+      getVectorDim?: () => number;
+      getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
+    };
+    const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
+    let byId = new Map<string, number[]>();
 
-  const result: (number[] | null)[] = new Array(facts.length);
-  let lanceHits = 0;
-  let apiEmbeds = 0;
+    logger.info(`${logPrefix} — dedupe corpus: loading vectors from Lance index for ${facts.length} fact(s)...`);
 
-  for (let i = 0; i < facts.length; i += 20) {
-    const end = Math.min(i + 20, facts.length);
-    let hadApiEmbed = false;
-    for (let j = i; j < end; j++) {
-      const f = facts[j]!;
-      const cached = byId.get(f.id.toLowerCase());
-      const modelOk =
-        f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
-      const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
-      if (useCache) {
-        result[j] = normalizeVector(cached);
-        lanceHits++;
-      } else {
-        try {
-          const vec = await embeddings.embed(f.text);
-          result[j] = normalizeVector(vec);
-          apiEmbeds++;
-          hadApiEmbed = true;
-        } catch (err) {
-          if (!shouldSuppressEmbeddingError(err)) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: captureOperation,
-              subsystem: "embeddings",
-              factId: f.id,
-            });
-          }
-          result[j] = null;
-          hadApiEmbed = true;
-        }
+    if (typeof vdb.getVectorsByFactIds === "function") {
+      try {
+        byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
+        logger.info(`${logPrefix} — dedupe corpus: loaded ${byId.size} vector(s) from Lance index`);
+      } catch (err) {
+        logger.info(`${logPrefix} — dedupe corpus: Lance index load failed, will use embedding API for all: ${err}`);
+        byId = new Map();
       }
     }
-    if (hadApiEmbed && end < facts.length) {
-      await new Promise((r) => setTimeout(r, 200));
+
+    const result: (number[] | null)[] = new Array(facts.length);
+    let lanceHits = 0;
+    let apiEmbeds = 0;
+
+    logger.info(`${logPrefix} — dedupe corpus: processing ${facts.length} facts in batches of 20...`);
+
+    for (let i = 0; i < facts.length; i += 20) {
+      const end = Math.min(i + 20, facts.length);
+      let hadApiEmbed = false;
+      for (let j = i; j < end; j++) {
+        const f = facts[j]!;
+        const cached = byId.get(f.id.toLowerCase());
+        const modelOk =
+          f.embeddingModel != null && embeddings.modelName != null && f.embeddingModel === embeddings.modelName;
+        const useCache = dim > 0 && cached != null && cached.length === dim && modelOk;
+        if (useCache) {
+          result[j] = normalizeVector(cached);
+          lanceHits++;
+        } else {
+          try {
+            const vec = await embeddings.embed(f.text);
+            result[j] = normalizeVector(vec);
+            apiEmbeds++;
+            hadApiEmbed = true;
+          } catch (err) {
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: captureOperation,
+                subsystem: "embeddings",
+                factId: f.id,
+              });
+            }
+            result[j] = null;
+            hadApiEmbed = true;
+          }
+        }
+      }
+
+      // Log progress for large batches (every 500 facts or at the end)
+      if (facts.length > 1000 && (end % 500 === 0 || end === facts.length)) {
+        const ok = result.slice(0, end).filter((v) => v !== null).length;
+        logger.info(
+          `${logPrefix} — dedupe corpus progress: ${end}/${facts.length} facts processed (${lanceHits} from Lance, ${apiEmbeds} via API, ${ok} non-null)`
+        );
+      }
+
+      if (hadApiEmbed && end < facts.length) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
     }
+
+    if (facts.length > 0) {
+      const ok = result.filter((v) => v !== null).length;
+      logger.info(
+        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
+      );
+    }
+    return result;
+  };
+
+  // Wrap the entire operation with a timeout
+  const result = await withTimeout(REFLECTION_DEDUPE_LOAD_TIMEOUT_MS, loadWithTimeout);
+
+  if (result === null) {
+    logger.info(
+      `${logPrefix} — dedupe corpus: timed out after ${REFLECTION_DEDUPE_LOAD_TIMEOUT_MS}ms while loading ${facts.length} vectors; falling back to empty corpus (dedupe disabled for this run)`
+    );
+    return new Array(facts.length).fill(null);
   }
 
-  if (facts.length > 0) {
-    const ok = result.filter((v) => v !== null).length;
-    logger.info(
-      `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
-    );
-  }
   return result;
 }
 

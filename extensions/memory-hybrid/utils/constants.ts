@@ -108,6 +108,15 @@ export const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 /** Timeout (ms) for vectorDB reader drain. */
 export const VECTORDB_READER_DRAIN_TIMEOUT_MS = 30_000;
 
+/** Timeout (ms) for VectorDB initialization (connect + table open). */
+export const VECTORDB_INIT_TIMEOUT_MS = 60_000;
+
+/** Timeout (ms) for VectorDB getVectorsByFactIds batch query. */
+export const VECTORDB_GET_VECTORS_TIMEOUT_MS = 45_000;
+
+/** Timeout (ms) for reflection dedupe corpus loading (all batches). */
+export const REFLECTION_DEDUPE_LOAD_TIMEOUT_MS = 120_000;
+
 /** LanceDB semantic search: maximum rows to request from vectorSearch (#882). */
 export const LANCE_VECTOR_SEARCH_MAX_LIMIT = 1000;
 
