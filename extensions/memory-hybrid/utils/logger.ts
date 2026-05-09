@@ -70,6 +70,25 @@ export function initPluginLogger(apiLogger: PluginLoggerApi): void {
   };
 }
 
+/** Logger implementation for machine-readable CLI commands.
+ *
+ * OpenClaw's normal plugin logger may render `[plugins] ...` lines on stdout during
+ * standalone CLI execution. For `hybrid-mem ... --json` commands stdout must be valid
+ * JSON from byte 0, so route runtime telemetry to stderr while preserving visibility.
+ */
+export function createJsonCliStderrLogger(): Required<PluginLoggerApi> {
+  return {
+    info: (msg: string) => console.error(msg),
+    warn: (msg: string) => console.error(msg),
+    error: (msg: string) => console.error(msg),
+    debug: (msg: string) => console.error(msg),
+  };
+}
+
+export function initPluginLoggerForJsonCli(): void {
+  activeLogger = createJsonCliStderrLogger();
+}
+
 /**
  * Reset the plugin logger to the silent no-op.
  * Used in unit tests to isolate logging side effects.
