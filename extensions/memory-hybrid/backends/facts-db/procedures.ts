@@ -139,8 +139,15 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
       | undefined;
 
     if (!versionRow) {
-      // No version records yet — return base with lastOutcome computed from procedure timestamps
-      return { ...base, lastOutcome };
+      // No version records yet — mirror implied-success for validated rows (see merged branch below).
+      const implied =
+        base.lastValidated != null &&
+        base.successCount === 0 &&
+        base.failureCount === 0 &&
+        (base.lastFailed == null || base.lastValidated > base.lastFailed)
+          ? 1
+          : 0;
+      return { ...base, lastOutcome, successCount: base.successCount + implied };
     }
 
     // Aggregate all successes and failures across ALL version records to compute overall successRate.
@@ -157,8 +164,18 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
 
     const totalSuccess = versionCounts.total_succ;
     const totalFailure = versionCounts.total_fail;
-    const total = totalSuccess + totalFailure;
-    const successRate = total > 0 ? totalSuccess / total : 0;
+    // Validated procedures may have last_validated set by extraction with procedures.success_count still 0
+    // and no procedure_versions rows yet — treat as one implicit success so promotion gates match operator intent (#audit remediation).
+    const baseMergedSuccess = base.successCount + totalSuccess;
+    const validatedWithoutTrials =
+      base.lastValidated != null &&
+      (base.lastFailed == null || base.lastValidated > base.lastFailed) &&
+      base.failureCount === 0 &&
+      totalFailure === 0;
+    const effectiveSuccess = validatedWithoutTrials && baseMergedSuccess === 0 ? 1 : baseMergedSuccess;
+    // successRate stays version-table-only (matches historical enrich semantics; tests + UI trends).
+    const versionTrialTotal = totalSuccess + totalFailure;
+    const successRate = versionTrialTotal > 0 ? totalSuccess / versionTrialTotal : 0;
 
     // Merge avoidance notes across all versions
     const allNotes = new Set<string>(base.avoidanceNotes ?? []);
@@ -173,7 +190,7 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
 
     return {
       ...base,
-      successCount: base.successCount + totalSuccess,
+      successCount: effectiveSuccess,
       failureCount: base.failureCount + totalFailure,
       version: versionRow.version_number,
       successRate,

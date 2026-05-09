@@ -28,13 +28,32 @@ import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+
+/** Persist canonical embedding row so audit `vectorless` / hybrid recall match Lance (#audit remediation). */
+function persistCanonicalFactEmbedding(
+  factsDb: LifecycleContext["factsDb"],
+  factId: string,
+  modelName: string,
+  vector: number[],
+  logWarn?: (msg: string) => void,
+): void {
+  try {
+    factsDb.storeEmbedding(factId, modelName, "canonical", new Float32Array(vector), vector.length);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "auto-capture-fact-embeddings",
+      subsystem: "auto-capture",
+    });
+    logWarn?.(`memory-hybrid: fact_embeddings canonical store failed: ${err}`);
+  }
+}
 
 /** Outcome indicator patterns for episodic memory auto-capture (#781). */
 interface OutcomePattern {
@@ -450,6 +469,13 @@ async function runCapture(
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
                     try {
                       if (vector) {
+                        persistCanonicalFactEmbedding(
+                          ctx.factsDb,
+                          newEntry.id,
+                          ctx.embeddings.modelName,
+                          vector,
+                          api.logger.warn?.bind(api.logger),
+                        );
                         ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
                         if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                           await ctx.vectorDb.store({
@@ -537,6 +563,13 @@ async function runCapture(
           });
           try {
             if (vector) {
+              persistCanonicalFactEmbedding(
+                ctx.factsDb,
+                storedEntry.id,
+                ctx.embeddings.modelName,
+                vector,
+                api.logger.warn?.bind(api.logger),
+              );
               ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
               if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                 await ctx.vectorDb.store({
@@ -796,6 +829,13 @@ async function runCapture(
               if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   const vector = await ctx.embeddings.embed(text);
+                  persistCanonicalFactEmbedding(
+                    ctx.factsDb,
+                    entry.id,
+                    ctx.embeddings.modelName,
+                    vector,
+                    api.logger.warn?.bind(api.logger),
+                  );
                   ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                   if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                     await ctx.vectorDb.store({

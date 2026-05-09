@@ -3,25 +3,58 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
+import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
-import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
-import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
+import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
+import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
-import { expandGraph, resolveGraphHubDegreeCap, type GraphExpansionStats } from "../../../services/graph-retrieval.js";
+import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
-import { getEnv } from "../../../utils/env-manager.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
+import { getEnv } from "../../../utils/env-manager.js";
+import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
+import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
+
+/** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
+export const IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP = 20_000;
+
+/**
+ * Insert one `storage_growth_history` row per UTC calendar day (idempotent).
+ * Enables `audit health` 7d deltas when combined with daily cron (#audit remediation).
+ */
+export function recordStorageGrowthSample(
+  factsDb: ManageBindings["factsDb"],
+  lanceBytes: number | null,
+): { inserted: boolean; recordedAt: number } {
+  const raw = factsDb.getRawDb?.();
+  const nowSecReport = Math.floor(Date.now() / 1000);
+  if (!raw) return { inserted: false, recordedAt: nowSecReport };
+  const storageBytes = factsDb.estimateStorageBytes?.();
+  const activeFacts = factsDb.getCount();
+  const linkCountTotal = Number(
+    (raw.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as { c: number } | undefined)?.c ?? 0,
+  );
+  const d = new Date();
+  const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
+  const alreadyToday = raw
+    .prepare("SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1")
+    .get(startOfDayUtc) as { ok: number } | undefined;
+  if (alreadyToday) return { inserted: false, recordedAt: nowSecReport };
+  raw
+    .prepare(
+      "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(nowSecReport, storageBytes?.sqliteBytes ?? null, lanceBytes, linkCountTotal, activeFacts);
+  return { inserted: true, recordedAt: nowSecReport };
+}
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
 function entryMatchesHybridSearchFilters(
@@ -78,6 +111,8 @@ export type AuditHealthReport = {
     implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }>;
   };
   entityStopwordMatches: Array<{ entity: string; count: number }>;
+  /** Top entities with configured stop-words removed (retrieval-aligned view, #1193). */
+  topEntitiesFiltered: Array<{ entity: string; count: number }>;
   storage: {
     sqliteBytes: number | null;
     walBytes: number | null;
@@ -290,17 +325,18 @@ export function buildAuditHealthReport(
   // LIMIT added to prevent hanging on long-lived stores with thousands of implicit-feedback patterns.
   const implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }> = (() => {
     if (!raw || !hasBudget("implicitFeedbackPrefixHistogram")) return [];
+    const cap = IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP;
     try {
-      // Fetch 5000 + 1 rows so we only flag truncation when another row exists (exactly 5000 rows is not truncated).
+      // Fetch cap + 1 rows so we only flag truncation when another row exists (exactly `cap` rows is not truncated).
       const rows = raw
         .prepare(
           `SELECT text FROM facts
            WHERE superseded_at IS NULL AND category = 'pattern' AND source = 'implicit-feedback'
-           LIMIT 5001`,
+           LIMIT ?`,
         )
-        .all() as Array<{ text: string | null }>;
-      const truncated = rows.length > 5000;
-      const forAgg = truncated ? rows.slice(0, 5000) : rows;
+        .all(cap + 1) as Array<{ text: string | null }>;
+      const truncated = rows.length > cap;
+      const forAgg = truncated ? rows.slice(0, cap) : rows;
       if (forAgg.length === 0) return [];
       const counts = new Map<string, number>();
       for (const row of forAgg) {
@@ -318,7 +354,7 @@ export function buildAuditHealthReport(
       if (truncated) {
         errors.push({
           section: "implicitFeedbackPrefixHistogram",
-          message: "Truncated: more than 5000 implicit-feedback pattern rows (histogram used first 5000 only)",
+          message: `Truncated: histogram sampled first ${cap} of ${implicitFeedbackPatterns} implicit-feedback pattern row(s)`,
         });
       }
       return result;
@@ -334,13 +370,10 @@ export function buildAuditHealthReport(
     .topEntities(50)
     .filter((row) => isEntityStopWord(row.entity, entityStopWords))
     .slice(0, 10);
+  const topEntitiesFiltered = factsDb.topEntitiesFiltered(10, entityStopWords);
   const storageBytes = factsDb.estimateStorageBytes?.();
   const lanceBytes = options?.lanceBytes ?? null;
   const nowSecReport = Math.floor(Date.now() / 1000);
-  const linkCountTotal =
-    raw != null
-      ? Number((raw.prepare(`SELECT COUNT(*) AS c FROM memory_links`).get() as { c: number } | undefined)?.c ?? 0)
-      : 0;
 
   let storageGrowth: AuditHealthReport["storageGrowth"] = {
     lastSampleAt: null,
@@ -348,18 +381,7 @@ export function buildAuditHealthReport(
     lanceBytesPerWeekDelta: null,
   };
   if (raw && hasBudget("storageGrowth")) {
-    const d = new Date();
-    const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
-    const alreadyToday = raw
-      .prepare(`SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1`)
-      .get(startOfDayUtc) as { ok: number } | undefined;
-    if (!alreadyToday) {
-      raw
-        .prepare(
-          `INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(nowSecReport, storageBytes?.sqliteBytes ?? null, lanceBytes, linkCountTotal, activeFacts);
-    }
+    recordStorageGrowthSample(factsDb, lanceBytes);
     const lastRow = raw
       .prepare(`SELECT recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1`)
       .get() as { recorded_at: number } | undefined;
@@ -507,6 +529,14 @@ export function buildAuditHealthReport(
     remediation.push(
       "Run `openclaw hybrid-mem procedures triage --not-promoted` and `generate-auto-skills` where appropriate.",
     );
+  if (
+    implicitFeedbackPatterns > 1000 ||
+    (implicitFeedbackPrefixHistogram.length > 0 && implicitFeedbackPrefixHistogram[0].count >= 10)
+  ) {
+    remediation.push(
+      "Run `openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy` (omit `--dry-run` to apply mutations).",
+    );
+  }
 
   let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
   if (raw && hasBudget("graphHubGuard")) {
@@ -557,6 +587,7 @@ export function buildAuditHealthReport(
     structuralEligibleWarmFacts,
     patternBloat: { implicitFeedbackPatterns, implicitFeedbackPrefixHistogram },
     entityStopwordMatches,
+    topEntitiesFiltered,
     storage: {
       sqliteBytes: storageBytes?.sqliteBytes ?? null,
       walBytes: storageBytes?.walBytes ?? null,
@@ -583,7 +614,7 @@ export function buildAuditHealthReport(
 function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log("# Hybrid-memory audit health");
   console.log("");
-  console.log(`Status: ${report.status}${report.status !== "ok" ? ` (legacy ok=${report.ok})` : ""}`);
+  console.log(`Status: ${report.status}`);
   console.log(`Generated: ${report.generatedAt}`);
   console.log(`Schema version: ${report.schemaVersion}`);
   console.log(`Active facts: ${report.activeFacts}`);
@@ -623,6 +654,11 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
       `Implicit-feedback prefix histogram: ${report.patternBloat.implicitFeedbackPrefixHistogram
         .map((row) => `"${row.prefix}"=${row.count}`)
         .join(", ")}`,
+    );
+  }
+  if (report.topEntitiesFiltered.length > 0) {
+    console.log(
+      `Top entities (retrieval view, stop-words removed): ${report.topEntitiesFiltered.map((row) => `${row.entity}=${row.count}`).join(", ")}`,
     );
   }
   if (report.entityStopwordMatches.length > 0) {
@@ -749,6 +785,33 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           });
           throw err;
         }
+      }),
+    );
+
+  mem
+    .command("record-storage-sample")
+    .description(
+      "Record one storage_growth_history row per UTC day (SQLite + Lance sizes). Use with daily cron so audit-health can compute 7d deltas.",
+    )
+    .action(
+      withExit(async () => {
+        let lanceBytes: number | null = null;
+        try {
+          const sizes = await Promise.resolve(ctx.richStatsExtras?.getStorageSizes());
+          if (sizes && typeof sizes.lanceBytes === "number") lanceBytes = sizes.lanceBytes;
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "record-storage-sample-lance",
+            severity: "info",
+            subsystem: "cli",
+          });
+        }
+        const r = recordStorageGrowthSample(factsDb, lanceBytes);
+        console.log(
+          r.inserted
+            ? `record-storage-sample: inserted row (unix=${r.recordedAt})`
+            : `record-storage-sample: skipped (already sampled today UTC; unix=${r.recordedAt})`,
+        );
       }),
     );
 

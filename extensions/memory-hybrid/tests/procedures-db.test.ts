@@ -768,4 +768,25 @@ describe("FactsDB procedureFeedback", () => {
     expect(versions[0].versionNumber).toBe(2); // newest
     expect(versions[1].versionNumber).toBe(1);
   });
+
+  it("triage treats last_validated with zero success_count as one implied success (no low_recall)", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const proc = db.upsertProcedure({
+      taskPattern: `Implied-validated-${now}`,
+      recipeJson: '[{"tool":"bash","args":{}}]',
+      procedureType: "positive",
+      successCount: 0,
+      failureCount: 0,
+      lastValidated: now,
+      confidence: 0.6,
+    });
+    const triage = db.triageProcedures({
+      status: "validated",
+      notPromoted: true,
+      validationThreshold: 1,
+      limit: 50,
+    });
+    const row = triage.rows.find((r) => r.id === proc.id);
+    expect(row?.promotionBlockReason).toBe("awaiting_approval");
+  });
 });

@@ -43,6 +43,26 @@ const REFLECTION_META_MIN_CHARS = 20;
 const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
 const REFLECTION_MAX_PATTERNS_FOR_META = 30;
 
+/** Mirror Lance writes into SQLite `fact_embeddings` so audit vectorless counts stay accurate (#audit remediation). */
+function persistCanonicalFactEmbedding(
+  factsDb: FactsDB,
+  factId: string,
+  modelName: string,
+  vector: number[],
+  logWarn: (msg: string) => void,
+): void {
+  try {
+    factsDb.storeEmbedding(factId, modelName, "canonical", new Float32Array(vector), vector.length);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "reflection-fact-embeddings",
+      subsystem: "reflection",
+      factId,
+    });
+    logWarn(`memory-hybrid: fact_embeddings canonical store failed: ${err}`);
+  }
+}
+
 /** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
 export function countActivePatternFactsForMaintenance(factsDb: FactsDB): number {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -664,6 +684,7 @@ export async function runReflection(
       );
     }
     try {
+      persistCanonicalFactEmbedding(factsDb, entry.id, embeddings.modelName, vec, logger.warn);
       await vectorDb.store({
         text: patternText,
         vector: vec,
@@ -910,6 +931,7 @@ export async function runReflectionRules(
       );
     }
     try {
+      persistCanonicalFactEmbedding(factsDb, entry.id, embeddings.modelName, vec, logger.warn);
       await vectorDb.store({
         text: ruleText,
         vector: vec,
@@ -1137,6 +1159,7 @@ export async function runReflectionMeta(
       );
     }
     try {
+      persistCanonicalFactEmbedding(factsDb, entry.id, embeddings.modelName, vec, logger.warn);
       await vectorDb.store({
         text: metaText,
         vector: vec,
