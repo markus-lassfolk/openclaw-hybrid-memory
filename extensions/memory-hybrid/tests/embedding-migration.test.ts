@@ -697,8 +697,13 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
       getEmbeddingMeta: vi.fn().mockReturnValue({ provider: "ollama", model: "old" }),
     });
     let generation = 0;
+    // Simulate the post-#1248 "real abort" shape: close mid-run AND the
+    // reconnect attempt cannot bring LanceDB back up. Routine connection
+    // recycles are now handled transparently by migrateEmbeddings, so we
+    // need to model the genuinely-broken case to assert the abort path.
     const vectorDb = makeVectorDB({
       getCloseGeneration: vi.fn(() => generation),
+      ensureInitialized: vi.fn().mockRejectedValue(new Error("LanceDB unavailable")),
       store: vi.fn().mockImplementation(async () => {
         generation++; // simulate close after first store
         return "id";
@@ -727,6 +732,7 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     // Migration was attempted, even though it aborted — surface that to callers.
     expect(result.migrated).toBe(true);
     expect(result.result?.aborted).toBe(true);
+    expect(result.result?.abortReason).toContain("VectorDB reconnect failed");
     expect(result.result?.migrated).toBe(1);
     expect(result.result?.processed).toBe(1);
     expect(result.result?.total).toBe(2);
