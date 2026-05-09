@@ -665,6 +665,13 @@ export async function runReflection(
       );
     }
     try {
+      await vectorDb.store({
+        text: patternText,
+        vector: vec,
+        importance: REFLECTION_IMPORTANCE,
+        category: "pattern",
+        id: entry.id,
+      });
       persistCanonicalFactEmbedding(
         factsDb,
         entry.id,
@@ -674,13 +681,6 @@ export async function runReflection(
         "reflection",
         logger.warn?.bind(logger),
       );
-      await vectorDb.store({
-        text: patternText,
-        vector: vec,
-        importance: REFLECTION_IMPORTANCE,
-        category: "pattern",
-        id: entry.id,
-      });
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
@@ -920,6 +920,13 @@ export async function runReflectionRules(
       );
     }
     try {
+      await vectorDb.store({
+        text: ruleText,
+        vector: vec,
+        importance: REFLECTION_IMPORTANCE,
+        category: "rule",
+        id: entry.id,
+      });
       persistCanonicalFactEmbedding(
         factsDb,
         entry.id,
@@ -929,13 +936,6 @@ export async function runReflectionRules(
         "reflection",
         logger.warn?.bind(logger),
       );
-      await vectorDb.store({
-        text: ruleText,
-        vector: vec,
-        importance: REFLECTION_IMPORTANCE,
-        category: "rule",
-        id: entry.id,
-      });
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
@@ -1156,6 +1156,13 @@ export async function runReflectionMeta(
       );
     }
     try {
+      await vectorDb.store({
+        text: metaText,
+        vector: vec,
+        importance: REFLECTION_IMPORTANCE,
+        category: "pattern",
+        id: entry.id,
+      });
       persistCanonicalFactEmbedding(
         factsDb,
         entry.id,
@@ -1165,13 +1172,6 @@ export async function runReflectionMeta(
         "reflection",
         logger.warn?.bind(logger),
       );
-      await vectorDb.store({
-        text: metaText,
-        vector: vec,
-        importance: REFLECTION_IMPORTANCE,
-        category: "pattern",
-        id: entry.id,
-      });
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);

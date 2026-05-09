@@ -8,6 +8,8 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 /**
  * Persist canonical embedding to SQLite fact_embeddings table.
+ * Call only after a successful `vectorDb.store` for this fact id so SQLite stays aligned
+ * with Lance and vectorless audit / reembed paths remain correct.
  * Used by auto-capture and reflection to mirror Lance writes (#audit remediation).
  *
  * @param factsDb - Facts database instance

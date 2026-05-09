@@ -451,15 +451,6 @@ async function runCapture(
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
                     try {
                       if (vector) {
-                        persistCanonicalFactEmbedding(
-                          ctx.factsDb,
-                          newEntry.id,
-                          ctx.embeddings.modelName,
-                          vector,
-                          "auto-capture-fact-embeddings",
-                          "auto-capture",
-                          api.logger.warn?.bind(api.logger),
-                        );
                         ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
                         if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                           await ctx.vectorDb.store({
@@ -469,6 +460,15 @@ async function runCapture(
                             category,
                             id: newEntry.id,
                           });
+                          persistCanonicalFactEmbedding(
+                            ctx.factsDb,
+                            newEntry.id,
+                            ctx.embeddings.modelName,
+                            vector,
+                            "auto-capture-fact-embeddings",
+                            "auto-capture",
+                            api.logger.warn?.bind(api.logger),
+                          );
                         }
                       }
                     } catch (vecErr) {
@@ -547,15 +547,6 @@ async function runCapture(
           });
           try {
             if (vector) {
-              persistCanonicalFactEmbedding(
-                ctx.factsDb,
-                storedEntry.id,
-                ctx.embeddings.modelName,
-                vector,
-                "auto-capture-fact-embeddings",
-                "auto-capture",
-                api.logger.warn?.bind(api.logger),
-              );
               ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
               if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                 await ctx.vectorDb.store({
@@ -565,6 +556,15 @@ async function runCapture(
                   category,
                   id: storedEntry.id,
                 });
+                persistCanonicalFactEmbedding(
+                  ctx.factsDb,
+                  storedEntry.id,
+                  ctx.embeddings.modelName,
+                  vector,
+                  "auto-capture-fact-embeddings",
+                  "auto-capture",
+                  api.logger.warn?.bind(api.logger),
+                );
               }
             }
           } catch (vecErr) {
@@ -815,15 +815,6 @@ async function runCapture(
               if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   const vector = await ctx.embeddings.embed(text);
-                  persistCanonicalFactEmbedding(
-                    ctx.factsDb,
-                    entry.id,
-                    ctx.embeddings.modelName,
-                    vector,
-                    "auto-capture-fact-embeddings",
-                    "auto-capture",
-                    api.logger.warn?.bind(api.logger),
-                  );
                   ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                   if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                     await ctx.vectorDb.store({
@@ -833,6 +824,15 @@ async function runCapture(
                       category: "technical",
                       id: entry.id,
                     });
+                    persistCanonicalFactEmbedding(
+                      ctx.factsDb,
+                      entry.id,
+                      ctx.embeddings.modelName,
+                      vector,
+                      "auto-capture-fact-embeddings",
+                      "auto-capture",
+                      api.logger.warn?.bind(api.logger),
+                    );
                   }
                 } catch (err) {
                   const asErr = err instanceof Error ? err : new Error(String(err));

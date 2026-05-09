@@ -1785,22 +1785,24 @@ describe("FactsDB category drift audit/remap", () => {
       value: null,
       source: "test",
     });
-    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("ops_status", entry.id);
+    // Use a category not in DEFAULT_MEMORY_CATEGORIES (ops_status is now a first-class default).
+    const driftCategory = "legacy_ops_drift_audit";
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run(driftCategory, entry.id);
 
-    expect(db.listForDashboard({ limit: 10, offset: 0, category: "ops_status" }).total).toBe(0);
+    expect(db.listForDashboard({ limit: 10, offset: 0, category: driftCategory }).total).toBe(0);
 
-    const dryRun = db.remapCategory("ops_status", "fact", false);
+    const dryRun = db.remapCategory(driftCategory, "fact", false);
     expect(dryRun).toEqual({
-      from: "ops_status",
+      from: driftCategory,
       to: "fact",
       apply: false,
       matched: 1,
       activeMatched: 1,
       changed: 0,
     });
-    expect(db.getById(entry.id)?.category).toBe("ops_status");
+    expect(db.getById(entry.id)?.category).toBe(driftCategory);
 
-    const applied = db.remapCategory("ops_status", "fact", true);
+    const applied = db.remapCategory(driftCategory, "fact", true);
     expect(applied.changed).toBe(1);
     expect(db.getById(entry.id)?.category).toBe("fact");
     const dashboard = db.listForDashboard({ limit: 10, offset: 0, category: "fact" });
