@@ -151,11 +151,12 @@ export async function loadReflectionDedupeCorpusVectors(
     let lanceHits = 0;
     let lanceModelOkHits = 0;
     let lanceModelMissingHits = 0;
-    let lanceModelMismatchHits = 0;
+    let lanceModelMismatchSkips = 0;
     let apiEmbeds = 0;
     let apiPersisted = 0;
     let apiPersistFailures = 0;
     let embedFailures = 0;
+    let nonNullSoFar = 0;
     const startedAt = Date.now();
     let lastProgressAt = startedAt;
 
@@ -170,7 +171,9 @@ export async function loadReflectionDedupeCorpusVectors(
       let batchLance = 0;
       let batchApi = 0;
       let batchPersisted = 0;
-      let batchFailures = 0;
+      let batchPersistFailures = 0;
+      let batchEmbedFailures = 0;
+      let batchMismatchSkips = 0;
 
       for (let j = i; j < end; j++) {
         const f = facts[j]!;
@@ -180,6 +183,7 @@ export async function loadReflectionDedupeCorpusVectors(
         const useCache = dim > 0 && cached != null && cached.length === dim && (!modelKnown || modelOk);
         if (useCache) {
           result[j] = normalizeVector(cached);
+          nonNullSoFar++;
           lanceHits++;
           batchLance++;
           if (modelOk) lanceModelOkHits++;
@@ -194,11 +198,16 @@ export async function loadReflectionDedupeCorpusVectors(
                 );
               }
             }
-          } else lanceModelMismatchHits++;
+          }
         } else {
+          if (dim > 0 && cached != null && cached.length === dim && modelKnown && !modelOk) {
+            lanceModelMismatchSkips++;
+            batchMismatchSkips++;
+          }
           try {
             const vec = await embeddings.embed(f.text);
             result[j] = normalizeVector(vec);
+            nonNullSoFar++;
             apiEmbeds++;
             batchApi++;
             hadApiEmbed = true;
@@ -219,6 +228,7 @@ export async function loadReflectionDedupeCorpusVectors(
                 batchPersisted++;
               } catch (storeErr) {
                 apiPersistFailures++;
+                batchPersistFailures++;
                 logger.info(
                   `${logPrefix} — dedupe corpus: failed to persist hydrated vector for fact ${f.id}: ${storeErr}`,
                 );
@@ -226,7 +236,7 @@ export async function loadReflectionDedupeCorpusVectors(
             }
           } catch (err) {
             embedFailures++;
-            batchFailures++;
+            batchEmbedFailures++;
             if (!shouldSuppressEmbeddingError(err)) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: captureOperation,
@@ -244,7 +254,7 @@ export async function loadReflectionDedupeCorpusVectors(
       const batchMs = Date.now() - batchStartedAt;
       const processed = end;
       const remaining = facts.length - end;
-      const ok = result.slice(0, end).filter((v) => v !== null).length;
+      const ok = nonNullSoFar;
       const shouldLog =
         facts.length > 1000 ||
         batchApi > 0 ||
@@ -255,7 +265,7 @@ export async function loadReflectionDedupeCorpusVectors(
       if (shouldLog) {
         lastProgressAt = Date.now();
         logger.info(
-          `${logPrefix} — dedupe corpus progress: ${processed}/${facts.length} processed, ${remaining} remaining; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, failures ${batchFailures}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch ${lanceModelMismatchHits}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, non-null ${ok}; elapsed=${elapsedMs}ms`,
+          `${logPrefix} — dedupe corpus progress: ${processed}/${facts.length} processed, ${remaining} remaining; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, non-null ${ok}; elapsed=${elapsedMs}ms`,
         );
       }
 
@@ -267,7 +277,7 @@ export async function loadReflectionDedupeCorpusVectors(
     if (facts.length > 0) {
       const ok = result.filter((v) => v !== null).length;
       logger.info(
-        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch ${lanceModelMismatchHits}), ${apiEmbeds} row(s) hydrated via embedding API, ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${ok}/${facts.length} non-null for cosine check`,
+        `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API, ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${ok}/${facts.length} non-null for cosine check`,
       );
     }
     return result;

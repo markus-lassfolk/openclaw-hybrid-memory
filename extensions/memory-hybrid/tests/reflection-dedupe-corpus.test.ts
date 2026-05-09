@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const { loadReflectionDedupeCorpusVectors } = _testing;
@@ -27,13 +28,19 @@ function makeLogger() {
   return { info: vi.fn<(msg: string) => void>() };
 }
 
+function makeEmbeddings(embed: EmbeddingProvider["embed"]): EmbeddingProvider {
+  return {
+    modelName: "text-embedding-3-large",
+    dimensions: 2,
+    embed,
+    embedBatch: vi.fn((texts: string[]) => Promise.all(texts.map((t) => embed(t)))),
+  };
+}
+
 describe("loadReflectionDedupeCorpusVectors", () => {
   it("reuses Lance vectors when embeddingModel is missing but dimensions match", async () => {
     const facts = [makeFact({ id: "fact-a", embeddingModel: null })];
-    const embeddings = {
-      modelName: "text-embedding-3-large",
-      embed: vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([0, 1]),
-    };
+    const embeddings = makeEmbeddings(vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([0, 1]));
     const vectorDb = {
       getVectorDim: () => 2,
       getVectorsByFactIds: vi.fn().mockResolvedValue(new Map([["fact-a", [3, 4]]])),
@@ -62,10 +69,7 @@ describe("loadReflectionDedupeCorpusVectors", () => {
 
   it("persists API-hydrated dedupe vectors back to Lance with the original fact id", async () => {
     const facts = [makeFact({ id: "fact-b", text: "Needs API hydration", embeddingModel: "old-model" })];
-    const embeddings = {
-      modelName: "text-embedding-3-large",
-      embed: vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([0, 5]),
-    };
+    const embeddings = makeEmbeddings(vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([0, 5]));
     const vectorDb = {
       getVectorDim: () => 2,
       getVectorsByFactIds: vi.fn().mockResolvedValue(new Map()),
@@ -99,10 +103,7 @@ describe("loadReflectionDedupeCorpusVectors", () => {
 
   it("logs and continues when persisting a hydrated vector fails", async () => {
     const facts = [makeFact({ id: "fact-c", text: "Hydrate but persist fails" })];
-    const embeddings = {
-      modelName: "text-embedding-3-large",
-      embed: vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([1, 0]),
-    };
+    const embeddings = makeEmbeddings(vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([1, 0]));
     const vectorDb = {
       getVectorDim: () => 2,
       getVectorsByFactIds: vi.fn().mockResolvedValue(new Map()),
@@ -128,10 +129,7 @@ describe("loadReflectionDedupeCorpusVectors", () => {
 
   it("logs per-batch progress with processed and remaining counts", async () => {
     const facts = Array.from({ length: 25 }, (_, i) => makeFact({ id: `fact-${i}`, text: `Fact ${i}` }));
-    const embeddings = {
-      modelName: "text-embedding-3-large",
-      embed: vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([1, 0]),
-    };
+    const embeddings = makeEmbeddings(vi.fn<(_: string) => Promise<number[]>>().mockResolvedValue([1, 0]));
     const vectorDb = {
       getVectorDim: () => 2,
       getVectorsByFactIds: vi.fn().mockResolvedValue(new Map()),
