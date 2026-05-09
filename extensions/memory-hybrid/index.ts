@@ -159,9 +159,9 @@ import { gatherIngestFiles } from "./services/ingest-utils.js";
 import { PythonBridge } from "./services/python-bridge.js";
 import {
   dotProductSimilarity,
+  loadReflectionDedupeCorpusVectors,
   normalizeVector,
   parsePatternsFromReflectionResponse,
-  loadReflectionDedupeCorpusVectors,
   runReflection,
   runReflectionMeta,
   runReflectionRules,
@@ -214,6 +214,7 @@ import {
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
 import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
+import { isHybridMemJsonInvocation, wrapApiLoggerStderrForJsonCli } from "./utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
   getCategoryEntityRegex,
@@ -226,6 +227,8 @@ import {
   setKeywordsPath,
 } from "./utils/language-keywords.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
+
+export { isHybridMemJsonInvocation };
 import { initPluginLogger } from "./utils/logger.js";
 import { fillPrompt, loadPrompt } from "./utils/prompt-loader.js";
 import { computeDynamicSalience } from "./utils/salience.js";
@@ -404,9 +407,10 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     return;
   }
 
-  // Initialize structured logger early so all runtime code (services/backends/lifecycle)
-  // routes through api.logger instead of raw console.*.
-  initPluginLogger(api.logger);
+  // Issue #1230 / #1234: JSON CLI must not write plugin telemetry to stdout (cron harnesses, jq).
+  // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
+  const logApi = wrapApiLoggerStderrForJsonCli(api);
+  initPluginLogger(logApi.logger, false);
 
   // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
   // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
@@ -475,7 +479,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   let dbContext: ReturnType<typeof initializeDatabases>;
   try {
-    dbContext = initializeDatabases(cfg, api);
+    dbContext = initializeDatabases(cfg, logApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -486,7 +490,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   const { resolvedSqlitePath, resolvedLancePath } = dbContext;
 
-  api.logger.info(
+  logApi.logger.info(
     `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
   );
 
@@ -499,7 +503,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     try {
       const eventBusPath = join(dirname(resolvedSqlitePath), "event-bus.db");
       eventBus = new EventBus(eventBusPath);
-      api.logger.info(`memory-hybrid: event bus initialized at ${eventBusPath}`);
+      logApi.logger.info(`memory-hybrid: event bus initialized at ${eventBusPath}`);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "registration",
@@ -540,7 +544,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   try {
     const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
     learningsDb = new LearningsDB(learningsDbPath);
-    api.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
+    logApi.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -559,7 +563,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     const auditPath = auditDbPathForMemorySqlite(resolvedSqlitePath);
     if (auditPath) {
       auditStore = new AuditStore(auditPath);
-      api.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
+      logApi.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
     }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -575,7 +579,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     const ahPath = agentHealthDbPathForMemorySqlite(resolvedSqlitePath);
     if (ahPath) {
       agentHealthStore = new AgentHealthStore(ahPath);
-      api.logger.info(`memory-hybrid: agent health store initialized at ${ahPath}`);
+      logApi.logger.info(`memory-hybrid: agent health store initialized at ${ahPath}`);
     }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -686,7 +690,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Tools
 
   try {
-    registerTools(pluginContext, api);
+    registerTools(pluginContext, logApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -699,7 +703,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // one-shot `openclaw hybrid-mem …` process can exit (Issue #1039; persistent LanceDB + sweep timer).
   try {
     registerHybridMemCliWithApi(
-      api,
+      logApi,
       {
         factsDb: runtime.factsDb,
         vectorDb: runtime.vectorDb,
@@ -744,17 +748,17 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
         wal: runtime.wal,
         embeddings: runtime.embeddings,
         cfg: runtime.cfg,
-        logger: api.logger,
+        logger: logApi.logger,
         pluginVersion: versionInfo.pluginVersion,
       }),
     )
     .catch((err: unknown) => {
-      api.logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
+      logApi.logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
     });
 
   // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
   try {
-    runtime.lifecycleHooksHandle = registerLifecycleHooks(pluginContext, api);
+    runtime.lifecycleHooksHandle = registerLifecycleHooks(pluginContext, logApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -782,7 +786,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
         openai: runtime.openai,
         resolvedLancePath: runtime.resolvedLancePath,
         resolvedSqlitePath: runtime.resolvedSqlitePath,
-        api,
+        api: logApi,
         timers: runtime.timers,
         pythonBridge: runtime.pythonBridge,
         provenanceService: runtime.provenanceService,
@@ -825,18 +829,18 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
           if (currentCrontab.includes("hybrid-mem backup")) {
             // Already scheduled -- nothing to do
-            api.logger.debug?.("memory-hybrid: boot-check -- weekly backup cron already present");
+            logApi.logger.debug?.("memory-hybrid: boot-check -- weekly backup cron already present");
             return;
           }
 
           // Cron not found -- log warning
           const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
-          api.logger.warn?.(
+          logApi.logger.warn?.(
             `memory-hybrid: boot-check -- weekly backup cron not found. Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`,
           );
         } catch (err) {
           // Non-fatal -- crontab may not be available (containers, read-only envs)
-          api.logger.debug?.(`memory-hybrid: boot-check -- could not verify backup cron (non-fatal): ${err}`);
+          logApi.logger.debug?.(`memory-hybrid: boot-check -- could not verify backup cron (non-fatal): ${err}`);
         }
       })();
     });
@@ -863,6 +867,7 @@ export const _testing = {
   truncateText,
   truncateForStorage,
   isHybridMemHelpInvocation,
+  isHybridMemJsonInvocation,
   extractTags,
   serializeTags,
   parseTags,

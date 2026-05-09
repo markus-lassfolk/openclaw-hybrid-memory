@@ -94,4 +94,20 @@ describe("pluginLogger", () => {
     expect(second.info).toHaveBeenCalledWith("second");
     expect(first.info).toHaveBeenCalledTimes(1); // not called again
   });
+
+  it("useStderr routes to console.error without calling api.logger (issue #1230)", () => {
+    const mockLogger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    initPluginLogger(mockLogger, true);
+    pluginLogger.info("x");
+    expect(errSpy).toHaveBeenCalledWith("x");
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+    restoreDefaultLogger();
+  });
 });

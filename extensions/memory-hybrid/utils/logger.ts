@@ -18,6 +18,11 @@
  * Before initPluginLogger is called, the logger defaults to console-based output so that
  * diagnostic warnings (e.g., config validation) are visible in CLI code paths. In unit tests,
  * call resetPluginLogger() to suppress output for test isolation.
+ *
+ * Issue #1230: For JSON CLI, use `wrapApiLoggerStderrForJsonCli(api)` before bootstrap and pass
+ * that API into `initializeDatabases`; keep `initPluginLogger` on the same logger. Optionally
+ * `useStderr=true` routes only `pluginLogger` through stderr without calling `api.logger` (avoids
+ * stdout if the host attaches api.logger to stdout).
  */
 
 /** Logger interface matching api.logger from ClawdbotPluginApi */
@@ -49,6 +54,17 @@ const consoleLogger: Required<PluginLoggerApi> = {
 };
 
 /**
+ * Console-based logger that routes to stderr instead of stdout.
+ * Used when hybrid-mem CLI is invoked with --json so stdout remains pure JSON (issue #1230).
+ */
+const consoleStderrLogger: Required<PluginLoggerApi> = {
+  info: (msg: string) => console.error(msg),
+  warn: (msg: string) => console.error(msg),
+  error: (msg: string) => console.error(msg),
+  debug: (msg: string) => console.error(msg),
+};
+
+/**
  * Active logger delegate — replaced by initPluginLogger.
  * Marked as `let` intentionally: initialized once at plugin startup.
  * Defaults to consoleLogger so config warnings are visible in CLI paths.
@@ -60,14 +76,21 @@ let activeLogger: Required<PluginLoggerApi> = consoleLogger;
  * Call this once in register(api) before any services are started.
  *
  * @param apiLogger - The logger from ClawdbotPluginApi
+ * @param useStderr - If true, route all api.logger calls to stderr (for JSON CLI commands)
  */
-export function initPluginLogger(apiLogger: PluginLoggerApi): void {
-  activeLogger = {
-    info: (msg: string) => apiLogger.info(msg),
-    warn: (msg: string) => apiLogger.warn(msg),
-    error: (msg: string) => apiLogger.error(msg),
-    debug: (msg: string) => apiLogger.debug?.(msg),
-  };
+export function initPluginLogger(apiLogger: PluginLoggerApi, useStderr = false): void {
+  if (useStderr) {
+    // Do not forward to apiLogger — it may be wired to stdout by the host (#1230).
+    activeLogger = consoleStderrLogger;
+  } else {
+    // Normal mode: route through api.logger
+    activeLogger = {
+      info: (msg: string) => apiLogger.info(msg),
+      warn: (msg: string) => apiLogger.warn(msg),
+      error: (msg: string) => apiLogger.error(msg),
+      debug: (msg: string) => apiLogger.debug?.(msg),
+    };
+  }
 }
 
 /**
