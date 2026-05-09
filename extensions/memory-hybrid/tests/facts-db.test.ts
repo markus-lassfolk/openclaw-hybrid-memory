@@ -2707,7 +2707,7 @@ describe("FactsDB.reinforceProcedure", () => {
 describe("FactsDB search reinforcement ranking", () => {
   it("reinforced fact ranks before non-reinforced when reinforcementBoost > 0", () => {
     const a = db.store({
-      text: "Use auth key for API requests",
+      text: "auth API token key config",
       category: "fact",
       importance: 0.8,
       entity: null,
@@ -2716,7 +2716,7 @@ describe("FactsDB search reinforcement ranking", () => {
       source: "conversation",
     });
     const b = db.store({
-      text: "API auth token configuration and secrets",
+      text: "auth API token key config",
       category: "fact",
       importance: 0.8,
       entity: null,
@@ -2735,7 +2735,7 @@ describe("FactsDB search reinforcement ranking", () => {
     expect(ids.indexOf(a.id)).toBeLessThan(ids.indexOf(b.id));
     const scoreA = results.find((r) => r.entry.id === a.id)?.score;
     const scoreB = results.find((r) => r.entry.id === b.id)?.score;
-    expect(scoreA!).toBeGreaterThanOrEqual(scoreB!);
+    expect(scoreA!).toBeGreaterThan(scoreB!);
   });
 
   it("with reinforcementBoost 0 reinforced fact does not get boost", () => {
