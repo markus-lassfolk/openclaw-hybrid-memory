@@ -112,6 +112,8 @@ describe("migrateEmbeddings — basic behavior", () => {
     expect(result.migrated).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.errors).toHaveLength(0);
+    expect(result.aborted).toBe(false);
+    expect(result.processed).toBe(0);
   });
 
   it("embeds and stores each fact", async () => {
@@ -134,6 +136,8 @@ describe("migrateEmbeddings — basic behavior", () => {
     expect(result.migrated).toBe(3);
     expect(result.skipped).toBe(0);
     expect(result.errors).toHaveLength(0);
+    expect(result.aborted).toBe(false);
+    expect(result.processed).toBe(3);
     expect(vectorDb.store).toHaveBeenCalledTimes(3);
     expect(factsDb.setEmbeddingModel).toHaveBeenCalledTimes(3);
     expect(factsDb.setEmbeddingModel).toHaveBeenCalledWith("a", "test-model");
@@ -322,6 +326,7 @@ describe("migrateEmbeddings — error handling", () => {
         .mockResolvedValueOnce([Array(1536).fill(0.1)])
         .mockResolvedValueOnce([Array(1536).fill(0.2)]),
     });
+    const logger = silentLogger();
 
     const result = await migrateEmbeddings({
       factsDb: factsDb as any,
@@ -329,11 +334,22 @@ describe("migrateEmbeddings — error handling", () => {
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       batchSize: 1,
-      logger: silentLogger(),
+      logger,
     });
 
     // Only first batch ran before generation changed
     expect(result.migrated).toBe(1);
+    expect(result.aborted).toBe(true);
+    expect(result.abortReason).toBe("VectorDB closed during migration");
+    expect(result.processed).toBe(1);
+    expect(result.total).toBe(2);
+    // Verify abort log was called
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("aborted at 1/2 — VectorDB closed during migration"),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("ABORTED at 1/2 — VectorDB closed during migration; 1 facts not re-embedded"),
+    );
   });
 });
 

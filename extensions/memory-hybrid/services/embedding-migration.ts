@@ -50,6 +50,12 @@ interface MigrateEmbeddingsResult {
   skipped: number;
   /** Per-fact error strings for failures that were recoverable. */
   errors: string[];
+  /** `true` when migration was aborted mid-run (e.g., VectorDB closed). */
+  aborted: boolean;
+  /** Human-readable reason for abort when `aborted` is `true`. */
+  abortReason?: string;
+  /** Total facts processed (migrated + skipped + errors) before abort/completion. */
+  processed: number;
 }
 
 export interface EmbeddingMaintenanceOptions extends MigrateEmbeddingsOptions {
@@ -103,6 +109,8 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   let migrated = 0;
   let skipped = 0;
   const errors: string[] = [];
+  let aborted = false;
+  let abortReason: string | undefined;
 
   log.info(
     `memory-hybrid: embedding-migration: starting — ${total} facts, ` +
@@ -116,6 +124,8 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   while (offset < total) {
     // Abort if the VectorDB was closed (hot-reload or shutdown)
     if (vectorDb.getCloseGeneration() !== initialGeneration) {
+      aborted = true;
+      abortReason = "VectorDB closed during migration";
       log.warn(
         `memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — VectorDB closed during migration`,
       );
@@ -254,11 +264,19 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     }
   }
 
-  log.info(
-    `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
-  );
+  const processed = migrated + skipped;
 
-  return { total, migrated, skipped, errors };
+  if (aborted) {
+    log.warn(
+      `memory-hybrid: embedding-migration: ABORTED at ${processed}/${total} — ${abortReason}; ${total - processed} facts not re-embedded`,
+    );
+  } else {
+    log.info(
+      `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
+    );
+  }
+
+  return { total, migrated, skipped, errors, aborted, abortReason, processed };
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +339,15 @@ export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions)
 
   try {
     const result = await migrateEmbeddings(opts);
-    // Only update meta after successful migration
+    // Only update meta after successful (non-aborted) migration
+    if (result.aborted) {
+      log.warn(
+        `memory-hybrid: embedding-migration: maintenance run aborted — meta not updated. ` +
+          `${result.processed}/${result.total} facts migrated before abort. ` +
+          `Re-run maintenance or re-index to complete.`,
+      );
+      return { changed: true, migrated: false };
+    }
     factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: true, result };
   } catch (err) {
