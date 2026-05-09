@@ -149,7 +149,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       (targetTableName ? `, targetTable=${targetTableName}` : ""),
   );
 
-  const initialGeneration = vectorDb.getCloseGeneration();
+  let currentGeneration = vectorDb.getCloseGeneration();
   let offset = 0;
   const facts = useBatched ? null : factsDb.getAll({ includeSuperseded: false });
 
@@ -175,14 +175,39 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   const checkDuplicate = targetTableName ? async () => false : (vec: number[]) => vectorDb.hasDuplicate(vec);
 
   while (offset < total) {
-    // Abort if the VectorDB was closed (hot-reload or shutdown)
-    if (vectorDb.getCloseGeneration() !== initialGeneration) {
-      aborted = true;
-      abortReason = "VectorDB closed during migration";
-      log.warn(
-        `memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — VectorDB closed during migration`,
+    // VectorDB was recycled mid-run (hot-reload, plugin re-registration, or
+    // a stray close from a peer subsystem — see #1248). Try a transparent
+    // reconnect first so a routine connection bump no longer guts re-index.
+    const newGeneration = vectorDb.getCloseGeneration();
+    if (newGeneration !== currentGeneration) {
+      log.info(
+        `memory-hybrid: embedding-migration: VectorDB closeGeneration advanced (${currentGeneration} → ${newGeneration}) — attempting transparent reconnect at ${migrated + skipped}/${total}...`,
       );
-      break;
+      try {
+        await vectorDb.ensureInitialized();
+      } catch (err) {
+        aborted = true;
+        abortReason = `VectorDB reconnect failed: ${err instanceof Error ? err.message : String(err)}`;
+        log.warn(
+          `memory-hybrid: embedding-migration: reconnect failed at ${migrated + skipped}/${total} — aborting: ${err}`,
+        );
+        break;
+      }
+      // `ensureInitialized()` resolves successfully even when LanceDB stays in
+      // degraded/FTS-only mode (`lanceInitFailed === true`), in which case
+      // `vectorDb.store()` becomes a silent no-op. We MUST verify the LanceDB
+      // table is actually writable before claiming the reconnect succeeded.
+      if (!vectorDb.isLanceAvailable()) {
+        aborted = true;
+        abortReason = "VectorDB reconnected but LanceDB is unavailable (degraded mode)";
+        log.warn(
+          `memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — ${abortReason}; ` +
+            `subsequent writes would be silent no-ops`,
+        );
+        break;
+      }
+      currentGeneration = vectorDb.getCloseGeneration();
+      log.info("memory-hybrid: embedding-migration: reconnect successful — continuing migration");
     }
 
     const batch =
