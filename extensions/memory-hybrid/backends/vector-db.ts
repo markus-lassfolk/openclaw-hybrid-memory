@@ -14,6 +14,9 @@ import {
   LANCE_NO_VECTOR_COL_MSG,
   LANCE_VECTOR_SEARCH_MAX_LIMIT,
   UUID_REGEX,
+  VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS,
+  VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS,
+  VECTORDB_WRITE_CONFLICT_MAX_RETRIES,
   VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
@@ -37,6 +40,8 @@ const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
 const _optimizingByPath = new Map<string, boolean>();
 /** Module-level consecutive optimize-failure counter keyed by dbPath. */
 const _optimizeFailuresByPath = new Map<string, number>();
+/** Module-level guard for temporary auto-optimize suppression during bulk writes keyed by dbPath. */
+const _autoOptimizePauseByPath = new Map<string, number>();
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
 
 type VectorDBLogger = { warn: (msg: string) => void };
@@ -1127,6 +1132,61 @@ export class VectorDB {
     return /EEXIST|already exists|duplicate/i.test(msg);
   }
 
+  /** True when LanceDB asks the caller to retry a write transaction due to commit conflict. */
+  private isRetryableCommitConflictError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /retryable commit conflict/i.test(msg);
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getWriteConflictRetryDelayMs(attempt: number): number {
+    const exp = VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS * 2 ** (attempt - 1);
+    const capped = Math.min(exp, VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS);
+    // Add jitter in [0.75, 1.25] to reduce synchronized retries between competing writers.
+    const jitter = 0.75 + Math.random() * 0.5;
+    return Math.max(1, Math.round(capped * jitter));
+  }
+
+  private async withRetryableWriteConflictRetry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    const maxAttempts = VECTORDB_WRITE_CONFLICT_MAX_RETRIES + 1;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (!this.isRetryableCommitConflictError(err) || attempt >= maxAttempts) throw err;
+        const delayMs = this.getWriteConflictRetryDelayMs(attempt);
+        this.logWarn(
+          `memory-hybrid: ${operation} hit retryable commit conflict (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
+        );
+        await this.sleep(delayMs);
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`memory-hybrid: retry loop failed for operation "${operation}"`);
+  }
+
+  /**
+   * Temporarily suppresses auto-optimize scheduling on this dbPath while a bulk write operation runs.
+   * Prevents internal optimize rewrites from racing with caller-driven delete/store loops.
+   */
+  async runWithAutoOptimizePaused<T>(fn: () => Promise<T>): Promise<T> {
+    const current = _autoOptimizePauseByPath.get(this.dbPath) ?? 0;
+    _autoOptimizePauseByPath.set(this.dbPath, current + 1);
+    try {
+      return await fn();
+    } finally {
+      const next = (_autoOptimizePauseByPath.get(this.dbPath) ?? 1) - 1;
+      if (next <= 0) _autoOptimizePauseByPath.delete(this.dbPath);
+      else _autoOptimizePauseByPath.set(this.dbPath, next);
+    }
+  }
+
   /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for classification. */
   async store(entry: {
     text: string;
@@ -1154,20 +1214,28 @@ export class VectorDB {
       const id = entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       const why = entry.why ?? "";
       const row = { ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) };
-      try {
-        await this.getTable().add([row]);
-      } catch (err) {
-        // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
-        if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
-          const lid = id;
-          await this.getTable().delete(`id = '${lid}'`);
+      await this.withRetryableWriteConflictRetry("LanceDB store", async () => {
+        try {
           await this.getTable().add([row]);
-        } else {
-          throw err;
+        } catch (err) {
+          // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
+          if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
+            const lid = id;
+            if (!UUID_REGEX.test(lid))
+              throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
+            await this.getTable().delete(`id = '${lid}'`);
+            await this.getTable().add([row]);
+          } else {
+            throw err;
+          }
         }
-      }
+      });
       this.storeCount++;
-      if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
+      if (
+        !_optimizingByPath.get(this.dbPath) &&
+        (_autoOptimizePauseByPath.get(this.dbPath) ?? 0) === 0 &&
+        this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL
+      ) {
         this.storeCount = 0;
         // Fire-and-forget; don't block the store operation
         this.optimize(24 * 60 * 60 * 1000)
@@ -1177,13 +1245,27 @@ export class VectorDB {
           .catch((err) => {
             const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
             _optimizeFailuresByPath.set(this.dbPath, failures);
+            const isRetryableConflict = this.isRetryableCommitConflictError(err);
             if (failures >= VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD) {
-              this.logWarn(
-                `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
-                  `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
-              );
+              if (isRetryableConflict) {
+                this.logWarn(
+                  `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row due to retryable commit conflicts — ` +
+                    `this is usually transient write contention (concurrent delete/rewrite). Serialize maintenance writes or retry later. Error: ${err}`,
+                );
+              } else {
+                this.logWarn(
+                  `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
+                    `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
+                );
+              }
             } else {
-              this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`);
+              if (isRetryableConflict) {
+                this.logWarn(
+                  `memory-hybrid: auto-optimize hit retryable commit conflict (non-fatal) — concurrent writes detected; retrying on next cycle. Error: ${err}`,
+                );
+              } else {
+                this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`);
+              }
             }
           });
       }
@@ -1401,7 +1483,20 @@ export class VectorDB {
       if (!this.lanceDbAvailable) return false;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
-      await this.getTable().delete(`id = '${id.toLowerCase()}'`);
+      const normalizedId = id.toLowerCase();
+      if (!UUID_REGEX.test(normalizedId)) return false;
+      if (this.optimizePromise) {
+        try {
+          await this.optimizePromise;
+        } catch (optimizeErr) {
+          this.logWarn(
+            `memory-hybrid: auto-optimize failed before LanceDB delete; continuing with delete anyway (non-fatal). Error: ${optimizeErr}`,
+          );
+        }
+      }
+      await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
+        await this.getTable().delete(`id = '${normalizedId}'`);
+      });
       return true;
     } catch (err) {
       capturePluginError(err as Error, {
