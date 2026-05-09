@@ -8,6 +8,7 @@ const DEFAULT_MAX_ITEMS_PER_SECTION = 12;
 const BOT_LOGIN_RE = /\[bot\]$/i;
 const NON_BLOCKING_REVIEW_STATES = new Set(['APPROVED', 'DISMISSED']);
 const PASSING_CONCLUSIONS = new Set(['success', 'skipped', 'neutral']);
+const SELF_CHECK_NAMES = new Set(['Inspect PR blockers and dispatch Forge']);
 
 function normalizeWhitespace(value) {
   return String(value ?? '')
@@ -51,6 +52,7 @@ function summarizeFailedChecks(checkRuns) {
       if (!run || typeof run !== 'object') return false;
       if (run.status !== 'completed') return false;
       const conclusion = String(run.conclusion ?? '').toLowerCase();
+      if (SELF_CHECK_NAMES.has(String(run.name ?? '')) && conclusion === 'cancelled') return false;
       return conclusion && !PASSING_CONCLUSIONS.has(conclusion);
     })
     .slice(0, DEFAULT_MAX_ITEMS_PER_SECTION)

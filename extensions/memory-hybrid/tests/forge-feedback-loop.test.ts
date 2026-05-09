@@ -83,6 +83,78 @@ describe("buildForgeRemediationRequest", () => {
     expect(result.prompt).toContain("Fix every failing CI check");
   });
 
+  it("ignores its own cancelled inspection check when deciding whether to dispatch", () => {
+    const result = buildForgeRemediationRequest({
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
+      pullRequest: {
+        number: 1259,
+        title: "fix: handle LanceDB reembed commit conflicts",
+        baseRef: "main",
+        headRef: "copilot/fix-reembed-vectorless-commit-conflicts",
+        headSha: "0ba93dc",
+      },
+      headCommit: { committedAt: "2026-05-09T17:37:00Z" },
+      checkRuns: [
+        {
+          name: "Inspect PR blockers and dispatch Forge",
+          status: "completed",
+          conclusion: "cancelled",
+          completed_at: "2026-05-09T17:37:08Z",
+        },
+        {
+          name: "Test (Node 22)",
+          status: "completed",
+          conclusion: "success",
+          completed_at: "2026-05-09T17:39:00Z",
+        },
+      ],
+      issueComments: [],
+      reviews: [],
+      reviewThreads: [],
+    });
+
+    expect(result.summary.failedChecks).toBe(0);
+    expect(result.summary.shouldDispatch).toBe(false);
+    expect(result.summary.completionReady).toBe(true);
+  });
+
+  it("does not ignore a genuinely failed inspection check", () => {
+    const result = buildForgeRemediationRequest({
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
+      pullRequest: {
+        number: 1259,
+        title: "fix: handle LanceDB reembed commit conflicts",
+        baseRef: "main",
+        headRef: "copilot/fix-reembed-vectorless-commit-conflicts",
+        headSha: "0ba93dc",
+      },
+      headCommit: { committedAt: "2026-05-09T17:37:00Z" },
+      checkRuns: [
+        {
+          name: "Inspect PR blockers and dispatch Forge",
+          status: "completed",
+          conclusion: "failure",
+          completed_at: "2026-05-09T17:37:08Z",
+        },
+      ],
+      issueComments: [],
+      reviews: [],
+      reviewThreads: [],
+    });
+
+    expect(result.summary.failedChecks).toBe(1);
+    expect(result.summary.shouldDispatch).toBe(true);
+    expect(result.summary.reasons).toEqual(["failed-ci"]);
+  });
+
   it("treats human comments older than the latest push as already addressed", () => {
     const result = buildForgeRemediationRequest({
       repo: {
