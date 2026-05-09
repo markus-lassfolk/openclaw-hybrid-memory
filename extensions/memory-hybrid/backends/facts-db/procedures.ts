@@ -854,6 +854,12 @@ export function recordProcedureSuccess(db: DatabaseSync, id: string, recipeJson?
   const proc = getProcedureById(db, id);
   if (!proc) return false;
 
+  // Read raw DB values to avoid inflating implied-success values back into the database
+  const rawRow = db.prepare("SELECT success_count, failure_count FROM procedures WHERE id = ?").get(id) as
+    | { success_count: number; failure_count: number }
+    | undefined;
+  if (!rawRow) return false;
+
   // Check if this session has already been counted
   if (sessionId) {
     const sourceSessions = proc.sourceSessions ? proc.sourceSessions.split(",") : [];
@@ -863,8 +869,8 @@ export function recordProcedureSuccess(db: DatabaseSync, id: string, recipeJson?
     sourceSessions.push(sessionId);
     const newSourceSessions = sourceSessions.join(",");
 
-    const successCount = proc.successCount + 1;
-    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
+    const successCount = rawRow.success_count + 1;
+    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - rawRow.failure_count)));
     if (recipeJson !== undefined) {
       db.prepare(
         `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', recipe_json = ?, source_sessions = ?, updated_at = ? WHERE id = ?`,
@@ -875,8 +881,8 @@ export function recordProcedureSuccess(db: DatabaseSync, id: string, recipeJson?
       ).run(successCount, now, confidence, newSourceSessions, now, id);
     }
   } else {
-    const successCount = proc.successCount + 1;
-    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
+    const successCount = rawRow.success_count + 1;
+    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - rawRow.failure_count)));
     if (recipeJson !== undefined) {
       db.prepare(
         `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', recipe_json = ?, updated_at = ? WHERE id = ?`,
@@ -896,6 +902,12 @@ export function recordProcedureFailure(db: DatabaseSync, id: string, recipeJson?
   const proc = getProcedureById(db, id);
   if (!proc) return false;
 
+  // Read raw DB values to avoid inflating implied-success values back into the database
+  const rawRow = db.prepare("SELECT success_count, failure_count FROM procedures WHERE id = ?").get(id) as
+    | { success_count: number; failure_count: number }
+    | undefined;
+  if (!rawRow) return false;
+
   // Check if this session has already been counted
   if (sessionId) {
     const sourceSessions = proc.sourceSessions ? proc.sourceSessions.split(",") : [];
@@ -905,8 +917,8 @@ export function recordProcedureFailure(db: DatabaseSync, id: string, recipeJson?
     sourceSessions.push(sessionId);
     const newSourceSessions = sourceSessions.join(",");
 
-    const failureCount = proc.failureCount + 1;
-    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
+    const failureCount = rawRow.failure_count + 1;
+    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (rawRow.success_count - failureCount)));
     if (recipeJson !== undefined) {
       db.prepare(
         `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', recipe_json = ?, source_sessions = ?, updated_at = ? WHERE id = ?`,
@@ -917,8 +929,8 @@ export function recordProcedureFailure(db: DatabaseSync, id: string, recipeJson?
       ).run(failureCount, now, confidence, newSourceSessions, now, id);
     }
   } else {
-    const failureCount = proc.failureCount + 1;
-    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
+    const failureCount = rawRow.failure_count + 1;
+    const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (rawRow.success_count - failureCount)));
     if (recipeJson !== undefined) {
       db.prepare(
         `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', recipe_json = ?, updated_at = ? WHERE id = ?`,
