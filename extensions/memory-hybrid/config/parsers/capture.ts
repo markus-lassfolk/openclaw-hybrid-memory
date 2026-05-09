@@ -47,6 +47,28 @@ export function parsePassiveObserverConfig(cfg: Record<string, unknown>): Passiv
 
 export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionConfig {
   const reflectionRaw = cfg.reflection as Record<string, unknown> | undefined;
+  const dhRaw = reflectionRaw?.dedupeHydration as Record<string, unknown> | undefined;
+  const dedupeHydration: ReflectionConfig["dedupeHydration"] =
+    dhRaw && typeof dhRaw === "object"
+      ? {
+          maxEmbedsPerRun:
+            typeof dhRaw.maxEmbedsPerRun === "number" && dhRaw.maxEmbedsPerRun >= 0
+              ? Math.min(2_000_000, Math.floor(dhRaw.maxEmbedsPerRun))
+              : undefined,
+          minIntervalMsBetweenEmbeds:
+            typeof dhRaw.minIntervalMsBetweenEmbeds === "number" && dhRaw.minIntervalMsBetweenEmbeds >= 0
+              ? Math.min(120_000, Math.floor(dhRaw.minIntervalMsBetweenEmbeds))
+              : undefined,
+          maxConsecutive429BeforeDefer:
+            typeof dhRaw.maxConsecutive429BeforeDefer === "number" && dhRaw.maxConsecutive429BeforeDefer >= 1
+              ? Math.min(50, Math.floor(dhRaw.maxConsecutive429BeforeDefer))
+              : undefined,
+          baseBackoffMsAfter429:
+            typeof dhRaw.baseBackoffMsAfter429 === "number" && dhRaw.baseBackoffMsAfter429 >= 0
+              ? Math.min(600_000, Math.floor(dhRaw.baseBackoffMsAfter429))
+              : undefined,
+        }
+      : undefined;
   return {
     enabled: reflectionRaw?.enabled === true,
     model: typeof reflectionRaw?.model === "string" ? reflectionRaw.model : undefined,
@@ -58,6 +80,7 @@ export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionC
       typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
         ? Math.floor(reflectionRaw.minObservations)
         : 2,
+    ...(dedupeHydration && Object.values(dedupeHydration).some((v) => v !== undefined) ? { dedupeHydration } : {}),
   };
 }
 

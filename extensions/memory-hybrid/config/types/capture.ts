@@ -16,12 +16,28 @@ export type PassiveObserverConfig = {
   sessionsDir?: string;
 };
 
+/**
+ * Throttle + checkpoint for embedding-backed reflection dedupe corpus hydration (#1229).
+ * Omitted fields use built-in defaults (bounded embeds/run, min interval, 429 defer).
+ */
+export type ReflectionDedupeHydrationConfig = {
+  /** Max embedding API calls per run for reflection/reflect-rules/reflect-meta dedupe hydration (0 = unlimited). */
+  maxEmbedsPerRun?: number;
+  /** Minimum delay between consecutive embedding calls in that path (ms). */
+  minIntervalMsBetweenEmbeds?: number;
+  /** Consecutive rate-limit errors before deferring remaining backlog to a later run. */
+  maxConsecutive429BeforeDefer?: number;
+  /** Base backoff (ms) when rate-limited; grows exponentially with consecutive 429s. */
+  baseBackoffMsAfter429?: number;
+};
+
 /** Reflection / pattern synthesis from session history */
 export type ReflectionConfig = {
   enabled: boolean;
   model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
   defaultWindow: number; // Time window in days (default: 14)
   minObservations: number; // Min observations to support a pattern (default: 2)
+  dedupeHydration?: ReflectionDedupeHydrationConfig;
 };
 
 /** Identity reflection: persona-level synthesis from reflection outputs */

@@ -29,6 +29,8 @@ interface ConsolidateOptions {
   dryRun: boolean;
   limit: number;
   model: string;
+  /** Verbose vector load / dedupe corpus progress (#1228). */
+  verbose?: boolean;
 }
 
 interface ConsolidateResult {
@@ -153,8 +155,9 @@ export async function runConsolidate(
     logger,
     "memory-hybrid: consolidate",
     "consolidate-embed",
+    { verbose: opts.verbose === true, progressLabel: "consolidate dedupe corpus" },
   );
-  const vectors = vectorResults.map((v) => (v === null ? [] : v));
+  const vectors = vectorResults.vectors.map((v) => (v === null ? [] : v));
 
   const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const edges: Array<[string, string]> = [];

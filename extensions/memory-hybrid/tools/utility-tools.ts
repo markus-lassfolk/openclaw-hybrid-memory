@@ -12,6 +12,8 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { analyzeKnowledgeGaps } from "../services/knowledge-gaps.js";
 import type { ProvenanceService } from "../services/provenance.js";
+import type { ReflectionDedupeHydrationResolved } from "../services/reflection-dedupe-hydration.js";
+import { resolveReflectionDedupeHydration } from "../services/reflection-dedupe-hydration.js";
 import { detectClusters } from "../services/topic-clusters.js";
 
 export interface PluginContext {
@@ -32,7 +34,13 @@ export type RunReflectionFn = (
   embeddings: EmbeddingProvider,
   openai: OpenAI,
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
-  opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
+  opts: {
+    window: number;
+    dryRun: boolean;
+    model: string;
+    fallbackModels?: string[];
+    dedupeHydration?: ReflectionDedupeHydrationResolved;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
@@ -244,7 +252,13 @@ export function registerUtilityTools(
             embeddings,
             openai,
             { defaultWindow: reflectionCfg.defaultWindow, minObservations: reflectionCfg.minObservations },
-            { window, dryRun: false, model: defaultModel, fallbackModels },
+            {
+              window,
+              dryRun: false,
+              model: defaultModel,
+              fallbackModels,
+              dedupeHydration: resolveReflectionDedupeHydration(reflectionCfg.dedupeHydration ?? null),
+            },
             api.logger,
             provenanceService,
           );

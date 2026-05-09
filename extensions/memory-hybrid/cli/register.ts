@@ -155,6 +155,7 @@ export type HybridMemCliContext = {
     threshold: number;
     includeStructured: boolean;
     limit: number;
+    verbose?: boolean;
   }) => Promise<FindDuplicatesResult>;
   runConsolidate: (opts: {
     threshold: number;
@@ -162,6 +163,7 @@ export type HybridMemCliContext = {
     dryRun: boolean;
     limit: number;
     model: string;
+    verbose?: boolean;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
   runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     factsAnalyzed: number;

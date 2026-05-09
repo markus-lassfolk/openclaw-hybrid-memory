@@ -22,14 +22,29 @@ import {
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { formatElapsedSec, withVerboseHeartbeat } from "../utils/maintenance-progress.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError } from "./chat.js";
+import { LLMRetryError, parseRetryAfterMs } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
+import {
+  computeDedupeCorpusFingerprint,
+  CONSOLIDATE_REFLECTION_DEDUPE_HYDRATION,
+  DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+  dedupeHydrationStateKey,
+  isEmbeddingRateLimitError,
+  readDedupeHydrationCheckpoint,
+  REFLECTION_DEDUPE_CHECKPOINT_VERSION,
+  reflectionLexicalNearDuplicateAgainstFact,
+  type DedupeHydrationFailedRow,
+  writeDedupeHydrationCheckpoint,
+  type DedupeCorpusCheckpointKind,
+  type ReflectionDedupeHydrationResolved,
+} from "./reflection-dedupe-hydration.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -60,6 +75,8 @@ interface ReflectionOptions {
   fallbackModels?: string[];
   modelSource?: string;
   adaptiveStatePath?: string;
+  /** Resolved hydration throttle + cap (#1229). When omitted, defaults for consolidate-style paths. */
+  dedupeHydration?: ReflectionDedupeHydrationResolved;
 }
 
 interface ReflectionResult {
@@ -104,40 +121,143 @@ export function dotProductSimilarity(a: number[], b: number[]): number {
   return dot;
 }
 
+export interface ReflectionDedupeCorpusCheckpointOpts {
+  factsDb: FactsDB;
+  kind: DedupeCorpusCheckpointKind;
+}
+
+export interface ReflectionDedupeCorpusOptions {
+  /** When true, emit Lance chunk lines, embedding batch milestones, and idle heartbeats (#1228). */
+  verbose?: boolean;
+  /** Short label for progress lines (e.g. `reflection dedupe`). */
+  progressLabel?: string;
+  /** When set, persist/resume hydration cursor across runs (#1229). */
+  checkpoint?: ReflectionDedupeCorpusCheckpointOpts;
+  /** When false, checkpoint state is read for resume but never mutated (dry-run semantics). */
+  persistCheckpoint?: boolean;
+  /** Throttle + cap; default depends on checkpoint (dream-cycle vs consolidate). */
+  hydrationPolicy?: ReflectionDedupeHydrationResolved;
+}
+
+export interface ReflectionDedupeCorpusResult {
+  vectors: (number[] | null)[];
+  hydration: {
+    complete: boolean;
+    totalRows: number;
+    needEmbedTotal: number;
+    /** Next index into the sorted need-embed list for resume (see maintenance_state). */
+    checkpointNextNeedIdx: number;
+    deferredDueToRateLimit: boolean;
+    deferredDueToCap: boolean;
+    apiEmbedsThisRun: number;
+    lanceHits: number;
+    vectorsNonNull: number;
+    /** False when some rows still lack vectors — use lexical fallback for those slots (#1229). */
+    vectorsCompleteForCosine: boolean;
+  };
+}
+
 /**
- * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
- * else call the embedding API. Batches API calls (20) with a short pause only when a batch used the API.
+ * Build normalized dedupe-corpus vectors: Lance first, then throttled embedding with
+ * checkpoints, 429 backpressure, per-run caps, and resumable backlog (#1229).
  */
 export async function loadReflectionDedupeCorpusVectors(
   facts: MemoryEntry[],
   embeddings: EmbeddingProvider,
   vectorDb: VectorDB,
-  logger: { info: (msg: string) => void },
+  logger: { info: (msg: string) => void; warn?: (msg: string) => void },
   logPrefix: string,
   captureOperation: string,
-): Promise<(number[] | null)[]> {
-  const vdb = vectorDb as VectorDB & {
-    getVectorDim?: () => number;
-    getVectorsByFactIds?: (ids: string[]) => Promise<Map<string, number[]>>;
-  };
-  const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
-  let byId = new Map<string, number[]>();
-  if (typeof vdb.getVectorsByFactIds === "function") {
-    try {
-      byId = await vdb.getVectorsByFactIds(facts.map((f) => f.id));
-    } catch {
-      byId = new Map();
+  corpusOpts?: ReflectionDedupeCorpusOptions,
+): Promise<ReflectionDedupeCorpusResult> {
+  const verbose = corpusOpts?.verbose === true;
+  const progressLabel = corpusOpts?.progressLabel ?? "dedupe corpus";
+  const policy =
+    corpusOpts?.hydrationPolicy ??
+    (corpusOpts?.checkpoint ? DEFAULT_REFLECTION_DEDUPE_HYDRATION : CONSOLIDATE_REFLECTION_DEDUPE_HYDRATION);
+  const hb = { lanceHits: 0, apiEmbeds: 0, rowEnd: 0, needK: 0, needTotal: 0 };
+
+  const runBody = async (): Promise<ReflectionDedupeCorpusResult> => {
+    const vdb = vectorDb as VectorDB & {
+      getVectorDim?: () => number;
+      getVectorsByFactIds?: (
+        ids: string[],
+        opts?: { onChunkProgress?: (loaded: number, total: number) => void },
+      ) => Promise<Map<string, number[]>>;
+      isMemoriesVectorSchemaValid?: () => boolean;
+      isLanceAvailable?: () => boolean;
+      isLanceDbAvailable?: () => boolean;
+      store?: (entry: {
+        text: string;
+        vector: number[];
+        importance: number;
+        category: string;
+        id: string;
+      }) => Promise<string>;
+    };
+    const dim = typeof vdb.getVectorDim === "function" ? vdb.getVectorDim() : 0;
+    let byId = new Map<string, number[]>();
+    const lanceSchemaOk =
+      typeof vdb.isMemoriesVectorSchemaValid === "function" ? vdb.isMemoriesVectorSchemaValid() : true;
+    const lanceDbAvailable =
+      typeof vdb.isLanceDbAvailable === "function"
+        ? vdb.isLanceDbAvailable()
+        : typeof vdb.isLanceAvailable === "function"
+          ? vdb.isLanceAvailable()
+          : true;
+
+    if (verbose && facts.length > 0) {
+      logger.info(
+        `${logPrefix} — ${progressLabel}: starting (${facts.length} row(s); Lance DB available=${lanceDbAvailable}, memories vector schema valid=${lanceSchemaOk}, embedModel=${embeddings.modelName ?? "unknown"}; maxEmbedsPerRun=${policy.maxEmbedsPerRun || "∞"}, minIntervalMs=${policy.minIntervalMsBetweenEmbeds})`,
+      );
     }
-  }
 
-  const result: (number[] | null)[] = new Array(facts.length);
-  let lanceHits = 0;
-  let apiEmbeds = 0;
+    const prefetchStart = Date.now();
+    if (typeof vdb.getVectorsByFactIds === "function") {
+      let lanceBulkFetchFailed = false;
+      try {
+        if (verbose) {
+          logger.info(
+            `${logPrefix} — ${progressLabel}: Lance bulk fetch for ${facts.length} fact id(s) (indexed id IN queries, chunked)`,
+          );
+        }
+        byId = await vdb.getVectorsByFactIds(
+          facts.map((f) => f.id),
+          verbose
+            ? {
+                onChunkProgress: (loaded, total) => {
+                  logger.info(
+                    `${logPrefix} — ${progressLabel}: Lance id scan ${loaded}/${total}, elapsed=${formatElapsedSec(prefetchStart)}`,
+                  );
+                },
+              }
+            : undefined,
+        );
+      } catch (err) {
+        lanceBulkFetchFailed = true;
+        byId = new Map();
+        if (verbose) {
+          const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+          logWarn(
+            `${logPrefix} — ${progressLabel}: Lance bulk fetch failed — falling back to embedding API/lexical fallback where needed, elapsed=${formatElapsedSec(prefetchStart)}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (verbose && !lanceBulkFetchFailed) {
+        logger.info(
+          `${logPrefix} — ${progressLabel}: Lance bulk fetch done — ${byId.size} vector(s) present in Lance for requested ids, elapsed=${formatElapsedSec(prefetchStart)}`,
+        );
+      }
+    } else if (verbose) {
+      logger.info(
+        `${logPrefix} — ${progressLabel}: no getVectorsByFactIds on backend — per-row embedding API on cache miss`,
+      );
+    }
 
-  for (let i = 0; i < facts.length; i += 20) {
-    const end = Math.min(i + 20, facts.length);
-    let hadApiEmbed = false;
-    for (let j = i; j < end; j++) {
+    const result: (number[] | null)[] = new Array(facts.length).fill(null);
+    let lanceHits = 0;
+    const modelKey = embeddings.modelName ?? "";
+    for (let j = 0; j < facts.length; j++) {
       const f = facts[j]!;
       const cached = byId.get(f.id.toLowerCase());
       const modelOk =
@@ -146,37 +266,240 @@ export async function loadReflectionDedupeCorpusVectors(
       if (useCache) {
         result[j] = normalizeVector(cached);
         lanceHits++;
-      } else {
+      }
+    }
+
+    const needEmbedIndices: number[] = [];
+    for (let j = 0; j < facts.length; j++) {
+      if (result[j] === null) needEmbedIndices.push(j);
+    }
+    needEmbedIndices.sort((a, b) => facts[a]!.id.toLowerCase().localeCompare(facts[b]!.id.toLowerCase()));
+    const sortedIds = [...facts.map((f) => f.id)].map((id) => id.toLowerCase()).sort();
+    const fp = computeDedupeCorpusFingerprint(sortedIds, modelKey);
+    const stateKey = corpusOpts?.checkpoint ? dedupeHydrationStateKey(corpusOpts.checkpoint.kind) : "";
+
+    let failedRows: Record<string, DedupeHydrationFailedRow> = {};
+    let doneIds = new Set<string>();
+    if (corpusOpts?.checkpoint) {
+      const cp = readDedupeHydrationCheckpoint(corpusOpts.checkpoint.factsDb, stateKey);
+      if (cp && cp.fp === fp && cp.model === modelKey) {
+        failedRows = { ...(cp.failed ?? {}) };
+        doneIds = new Set((cp.doneIds ?? []).map((id) => id.toLowerCase()));
+      }
+    }
+
+    for (let j = 0; j < facts.length; j++) {
+      if (result[j] !== null) doneIds.add(facts[j]!.id.toLowerCase());
+    }
+
+    let checkpointNextIdx = 0;
+    let apiEmbedsThisRun = 0;
+    let deferredDueToRateLimit = false;
+    let deferredDueToCap = false;
+    let deferredDueToEmbeddingFailure = false;
+    let lastEmbedAt = 0;
+    let consecutive429 = 0;
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const embedPhaseStart = Date.now();
+    hb.needTotal = needEmbedIndices.length;
+
+    const persistCheckpoint = (nextNeedIdx: number) => {
+      checkpointNextIdx = Math.max(checkpointNextIdx, nextNeedIdx);
+      if (!corpusOpts?.checkpoint || corpusOpts.persistCheckpoint === false) return;
+      const failed = Object.fromEntries(Object.entries(failedRows).sort(([a], [b]) => a.localeCompare(b)));
+      writeDedupeHydrationCheckpoint(corpusOpts.checkpoint.factsDb, stateKey, {
+        v: REFLECTION_DEDUPE_CHECKPOINT_VERSION,
+        fp,
+        model: modelKey,
+        nextNeedIdx: checkpointNextIdx,
+        doneIds: [...doneIds].sort(),
+        failed: Object.keys(failed).length > 0 ? failed : undefined,
+      });
+    };
+
+    const retryDelaySec = (attempts: number) => Math.min(24 * 60 * 60, 60 * 2 ** Math.max(0, attempts - 1));
+    const nowSecForRetry = () => Math.floor(Date.now() / 1000);
+    const markEmbeddingFailure = (factId: string, kk: number) => {
+      const id = factId.toLowerCase();
+      const prev = failedRows[id];
+      const attempts = (prev?.attempts ?? 0) + 1;
+      failedRows[id] = { attempts, nextRetryAt: nowSecForRetry() + retryDelaySec(attempts) };
+      persistCheckpoint(kk + 1);
+    };
+
+    const workKs: number[] = [];
+    const nowRetry = nowSecForRetry();
+    for (let kk = 0; kk < needEmbedIndices.length; kk++) {
+      const f = facts[needEmbedIndices[kk]!]!;
+      const failed = failedRows[f.id.toLowerCase()];
+      const retryDue = !failed || failed.nextRetryAt <= nowRetry;
+      if (doneIds.has(f.id.toLowerCase()) && !failed) continue;
+      if (retryDue) workKs.push(kk);
+    }
+
+    for (const kk of workKs) {
+      hb.needK = kk;
+      if (policy.maxEmbedsPerRun > 0 && apiEmbedsThisRun >= policy.maxEmbedsPerRun) {
+        deferredDueToCap = true;
+        persistCheckpoint(kk);
+        logger.info(
+          `${logPrefix} — ${progressLabel}: hydration cap — processed=${kk}/${needEmbedIndices.length} embed API calls this run=${apiEmbedsThisRun} cap=${policy.maxEmbedsPerRun} remaining=${needEmbedIndices.length - kk} checkpoint nextNeedIdx=${kk} (#1229)`,
+        );
+        break;
+      }
+
+      const j = needEmbedIndices[kk]!;
+      const f = facts[j]!;
+      const gap = lastEmbedAt + policy.minIntervalMsBetweenEmbeds - Date.now();
+      if (gap > 0) await sleep(gap);
+
+      let done = false;
+      while (!done && !deferredDueToRateLimit) {
         try {
+          apiEmbedsThisRun++;
+          hb.apiEmbeds = apiEmbedsThisRun;
           const vec = await embeddings.embed(f.text);
-          result[j] = normalizeVector(vec);
-          apiEmbeds++;
-          hadApiEmbed = true;
-        } catch (err) {
-          if (!shouldSuppressEmbeddingError(err)) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: captureOperation,
-              subsystem: "embeddings",
-              factId: f.id,
-            });
+          const normVec = normalizeVector(vec);
+          // If we are going to advance a durable checkpoint, the newly-hydrated vector
+          // must be durable too. Otherwise a later run resumes past this row while Lance
+          // still lacks the vector, permanently forcing lexical fallback for that prefix.
+          if (corpusOpts?.checkpoint && corpusOpts.persistCheckpoint !== false && typeof vdb.store === "function") {
+            try {
+              await vdb.store({
+                id: f.id,
+                text: f.text,
+                vector: normVec,
+                importance: f.importance ?? 0.5,
+                category: f.category,
+              });
+            } catch (storeErr) {
+              const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+              logWarn(
+                `${logPrefix} — ${progressLabel}: vector persistence failed for hydrated backlog item ${kk + 1}/${needEmbedIndices.length} (factId=${f.id}); leaving checkpoint at ${kk} so it can be retried next run: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`,
+              );
+              result[j] = normVec;
+              consecutive429 = 0;
+              deferredDueToEmbeddingFailure = true;
+              markEmbeddingFailure(f.id, kk);
+              done = true;
+              break;
+            }
           }
-          result[j] = null;
-          hadApiEmbed = true;
+          result[j] = normVec;
+          doneIds.add(f.id.toLowerCase());
+          delete failedRows[f.id.toLowerCase()];
+          consecutive429 = 0;
+          lastEmbedAt = Date.now();
+          done = true;
+          hb.rowEnd = j + 1;
+          hb.lanceHits = lanceHits;
+          hb.apiEmbeds = apiEmbedsThisRun;
+          if (corpusOpts?.checkpoint && (apiEmbedsThisRun % 8 === 0 || kk === needEmbedIndices.length - 1)) {
+            persistCheckpoint(kk + 1);
+          }
+        } catch (err) {
+          if (isEmbeddingRateLimitError(err)) {
+            consecutive429++;
+            const e = err instanceof Error ? err : new Error(String(err));
+            const ra = parseRetryAfterMs(e);
+            const exp = policy.baseBackoffMsAfter429 * 2 ** Math.max(0, consecutive429 - 1);
+            const backMs = Math.min(180_000, Math.max(ra ?? 0, exp));
+            const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+            logWarn(
+              `${logPrefix} — ${progressLabel}: embedding rate-limited — backing off ${backMs}ms (consecutive=${consecutive429}/${policy.maxConsecutive429BeforeDefer}, backlog kk=${kk}/${needEmbedIndices.length}) (#1229)`,
+            );
+            await sleep(backMs);
+            if (consecutive429 >= policy.maxConsecutive429BeforeDefer) {
+              deferredDueToRateLimit = true;
+              persistCheckpoint(kk);
+              logger.info(
+                `${logPrefix} — ${progressLabel}: deferring hydration — processed=${kk}/${needEmbedIndices.length} remaining=${needEmbedIndices.length - kk} deferred_due_to_rate_limit=1 checkpoint nextNeedIdx=${kk} vectors_created_this_run=${apiEmbedsThisRun} (#1229)`,
+              );
+            }
+          } else {
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: captureOperation,
+                subsystem: "embeddings",
+                factId: f.id,
+              });
+            }
+            const logWarn = logger.warn ?? ((m: string) => logger.info(m));
+            logWarn(
+              `${logPrefix} — ${progressLabel}: embedding failed for backlog item ${kk + 1}/${needEmbedIndices.length} (factId=${f.id}); leaving checkpoint at ${kk} so it can be retried next run: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            result[j] = null;
+            consecutive429 = 0;
+            deferredDueToEmbeddingFailure = true;
+            markEmbeddingFailure(f.id, kk);
+            done = true;
+          }
+        }
+      }
+      if (deferredDueToRateLimit) break;
+
+      if (verbose) {
+        const logEvery =
+          needEmbedIndices.length <= 80 || kk === 0 || kk === needEmbedIndices.length - 1 || kk % 40 === 0;
+        if (logEvery) {
+          logger.info(
+            `${logPrefix} — ${progressLabel}: embed progress kk=${kk + 1}/${needEmbedIndices.length} apiEmbeds=${apiEmbedsThisRun} lanceHits=${lanceHits} elapsed=${formatElapsedSec(embedPhaseStart)}`,
+          );
         }
       }
     }
-    if (hadApiEmbed && end < facts.length) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
 
-  if (facts.length > 0) {
-    const ok = result.filter((v) => v !== null).length;
-    logger.info(
-      `${logPrefix} — dedupe corpus: ${lanceHits} vector(s) reused from Lance index, ${apiEmbeds} via embedding API, ${ok}/${facts.length} non-null for cosine check`,
-    );
+    if (!deferredDueToRateLimit && !deferredDueToCap) {
+      persistCheckpoint(needEmbedIndices.length);
+    }
+
+    checkpointNextIdx = needEmbedIndices.filter((idx) => doneIds.has(facts[idx]!.id.toLowerCase())).length;
+    const failedRowCount = Object.keys(failedRows).length;
+    const nonNull = result.filter((v) => v !== null).length;
+    const complete =
+      !deferredDueToRateLimit &&
+      !deferredDueToCap &&
+      failedRowCount === 0 &&
+      checkpointNextIdx >= needEmbedIndices.length;
+    const remainingNeed = Math.max(0, needEmbedIndices.length - checkpointNextIdx);
+
+    if (facts.length > 0) {
+      logger.info(
+        `${logPrefix} — ${progressLabel}: ${lanceHits} vector(s) reused from Lance index, ${apiEmbedsThisRun} via embedding API, ${nonNull}/${facts.length} non-null for cosine check` +
+          (deferredDueToRateLimit || deferredDueToCap || deferredDueToEmbeddingFailure || failedRowCount > 0
+            ? ` | backlog need_embed_total=${needEmbedIndices.length} remaining=${remainingNeed} checkpoint_nextNeedIdx=${checkpointNextIdx} deferred429=${deferredDueToRateLimit ? 1 : 0} deferredCap=${deferredDueToCap ? 1 : 0} failedRows=${failedRowCount} (#1229)`
+            : ""),
+      );
+    }
+
+    return {
+      vectors: result,
+      hydration: {
+        complete,
+        totalRows: facts.length,
+        needEmbedTotal: needEmbedIndices.length,
+        checkpointNextNeedIdx: checkpointNextIdx,
+        deferredDueToRateLimit,
+        deferredDueToCap,
+        apiEmbedsThisRun,
+        lanceHits,
+        vectorsNonNull: nonNull,
+        vectorsCompleteForCosine: facts.length === 0 || nonNull === facts.length,
+      },
+    };
+  };
+
+  if (!verbose) {
+    return runBody();
   }
-  return result;
+  return withVerboseHeartbeat({
+    verbose: true,
+    log: (m) => logger.info(m),
+    prefix: `${logPrefix} — ${progressLabel}`,
+    detail: () =>
+      `rows=${hb.rowEnd}/${facts.length} lanceHits=${hb.lanceHits} apiEmbeds=${hb.apiEmbeds} needEmbed=${hb.needK}/${hb.needTotal}`,
+    fn: runBody,
+  });
 }
 
 /**
@@ -335,20 +658,50 @@ export async function runReflection(
   }
 
   let existingVectors: (number[] | null)[] = [];
+  let patternCorpusHydration = {
+    vectorsCompleteForCosine: true,
+    complete: true,
+    needEmbedTotal: 0,
+    checkpointNextNeedIdx: 0,
+    deferredDueToRateLimit: false,
+    deferredDueToCap: false,
+    apiEmbedsThisRun: 0,
+    vectorsNonNull: 0,
+  };
+  const corpusLoadStarted = Date.now();
   if (existingPatternFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflection — loading ${existingPatternFacts.length} existing pattern row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
     );
-    existingVectors = await loadReflectionDedupeCorpusVectors(
+    const corpusRes = await loadReflectionDedupeCorpusVectors(
       existingPatternFacts,
       embeddings,
       vectorDb,
       logger,
       "memory-hybrid: reflection",
       "reflection-embed-existing",
+      {
+        verbose: opts.verbose,
+        progressLabel: "reflection dedupe (existing corpus)",
+        checkpoint: { factsDb, kind: "pattern" },
+        persistCheckpoint: !opts.dryRun,
+        hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+      },
     );
+    existingVectors = corpusRes.vectors;
+    patternCorpusHydration = corpusRes.hydration;
+    if (!corpusRes.hydration.vectorsCompleteForCosine) {
+      logger.info(
+        `memory-hybrid: reflection — dedupe corpus hydration partial: vectors_non_null=${corpusRes.hydration.vectorsNonNull}/${corpusRes.hydration.totalRows} need_embed_total=${corpusRes.hydration.needEmbedTotal} remaining_next_idx=${corpusRes.hydration.checkpointNextNeedIdx} — lexical fallback for rows without vectors (#1229)`,
+      );
+    }
   } else {
     logger.info("memory-hybrid: reflection — no existing pattern facts for dedupe; embedding new candidates only");
+  }
+  if (opts.verbose && existingPatternFacts.length > 0) {
+    logger.info(
+      `memory-hybrid: reflection — existing corpus vectors ready: ${existingVectors.length} slot(s), elapsed=${formatElapsedSec(corpusLoadStarted)}`,
+    );
   }
 
   logger.info(
@@ -359,7 +712,10 @@ export async function runReflection(
   let duplicatesSkipped = 0;
   let newPatternEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const newCandidatePhaseStart = Date.now();
+  let candIndex = 0;
   for (const patternText of uniqueNewPatterns) {
+    candIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(patternText);
@@ -373,16 +729,34 @@ export async function runReflection(
           subsystem: "reflection",
         });
       }
+      if (opts.verbose) {
+        logger.info(
+          `memory-hybrid: reflection — dedupe candidate ${candIndex}/${uniqueNewPatterns.length}: embed failed, skipped | elapsed=${formatElapsedSec(newCandidatePhaseStart)}`,
+        );
+      }
       continue; // Skip this pattern on embed failure
     }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
+    for (let ei = 0; ei < existingVectors.length; ei++) {
+      const ev = existingVectors[ei];
+      if (ev !== null && ev.length > 0) {
+        if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+          isDuplicate = true;
+          break;
+        }
+      } else if (!patternCorpusHydration.vectorsCompleteForCosine) {
+        const prior = existingPatternFacts[ei];
+        if (prior && reflectionLexicalNearDuplicateAgainstFact(patternText, prior.text)) {
+          isDuplicate = true;
+          break;
+        }
       }
+    }
+    if (opts.verbose) {
+      logger.info(
+        `memory-hybrid: reflection — dedupe candidate ${candIndex}/${uniqueNewPatterns.length}: cosine/lexical check done, duplicate=${isDuplicate} | elapsed=${formatElapsedSec(newCandidatePhaseStart)}`,
+      );
     }
     if (isDuplicate) {
       duplicatesSkipped++;
@@ -457,7 +831,8 @@ export async function runReflection(
     factsDb.setMaintenanceState("reflection_input_hash", inputHash);
   }
   logger.info(
-    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
+    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total` +
+      (opts.verbose ? ` | new-candidate phase elapsed=${formatElapsedSec(newCandidatePhaseStart)}` : ""),
   );
 
   return {
@@ -483,6 +858,7 @@ export async function runReflectionRules(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    dedupeHydration?: ReflectionDedupeHydrationResolved;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -568,18 +944,41 @@ export async function runReflectionRules(
     .getByCategory("rule")
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   let existingVectors: (number[] | null)[] = [];
+  let rulesCorpusHydration = {
+    vectorsCompleteForCosine: true,
+    vectorsNonNull: 0,
+    totalRows: 0,
+  };
   if (existingRuleFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflect-rules — loading ${existingRuleFacts.length} existing rule row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
     );
-    existingVectors = await loadReflectionDedupeCorpusVectors(
+    const corpusRes = await loadReflectionDedupeCorpusVectors(
       existingRuleFacts,
       embeddings,
       vectorDb,
       logger,
       "memory-hybrid: reflect-rules",
       "reflection-rules-embed-existing",
+      {
+        verbose: opts.verbose,
+        progressLabel: "reflect-rules dedupe (existing corpus)",
+        checkpoint: { factsDb, kind: "rule" },
+        persistCheckpoint: !opts.dryRun,
+        hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+      },
     );
+    existingVectors = corpusRes.vectors;
+    rulesCorpusHydration = {
+      vectorsCompleteForCosine: corpusRes.hydration.vectorsCompleteForCosine,
+      vectorsNonNull: corpusRes.hydration.vectorsNonNull,
+      totalRows: corpusRes.hydration.totalRows,
+    };
+    if (!corpusRes.hydration.vectorsCompleteForCosine) {
+      logger.info(
+        `memory-hybrid: reflect-rules — dedupe corpus hydration partial (${corpusRes.hydration.vectorsNonNull}/${corpusRes.hydration.totalRows}); lexical fallback for null-vector rows (#1229)`,
+      );
+    }
   } else {
     logger.info("memory-hybrid: reflect-rules — no existing rule facts for dedupe; embedding new candidates only");
   }
@@ -592,7 +991,10 @@ export async function runReflectionRules(
   let rulesDuplicatesSkipped = 0;
   let newRuleEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const rulesCandidatePhaseStart = Date.now();
+  let ruleCandIndex = 0;
   for (const ruleText of uniqueRules) {
+    ruleCandIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(ruleText);
@@ -606,16 +1008,34 @@ export async function runReflectionRules(
           subsystem: "reflection",
         });
       }
+      if (opts.verbose) {
+        logger.info(
+          `memory-hybrid: reflect-rules — dedupe candidate ${ruleCandIndex}/${uniqueRules.length}: embed failed, skipped | elapsed=${formatElapsedSec(rulesCandidatePhaseStart)}`,
+        );
+      }
       continue; // Skip this rule on embed failure
     }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
+    for (let ei = 0; ei < existingVectors.length; ei++) {
+      const ev = existingVectors[ei];
+      if (ev !== null && ev.length > 0) {
+        if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+          isDuplicate = true;
+          break;
+        }
+      } else if (!rulesCorpusHydration.vectorsCompleteForCosine) {
+        const prior = existingRuleFacts[ei];
+        if (prior && reflectionLexicalNearDuplicateAgainstFact(ruleText, prior.text)) {
+          isDuplicate = true;
+          break;
+        }
       }
+    }
+    if (opts.verbose) {
+      logger.info(
+        `memory-hybrid: reflect-rules — dedupe candidate ${ruleCandIndex}/${uniqueRules.length}: duplicate=${isDuplicate} | elapsed=${formatElapsedSec(rulesCandidatePhaseStart)}`,
+      );
     }
     if (isDuplicate) {
       rulesDuplicatesSkipped++;
@@ -685,7 +1105,8 @@ export async function runReflectionRules(
   }
 
   logger.info(
-    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`,
+    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total` +
+      (opts.verbose ? ` | new-candidate phase elapsed=${formatElapsedSec(rulesCandidatePhaseStart)}` : ""),
   );
 
   return { rulesExtracted: rules.length, rulesStored: stored };
@@ -706,6 +1127,7 @@ export async function runReflectionMeta(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    dedupeHydration?: ReflectionDedupeHydrationResolved;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -793,18 +1215,33 @@ export async function runReflectionMeta(
       (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
     );
   let existingVectors: (number[] | null)[] = [];
+  let metaCorpusHydration = { vectorsCompleteForCosine: true };
   if (existingMetaFacts.length > 0) {
     logger.info(
       `memory-hybrid: reflect-meta — loading ${existingMetaFacts.length} existing meta-pattern row(s) for dedupe (Lance vectors + embedding API when index or model is missing)`,
     );
-    existingVectors = await loadReflectionDedupeCorpusVectors(
+    const corpusRes = await loadReflectionDedupeCorpusVectors(
       existingMetaFacts,
       embeddings,
       vectorDb,
       logger,
       "memory-hybrid: reflect-meta",
       "reflection-meta-embed-existing",
+      {
+        verbose: opts.verbose,
+        progressLabel: "reflect-meta dedupe (existing corpus)",
+        checkpoint: { factsDb, kind: "meta" },
+        persistCheckpoint: !opts.dryRun,
+        hydrationPolicy: opts.dedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+      },
     );
+    existingVectors = corpusRes.vectors;
+    metaCorpusHydration = { vectorsCompleteForCosine: corpusRes.hydration.vectorsCompleteForCosine };
+    if (!corpusRes.hydration.vectorsCompleteForCosine) {
+      logger.info(
+        `memory-hybrid: reflect-meta — dedupe corpus hydration partial; lexical fallback for null-vector rows (#1229)`,
+      );
+    }
   } else {
     logger.info("memory-hybrid: reflect-meta — no existing meta-patterns for dedupe; embedding new candidates only");
   }
@@ -817,7 +1254,10 @@ export async function runReflectionMeta(
   let metaDuplicatesSkipped = 0;
   let newMetaEmbedFailures = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const metaCandidatePhaseStart = Date.now();
+  let metaCandIndex = 0;
   for (const metaText of uniqueMetas) {
+    metaCandIndex++;
     let vec: number[];
     try {
       vec = await embeddings.embed(metaText);
@@ -831,16 +1271,34 @@ export async function runReflectionMeta(
           subsystem: "reflection",
         });
       }
+      if (opts.verbose) {
+        logger.info(
+          `memory-hybrid: reflect-meta — dedupe candidate ${metaCandIndex}/${uniqueMetas.length}: embed failed, skipped | elapsed=${formatElapsedSec(metaCandidatePhaseStart)}`,
+        );
+      }
       continue; // Skip this meta-pattern on embed failure
     }
     const normVec = normalizeVector(vec);
     let isDuplicate = false;
-    for (const ev of existingVectors) {
-      if (ev === null || ev.length === 0) continue;
-      if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
-        isDuplicate = true;
-        break;
+    for (let ei = 0; ei < existingVectors.length; ei++) {
+      const ev = existingVectors[ei];
+      if (ev !== null && ev.length > 0) {
+        if (dotProductSimilarity(normVec, ev) >= REFLECTION_DEDUPE_THRESHOLD) {
+          isDuplicate = true;
+          break;
+        }
+      } else if (!metaCorpusHydration.vectorsCompleteForCosine) {
+        const prior = existingMetaFacts[ei];
+        if (prior && reflectionLexicalNearDuplicateAgainstFact(metaText, prior.text)) {
+          isDuplicate = true;
+          break;
+        }
       }
+    }
+    if (opts.verbose) {
+      logger.info(
+        `memory-hybrid: reflect-meta — dedupe candidate ${metaCandIndex}/${uniqueMetas.length}: duplicate=${isDuplicate} | elapsed=${formatElapsedSec(metaCandidatePhaseStart)}`,
+      );
     }
     if (isDuplicate) {
       metaDuplicatesSkipped++;
@@ -910,7 +1368,8 @@ export async function runReflectionMeta(
   }
 
   logger.info(
-    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total`,
+    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total` +
+      (opts.verbose ? ` | new-candidate phase elapsed=${formatElapsedSec(metaCandidatePhaseStart)}` : ""),
   );
 
   return { metaExtracted: metas.length, metaStored: stored };

@@ -19,7 +19,12 @@ import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.j
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
+import { formatElapsedSec } from "../utils/maintenance-progress.js";
 import type { ProvenanceService } from "./provenance.js";
+import {
+  DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+  type ReflectionDedupeHydrationResolved,
+} from "./reflection-dedupe-hydration.js";
 import {
   type ReflectionConfig,
   countActivePatternFactsForMaintenance,
@@ -79,6 +84,11 @@ export interface DreamCycleConfig {
     /** Extra types to treat as noise (merged with built-in deny list). */
     deny?: string[];
   };
+  /**
+   * Resolved embedding throttle + checkpoint policy for reflection dedupe hydration (#1229).
+   * When omitted, {@link DEFAULT_REFLECTION_DEDUPE_HYDRATION} is used.
+   */
+  reflectionDedupeHydration?: ReflectionDedupeHydrationResolved;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -315,8 +325,17 @@ export async function runEpisodicConsolidation(
     );
   }
   let factsCreated = 0;
+  const episodicStart = Date.now();
+  const groupTotal = groups.size;
+  let groupIdx = 0;
 
   for (const [entity, groupEvents] of groups) {
+    groupIdx++;
+    if (verbose && groupTotal >= 15 && (groupIdx === 1 || groupIdx === groupTotal || groupIdx % 20 === 0)) {
+      logger.info(
+        `memory-hybrid: dream-cycle — episodic consolidation progress: entity group ${groupIdx}/${groupTotal}, factsCreated=${factsCreated}, eventsMarked=${eventsConsolidated}, elapsed=${formatElapsedSec(episodicStart)}`,
+      );
+    }
     if (groupEvents.length === 0) continue;
 
     if (entity === "__default__" && groupEvents.length > maxEventsPerConsolidation) {
@@ -501,334 +520,365 @@ export async function runDreamCycle(
 
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
   const v = !!config.verbose;
+  const vectorDbVerbose = vectorDb as unknown as { setMaintenanceVerbose?: (on: boolean) => void };
+  vectorDbVerbose.setMaintenanceVerbose?.(v);
   let stepCounter = 0;
   const step = (label: string) => {
     if (v) logger.info(`memory-hybrid: dream-cycle — step ${++stepCounter}: ${label}`);
   };
 
-  // ── Step 1: Prune ────────────────────────────────────────────────────────
-  step("prune / decay / orphaned links");
-  let factsPruned = 0;
-  let factsDecayed = 0;
-  if (config.pruneMode === "expired" || config.pruneMode === "both") {
-    try {
-      factsPruned = factsDb.pruneExpired();
-      logger.info(`memory-hybrid: dream-cycle — pruned ${factsPruned} expired facts`);
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — pruneExpired failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-prune-expired",
-        subsystem: "facts-db",
-      });
-    }
-  }
-  if (config.pruneMode === "decay" || config.pruneMode === "both") {
-    try {
-      factsDecayed = factsDb.decayConfidence();
-      logger.info(`memory-hybrid: dream-cycle — decayed ${factsDecayed} facts`);
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — decayConfidence failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-decay",
-        subsystem: "facts-db",
-      });
-    }
-  }
-
-  // ── Step 1b: Prune orphaned links ────────────────────────────────────────
-  let linksPruned = 0;
   try {
-    linksPruned = factsDb.pruneOrphanedLinks();
-    if (linksPruned > 0) {
-      logger.info(`memory-hybrid: dream-cycle — pruned ${linksPruned} orphaned link(s)`);
+    // ── Step 1: Prune ────────────────────────────────────────────────────────
+    step("prune / decay / orphaned links");
+    let factsPruned = 0;
+    let factsDecayed = 0;
+    if (config.pruneMode === "expired" || config.pruneMode === "both") {
+      try {
+        factsPruned = factsDb.pruneExpired();
+        logger.info(`memory-hybrid: dream-cycle — pruned ${factsPruned} expired facts`);
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — pruneExpired failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-prune-expired",
+          subsystem: "facts-db",
+        });
+      }
     }
-  } catch (err) {
-    logger.warn(`memory-hybrid: dream-cycle — pruneOrphanedLinks failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-prune-orphaned-links",
-      subsystem: "facts-db",
-    });
-  }
+    if (config.pruneMode === "decay" || config.pruneMode === "both") {
+      try {
+        factsDecayed = factsDb.decayConfidence();
+        logger.info(`memory-hybrid: dream-cycle — decayed ${factsDecayed} facts`);
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — decayConfidence failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-decay",
+          subsystem: "facts-db",
+        });
+      }
+    }
 
-  // ── Step 1c: Decay reclassify (#1189) ────────────────────────────────────
-  // Source-/importance-aware reclassifier. Without this nightly hook, the
-  // reclassifier only ran when an operator manually invoked the CLI, which
-  // meant `decay_class=stable` accumulated and prune found nothing.
-  let decayReclassified = 0;
-  if (config.reclassifyDecayOnCycle !== false) {
-    step("decay reclassify (source/importance/recall)");
+    // ── Step 1b: Prune orphaned links ────────────────────────────────────────
+    let linksPruned = 0;
     try {
-      const report = factsDb.reclassifyDecayClasses({
-        apply: true,
-        inactiveDays: config.reclassifyInactiveDays ?? 90,
-        promoteRecallCount: config.reclassifyPromoteRecallCount ?? 3,
-      });
-      decayReclassified = report.changed;
-      if (decayReclassified > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle — decay reclassify: ${decayReclassified} facts re-tiered (scanned ${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
-        );
+      linksPruned = factsDb.pruneOrphanedLinks();
+      if (linksPruned > 0) {
+        logger.info(`memory-hybrid: dream-cycle — pruned ${linksPruned} orphaned link(s)`);
       }
     } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
+      logger.warn(`memory-hybrid: dream-cycle — pruneOrphanedLinks failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-reclassify-decay",
+        operation: "dream-cycle-prune-orphaned-links",
         subsystem: "facts-db",
       });
     }
-  }
 
-  // ── Step 1d: Refresh denormalized graph degrees (#1192) ──────────────────
-  // Without this, every BFS hop runs `COUNT(*) FROM memory_links` against the same node, which
-  // is O(edges) per call. A single nightly refresh keeps reads cheap while still adapting to
-  // graph changes within a day.
-  if (typeof (factsDb as { refreshFactDegrees?: () => unknown }).refreshFactDegrees === "function") {
-    step("refresh fact degrees");
-    try {
-      const result = (factsDb as { refreshFactDegrees: () => { updated: number } }).refreshFactDegrees();
-      if (v) {
-        logger.info(`memory-hybrid: dream-cycle — refreshed fact degrees for ${result.updated} facts`);
+    // ── Step 1c: Decay reclassify (#1189) ────────────────────────────────────
+    // Source-/importance-aware reclassifier. Without this nightly hook, the
+    // reclassifier only ran when an operator manually invoked the CLI, which
+    // meant `decay_class=stable` accumulated and prune found nothing.
+    let decayReclassified = 0;
+    if (config.reclassifyDecayOnCycle !== false) {
+      step("decay reclassify (source/importance/recall)");
+      try {
+        const decayStart = Date.now();
+        const report = factsDb.reclassifyDecayClasses({
+          apply: true,
+          inactiveDays: config.reclassifyInactiveDays ?? 90,
+          promoteRecallCount: config.reclassifyPromoteRecallCount ?? 3,
+        });
+        decayReclassified = report.changed;
+        if (v) {
+          logger.info(
+            `memory-hybrid: dream-cycle — decay reclassify done: changed=${decayReclassified}, scanned=${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%, elapsed=${formatElapsedSec(decayStart)}`,
+          );
+        } else if (decayReclassified > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle — decay reclassify: ${decayReclassified} facts re-tiered (scanned ${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-reclassify-decay",
+          subsystem: "facts-db",
+        });
       }
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — refreshFactDegrees failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-refresh-degrees",
-        subsystem: "facts-db",
-      });
     }
-  }
 
-  // ── Step 2: Episodic consolidation ───────────────────────────────────────
-  let eventsConsolidated = 0;
-  let factsCreated = 0;
-  step("episodic consolidation + event log maintenance");
-  if (eventLog) {
-    try {
-      const consolidationResult = await runEpisodicConsolidation(
-        factsDb,
-        eventLog,
-        config.consolidateAfterDays,
-        logger,
-        v,
-        config.maxEventsPerConsolidation,
-        config.episodicConsolidationEventTypes ?? null,
-      );
-      eventsConsolidated = consolidationResult.eventsConsolidated;
-      factsCreated = consolidationResult.factsCreated;
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-consolidation",
-        subsystem: "event-log",
-      });
+    // ── Step 1d: Refresh denormalized graph degrees (#1192) ──────────────────
+    // Without this, every BFS hop runs `COUNT(*) FROM memory_links` against the same node, which
+    // is O(edges) per call. A single nightly refresh keeps reads cheap while still adapting to
+    // graph changes within a day.
+    if (typeof (factsDb as { refreshFactDegrees?: () => unknown }).refreshFactDegrees === "function") {
+      step("refresh fact degrees");
+      try {
+        const result = (factsDb as { refreshFactDegrees: () => { updated: number } }).refreshFactDegrees();
+        if (v) {
+          logger.info(`memory-hybrid: dream-cycle — refreshed fact degrees for ${result.updated} facts`);
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — refreshFactDegrees failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-refresh-degrees",
+          subsystem: "facts-db",
+        });
+      }
     }
-  } else if (v) {
-    logger.info("memory-hybrid: dream-cycle — no event log: skipping episodic consolidation");
-  }
 
-  // ── Step 2b: Archive stale event log entries ─────────────────────────────
-  if (eventLog && config.eventLogArchivalDays > 0) {
-    try {
-      const result = await eventLog.archiveConsolidated(config.eventLogArchivalDays, config.eventLogArchivePath);
-      if (result.archived > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle — archived ${result.archived} consolidated event log entries older than ${config.eventLogArchivalDays} days`,
+    // ── Step 2: Episodic consolidation ───────────────────────────────────────
+    let eventsConsolidated = 0;
+    let factsCreated = 0;
+    step("episodic consolidation + event log maintenance");
+    if (eventLog) {
+      try {
+        const consolidationResult = await runEpisodicConsolidation(
+          factsDb,
+          eventLog,
+          config.consolidateAfterDays,
+          logger,
+          v,
+          config.maxEventsPerConsolidation,
+          config.episodicConsolidationEventTypes ?? null,
         );
+        eventsConsolidated = consolidationResult.eventsConsolidated;
+        factsCreated = consolidationResult.factsCreated;
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-consolidation",
+          subsystem: "event-log",
+        });
       }
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — archiveConsolidated failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-archive",
-        subsystem: "event-log",
-      });
+    } else if (v) {
+      logger.info("memory-hybrid: dream-cycle — no event log: skipping episodic consolidation");
     }
-  }
 
-  // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
-  if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
-    try {
-      const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
-      if (deleted > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${config.maxUnconsolidatedAgeDays} days`,
-        );
+    // ── Step 2b: Archive stale event log entries ─────────────────────────────
+    if (eventLog && config.eventLogArchivalDays > 0) {
+      try {
+        const result = await eventLog.archiveConsolidated(config.eventLogArchivalDays, config.eventLogArchivePath);
+        if (result.archived > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle — archived ${result.archived} consolidated event log entries older than ${config.eventLogArchivalDays} days`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — archiveConsolidated failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-archive",
+          subsystem: "event-log",
+        });
       }
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-archive-old",
-        subsystem: "event-log",
-      });
     }
-  }
 
-  // ── Step 3: Reflect ───────────────────────────────────────────────────────
-  step("reflection (patterns)");
-  let patternsFound = 0;
-  const reflectionConfig: ReflectionConfig = {
-    enabled: true,
-    defaultWindow: config.reflectWindowDays,
-    minObservations: 2,
-  };
-  try {
-    const reflectionResult = await runReflection(
-      factsDb,
-      vectorDb,
-      embeddings,
-      openai,
-      reflectionConfig,
-      {
-        window: config.reflectWindowDays,
-        dryRun: false,
-        model: config.model,
-        fallbackModels: config.fallbackModels ?? [],
-        verbose: v,
-      },
-      logger,
-      provenanceService,
-    );
-    patternsFound = reflectionResult.patternsStored;
-    logger.info(`memory-hybrid: dream-cycle — reflection complete: ${patternsFound} patterns stored`);
-  } catch (err) {
-    logger.warn(`memory-hybrid: dream-cycle — reflection step failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-reflect",
-      subsystem: "reflection",
-    });
-  }
+    // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
+    if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+      try {
+        const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+        if (deleted > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${config.maxUnconsolidatedAgeDays} days`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-archive-old",
+          subsystem: "event-log",
+        });
+      }
+    }
 
-  const livePatternCountForRules = countActivePatternFactsForMaintenance(factsDb);
-  const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
-
-  // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
-  let rulesGenerated = 0;
-  if (patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
-    step("reflect-rules");
+    // ── Step 3: Reflect ───────────────────────────────────────────────────────
+    step("reflection (patterns)");
+    let patternsFound = 0;
+    const reflectionConfig: ReflectionConfig = {
+      enabled: true,
+      defaultWindow: config.reflectWindowDays,
+      minObservations: 2,
+    };
     try {
-      const rulesResult = await runReflectionRules(
+      const reflectionResult = await runReflection(
         factsDb,
         vectorDb,
         embeddings,
         openai,
-        { dryRun: false, model: config.model, fallbackModels: config.fallbackModels ?? [], verbose: v },
+        reflectionConfig,
+        {
+          window: config.reflectWindowDays,
+          dryRun: false,
+          model: config.model,
+          fallbackModels: config.fallbackModels ?? [],
+          verbose: v,
+          dedupeHydration: config.reflectionDedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+        },
         logger,
         provenanceService,
       );
-      rulesGenerated = rulesResult.rulesStored;
-      logger.info(`memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored`);
+      patternsFound = reflectionResult.patternsStored;
+      logger.info(`memory-hybrid: dream-cycle — reflection complete: ${patternsFound} patterns stored`);
     } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
+      logger.warn(`memory-hybrid: dream-cycle — reflection step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-reflect-rules",
+        operation: "dream-cycle-reflect",
         subsystem: "reflection",
       });
     }
-  } else if (v) {
-    logger.info(
-      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
-    );
-  }
 
-  // ── Step 4b: Refresh memory awareness index ─────────────────────────────
-  step("MEMORY_INDEX.md refresh");
-  try {
-    await writeMemoryIndex(
-      factsDb,
-      openai,
-      {
-        model: config.model,
-        fallbackModels: config.fallbackModels ?? [],
-        recentWindowDays: config.reflectWindowDays,
-        verbose: v,
-      },
-      logger,
-    );
-  } catch (err) {
-    logger.warn(`memory-hybrid: dream-cycle — memory index update failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-memory-index",
-      subsystem: "reflection",
-    });
-  }
+    const livePatternCountForRules = countActivePatternFactsForMaintenance(factsDb);
+    const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
 
-  // ── Step 5: Prune log tables ─────────────────────────────────────────────
-  step("prune operational log tables (recall/reinforcement/trajectories)");
-  let logRowsPruned = 0;
-  if (config.logRetentionDays > 0) {
-    try {
-      logRowsPruned = factsDb.pruneLogTables(config.logRetentionDays);
-      if (logRowsPruned > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle — pruned ${logRowsPruned} log rows older than ${config.logRetentionDays} days`,
+    // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
+    let rulesGenerated = 0;
+    if (patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
+      step("reflect-rules");
+      try {
+        const rulesResult = await runReflectionRules(
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          {
+            dryRun: false,
+            model: config.model,
+            fallbackModels: config.fallbackModels ?? [],
+            verbose: v,
+            dedupeHydration: config.reflectionDedupeHydration ?? DEFAULT_REFLECTION_DEDUPE_HYDRATION,
+          },
+          logger,
+          provenanceService,
         );
+        rulesGenerated = rulesResult.rulesStored;
+        logger.info(`memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored`);
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-reflect-rules",
+          subsystem: "reflection",
+        });
       }
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — pruneLogTables failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-prune-log-tables",
-        subsystem: "facts-db",
-      });
+    } else if (v) {
+      logger.info(
+        `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
+      );
     }
-  }
 
-  // ── Step 5b: FTS5 optimize ───────────────────────────────────────────────
-  step("FTS5 optimize (facts search)");
-  try {
-    factsDb.optimizeFts();
-    logger.info("memory-hybrid: dream-cycle — FTS5 index optimized");
-  } catch (err) {
-    logger.warn(`memory-hybrid: dream-cycle — optimizeFts failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-optimize-fts",
-      subsystem: "facts-db",
-    });
-  }
-
-  // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
-  let vacuumRan = false;
-  if (config.vacuumOnCycle) {
-    step("VACUUM + WAL checkpoint");
+    // ── Step 4b: Refresh memory awareness index ─────────────────────────────
+    step("MEMORY_INDEX.md refresh");
     try {
-      factsDb.vacuumAndCheckpoint();
-      vacuumRan = true;
-      logger.info("memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete");
+      await writeMemoryIndex(
+        factsDb,
+        openai,
+        {
+          model: config.model,
+          fallbackModels: config.fallbackModels ?? [],
+          recentWindowDays: config.reflectWindowDays,
+          verbose: v,
+        },
+        logger,
+      );
     } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
+      logger.warn(`memory-hybrid: dream-cycle — memory index update failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-vacuum",
+        operation: "dream-cycle-memory-index",
+        subsystem: "reflection",
+      });
+    }
+
+    // ── Step 5: Prune log tables ─────────────────────────────────────────────
+    step("prune operational log tables (recall/reinforcement/trajectories)");
+    let logRowsPruned = 0;
+    if (config.logRetentionDays > 0) {
+      try {
+        logRowsPruned = factsDb.pruneLogTables(config.logRetentionDays);
+        if (logRowsPruned > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle — pruned ${logRowsPruned} log rows older than ${config.logRetentionDays} days`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — pruneLogTables failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-prune-log-tables",
+          subsystem: "facts-db",
+        });
+      }
+    }
+
+    // ── Step 5b: FTS5 optimize ───────────────────────────────────────────────
+    step("FTS5 optimize (facts search)");
+    try {
+      if (v) {
+        logger.info("memory-hybrid: dream-cycle — FTS5 optimize starting (may take a while on large corpora)…");
+      }
+      const ftsStart = Date.now();
+      factsDb.optimizeFts();
+      logger.info(
+        `memory-hybrid: dream-cycle — FTS5 index optimized` + (v ? ` (elapsed=${formatElapsedSec(ftsStart)})` : ""),
+      );
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — optimizeFts failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-optimize-fts",
         subsystem: "facts-db",
       });
     }
+
+    // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
+    let vacuumRan = false;
+    if (config.vacuumOnCycle) {
+      step("VACUUM + WAL checkpoint");
+      try {
+        if (v) {
+          logger.info("memory-hybrid: dream-cycle — VACUUM + WAL checkpoint starting (often the longest SQLite step)…");
+        }
+        const vacuumStart = Date.now();
+        factsDb.vacuumAndCheckpoint();
+        vacuumRan = true;
+        logger.info(
+          `memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete` +
+            (v ? ` (elapsed=${formatElapsedSec(vacuumStart)})` : ""),
+        );
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dream-cycle-vacuum",
+          subsystem: "facts-db",
+        });
+      }
+    }
+
+    // ── Step 6: Digest summary ───────────────────────────────────────────────
+    const digestSummary = buildDigestSummary({
+      factsPruned,
+      factsDecayed,
+      linksPruned,
+      eventsConsolidated,
+      factsCreated,
+      patternsFound,
+      rulesGenerated,
+      logRowsPruned,
+      vacuumRan,
+      decayReclassified,
+    });
+
+    logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
+
+    return {
+      factsPruned,
+      factsDecayed,
+      linksPruned,
+      eventsConsolidated,
+      factsCreated,
+      patternsFound,
+      rulesGenerated,
+      logRowsPruned,
+      vacuumRan,
+      decayReclassified,
+      digestSummary,
+      skipped: false,
+    };
+  } finally {
+    vectorDbVerbose.setMaintenanceVerbose?.(false);
   }
-
-  // ── Step 6: Digest summary ───────────────────────────────────────────────
-  const digestSummary = buildDigestSummary({
-    factsPruned,
-    factsDecayed,
-    linksPruned,
-    eventsConsolidated,
-    factsCreated,
-    patternsFound,
-    rulesGenerated,
-    logRowsPruned,
-    vacuumRan,
-    decayReclassified,
-  });
-
-  logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
-
-  return {
-    factsPruned,
-    factsDecayed,
-    linksPruned,
-    eventsConsolidated,
-    factsCreated,
-    patternsFound,
-    rulesGenerated,
-    logRowsPruned,
-    vacuumRan,
-    decayReclassified,
-    digestSummary,
-    skipped: false,
-  };
 }

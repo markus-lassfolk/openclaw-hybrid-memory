@@ -37,6 +37,7 @@ import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { mergeResults } from "../services/merge-results.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { resolveReflectionDedupeHydration } from "../services/reflection-dedupe-hydration.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { parseSourceDate } from "../utils/dates.js";
@@ -176,6 +177,7 @@ interface CliContextServices {
     threshold: number;
     includeStructured: boolean;
     limit: number;
+    verbose?: boolean;
   }) => Promise<FindDuplicatesResult>;
   runConsolidate: (opts: {
     threshold: number;
@@ -183,6 +185,7 @@ interface CliContextServices {
     dryRun: boolean;
     limit: number;
     model: string;
+    verbose?: boolean;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
   runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     factsAnalyzed: number;
@@ -332,6 +335,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          dedupeHydration: resolveReflectionDedupeHydration(cfg.reflection.dedupeHydration ?? null),
         },
         logSink,
         provenanceService,
@@ -367,6 +371,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          dedupeHydration: resolveReflectionDedupeHydration(cfg.reflection.dedupeHydration ?? null),
         },
         logSink,
         provenanceService,
@@ -391,6 +396,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          dedupeHydration: resolveReflectionDedupeHydration(cfg.reflection.dedupeHydration ?? null),
         },
         logSink,
         provenanceService,
@@ -516,6 +522,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
             deny: cfg.nightlyCycle.consolidationEventTypeDeny,
           },
+          reflectionDedupeHydration: resolveReflectionDedupeHydration(cfg.reflection.dedupeHydration ?? null),
         },
         logSink,
         provenanceService,

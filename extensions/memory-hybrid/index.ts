@@ -225,7 +225,7 @@ import {
   setKeywordsPath,
 } from "./utils/language-keywords.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
-import { initPluginLogger } from "./utils/logger.js";
+import { createJsonCliStderrLogger, initPluginLogger } from "./utils/logger.js";
 import { fillPrompt, loadPrompt } from "./utils/prompt-loader.js";
 import { computeDynamicSalience } from "./utils/salience.js";
 import { buildToolScopeFilter } from "./utils/scope-filter.js";
@@ -404,7 +404,12 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   }
 
   // Initialize structured logger early so all runtime code (services/backends/lifecycle)
-  // routes through api.logger instead of raw console.*.
+  // routes through api.logger instead of raw console.*. For JSON CLI invocations, keep
+  // stdout pure by routing *both* pluginLogger and direct api.logger calls to stderr (issue #1234).
+  const jsonCli = isHybridMemJsonCliInvocation(process.argv);
+  if (jsonCli) {
+    api = { ...api, logger: createJsonCliStderrLogger() } as ClawdbotPluginApi;
+  }
   initPluginLogger(api.logger);
 
   // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
@@ -843,6 +848,22 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 }
 
 /** Exported for tests. Stops at `--` so `hybrid-mem store -- --help` is not treated as plugin-level help. */
+
+/**
+ * True when this standalone hybrid-mem CLI invocation explicitly requested machine-readable JSON.
+ * Keep this deliberately syntactic and early: it runs before command registration has parsed options.
+ */
+export function isHybridMemJsonCliInvocation(argv: string[]): boolean {
+  const hybridIdx = argv.indexOf("hybrid-mem");
+  if (hybridIdx === -1) return false;
+  for (let i = hybridIdx + 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--") return false;
+    if (a === "--json" || a === "--format=json" || (a === "--format" && argv[i + 1] === "json")) return true;
+  }
+  return false;
+}
+
 export function isHybridMemHelpInvocation(argv: string[]): boolean {
   const hybridIdx = argv.indexOf("hybrid-mem");
   if (hybridIdx === -1) return false;

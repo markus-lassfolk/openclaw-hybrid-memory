@@ -23,6 +23,7 @@ import type { DashboardServer } from "../routes/dashboard-server.js";
 import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+import { reconcileHybridMemCronMaintenanceOutcomes } from "../services/cron-maintenance-reconciler.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import {
   capturePluginError,
@@ -444,6 +445,14 @@ export function createPluginService(ctx: PluginServiceContext) {
       } catch (err) {
         api.logger.warn?.(`memory-hybrid: cron guard sync failed (non-fatal): ${err}`);
       }
+      // Issue #1233: reconcile hybrid-mem maintenance validation back into OpenClaw
+      // cron state/run ledgers. The OpenClaw scheduler owns isolated agent-turn status,
+      // so plugin-managed jobs repair false OK rows after validation artifacts exist.
+      try {
+        reconcileHybridMemCronMaintenanceOutcomes(api.logger);
+      } catch (err) {
+        api.logger.warn?.(`memory-hybrid: cron maintenance outcome reconciliation failed (non-fatal): ${err}`);
+      }
 
       // Issue #309: Mission Control dashboard HTTP server
       if (cfg.dashboard.enabled) {
@@ -668,6 +677,15 @@ export function createPluginService(ctx: PluginServiceContext) {
       // Task queue watchdog: periodically detect stale/broken autonomous queue runs and self-heal
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
       const watchdogRun = async () => {
+        // Issue #1233: OpenClaw writes isolated cron run state after the agent turn
+        // finishes, so startup-only repair is not enough. Re-run the idempotent
+        // reconciler from the watchdog so false-OK maintenance rows are corrected
+        // shortly after they land and failure counters/alerts can observe error state.
+        try {
+          reconcileHybridMemCronMaintenanceOutcomes(api.logger);
+        } catch (err) {
+          api.logger.warn?.(`memory-hybrid: cron maintenance outcome reconciliation failed (non-fatal): ${err}`);
+        }
         try {
           await runTaskQueueWatchdog({ repoDir: getEnv("OPENCLAW_WORKSPACE") ?? process.cwd() }, api.logger);
         } catch (err) {
