@@ -21,7 +21,7 @@ export type LongRunningWorkflowProposal = {
 const REPO_REF_RE = /\b([a-z0-9_.-]+\/[a-z0-9_.-]+)\b/i;
 const PR_NUM_RE = /(?:\bpr\b|\bpull request\b)?\s*#(\d+)\b/i;
 const DEPLOY_TARGET_RE = /\b(prod|production|staging|stage|qa|dev|preview)\b/i;
-const GENERIC_WORKSPACE_NAMES = new Set(["workspace", "workspaces", "tmp", "home", "openclaw", "."]);
+const GENERIC_WORKSPACE_NAMES = new Set(["workspace", "workspaces", "tmp", "home", "openclaw", "task"]);
 
 function slugifyToken(value: string): string {
   const slug = value
@@ -129,7 +129,11 @@ export function detectLongRunningWorkflowProposal(
   if (/\bfix\b[\s\S]{0,20}\ball\b[\s\S]{0,20}\bissues?\b/i.test(text)) {
     return buildWorkflowProposal("issue_sweep", text, workspaceRoot);
   }
-  if (/\b(run|start|trigger|execute|perform)\b[\s\S]{0,30}\b(deploy|deployment|rollout|release)\b/i.test(text)) {
+  if (
+    /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\b(deploy|deployment|rollout|release)\b/i.test(
+      text,
+    )
+  ) {
     return buildWorkflowProposal("deployment", text, workspaceRoot);
   }
   return null;
