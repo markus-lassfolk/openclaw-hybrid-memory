@@ -275,6 +275,29 @@ describe("FactsDB.list / listForDashboard filter allowlist", () => {
     expect(r.total).toBe(1);
     expect(r.facts[0]?.id).toBe(stored.id);
   });
+
+  it("listForDashboard search pagination is not capped at 2000 matches", () => {
+    const totalFacts = 2050;
+    for (let i = 0; i < totalFacts; i += 1) {
+      db.store({
+        text: `Dashboard pagination marker ${i}`,
+        category: "fact",
+        importance: 0.6,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+
+    const firstPage = db.listForDashboard({ limit: 25, offset: 0, search: "dashboard pagination marker" });
+    expect(firstPage.total).toBe(totalFacts);
+    expect(firstPage.facts.length).toBe(25);
+
+    const deepPage = db.listForDashboard({ limit: 25, offset: 2025, search: "dashboard pagination marker" });
+    expect(deepPage.total).toBe(totalFacts);
+    expect(deepPage.facts.length).toBe(25);
+  });
 });
 
 // ---------------------------------------------------------------------------
