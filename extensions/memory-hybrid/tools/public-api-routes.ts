@@ -347,7 +347,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     let renderApplied = false;
     let renderError: string | null = null;
     if (renderRequested) {
-      if (activeTaskCfg.ledger !== "facts") {
+      if (!activeTaskCfg.enabled) {
+        renderError = "render_requested_but_activeTask_is_disabled";
+      } else if (activeTaskCfg.ledger !== "facts") {
         renderError = "render_requested_but_activeTask_ledger_is_not_facts";
       } else {
         const result = await refreshActiveTaskProjectionBestEffort({

@@ -246,8 +246,12 @@ function parseProjectionMarker(raw: string): ActiveTaskProjectionStaleMarker | n
       return {
         staleAt: parsed.staleAt.trim(),
         reason: parsed.reason.trim(),
-        ...(typeof parsed.source === "string" && parsed.source.trim().length > 0 ? { source: parsed.source.trim() } : {}),
-        ...(typeof parsed.factId === "string" && parsed.factId.trim().length > 0 ? { factId: parsed.factId.trim() } : {}),
+        ...(typeof parsed.source === "string" && parsed.source.trim().length > 0
+          ? { source: parsed.source.trim() }
+          : {}),
+        ...(typeof parsed.factId === "string" && parsed.factId.trim().length > 0
+          ? { factId: parsed.factId.trim() }
+          : {}),
       };
     }
   } catch {
