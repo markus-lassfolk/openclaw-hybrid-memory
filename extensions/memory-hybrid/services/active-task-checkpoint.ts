@@ -699,7 +699,9 @@ export async function runActiveTaskCheckpoint(
 
   const message = ok
     ? `active_task_checkpoint completed (${summaryBits.join(", ")}).`
-    : `active_task_checkpoint completed with partial failures (${summaryBits.join(", ")}).`;
+    : partial
+      ? `active_task_checkpoint completed with partial failures (${summaryBits.join(", ")}).`
+      : `active_task_checkpoint failed (${summaryBits.join(", ")}).`;
 
   return {
     ok,
