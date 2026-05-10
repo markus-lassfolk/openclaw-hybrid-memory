@@ -398,8 +398,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 } else if (entry.data.vector) {
                   // SQLite fact already exists (crash after SQL write, before vector write).
                   // Re-attempt the vector store so the fact is searchable via semantics.
-                  const existing = factsDb.search(text, 1, { includeSuperseded: false });
-                  const existingId = existing[0]?.entry.id;
+                  const existingId = factsDb.getDuplicateIdByNormalizedHash(text);
                   if (existingId) {
                     void vectorDb
                       .store({

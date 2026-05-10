@@ -468,6 +468,8 @@ async function runCapture(
                       if (storeResult.embeddingStale) {
                         // Merge case: the existing fact's text was updated in-place.
                         // Re-embed the merged text and force-replace the stale LanceDB vector.
+                        // If embed fails, the vector encodes stale pre-merge text; the dream-cycle
+                        // re-index will repair it on the next nightly run.
                         const mergedVector = await ctx.embeddings.embed(newEntry.text);
                         ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
                         await ctx.vectorDb.store({
@@ -509,10 +511,16 @@ async function runCapture(
                       }
                     } catch (vecErr) {
                       capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
-                        operation: "auto-capture-vector-update",
+                        operation: storeResult.embeddingStale
+                          ? "auto-capture-stale-vector-update"
+                          : "auto-capture-vector-update",
                         subsystem: "auto-capture",
                       });
-                      api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
+                      api.logger.warn(
+                        storeResult.embeddingStale
+                          ? `memory-hybrid: stale vector re-embed failed for merged fact ${newEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
+                          : `memory-hybrid: vector capture failed: ${vecErr}`,
+                      );
                     }
                     await ctx.walRemove(walEntryId, api.logger);
                     ctx.auditStore?.append({
@@ -856,10 +864,11 @@ async function runCapture(
                 logger: api.logger,
                 context: "stage-capture",
               });
-              if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+                if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   if (storeResult.embeddingStale) {
                     // Merge case: re-embed the merged text to keep the vector in sync.
+                    // If embed fails, the vector encodes stale pre-merge text; nightly re-index will repair.
                     const mergedVector = await ctx.embeddings.embed(entry.text);
                     ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                     await ctx.vectorDb.store({
@@ -904,11 +913,17 @@ async function runCapture(
                   const asErr = err instanceof Error ? err : new Error(String(err));
                   if (!isOllamaCircuitBreakerOpen(asErr)) {
                     capturePluginError(asErr, {
-                      operation: "tool-call-credential-vector-store",
+                      operation: storeResult.embeddingStale
+                        ? "tool-call-credential-stale-vector-update"
+                        : "tool-call-credential-vector-store",
                       subsystem: "credentials",
                     });
                   }
-                  api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
+                  api.logger.warn(
+                    storeResult.embeddingStale
+                      ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
+                      : `memory-hybrid: vector store for credential fact failed: ${err}`,
+                  );
                 }
               }
               if (logCaptures) {

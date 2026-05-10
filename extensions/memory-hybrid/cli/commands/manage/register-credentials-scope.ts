@@ -265,8 +265,10 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
         const pendingIds = factsDb.listScopedFactIdsPendingPrune(scopeFilter);
         if (opts.dryRun) {
           console.log(`Dry-run: would delete ${pendingIds.length} fact(s) from scope ${scopeLabel}.`);
-          for (const id of pendingIds.slice(0, 20)) {
-            const f = factsDb.getById(id);
+          const previewIds = pendingIds.slice(0, 20);
+          const previewFacts = factsDb.getByIds(previewIds);
+          for (const id of previewIds) {
+            const f = previewFacts.get(id);
             if (f) console.log(`  [${id.slice(0, 8)}] "${f.text.slice(0, 80)}"`);
           }
           if (pendingIds.length > 20) console.log(`  … and ${pendingIds.length - 20} more`);

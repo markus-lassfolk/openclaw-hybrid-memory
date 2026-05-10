@@ -16,6 +16,7 @@ import {
   type StoreFactInput,
   type StoreFactResult,
   deleteFact,
+  getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
   statsDailyWrites as statsDailyWritesImpl,
@@ -478,6 +479,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     structured?: { category?: string | null; entity?: string | null; key?: string | null; value?: string | null },
   ): boolean {
     return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source, structured);
+  }
+
+  /**
+   * Return the ID of an existing fact whose normalised hash matches `text`, or null if none.
+   * O(1) index lookup. Useful for resolving the canonical fact ID when `hasDuplicate()` returns true.
+   */
+  getDuplicateIdByNormalizedHash(text: string): string | null {
+    return getDuplicateIdByNormalizedHash(this.liveDb, text);
   }
 
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
