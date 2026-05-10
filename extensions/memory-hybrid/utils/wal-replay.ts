@@ -29,10 +29,20 @@ function safeNumber(v: unknown): number | null {
 
 function safeStringArray(v: unknown): string[] | null {
   if (!Array.isArray(v)) return null;
-  const out = v
-    .map((x) => (typeof x === "string" ? x.trim() : ""))
-    .filter((x) => x.length > 0);
+  const out = v.map((x) => (typeof x === "string" ? x.trim() : "")).filter((x) => x.length > 0);
   return out.length > 0 ? out : null;
+}
+
+const VALID_WAL_SCOPES = new Set(["global", "user", "agent", "session"]);
+
+function safeScope(v: unknown): "global" | "user" | "agent" | "session" | null {
+  const scope = safeString(v);
+  if (!scope || !VALID_WAL_SCOPES.has(scope)) return null;
+  return scope as "global" | "user" | "agent" | "session";
+}
+
+function isSafeWalText(v: unknown): v is string {
+  return safeString(v) !== null;
 }
 
 function findExistingFactIdForWal(factsDb: FactsDB, text: string, source: string | null): string | null {
@@ -93,16 +103,6 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
-      if (embeddings?.modelName) {
-        factsDb.setEmbeddingModel(factId, embeddings.modelName);
-        factsDb.storeEmbedding(
-          factId,
-          embeddings.modelName,
-          "canonical",
-          new Float32Array(vector),
-          vector.length,
-        );
-      }
       return;
     }
   } catch {
@@ -137,13 +137,13 @@ export async function replayWalEntries(
 
   for (const entry of walEntries) {
     try {
-      if (entry.operation === "store" && entry.data?.text) {
-        const text = safeString(entry.data.text) ?? "";
+      if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
+        const text = safeString(entry.data.text)!;
         const source = safeString(entry.data.source) ?? "conversation";
         const category = (safeString(entry.data.category) ?? "other") as import("../config.js").MemoryCategory;
         const importance = safeNumber(entry.data.importance) ?? 0.5;
         const why = safeString(entry.data.why);
-        const scope = safeString(entry.data.scope) as "global" | "user" | "agent" | "session" | null;
+        const scope = safeScope(entry.data.scope);
         const scopeTarget = safeString(entry.data.scopeTarget);
         const summary = safeString(entry.data.summary);
         const tags = safeStringArray(entry.data.tags) ?? undefined;
@@ -217,14 +217,14 @@ export async function replayWalEntries(
 
         committed++;
         await wal.remove(entry.id);
-      } else if (entry.operation === "update" && entry.targetId && entry.data?.text) {
+      } else if (entry.operation === "update" && entry.targetId && isSafeWalText(entry.data?.text)) {
         const targetId = entry.targetId;
-        const text = safeString(entry.data.text) ?? "";
+        const text = safeString(entry.data.text)!;
         const source = safeString(entry.data.source) ?? "conversation";
         const category = (safeString(entry.data.category) ?? "other") as import("../config.js").MemoryCategory;
         const importance = safeNumber(entry.data.importance) ?? 0.5;
         const why = safeString(entry.data.why);
-        const scope = safeString(entry.data.scope) as "global" | "user" | "agent" | "session" | null;
+        const scope = safeScope(entry.data.scope);
         const scopeTarget = safeString(entry.data.scopeTarget);
         const summary = safeString(entry.data.summary);
         const tags = safeStringArray(entry.data.tags) ?? undefined;
@@ -250,23 +250,26 @@ export async function replayWalEntries(
           continue;
         }
 
-        // Idempotent replay: if a matching replacement fact exists, ensure vector and link it.
+        // Idempotent replay: if the exact intended replacement already exists, ensure vector metadata.
         const existingId = findExistingFactIdForWal(factsDb, text, source);
         if (existingId && existingId !== targetId) {
-          factsDb.supersede(targetId, existingId);
-          await ensureVectorAndEmbeddingMeta({
-            factId: existingId,
-            text,
-            category,
-            importance,
-            vector: precomputedVector,
-            vectorDb,
-            embeddings,
-            factsDb,
-          });
-          skipped++;
-          await wal.remove(entry.id);
-          continue;
+          const existing = factsDb.getById(existingId);
+          if (existing?.supersedesId === targetId) {
+            factsDb.supersede(targetId, existingId);
+            await ensureVectorAndEmbeddingMeta({
+              factId: existingId,
+              text,
+              category,
+              importance,
+              vector: precomputedVector,
+              vectorDb,
+              embeddings,
+              factsDb,
+            });
+            skipped++;
+            await wal.remove(entry.id);
+            continue;
+          }
         }
 
         if (factsDb.hasDuplicate(text)) {
@@ -315,6 +318,10 @@ export async function replayWalEntries(
         });
 
         committed++;
+        await wal.remove(entry.id);
+      } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
+        // Empty or whitespace-only text cannot ever be replayed into FactsDB.
+        skipped++;
         await wal.remove(entry.id);
       } else if (entry.operation === "update") {
         // Legacy UPDATE lines without targetId cannot be replayed safely.
