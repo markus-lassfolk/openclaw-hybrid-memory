@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { createSessionState, resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
+import { SessionSeenFacts } from "../services/ambient-retrieval.js";
 
 describe("session-state", () => {
   describe("resolveSessionKeyFromHookEvent", () => {
@@ -197,7 +198,7 @@ describe("session-state", () => {
       it("should clear all state for a session", () => {
         // Populate state
         state.sessionStartSeen.add("session-1");
-        state.ambientSeenFactsMap.set("session-1", new Map());
+        state.ambientSeenFactsMap.set("session-1", new SessionSeenFacts());
         state.ambientLastEmbeddingMap.set("session-1", [1, 2, 3]);
         state.frustrationStateMap.set("session-1", { level: 2, turns: [] });
         state.sessionLastActivity.set("session-1", Date.now());
@@ -254,7 +255,7 @@ describe("session-state", () => {
       it("should prune ambient seen facts when exceeding limit", () => {
         // Add more than MAX_TRACKED_SESSIONS
         for (let i = 0; i < 250; i++) {
-          state.ambientSeenFactsMap.set(`session-${i}`, new Map());
+          state.ambientSeenFactsMap.set(`session-${i}`, new SessionSeenFacts());
         }
 
         state.pruneSessionMaps();
@@ -265,7 +266,7 @@ describe("session-state", () => {
       it("should prune ambient embeddings when exceeding limit", () => {
         // Add more than MAX_TRACKED_SESSIONS
         for (let i = 0; i < 250; i++) {
-          state.ambientSeenFactsMap.set(`session-${i}`, new Map());
+          state.ambientSeenFactsMap.set(`session-${i}`, new SessionSeenFacts());
           state.ambientLastEmbeddingMap.set(`session-${i}`, [1, 2, 3]);
         }
 
@@ -319,7 +320,7 @@ describe("session-state", () => {
       it("should not prune when below limit", () => {
         // Add less than MAX_TRACKED_SESSIONS
         for (let i = 0; i < 50; i++) {
-          state.ambientSeenFactsMap.set(`session-${i}`, new Map());
+          state.ambientSeenFactsMap.set(`session-${i}`, new SessionSeenFacts());
         }
 
         state.pruneSessionMaps();
@@ -351,14 +352,14 @@ describe("session-state", () => {
       it("should clear all maps and sets", () => {
         // Populate all collections
         state.sessionStartSeen.add("session-1");
-        state.ambientSeenFactsMap.set("session-1", new Map());
+        state.ambientSeenFactsMap.set("session-1", new SessionSeenFacts());
         state.ambientLastEmbeddingMap.set("session-1", [1, 2, 3]);
         state.frustrationStateMap.set("session-1", { level: 1, turns: [] });
         state.authFailureRecallsThisSession.set("key-1", 1);
         state.sessionLastActivity.set("session-1", Date.now());
 
         // Clear all
-        state.clearAll();
+        state.clearAll?.();
 
         // Verify all cleared
         expect(state.sessionStartSeen.size).toBe(0);
@@ -370,7 +371,7 @@ describe("session-state", () => {
       });
 
       it("should handle already empty collections", () => {
-        expect(() => state.clearAll()).not.toThrow();
+        expect(() => state.clearAll?.()).not.toThrow();
       });
     });
 

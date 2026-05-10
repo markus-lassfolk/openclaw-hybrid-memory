@@ -168,7 +168,7 @@ describe("llm-selection", () => {
     it("should handle empty array in config", () => {
       const config: HybridMemoryConfig = {
         llm: {
-          nano: [],
+          nano: [] as string[],
         },
       } as HybridMemoryConfig;
 
