@@ -303,6 +303,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         continue;
       }
 
+      // Bug #1 & #2 fix: Read goal at start of each iteration to avoid stale state
       let g = await readGoal(goalsDir, goal.id);
       if (!g) {
         recordOutcome("blocked", "Goal state could not be loaded for stewardship processing.");
@@ -386,16 +387,15 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
               sessionKey: lt.sessionKey,
               runId: lt.runId ?? null,
             });
+            // Bug #2 fix: Don't reread here, just continue to next goal
             shouldContinueToNextGoal = true;
-            const reread = await readGoal(goalsDir, goal.id);
-            if (!reread) break;
-            g = reread;
             break;
           }
         }
       }
       if (shouldContinueToNextGoal) continue;
 
+      // Bug #1 fix: Reread goal after all task updates to get fresh state
       const reread2 = await readGoal(goalsDir, goal.id);
       if (!reread2) {
         recordOutcome("blocked", "Goal state disappeared during stewardship processing.");
