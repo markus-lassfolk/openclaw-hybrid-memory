@@ -296,7 +296,7 @@ function resolveWorkspaceRoot(override?: string): string {
 }
 
 function scheduleToCronExpr(resumeAt: Date): string {
-  return `${resumeAt.getUTCMinutes()} ${resumeAt.getUTCHours()} ${resumeAt.getUTCDate()} ${resumeAt.getUTCMonth() + 1} *`;
+  return `${resumeAt.getUTCMinutes()} ${resumeAt.getUTCHours()} ${resumeAt.getUTCDate()} ${resumeAt.getUTCMonth() + 1} * ${resumeAt.getUTCFullYear()}`;
 }
 
 function resolveCronModel(cfg: HybridMemoryConfig): string {
