@@ -259,6 +259,22 @@ describe("FactsDB.list / listForDashboard filter allowlist", () => {
     expect(r.facts).toEqual([]);
     expect(r.total).toBe(0);
   });
+
+  it("listForDashboard entity filter is case-insensitive", () => {
+    const stored = db.store({
+      text: "User profile fact",
+      category: "fact",
+      importance: 0.8,
+      entity: "Alice",
+      key: "role",
+      value: "admin",
+      source: "test",
+    });
+
+    const r = db.listForDashboard({ limit: 10, offset: 0, entity: "alice" });
+    expect(r.total).toBe(1);
+    expect(r.facts[0]?.id).toBe(stored.id);
+  });
 });
 
 // ---------------------------------------------------------------------------

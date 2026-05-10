@@ -423,7 +423,8 @@ export function listForDashboard(
     params.push(opts.decayClass);
   }
   if (opts.entity) {
-    where += " AND entity = ?";
+    // Keep dashboard entity filters aligned with `list(...)` semantics.
+    where += " AND lower(entity) = lower(?)";
     params.push(opts.entity);
   }
 
