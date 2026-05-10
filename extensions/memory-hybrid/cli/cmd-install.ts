@@ -16,6 +16,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
@@ -1454,7 +1455,12 @@ function isPlaceholderSecret(value: unknown): boolean {
   const lower = trimmed.toLowerCase();
   return (
     lower === "your_openai_api_key" ||
-    lower === "<openai_api_key>"
+    lower === "<openai_api_key>" ||
+    lower === "your_api_key_here" ||
+    lower === "<your_key_here>" ||
+    lower === "<your_api_key_here>" ||
+    /^sk-\.\.\.$/.test(lower) ||
+    (/key/.test(lower) && /(your|placeholder|example|replace)/.test(lower))
   );
 }
 
@@ -1497,9 +1503,10 @@ export function detectRecommendedEmbeddingSetup(
     };
   }
 
+  const openclawExtensionsDir = join(expandTilde(getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw")), "extensions");
   const onnxInstalled =
     existsSync(join(pluginRootDir, "node_modules", "onnxruntime-node")) ||
-    existsSync(join(homedir(), ".openclaw", "extensions", "node_modules", "onnxruntime-node"));
+    existsSync(join(openclawExtensionsDir, "node_modules", "onnxruntime-node"));
   if (onnxInstalled) {
     return {
       provider: "onnx",
@@ -1509,11 +1516,15 @@ export function detectRecommendedEmbeddingSetup(
     };
   }
 
-  if (existsSync(join(homedir(), ".ollama")) || readString(process.env.OLLAMA_HOST)) {
+  const ollamaInstalled =
+    existsSync(join(homedir(), ".ollama")) ||
+    readString(process.env.OLLAMA_HOST) !== undefined ||
+    spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+  if (ollamaInstalled) {
     return {
       provider: "ollama",
       model: "nomic-embed-text",
-      source: readString(process.env.OLLAMA_HOST) ? "OLLAMA_HOST" : "~/.ollama",
+      source: readString(process.env.OLLAMA_HOST) ? "OLLAMA_HOST" : existsSync(join(homedir(), ".ollama")) ? "~/.ollama" : "ollama --version",
       reason: "Detected a local Ollama installation or endpoint hint.",
     };
   }

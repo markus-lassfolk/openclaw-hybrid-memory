@@ -53,8 +53,11 @@ const WORKSPACE_FILE_TEMPLATES: ReadonlyArray<{ relativePath: string; body: stri
 ];
 
 function ensureDirectory(path: string, dryRun: boolean): BootstrapEntryResult {
-  const created = !existsSync(path);
-  if (created && !dryRun) mkdirSync(path, { recursive: true });
+  let created = !existsSync(path);
+  if (!dryRun) {
+    const createdPath = mkdirSync(path, { recursive: true });
+    created = typeof createdPath === "string";
+  }
   return { path, created, kind: "directory" };
 }
 

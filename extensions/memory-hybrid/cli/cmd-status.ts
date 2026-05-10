@@ -79,7 +79,7 @@ export async function runStatusForCli(ctx: StatusContext, opts?: { format?: "tex
 
 export function registerStatusCommands(mem: Chainable, ctx: StatusContext): void {
   const command = mem.command("status").description("Unified health home: memory, jobs, audit, and dashboard link");
-  command.alias?.("home");
+  if (command.alias) command.alias("home");
   command.option("--json", "Output the full status payload as JSON").action(
     withExit(async (opts?: { json?: boolean }) => {
       try {
@@ -95,7 +95,7 @@ export function registerStatusCommands(mem: Chainable, ctx: StatusContext): void
   );
 
   const dashboard = mem.command("dashboard").description("Print the Mission Control dashboard URL");
-  dashboard.alias?.("mission-control");
+  if (dashboard.alias) dashboard.alias("mission-control");
   dashboard.action(
     withExit(async () => {
       const url = getDashboardUrl({

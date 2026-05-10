@@ -273,7 +273,7 @@ describe("ensureWorkspaceBootstrap", () => {
     const result = ensureWorkspaceBootstrap({ workspaceRoot: tmp, dryRun: true });
     expect(result.directories.some((entry) => entry.created)).toBe(true);
     expect(result.files.some((entry) => entry.created)).toBe(true);
-    expect(() => readFileSync(join(tmp, "AGENTS.md"), "utf-8")).toThrow();
+    expect(() => readFileSync(join(tmp, "AGENTS.md"), "utf-8")).toThrow(/ENOENT|no such file or directory/i);
   });
 });
 
