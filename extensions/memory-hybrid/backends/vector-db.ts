@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
@@ -14,15 +15,15 @@ import {
   LANCE_NO_VECTOR_COL_MSG,
   LANCE_VECTOR_SEARCH_MAX_LIMIT,
   UUID_REGEX,
-  VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS,
-  VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS,
-  VECTORDB_WRITE_CONFLICT_MAX_RETRIES,
   VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
   VECTORDB_INIT_TIMEOUT_MS,
   VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
   VECTORDB_READER_DRAIN_TIMEOUT_MS,
+  VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS,
+  VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS,
+  VECTORDB_WRITE_CONFLICT_MAX_RETRIES,
 } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withTimeout } from "../utils/timeout.js";
@@ -118,6 +119,12 @@ export class VectorDB {
   private closeGeneration = 0;
   /** When true, LanceDB failed to open; vector ops no-op / empty (issue #906 FTS-only degradation). */
   private lanceInitFailed = false;
+  /** Operator-visible degraded-mode state. */
+  private degradedState: { active: boolean; reason: string | null; sinceEpochMs: number | null } = {
+    active: false,
+    reason: null,
+    sinceEpochMs: null,
+  };
   /**
    * When true, this VectorDB is a long-lived singleton connection (set via setPersistent()).
    * removeSession() becomes a safe no-op when persistent — the connection is only closed
@@ -141,6 +148,7 @@ export class VectorDB {
    */
   private static _activeReadersByPath = new Map<string, number>();
   private static _optimizeExclusiveLockByPath = new Map<string, boolean>();
+  private static _reindexExclusiveLockByPath = new Map<string, number>();
 
   constructor(
     private readonly dbPath: string,
@@ -155,6 +163,55 @@ export class VectorDB {
   private logWarn(msg: string): void {
     if (this.logger) this.logger.warn(msg);
     else pluginLogger.warn(msg);
+  }
+
+  private setDegradedState(reason: string): void {
+    if (!this.degradedState.active || this.degradedState.reason !== reason) {
+      this.logWarn(
+        `memory-hybrid: VectorDB degraded mode entered (reason=${reason}). ` +
+          "Vector operations will fall back to safe no-op/empty defaults until recovery.",
+      );
+    }
+    this.degradedState = {
+      active: true,
+      reason,
+      sinceEpochMs: this.degradedState.active ? this.degradedState.sinceEpochMs : Date.now(),
+    };
+  }
+
+  private clearDegradedState(reason = "recovered"): void {
+    if (this.degradedState.active) {
+      this.logWarn(`memory-hybrid: VectorDB degraded mode exited (${reason}).`);
+    }
+    this.degradedState = { active: false, reason: null, sinceEpochMs: null };
+  }
+
+  private async waitForReindexLockRelease(maxWaitMs = 30_000): Promise<void> {
+    const started = Date.now();
+    while ((VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 0) > 0) {
+      if (Date.now() - started > maxWaitMs) {
+        throw new Error(
+          `VectorDB operation blocked by active re-index lock for >${maxWaitMs}ms. Retry after re-index completes.`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  async runWithReindexLock<T>(fn: () => Promise<T>): Promise<T> {
+    const current = VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 0;
+    VectorDB._reindexExclusiveLockByPath.set(this.dbPath, current + 1);
+    try {
+      return await fn();
+    } finally {
+      const next = (VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 1) - 1;
+      if (next <= 0) VectorDB._reindexExclusiveLockByPath.delete(this.dbPath);
+      else VectorDB._reindexExclusiveLockByPath.set(this.dbPath, next);
+    }
+  }
+
+  private async renamePath(fromPath: string, toPath: string): Promise<void> {
+    await rename(fromPath, toPath);
   }
 
   /**
@@ -247,6 +304,7 @@ export class VectorDB {
       // (e.g., plugin reload). Clear both degraded-mode signals so doInitialize() can retry.
       this.lanceDbAvailable = true;
       this.lanceInitFailed = false;
+      this.clearDegradedState("reconnect-attempt");
       this.table = null;
       // Close any connection that may have been set by a concurrent in-flight doInitialize()
       // that completed after close() ran, to avoid leaking the underlying file handle.
@@ -307,6 +365,7 @@ export class VectorDB {
       this.initPromise = null;
       this.lanceDbAvailable = false;
       this.lanceInitFailed = !isTimeout;
+      this.setDegradedState(isTimeout ? "initialization_timeout" : "initialization_failed");
       this.schemaValid = false;
       this.table = null;
       this.semanticQueryCacheTable = null;
@@ -333,6 +392,7 @@ export class VectorDB {
     };
     this.lanceInitFailed = false;
     this.lanceDbAvailable = true;
+    this.clearDegradedState("init-start");
     // Reset schema validity on each (re-)init so a fixed table is detected correctly.
     this.schemaValid = true;
     this.semanticQueryCacheSchemaValid = true;
@@ -354,6 +414,7 @@ export class VectorDB {
       this.lanceDbAvailable = false;
       this.lanceInitFailed = true;
       this.schemaValid = false;
+      this.setDegradedState("lancedb_connect_failed");
       this.logWarn(
         `memory-hybrid: ⚠️  LanceDB unavailable — entering FTS5-only fallback mode. Vector search and storage are disabled. Error: ${connectErr instanceof Error ? connectErr.message : String(connectErr)}`,
       );
@@ -405,6 +466,7 @@ export class VectorDB {
     await this.ensureSemanticQueryCacheTable();
     // Log successful reconnect completion for operational visibility (#1212)
     this.logWarn("memory-hybrid: VectorDB reconnect completed successfully");
+    this.clearDegradedState("init-success");
   }
 
   private async ensureSemanticQueryCacheTable(): Promise<void> {
@@ -849,44 +911,40 @@ export class VectorDB {
     this.db = null;
     this.table = null;
     this.semanticQueryCacheTable = null;
-    this.shadowTableCache.clear();
 
     // Rename main → old (if main exists)
-    let mainWasRenamed = false;
+    let movedMainToOld = false;
     if (existsSync(mainTableDir)) {
       try {
         rmSync(oldTableDir, { recursive: true, force: true }); // Clean up any stale old table
       } catch {
         // ignore
       }
-      await import("node:fs/promises").then((fs) => fs.rename(mainTableDir, oldTableDir));
-      mainWasRenamed = true;
+      await this.renamePath(mainTableDir, oldTableDir);
+      movedMainToOld = true;
     }
 
-    // Rename shadow → main
+    // Rename shadow → main (with explicit rollback on failure)
     try {
-      await import("node:fs/promises").then((fs) => fs.rename(shadowTableDir, mainTableDir));
+      await this.renamePath(shadowTableDir, mainTableDir);
     } catch (swapErr) {
-      // Rollback: restore old → main so the database is not left in a broken state.
-      // Only attempt rollback when: (a) we actually renamed main→old, (b) the old
-      // backup still exists, (c) the main directory is still absent (swap did not
-      // partially succeed), AND (d) the shadow source still exists (nothing was moved
-      // out from under us in an unexpected partial-success scenario).
-      if (mainWasRenamed && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
+      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
         try {
-          await import("node:fs/promises").then((fs) => fs.rename(oldTableDir, mainTableDir));
+          await this.renamePath(oldTableDir, mainTableDir);
           this.logWarn(
             `memory-hybrid: shadow swap failed — successfully rolled back main table from backup. Error: ${swapErr}`,
           );
         } catch (rollbackErr) {
-          // Both the swap and the rollback failed.  The main table directory is gone and
-          // must be recovered manually (old data is still at oldTableDir).
-          this.logWarn(
+          const rollbackMessage =
             `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state!` +
-              ` Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'.` +
-              ` SwapError: ${swapErr}. RollbackError: ${rollbackErr}`,
-          );
+            ` Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'.` +
+            ` SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
+          this.logWarn(rollbackMessage);
+          throw new Error(rollbackMessage);
         }
+      }
+      if (existsSync(shadowTableDir)) {
+        this.logWarn(`memory-hybrid: shadow swap failed; shadow table preserved for inspection: ${shadowTableName}`);
       }
       throw swapErr;
     }
@@ -1240,6 +1298,7 @@ export class VectorDB {
   }): Promise<string> {
     try {
       if (!this.lanceDbAvailable) return entry.id ?? randomUUID();
+      await this.waitForReindexLockRelease();
       await this.ensureInitialized();
       // LanceDB unavailable (FTS5-only fallback mode): return canonical id without storing vectors.
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
@@ -1332,6 +1391,7 @@ export class VectorDB {
     olderThanMs: number = 7 * 24 * 60 * 60 * 1000,
   ): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
     if (!this.lanceDbAvailable) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
+    await this.waitForReindexLockRelease();
     await this.ensureInitialized();
     if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
       return { compacted: 0, removedFragments: 0, freedBytes: 0 };
@@ -1825,6 +1885,7 @@ export class VectorDB {
     this.closeGeneration++;
     this.lanceInitFailed = false;
     this.lanceDbAvailable = true;
+    this.clearDegradedState("closed");
     this.table = null;
     this.semanticQueryCacheTable = null;
     this.shadowTableCache.clear();
@@ -1890,5 +1951,9 @@ export class VectorDB {
    */
   isLanceDbAvailable(): boolean {
     return this.lanceDbAvailable;
+  }
+
+  getDegradedState(): { active: boolean; reason: string | null; sinceEpochMs: number | null } {
+    return { ...this.degradedState };
   }
 }

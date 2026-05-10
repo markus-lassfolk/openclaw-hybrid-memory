@@ -116,6 +116,10 @@ export type DedupeCandidate = {
    */
   scope?: "global" | "user" | "agent" | "session";
   scopeTarget?: string | null;
+  category?: string | null;
+  entity?: string | null;
+  key?: string | null;
+  value?: string | null;
 };
 
 export type ApplyDedupeContext = {
@@ -190,6 +194,52 @@ export function applyDedupe(
   const candidateScope = candidate.scope ?? "global";
   const candidateScopeTarget = candidateScope === "global" ? null : (candidate.scopeTarget ?? null);
   const isGlobal = candidateScope === "global";
+
+  // Issue #1276: project-task facts rely on explicit keys (title/status/next/...)
+  // for ACTIVE-TASKS projection. For category=project with entity+key, treat
+  // (category, entity, key) as the identity boundary and only dedupe on the same
+  // key/value pair, not semantic/text similarity across different keys.
+  const category = candidate.category?.trim().toLowerCase();
+  const entity = candidate.entity?.trim();
+  const key = candidate.key?.trim();
+  if (category === "project" && entity && key) {
+    let existing: { id: string } | undefined;
+    if (candidate.value != null) {
+      if (isGlobal) {
+        existing = ctx.db
+          .prepare(
+            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND source = ? AND superseded_at IS NULL AND scope = 'global' LIMIT 1",
+          )
+          .get(entity, key, candidate.value, candidate.source) as { id: string } | undefined;
+      } else {
+        existing = ctx.db
+          .prepare(
+            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND source = ? AND superseded_at IS NULL AND scope = ? AND scope_target = ? LIMIT 1",
+          )
+          .get(entity, key, candidate.value, candidate.source, candidateScope, candidateScopeTarget) as
+          | { id: string }
+          | undefined;
+      }
+    } else if (isGlobal) {
+      existing = ctx.db
+        .prepare(
+          "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND source = ? AND superseded_at IS NULL AND scope = 'global' LIMIT 1",
+        )
+        .get(entity, key, candidate.text, candidate.source) as { id: string } | undefined;
+    } else {
+      existing = ctx.db
+        .prepare(
+          "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND source = ? AND superseded_at IS NULL AND scope = ? AND scope_target = ? LIMIT 1",
+        )
+        .get(entity, key, candidate.text, candidate.source, candidateScope, candidateScopeTarget) as
+        | { id: string }
+        | undefined;
+    }
+    if (existing) {
+      return mapOnDuplicate(profile, existing.id, "exact");
+    }
+    return { action: "store" };
+  }
 
   let exact: { id: string } | undefined;
   if (isGlobal) {

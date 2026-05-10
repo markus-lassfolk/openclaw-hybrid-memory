@@ -14,7 +14,7 @@ import type OpenAI from "openai";
 import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryCategory } from "../types/memory.js";
+import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -27,6 +27,7 @@ import {
   runReflection,
   runReflectionRules,
 } from "./reflection.js";
+import { deleteVectorsForFactIds } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -404,7 +405,7 @@ export async function runEpisodicConsolidation(
     // the fact row instead of creating one DERIVED_FROM graph edge per event.
     // Historical DERIVED_FROM rows are left untouched by this forward migration;
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
-    let consolidatedFact;
+    let consolidatedFact: MemoryEntry | null = null;
     try {
       const storeResult = factsDb.storeWithResult({
         text: mergedText.slice(0, 500),
@@ -477,7 +478,7 @@ export async function runEpisodicConsolidation(
         subsystem: "event-log",
       });
       try {
-        factsDb.delete(consolidatedFact.id);
+        if (consolidatedFact) factsDb.delete(consolidatedFact.id);
       } catch (cleanupErr) {
         logger.warn(
           `memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`,
@@ -568,8 +569,18 @@ export async function runDreamCycle(
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
     try {
+      const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
       factsPruned = factsDb.pruneExpired();
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
+        operation: "dream-cycle-prune-expired",
+        logger,
+      });
       logger.info(`memory-hybrid: dream-cycle — pruned ${factsPruned} expired facts`);
+      if (vectorCleanup.failed > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — expired vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — pruneExpired failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -580,8 +591,18 @@ export async function runDreamCycle(
   }
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
     try {
+      const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
       factsDecayed = factsDb.decayConfidence();
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, lowConfidenceIds, {
+        operation: "dream-cycle-decay",
+        logger,
+      });
       logger.info(`memory-hybrid: dream-cycle — decayed ${factsDecayed} facts`);
+      if (vectorCleanup.failed > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — decay vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — decayConfidence failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

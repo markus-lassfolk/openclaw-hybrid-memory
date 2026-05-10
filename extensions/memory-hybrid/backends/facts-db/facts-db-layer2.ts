@@ -11,6 +11,7 @@ import {
   getBatch as getBatchImpl,
   getByCategory as getByCategoryImpl,
   getCount as getCountImpl,
+  getMaxCreatedAtByCategory as getMaxCreatedAtByCategoryImpl,
   getRecentFacts as getRecentFactsImpl,
   getUnattemptedOtherFacts as getUnattemptedOtherFactsImpl,
   listDirectives as listDirectivesImpl,
@@ -29,7 +30,9 @@ import {
   decayConfidence as decayConfidenceImpl,
   promoteScope as promoteScopeImpl,
   listExpiredFactIdsPendingPrune as listExpiredFactIdsPendingPruneImpl,
+  listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
   pruneExpired as pruneExpiredImpl,
+  listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
   pruneSessionScope as pruneSessionScopeImpl,
   restoreCheckpoint as restoreCheckpointImpl,
   saveCheckpoint as saveCheckpointImpl,
@@ -165,8 +168,18 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return listExpiredFactIdsPendingPruneImpl(this.liveDb);
   }
 
+  /** Fact ids that `decayConfidence()` would delete (same filter as the DELETE). */
+  listLowConfidenceFactIdsPendingPrune(): string[] {
+    return listLowConfidenceFactIdsPendingPruneImpl(this.liveDb);
+  }
+
   pruneExpired(): number {
     return pruneExpiredImpl(this.liveDb);
+  }
+
+  /** Session-scoped fact ids that `pruneSessionScope(sessionId)` would delete. */
+  listSessionFactIdsPendingPrune(sessionId: string): string[] {
+    return listSessionFactIdsPendingPruneImpl(this.liveDb, sessionId);
   }
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
@@ -448,6 +461,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** List directive facts (source LIKE 'directive:%'), non-superseded, by created_at DESC. */
   listDirectives(limit = 100): MemoryEntry[] {
     return listDirectivesImpl(this.liveDb, limit);
+  }
+
+  /** Get maximum created_at timestamp for non-superseded facts in a category. */
+  getMaxCreatedAtByCategory(category: string): number | null {
+    return getMaxCreatedAtByCategoryImpl(this.liveDb, category);
   }
 
   updateCategory(id: string, category: string): boolean {

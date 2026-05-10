@@ -26,6 +26,12 @@ import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
+import {
+  formatPreFinalizationGuardMessage,
+  evaluatePreFinalizationGuard,
+  PreFinalizationGuardBlockingError,
+} from "../services/pre-finalization-guard.js";
+import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
@@ -104,11 +110,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Same typed-hook shape as before_agent_start (#1005).
     api.on("agent_end", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
+      const ev = event as { messages?: unknown[]; success?: boolean };
+
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
         try {
-          const ev = event as { messages?: unknown[]; success?: boolean };
           const messages = ev?.messages ?? [];
           const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
 
@@ -219,6 +226,46 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.info?.(`memory-hybrid: session narrative skipped (LLM unavailable or aborted): ${detail}`);
         } else {
           api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+        }
+      }
+
+      if (ev?.success !== false) {
+        try {
+          const messages = ev?.messages ?? [];
+          let guard = evaluatePreFinalizationGuard(messages, { sessionKey: sessionId });
+          const requiresProjectFacts =
+            guard.reason === "missing_checkpoint_block" || guard.reason === "missing_checkpoint_warn";
+          if (requiresProjectFacts) {
+            const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId });
+          }
+          const guardMessage = formatPreFinalizationGuardMessage(guard);
+          if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {
+            api.logger.info?.(`memory-hybrid: ${guardMessage}`);
+          } else if (guard.action === "warn") {
+            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+          } else if (guard.action === "block") {
+            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+            try {
+              ctx.auditStore?.append({
+                agentId: ctx.currentAgentIdRef.value ?? "unknown",
+                action: "cleanup:pre-finalization-guard-blocked",
+                outcome: "failed",
+                context: {
+                  missingFields: guard.checkpoint.missingFields,
+                  signals: guard.signals,
+                },
+              });
+            } catch (auditErr) {
+              api.logger.debug?.(`memory-hybrid: audit store append failed (non-fatal): ${String(auditErr)}`);
+            }
+            throw new PreFinalizationGuardBlockingError(`memory-hybrid: ${guardMessage}`);
+          }
+        } catch (err) {
+          if (err instanceof PreFinalizationGuardBlockingError) {
+            throw err;
+          }
+          api.logger.debug?.(`memory-hybrid: pre-finalization guard skipped (non-fatal): ${String(err)}`);
         }
       }
     });

@@ -7,14 +7,16 @@
  * naturally float to the top. Default k=60 (standard constant).
  */
 
-import type { ScopeFilter, SearchResult } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 
 /** RRF constant (default 60). Higher k = less penalty for lower ranks. */
 export const RRF_K_DEFAULT = 60;
 
-/** Optional provider for superseded fact texts (e.g. FactsDB). */
-interface SupersededProvider {
-  getSupersededTexts(): Set<string>;
+/** Optional provider for active/superseded state checks (e.g. FactsDB). */
+interface MergeStateProvider {
+  getById?: (id: string) => MemoryEntry | null;
+  /** @deprecated Legacy fallback kept for compatibility with older tests/mocks. */
+  getSupersededTexts?: () => Set<string>;
 }
 
 /** Optional merge options (RRF k constant). */
@@ -55,7 +57,8 @@ export function filterByScope<T extends SearchResult>(
  * 2. Assign 1-based ranks within each list.
  * 3. Deduplicate across backends (ID first, then case-insensitive text). SQLite is processed
  *    first, so SQLite wins when both backends return the same fact.
- * 4. Filter out facts whose text appears in `factsDb.getSupersededTexts()`.
+ * 4. Filter out inactive facts (superseded/expired/missing) by fact ID when `factsDb.getById`
+ *    is available. Legacy fallback: text-based superseded filter for older mocks.
  * 5. For each remaining fact, compute `rrf_score = Σ 1/(k + rank)` over all lists it appears in.
  * 6. Sort by `rrf_score` descending; break ties by recency (sourceDate or createdAt), then
  *    by backend (sqlite > lancedb).
@@ -65,8 +68,8 @@ export function filterByScope<T extends SearchResult>(
  * @param lanceResults  - Results from LanceDB cosine search (pre-filtered by scope via
  *   `filterByScope` before calling this function).
  * @param limit         - Maximum number of results to return.
- * @param factsDb       - Optional provider of superseded fact texts. When provided, any result
- *   whose text (lowercased) is in `getSupersededTexts()` is excluded from the output.
+ * @param factsDb       - Optional provider of fact activity state. When `getById` is present,
+ *   inactive rows are excluded by ID/state. Legacy fallback: text-based superseded filtering.
  * @param options       - Optional RRF tuning: `{ k }` (default `RRF_K_DEFAULT = 60`).
  * @returns Up to `limit` merged results sorted by RRF score descending.
  */
@@ -74,11 +77,30 @@ export function mergeResults(
   sqliteResults: SearchResult[],
   lanceResults: SearchResult[],
   limit: number,
-  factsDb?: SupersededProvider,
+  factsDb?: MergeStateProvider,
   options?: MergeOptions,
 ): SearchResult[] {
   const k = options?.k ?? RRF_K_DEFAULT;
-  const supersededTexts = factsDb ? factsDb.getSupersededTexts() : new Set<string>();
+  const nowSec = Math.floor(Date.now() / 1000);
+  const supersededTexts =
+    factsDb && typeof factsDb.getById !== "function" && typeof factsDb.getSupersededTexts === "function"
+      ? factsDb.getSupersededTexts()
+      : new Set<string>();
+  const entryStateById = new Map<string, MemoryEntry | null>();
+
+  const isInactive = (result: SearchResult): boolean => {
+    if (factsDb && typeof factsDb.getById === "function") {
+      const cached = entryStateById.get(result.entry.id);
+      const entry = cached !== undefined ? cached : factsDb.getById(result.entry.id);
+      if (cached === undefined) entryStateById.set(result.entry.id, entry);
+      if (!entry) return true;
+      if (entry.supersededAt != null) return true;
+      if (entry.expiresAt != null && entry.expiresAt <= nowSec) return true;
+      return false;
+    }
+    const norm = result.entry.text.toLowerCase();
+    return supersededTexts.has(norm);
+  };
 
   // Rank SQLite by BM25 score descending (higher = rank 1)
   const sqliteRanked = [...sqliteResults].sort((a, b) => b.score - a.score);
@@ -107,16 +129,16 @@ export function mergeResults(
   const byText = new Map<string, string>(); // normalized text -> id
 
   for (const r of sqliteResults) {
+    if (isInactive(r)) continue;
     const norm = r.entry.text.toLowerCase();
-    if (supersededTexts.has(norm)) continue;
     if (!byId.has(r.entry.id) && !byText.has(norm)) {
       byId.set(r.entry.id, r);
       byText.set(norm, r.entry.id);
     }
   }
   for (const r of lanceResults) {
+    if (isInactive(r)) continue;
     const norm = r.entry.text.toLowerCase();
-    if (supersededTexts.has(norm)) continue;
     const existingId = byText.get(norm);
     if (existingId) continue; // dedupe by text (case-insensitive)
     if (byId.has(r.entry.id)) continue; // dedupe by id

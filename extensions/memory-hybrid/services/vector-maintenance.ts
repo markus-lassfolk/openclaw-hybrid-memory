@@ -8,9 +8,12 @@ export async function deleteVectorsForFactIds(
     logger?: { warn?: (message: string) => void; info?: (message: string) => void; debug?: (message: string) => void };
   },
 ): Promise<{ attempted: number; deleted: number; failed: number }> {
+  const uniqueIds = [...new Set(factIds.filter((id) => typeof id === "string" && id.length > 0))];
+  if (uniqueIds.length === 0) return { attempted: 0, deleted: 0, failed: 0 };
+
   let deleted = 0;
   let failed = 0;
-  for (const id of factIds) {
+  for (const id of uniqueIds) {
     try {
       if (await vectorDb.delete(id)) deleted++;
     } catch (err) {
@@ -19,7 +22,7 @@ export async function deleteVectorsForFactIds(
       options.logger?.warn?.(`memory-hybrid: ${options.operation} vector delete failed for ${id}: ${error.message}`);
     }
   }
-  return { attempted: factIds.length, deleted, failed };
+  return { attempted: uniqueIds.length, deleted, failed };
 }
 
 export async function cleanupEvictedVector(options: {

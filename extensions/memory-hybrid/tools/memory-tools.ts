@@ -54,6 +54,7 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../services/task-ledger-facts.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
@@ -61,8 +62,10 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { parseDuration } from "../utils/duration.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { getEnv } from "../utils/env-manager.js";
+import { resolveWorkspacePath } from "../utils/path.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 
@@ -299,6 +302,38 @@ export function registerMemoryTools(
       /* non-fatal */
     }
   }
+
+  const activeTaskCfg = cfg.activeTask;
+  const activeTaskProjectionPath = activeTaskCfg ? resolveWorkspacePath(activeTaskCfg.filePath) : null;
+  const activeTaskStaleMinutes = (() => {
+    if (!activeTaskCfg) return parseDuration("24h");
+    try {
+      return parseDuration(activeTaskCfg.staleThreshold);
+    } catch {
+      return parseDuration("24h");
+    }
+  })();
+
+  const maybeRefreshProjectActiveTaskProjection = async (
+    factCategory: string,
+    factId: string,
+    factScope: string | null | undefined,
+  ): Promise<void> => {
+    if (!activeTaskCfg || !activeTaskCfg.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath)
+      return;
+    if (factCategory !== TASK_LEDGER_CATEGORY) return;
+    if ((factScope ?? "global") !== "global") return;
+    await refreshActiveTaskProjectionBestEffort({
+      factsDb,
+      staleMinutes: activeTaskStaleMinutes,
+      filePath: activeTaskProjectionPath,
+      projection: activeTaskCfg.projection,
+      reason: "memory_store_project_fact_write",
+      source: "memory_store",
+      factId,
+      logger: api.logger,
+    });
+  };
 
   api.registerTool(
     {
@@ -1611,17 +1646,17 @@ export function registerMemoryTools(
             }
           };
 
-          if (factsDb.hasDuplicate(textToStore, "conversation")) {
+          const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
+          const entity = paramEntity || extracted.entity;
+          const key = paramKey || extracted.key;
+          const value = paramValue || extracted.value;
+
+          if (factsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {
               content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },
             };
           }
-
-          const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
-          const entity = paramEntity || extracted.entity;
-          const key = paramKey || extracted.key;
-          const value = paramValue || extracted.value;
 
           // FR-006: Compute scope early so it's available for classify-before-write UPDATE path; normal path may overwrite with multiAgent logic below
           let scope: "global" | "user" | "agent" | "session" = paramScope ?? "global";
@@ -1942,6 +1977,7 @@ export function registerMemoryTools(
                   }
 
                   await walRemove(walEntryId, api.logger);
+                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
                   // Issue #159: enqueue contextual variant generation (non-blocking)
                   if (variantQueue) {
@@ -2125,6 +2161,7 @@ export function registerMemoryTools(
           }
 
           await walRemove(walEntryId, api.logger);
+          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
           // Issue #150: write event to episodic event log
           if (eventLog) {
