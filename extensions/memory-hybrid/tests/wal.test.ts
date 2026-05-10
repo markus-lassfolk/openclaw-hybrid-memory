@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // while letting everything else (appendFile, readFile, writeFile, rm) use the
 // real implementation on a temporary directory.
 const fsyncError = vi.hoisted(() => ({ value: null as Error | null }));
+const failNextOpen = vi.hoisted(() => ({ value: null as Error | null }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -11,6 +12,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     open: vi.fn(async (...args: any[]) => {
+      if (failNextOpen.value) {
+        const err = failNextOpen.value;
+        failNextOpen.value = null;
+        throw err;
+      }
       const fh = await actualOpen(...(args as Parameters<typeof actualOpen>));
       // Intercept append-mode opens used by fsyncAfterWrite.
       if (args[1] === "r" || args[1] === "a" || args[1] === "a+") {
@@ -583,6 +589,20 @@ describe("WriteAheadLog", () => {
         data: { text: "Test EINVAL", category: "general", importance: 0.5, source: "test" },
       };
       await expect(wal.write(entry)).resolves.not.toThrow();
+    });
+
+    it("throws when datasync fails and fallback open cannot execute", async () => {
+      const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      const openError = Object.assign(new Error("fallback open rejected"), { code: "EINVAL" });
+      fsyncError.value = epermError;
+      failNextOpen.value = openError;
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Test fallback open failure", category: "general", importance: 0.5, source: "test" },
+      };
+      await expect(wal.write(entry)).rejects.toThrow(/WAL write failed/);
     });
 
     it("re-throws unexpected fsync errors", async () => {

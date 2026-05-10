@@ -121,9 +121,9 @@ describe("runStoreForCli vault write failure", () => {
 
 describe("runStoreForCli pointer write failure with compensating delete", () => {
   it("deletes vault entry when pointer write fails", async () => {
-    // Mock factsDb.store to throw after vault write
-    const originalFactsStore = factsDb.store.bind(factsDb);
-    factsDb.store = vi.fn().mockImplementation(() => {
+    // Mock factsDb.storeWithResult to throw after vault write
+    const originalFactsStore = factsDb.storeWithResult.bind(factsDb);
+    factsDb.storeWithResult = vi.fn().mockImplementation(() => {
       throw new Error("FactsDB storage failed");
     });
 
@@ -146,13 +146,13 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     expect(allFacts.length).toBe(0);
 
     // Restore
-    factsDb.store = originalFactsStore;
+    factsDb.storeWithResult = originalFactsStore;
   });
 
   it("logs warning when compensating delete fails", async () => {
-    // Mock factsDb.store to throw
-    const originalFactsStore = factsDb.store.bind(factsDb);
-    factsDb.store = vi.fn().mockImplementation(() => {
+    // Mock factsDb.storeWithResult to throw
+    const originalFactsStore = factsDb.storeWithResult.bind(factsDb);
+    factsDb.storeWithResult = vi.fn().mockImplementation(() => {
       throw new Error("FactsDB storage failed");
     });
 
@@ -176,7 +176,7 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to clean up orphaned credential"));
 
     // Restore
-    factsDb.store = originalFactsStore;
+    factsDb.storeWithResult = originalFactsStore;
     credentialsDb.delete = originalDelete;
   });
 });
