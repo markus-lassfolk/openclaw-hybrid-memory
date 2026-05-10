@@ -8,7 +8,7 @@ import { DECAY_CLASSES } from "../../config.js";
 import { isValidCategory } from "../../config.js";
 import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stopwords.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { buildFts5Query } from "../../services/fts-search.js";
+import { searchFts } from "../../services/fts-search.js";
 import { parseTags } from "../../utils/tags.js";
 import { estimateTokensForDisplay, truncateText } from "../../utils/text.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
@@ -461,40 +461,52 @@ export function listForDashboard(
   });
 
   if (opts.search?.trim()) {
-    const ftsQuery = buildFts5Query(opts.search.trim());
-    if (!ftsQuery) return { facts: [], total: 0 };
+    const targetWindow = Math.max(1, opts.offset + opts.limit);
+    let searchLimit = Math.max(2000, targetWindow);
+    let allFtsIds: string[] = [];
 
-    const searchWhere = where
-      .replaceAll("superseded_at", "facts.superseded_at")
-      .replaceAll("expires_at", "facts.expires_at")
-      .replaceAll("category", "facts.category")
-      .replaceAll("tier", "facts.tier")
-      .replaceAll("decay_class", "facts.decay_class")
-      .replaceAll("entity", "facts.entity");
-    const searchParams = [ftsQuery, ...params];
+    // Avoid direct facts_fts↔facts JOIN (known node:sqlite performance pathology).
+    // Instead, reuse searchFts' two-phase rowid-first strategy and progressively
+    // expand until the full result-set is collected for accurate `total`.
+    for (;;) {
+      const ftsResults = searchFts(db, opts.search.trim(), { limit: searchLimit, entityFilter: opts.entity });
+      allFtsIds = ftsResults.map((r) => r.factId);
+      if (allFtsIds.length === 0) return { facts: [], total: 0 };
+      if (ftsResults.length < searchLimit) break;
+      searchLimit *= 2;
+    }
 
-    const totalRow = db
+    const CHUNK_SIZE = 500;
+    const filteredIdRows: Array<{ id: string }> = [];
+    for (let i = 0; i < allFtsIds.length; i += CHUNK_SIZE) {
+      const chunk = allFtsIds.slice(i, i + CHUNK_SIZE);
+      const idPlaceholders = chunk.map(() => "?").join(",");
+      const chunkRows = db
+        .prepare(`SELECT id FROM facts WHERE id IN (${idPlaceholders}) AND ${where}`)
+        .all(...chunk, ...params) as Array<{ id: string }>;
+      filteredIdRows.push(...chunkRows);
+    }
+    const filteredSet = new Set(filteredIdRows.map((r) => r.id));
+    const filteredIds = allFtsIds.filter((id) => filteredSet.has(id));
+    const total = filteredIds.length;
+    const pageIds = filteredIds.slice(opts.offset, opts.offset + opts.limit);
+    if (pageIds.length === 0) return { facts: [], total };
+    const placeholders = pageIds.map(() => "?").join(",");
+    const pageRows = db
       .prepare(
-        `SELECT COUNT(*) as cnt FROM facts_fts JOIN facts ON facts.rowid = facts_fts.rowid WHERE facts_fts MATCH ? AND ${searchWhere}`,
+        `SELECT id, text, why, category, importance, entity, key, value, source, tags, COALESCE(tier, 'warm') as tier,
+         COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
+         created_at, recall_count, expires_at, summary, superseded_at, superseded_by, provenance_session, reinforced_count
+         FROM facts WHERE id IN (${placeholders})`,
       )
-      .get(...searchParams) as { cnt?: number } | undefined;
-    const total = totalRow?.cnt ?? 0;
-    if (total === 0) return { facts: [], total: 0 };
-
-    const rows = db
-      .prepare(
-        `SELECT facts.id, facts.text, facts.why, facts.category, facts.importance, facts.entity, facts.key, facts.value, facts.source, facts.tags,
-         COALESCE(facts.tier, 'warm') as tier, COALESCE(facts.decay_class, 'stable') as decay_class, COALESCE(facts.scope, 'global') as scope,
-         facts.confidence, facts.created_at, facts.recall_count, facts.expires_at, facts.summary, facts.superseded_at, facts.superseded_by,
-         facts.provenance_session, facts.reinforced_count
-         FROM facts_fts
-         JOIN facts ON facts.rowid = facts_fts.rowid
-         WHERE facts_fts MATCH ? AND ${searchWhere}
-         ORDER BY rank
-         LIMIT ? OFFSET ?`,
-      )
-      .all(...searchParams, opts.limit, opts.offset) as Array<Record<string, unknown>>;
-    return { facts: rows.map((r) => toDashboardRow(r)), total };
+      .all(...pageIds) as Array<Record<string, unknown>>;
+    const byId = new Map<string, Record<string, unknown>>();
+    for (const r of pageRows) byId.set(r.id as string, r);
+    const facts = pageIds.flatMap((id) => {
+      const r = byId.get(id);
+      return r ? [toDashboardRow(r)] : [];
+    });
+    return { facts, total };
   }
 
   const countRow = db.prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`).get(...params) as {

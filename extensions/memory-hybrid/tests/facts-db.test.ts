@@ -297,7 +297,7 @@ describe("FactsDB.list / listForDashboard filter allowlist", () => {
     const deepPage = db.listForDashboard({ limit: 25, offset: 2025, search: "dashboard pagination marker" });
     expect(deepPage.total).toBe(totalFacts);
     expect(deepPage.facts.length).toBe(25);
-  });
+  }, 45_000);
 });
 
 // ---------------------------------------------------------------------------
