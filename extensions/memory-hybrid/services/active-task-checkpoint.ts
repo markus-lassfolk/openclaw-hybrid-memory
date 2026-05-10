@@ -182,6 +182,12 @@ function normalizeExistingStatus(raw?: string): string | undefined {
   return lower;
 }
 
+const TERMINAL_CHECKPOINT_STATUSES = new Set(["done", "failed", "cancelled", "abandoned", "superseded"]);
+
+function isTerminalCheckpointStatus(status: string): boolean {
+  return TERMINAL_CHECKPOINT_STATUSES.has(status);
+}
+
 function normalizeCheckpointInput(
   input: ActiveTaskCheckpointInput,
   now: Date,
@@ -220,9 +226,8 @@ function normalizeCheckpointInput(
       const parsed = new Date(rawResumeAt);
       if (Number.isNaN(parsed.getTime())) {
         errors.push({ step: "validation", message: "resumeAt must be a valid ISO timestamp" });
-      } else if (parsed.getTime() <= now.getTime()) {
-        errors.push({ step: "validation", message: "resumeAt must be in the future" });
       } else {
+        // Accept past timestamps so missed reminders can be caught up by the cron scanner.
         resumeAtDate = parsed;
         resumeAtIso = parsed.toISOString();
       }
@@ -632,6 +637,7 @@ export async function runActiveTaskCheckpoint(
     "next",
     "related_session",
     "title",
+    "resume_at",
   ]);
   const existingStatus = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status");
   const resolvedStatus = checkpoint.status ?? normalizeExistingStatus(existingStatus) ?? "in_progress";
@@ -639,6 +645,8 @@ export async function runActiveTaskCheckpoint(
   const resolvedNext = checkpoint.next ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "next") ?? "";
   const resolvedRelatedSession =
     checkpoint.relatedSession ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "related_session") ?? "";
+  const existingResumeAt = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "resume_at");
+  const terminalStatus = isTerminalCheckpointStatus(resolvedStatus);
   const taskUpdated = now.toISOString();
   const errors: ActiveTaskCheckpointError[] = [];
   const updatedKeys: string[] = [];
@@ -682,8 +690,12 @@ export async function runActiveTaskCheckpoint(
     updates.push({ key: "checkpoint_state", value: safeJson(checkpoint.state) });
   }
 
-  if (checkpoint.resumeAtIso) {
-    updates.push({ key: "resume_at", value: checkpoint.resumeAtIso });
+  const shouldPersistResumeAt = !terminalStatus && !!checkpoint.resumeAtIso;
+  const shouldClearResumeAt = !checkpoint.resumeAtIso || terminalStatus;
+  if (shouldPersistResumeAt) {
+    updates.push({ key: "resume_at", value: checkpoint.resumeAtIso as string });
+  } else if (shouldClearResumeAt && existingResumeAt !== undefined) {
+    updates.push({ key: "resume_at", value: "" });
   }
 
   primeLatestProjectFactCacheForEntityKeys(
@@ -762,7 +774,7 @@ export async function runActiveTaskCheckpoint(
 
   if (failedKeys.length > 0) {
     wakeSkippedReason = "facts_write_failed";
-  } else if (checkpoint.resumeAtIso && checkpoint.resumeAtDate && checkpoint.scheduleWake) {
+  } else if (checkpoint.resumeAtIso && checkpoint.resumeAtDate && checkpoint.scheduleWake && !terminalStatus) {
     wakeAttempted = true;
     try {
       const scheduleWake = deps.scheduleWakeFn ?? scheduleActiveTaskWakeReminder;
@@ -785,7 +797,11 @@ export async function runActiveTaskCheckpoint(
       errors.push(stepError("schedule", err));
     }
   } else {
-    wakeSkippedReason = checkpoint.resumeAtIso ? "schedule_wake_disabled" : "resumeAt_not_provided";
+    wakeSkippedReason = terminalStatus
+      ? "terminal_status_no_wake"
+      : checkpoint.resumeAtIso
+        ? "schedule_wake_disabled"
+        : "resumeAt_not_provided";
     try {
       const cleanup = disableActiveTaskWakeJobsForEntity(checkpoint.entity, deps.openclawDir);
       wakeJobsPath = cleanup.jobsPath;
