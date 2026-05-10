@@ -1843,7 +1843,9 @@ export async function runVerifyForCli(
                 );
               }
             } else if (opts.fix && sqliteOrphanRebuildBudget === 0) {
-              log(`  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`);
+              log(
+                `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,
+              );
             } else {
               log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
             }

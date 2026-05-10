@@ -82,9 +82,9 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
       vectorlessRatio: expect.any(Number),
       orphanSignals: expect.any(Object),
     });
-    expect(report.vectorIntegrity.degradedReason === null || typeof report.vectorIntegrity.degradedReason === "string").toBe(
-      true,
-    );
+    expect(
+      report.vectorIntegrity.degradedReason === null || typeof report.vectorIntegrity.degradedReason === "string",
+    ).toBe(true);
     expect(report.vectorLifecycleSlo).toMatchObject({
       targets: expect.any(Object),
       breaches: expect.any(Array),
