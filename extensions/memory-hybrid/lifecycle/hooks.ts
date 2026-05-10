@@ -26,6 +26,8 @@ import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
+import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
+import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
@@ -104,11 +106,41 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Same typed-hook shape as before_agent_start (#1005).
     api.on("agent_end", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
+      const ev = event as { messages?: unknown[]; success?: boolean };
+
+      if (ev?.success !== false) {
+        try {
+          const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+          const guard = evaluatePreFinalizationGuard(ev?.messages ?? [], { projectFacts });
+          const guardMessage = formatPreFinalizationGuardMessage(guard);
+          if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {
+            api.logger.info?.(`memory-hybrid: ${guardMessage}`);
+          } else if (guard.action === "warn") {
+            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+          } else if (guard.action === "block") {
+            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+            ctx.auditStore?.append({
+              agentId: ctx.currentAgentIdRef.value ?? "unknown",
+              action: "cleanup:pre-finalization-guard-blocked",
+              details: {
+                missingFields: guard.checkpoint.missingFields,
+                signals: guard.signals,
+              },
+            });
+            throw new Error(`memory-hybrid: ${guardMessage}`);
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message.startsWith("memory-hybrid: pre-finalization guard: blocking")) {
+            throw err;
+          }
+          api.logger.debug?.(`memory-hybrid: pre-finalization guard skipped (non-fatal): ${String(err)}`);
+        }
+      }
+
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
         try {
-          const ev = event as { messages?: unknown[]; success?: boolean };
           const messages = ev?.messages ?? [];
           const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
 
