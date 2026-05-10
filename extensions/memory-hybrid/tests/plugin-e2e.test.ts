@@ -13,9 +13,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IssueStore } from "../backends/issue-store.js";
-import { hybridConfigSchema } from "../config.js";
+import { type ActiveTaskProjectionConfig, hybridConfigSchema } from "../config.js";
 import memoryHybridPlugin from "../index.js";
 import { _testing } from "../index.js";
+import { applyActiveTaskProjectionFilters, loadTaskLedgerFromFacts } from "../services/task-ledger-facts.js";
 import { closeOldDatabases, initializeDatabases } from "../setup/init-databases.js";
 import { registerTools } from "../setup/register-tools.js";
 
@@ -593,6 +594,83 @@ describe("Core and common flows e2e", () => {
     };
     expect(secondResult.details?.action).toBe("duplicate");
     expect(secondResult.content?.[0]?.text?.toLowerCase()).toMatch(/similar|already exists|duplicate/);
+  });
+
+  it("memory_store keeps project title writes key-aware for facts projection (Issue #1276)", async () => {
+    factsDb.close();
+    const cfgDedup = getMinimalConfig({
+      sqlitePath: join(tmpDir, "facts.db"),
+      lanceDbPath: join(tmpDir, "lancedb"),
+      store: { fuzzyDedupe: true, classifyBeforeWrite: false },
+    });
+    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: true });
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg: cfgDedup, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const entity = "stewardship-reliability-reset";
+    const title = "Stewardship reliability reset and hardening";
+    const projection: ActiveTaskProjectionConfig = {
+      mode: "readable",
+      excludeGenericTitle: true,
+      titleMinChars: 0,
+      dedupeBy: "none",
+      sectioned: true,
+    };
+
+    await storeTool?.execute("call-1", {
+      text: "Task status in progress",
+      category: "project",
+      entity,
+      key: "status",
+      value: "in_progress",
+      importance: 0.8,
+    });
+    await storeTool?.execute("call-2", {
+      text: "Next: harden replay and recovery paths",
+      category: "project",
+      entity,
+      key: "next",
+      value: "harden replay and recovery paths",
+      importance: 0.8,
+    });
+    await storeTool?.execute("call-3", {
+      text: title,
+      category: "project",
+      entity,
+      key: "progress",
+      value: title,
+      importance: 0.8,
+    });
+    await storeTool?.execute("call-4", {
+      text: "session-forge-1276",
+      category: "project",
+      entity,
+      key: "related_session",
+      value: "session-forge-1276",
+      importance: 0.8,
+    });
+
+    const beforeTitle = applyActiveTaskProjectionFilters(loadTaskLedgerFromFacts(factsDb).active, projection);
+    expect(beforeTitle).toHaveLength(0);
+
+    const titleResult = (await storeTool?.execute("call-5", {
+      text: title,
+      category: "project",
+      entity,
+      key: "title",
+      value: title,
+      importance: 0.8,
+    })) as {
+      details?: { action?: string; id?: string };
+    };
+
+    expect(titleResult.details?.action).not.toBe("duplicate");
+    expect(titleResult.details?.id).toBeDefined();
+
+    const afterTitle = applyActiveTaskProjectionFilters(loadTaskLedgerFromFacts(factsDb).active, projection);
+    expect(afterTitle).toHaveLength(1);
+    expect(afterTitle[0].label).toBe(entity);
+    expect(afterTitle[0].description).toBe(title);
   });
 });
 
