@@ -1,0 +1,72 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+let renameCalls = 0;
+let injectSecondRenameFailure = false;
+vi.mock("node:fs/promises", async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  return {
+    ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      renameCalls++;
+      if (injectSecondRenameFailure && renameCalls === 2) {
+        throw new Error("injected failure on shadow->main rename");
+      }
+      return actual.rename(...args);
+    },
+  };
+});
+
+describe("VectorDB swap rollback", () => {
+  let testDbPath = "";
+
+  afterEach(() => {
+    if (testDbPath && existsSync(testDbPath)) {
+      rmSync(testDbPath, { recursive: true, force: true });
+    }
+    renameCalls = 0;
+    injectSecondRenameFailure = false;
+  });
+
+  it("rolls main table back when shadow->main rename fails", async () => {
+    testDbPath = mkdtempSync(join(tmpdir(), "vectordb-swap-rollback-"));
+    injectSecondRenameFailure = true;
+
+    const { VectorDB } = await import("../backends/vector-db.js");
+    const vectorDb = new VectorDB(testDbPath, 64, false);
+    vectorDb.setLogger({ warn: vi.fn() });
+    await vectorDb.open();
+
+    for (let i = 0; i < 5; i++) {
+      await vectorDb.store({
+        text: `main fact ${i}`,
+        vector: Array(64).fill(i / 64),
+        importance: 0.7,
+        category: "test",
+      });
+    }
+
+    const shadowTable = await vectorDb.createShadowTable();
+    for (let i = 0; i < 7; i++) {
+      await vectorDb.storeToTable(shadowTable, {
+        id: `bbbbbbbb-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`,
+        text: `shadow fact ${i}`,
+        vector: Array(64).fill(i / 64),
+        importance: 0.7,
+        category: "test",
+      });
+    }
+
+    await expect(vectorDb.swapShadowTable(shadowTable, 0.5, 5)).rejects.toThrow(
+      /injected failure on shadow->main rename/,
+    );
+
+    const vectorDbAfter = new VectorDB(testDbPath, 64, false);
+    vectorDbAfter.setLogger({ warn: vi.fn() });
+    await vectorDbAfter.open();
+    expect(await vectorDbAfter.count()).toBe(5);
+    await vectorDbAfter.close();
+  });
+});
