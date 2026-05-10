@@ -11,6 +11,7 @@ import { getEnv } from "../utils/env-manager.js";
 import { renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { slugify } from "./credential-scanner.js";
 
 const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
 const ACTIVE_TASK_WAKE_GUARD_YEARS = 10;
@@ -289,7 +290,6 @@ function wakeEntityKey(entity: string): string {
   const digest = createHash("sha1").update(entity).digest("hex").slice(0, 12);
   return `${slug}-${digest}`;
 }
-
 function resolveOpenclawDir(override?: string): string {
   if (override?.trim()) return override.trim();
   const env = getEnv("OPENCLAW_HOME")?.trim();
