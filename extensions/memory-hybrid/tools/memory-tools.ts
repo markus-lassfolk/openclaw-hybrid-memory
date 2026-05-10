@@ -3135,10 +3135,46 @@ export function registerMemoryTools(
         }
 
         let ttlValue: "never" | "event" | number = "never";
-        if (ttl === "event") {
-          ttlValue = "event";
-        } else if (ttl !== undefined && !Number.isNaN(Number(ttl))) {
-          ttlValue = Number(ttl);
+        if (ttl !== undefined) {
+          if (ttl === "never") ttlValue = "never";
+          else if (ttl === "event") ttlValue = "event";
+          else if (!Number.isNaN(Number(ttl))) ttlValue = Number(ttl);
+          else {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Invalid 'ttl' parameter: must be a positive integer number of seconds, 'never', or 'event'.",
+                },
+              ],
+              details: { error: "invalid_ttl" },
+            };
+          }
+        }
+        if (
+          typeof ttlValue === "number" &&
+          (!Number.isFinite(ttlValue) || ttlValue <= 0 || !Number.isInteger(ttlValue))
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Invalid 'ttl' parameter: must be a positive integer number of seconds, 'never', or 'event'.",
+              },
+            ],
+            details: { error: "invalid_ttl" },
+          };
+        }
+        if (ttlValue === "event" && (!expiresAt || !expiresAt.trim())) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Provide the 'expiresAt' parameter (ISO 8601) when ttl='event'.",
+              },
+            ],
+            details: { error: "missing_expiresAt" },
+          };
         }
 
         const edict = edictStore.add({
@@ -3316,9 +3352,45 @@ export function registerMemoryTools(
 
         let ttlValue: "never" | "event" | number | undefined;
         if (ttl !== undefined) {
-          if (ttl === "event") ttlValue = "event";
+          if (ttl === "never") ttlValue = "never";
+          else if (ttl === "event") ttlValue = "event";
           else if (!Number.isNaN(Number(ttl))) ttlValue = Number(ttl);
-          else ttlValue = "never";
+          else {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Invalid 'ttl' parameter: must be a positive integer number of seconds, 'never', or 'event'.",
+                },
+              ],
+              details: { error: "invalid_ttl" },
+            };
+          }
+        }
+        if (
+          typeof ttlValue === "number" &&
+          (!Number.isFinite(ttlValue) || ttlValue <= 0 || !Number.isInteger(ttlValue))
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Invalid 'ttl' parameter: must be a positive integer number of seconds, 'never', or 'event'.",
+              },
+            ],
+            details: { error: "invalid_ttl" },
+          };
+        }
+        if (ttlValue === "event" && (!expiresAt || !expiresAt.trim())) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Provide the 'expiresAt' parameter (ISO 8601) when ttl='event'.",
+              },
+            ],
+            details: { error: "missing_expiresAt" },
+          };
         }
 
         const updated = edictStore.update({
