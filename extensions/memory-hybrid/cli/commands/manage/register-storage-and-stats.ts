@@ -1474,6 +1474,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             console.log(`Re-index: starting non-destructive re-index of ${totalFacts} facts...`);
             if (resumeCheckpoint) {
               console.log(`Re-index: resume enabled — checkpoint offset ${resumeCheckpoint.offset}/${resumeCheckpoint.total}`);
+              if (resumeCheckpoint.total !== totalFacts) {
+                console.warn(
+                  `Re-index: checkpoint total (${resumeCheckpoint.total}) differs from current fact count (${totalFacts}); checkpoint will be ignored for safety.`,
+                );
+              }
             }
             console.log(`Re-index: creating shadow table for safe rebuild...`);
 
@@ -1671,6 +1676,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--json", "Emit JSON report")
     .action(
       withExit(async (opts?: { reconcilePolicy?: string; maxFixes?: string; json?: boolean }) => {
+        const resolveRepairBudget = (policy: "conservative" | "balanced" | "aggressive", maxFixes: number): number => {
+          if (policy === "conservative") return 0;
+          if (policy === "balanced") return maxFixes;
+          return Math.max(maxFixes, 2000);
+        };
         const policyRaw = String(opts?.reconcilePolicy ?? "balanced").trim().toLowerCase();
         const policy = policyRaw === "conservative" || policyRaw === "aggressive" ? policyRaw : "balanced";
         const maxFixes = Math.max(0, Math.min(5000, Number.parseInt(String(opts?.maxFixes ?? "200"), 10) || 200));
@@ -1694,7 +1704,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
         // Step 1: reembed vectorless facts
         const candidates = factsDb.listVectorlessActiveFacts(undefined, Math.max(200, maxFixes));
-        const allowedRebuilds = policy === "conservative" ? 0 : policy === "balanced" ? maxFixes : Math.max(maxFixes, 2000);
+        const allowedRebuilds = resolveRepairBudget(policy, maxFixes);
         for (const fact of candidates.slice(0, allowedRebuilds)) {
           try {
             const vec = await embeddings.embed(fact.text);
@@ -1738,7 +1748,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           }
 
           const rebuildLimit = Math.min(
-            policy === "conservative" ? 0 : policy === "balanced" ? maxFixes : Math.max(maxFixes, 2000),
+            resolveRepairBudget(policy, maxFixes),
             sqliteOrphans.length,
           );
           for (const id of sqliteOrphans.slice(0, rebuildLimit)) {

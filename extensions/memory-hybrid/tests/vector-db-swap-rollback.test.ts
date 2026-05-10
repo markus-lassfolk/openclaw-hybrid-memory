@@ -2,22 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-let renameCalls = 0;
-let injectSecondRenameFailure = false;
-vi.mock("node:fs/promises", async () => {
-  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-  return {
-    ...actual,
-    rename: async (...args: Parameters<typeof actual.rename>) => {
-      renameCalls++;
-      if (injectSecondRenameFailure && renameCalls === 2) {
-        throw new Error("injected failure on shadow->main rename");
-      }
-      return actual.rename(...args);
-    },
-  };
-});
+import { VectorDB } from "../backends/vector-db.js";
 
 describe("VectorDB swap rollback", () => {
   let testDbPath = "";
@@ -26,18 +11,25 @@ describe("VectorDB swap rollback", () => {
     if (testDbPath && existsSync(testDbPath)) {
       rmSync(testDbPath, { recursive: true, force: true });
     }
-    renameCalls = 0;
-    injectSecondRenameFailure = false;
+    vi.restoreAllMocks();
   });
 
   it("rolls main table back when shadow->main rename fails", async () => {
     testDbPath = mkdtempSync(join(tmpdir(), "vectordb-swap-rollback-"));
-    injectSecondRenameFailure = true;
-
-    const { VectorDB } = await import("../backends/vector-db.js");
     const vectorDb = new VectorDB(testDbPath, 64, false);
     vectorDb.setLogger({ warn: vi.fn() });
     await vectorDb.open();
+    let renameCalls = 0;
+    vi.spyOn(vectorDb as unknown as { renamePath: (fromPath: string, toPath: string) => Promise<void> }, "renamePath").mockImplementation(
+      async (fromPath, toPath) => {
+        renameCalls++;
+        if (renameCalls === 2) {
+          throw new Error("injected failure on shadow->main rename");
+        }
+        const fs = await import("node:fs/promises");
+        await fs.rename(fromPath, toPath);
+      },
+    );
 
     for (let i = 0; i < 5; i++) {
       await vectorDb.store({

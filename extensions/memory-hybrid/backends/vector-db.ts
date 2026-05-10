@@ -208,6 +208,10 @@ export class VectorDB {
     }
   }
 
+  private async renamePath(fromPath: string, toPath: string): Promise<void> {
+    await rename(fromPath, toPath);
+  }
+
   /**
    * Acquire a shared reader slot. Called at the start of every read operation
    * (search, hasDuplicate, count) so that optimize() can wait for all in-flight
@@ -910,17 +914,17 @@ export class VectorDB {
       } catch {
         // ignore
       }
-      await rename(mainTableDir, oldTableDir);
+      await this.renamePath(mainTableDir, oldTableDir);
       movedMainToOld = true;
     }
 
     // Rename shadow → main (with explicit rollback on failure)
     try {
-      await rename(shadowTableDir, mainTableDir);
+      await this.renamePath(shadowTableDir, mainTableDir);
     } catch (swapErr) {
       if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
         try {
-          await rename(oldTableDir, mainTableDir);
+          await this.renamePath(oldTableDir, mainTableDir);
           this.logWarn("memory-hybrid: shadow swap failed; rolled back old table to main successfully");
         } catch (rollbackErr) {
           throw new Error(
