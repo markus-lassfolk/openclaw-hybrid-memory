@@ -248,6 +248,7 @@ async function runCapture(
         api.logger.debug?.(
           `memory-hybrid: skipped auto-capture for ${captureProvenance.origin} session (${captureProvenance.reason ?? "provenance blocked"})`,
         );
+        return;
       }
 
       const candidates: Array<{ role: "user" | "assistant"; text: string; sourceTurn: number }> = [];
@@ -545,7 +546,7 @@ async function runCapture(
             },
             api.logger,
           );
-          const storeResult = ctx.factsDb.storeWithResult({
+          const storedEntry = ctx.factsDb.store({
             text: textToStore,
             category,
             importance: CLI_STORE_IMPORTANCE,
@@ -559,14 +560,6 @@ async function runCapture(
             sourceTurn: candidate.sourceTurn,
             extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
             extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
-          });
-          const storedEntry = storeResult.entry;
-          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-          await cleanupEvictedVector({
-            vectorDb: ctx.vectorDb,
-            evictedFactId: storeResult.evictedFactId,
-            logger: api.logger,
-            context: "stage-capture",
           });
           try {
             if (vector) {
