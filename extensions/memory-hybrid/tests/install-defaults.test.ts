@@ -23,4 +23,15 @@ describe("buildInstallDefaults", () => {
     expect(defaults.agents?.defaults?.memorySearch).not.toHaveProperty("provider");
     expect(defaults.agents?.defaults?.memorySearch).not.toHaveProperty("model");
   });
+
+  it("pins compaction to a cheap mini model by default", () => {
+    const defaults = buildInstallDefaults() as {
+      agents?: {
+        defaults?: {
+          compaction?: Record<string, unknown>;
+        };
+      };
+    };
+    expect(defaults.agents?.defaults?.compaction?.model).toBe("minimax/MiniMax-M2.7");
+  });
 });

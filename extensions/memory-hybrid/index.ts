@@ -394,6 +394,11 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
   // Check this FIRST, before any logger init or config parsing, so an incomplete config
   // cannot block lightweight metadata registration.
+  //
+  // Issue #1209/#XXXX: Always register CLI metadata even when service markers are present in the environment.
+  // Service markers (OPENCLAW_SERVICE_KIND, OPENCLAW_SERVICE_MARKER) should only prevent full plugin
+  // initialization (databases, timers), not CLI metadata registration. Without this, `openclaw hybrid-mem`
+  // commands become unavailable in cron/service environments where these markers leak.
   if (api.registrationMode === "cli-metadata") {
     registerHybridMemCliMetadataOnly(api);
     return;

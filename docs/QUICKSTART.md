@@ -109,6 +109,8 @@ Then verify everything is working:
 openclaw hybrid-mem verify
 ```
 
+Verify now also reports effective compaction routing (`provider`, `model`, `reason`) and warns if compaction appears to use a stronger-than-mini model. `minimax/MiniMax-M2.7` is treated as safe and is not flagged.
+
 If SQLite or LanceDB show native bindings errors, run `openclaw hybrid-mem verify --fix` to rebuild them, then restart the gateway.
 
 You should see:
@@ -166,4 +168,3 @@ Restart the gateway after backfill so memorySearch re-indexes.
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands (including `enrich-entities` for contact/org NER backfill)
 - [OPERATIONS.md](OPERATIONS.md) - Background jobs, scripts, upgrades
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
-

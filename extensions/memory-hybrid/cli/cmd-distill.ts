@@ -278,7 +278,17 @@ export async function runDistillForCli(
     }
 
     const cronCfgDistill = getCronModelConfig(cfg);
-    const distillMainTier = cfg.distill?.modelTier ?? "maintenance";
+    // CRITICAL FIX (#1205/#1216): Clamp distill main tier to never use "heavy" to prevent
+    // silently starting expensive maintenance on GPT-5.5/O3/etc. when llm.heavy[0] is expensive.
+    // Operators who want heavy tier for distill must pass --model explicitly; distill.modelTier
+    // is now clamped to maintenance/default/nano.
+    const configuredDistillTier = cfg.distill?.modelTier ?? "maintenance";
+    const distillMainTier = configuredDistillTier === "heavy" ? "maintenance" : configuredDistillTier;
+    if (configuredDistillTier === "heavy") {
+      logger.warn?.(
+        `memory-hybrid: distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance). Use --model to override for a single run.`,
+      );
+    }
     const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, distillMainTier);
     const tierResolved = resolveReflectionModelAndFallbacks(cfg, distillMainTier);
     const model =
