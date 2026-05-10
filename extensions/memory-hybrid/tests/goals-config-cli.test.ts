@@ -53,11 +53,7 @@ describe("goals config CLI", () => {
     }) as any);
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
-      expect.fail("Should have called process.exit(0)");
-    } catch (err: any) {
-      // process.exit throws in our mock
-      expect(err.message).toBe("process.exit called");
-      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(exitSpy).not.toHaveBeenCalled();
       expect(log).toHaveBeenCalledOnce();
       const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
       expect(parsed.enabled).toBe(true);
@@ -75,7 +71,7 @@ describe("goals config CLI", () => {
     }
   });
 
-  it("exits with code 0 after --json output (issue #1234/#1268)", async () => {
+  it("does not force process.exit after --json output (issue #1234/#1268)", async () => {
     const prevWorkspace = process.env.OPENCLAW_WORKSPACE;
     setEnv("OPENCLAW_WORKSPACE", "/tmp/openclaw-goals-config-test");
     process.argv = ["node", "openclaw", "hybrid-mem", "goals", "config", "--json"];
@@ -91,11 +87,7 @@ describe("goals config CLI", () => {
 
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
-      expect.fail("Should have called process.exit(0)");
-    } catch (err: any) {
-      // process.exit throws in our mock
-      expect(err.message).toBe("process.exit called");
-      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(exitSpy).not.toHaveBeenCalled();
       expect(log).toHaveBeenCalled();
       const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
       expect(parsed.enabled).toBe(true);
