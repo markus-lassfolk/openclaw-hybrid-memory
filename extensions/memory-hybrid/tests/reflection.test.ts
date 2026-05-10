@@ -2,6 +2,8 @@
  * Reflection layer — parsePatternsFromReflectionResponse and prompt loading.
  */
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
@@ -124,6 +126,7 @@ describe("runReflection cost attribution", () => {
     let capturedFeature: string | undefined;
     const fact = makeEntry();
     const factsDb = {
+      sqlitePath: join(tmpdir(), "reflect-cost-test.db"),
       getRecentFacts: () => [fact],
       getByCategory: () => [],
       store: async () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
