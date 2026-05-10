@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerGoalCommands } from "../cli/goals.js";
 import { hybridConfigSchema } from "../config.js";
 import { setEnv } from "../utils/env-manager.js";
@@ -21,6 +21,13 @@ function makeCfg() {
 }
 
 describe("goals config CLI", () => {
+  const origArgv = [...process.argv];
+
+  afterEach(() => {
+    process.argv = [...origArgv];
+    vi.restoreAllMocks();
+  });
+
   it("prints human-readable config by default", async () => {
     const program = new Command("hybrid-mem");
     program.exitOverride();
@@ -41,8 +48,16 @@ describe("goals config CLI", () => {
     program.exitOverride();
     registerGoalCommands(program, { cfg: makeCfg() });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as any);
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
+      expect.fail("Should have called process.exit(0)");
+    } catch (err: any) {
+      // process.exit throws in our mock
+      expect(err.message).toBe("process.exit called");
+      expect(exitSpy).toHaveBeenCalledWith(0);
       expect(log).toHaveBeenCalledOnce();
       const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
       expect(parsed.enabled).toBe(true);
@@ -55,6 +70,38 @@ describe("goals config CLI", () => {
       expect(parsed.defaults.maxDispatches).toBeGreaterThan(0);
     } finally {
       log.mockRestore();
+      exitSpy.mockRestore();
+      setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+    }
+  });
+
+  it("exits with code 0 after --json output (issue #1234/#1268)", async () => {
+    const prevWorkspace = process.env.OPENCLAW_WORKSPACE;
+    setEnv("OPENCLAW_WORKSPACE", "/tmp/openclaw-goals-config-test");
+    process.argv = ["node", "openclaw", "hybrid-mem", "goals", "config", "--json"];
+
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerGoalCommands(program, { cfg: makeCfg() });
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as any);
+
+    try {
+      await program.parseAsync(["goals", "config", "--json"], { from: "user" });
+      expect.fail("Should have called process.exit(0)");
+    } catch (err: any) {
+      // process.exit throws in our mock
+      expect(err.message).toBe("process.exit called");
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(log).toHaveBeenCalled();
+      const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(parsed.enabled).toBe(true);
+    } finally {
+      log.mockRestore();
+      exitSpy.mockRestore();
       setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
     }
   });
