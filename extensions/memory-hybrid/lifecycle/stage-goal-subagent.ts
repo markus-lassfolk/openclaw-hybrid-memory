@@ -4,6 +4,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
+  markGoalDispatchFailure,
   type GoalSubagentSpawnEvent,
   linkSubagentToGoal,
   resolveGoalForSpawn,
@@ -20,11 +21,32 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
       const ev = event as GoalSubagentSpawnEvent;
       const gid = await resolveGoalForSpawn(ev, goalsDir);
       if (!gid) return;
-      const childOrSession = ev.childSessionKey ?? ev.sessionKey;
+      const childOrSession =
+        ev.childSessionKey ??
+        ev.sessionKey ??
+        (typeof ev.metadata?.childSessionKey === "string" ? ev.metadata.childSessionKey : null) ??
+        (typeof ev.metadata?.sessionKey === "string" ? ev.metadata.sessionKey : null);
+      const runId =
+        ev.runId ??
+        (typeof ev.metadata?.runId === "string" ? ev.metadata.runId : null) ??
+        (typeof ev.metadata?.run_id === "string" ? ev.metadata.run_id : null);
       const label = ev.label ?? childOrSession ?? `subagent-${Date.now()}`;
+      if (!childOrSession) {
+        const reason = runId
+          ? "Subagent dispatch missing ACP session metadata (runId-only dispatch cannot be correlated without childSessionKey/sessionKey)."
+          : "Subagent dispatch missing ACP session metadata (no childSessionKey/sessionKey in spawn event).";
+        await markGoalDispatchFailure(goalsDir, gid, {
+          label,
+          sessionKey: null,
+          runId: runId ?? null,
+          reason,
+        });
+        return;
+      }
       await linkSubagentToGoal(goalsDir, gid, {
         label,
         sessionKey: childOrSession ?? null,
+        runId: runId ?? null,
         status: "in_progress",
       });
     } catch (err) {

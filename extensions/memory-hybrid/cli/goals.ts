@@ -326,6 +326,15 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         logger: console,
       });
       console.log(`Checked ${result.goalsChecked}, updated ${result.goalsUpdated}`);
+      if (result.outcomes.length > 0) {
+        console.log("Per-goal outcomes:");
+        for (const o of result.outcomes) {
+          const task = o.taskLabel ? ` task=${o.taskLabel}` : "";
+          const session = o.sessionKey ? ` session=${o.sessionKey}` : "";
+          const run = o.runId ? ` run=${o.runId}` : "";
+          console.log(`  ${o.label}: ${o.outcome} — ${o.reason}${task}${session}${run}`);
+        }
+      }
       for (const a of result.actions) {
         console.log(`  ${a.label}: ${a.action} — ${a.reason}`);
       }
