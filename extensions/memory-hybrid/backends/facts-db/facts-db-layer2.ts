@@ -31,6 +31,7 @@ import {
   promoteScope as promoteScopeImpl,
   listExpiredFactIdsPendingPrune as listExpiredFactIdsPendingPruneImpl,
   listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
+  listFactIdsToBeDeletedByDecayRun as listFactIdsToBeDeletedByDecayRunImpl,
   pruneExpired as pruneExpiredImpl,
   listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
   pruneSessionScope as pruneSessionScopeImpl,
@@ -171,6 +172,15 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Fact ids that `decayConfidence()` would delete (same filter as the DELETE). */
   listLowConfidenceFactIdsPendingPrune(): string[] {
     return listLowConfidenceFactIdsPendingPruneImpl(this.liveDb);
+  }
+
+  /**
+   * Return all fact IDs that will be hard-deleted by the next `decayConfidence()` call.
+   * Includes facts already below 0.1 confidence AND facts that will be halved below 0.1.
+   * Call this *before* `decayConfidence()` to capture the complete set for vector cleanup.
+   */
+  listFactIdsToBeDeletedByDecayRun(): string[] {
+    return listFactIdsToBeDeletedByDecayRunImpl(this.liveDb);
   }
 
   pruneExpired(): number {

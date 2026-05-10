@@ -32,6 +32,7 @@ export {
   refreshAccessedFacts,
   storeFact,
   type StoreFactInput,
+  type StoreFactResult,
   validateStoreEntryInput,
 } from "./crud.js";
 export {
@@ -44,6 +45,7 @@ export {
 export {
   confirmFact,
   decayConfidence,
+  listFactIdsToBeDeletedByDecayRun,
   logRecall,
   promoteScope,
   pruneExpired,

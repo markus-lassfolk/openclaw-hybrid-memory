@@ -4,6 +4,7 @@
  */
 
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { ScopeFilter } from "../../../types/memory.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { CredentialsAuditResult, CredentialsPruneResult, MigrateToVaultResult } from "../../types.js";
@@ -12,6 +13,7 @@ import type { ManageBindings } from "./bindings.js";
 export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
+    vectorDb,
     runMigrateToVault,
     runEncryptVault,
     runCredentialsList,
@@ -248,17 +250,64 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       "--scope-target <st>",
       "Scope target (userId/agentId/sessionId). Required when scope is user/agent/session.",
     )
+    .option("--dry-run", "Preview what would be deleted without making any changes")
+    .option("--yes", "Skip the confirmation prompt and execute immediately")
     .action(
-      withExit(async (opts: { scope: string; scopeTarget?: string }) => {
+      withExit(async (opts: { scope: string; scopeTarget?: string; dryRun?: boolean; yes?: boolean }) => {
         const scopeFilter: ScopeFilter = {};
         if (opts.scope === "user") scopeFilter.userId = opts.scopeTarget || null;
         else if (opts.scope === "agent") scopeFilter.agentId = opts.scopeTarget || null;
         else if (opts.scope === "session") scopeFilter.sessionId = opts.scopeTarget || null;
 
+        const scopeLabel = `${opts.scope}${opts.scopeTarget ? ` (target=${opts.scopeTarget})` : ""}`;
+
+        // Dry-run: show what would be deleted without touching the DB.
+        const pendingIds = factsDb.listScopedFactIdsPendingPrune(scopeFilter);
+        if (opts.dryRun) {
+          console.log(`Dry-run: would delete ${pendingIds.length} fact(s) from scope ${scopeLabel}.`);
+          for (const id of pendingIds.slice(0, 20)) {
+            const f = factsDb.getById(id);
+            if (f) console.log(`  [${id.slice(0, 8)}] "${f.text.slice(0, 80)}"`);
+          }
+          if (pendingIds.length > 20) console.log(`  … and ${pendingIds.length - 20} more`);
+          return;
+        }
+
+        // Safety gate: require explicit --yes for destructive operations.
+        if (!opts.yes) {
+          console.error(
+            "error: scope prune is destructive and cannot be undone. Pass --yes to confirm, or use --dry-run to preview.",
+          );
+          process.exitCode = 1;
+          return;
+        }
+
         const deleted = factsDb.pruneScopedFacts(scopeFilter);
-        console.log(
-          `Pruned ${deleted} facts from scope ${opts.scope}${opts.scopeTarget ? ` (target=${opts.scopeTarget})` : ""}.`,
-        );
+        console.log(`Pruned ${deleted} facts from scope ${scopeLabel}.`);
+
+        // Clean up orphaned LanceDB vectors for the deleted facts.
+        if (pendingIds.length > 0) {
+          try {
+            const vectorCleanup = await deleteVectorsForFactIds(vectorDb, pendingIds, {
+              operation: "scope-prune-vector-cleanup",
+            });
+            if (vectorCleanup.attempted > 0) {
+              if (vectorCleanup.failed > 0) {
+                console.error(
+                  `Warning: vector cleanup partial — deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}. Run 'hybrid-mem repair-vectors' to reconcile.`,
+                );
+              } else {
+                console.log(`Cleaned up ${vectorCleanup.deleted} vector(s) from LanceDB.`);
+              }
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "scope-prune-vector-cleanup",
+            });
+            console.error(`Warning: vector cleanup failed: ${err}. Run 'hybrid-mem repair-vectors' to reconcile.`);
+          }
+        }
       }),
     );
   scope

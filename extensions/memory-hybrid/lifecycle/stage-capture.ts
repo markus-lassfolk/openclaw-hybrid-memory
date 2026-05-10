@@ -465,7 +465,28 @@ async function runCapture(
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
                     try {
-                      if (vector) {
+                      if (storeResult.embeddingStale) {
+                        // Merge case: the existing fact's text was updated in-place.
+                        // Re-embed the merged text and force-replace the stale LanceDB vector.
+                        const mergedVector = await ctx.embeddings.embed(newEntry.text);
+                        ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
+                        await ctx.vectorDb.store({
+                          text: newEntry.text,
+                          vector: mergedVector,
+                          importance: finalImportance,
+                          category,
+                          id: newEntry.id,
+                        });
+                        persistCanonicalFactEmbedding(
+                          ctx.factsDb,
+                          newEntry.id,
+                          ctx.embeddings.modelName,
+                          mergedVector,
+                          "auto-capture-fact-embeddings",
+                          "auto-capture",
+                          api.logger.warn?.bind(api.logger),
+                        );
+                      } else if (vector) {
                         ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
                         if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                           await ctx.vectorDb.store({
@@ -837,12 +858,13 @@ async function runCapture(
               });
               if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
-                  const vector = await ctx.embeddings.embed(text);
-                  ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
-                  if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                  if (storeResult.embeddingStale) {
+                    // Merge case: re-embed the merged text to keep the vector in sync.
+                    const mergedVector = await ctx.embeddings.embed(entry.text);
+                    ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                     await ctx.vectorDb.store({
-                      text,
-                      vector,
+                      text: entry.text,
+                      vector: mergedVector,
                       importance: 0.9,
                       category: "technical",
                       id: entry.id,
@@ -851,11 +873,32 @@ async function runCapture(
                       ctx.factsDb,
                       entry.id,
                       ctx.embeddings.modelName,
-                      vector,
+                      mergedVector,
                       "auto-capture-fact-embeddings",
                       "auto-capture",
                       api.logger.warn?.bind(api.logger),
                     );
+                  } else {
+                    const vector = await ctx.embeddings.embed(text);
+                    ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
+                    if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                      await ctx.vectorDb.store({
+                        text,
+                        vector,
+                        importance: 0.9,
+                        category: "technical",
+                        id: entry.id,
+                      });
+                      persistCanonicalFactEmbedding(
+                        ctx.factsDb,
+                        entry.id,
+                        ctx.embeddings.modelName,
+                        vector,
+                        "auto-capture-fact-embeddings",
+                        "auto-capture",
+                        api.logger.warn?.bind(api.logger),
+                      );
+                    }
                   }
                 } catch (err) {
                   const asErr = err instanceof Error ? err : new Error(String(err));

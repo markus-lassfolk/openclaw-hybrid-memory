@@ -395,6 +395,32 @@ export function createPluginService(ctx: PluginServiceContext) {
                   }
 
                   recovered++;
+                } else if (entry.data.vector) {
+                  // SQLite fact already exists (crash after SQL write, before vector write).
+                  // Re-attempt the vector store so the fact is searchable via semantics.
+                  const existing = factsDb.search(text, 1, { includeSuperseded: false });
+                  const existingId = existing[0]?.entry.id;
+                  if (existingId) {
+                    void vectorDb
+                      .store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.5,
+                        category: category || "other",
+                        id: existingId,
+                      })
+                      .then(() => {
+                        factsDb.setEmbeddingModel(existingId, embeddings.modelName);
+                        api.logger.info(
+                          `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
+                        );
+                      })
+                      .catch((err) => {
+                        api.logger.warn(
+                          `memory-hybrid: WAL recovery vector re-store failed for existing fact ${existingId.slice(0, 8)}: ${err}`,
+                        );
+                      });
+                  }
                 }
               } else {
                 // Known but unhandled operation type (e.g., "delete")
@@ -500,14 +526,14 @@ export function createPluginService(ctx: PluginServiceContext) {
           if (shuttingDown) return;
           if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
           const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
-          const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
+          const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun();
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
           const expiredCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
             operation: "plugin-periodic-prune-expired",
             logger: api.logger,
           });
-          const decayedCleanup = await deleteVectorsForFactIds(vectorDb, lowConfidenceIds, {
+          const decayedCleanup = await deleteVectorsForFactIds(vectorDb, decayDeleteIds, {
             operation: "plugin-periodic-decay",
             logger: api.logger,
           });

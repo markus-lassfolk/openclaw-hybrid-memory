@@ -332,15 +332,19 @@ export async function runConsolidate(
         }
       }
     }
+    // Delete source vectors before removing SQLite rows: if we deleted SQLite first and then
+    // crashed, the vectors would be permanent orphans (no matching SQL row, unreachable by
+    // reconciliation).  Deleting vectors first is safe — if we crash after vector delete but
+    // before SQL delete, the next run will find the SQLite rows still present and can retry.
+    await deleteVectorsForFactIds(vectorDb, clusterIds, {
+      operation: "consolidate-cleanup",
+      logger,
+    });
     for (const id of clusterIds) {
       factsDb.delete(id);
       aliasDb?.deleteByFactId(id);
       deleted++;
     }
-    await deleteVectorsForFactIds(vectorDb, clusterIds, {
-      operation: "consolidate-cleanup",
-      logger,
-    });
     merged++;
   }
 

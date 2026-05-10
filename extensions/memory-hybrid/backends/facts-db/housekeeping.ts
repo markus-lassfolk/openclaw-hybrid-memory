@@ -213,6 +213,40 @@ export function scopeStats(db: DatabaseSync): Array<{
   return rows;
 }
 
+/**
+ * Return all fact IDs that `pruneScopedFacts(scopeFilter)` would delete.
+ * Use this *before* calling `pruneScopedFacts` to gather IDs for vector cleanup.
+ * Excludes pinned facts in `verified_facts` (same guard as the DELETE).
+ */
+export function listScopedFactIdsPendingPrune(db: DatabaseSync, scopeFilter: ScopeFilter): string[] {
+  const conditions: string[] = [];
+  const params: (string | null)[] = [];
+
+  if (scopeFilter.userId !== undefined) {
+    conditions.push(`(scope = 'user' AND scope_target = ?)`);
+    params.push(scopeFilter.userId);
+  }
+  if (scopeFilter.agentId !== undefined) {
+    conditions.push(`(scope = 'agent' AND scope_target = ?)`);
+    params.push(scopeFilter.agentId);
+  }
+  if (scopeFilter.sessionId !== undefined) {
+    conditions.push(`(scope = 'session' AND scope_target = ?)`);
+    params.push(scopeFilter.sessionId);
+  }
+
+  if (conditions.length === 0) return [];
+
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts
+         WHERE (${conditions.join(" OR ")})
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all(...params) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
 export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): number {
   const conditions: string[] = [];
   const params: (string | null)[] = [];
@@ -234,12 +268,14 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): nu
 
   const linkCleanupQuery = `DELETE FROM memory_links
       WHERE target_fact_id IN (
-        SELECT id FROM facts WHERE ${conditions.join(" OR ")}
+        SELECT id FROM facts WHERE (${conditions.join(" OR ")})
+          AND id NOT IN (SELECT fact_id FROM verified_facts)
       )
       AND link_type != 'DERIVED_FROM'`;
   db.prepare(linkCleanupQuery).run(...params);
 
-  const query = `DELETE FROM facts WHERE ${conditions.join(" OR ")}`;
+  const query = `DELETE FROM facts WHERE (${conditions.join(" OR ")})
+    AND id NOT IN (SELECT fact_id FROM verified_facts)`;
   const result = db.prepare(query).run(...params);
   return Number(result.changes ?? 0);
 }
