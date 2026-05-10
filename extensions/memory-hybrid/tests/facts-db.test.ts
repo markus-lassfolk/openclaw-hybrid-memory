@@ -1027,6 +1027,33 @@ describe("FactsDB fuzzy deduplication", () => {
     expect(new Set(rows.map((f) => f.key))).toEqual(new Set(["progress", "title"]));
   });
 
+  it("store does not dedupe project facts across different sources", () => {
+    const entity = "stewardship-reliability-reset";
+    const value = "Stewardship reliability reset and hardening";
+    const first = dedupeDb.store({
+      text: `Task [${entity}] title: ${value}`,
+      category: "project",
+      importance: 0.8,
+      entity,
+      key: "title",
+      value,
+      source: "conversation",
+    });
+    const second = dedupeDb.store({
+      text: `Task [${entity}] title: ${value}`,
+      category: "project",
+      importance: 0.8,
+      entity,
+      key: "title",
+      value,
+      source: "auto-capture",
+    });
+    expect(second.id).not.toBe(first.id);
+    expect(
+      dedupeDb.listFactsByCategory("project", 20).filter((f) => f.entity === entity && f.key === "title"),
+    ).toHaveLength(2);
+  });
+
   it("store keeps duplicate suppression for same project entity/key/value", () => {
     const entity = "stewardship-reliability-reset";
     const value = "Stewardship reliability reset and hardening";
