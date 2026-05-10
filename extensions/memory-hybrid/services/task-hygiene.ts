@@ -3,7 +3,205 @@
  * @see docs/TASK-HYGIENE.md
  */
 
+import { basename } from "node:path";
 import type { ActiveTaskEntry } from "./active-task.js";
+
+export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
+export type LongRunningRegistrationMode = "off" | "suggest" | "confirm" | "auto_main_private";
+
+export type LongRunningWorkflowProposal = {
+  kind: LongRunningWorkflowKind;
+  label: string;
+  description: string;
+  next: string;
+  repoContext?: string;
+};
+
+const REPO_REF_RE = /\b([a-z0-9_.-]+\/[a-z0-9_.-]+)\b/i;
+const PR_NUM_RE = /(?:\bpr\b|\bpull request\b)?\s*#(\d+)\b/i;
+const DEPLOY_TARGET_RE = /\b(prod|production|staging|stage|qa|dev|preview)\b/i;
+const GENERIC_WORKSPACE_NAMES = new Set(["workspace", "workspaces", "tmp", "home", "openclaw", "."]);
+
+function slugifyToken(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "task";
+}
+
+function normalizeRepoContext(userText: string, workspaceRoot?: string): string | undefined {
+  const explicitRepo = REPO_REF_RE.exec(userText)?.[1];
+  if (explicitRepo) return slugifyToken(explicitRepo.replace("/", "-"));
+  if (!workspaceRoot?.trim()) return undefined;
+  const base = basename(workspaceRoot.trim());
+  const normalized = slugifyToken(base);
+  if (GENERIC_WORKSPACE_NAMES.has(normalized)) return undefined;
+  return normalized;
+}
+
+function withRepoPrefix(base: string, repo?: string): string {
+  return repo?.trim() ? `wf-${repo}-${base}` : `wf-${base}`;
+}
+
+function buildWorkflowProposal(kind: LongRunningWorkflowKind, userText: string, workspaceRoot?: string): LongRunningWorkflowProposal {
+  const repoContext = normalizeRepoContext(userText, workspaceRoot);
+  const prNumber = PR_NUM_RE.exec(userText)?.[1];
+  const deployTarget = DEPLOY_TARGET_RE.exec(userText)?.[1]?.toLowerCase();
+
+  if (kind === "pr_queue") {
+    return {
+      kind,
+      label: withRepoPrefix("pr-queue", repoContext),
+      description: `Process PR queue${repoContext ? ` (${repoContext})` : ""}`,
+      next: "Review pending PRs and move each one to merge-ready or blocked with explicit blockers.",
+      repoContext,
+    };
+  }
+
+  if (kind === "pr_until_merged") {
+    const suffix = prNumber ? `pr-${prNumber}-until-merged` : "pr-until-merged";
+    return {
+      kind,
+      label: withRepoPrefix(suffix, repoContext),
+      description: prNumber
+        ? `Drive PR #${prNumber} to merged state${repoContext ? ` (${repoContext})` : ""}`
+        : `Drive PR workflow to merged state${repoContext ? ` (${repoContext})` : ""}`,
+      next: "Track CI/review feedback, apply fixes, and continue until merge criteria are satisfied.",
+      repoContext,
+    };
+  }
+
+  if (kind === "ci_monitor") {
+    return {
+      kind,
+      label: withRepoPrefix("ci-monitor", repoContext),
+      description: `Monitor CI workflow${repoContext ? ` (${repoContext})` : ""}`,
+      next: "Watch CI checks, triage failures, and report pass/fail with concrete next action.",
+      repoContext,
+    };
+  }
+
+  if (kind === "issue_sweep") {
+    return {
+      kind,
+      label: withRepoPrefix("issue-sweep", repoContext),
+      description: `Fix all open issues${repoContext ? ` (${repoContext})` : ""}`,
+      next: "Work through issues in priority order and track unresolved blockers explicitly.",
+      repoContext,
+    };
+  }
+
+  return {
+    kind,
+    label: withRepoPrefix(`deploy-${slugifyToken(deployTarget ?? "workflow")}`, repoContext),
+    description: `Deployment workflow${deployTarget ? ` (${deployTarget})` : ""}${repoContext ? ` for ${repoContext}` : ""}`,
+    next: "Run deployment steps, monitor rollout health, and confirm outcome before closing the task.",
+    repoContext,
+  };
+}
+
+export function detectLongRunningWorkflowProposal(userText: string, workspaceRoot?: string): LongRunningWorkflowProposal | null {
+  const text = userText.trim();
+  if (!text) return null;
+
+  if (/\b(process|work|handle)\b[\s\S]{0,30}\bpr queue\b/i.test(text) || /\bpr queue\b/i.test(text)) {
+    return buildWorkflowProposal("pr_queue", text, workspaceRoot);
+  }
+  if (/\bcontinue\b[\s\S]{0,40}\buntil\b[\s\S]{0,30}\bmerged\b/i.test(text)) {
+    return buildWorkflowProposal("pr_until_merged", text, workspaceRoot);
+  }
+  if (
+    /\b(monitor|watch|track)\b[\s\S]{0,20}\bci\b/i.test(text) ||
+    /\b(wait|waiting)\b[\s\S]{0,25}\b(ci|checks?)\b/i.test(text)
+  ) {
+    return buildWorkflowProposal("ci_monitor", text, workspaceRoot);
+  }
+  if (/\bfix\b[\s\S]{0,20}\ball\b[\s\S]{0,20}\bissues?\b/i.test(text)) {
+    return buildWorkflowProposal("issue_sweep", text, workspaceRoot);
+  }
+  if (/\b(deploy|deployment|rollout|release)\b/i.test(text)) {
+    return buildWorkflowProposal("deployment", text, workspaceRoot);
+  }
+  return null;
+}
+
+export function buildLongRunningTaskDraft(
+  proposal: LongRunningWorkflowProposal,
+  nowIso = new Date().toISOString(),
+): ActiveTaskEntry {
+  return {
+    label: proposal.label,
+    description: proposal.description,
+    status: "In progress",
+    next: proposal.next,
+    started: nowIso,
+    updated: nowIso,
+  };
+}
+
+function isMainOrPrivateSessionKey(sessionKey?: string | null): boolean {
+  if (!sessionKey) return false;
+  const trimmed = sessionKey.trim().toLowerCase();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("agent:main:") || trimmed.startsWith("agent:private:")) return true;
+  return trimmed === "main" || trimmed === "private";
+}
+
+export function shouldAutoRegisterLongRunningTask(
+  mode: LongRunningRegistrationMode,
+  sessionKey?: string | null,
+): boolean {
+  return mode === "auto_main_private" && isMainOrPrivateSessionKey(sessionKey);
+}
+
+export function buildLongRunningTaskRegistrationBlock(
+  proposal: LongRunningWorkflowProposal,
+  draft: ActiveTaskEntry,
+  opts: {
+    mode: LongRunningRegistrationMode;
+    autoCreated: boolean;
+    alreadyActive: boolean;
+    sessionKey?: string | null;
+  },
+): string {
+  const lines = [
+    "<active-task-registration>",
+    `**Long-running workflow detected:** ${proposal.kind.replace(/_/g, " ")}`,
+    `- Stable task label: \`${draft.label}\`${proposal.repoContext ? ` (repo context: \`${proposal.repoContext}\`)` : ""}`,
+  ];
+
+  if (opts.autoCreated) {
+    lines.push("- Auto-registered this task in the active-task ledger (auto_main_private policy).");
+  } else if (opts.alreadyActive) {
+    lines.push("- Matching active task already exists; continuing with existing tracking row.");
+  } else if (opts.mode === "confirm") {
+    lines.push("- Guard: register/confirm this task before proceeding with external workflow mutations.");
+  } else if (opts.mode === "auto_main_private" && !shouldAutoRegisterLongRunningTask(opts.mode, opts.sessionKey)) {
+    lines.push("- Auto-registration policy only applies to main/private sessions; register this task manually.");
+  } else {
+    lines.push("- Suggested registration payload (use `active-tasks add` or project facts equivalent):");
+  }
+
+  lines.push("```json");
+  lines.push(
+    JSON.stringify(
+      {
+        label: draft.label,
+        description: draft.description,
+        status: draft.status,
+        next: draft.next,
+      },
+      null,
+      2,
+    ),
+  );
+  lines.push("```");
+  lines.push("- For outcome-oriented multi-session execution, follow with `active_task_propose_goal` + `goal_register`.");
+  lines.push("</active-task-registration>");
+  return lines.join("\n");
+}
 
 export function buildHeartbeatTaskHygieneBlock(
   tasks: ActiveTaskEntry[],

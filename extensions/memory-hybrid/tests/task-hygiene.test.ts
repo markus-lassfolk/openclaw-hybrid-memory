@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ActiveTaskEntry } from "../services/active-task.js";
 import {
+  buildLongRunningTaskDraft,
+  buildLongRunningTaskRegistrationBlock,
   buildGoalEscalationHeartbeatBlock,
   buildHeartbeatTaskHygieneBlock,
   buildProposeGoalDraftFromTask,
+  detectLongRunningWorkflowProposal,
+  shouldAutoRegisterLongRunningTask,
 } from "../services/task-hygiene.js";
 
 function baseTask(over: Partial<ActiveTaskEntry> = {}): ActiveTaskEntry {
@@ -102,5 +106,46 @@ describe("task-hygiene", () => {
     expect(draft.suggestedLabel).toBe("my-task");
     expect(draft.suggestedDescription).toBe("Ship feature");
     expect(draft.suggestedCriteria.some((c) => c.includes("Run tests"))).toBe(true);
+  });
+
+  it("detectLongRunningWorkflowProposal detects PR queue and includes repo-stable label", () => {
+    const proposal = detectLongRunningWorkflowProposal(
+      "Please process PR queue for markus-lassfolk/openclaw-hybrid-memory",
+      "/tmp/workspace",
+    );
+    expect(proposal).toBeTruthy();
+    expect(proposal?.kind).toBe("pr_queue");
+    expect(proposal?.label).toContain("pr-queue");
+    expect(proposal?.label).toContain("markus-lassfolk-openclaw-hybrid-memory");
+  });
+
+  it("detectLongRunningWorkflowProposal detects deployment workflows", () => {
+    const proposal = detectLongRunningWorkflowProposal("Monitor deployment to production and report rollout health");
+    expect(proposal).toBeTruthy();
+    expect(proposal?.kind).toBe("deployment");
+    expect(proposal?.label).toContain("deploy-production");
+  });
+
+  it("buildLongRunningTaskRegistrationBlock includes payload and goal handoff hint", () => {
+    const proposal = detectLongRunningWorkflowProposal("monitor CI for repo foo/bar");
+    expect(proposal).toBeTruthy();
+    if (!proposal) return;
+    const draft = buildLongRunningTaskDraft(proposal, "2026-05-10T00:00:00.000Z");
+    const block = buildLongRunningTaskRegistrationBlock(proposal, draft, {
+      mode: "suggest",
+      autoCreated: false,
+      alreadyActive: false,
+      sessionKey: "agent:main:main",
+    });
+    expect(block).toContain("<active-task-registration>");
+    expect(block).toContain('"label"');
+    expect(block).toContain("active_task_propose_goal");
+  });
+
+  it("shouldAutoRegisterLongRunningTask is limited to main/private sessions", () => {
+    expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:main:main")).toBe(true);
+    expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:private:session-1")).toBe(true);
+    expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:forge:main")).toBe(false);
+    expect(shouldAutoRegisterLongRunningTask("suggest", "agent:main:main")).toBe(false);
   });
 });

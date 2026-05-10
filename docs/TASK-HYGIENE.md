@@ -12,6 +12,12 @@ With **`activeTask.ledger: facts`**, the file is a **projection** from SQLite fa
 
 3. **Size cap** — **`activeTask.taskHygiene.heartbeatNudgeMaxChars`** (default **2500**, minimum **200** in the config parser) limits the hygiene block length.
 
+4. **Long-running workflow registration guard** — For user requests that typically require multi-step external handling (for example: PR queue processing, “continue until merged”, CI monitoring, deployment workflows, or “fix all issues”), task hygiene can prepend an **`<active-task-registration>`** block with a stable task label and draft payload.
+   - **`mode: "suggest"`** (default): suggest a task payload.
+   - **`mode: "confirm"`**: guard mode; instructs the agent to confirm/register task tracking before proceeding.
+   - **`mode: "auto_main_private"`**: auto-creates/updates the task row for `agent:main:*` or `agent:private:*` sessions, and still shows the payload.
+   - **`mode: "off"`**: disable this behavior.
+
 ## Configuration (plugin memory config)
 
 ```json
@@ -21,7 +27,10 @@ With **`activeTask.ledger: facts`**, the file is a **projection** from SQLite fa
   "taskHygiene": {
     "heartbeatEscalation": true,
     "suggestGoalAfterTaskAgeDays": 0,
-    "heartbeatNudgeMaxChars": 2500
+    "heartbeatNudgeMaxChars": 2500,
+    "longRunningRegistration": {
+      "mode": "suggest"
+    }
   }
 }
 ```
