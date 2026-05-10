@@ -65,10 +65,16 @@ async function persistPulseOutcomeHistory(
   outcome: GoalPulseOutcomeRecord,
   logger: GoalHealthCheckOptions["logger"],
 ): Promise<void> {
+  const detail = pulseOutcomeHistoryDetail(outcome);
+  const latestPulse = [...(goal.history ?? [])].reverse().find((entry) => entry.action === "pulse-outcome");
+  if (latestPulse?.detail === detail) {
+    return;
+  }
+
   const entry: GoalHistoryEntry = {
     timestamp: nowIso(),
     action: "pulse-outcome",
-    detail: pulseOutcomeHistoryDetail(outcome),
+    detail,
     actor: "watchdog",
   };
   try {
@@ -310,7 +316,6 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       for (const lt of g.linkedTasks) {
         if (lt.status !== "in_progress" && lt.status !== "In progress") continue;
         const hasSession = typeof lt.sessionKey === "string" && lt.sessionKey.trim().length > 0;
-        const hasRunId = typeof lt.runId === "string" && lt.runId.trim().length > 0;
         if (hasSession) continue;
         const reason = `Linked task "${lt.label}" is missing dispatch metadata (sessionKey/runId).`;
         const updatedTasks = g.linkedTasks.map((t) =>

@@ -444,6 +444,27 @@ describe("runGoalHealthCheck", () => {
     expect(pulse?.detail).toContain("No eligible deterministic action");
   });
 
+  it("does not rewrite goal history when the pulse outcome is unchanged", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "stable_noop_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+
+    await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const afterFirst = await readGoal(goalsDir, g.id);
+    const pulseCountAfterFirst = (afterFirst?.history ?? []).filter((h) => h.action === "pulse-outcome").length;
+
+    await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const afterSecond = await readGoal(goalsDir, g.id);
+    const pulseCountAfterSecond = (afterSecond?.history ?? []).filter((h) => h.action === "pulse-outcome").length;
+
+    expect(pulseCountAfterFirst).toBe(1);
+    expect(pulseCountAfterSecond).toBe(1);
+  });
+
   it("records waiting outcome when actionable next exists but no dispatch/execution occurs", async () => {
     goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
     workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
