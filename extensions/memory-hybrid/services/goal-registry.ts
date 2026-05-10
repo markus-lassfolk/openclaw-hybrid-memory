@@ -231,7 +231,7 @@ export async function createGoal(
   try {
     eventLog?.append({
       sessionId: "goal-stewardship",
-      timestamp: ts,
+      timestamp: goal.createdAt,
       eventType: "action_taken",
       content: {
         kind: "goal.created",
@@ -307,7 +307,7 @@ export async function terminateGoal(
     await writeGoal(goalsDir, updated);
     return updated;
   });
-  const ts = nowIso();
+  const ts = next.history[next.history.length - 1]?.timestamp ?? nowIso();
 
   const kind = status === "completed" ? "goal.completed" : status === "failed" ? "goal.failed" : "goal.abandoned";
   try {

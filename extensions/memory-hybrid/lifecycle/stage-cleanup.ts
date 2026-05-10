@@ -58,7 +58,7 @@ async function consumePendingTaskSignals(
   workspaceRoot: string,
   staleMinutes: number,
   flushOnComplete: boolean,
-  logger: { info?: (msg: string) => void; warn?: (msg: string) => void } | undefined,
+  logger: { info?: (msg: string) => void; warn?: (msg: string) => void; debug?: (msg: string) => void } | undefined,
   ledger: "markdown" | "facts",
   factsDb: import("../backends/facts-db.js").FactsDB,
   vectorDb: import("../backends/vector-db.js").VectorDB,
