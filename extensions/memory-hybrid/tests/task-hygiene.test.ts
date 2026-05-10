@@ -148,7 +148,9 @@ describe("task-hygiene", () => {
   });
 
   it("detectLongRunningWorkflowProposal strips .git suffix in GitHub URL repo context", () => {
-    const proposal = detectLongRunningWorkflowProposal("Process PR queue for https://github.com/openai/openclaw-hybrid-memory.git");
+    const proposal = detectLongRunningWorkflowProposal(
+      "Process PR queue for https://github.com/openai/openclaw-hybrid-memory.git",
+    );
     expect(proposal).toBeTruthy();
     expect(proposal?.label).toContain("wf-openai-openclaw-hybrid-memory-pr-queue");
     expect(proposal?.label).not.toContain("-git-pr-queue");

@@ -29,7 +29,7 @@ const DEPLOY_ACTION_RE =
 const RELEASE_TO_ENV_RE =
   /\brelease\b[\s\S]{0,25}\b(to|into)\b[\s\S]{0,10}\b(prod|production|staging|stage|qa|dev|preview)\b|\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\brelease\b[\s\S]{0,25}\b(to|into)\b[\s\S]{0,10}\b(prod|production|staging|stage|qa|dev|preview)\b/i;
 const ISSUE_SWEEP_RE =
-  /\bfix\b[\s\S]{0,20}\ball\b[\s\S]{0,20}\b(?:open|outstanding|remaining)\b[\s\S]{0,20}\bissues?\b|\bfix\b[\s\S]{0,20}\ball\b[\s\S]{0,20}\bissues?\b[\s\S]{0,25}\b(?:in|across|for)\b[\s\S]{0,10}\b(?:this\b[\s\S]{0,5})?(?:repo|repository|github|backlog)\b/i;
+  /\bfix\b[\s\S]{0,10}\ball\b[\s\S]{0,10}\b(?:open\s+|the\s+)?issues?\b(?!\s+(?:with|on|for|from|at|about)|\s+in\s+(?!(?:this\s+|the\s+)?(?:repo|repository|github|backlog)))/i;
 const GENERIC_WORKSPACE_NAMES = new Set(["workspace", "workspaces", "tmp", "home", "openclaw", "task"]);
 const SLASH_NOISE_TOKENS = new Set(["and", "or", "on", "off", "to", "for", "in", "by", "up", "down", "yes", "no"]);
 
@@ -201,9 +201,7 @@ export function shouldAutoRegisterLongRunningTask(
   sessionKey?: string | null,
 ): boolean {
   return (
-    mode === "auto_main_private" &&
-    isMainOrPrivateSessionKey(sessionKey) &&
-    !isSubagentSession(sessionKey ?? undefined)
+    mode === "auto_main_private" && isMainOrPrivateSessionKey(sessionKey) && !isSubagentSession(sessionKey ?? undefined)
   );
 }
 
