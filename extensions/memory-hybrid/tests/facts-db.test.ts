@@ -1080,6 +1080,42 @@ describe("FactsDB fuzzy deduplication", () => {
       dedupeDb.listFactsByCategory("project", 20).filter((f) => f.entity === entity && f.key === "title"),
     ).toHaveLength(1);
   });
+
+  it("merge dedupe preserves full text when incoming text is already contained", () => {
+    const mergeDb = new FactsDB(join(tmpDir, "dedupe-merge.db"), {
+      storeConfig: {
+        fuzzyDedupe: true,
+        defaultProfile: {
+          onDuplicate: "merge",
+        },
+      },
+    });
+    try {
+      const longText = "L".repeat(4500);
+      const first = mergeDb.store({
+        text: longText,
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-source",
+      });
+      const second = mergeDb.store({
+        text: longText,
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-source",
+      });
+      expect(second.id).toBe(first.id);
+      expect(mergeDb.getById(first.id)?.text.length).toBe(4500);
+    } finally {
+      mergeDb.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

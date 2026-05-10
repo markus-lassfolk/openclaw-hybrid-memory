@@ -167,8 +167,12 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     const existing = ctx.getById(dedupe.existingId);
     if (existing) {
       const alreadyContained = existing.text.includes(entry.text);
-      const rawMergedText = alreadyContained ? existing.text : `${existing.text}\n${entry.text}`;
-      if (!alreadyContained && rawMergedText.length > 4000) {
+      if (alreadyContained) {
+        return { entry: existing, evictedFactId: null, embeddingStale: false };
+      }
+
+      const rawMergedText = `${existing.text}\n${entry.text}`;
+      if (rawMergedText.length > 4000) {
         process.stderr.write(
           `memory-hybrid: dedupe merge for fact ${existing.id} truncated to 4000 chars (combined length=${rawMergedText.length}); some content may be lost\n`,
         );
