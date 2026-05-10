@@ -23,6 +23,10 @@ const NEGATED_WAITING_OR_PENDING_RE =
   /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|waiting|awaiting)\b/i;
 const CLEARED_WAITING_OR_PENDING_RE =
   /\b(?:pending|waiting|awaiting)\b[\s\S]{0,24}\b(?:cleared|resolved|finished|complete|completed|done|over)\b/i;
+const NEGATED_EXTERNAL_STATUS_RE =
+  /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|running|in progress|queued|awaiting|blocked)\b/i;
+const CLEARED_EXTERNAL_STATUS_RE =
+  /\b(?:pending|running|in progress|queued|awaiting|blocked)\b[\s\S]{0,24}\b(?:cleared|resolved|finished|complete|completed|done|over)\b/i;
 const CRON_WAKE_RE =
   /\b(?:cron wake|scheduled?\s+(?:a\s+)?(?:wake|wake-?up|recheck)|wake(?:\s|-)?at|resume(?:\s+at|\s+on)|next\s+(?:wake|check))\b/i;
 const BACKGROUND_TEXT_RE =
@@ -260,8 +264,8 @@ function hasAffirmativeWaitingOrPending(text: string): boolean {
 
 function hasUnresolvedExternalMention(text: string): boolean {
   if (!UNRESOLVED_EXTERNAL_RE.test(text)) return false;
-  if (NEGATED_WAITING_OR_PENDING_RE.test(text)) return false;
-  if (CLEARED_WAITING_OR_PENDING_RE.test(text)) return false;
+  if (NEGATED_EXTERNAL_STATUS_RE.test(text)) return false;
+  if (CLEARED_EXTERNAL_STATUS_RE.test(text)) return false;
   return true;
 }
 
