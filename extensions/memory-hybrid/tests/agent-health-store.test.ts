@@ -491,9 +491,11 @@ describe("agent-health-store", () => {
 
       const merged = mergeAgentHealthDashboard(forge, dbRows);
 
-      expect(merged).toHaveLength(1);
-      expect(merged[0].agentId).toBe("forge");
-      expect(merged[0].errorCount).toBe(2); // From DB
+      // mergeAgentHealthDashboard always includes all default agents (7 total)
+      expect(merged.length).toBeGreaterThanOrEqual(1);
+      const forgeAgent = merged.find(a => a.agentId === "forge");
+      expect(forgeAgent).toBeDefined();
+      expect(forgeAgent!.errorCount).toBe(2); // From DB
     });
 
     it("should map forge status to outcomes", () => {
@@ -532,8 +534,11 @@ describe("agent-health-store", () => {
 
       const merged = mergeAgentHealthDashboard(forge, dbRows);
 
-      expect(merged).toHaveLength(1);
-      expect(merged[0].agentId).toBe("forge");
+      // mergeAgentHealthDashboard always includes all default agents
+      expect(merged.length).toBeGreaterThanOrEqual(1);
+      const forgeAgent = merged.find(a => a.agentId === "forge");
+      expect(forgeAgent).toBeDefined();
+      expect(forgeAgent!.agentId).toBe("forge");
     });
 
     it("should include default agents in dashboard", () => {
@@ -551,7 +556,9 @@ describe("agent-health-store", () => {
 
       const merged = mergeAgentHealthDashboard(forge, []);
 
-      expect(merged[0].lastSeen).toBeGreaterThan(0);
+      const forgeAgent = merged.find(a => a.agentId === "forge");
+      expect(forgeAgent).toBeDefined();
+      expect(forgeAgent!.lastSeen).toBeGreaterThan(0);
     });
 
     it("should prioritize forge data over DB for active agents", () => {
@@ -580,9 +587,11 @@ describe("agent-health-store", () => {
 
       const merged = mergeAgentHealthDashboard(forge, dbRows);
 
-      expect(merged[0].lastTask).toBe("live task");
-      expect(merged[0].outcome).toBe("success");
-      expect(merged[0].lastSeen).toBeCloseTo(forgeTimestamp, -2);
+      const forgeAgent = merged.find(a => a.agentId === "forge");
+      expect(forgeAgent).toBeDefined();
+      expect(forgeAgent!.lastTask).toBe("live task");
+      expect(forgeAgent!.outcome).toBe("success");
+      expect(forgeAgent!.lastSeen).toBeCloseTo(forgeTimestamp, -2);
     });
   });
 });

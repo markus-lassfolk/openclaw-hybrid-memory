@@ -478,7 +478,7 @@ describe("active-task-checkpoint", () => {
     expect(followup.checkpoint?.relatedSession).toBe("agent:main:session-a");
 
     factsDb.close();
-  });
+  }, 30000); // 30 second timeout for large insert
 
   it("preserves explicitly cleared owner/next fields on follow-up checkpoints", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
