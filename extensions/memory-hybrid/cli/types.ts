@@ -215,3 +215,30 @@ export type ActiveTaskStaleResult = {
 };
 
 export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };
+
+export type ActiveTaskHygieneResult = {
+  ledger: "markdown" | "facts";
+  dryRun: boolean;
+  olderThanMinutes: number;
+  duplicates: Array<{
+    normalized: string;
+    canonicalLabel: string;
+    labels: string[];
+  }>;
+  stale: Array<{
+    label: string;
+    status: string;
+    updated: string;
+    hoursStale: number | "?";
+    reason: string;
+  }>;
+  actions: Array<{
+    label: string;
+    kind: "dead-session" | "stale-failed" | "superseded-duplicate";
+    toStatus: "abandoned" | "superseded";
+    reason: string;
+    canonicalLabel?: string;
+  }>;
+  appliedCount: number;
+  auditFactId?: string;
+};

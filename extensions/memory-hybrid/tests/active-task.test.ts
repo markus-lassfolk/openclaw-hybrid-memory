@@ -11,6 +11,7 @@ import {
   type ActiveTaskContext,
   runActiveTaskAdd,
   runActiveTaskComplete,
+  runActiveTaskHygiene,
   runActiveTaskList,
   runActiveTaskStale,
 } from "../cli/active-tasks.js";
@@ -1013,6 +1014,108 @@ describe("runActiveTaskAdd", () => {
   });
 });
 
+describe("runActiveTaskHygiene", () => {
+  let tmpDir: string;
+  let ctx: ActiveTaskContext;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "active-task-hygiene-"));
+    ctx = {
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASKS.md"),
+      staleMinutes: 1440,
+      flushOnComplete: false,
+      memoryDir: join(tmpDir, "memory"),
+      ledger: "markdown",
+      projection: {
+        mode: "readable",
+        excludeGenericTitle: true,
+        titleMinChars: 0,
+        dedupeBy: "none",
+        sectioned: true,
+      },
+    };
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("dry-run reports duplicates, dead sessions, and stale failed tasks", async () => {
+    const staleIso = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    const freshIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [
+        makeEntry({ label: "dup-a", description: "Issue 1273 hygiene", status: "Waiting", updated: freshIso }),
+        makeEntry({
+          label: "dup_a_copy",
+          description: "Issue 1273 hygiene",
+          status: "Waiting",
+          updated: freshIso,
+        }),
+        makeEntry({
+          label: "dead-subagent",
+          status: "In progress",
+          subagent: "agent:forge:subagent:dead-test-session",
+          updated: staleIso,
+        }),
+        makeEntry({ label: "failed-stale", status: "Failed", updated: staleIso }),
+      ],
+      [],
+    );
+
+    const report = await runActiveTaskHygiene(ctx, {
+      olderThanMinutes: 60,
+      openclawHome: join(tmpDir, "missing-openclaw-home"),
+    });
+    expect(report.dryRun).toBe(true);
+    expect(report.duplicates.length).toBeGreaterThanOrEqual(1);
+    expect(report.actions.some((a) => a.kind === "dead-session" && a.label === "dead-subagent")).toBe(true);
+    expect(report.actions.some((a) => a.kind === "stale-failed" && a.label === "failed-stale")).toBe(true);
+    expect(report.actions.some((a) => a.kind === "superseded-duplicate" && a.label === "dup_a_copy")).toBe(true);
+  });
+
+  it("apply marks stale/superseded rows done without deleting history", async () => {
+    const staleIso = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    const freshIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [
+        makeEntry({ label: "dup-a", description: "Issue 1273 hygiene", status: "Waiting", updated: freshIso }),
+        makeEntry({
+          label: "dup_a_copy",
+          description: "Issue 1273 hygiene",
+          status: "Waiting",
+          updated: freshIso,
+        }),
+        makeEntry({
+          label: "dead-subagent",
+          status: "In progress",
+          subagent: "agent:forge:subagent:dead-test-session",
+          updated: staleIso,
+        }),
+        makeEntry({ label: "failed-stale", status: "Failed", updated: staleIso }),
+      ],
+      [],
+    );
+
+    const report = await runActiveTaskHygiene(ctx, {
+      apply: true,
+      olderThanMinutes: 60,
+      openclawHome: join(tmpDir, "missing-openclaw-home"),
+    });
+    expect(report.dryRun).toBe(false);
+    expect(report.appliedCount).toBeGreaterThanOrEqual(3);
+
+    const file = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(file?.active.some((t) => t.label === "dup-a")).toBe(true);
+    expect(file?.active.some((t) => t.label === "dup_a_copy")).toBe(false);
+    expect(file?.completed.some((t) => t.label === "dup_a_copy")).toBe(true);
+    expect(file?.completed.some((t) => t.label === "dead-subagent")).toBe(true);
+    expect(file?.completed.some((t) => t.label === "failed-stale")).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Config injection tests
 // ---------------------------------------------------------------------------
@@ -1643,5 +1746,7 @@ describe("registerActiveTaskCommands", () => {
     const listCmd = activeTasksCmd?.commands.find((c) => c.name() === "list");
     expect(listCmd).toBeDefined();
     expect(listCmd?.description()).toContain("List active tasks");
+    const hygieneCmd = activeTasksCmd?.commands.find((c) => c.name() === "hygiene");
+    expect(hygieneCmd).toBeDefined();
   });
 });

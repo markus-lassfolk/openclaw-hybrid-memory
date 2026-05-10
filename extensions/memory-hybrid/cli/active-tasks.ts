@@ -22,18 +22,21 @@ import {
 } from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import {
+  applyActiveTaskHygieneFacts,
   loadTaskLedgerFromFacts,
+  planActiveTaskHygiene,
   readActiveTaskRowsFromFacts,
   reconcileActiveTaskInProgressSessionsFacts,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
-import { formatDuration } from "../utils/duration.js";
+import { formatDuration, parseDuration } from "../utils/duration.js";
 import { formatActiveTaskConfigLines } from "./config-feature-summaries.js";
 import type { Chainable } from "./shared.js";
 import type {
   ActiveTaskAddResult,
   ActiveTaskCompleteResult,
+  ActiveTaskHygieneResult,
   ActiveTaskListResult,
   ActiveTaskStaleResult,
 } from "./types.js";
@@ -320,6 +323,109 @@ export async function runActiveTaskAdd(
   return { ok: true, label: opts.label, upserted: wasExisting };
 }
 
+/** Detect/apply active-task hygiene: duplicates, stale failed tasks, dead-session in-progress tasks. */
+export async function runActiveTaskHygiene(
+  ctx: ActiveTaskContext,
+  opts: {
+    apply?: boolean;
+    olderThanMinutes?: number;
+    openclawHome?: string;
+  } = {},
+): Promise<ActiveTaskHygieneResult> {
+  const olderThanMinutes = Math.max(1, Math.floor(opts.olderThanMinutes ?? ctx.staleMinutes));
+  const apply = opts.apply === true;
+  if (ctx.ledger === "facts") {
+    const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const plan = await planActiveTaskHygiene(active, {
+      olderThanMinutes,
+      openclawHome: opts.openclawHome,
+    });
+    if (!apply || plan.actions.length === 0) {
+      return {
+        ledger: "facts",
+        dryRun: !apply,
+        olderThanMinutes,
+        duplicates: plan.duplicates,
+        stale: plan.stale,
+        actions: plan.actions,
+        appliedCount: 0,
+      };
+    }
+    const applied = await applyActiveTaskHygieneFacts(factsDb, vectorDb, embeddings, plan, {
+      flushOnComplete: ctx.flushOnComplete,
+      memoryDir: ctx.memoryDir,
+    });
+    await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+    return {
+      ledger: "facts",
+      dryRun: false,
+      olderThanMinutes,
+      duplicates: plan.duplicates,
+      stale: plan.stale,
+      actions: plan.actions,
+      appliedCount: applied.appliedCount,
+      auditFactId: applied.auditFactId,
+    };
+  }
+
+  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
+  const active = taskFile?.active ?? [];
+  const completed = taskFile?.completed ?? [];
+  const plan = await planActiveTaskHygiene(active, {
+    olderThanMinutes,
+    openclawHome: opts.openclawHome,
+  });
+  if (!apply || !taskFile || plan.actions.length === 0) {
+    return {
+      ledger: "markdown",
+      dryRun: !apply,
+      olderThanMinutes,
+      duplicates: plan.duplicates,
+      stale: plan.stale,
+      actions: plan.actions,
+      appliedCount: 0,
+    };
+  }
+
+  const actionByLabel = new Map(plan.actions.map((action) => [action.label, action] as const));
+  const newActive: ActiveTaskEntry[] = [];
+  const newCompleted: ActiveTaskEntry[] = [...completed];
+  const now = new Date().toISOString();
+  const toFlush: ActiveTaskEntry[] = [];
+  for (const task of active) {
+    const action = actionByLabel.get(task.label);
+    if (!action) {
+      newActive.push(task);
+      continue;
+    }
+    const completedEntry: ActiveTaskEntry = {
+      ...task,
+      status: "Done",
+      updated: now,
+      next: action.reason,
+      subagent: action.kind === "dead-session" ? undefined : task.subagent,
+    };
+    newCompleted.push(completedEntry);
+    toFlush.push(completedEntry);
+  }
+  await writeActiveTaskFile(ctx.activeTaskFilePath, newActive, newCompleted);
+  if (ctx.flushOnComplete) {
+    for (const entry of toFlush) {
+      await flushCompletedTaskToMemory(entry, ctx.memoryDir).catch(() => {});
+    }
+  }
+  return {
+    ledger: "markdown",
+    dryRun: false,
+    olderThanMinutes,
+    duplicates: plan.duplicates,
+    stale: plan.stale,
+    actions: plan.actions,
+    appliedCount: toFlush.length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------
@@ -354,6 +460,42 @@ function printActiveTaskList(result: ActiveTaskListResult): void {
   }
 }
 
+function printActiveTaskHygiene(result: ActiveTaskHygieneResult): void {
+  console.log(
+    `Active-task hygiene report [${result.ledger}] (older than ${formatDuration(result.olderThanMinutes)}):`,
+  );
+  console.log(`  Duplicate groups: ${result.duplicates.length}`);
+  console.log(`  Stale candidates: ${result.stale.length}`);
+  console.log(`  Actions: ${result.actions.length}`);
+
+  if (result.duplicates.length > 0) {
+    console.log("\nDuplicate groups:");
+    for (const group of result.duplicates) {
+      const variants = group.labels.filter((label) => label !== group.canonicalLabel);
+      console.log(`  Canonical: [${group.canonicalLabel}] (normalized: ${group.normalized})`);
+      if (variants.length > 0) {
+        console.log(`    Variants: ${variants.map((label) => `[${label}]`).join(", ")}`);
+      }
+    }
+  }
+
+  if (result.stale.length > 0) {
+    console.log("\nStale candidates:");
+    for (const row of result.stale) {
+      console.log(`  [${row.label}] ${row.status} — updated ${row.updated} (${row.hoursStale}h)`);
+      console.log(`    ${row.reason}`);
+    }
+  }
+
+  if (result.actions.length > 0) {
+    console.log("\nPlanned actions:");
+    for (const action of result.actions) {
+      const canonical = action.canonicalLabel ? ` -> [${action.canonicalLabel}]` : "";
+      console.log(`  [${action.label}] ${action.kind} => ${action.toStatus}${canonical}`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Commander registration
 // ---------------------------------------------------------------------------
@@ -370,7 +512,7 @@ export function registerActiveTaskCommands(
     .command("active-tasks")
     .description(
       ctx
-        ? `Working memory: active tasks (${ctx.ledger} ledger). Subcommands: list, complete, stale, reconcile, add, render, config`
+        ? `Working memory: active tasks (${ctx.ledger} ledger). Subcommands: list, complete, stale, reconcile, hygiene, add, render, config`
         : "Active tasks disabled (activeTask.enabled: false). Subcommand: config. Enable: openclaw hybrid-mem config-set activeTask enabled",
     )
     .action(async () => {
@@ -488,6 +630,49 @@ export function registerActiveTaskCommands(
       }
       console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) (moved to Completed):`);
       for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+    });
+
+  activeTasks
+    .command("hygiene")
+    .description(
+      "Detect and optionally clean stale/duplicate task entities (dead sessions, stale failures, superseded variants)",
+    )
+    .option("--dry-run", "Report hygiene findings and planned actions (default)")
+    .option("--apply", "Apply hygiene actions and persist audit trail")
+    .option("--older-than <duration>", `Age threshold, e.g. 24h or 2d (default: ${formatDuration(ctx.staleMinutes)})`)
+    .action(async (opts: { dryRun?: boolean; apply?: boolean; olderThan?: string }) => {
+      if (opts.apply && opts.dryRun) {
+        console.error("Error: --dry-run and --apply are mutually exclusive.");
+        process.exitCode = 1;
+        return;
+      }
+      let olderThanMinutes = ctx.staleMinutes;
+      if (opts.olderThan?.trim()) {
+        try {
+          olderThanMinutes = parseDuration(opts.olderThan.trim());
+        } catch (err) {
+          console.error(`Error: invalid --older-than value "${opts.olderThan}": ${String(err)}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+      const apply = opts.apply === true;
+      const result = await runActiveTaskHygiene(ctx, {
+        apply,
+        olderThanMinutes,
+      });
+      printActiveTaskHygiene(result);
+      if (!apply) {
+        console.log("\nDry run only. Re-run with --apply to persist hygiene actions.");
+        return;
+      }
+      console.log(`\nApplied ${result.appliedCount} action(s).`);
+      if (result.auditFactId) {
+        console.log(`Audit fact: ${result.auditFactId}`);
+      }
+      if (result.ledger === "facts") {
+        console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
+      }
     });
 
   activeTasks

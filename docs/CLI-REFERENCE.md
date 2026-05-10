@@ -32,7 +32,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
-| **Goals & working memory** | `goals …`, `goals config`, `active-tasks`, `active-tasks config`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
+| **Goals & working memory** | `goals …`, `goals config`, `active-tasks`, `active-tasks config`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks hygiene [--dry-run|--apply] [--older-than <duration>]`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
 
 ---
 
@@ -107,6 +107,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `active-tasks complete <label>` | Mark task Done and flush to memory log. |
 | `active-tasks stale` | Show tasks not updated within staleThreshold. |
 | `active-tasks reconcile` | Move in-progress tasks whose OpenClaw session transcript is missing to Completed (issues #978, #981). |
+| `active-tasks hygiene [--dry-run|--apply] [--older-than <duration>]` | Detect duplicate normalized task entities and stale rows (failed tasks, dead-session in-progress tasks). `--dry-run` reports findings; `--apply` marks rows as abandoned/superseded (history kept) and writes an audit fact. |
 | `active-tasks add <label> <desc>` | Add or update a task entry (markdown file or project facts). |
 | `active-tasks render` | Write `ACTIVE-TASKS.md` as a projection from the facts ledger (use with `activeTask.ledger: facts`). |
 | `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). Adds `recognized: true/false` when the file is valid JSON. Use `--with-active-tasks` to merge a summary of `ACTIVE-TASKS.md` (same paths as `active-tasks`). |
