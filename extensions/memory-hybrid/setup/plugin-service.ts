@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { findPluginRoot } from "../utils/plugin-root.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { clearRuntimeTimers } from "../api/plugin-runtime.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -929,42 +930,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (isErrorReporterActive()) {
         flushErrorReporter(2000).catch(() => {});
       }
-      if (timers.pruneTimer.value) {
-        clearInterval(timers.pruneTimer.value);
-        timers.pruneTimer.value = null;
-      }
-      if (timers.classifyStartupTimeout.value) {
-        clearTimeout(timers.classifyStartupTimeout.value);
-        timers.classifyStartupTimeout.value = null;
-      }
-      if (timers.classifyTimer.value) {
-        clearInterval(timers.classifyTimer.value);
-        timers.classifyTimer.value = null;
-      }
-      if (timers.proposalsPruneTimer.value) {
-        clearInterval(timers.proposalsPruneTimer.value);
-        timers.proposalsPruneTimer.value = null;
-      }
-      if (timers.languageKeywordsStartupTimeout.value) {
-        clearTimeout(timers.languageKeywordsStartupTimeout.value);
-        timers.languageKeywordsStartupTimeout.value = null;
-      }
-      if (timers.languageKeywordsTimer.value) {
-        clearInterval(timers.languageKeywordsTimer.value);
-        timers.languageKeywordsTimer.value = null;
-      }
-      if (timers.passiveObserverTimer.value) {
-        clearInterval(timers.passiveObserverTimer.value);
-        timers.passiveObserverTimer.value = null;
-      }
-      if (timers.postUpgradeTimeout.value) {
-        clearTimeout(timers.postUpgradeTimeout.value);
-        timers.postUpgradeTimeout.value = null;
-      }
-      if (timers.watchdogTimer.value) {
-        clearInterval(timers.watchdogTimer.value);
-        timers.watchdogTimer.value = null;
-      }
+      clearRuntimeTimers(timers);
       if (dashboardServer) {
         try {
           dashboardServer.close();
