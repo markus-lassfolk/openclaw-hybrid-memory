@@ -2,13 +2,19 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerBenchmarkCommands } from "../cli/benchmark.js";
 
-// Mock the shadow-eval module functions since they depend on complex setup
-vi.mock("../benchmark/shadow-eval.js", () => ({
-  formatBenchmarkResult: vi.fn((result) => `Feature: ${result.feature}, p50: ${result.latency.p50}ms`),
-  formatBenchmarkResults: vi.fn((results) => results.map((r: { feature: string }) => `- ${r.feature}`).join("\n")),
-  runBenchmark: vi.fn(async (feature) => ({
+const mocks = vi.hoisted(() => ({
+  formatBenchmarkResult: vi.fn(
+    (result: { feature: string; latency: { p50: number } }) =>
+      `Feature: ${result.feature}, p50: ${result.latency.p50}ms`,
+  ),
+  formatBenchmarkResults: vi.fn((results: Array<{ feature: string }>) =>
+    results.map((r) => `- ${r.feature}`).join("\n"),
+  ),
+  runBenchmark: vi.fn(async (feature: string) => ({
     feature,
     latency: { p50: 10, p95: 20, p99: 30, samples: 100 },
   })),
@@ -18,18 +24,22 @@ vi.mock("../benchmark/shadow-eval.js", () => ({
   ]),
 }));
 
+vi.mock("../benchmark/shadow-eval.js", () => ({
+  formatBenchmarkResult: mocks.formatBenchmarkResult,
+  formatBenchmarkResults: mocks.formatBenchmarkResults,
+  runBenchmark: mocks.runBenchmark,
+  runAllBenchmarks: mocks.runAllBenchmarks,
+}));
+
 describe("benchmark CLI", () => {
   let testDir: string;
   let dbPath: string;
 
   beforeEach(() => {
-    // Create a unique test directory for each test
     testDir = join(tmpdir(), `benchmark-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
 
     dbPath = join(testDir, "test.db");
-
-    // Create a minimal test database
     const db = new DatabaseSync(dbPath);
     db.exec(`
       CREATE TABLE IF NOT EXISTS llm_cost_log (
@@ -40,200 +50,64 @@ describe("benchmark CLI", () => {
         tokens_output INTEGER
       );
     `);
-    db.exec(`
-      INSERT INTO llm_cost_log (session_id, cost_usd, tokens_input, tokens_output)
-      VALUES ('test-session', 0.001, 100, 50);
-    `);
     db.close();
-  });
 
-  afterEach(() => {
-    // Clean up test directory
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
     vi.clearAllMocks();
   });
 
-  describe("benchmark command registration", () => {
-    it("should verify database exists", () => {
-      expect(existsSync(dbPath)).toBe(true);
-
-      // Verify we can open the database
-      const db = new DatabaseSync(dbPath, { readOnly: true });
-      const tables = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'")
-        .all() as Array<{ name: string }>;
-      expect(tables).toHaveLength(1);
-      expect(tables[0].name).toBe("llm_cost_log");
-      db.close();
-    });
-
-    it("should have correct table structure", () => {
-      const db = new DatabaseSync(dbPath, { readOnly: true });
-      const rows = db.prepare("SELECT * FROM llm_cost_log WHERE session_id = 'test-session'").all() as Array<{
-        session_id: string;
-        cost_usd: number;
-        tokens_input: number;
-        tokens_output: number;
-      }>;
-
-      expect(rows).toHaveLength(1);
-      expect(rows[0].session_id).toBe("test-session");
-      expect(rows[0].cost_usd).toBe(0.001);
-      expect(rows[0].tokens_input).toBe(100);
-      expect(rows[0].tokens_output).toBe(50);
-      db.close();
-    });
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
   });
 
-  describe("benchmark feature selection", () => {
-    it("should support episodes feature", () => {
-      const feature = "episodes";
-      expect(["episodes", "frequency-autosave", "procedure-feedback"]).toContain(feature);
-    });
+  function makeProgram(sqlitePath: string): Command {
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerBenchmarkCommands(program, { cfg: { sqlitePath } } as never);
+    return program;
+  }
 
-    it("should support frequency-autosave feature", () => {
-      const feature = "frequency-autosave";
-      expect(["episodes", "frequency-autosave", "procedure-feedback"]).toContain(feature);
-    });
+  it("runs all benchmarks by default", async () => {
+    const program = makeProgram(dbPath);
 
-    it("should support procedure-feedback feature", () => {
-      const feature = "procedure-feedback";
-      expect(["episodes", "frequency-autosave", "procedure-feedback"]).toContain(feature);
-    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync(["benchmark", "run"], { from: "user" });
+
+      expect(mocks.runAllBenchmarks).toHaveBeenCalledTimes(1);
+      expect(mocks.runAllBenchmarks).toHaveBeenCalledWith(
+        { dbPath },
+        expect.objectContaining({ format: "text", iterations: 100 }),
+      );
+      expect(mocks.runBenchmark).not.toHaveBeenCalled();
+      expect(mocks.formatBenchmarkResults).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
   });
 
-  describe("benchmark options", () => {
-    it("should support accuracy option", () => {
-      const options = { accuracy: true };
-      expect(options.accuracy).toBe(true);
+  it("runs a specific feature when --feature is provided", async () => {
+    const program = makeProgram(dbPath);
+
+    await program.parseAsync(["benchmark", "run", "--feature", "episodes", "--format", "json", "--iterations", "25"], {
+      from: "user",
     });
 
-    it("should support shadow option", () => {
-      const options = { shadow: true };
-      expect(options.shadow).toBe(true);
-    });
-
-    it("should support format options (text and json)", () => {
-      const textFormat = { format: "text" as const };
-      const jsonFormat = { format: "json" as const };
-
-      expect(textFormat.format).toBe("text");
-      expect(jsonFormat.format).toBe("json");
-    });
-
-    it("should support custom iterations", () => {
-      const options = { iterations: 50 };
-      expect(options.iterations).toBe(50);
-    });
-
-    it("should support custom judge model", () => {
-      const options = { judgeModel: "openai/gpt-4.1-nano" };
-      expect(options.judgeModel).toBe("openai/gpt-4.1-nano");
-    });
-
-    it("should use default iterations of 100", () => {
-      const defaultIterations = 100;
-      expect(defaultIterations).toBe(100);
-    });
-
-    it("should use default judge model", () => {
-      const defaultJudgeModel = "openai/gpt-4.1-nano";
-      expect(defaultJudgeModel).toBe("openai/gpt-4.1-nano");
-    });
+    expect(mocks.runBenchmark).toHaveBeenCalledTimes(1);
+    expect(mocks.runBenchmark).toHaveBeenCalledWith(
+      "episodes",
+      { dbPath },
+      expect.objectContaining({ format: "json", iterations: 25 }),
+    );
+    expect(mocks.runAllBenchmarks).not.toHaveBeenCalled();
   });
 
-  describe("benchmark result structure", () => {
-    it("should have expected result fields", () => {
-      const mockResult = {
-        feature: "test-feature",
-        latency: { p50: 10, p95: 20, p99: 30, samples: 100 },
-      };
+  it("fails with a clear error when database is missing", async () => {
+    const missingDb = join(testDir, "does-not-exist.db");
+    const program = makeProgram(missingDb);
 
-      expect(mockResult).toHaveProperty("feature");
-      expect(mockResult).toHaveProperty("latency");
-      expect(mockResult.latency).toHaveProperty("p50");
-      expect(mockResult.latency).toHaveProperty("p95");
-      expect(mockResult.latency).toHaveProperty("p99");
-      expect(mockResult.latency).toHaveProperty("samples");
-    });
-
-    it("should support optional accuracy field", () => {
-      const mockResultWithAccuracy = {
-        feature: "test-feature",
-        latency: { p50: 10, p95: 20, p99: 30, samples: 100 },
-        accuracy: { score: 0.85, llmCalls: 5, tokensUsed: 1000, judgement: "Good improvement" },
-      };
-
-      expect(mockResultWithAccuracy.accuracy).toBeDefined();
-      expect(mockResultWithAccuracy.accuracy?.score).toBe(0.85);
-    });
-
-    it("should support optional cost tracking fields", () => {
-      const mockResultWithCost = {
-        feature: "test-feature",
-        latency: { p50: 10, p95: 20, p99: 30, samples: 100 },
-        tokensTracked: 5000,
-        costTrackedUsd: 0.05,
-      };
-
-      expect(mockResultWithCost.tokensTracked).toBe(5000);
-      expect(mockResultWithCost.costTrackedUsd).toBe(0.05);
-    });
-
-    it("should support optional latency delta for shadow mode", () => {
-      const mockResultWithDelta = {
-        feature: "test-feature",
-        latency: { p50: 10, p95: 20, p99: 30, samples: 100 },
-        latencyDeltaMs: 2.5,
-      };
-
-      expect(mockResultWithDelta.latencyDeltaMs).toBe(2.5);
-    });
-  });
-
-  describe("database error handling", () => {
-    it("should handle missing database gracefully", () => {
-      const nonExistentPath = join(testDir, "nonexistent.db");
-      expect(existsSync(nonExistentPath)).toBe(false);
-    });
-
-    it("should detect when database path is invalid", () => {
-      const invalidPath = "/invalid/path/that/does/not/exist/db.db";
-      expect(existsSync(invalidPath)).toBe(false);
-    });
-  });
-
-  describe("cost tracking", () => {
-    it("should query llm_cost_log table", () => {
-      const db = new DatabaseSync(dbPath, { readOnly: true });
-      const rows = db.prepare("SELECT SUM(cost_usd) as total_cost FROM llm_cost_log").all() as Array<{
-        total_cost: number;
-      }>;
-
-      expect(rows[0].total_cost).toBe(0.001);
-      db.close();
-    });
-
-    it("should calculate total tokens", () => {
-      const db = new DatabaseSync(dbPath, { readOnly: true });
-      const rows = db
-        .prepare("SELECT SUM(tokens_input + tokens_output) as total_tokens FROM llm_cost_log")
-        .all() as Array<{ total_tokens: number }>;
-
-      expect(rows[0].total_tokens).toBe(150); // 100 input + 50 output
-      db.close();
-    });
-
-    it("should filter by session_id", () => {
-      const db = new DatabaseSync(dbPath, { readOnly: true });
-      const rows = db
-        .prepare("SELECT COUNT(*) as count FROM llm_cost_log WHERE session_id = 'test-session'")
-        .all() as Array<{ count: number }>;
-
-      expect(rows[0].count).toBe(1);
-      db.close();
-    });
+    await expect(program.parseAsync(["benchmark", "run"], { from: "user" })).rejects.toThrow(/Database not found at:/);
   });
 });

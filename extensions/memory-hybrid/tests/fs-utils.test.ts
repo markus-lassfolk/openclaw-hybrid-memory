@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,8 +39,8 @@ describe("fs utilities", () => {
       mkdirSync(dirPath);
 
       const size = await getFileSizeAsync(dirPath);
-      // Directories have a metadata size (e.g., 4096 on Linux)
-      expect(size).toBeGreaterThanOrEqual(0);
+      expect(size).toBe(statSync(dirPath).size);
+      expect(Number.isFinite(size)).toBe(true);
     });
 
     it("should handle empty file", async () => {
@@ -144,12 +144,19 @@ describe("fs utilities", () => {
       expect(size).toBeGreaterThanOrEqual(0);
     });
 
-    it("should handle symbolic links (if they exist)", async () => {
+    it("should ignore symbolic links when calculating directory size", async () => {
       const targetFile = join(testDir, "target.txt");
       writeFileSync(targetFile, "content", "utf-8");
+      const symlinkPath = join(testDir, "target-link.txt");
+      try {
+        symlinkSync(targetFile, symlinkPath);
+      } catch {
+        // Some environments may block symlink creation for unprivileged users.
+        return;
+      }
 
       const size = await getDirSize(testDir);
-      expect(size).toBeGreaterThan(0);
+      expect(size).toBe("content".length);
     });
 
     it("should handle directory with many files", async () => {

@@ -6,9 +6,17 @@ import {
   AgentHealthStore,
   agentHealthDbPathForMemorySqlite,
   mergeAgentHealthDashboard,
-  type AgentHealthView,
 } from "../backends/agent-health-store.js";
 import type { ForgeTaskItem } from "../types/dashboard-types.js";
+
+type AgentHealthStoreTestAccess = AgentHealthStore & {
+  liveDb: {
+    prepare: (sql: string) => {
+      all: () => unknown[];
+    };
+  };
+  getSubsystemName: () => string;
+};
 
 describe("agent-health-store", () => {
   let testDir: string;
@@ -35,7 +43,7 @@ describe("agent-health-store", () => {
     });
 
     it("should create agent_health table with correct schema", () => {
-      const tables = store["liveDb"]
+      const tables = (store as unknown as AgentHealthStoreTestAccess).liveDb
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_health'")
         .all() as Array<{ name: string }>;
 
@@ -52,7 +60,7 @@ describe("agent-health-store", () => {
     });
 
     it("should have correct subsystem name", () => {
-      expect(store["getSubsystemName"]()).toBe("agent-health-store");
+      expect((store as unknown as AgentHealthStoreTestAccess).getSubsystemName()).toBe("agent-health-store");
     });
   });
 

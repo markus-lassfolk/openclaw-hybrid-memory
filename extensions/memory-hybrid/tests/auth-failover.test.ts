@@ -142,19 +142,23 @@ describe("auth-failover", () => {
 
     it("should calculate correct backoff duration", () => {
       const schedule = [5]; // 5 minutes
-      recordOAuthFailure("openai", { statePath, backoffScheduleMinutes: schedule });
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+        recordOAuthFailure("openai", { statePath, backoffScheduleMinutes: schedule });
 
-      // Read state file to check backoffUntil
-      const stateContent = require("node:fs").readFileSync(statePath, "utf-8");
-      const state = JSON.parse(stateContent);
+        // Read state file to check backoffUntil
+        const stateContent = require("node:fs").readFileSync(statePath, "utf-8");
+        const state = JSON.parse(stateContent);
 
-      const expectedBackoffUntil = state.providers.openai.backoffUntil;
-      const now = Date.now();
-      const diff = expectedBackoffUntil - now;
+        const expectedBackoffUntil = state.providers.openai.backoffUntil;
+        const now = Date.now();
+        const diff = expectedBackoffUntil - now;
 
-      // Should be approximately 5 minutes (allowing 1 second tolerance)
-      expect(diff).toBeGreaterThan(5 * 60 * 1000 - 1000);
-      expect(diff).toBeLessThanOrEqual(5 * 60 * 1000);
+        expect(diff).toBe(5 * 60 * 1000);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should persist state across function calls", () => {
