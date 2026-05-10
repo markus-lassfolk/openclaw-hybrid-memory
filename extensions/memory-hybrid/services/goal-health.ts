@@ -381,10 +381,10 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
               sessionKey: lt.sessionKey,
               runId: lt.runId ?? null,
             });
-            const reread = await readGoal(goalsDir, goal.id);
-            if (!reread) continue;
-            g = reread;
             metadataFailureHandled = true;
+            const reread = await readGoal(goalsDir, goal.id);
+            if (!reread) break;
+            g = reread;
             break;
           }
         }
