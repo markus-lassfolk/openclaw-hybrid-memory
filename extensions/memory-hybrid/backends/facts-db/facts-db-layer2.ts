@@ -11,6 +11,7 @@ import {
   getBatch as getBatchImpl,
   getByCategory as getByCategoryImpl,
   getCount as getCountImpl,
+  getMaxCreatedAtByCategory as getMaxCreatedAtByCategoryImpl,
   getRecentFacts as getRecentFactsImpl,
   getUnattemptedOtherFacts as getUnattemptedOtherFactsImpl,
   listDirectives as listDirectivesImpl,
@@ -460,6 +461,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** List directive facts (source LIKE 'directive:%'), non-superseded, by created_at DESC. */
   listDirectives(limit = 100): MemoryEntry[] {
     return listDirectivesImpl(this.liveDb, limit);
+  }
+
+  /** Get maximum created_at timestamp for non-superseded facts in a category. */
+  getMaxCreatedAtByCategory(category: string): number | null {
+    return getMaxCreatedAtByCategoryImpl(this.liveDb, category);
   }
 
   updateCategory(id: string, category: string): boolean {

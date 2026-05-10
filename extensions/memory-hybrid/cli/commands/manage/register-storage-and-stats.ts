@@ -3,13 +3,13 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
+import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
-import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
@@ -18,6 +18,7 @@ import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
+import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { getEnv } from "../../../utils/env-manager.js";
@@ -49,6 +50,60 @@ function recordMaintenanceTimestamp(resolvedSqlitePath: string, filename: string
     });
     // Non-fatal: don't throw, just log the error
   }
+}
+
+type ReindexCheckpoint = {
+  offset: number;
+  total: number;
+  migrated: number;
+  skipped: number;
+  ts: number;
+};
+
+function defaultReindexCheckpointPath(resolvedSqlitePath: string): string {
+  return join(dirname(resolvedSqlitePath), ".reindex_checkpoint.json");
+}
+
+function readReindexCheckpoint(path: string): ReindexCheckpoint | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<ReindexCheckpoint>;
+    if (
+      typeof parsed.offset === "number" &&
+      typeof parsed.total === "number" &&
+      typeof parsed.migrated === "number" &&
+      typeof parsed.skipped === "number" &&
+      typeof parsed.ts === "number"
+    ) {
+      return {
+        offset: Math.max(0, Math.floor(parsed.offset)),
+        total: Math.max(0, Math.floor(parsed.total)),
+        migrated: Math.max(0, Math.floor(parsed.migrated)),
+        skipped: Math.max(0, Math.floor(parsed.skipped)),
+        ts: Math.max(0, Math.floor(parsed.ts)),
+      };
+    }
+  } catch {
+    // ignore malformed checkpoints; caller treats as absent
+  }
+  return null;
+}
+
+function writeReindexCheckpoint(path: string, state: ReindexCheckpoint): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(state, null, 2), "utf-8");
+}
+
+function parseBoundedIntOption(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(String(raw ?? fallback), 10);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
+}
+
+function parseBoundedFloatOption(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseFloat(String(raw ?? fallback));
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
 }
 
 /**
@@ -169,6 +224,22 @@ export type AuditHealthReport = {
    * dashboards can render a single number and gate the 60% warning (#1193).
    */
   stableStickiness: { stablePermanent: number; activeFacts: number; ratio: number };
+  vectorIntegrity: {
+    score: number;
+    degraded: boolean;
+    degradedReason: string | null;
+    vectorlessRatio: number;
+    orphanSignals: {
+      sqliteFactsWithoutCanonicalEmbedding: number;
+    };
+  };
+  vectorLifecycleSlo: {
+    targets: {
+      maxVectorlessRatio: number;
+      minIntegrityScore: number;
+    };
+    breaches: Array<{ key: "vectorless_ratio" | "integrity_score"; actual: number; target: number }>;
+  };
   categories: {
     configured: string[];
     present: string[];
@@ -215,6 +286,7 @@ export function buildAuditHealthReport(
     timeoutMs?: number;
     startedAtMs?: number;
     deadlineMs?: number;
+    degradedState?: { active: boolean; reason: string | null };
   },
 ): AuditHealthReport {
   const startedAtMs = options?.startedAtMs ?? Date.now();
@@ -500,6 +572,33 @@ export function buildAuditHealthReport(
     activeFacts,
     ratio: stableStickinessRatio,
   };
+  const vectorlessRatio = activeFacts > 0 ? vectorless / activeFacts : 0;
+  const degraded = options?.degradedState?.active === true;
+  const degradedReason = options?.degradedState?.reason ?? null;
+  let integrityScore = 100;
+  integrityScore -= Math.min(60, Math.round(vectorlessRatio * 100));
+  if (degraded) integrityScore -= 30;
+  if (errors.length > 0) integrityScore -= Math.min(20, errors.length * 5);
+  integrityScore = Math.max(0, Math.min(100, integrityScore));
+  const vectorLifecycleSloTargets = {
+    maxVectorlessRatio: 0.02,
+    minIntegrityScore: 85,
+  } as const;
+  const vectorLifecycleSloBreaches: AuditHealthReport["vectorLifecycleSlo"]["breaches"] = [];
+  if (vectorlessRatio > vectorLifecycleSloTargets.maxVectorlessRatio) {
+    vectorLifecycleSloBreaches.push({
+      key: "vectorless_ratio",
+      actual: Number(vectorlessRatio.toFixed(4)),
+      target: vectorLifecycleSloTargets.maxVectorlessRatio,
+    });
+  }
+  if (integrityScore < vectorLifecycleSloTargets.minIntegrityScore) {
+    vectorLifecycleSloBreaches.push({
+      key: "integrity_score",
+      actual: integrityScore,
+      target: vectorLifecycleSloTargets.minIntegrityScore,
+    });
+  }
 
   const warnings: string[] = [];
   // #1193: gate hot=0/structural=0 warnings on storeAgeDays > 14 to avoid false positives during
@@ -538,6 +637,14 @@ export function buildAuditHealthReport(
       `Top entities include stop-word-like labels: ${entityStopwordMatches.map((row) => row.entity).join(", ")}.`,
     );
   if (vectorless > 0) warnings.push(`${vectorless} active non-kv fact(s) are missing canonical embeddings.`);
+  if (degraded)
+    warnings.push(
+      `Vector store is in degraded mode${degradedReason ? ` (reason: ${degradedReason})` : ""}; semantic retrieval may be unavailable.`,
+    );
+  if (vectorLifecycleSloBreaches.length > 0)
+    warnings.push(
+      `Vector lifecycle SLO breach(es): ${vectorLifecycleSloBreaches.map((b) => `${b.key} actual=${b.actual} target=${b.target}`).join("; ")}`,
+    );
   if (procedureTriage.summary.total > 0)
     warnings.push(
       `${procedureTriage.summary.total} validated procedure(s) are not promoted (top reason: ${procedureTriage.summary.topReason ?? "unknown"}).`,
@@ -552,6 +659,7 @@ export function buildAuditHealthReport(
   if (unknown.length > 0)
     remediation.push("Run `openclaw hybrid-mem categories audit`, then `categories remap --apply` where appropriate.");
   if (vectorless > 0) remediation.push("Run `openclaw hybrid-mem reembed-vectorless --apply`.");
+  if (degraded) remediation.push("Run `openclaw hybrid-mem repair-vectors` and validate LanceDB connectivity.");
   if (procedureTriage.summary.total > 0)
     remediation.push(
       "Run `openclaw hybrid-mem procedures triage --not-promoted` and `generate-auto-skills` where appropriate.",
@@ -628,6 +736,19 @@ export function buildAuditHealthReport(
     tiers,
     decay,
     stableStickiness,
+    vectorIntegrity: {
+      score: integrityScore,
+      degraded,
+      degradedReason,
+      vectorlessRatio: Number(vectorlessRatio.toFixed(4)),
+      orphanSignals: {
+        sqliteFactsWithoutCanonicalEmbedding: vectorless,
+      },
+    },
+    vectorLifecycleSlo: {
+      targets: vectorLifecycleSloTargets,
+      breaches: vectorLifecycleSloBreaches,
+    },
     categories: { configured, present, unknown },
     sources,
     implicitFeedbackTrajectorySignals,
@@ -650,6 +771,17 @@ function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log(`Store age (days): ${report.storeAgeDays.toFixed(1)}`);
   console.log(`Canonical embeddings: ${report.canonicalEmbeddings}`);
   console.log(`Vectorless active non-kv facts: ${report.vectorless}`);
+  console.log(
+    `Vector integrity score: ${report.vectorIntegrity.score}/100 (degraded=${report.vectorIntegrity.degraded ? "yes" : "no"}; vectorlessRatio=${report.vectorIntegrity.vectorlessRatio})`,
+  );
+  if (report.vectorIntegrity.degradedReason) {
+    console.log(`Vector degraded reason: ${report.vectorIntegrity.degradedReason}`);
+  }
+  if (report.vectorLifecycleSlo.breaches.length > 0) {
+    console.log(
+      `Vector lifecycle SLO breaches: ${report.vectorLifecycleSlo.breaches.map((b) => `${b.key} actual=${b.actual} target=${b.target}`).join(", ")}`,
+    );
+  }
   if (report.vectorlessBySource.length > 0) {
     console.log(`Vectorless by source: ${report.vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`);
   }
@@ -1327,22 +1459,24 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       "Minimum fraction of facts that must be successfully embedded (0.0-1.0, default: 0.95). Re-index aborts without swapping if fewer facts are migrated.",
       "0.95",
     )
+    .option("--resume", "Resume from saved checkpoint file when available")
+    .option("--checkpoint-file <path>", "Checkpoint file path for resumable re-index")
     .action(
       withExit(
         async (opts?: {
           batchSize?: string;
           delayMsBetweenBatches?: string;
           minFractionSuccess?: string;
+          resume?: boolean;
+          checkpointFile?: string;
         }) => {
-          const batchSize = Math.max(1, Math.min(500, Number.parseInt(String(opts?.batchSize ?? "50"), 10) || 50));
-          const delayMsBetweenBatches = Math.max(
-            0,
-            Math.min(120_000, Number.parseInt(String(opts?.delayMsBetweenBatches ?? "0"), 10) || 0),
-          );
-          const minFractionSuccess = Math.max(
-            0.0,
-            Math.min(1.0, Number.parseFloat(String(opts?.minFractionSuccess ?? "0.95")) || 0.95),
-          );
+          const batchSize = parseBoundedIntOption(opts?.batchSize, 50, 1, 500);
+          const delayMsBetweenBatches = parseBoundedIntOption(opts?.delayMsBetweenBatches, 0, 0, 120_000);
+          const minFractionSuccess = parseBoundedFloatOption(opts?.minFractionSuccess, 0.95, 0.0, 1.0);
+          const checkpointPath =
+            opts?.checkpointFile?.trim() ||
+            (ctx.resolvedSqlitePath ? defaultReindexCheckpointPath(ctx.resolvedSqlitePath) : "");
+          let resumeCheckpoint = opts?.resume === true && checkpointPath ? readReindexCheckpoint(checkpointPath) : null;
 
           // Get total facts for validation
           const totalFacts =
@@ -1352,126 +1486,347 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
                 })
               : factsDb.getAll({ includeSuperseded: false }).length;
 
-          console.log(`Re-index: starting non-destructive re-index of ${totalFacts} facts...`);
-          console.log(`Re-index: creating shadow table for safe rebuild...`);
-
-          let shadowTableName: string;
-          try {
-            shadowTableName = await vectorDb.createShadowTable();
-          } catch (err) {
-            console.error(`Re-index failed: unable to create shadow table: ${err}`);
-            process.exit(1);
-          }
-
-          console.log(`Re-index: embedding all facts into shadow table (this may take a while)...`);
-          const result = await migrateEmbeddings({
-            factsDb,
-            vectorDb,
-            embeddings,
-            batchSize,
-            delayMsBetweenBatches,
-            targetTableName: shadowTableName,
-            onProgress: (completed, total) => {
-              if (total > 0 && completed % Math.max(1, Math.floor(total / 10)) === 0) {
-                process.stdout.write(`  ${completed}/${total} facts embedded...\r`);
+          const runReindex = async () => {
+            console.log(`Re-index: starting non-destructive re-index of ${totalFacts} facts...`);
+            if (resumeCheckpoint) {
+              console.log(
+                `Re-index: resume enabled — checkpoint offset ${resumeCheckpoint.offset}/${resumeCheckpoint.total}`,
+              );
+              if (resumeCheckpoint.total !== totalFacts) {
+                console.warn(
+                  `Re-index: checkpoint total (${resumeCheckpoint.total}) differs from current fact count (${totalFacts}); checkpoint will be ignored for safety.`,
+                );
+                resumeCheckpoint = null;
+              } else if (resumeCheckpoint.offset > 0) {
+                console.warn(
+                  "Re-index: checkpoint offsets cannot be resumed with a newly-created shadow table; restarting from offset 0 for safety.",
+                );
+                resumeCheckpoint = null;
               }
-            },
-            logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
-          });
+            }
+            console.log(`Re-index: creating shadow table for safe rebuild...`);
 
-          console.log(
-            `\nRe-index: migration complete — ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors.`,
-          );
-
-          if (result.errors.length > 0 && result.errors.length <= 10) {
-            for (const e of result.errors) console.warn(`  - ${e}`);
-          } else if (result.errors.length > 10) {
-            console.warn(`  (${result.errors.length} errors; first 5:)`);
-            for (const e of result.errors.slice(0, 5)) console.warn(`  - ${e}`);
-          }
-
-          // Hard abort (e.g. VectorDB closed mid-run, see #1247): never swap a
-          // partial shadow table into place — that would defeat the whole
-          // build-then-swap point. The live table was untouched, so we just
-          // surface the failure, leave the shadow table for inspection, and
-          // exit non-zero.
-          if (result.aborted) {
-            console.error(
-              `\nRe-index FAILED: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
-                `(processed ${result.processed}/${result.total}) — migration aborted before completion.`,
-            );
-            console.error(`Reason: ${result.abortReason ?? "unknown"}`);
-            console.error("Live vector store was NOT modified.");
-            console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
-            console.error("Recommendation: Re-run 'openclaw hybrid-mem re-index' to complete the migration.");
-            process.exit(1);
-          }
-
-          // Validate row count before swapping
-          const minRequired = Math.ceil(totalFacts * minFractionSuccess);
-          if (result.migrated < minRequired) {
-            console.error(
-              `\nRe-index validation failed: ${result.migrated} migrated < required minimum ${minRequired} ` +
-                `(${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts} facts).`,
-            );
-            console.error("Aborting swap to preserve live vector store.");
-            console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
-            console.error("To retry, clean up shadow table and run re-index again.");
-            process.exit(1);
-          }
-
-          console.log(
-            `Re-index: validation passed — ${result.migrated} >= ${minRequired} required (${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts})`,
-          );
-          console.log(`Re-index: swapping shadow table into place...`);
-
-          try {
-            await vectorDb.swapShadowTable(shadowTableName, minFractionSuccess, totalFacts);
-          } catch (err) {
-            console.error(`\nRe-index failed: shadow table swap failed: ${err}`);
-            console.error(`Live vector store was NOT modified.`);
-            console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
-            process.exit(1);
-          }
-
-          // Update embedding metadata in SQLite (batch update for all facts)
-          console.log(`Re-index: updating embedding metadata in SQLite...`);
-          const allFacts =
-            typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
-              ? (() => {
-                  const facts: Array<{ id: string }> = [];
-                  let offset = 0;
-                  const batchSize = 500;
-                  while (true) {
-                    const batch = (
-                      factsDb as {
-                        getBatch: (
-                          offset: number,
-                          limit: number,
-                          opts: { includeSuperseded: boolean },
-                        ) => Array<{ id: string }>;
-                      }
-                    ).getBatch(offset, batchSize, { includeSuperseded: false });
-                    if (batch.length === 0) break;
-                    facts.push(...batch);
-                    offset += batch.length;
-                  }
-                  return facts;
-                })()
-              : factsDb.getAll({ includeSuperseded: false });
-
-          for (const fact of allFacts) {
+            let shadowTableName: string;
             try {
-              factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
-            } catch {
-              // ignore per-fact metadata update errors (non-fatal)
+              shadowTableName = await vectorDb.createShadowTable();
+            } catch (err) {
+              console.error(`Re-index failed: unable to create shadow table: ${err}`);
+              process.exit(1);
+            }
+            if (ctx.resolvedSqlitePath) {
+              appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
+                event: "reindex_started",
+                ts: new Date().toISOString(),
+                details: { totalFacts, batchSize, delayMsBetweenBatches, minFractionSuccess, shadowTableName },
+              });
+            }
+
+            console.log(`Re-index: embedding all facts into shadow table (this may take a while)...`);
+            const result = await migrateEmbeddings({
+              factsDb,
+              vectorDb,
+              embeddings,
+              batchSize,
+              delayMsBetweenBatches,
+              targetTableName: shadowTableName,
+              checkpoint:
+                checkpointPath.length > 0
+                  ? {
+                      load: () => (resumeCheckpoint ? { offset: resumeCheckpoint.offset } : null),
+                      save: (state) => writeReindexCheckpoint(checkpointPath, state),
+                      clear: () => {
+                        if (existsSync(checkpointPath)) unlinkSync(checkpointPath);
+                      },
+                    }
+                  : undefined,
+              onProgress: (completed, total) => {
+                if (total > 0 && completed % Math.max(1, Math.floor(total / 10)) === 0) {
+                  process.stdout.write(`  ${completed}/${total} facts embedded...\r`);
+                  if (ctx.resolvedSqlitePath) {
+                    appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
+                      event: "reindex_progress",
+                      ts: new Date().toISOString(),
+                      details: { completed, total },
+                    });
+                  }
+                }
+              },
+              logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+            });
+
+            console.log(
+              `\nRe-index: migration complete — ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors.`,
+            );
+
+            if (result.errors.length > 0 && result.errors.length <= 10) {
+              for (const e of result.errors) console.warn(`  - ${e}`);
+            } else if (result.errors.length > 10) {
+              console.warn(`  (${result.errors.length} errors; first 5:)`);
+              for (const e of result.errors.slice(0, 5)) console.warn(`  - ${e}`);
+            }
+
+            // Hard abort (e.g. VectorDB closed mid-run, see #1247): never swap a
+            // partial shadow table into place.
+            if (result.aborted) {
+              if (ctx.resolvedSqlitePath) {
+                appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
+                  event: "reindex_aborted",
+                  ts: new Date().toISOString(),
+                  details: {
+                    migrated: result.migrated,
+                    skipped: result.skipped,
+                    errors: result.errors.length,
+                    processed: result.processed,
+                    total: result.total,
+                    abortReason: result.abortReason ?? null,
+                    shadowTableName,
+                  },
+                });
+              }
+              console.error(
+                `\nRe-index FAILED: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
+                  `(processed ${result.processed}/${result.total}) — migration aborted before completion.`,
+              );
+              console.error(`Reason: ${result.abortReason ?? "unknown"}`);
+              console.error("Live vector store was NOT modified.");
+              console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+              console.error("Recommendation: Re-run 'openclaw hybrid-mem re-index --resume' to continue.");
+              process.exit(1);
+            }
+
+            // Validate row count before swapping
+            const minRequired = Math.ceil(totalFacts * minFractionSuccess);
+            if (result.migrated < minRequired) {
+              console.error(
+                `\nRe-index validation failed: ${result.migrated} migrated < required minimum ${minRequired} ` +
+                  `(${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts} facts).`,
+              );
+              console.error("Aborting swap to preserve live vector store.");
+              console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+              console.error("To retry, clean up shadow table and run re-index again.");
+              process.exit(1);
+            }
+
+            console.log(
+              `Re-index: validation passed — ${result.migrated} >= ${minRequired} required (${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts})`,
+            );
+            console.log(`Re-index: swapping shadow table into place...`);
+
+            try {
+              await vectorDb.swapShadowTable(shadowTableName, minFractionSuccess, totalFacts);
+            } catch (err) {
+              console.error(`\nRe-index failed: shadow table swap failed: ${err}`);
+              console.error(`Live vector store was NOT modified.`);
+              console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+              process.exit(1);
+            }
+
+            // Update embedding metadata in SQLite (batch update for all facts)
+            console.log(`Re-index: updating embedding metadata in SQLite...`);
+            const allFacts =
+              typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
+                ? (() => {
+                    const facts: Array<{ id: string }> = [];
+                    let offset = 0;
+                    const batchSize = 500;
+                    while (true) {
+                      const batch = (
+                        factsDb as {
+                          getBatch: (
+                            offset: number,
+                            limit: number,
+                            opts: { includeSuperseded: boolean },
+                          ) => Array<{ id: string }>;
+                        }
+                      ).getBatch(offset, batchSize, { includeSuperseded: false });
+                      if (batch.length === 0) break;
+                      facts.push(...batch);
+                      offset += batch.length;
+                    }
+                    return facts;
+                  })()
+                : factsDb.getAll({ includeSuperseded: false });
+
+            for (const fact of allFacts) {
+              try {
+                factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+              } catch {
+                // ignore per-fact metadata update errors (non-fatal)
+              }
+            }
+
+            if (ctx.resolvedSqlitePath) {
+              appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
+                event: "reindex_completed",
+                ts: new Date().toISOString(),
+                details: {
+                  migrated: result.migrated,
+                  skipped: result.skipped,
+                  errors: result.errors.length,
+                  total: result.total,
+                  shadowTableName,
+                },
+              });
+            }
+
+            console.log(`\nRe-index complete: ${result.migrated} facts successfully re-indexed.`);
+            console.log("Live vector store updated atomically. Semantic search is fully operational.");
+          };
+
+          if (typeof (vectorDb as { runWithReindexLock?: unknown }).runWithReindexLock === "function") {
+            await (
+              vectorDb as {
+                runWithReindexLock: <T>(fn: () => Promise<T>) => Promise<T>;
+              }
+            ).runWithReindexLock(runReindex);
+          } else {
+            await runReindex();
+          }
+        },
+      ),
+    );
+
+  mem
+    .command("repair-vectors")
+    .description(
+      "Run an orchestrated vector lifecycle repair pipeline: reembed-vectorless, vectordb-optimize, reconcile orphans, and print a single report.",
+    )
+    .option(
+      "--reconcile-policy <policy>",
+      "Self-heal policy for SQLite-orphan vectors: conservative|balanced|aggressive",
+      "balanced",
+    )
+    .option("--max-fixes <n>", "Max SQLite-orphan vectors to auto-rebuild (default: 200)", "200")
+    .option("--json", "Emit JSON report")
+    .action(
+      withExit(async (opts?: { reconcilePolicy?: string; maxFixes?: string; json?: boolean }) => {
+        const resolveRepairBudget = (policy: "conservative" | "balanced" | "aggressive", maxFixes: number): number => {
+          if (policy === "conservative") return 0;
+          if (policy === "balanced") return maxFixes;
+          return Math.max(maxFixes, 2000);
+        };
+        const policyRaw = String(opts?.reconcilePolicy ?? "balanced")
+          .trim()
+          .toLowerCase();
+        const policy = policyRaw === "conservative" || policyRaw === "aggressive" ? policyRaw : "balanced";
+        const maxFixes = parseBoundedIntOption(opts?.maxFixes, 200, 0, 5000);
+        const report = {
+          policy,
+          maxFixes,
+          startedAt: new Date().toISOString(),
+          vectorlessBefore: factsDb.countVectorlessActiveFacts(),
+          reembedded: 0,
+          optimize: { compacted: 0, removedFragments: 0, freedBytes: 0 },
+          reconcile: {
+            vectorOrphans: 0,
+            vectorOrphansDeleted: 0,
+            sqliteOrphans: 0,
+            sqliteOrphansRebuilt: 0,
+            sqliteOrphansSkipped: 0,
+          },
+          vectorlessAfter: 0,
+          errors: [] as string[],
+        };
+
+        // Step 1: reembed vectorless facts
+        const candidates = factsDb.listVectorlessActiveFacts({ limit: Math.max(200, maxFixes) });
+        const allowedRebuilds = resolveRepairBudget(policy, maxFixes);
+        for (const fact of candidates.slice(0, allowedRebuilds)) {
+          try {
+            const vec = await embeddings.embed(fact.text);
+            await vectorDb.store({
+              id: fact.id,
+              text: fact.text,
+              vector: vec,
+              importance: 0.5,
+              category: fact.category,
+            });
+            report.reembedded++;
+          } catch (err) {
+            report.errors.push(`reembed ${fact.id}: ${String(err)}`);
+          }
+        }
+
+        // Step 2: optimize
+        try {
+          report.optimize = await vectorDb.optimize();
+        } catch (err) {
+          report.errors.push(`optimize: ${String(err)}`);
+        }
+
+        // Step 3: reconcile and policy-based self-heal
+        try {
+          const sqliteIds = new Set(factsDb.getAllIds());
+          const vectorIds = await vectorDb.getAllIds();
+          const vectorIdSet = new Set(vectorIds);
+          const vectorOrphans = vectorIds.filter((id) => !sqliteIds.has(id));
+          const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
+          report.reconcile.vectorOrphans = vectorOrphans.length;
+          report.reconcile.sqliteOrphans = sqliteOrphans.length;
+
+          for (const id of vectorOrphans) {
+            try {
+              await vectorDb.delete(id);
+              report.reconcile.vectorOrphansDeleted++;
+            } catch (err) {
+              report.errors.push(`delete orphan vector ${id}: ${String(err)}`);
             }
           }
 
-          console.log(`\nRe-index complete: ${result.migrated} facts successfully re-indexed.`);
-          console.log("Live vector store updated atomically. Semantic search is fully operational.");
-        },
-      ),
+          const rebuildLimit = Math.min(resolveRepairBudget(policy, maxFixes), sqliteOrphans.length);
+          for (const id of sqliteOrphans.slice(0, rebuildLimit)) {
+            try {
+              const fact = factsDb.getById(id);
+              if (!fact) {
+                report.reconcile.sqliteOrphansSkipped++;
+                continue;
+              }
+              const vec = await embeddings.embed(fact.text);
+              await vectorDb.store({
+                id: fact.id,
+                text: fact.text,
+                vector: vec,
+                importance: fact.importance ?? 0.5,
+                category: fact.category,
+              });
+              report.reconcile.sqliteOrphansRebuilt++;
+            } catch (err) {
+              report.errors.push(`rebuild sqlite orphan ${id}: ${String(err)}`);
+            }
+          }
+          report.reconcile.sqliteOrphansSkipped += Math.max(0, sqliteOrphans.length - rebuildLimit);
+        } catch (err) {
+          report.errors.push(`reconcile: ${String(err)}`);
+        }
+
+        report.vectorlessAfter = factsDb.countVectorlessActiveFacts();
+        const finishedAt = new Date().toISOString();
+        if (ctx.resolvedSqlitePath) {
+          appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
+            event: "repair_vectors_completed",
+            ts: finishedAt,
+            details: report as unknown as Record<string, unknown>,
+          });
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify({ ...report, finishedAt }, null, 2));
+          return;
+        }
+        console.log("Repair vectors report:");
+        console.log(`  policy=${report.policy} maxFixes=${report.maxFixes}`);
+        console.log(`  vectorless: before=${report.vectorlessBefore} after=${report.vectorlessAfter}`);
+        console.log(
+          `  optimize: compacted=${report.optimize.compacted} removedFragments=${report.optimize.removedFragments} freedBytes=${report.optimize.freedBytes}`,
+        );
+        console.log(
+          `  reconcile: vectorOrphans=${report.reconcile.vectorOrphans} deleted=${report.reconcile.vectorOrphansDeleted}; sqliteOrphans=${report.reconcile.sqliteOrphans} rebuilt=${report.reconcile.sqliteOrphansRebuilt} skipped=${report.reconcile.sqliteOrphansSkipped}`,
+        );
+        if (report.errors.length > 0) {
+          console.log(`  errors=${report.errors.length}`);
+          for (const err of report.errors.slice(0, 10)) console.log(`    - ${err}`);
+          process.exitCode = 2;
+        }
+      }),
     );
 
   const entitiesCommand = mem.command("entities").description("Inspect and clean entity labels");
@@ -1997,7 +2352,21 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
       getMemoryCategories,
       cfg.entityExtraction.stopWords,
       cfg.graph.hubDegreeCap,
-      { lanceBytes, preReportErrors, timeoutMs, startedAtMs, deadlineMs },
+      {
+        lanceBytes,
+        preReportErrors,
+        timeoutMs,
+        startedAtMs,
+        deadlineMs,
+        degradedState:
+          typeof (vectorDb as { getDegradedState?: unknown }).getDegradedState === "function"
+            ? (
+                vectorDb as {
+                  getDegradedState: () => { active: boolean; reason: string | null; sinceEpochMs: number | null };
+                }
+              ).getDegradedState()
+            : { active: false, reason: null },
+      },
     );
     const strict = opts?.strict === true;
     const exitInfo = buildAuditHealthExitInfo({

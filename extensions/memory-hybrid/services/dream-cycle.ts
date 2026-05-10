@@ -20,6 +20,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
 import type { ProvenanceService } from "./provenance.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 import {
   type ReflectionConfig,
   countActivePatternFactsForMaintenance,
@@ -146,15 +147,24 @@ function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): 
 /**
  * True when this event should not be merged into consolidated facts based on `eventType`
  * (allow/deny lists). Text-pattern skipping remains in {@link shouldSkipEpisodicConsolidation}.
+ *
+ * CRITICAL FIX (#5): Allow list now overrides deny list. If an event type is explicitly
+ * in the allow list, it is accepted even if it's in the default deny set.
  */
 export function shouldSkipEpisodicConsolidationByEventType(
   event: EventLogEntry,
   filter?: EpisodicConsolidationEventTypeFilter | null,
 ): boolean {
+  const allow = filter?.allow?.map((x) => x.trim()).filter((x) => x.length > 0);
+  // If allow list is specified and contains this event type, accept it (override deny).
+  if (allow && allow.length > 0) {
+    if (allow.includes(event.eventType)) return false;
+    // If allow list is specified but doesn't contain this event type, reject it.
+    return true;
+  }
+  // No allow list specified, check deny list.
   const deny = episodicDenySet(filter);
   if (deny.has(event.eventType)) return true;
-  const allow = filter?.allow?.map((x) => x.trim()).filter((x) => x.length > 0);
-  if (allow && allow.length > 0 && !allow.includes(event.eventType)) return true;
   return false;
 }
 
@@ -260,6 +270,7 @@ export async function runEpisodicConsolidation(
   verbose?: boolean,
   maxEventsPerConsolidation = DEFAULT_MAX_EVENTS_PER_CONSOLIDATION,
   eventTypeFilter?: EpisodicConsolidationEventTypeFilter | null,
+  options?: { vectorDb?: VectorDB },
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
@@ -387,7 +398,7 @@ export async function runEpisodicConsolidation(
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact: MemoryEntry | null = null;
     try {
-      consolidatedFact = factsDb.store({
+      const storeResult = factsDb.storeWithResult({
         text: mergedText.slice(0, 500),
         category: "fact" as MemoryCategory,
         importance: 0.5,
@@ -405,6 +416,16 @@ export async function runEpisodicConsolidation(
           sourceEvents,
         }),
       });
+      consolidatedFact = storeResult.entry;
+      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+      if (options?.vectorDb) {
+        await cleanupEvictedVector({
+          vectorDb: options.vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger,
+          context: "dream-cycle",
+        });
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -633,6 +654,7 @@ export async function runDreamCycle(
         v,
         config.maxEventsPerConsolidation,
         config.episodicConsolidationEventTypes ?? null,
+        { vectorDb },
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;

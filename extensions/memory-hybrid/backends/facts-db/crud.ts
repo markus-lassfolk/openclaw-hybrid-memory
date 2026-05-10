@@ -82,7 +82,17 @@ export type StoreFactContext = {
   vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
 };
 
-export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryEntry {
+export type StoreFactResult = {
+  /** The stored fact entry */
+  entry: MemoryEntry;
+  /**
+   * CRITICAL (#2): ID of fact evicted during onOverflow=evict-lowest-confidence.
+   * Caller MUST delete the vector from VectorDB to prevent orphaned vectors.
+   */
+  evictedFactId?: string | null;
+};
+
+export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
@@ -92,7 +102,14 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
   const dedupe = applyDedupe(
     profile,
-    { text: entry.text, source: sourceForPolicy },
+    {
+      text: entry.text,
+      source: sourceForPolicy,
+      category: entry.category ?? null,
+      entity: entry.entity ?? null,
+      key: entry.key ?? null,
+      value: entry.value ?? null,
+    },
     {
       db: ctx.db,
       nowSec,
@@ -117,7 +134,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
         .run(nowSec, dedupe.existingId);
     }
     const existing = ctx.getById(dedupe.existingId);
-    if (existing) return existing;
+    if (existing) return { entry: existing, evictedFactId: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -130,7 +147,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       )
       .run(dedupe.boostBy, dedupe.existingId);
     const boosted = ctx.getById(dedupe.existingId);
-    if (boosted) return boosted;
+    if (boosted) return { entry: boosted, evictedFactId: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -146,7 +163,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       ctx.db
         .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
         .run(mergedText, mergedHash, existing.id);
-      return ctx.getById(existing.id) ?? existing;
+      return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null };
     }
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
@@ -157,11 +174,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
 
   const importance = entry.importance ?? 0.5;
   const why = entry.why ?? null;
-  const entity = entry.entity ?? null;
-  const key = entry.key ?? null;
+  const entity = entry.entity?.trim() || null;
+  const key = entry.key?.trim() || null;
   const value = entry.value ?? null;
   const source = entry.source ?? "conversation";
-  const category = entry.category ?? "other";
+  const category = (entry.category?.trim() || "other").toLowerCase();
   const decayClass =
     entry.decayClass || classifyDecay(entity, key, value, entry.text, { source, category, importance });
   const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
@@ -333,7 +350,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   if (!loaded) {
     throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
   }
-  return loaded;
+  return { entry: loaded, evictedFactId };
 }
 
 /** Update recall_count and last_accessed for facts (bulk UPDATE). */
@@ -387,13 +404,25 @@ export function hasDuplicateText(
   text: string,
   storeConfig?: StoreConfig,
   source?: string,
+  structured?: { category?: MemoryCategory | null; entity?: string | null; key?: string | null; value?: string | null },
 ): boolean {
   const nowSec = Math.floor(Date.now() / 1000);
   if (source === undefined) {
     return hasGlobalDuplicateProbe(db, text, { nowSec, fuzzyDedupe, storeConfig });
   }
   const profile = resolveDedupeProfile(source, storeConfig ?? { fuzzyDedupe });
-  const r = applyDedupe(profile, { text, source }, { db, nowSec, fuzzyDedupe });
+  const r = applyDedupe(
+    profile,
+    {
+      text,
+      source,
+      category: structured?.category ?? null,
+      entity: structured?.entity ?? null,
+      key: structured?.key ?? null,
+      value: structured?.value ?? null,
+    },
+    { db, nowSec, fuzzyDedupe },
+  );
   return r.action !== "store";
 }
 

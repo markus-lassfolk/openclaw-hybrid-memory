@@ -10,6 +10,16 @@ openclaw hybrid-mem active-tasks render
 
 Requires `activeTask.ledger: facts`. With the default `markdown` ledger, the file **is** the ledger—no render step.
 
+## Fast snapshot/render via gateway
+
+The public gateway route `/plugins/memory-public/active-tasks` returns a DB-backed snapshot directly from
+`category:project` facts (no CLI cold start).
+
+- `GET /plugins/memory-public/active-tasks` returns active rows + projection status (`stale`, reasons, timestamps).
+- `GET /plugins/memory-public/active-tasks?render=1` does a best-effort projection refresh before returning.
+- `memory_store` writes to `category:project` also trigger a best-effort `ACTIVE-TASKS.md` refresh when
+  `activeTask.ledger: facts`; failures mark the projection stale.
+
 ## Timestamp semantics
 
 The projection must not invent “when work started” or “last touch” from the render clock.
@@ -35,7 +45,8 @@ Empty sections are **omitted** (no blank headings), except the all-empty case wh
 
 1. **Close or update work** via `memory_store` / facts (set status to `done`, `failed`, etc., or update `task_updated` and narrative keys).
 2. Run **`hybrid-mem active-tasks reconcile`** when subagent **Session:** references point at missing transcripts—rows can be completed automatically.
-3. Run **`hybrid-mem active-tasks render`** to refresh the markdown.
+3. Run **`hybrid-mem active-tasks hygiene --dry-run`** to detect stale failed rows and duplicate normalized entities; use `--apply` to mark stale/superseded rows without deleting history.
+4. Run **`hybrid-mem active-tasks render`** to refresh the markdown.
 
 See also [TASK-HYGIENE.md](TASK-HYGIENE.md) for heartbeat nudges and `active_task_propose_goal`.
 
