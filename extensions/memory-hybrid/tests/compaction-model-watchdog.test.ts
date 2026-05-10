@@ -42,21 +42,33 @@ describe("compaction-model-watchdog", () => {
     expect(selection.inherited).toBe(true);
   });
 
-  it("prefers active agent-specific compaction model when agentId is provided", () => {
+  it("uses active agent primary fallback when agentId is provided", () => {
     const selection = resolveCompactionModelSelection(
       {
         agents: {
           defaults: { model: { primary: "azure-foundry/gpt-5.5" } },
           list: [
             { id: "main", compaction: { model: "minimax/MiniMax-M2.7" } },
-            { id: "worker", compaction: { model: "openai/gpt-4.1" } },
+            { id: "worker", model: { primary: "openai/gpt-4.1" }, compaction: { model: "openai/gpt-4.1-mini" } },
           ],
         },
       },
       { agentId: "worker", fallbackPolicy: "inherit-agent-primary" },
     );
     expect(selection.model).toBe("openai/gpt-4.1");
-    expect(selection.reason).toContain("agents.list[id=worker].compaction.model");
+    expect(selection.reason).toContain("inherited from agents.list[id=worker].model.primary");
+    expect(selection.inherited).toBe(true);
+  });
+
+  it("ignores unsupported agents.list[id=*].compaction.model and uses defaults compaction", () => {
+    const selection = resolveCompactionModelSelection({
+      agents: {
+        defaults: { compaction: { model: "minimax/MiniMax-M2.7" } },
+        list: [{ id: "main", compaction: { model: "openai/gpt-5.4-pro" } }],
+      },
+    });
+    expect(selection.model).toBe("minimax/MiniMax-M2.7");
+    expect(selection.reason).toContain("agents.defaults.compaction.model explicitly set");
     expect(selection.inherited).toBe(false);
   });
 
@@ -73,6 +85,10 @@ describe("compaction-model-watchdog", () => {
   it("flags non-mini OpenAI and Anthropic models as too strong", () => {
     expect(isCompactionModelTooStrong("openai/gpt-4.1")).toBe(true);
     expect(isCompactionModelTooStrong("anthropic/claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("does not flag Claude Haiku models as too strong", () => {
+    expect(isCompactionModelTooStrong("anthropic/claude-haiku-4-5")).toBe(false);
   });
 
   it("does not flag mini or nano models", () => {

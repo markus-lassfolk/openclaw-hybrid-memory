@@ -50,6 +50,7 @@ function resolveOpenclawJsonPathForCompactionWatchdog(): string {
 function emitCompactionModelWatchdogAlert(api: ClawdbotPluginApi, context: CompactionWatchdogContext): void {
   const configPath = resolveOpenclawJsonPathForCompactionWatchdog();
   const activeAgentId = api.context?.agentId;
+  let selectionUnknownReason: string | null = null;
   let selection = resolveCompactionModelSelection(undefined, {
     fallbackPolicy: "inherit-agent-primary",
     agentId: activeAgentId,
@@ -62,8 +63,14 @@ function emitCompactionModelWatchdogAlert(api: ClawdbotPluginApi, context: Compa
         agentId: activeAgentId,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      selectionUnknownReason = `failed reading ${configPath}: ${message}`;
       api.logger.debug?.(`memory-hybrid: ${context} watchdog — failed reading ${configPath}: ${err}`);
     }
+  }
+  if (selectionUnknownReason) {
+    api.logger.warn?.(`memory-hybrid: ${context} watchdog — compaction routing unknown (${selectionUnknownReason})`);
+    return;
   }
   const warning = buildCompactionModelWatchdogWarning(selection, { context });
   if (warning) {

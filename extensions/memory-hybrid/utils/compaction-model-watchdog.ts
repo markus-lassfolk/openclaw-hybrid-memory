@@ -98,16 +98,6 @@ export function resolveCompactionModelSelection(
   const selectedLabel =
     requestedAgent && requestedAgentId ? `agents.list[id=${requestedAgentId}]` : "agents.list[id=main]";
 
-  const selectedCompaction = readCompactionModelFromAgentBlock(selectedAgent);
-  if (selectedCompaction) {
-    return {
-      model: selectedCompaction,
-      provider: inferCompactionProvider(selectedCompaction),
-      reason: `${selectedLabel}.compaction.model explicitly set`,
-      inherited: false,
-    };
-  }
-
   const defaultsCompaction = readCompactionModelFromAgentBlock(defaults);
   if (defaultsCompaction) {
     return {
@@ -149,7 +139,7 @@ export function resolveCompactionModelSelection(
 
 function isExplicitMiniOrNanoModel(model: string): boolean {
   const lower = (model.split("/").pop() ?? model).toLowerCase();
-  return /\bmini\b|\bnano\b/.test(lower);
+  return /\bmini\b|\bnano\b|\blite\b|\bhaiku\b/.test(lower);
 }
 
 function isMiniMaxM27(model: string): boolean {
@@ -282,7 +272,7 @@ export function classifyCompactionModelStrength(model: string): CompactionModelS
       model: normalizedModel,
     };
   }
-  if (/\bsonnet\b|\bopus\b|\bclaude\b/.test(lowerTail)) {
+  if (/\bsonnet\b|\bopus\b/.test(lowerTail)) {
     return {
       tooStrong: true,
       reason: "Claude Sonnet/Opus class model",
@@ -379,5 +369,5 @@ export function buildCompactionModelWatchdogWarning(
   if (!isCompactionModelTooStrong(selection.model)) return null;
   const recommendedModel = opts?.recommendedModel?.trim() || DEFAULT_COMPACTION_MODEL;
   const contextPrefix = opts?.context ? `${opts.context}: ` : "";
-  return `${contextPrefix}compaction routing uses a stronger-than-mini model (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason}). Set agents.defaults.compaction.model (or agents.list[id=main].compaction.model) to a mini/nano model such as ${recommendedModel}.`;
+  return `${contextPrefix}compaction routing uses a stronger-than-mini model (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason}). Set agents.defaults.compaction.model to a mini/nano model such as ${recommendedModel}.`;
 }
