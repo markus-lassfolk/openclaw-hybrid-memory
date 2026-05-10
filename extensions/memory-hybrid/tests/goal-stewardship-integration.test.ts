@@ -266,14 +266,24 @@ describe("goal stewardship integration (mock plugin API)", () => {
     const api = createMockPluginApi();
     registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
 
-    const g1 = await createGoal(goalsDir, { label: "deploy-a", description: "deploy a", acceptanceCriteria: ["ok"] }, defaults);
-    const g2 = await createGoal(goalsDir, { label: "deploy-b", description: "deploy b", acceptanceCriteria: ["ok"] }, defaults);
+    const g1 = await createGoal(
+      goalsDir,
+      { label: "deploy-a", description: "deploy a", acceptanceCriteria: ["ok"] },
+      defaults,
+    );
+    const g2 = await createGoal(
+      goalsDir,
+      { label: "deploy-b", description: "deploy b", acceptanceCriteria: ["ok"] },
+      defaults,
+    );
     const now = new Date().toISOString();
     await updateGoal(
       goalsDir,
       g1.id,
       {
-        linkedTasks: [{ label: "shared-task", sessionKey: null, runId: null, status: "in_progress", linkedAt: now, updatedAt: now }],
+        linkedTasks: [
+          { label: "shared-task", sessionKey: null, runId: null, status: "in_progress", linkedAt: now, updatedAt: now },
+        ],
       },
       { timestamp: now, action: "test", detail: "seed linked task", actor: "user" },
     );
@@ -281,7 +291,9 @@ describe("goal stewardship integration (mock plugin API)", () => {
       goalsDir,
       g2.id,
       {
-        linkedTasks: [{ label: "shared-task", sessionKey: null, runId: null, status: "in_progress", linkedAt: now, updatedAt: now }],
+        linkedTasks: [
+          { label: "shared-task", sessionKey: null, runId: null, status: "in_progress", linkedAt: now, updatedAt: now },
+        ],
       },
       { timestamp: now, action: "test", detail: "seed linked task", actor: "user" },
     );

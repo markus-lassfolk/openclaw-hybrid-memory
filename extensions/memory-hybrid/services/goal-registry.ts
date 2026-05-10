@@ -48,7 +48,14 @@ const GOAL_LOCK_RETRY_MS = 25;
 const GOAL_LOCK_MAX_RETRIES = 200;
 
 function lockKey(raw: string): string {
-  return raw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "goal";
+  return (
+    raw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120) || "goal"
+  );
 }
 
 async function acquireGoalLock(goalsDir: string, key: string): Promise<string> {

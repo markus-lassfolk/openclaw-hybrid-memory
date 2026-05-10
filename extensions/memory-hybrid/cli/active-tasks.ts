@@ -282,8 +282,10 @@ export async function runActiveTaskAdd(
   const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   const existingActive = taskFile?.active ?? [];
   const existingCompleted = taskFile?.completed ?? [];
-  const wasExisting = existingActive.some((t) => t.label === opts.label) || existingCompleted.some((t) => t.label === opts.label);
-  const existing = existingActive.find((t) => t.label === opts.label) ?? existingCompleted.find((t) => t.label === opts.label);
+  const wasExisting =
+    existingActive.some((t) => t.label === opts.label) || existingCompleted.some((t) => t.label === opts.label);
+  const existing =
+    existingActive.find((t) => t.label === opts.label) ?? existingCompleted.find((t) => t.label === opts.label);
 
   const status: ActiveTaskStatus = (() => {
     if (opts.status && ACTIVE_TASK_STATUSES.includes(opts.status as ActiveTaskStatus)) {

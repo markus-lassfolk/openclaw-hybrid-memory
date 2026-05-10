@@ -239,10 +239,15 @@ describe("buildMultiGoalStewardshipPrepend", () => {
     }
     const goals = await listActiveGoals(goalsDir);
     const cap = 800;
-    const result = await buildMultiGoalStewardshipPrepend(goalsDir, gs({ multiGoalMaxChars: cap, multiGoalMaxGoals: 3 }), goals, {
-      suggestHeavyDirective: false,
-      triageHeavy: false,
-    });
+    const result = await buildMultiGoalStewardshipPrepend(
+      goalsDir,
+      gs({ multiGoalMaxChars: cap, multiGoalMaxGoals: 3 }),
+      goals,
+      {
+        suggestHeavyDirective: false,
+        triageHeavy: false,
+      },
+    );
     expect(result).not.toBeNull();
     const blocks = result!.prepend.match(/<goal-stewardship>[\s\S]*?<\/goal-stewardship>/g) ?? [];
     const totalBlockChars = blocks.reduce((sum, block) => sum + block.length, 0);

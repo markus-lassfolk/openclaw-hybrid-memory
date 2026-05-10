@@ -192,7 +192,9 @@ export async function updateGoalOnSubagentEnd(
   const ts = nowIso();
   const newStatus = info.success ? "completed" : "failed";
   const linkedTasks = g.linkedTasks.map((t) =>
-    t.label === matchedTaskLabel ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey } : t,
+    t.label === matchedTaskLabel
+      ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
+      : t,
   );
   const consecutiveFailures = info.success ? 0 : g.consecutiveFailures + 1;
   const lastOutcome = info.outcome ?? g.lastOutcome;
