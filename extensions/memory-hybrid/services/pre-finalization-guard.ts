@@ -19,6 +19,10 @@ export class PreFinalizationGuardBlockingError extends Error {
 
 const WAITING_OR_PENDING_RE =
   /\b(waiting\s+(?:for|on|to)|still\s+waiting|pending|recheck|check back|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
+const NEGATED_WAITING_OR_PENDING_RE =
+  /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|waiting|awaiting)\b/i;
+const CLEARED_WAITING_OR_PENDING_RE =
+  /\b(?:pending|waiting|awaiting)\b[\s\S]{0,24}\b(?:cleared|resolved|finished|complete|completed|done|over)\b/i;
 const CRON_WAKE_RE =
   /\b(?:cron wake|scheduled?\s+(?:a\s+)?(?:wake|wake-?up|recheck)|wake(?:\s|-)?at|resume(?:\s+at|\s+on)|next\s+(?:wake|check))\b/i;
 const BACKGROUND_TEXT_RE =
@@ -97,6 +101,7 @@ export interface EvaluatePreFinalizationGuardOptions {
   projectFacts?: MemoryEntry[];
   nowMs?: number;
   taskUpdatedFreshnessMs?: number;
+  sessionKey?: string;
 }
 
 function extractTextBlocks(content: unknown): string[] {
@@ -215,28 +220,62 @@ function collectAssistantTexts(messages: unknown[]): string[] {
   return texts;
 }
 
+function isCommandExecutionTool(name: string): boolean {
+  return /\b(exec|bash|shell|terminal|command|script|run[_-]?command|subprocess|spawn|process)\b/i.test(name);
+}
+
 function extractCommandCandidates(call: ToolCallSnapshot): string[] {
   const candidates: string[] = [];
-  if (call.rawArguments.trim()) candidates.push(call.rawArguments);
+  if (isCommandExecutionTool(call.name) && call.rawArguments.trim()) candidates.push(call.rawArguments);
 
   const parsed = call.parsedArgs;
   if (!parsed) return candidates;
 
-  const preferredKeys = ["cmd", "command", "script", "bash", "input", "query", "args"];
+  const preferredKeys = ["cmd", "command", "script", "bash", "args"];
   for (const key of preferredKeys) {
     const v = parsed[key];
     if (typeof v === "string" && v.trim()) {
       candidates.push(v);
+      continue;
     }
-  }
-
-  for (const value of Object.values(parsed)) {
-    if (typeof value === "string" && value.trim()) {
-      candidates.push(value);
+    if (key === "args" && Array.isArray(v)) {
+      for (const item of v) {
+        if (typeof item === "string" && item.trim()) {
+          candidates.push(item);
+        }
+      }
     }
   }
 
   return candidates;
+}
+
+function hasAffirmativeWaitingOrPending(text: string): boolean {
+  if (!WAITING_OR_PENDING_RE.test(text)) return false;
+  if (NEGATED_WAITING_OR_PENDING_RE.test(text)) return false;
+  if (CLEARED_WAITING_OR_PENDING_RE.test(text)) return false;
+  return true;
+}
+
+function hasUnresolvedExternalMention(text: string): boolean {
+  if (!UNRESOLVED_EXTERNAL_RE.test(text)) return false;
+  if (NEGATED_WAITING_OR_PENDING_RE.test(text)) return false;
+  if (CLEARED_WAITING_OR_PENDING_RE.test(text)) return false;
+  return true;
+}
+
+function normalizeSessionRef(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
+  const related = normalizeSessionRef(relatedSession);
+  const current = normalizeSessionRef(currentSession);
+  if (!related || !current) return false;
+  if (related === current) return true;
+  if ((related === "main" || related === "private") && current.startsWith(`agent:${related}:`)) return true;
+  if ((current === "main" || current === "private") && related.startsWith(`agent:${current}:`)) return true;
+  return false;
 }
 
 function normalizeProjectStatus(raw: string | undefined): string | null {
@@ -258,7 +297,7 @@ function evaluateProjectCheckpoint(
   nowMs: number,
   taskUpdatedFreshnessMs: number,
   goalAssessCalled: boolean,
-  cronWakeScheduled: boolean,
+  currentSessionKey?: string,
 ): ProjectCheckpointEvaluation {
   if (projectFacts.length === 0) return { satisfied: false, missingFields: ["status"] };
 
@@ -281,16 +320,18 @@ function evaluateProjectCheckpoint(
 
     const wakeLinked =
       status !== "waiting" ||
-      cronWakeScheduled ||
       WAITING_WAKE_FIELDS.some((k) => {
         const raw = chooseLatestText(keyMap.get(k));
         return raw.length > 0;
       });
+    const relatedSessionMatches = currentSessionKey
+      ? sessionRefMatches(relatedSession, currentSessionKey)
+      : relatedSession.length > 0;
 
     const missingFields: string[] = [];
     if (!next) missingFields.push("next");
     if (!updatedFresh) missingFields.push("task_updated");
-    if (!relatedSession) missingFields.push("related_session");
+    if (!relatedSessionMatches) missingFields.push("related_session");
     if (!wakeLinked) missingFields.push("wake_link");
     if (relatedGoal && !goalAssessCalled) missingFields.push("goal_assess");
 
@@ -347,11 +388,11 @@ function detectSignals(finalAssistantText: string, toolCalls: ToolCallSnapshot[]
   }
 
   return {
-    waitingOrPending: WAITING_OR_PENDING_RE.test(finalAssistantText),
+    waitingOrPending: hasAffirmativeWaitingOrPending(finalAssistantText),
     cronWakeScheduled,
     backgroundProcessRunning,
     gitOrGithubMutation,
-    unresolvedExternalMention: UNRESOLVED_EXTERNAL_RE.test(finalAssistantText),
+    unresolvedExternalMention: hasUnresolvedExternalMention(finalAssistantText),
   };
 }
 
@@ -399,7 +440,7 @@ export function evaluatePreFinalizationGuard(
     nowMs,
     taskUpdatedFreshnessMs,
     goalAssessCalled,
-    signals.cronWakeScheduled,
+    options.sessionKey,
   );
   const checkpointSatisfied = activeTaskCheckpointCalled || projectCheckpoint.satisfied;
 
@@ -465,9 +506,17 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
   const missing =
     result.checkpoint.missingFields.length > 0 ? result.checkpoint.missingFields.join(", ") : "project checkpoint";
   const mode = result.action === "block" ? "blocking" : "warning";
+  const conditionalHints: string[] = [];
+  if (result.checkpoint.missingFields.includes("wake_link")) {
+    conditionalHints.push("For waiting tasks, persist a wake field in project facts (e.g. wake_link/wake_at/resume_at).");
+  }
+  if (result.checkpoint.missingFields.includes("goal_assess")) {
+    conditionalHints.push("If the task is goal-backed (related_goal/goal_id), call goal_assess in this turn.");
+  }
   return [
     `pre-finalization guard: ${mode} finalization due to unfinished external workflow and missing checkpoint fields: ${missing}.`,
     "Satisfy with active_task_checkpoint (if available) or project facts keys [status(in_progress|waiting|blocked), next, task_updated, related_session].",
+    ...conditionalHints,
     `False positive override: include '${CHECKPOINT_GUARD_BYPASS_PREFIX} <short reason>' in the final assistant message.`,
   ].join(" ");
 }

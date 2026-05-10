@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CHECKPOINT_GUARD_BYPASS_PREFIX, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
+import {
+  CHECKPOINT_GUARD_BYPASS_PREFIX,
+  evaluatePreFinalizationGuard,
+  formatPreFinalizationGuardMessage,
+} from "../services/pre-finalization-guard.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const NOW_ISO = "2026-05-10T08:31:00.000Z";
@@ -106,7 +110,11 @@ describe("pre-finalization guard", () => {
       { role: "assistant", content: "CI is pending; recheck is scheduled." },
     ];
 
-    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: facts });
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:main",
+    });
     expect(result.action).toBe("allow");
     expect(result.reason).toBe("checkpoint_present");
     expect(result.checkpoint.projectFactsSatisfied).toBe(true);
@@ -150,6 +158,116 @@ describe("pre-finalization guard", () => {
     expect(result.reason).toBe("missing_checkpoint_warn");
     expect(result.signals.gitOrGithubMutation).toBe(true);
     expect(result.signals.waitingOrPending).toBe(false);
+  });
+
+  it("does not treat negated pending/waiting phrases as unfinished workflow signals", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "CI is no longer pending and nothing is waiting." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
+    expect(result.action).toBe("allow");
+    expect(result.reason).toBe("no_external_signal");
+    expect(result.signals.waitingOrPending).toBe(false);
+  });
+
+  it("does not infer command mutations from non-command tool payload text", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "Assess progress." },
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            function: {
+              name: "goal_assess",
+              arguments: JSON.stringify({
+                goal_id: "goal-1",
+                assessment: "Need to run git push after CI passes",
+              }),
+            },
+          },
+        ],
+      },
+      { role: "assistant", content: "Assessment captured." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
+    expect(result.signals.gitOrGithubMutation).toBe(false);
+  });
+
+  it("requires waiting wake link to be persisted in facts (cron wording alone is not enough)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "issue-1271-ci", key: "status", value: "waiting" }),
+      projectFact({ id: "2", entity: "issue-1271-ci", key: "next", value: "Recheck CI in 10 minutes." }),
+      projectFact({ id: "3", entity: "issue-1271-ci", key: "task_updated", value: NOW_ISO }),
+      projectFact({ id: "4", entity: "issue-1271-ci", key: "related_session", value: "agent:main:main" }),
+      projectFact({ id: "5", entity: "issue-1271-ci", key: "related_goal", value: "goal-1271" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      {
+        role: "assistant",
+        tool_calls: [
+          {
+            function: {
+              name: "goal_assess",
+              arguments: JSON.stringify({ goal_id: "goal-1271", assessment: "Pending CI" }),
+            },
+          },
+        ],
+      },
+      { role: "assistant", content: "CI is pending and recheck is scheduled." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:main",
+    });
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("wake_link");
+  });
+
+  it("requires project checkpoint related_session to match the active session", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "issue-1271-ci", key: "status", value: "in_progress" }),
+      projectFact({ id: "2", entity: "issue-1271-ci", key: "next", value: "Continue processing." }),
+      projectFact({ id: "3", entity: "issue-1271-ci", key: "task_updated", value: NOW_ISO }),
+      projectFact({ id: "4", entity: "issue-1271-ci", key: "related_session", value: "agent:main:other-session" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:current-session",
+    });
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("related_session");
+  });
+
+  it("formats conditional wake/goal requirements in the guard message", () => {
+    const result = {
+      action: "block",
+      reason: "missing_checkpoint_block",
+      signals: {
+        waitingOrPending: true,
+        cronWakeScheduled: false,
+        backgroundProcessRunning: false,
+        gitOrGithubMutation: false,
+        unresolvedExternalMention: true,
+      },
+      checkpoint: {
+        activeTaskCheckpointCalled: false,
+        goalAssessCalled: false,
+        projectFactsSatisfied: false,
+        missingFields: ["wake_link", "goal_assess"],
+      },
+      bypassReason: null,
+    } as const;
+    const message = formatPreFinalizationGuardMessage(result);
+    expect(message).toContain("wake");
+    expect(message).toContain("goal_assess");
   });
 
   it("allows hypothetical active_task_checkpoint tool as direct satisfaction path", () => {

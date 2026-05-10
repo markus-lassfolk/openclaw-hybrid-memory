@@ -231,8 +231,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
       if (ev?.success !== false) {
         try {
-          const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-          const guard = evaluatePreFinalizationGuard(ev?.messages ?? [], { projectFacts });
+          const messages = ev?.messages ?? [];
+          let guard = evaluatePreFinalizationGuard(messages, { sessionKey: sessionId });
+          const requiresProjectFacts =
+            guard.reason === "missing_checkpoint_block" || guard.reason === "missing_checkpoint_warn";
+          if (requiresProjectFacts) {
+            const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId });
+          }
           const guardMessage = formatPreFinalizationGuardMessage(guard);
           if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {
             api.logger.info?.(`memory-hybrid: ${guardMessage}`);
