@@ -20,7 +20,7 @@ import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import type { WorkflowTracker } from "../services/workflow-tracker.js";
-import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+import type { MemoryEntry, MemoryScope, ScopeFilter, SearchResult } from "../types/memory.js";
 
 /**
  * Subset of OpenClaw `PluginHookAgentContext` read at the hook boundary (#1005).
@@ -67,6 +67,7 @@ export interface LifecycleContext {
     vector: number[],
     limit: number,
     minScore?: number,
+    options?: { scope?: MemoryScope; scopeTarget?: string | null },
   ) => Promise<MemoryEntry[]>;
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => MemoryCategory;

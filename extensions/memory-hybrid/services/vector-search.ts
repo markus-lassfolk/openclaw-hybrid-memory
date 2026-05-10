@@ -3,7 +3,13 @@
  */
 
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, MemoryScope } from "../types/memory.js";
+import { matchesExactScope } from "./classification-scope.js";
+
+export type ScopedClassificationOptions = {
+  scope?: MemoryScope;
+  scopeTarget?: string | null;
+};
 
 /**
  * Find similar memories by embedding vector.
@@ -15,12 +21,19 @@ export async function findSimilarByEmbedding(
   vector: number[],
   limit: number,
   minScore = 0.3,
+  options?: ScopedClassificationOptions,
 ): Promise<MemoryEntry[]> {
-  const results = await vectorDb.search(vector, limit, minScore);
+  const scope = options?.scope ?? "global";
+  const scopeTarget = scope === "global" ? null : (options?.scopeTarget ?? null);
+  const searchLimit = Math.min(Math.max(limit * 4, limit), 200);
+  const results = await vectorDb.search(vector, searchLimit, minScore);
   const entries: MemoryEntry[] = [];
   for (const r of results) {
     const entry = factsDb.getById(r.entry.id);
-    if (entry && entry.supersededAt == null) entries.push(entry);
+    if (entry && entry.supersededAt == null && matchesExactScope(entry, scope, scopeTarget)) {
+      entries.push(entry);
+      if (entries.length >= limit) break;
+    }
   }
   return entries;
 }
