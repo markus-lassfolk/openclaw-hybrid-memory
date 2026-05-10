@@ -249,6 +249,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       } else {
         console.log(JSON.stringify({ ...base, goals }, null, 2));
       }
+      return;
     });
 
   g.command("budget")
