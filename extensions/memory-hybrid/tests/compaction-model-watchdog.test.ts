@@ -52,10 +52,20 @@ describe("compaction-model-watchdog", () => {
     expect(isCompactionModelTooStrong("azure-foundry/gpt-5.5")).toBe(true);
   });
 
+  it("flags non-mini OpenAI and Anthropic models as too strong", () => {
+    expect(isCompactionModelTooStrong("openai/gpt-4.1")).toBe(true);
+    expect(isCompactionModelTooStrong("anthropic/claude-sonnet-4-6")).toBe(true);
+  });
+
   it("does not flag mini or nano models", () => {
     expect(isCompactionModelTooStrong("openai/gpt-4.1-mini")).toBe(false);
     expect(isCompactionModelTooStrong("openai/gpt-4.1-nano")).toBe(false);
     expect(isCompactionModelTooStrong("openai/gpt-5-mini")).toBe(false);
+  });
+
+  it("treats minimax provider models as mini-safe allowlisted", () => {
+    expect(isCompactionModelTooStrong("minimax/MiniMax-M2.7")).toBe(false);
+    expect(isCompactionModelTooStrong("minimax/MiniMax-M2.5")).toBe(false);
   });
 
   it("formats a contextual watchdog warning for stronger-than-mini routing", () => {

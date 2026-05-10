@@ -142,9 +142,9 @@ export function resolveCompactionModelSelection(
   };
 }
 
-function isExplicitMiniOrNanoLikeModel(model: string): boolean {
+function isExplicitMiniOrNanoModel(model: string): boolean {
   const lower = (model.split("/").pop() ?? model).toLowerCase();
-  return /\bmini\b|\bnano\b|\blite\b|\bhaiku\b/.test(lower);
+  return /\bmini\b|\bnano\b/.test(lower);
 }
 
 function isMiniMaxM27(model: string): boolean {
@@ -243,7 +243,7 @@ export function resolveCompactionHookModelMetadata(
 /**
  * Explain whether a compaction model is cost-safe. Policy:
  * - allow MiniMax M2.7 / M2.7-highspeed
- * - allow explicit mini/nano/lite/haiku
+ * - allow explicit mini/nano
  * - allow local ollama models
  * - flag high-tier families and unknown non-mini/non-nano/non-MiniMax models
  */
@@ -293,7 +293,7 @@ export function classifyCompactionModelStrength(model: string): CompactionModelS
       model: normalizedModel,
     };
   }
-  if (isExplicitMiniOrNanoLikeModel(normalizedModel)) {
+  if (isExplicitMiniOrNanoModel(normalizedModel)) {
     return {
       tooStrong: false,
       reason: "mini/nano allowlist",
@@ -356,7 +356,12 @@ export function buildCompactionWatchdogAlert(opts: {
 
 /**
  * Cost watchdog classification for compaction model safety.
- * We intentionally do not flag MiniMax M2.7 and mini/nano models.
+ * Treat only explicit mini-safe allowlist models as safe:
+ * - minimax/* (current plugin default family)
+ * - ollama/* (local/offline)
+ * - any explicit *mini* or *nano* model name
+ *
+ * Everything else is treated as stronger-than-mini to match warning wording.
  */
 export function isCompactionModelTooStrong(model: string): boolean {
   return classifyCompactionModelStrength(model).tooStrong;

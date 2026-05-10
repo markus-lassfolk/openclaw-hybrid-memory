@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 
@@ -27,6 +27,14 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     writeFileSync(join(openclawDir, "openclaw.json"), JSON.stringify(root, null, 2), "utf-8");
     writeFileSync(join(cronDir, "jobs.json"), JSON.stringify({ jobs: [] }, null, 2), "utf-8");
     vi.stubEnv("HOME", homeDir);
+  }
+
+  function writeOpenclawConfigAt(configPath: string, root: Record<string, unknown>): void {
+    const configDir = dirname(configPath);
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(join(configDir, "cron"), { recursive: true });
+    writeFileSync(configPath, JSON.stringify(root, null, 2), "utf-8");
+    writeFileSync(join(configDir, "cron", "jobs.json"), JSON.stringify({ jobs: [] }, null, 2), "utf-8");
   }
 
   function buildCtx() {
@@ -93,6 +101,50 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     const out = lines.join("\n");
 
     expect(out).toContain("provider=minimax, model=minimax/MiniMax-M2.7");
+    expect(out).not.toContain("compaction routing uses a stronger-than-mini model");
+  });
+
+  it("honors OPENCLAW_CONFIG_PATH for compaction watchdog resolution", async () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-cfg-path-"));
+    const externalRoot = join(homeDir, "custom-openclaw-root");
+    const configPath = join(externalRoot, "openclaw.json");
+    writeOpenclawConfigAt(configPath, {
+      agents: { defaults: { model: { primary: "openai/gpt-4.1" } } },
+    });
+
+    vi.stubEnv("HOME", join(homeDir, "ignored-home"));
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain(`Config source: ${configPath}`);
+    expect(out).toContain("compaction routing uses a stronger-than-mini model");
+    expect(out).toContain("provider=openai, model=openai/gpt-4.1");
+  });
+
+  it("surfaces unknown compaction watchdog state when config is invalid JSON", async () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-invalid-"));
+    const externalRoot = join(homeDir, "custom-openclaw-root");
+    const configPath = join(externalRoot, "openclaw.json");
+    mkdirSync(externalRoot, { recursive: true });
+    mkdirSync(join(externalRoot, "cron"), { recursive: true });
+    writeFileSync(configPath, "{ invalid json ", "utf-8");
+    writeFileSync(join(externalRoot, "cron", "jobs.json"), JSON.stringify({ jobs: [] }, null, 2), "utf-8");
+
+    vi.stubEnv("HOME", join(homeDir, "ignored-home"));
+    vi.stubEnv("OPENCLAW_CONFIG", configPath);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("could not be read/parsed");
+    expect(out).toContain("verify watchdog: compaction routing check is unknown");
+    expect(out).toContain("status=unknown");
     expect(out).not.toContain("compaction routing uses a stronger-than-mini model");
   });
 });
