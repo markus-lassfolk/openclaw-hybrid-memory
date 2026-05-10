@@ -3,7 +3,8 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
@@ -2681,46 +2682,52 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         }
         const passphraseEnv = String(opts?.passphraseEnv ?? "HYBRID_MEM_SYNC_PASSPHRASE").trim();
         const passphrase = getEnv(passphraseEnv);
-        if (!passphrase || passphrase.length < 12) {
-          console.error(`error: set ${passphraseEnv} to a strong passphrase (>=12 chars) before running sync-export`);
+        if (!passphrase || passphrase.length < 20) {
+          console.error("error: set a strong sync passphrase (>=20 chars) in the configured environment variable");
           process.exitCode = 1;
           return;
         }
-        const tmpJson = join("/tmp", `hybrid-mem-sync-export-${Date.now()}.json`);
+        const tmpDir = mkdtempSync(join(tmpdir(), "hybrid-mem-sync-"));
+        const tmpJson = join(tmpDir, "export.json");
         const sources = opts?.sources
           ?.split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
-        const exportResult = await runExport({ outputPath: tmpJson, excludeCredentials: true, sources });
-        const plaintext = readFileSync(exportResult.outputPath, "utf-8");
-        unlinkSync(exportResult.outputPath);
+        try {
+          const exportResult = await runExport({ outputPath: tmpJson, excludeCredentials: true, sources });
+          const plaintext = readFileSync(exportResult.outputPath, "utf-8");
+          unlinkSync(exportResult.outputPath);
 
-        const salt = randomBytes(16);
-        const iv = randomBytes(12);
-        const key = pbkdf2Sync(passphrase, salt, 310_000, 32, "sha256");
-        const cipher = createCipheriv("aes-256-gcm", key, iv);
-        const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-        const tag = cipher.getAuthTag();
-        const envelope = {
-          schemaVersion: 1,
-          type: "hybrid-memory-sync-bundle",
-          encryptedAt: new Date().toISOString(),
-          alg: "aes-256-gcm",
-          kdf: "pbkdf2-sha256",
-          iterations: 310000,
-          salt: salt.toString("base64"),
-          iv: iv.toString("base64"),
-          tag: tag.toString("base64"),
-          ciphertext: ciphertext.toString("base64"),
-          metadata: {
-            factsExported: exportResult.factsExported,
-            proceduresExported: exportResult.proceduresExported,
-            filesWritten: exportResult.filesWritten,
-          },
-        };
-        mkdirSync(dirname(outPath), { recursive: true });
-        writeFileSync(outPath, JSON.stringify(envelope, null, 2), "utf-8");
-        console.log(`Encrypted sync bundle written to ${outPath}`);
+          const salt = randomBytes(16);
+          const iv = randomBytes(12);
+          const iterations = 600_000;
+          const key = pbkdf2Sync(passphrase, salt, iterations, 32, "sha256");
+          const cipher = createCipheriv("aes-256-gcm", key, iv);
+          const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+          const tag = cipher.getAuthTag();
+          const envelope = {
+            schemaVersion: 1,
+            type: "hybrid-memory-sync-bundle",
+            encryptedAt: new Date().toISOString(),
+            alg: "aes-256-gcm",
+            kdf: "pbkdf2-sha256",
+            iterations,
+            salt: salt.toString("base64"),
+            iv: iv.toString("base64"),
+            tag: tag.toString("base64"),
+            ciphertext: ciphertext.toString("base64"),
+            metadata: {
+              factsExported: exportResult.factsExported,
+              proceduresExported: exportResult.proceduresExported,
+              filesWritten: exportResult.filesWritten,
+            },
+          };
+          mkdirSync(dirname(outPath), { recursive: true });
+          writeFileSync(outPath, JSON.stringify(envelope, null, 2), "utf-8");
+          console.log(`Encrypted sync bundle written to ${outPath}`);
+        } finally {
+          rmSync(tmpDir, { recursive: true, force: true });
+        }
       }),
     );
 
@@ -2746,11 +2753,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         const passphraseEnv = String(opts?.passphraseEnv ?? "HYBRID_MEM_SYNC_PASSPHRASE").trim();
         const passphrase = getEnv(passphraseEnv);
         if (!passphrase) {
-          console.error(`error: set ${passphraseEnv} before running sync-import`);
+          console.error("error: set the sync passphrase in the configured environment variable before running sync-import");
           process.exitCode = 1;
           return;
         }
-        const envelope = JSON.parse(readFileSync(inPath, "utf-8")) as {
+        let envelope: {
           schemaVersion: number;
           alg: string;
           iterations: number;
@@ -2759,6 +2766,21 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           tag: string;
           ciphertext: string;
         };
+        try {
+          envelope = JSON.parse(readFileSync(inPath, "utf-8")) as {
+            schemaVersion: number;
+            alg: string;
+            iterations: number;
+            salt: string;
+            iv: string;
+            tag: string;
+            ciphertext: string;
+          };
+        } catch (err) {
+          console.error(`error: failed to read or parse sync bundle from ${inPath}: ${String(err)}`);
+          process.exitCode = 1;
+          return;
+        }
         if (envelope.schemaVersion !== 1 || envelope.alg !== "aes-256-gcm") {
           console.error("error: unsupported sync bundle format");
           process.exitCode = 1;

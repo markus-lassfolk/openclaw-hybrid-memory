@@ -22,6 +22,9 @@ describe("benchmark quality report", () => {
     ];
 
     const report = buildBenchmarkQualityReport(results);
+    // Average includes all measured features, including explicit failure rows (score=0),
+    // so operators can see degraded quality at the suite level.
+    expect(report.metrics.recallAccuracy.measuredFeatures).toBe(2);
     expect(report.metrics.latency.p50Ms).toBe(10);
     expect(report.metrics.recallAccuracy.averageScore).toBe(0.4);
     expect(report.metrics.failureRate.failedFeatures).toBe(1);

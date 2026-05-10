@@ -41,7 +41,11 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
       "balanced",
     )
-    .option("--reconcile-max-fixes <n>", "Max SQLite-orphan vectors to rebuild when --fix is set (default: 200)", "200")
+    .option(
+      "--reconcile-max-fixes <n>",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
+      "200",
+    )
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
       withExit(
@@ -184,7 +188,11 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
       "balanced",
     )
-    .option("--reconcile-max-fixes <n>", "Max SQLite-orphan vectors to rebuild when --fix is set (default: 200)", "200")
+    .option(
+      "--reconcile-max-fixes <n>",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
+      "200",
+    )
     .action(
       withExit(
         async (opts: {

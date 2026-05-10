@@ -57,6 +57,21 @@ interface BenchmarkQualityReport {
   features: BenchmarkResult[];
 }
 
+function parseBooleanOption(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+function resolveBenchmarkDbPath(cfg: Record<string, unknown>): string {
+  if (typeof cfg.sqlitePath === "string" && cfg.sqlitePath) {
+    return cfg.sqlitePath;
+  }
+  const home = getEnv("HOME");
+  if (!home) {
+    throw new Error("HOME is not set and sqlitePath is not configured; cannot resolve benchmark database path.");
+  }
+  return join(home, ".openclaw", "memory", "facts.db");
+}
+
 async function runBenchmarkCommand(
   ctx: BenchmarkRunContext,
   options: {
@@ -214,18 +229,14 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
     .action(async (opts: Record<string, string | boolean | undefined>) => {
       // Resolve dbPath from HybridMemoryConfig
       const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
-      const dbPath = (
-        typeof cfg.sqlitePath === "string" && cfg.sqlitePath
-          ? cfg.sqlitePath
-          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
-      ) as string;
+      const dbPath = resolveBenchmarkDbPath(cfg);
 
       await runBenchmarkCommand(
         { dbPath },
         {
           feature: typeof opts.feature === "string" ? opts.feature : undefined,
-          accuracy: opts.accuracy === "true",
-          shadow: opts.shadow === "true",
+          accuracy: parseBooleanOption(opts.accuracy),
+          shadow: parseBooleanOption(opts.shadow),
           format: (opts.format === "json" ? "json" : "text") as "text" | "json",
           iterations: typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100,
           judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
@@ -243,17 +254,13 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
     .option("--out <path>", "Optional output file path")
     .action(async (opts: Record<string, string | boolean | undefined>) => {
       const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
-      const dbPath = (
-        typeof cfg.sqlitePath === "string" && cfg.sqlitePath
-          ? cfg.sqlitePath
-          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
-      ) as string;
+      const dbPath = resolveBenchmarkDbPath(cfg);
       const format = opts.format === "json" ? "json" : "markdown";
       const iterations = typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100;
       const results = await runAllBenchmarks(
         { dbPath },
         {
-          accuracy: opts.accuracy === "true",
+          accuracy: parseBooleanOption(opts.accuracy),
           judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
           format: "json",
           iterations,
