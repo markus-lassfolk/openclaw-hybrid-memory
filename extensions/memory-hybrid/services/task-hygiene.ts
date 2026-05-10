@@ -114,7 +114,7 @@ export function detectLongRunningWorkflowProposal(
   const text = userText.trim();
   if (!text) return null;
 
-  if (/\b(process|work|handle)\b[\s\S]{0,30}\bpr queue\b/i.test(text) || /\bpr queue\b/i.test(text)) {
+  if (/\bpr queue\b/i.test(text)) {
     return buildWorkflowProposal("pr_queue", text, workspaceRoot);
   }
   if (/\bcontinue\b[\s\S]{0,40}\buntil\b[\s\S]{0,30}\bmerged\b/i.test(text)) {
@@ -129,7 +129,7 @@ export function detectLongRunningWorkflowProposal(
   if (/\bfix\b[\s\S]{0,20}\ball\b[\s\S]{0,20}\bissues?\b/i.test(text)) {
     return buildWorkflowProposal("issue_sweep", text, workspaceRoot);
   }
-  if (/\b(deploy|deployment|rollout|release)\b/i.test(text)) {
+  if (/\b(run|start|trigger|execute|perform)\b[\s\S]{0,30}\b(deploy|deployment|rollout|release)\b/i.test(text)) {
     return buildWorkflowProposal("deployment", text, workspaceRoot);
   }
   return null;
