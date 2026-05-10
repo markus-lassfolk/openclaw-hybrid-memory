@@ -41,6 +41,7 @@ import { gatherSessionFiles } from "./cmd-distill.js";
 import { createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -278,7 +279,7 @@ export async function runBackfillForCli(
       continue;
     }
     try {
-      const entry = factsDb.store({
+      const storeResult = factsDb.storeWithResult({
         text: fact.text,
         category: fact.category as MemoryCategory,
         importance: 0.8,
@@ -287,6 +288,14 @@ export async function runBackfillForCli(
         value: fact.value,
         source: `backfill:${fact.source}`,
         sourceDate: sourceDateSec(fact.source_date),
+      });
+      const entry = storeResult.entry;
+      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+      await cleanupEvictedVector({
+        vectorDb: vectorDb,
+        evictedFactId: storeResult.evictedFactId,
+        logger: sink,
+        context: "backfill",
       });
       try {
         const vector = await embeddings.embed(fact.text);
@@ -672,7 +681,7 @@ export async function runIngestFilesForCli(
         skipped++;
         continue;
       }
-      const entry = factsDb.store({
+      const storeResult = factsDb.storeWithResult({
         text: fact.text,
         category: (isValidCategory(fact.category) ? fact.category : "technical") as MemoryCategory,
         importance: BATCH_STORE_IMPORTANCE,
@@ -682,6 +691,14 @@ export async function runIngestFilesForCli(
         source: "ingest",
         decayClass: "stable",
         tags: fact.tags,
+      });
+      const entry = storeResult.entry;
+      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+      await cleanupEvictedVector({
+        vectorDb: vectorDb,
+        evictedFactId: storeResult.evictedFactId,
+        logger: sink,
+        context: "backfill",
       });
       try {
         await vectorDb.store({
