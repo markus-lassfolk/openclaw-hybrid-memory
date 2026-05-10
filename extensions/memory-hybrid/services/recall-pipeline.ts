@@ -325,15 +325,21 @@ export async function runRecallPipelineQuery(
         },
         recallOpts.scopeFilter,
       );
-      results = results.map((r) => {
-        const fullEntry = factsDb.getById(r.entry.id);
-        if (fullEntry && fullEntry.supersededAt == null && (fullEntry.expiresAt == null || fullEntry.expiresAt > nowSec)) {
-          const salienceScore = computeDynamicSalience(r.score, fullEntry);
-          const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
-          return { ...r, entry: fullEntry, score: controlledScore };
-        }
-        return null;
-      }).filter((r): r is SearchResult => r !== null);
+      results = results
+        .map((r) => {
+          const fullEntry = factsDb.getById(r.entry.id);
+          if (
+            fullEntry &&
+            fullEntry.supersededAt == null &&
+            (fullEntry.expiresAt == null || fullEntry.expiresAt > nowSec)
+          ) {
+            const salienceScore = computeDynamicSalience(r.score, fullEntry);
+            const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
+            return { ...r, entry: fullEntry, score: controlledScore };
+          }
+          return null;
+        })
+        .filter((r): r is SearchResult => r !== null);
       recallTiming.phaseCompleted("lancedb_search", vectorStartedAt, {
         raw_hits: rawResults.length,
         hits: results.length,
