@@ -1592,6 +1592,18 @@ export class VectorDB {
     }
   }
 
+  /**
+   * LanceDB predicates are string-based (no parameter binding API), so UUID validation
+   * is the safety boundary before interpolation.
+   */
+  private toSafeUuidLiteral(id: string): string {
+    const normalized = String(id).toLowerCase();
+    if (!UUID_REGEX.test(normalized) || normalized.includes("'")) {
+      throw new Error("Invalid UUID for LanceDB predicate");
+    }
+    return `'${normalized}'`;
+  }
+
   async delete(id: string): Promise<boolean> {
     // SECURITY: UUID validation is the security boundary for delete().
     // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
@@ -1610,6 +1622,7 @@ export class VectorDB {
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
       const normalizedId = id.toLowerCase();
       if (!UUID_REGEX.test(normalizedId)) return false;
+      const idLiteral = this.toSafeUuidLiteral(normalizedId);
       if (this.optimizePromise) {
         try {
           await this.optimizePromise;
@@ -1620,7 +1633,7 @@ export class VectorDB {
         }
       }
       await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
-        await this.getTable().delete(`id = '${normalizedId}'`);
+        await this.getTable().delete(`id = ${idLiteral}`);
       });
       return true;
     } catch (err) {
@@ -1655,8 +1668,9 @@ export class VectorDB {
       }
       let deleted = 0;
       for (const id of normalized) {
+        const idLiteral = this.toSafeUuidLiteral(id);
         await this.withRetryableWriteConflictRetry("LanceDB bulk delete", async () => {
-          await this.getTable().delete(`id = '${id}'`);
+          await this.getTable().delete(`id = ${idLiteral}`);
         });
         deleted++;
       }

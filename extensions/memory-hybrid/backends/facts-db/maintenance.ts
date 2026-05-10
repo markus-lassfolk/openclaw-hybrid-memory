@@ -303,6 +303,8 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
   const desired: TierTransition[] = [];
   const hotDesired: HotCandidate[] = [];
 
+  // Single-pass projection builds tier transitions and hot-candidate ranking inputs
+  // together to avoid extra map/filter allocations for large fact sets.
   for (const row of rows) {
     const to = chooseTier(row, nowSec, normalized, { hotByRecallIds });
     desired.push({ id: row.id, from: row.tier, to });
