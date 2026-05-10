@@ -1653,15 +1653,12 @@ export class VectorDB {
           );
         }
       }
-      const BATCH_SIZE = 200;
       let deleted = 0;
-      for (let i = 0; i < normalized.length; i += BATCH_SIZE) {
-        const batch = normalized.slice(i, i + BATCH_SIZE);
-        const where = `id IN (${batch.map((id) => `'${id}'`).join(", ")})`;
+      for (const id of normalized) {
         await this.withRetryableWriteConflictRetry("LanceDB bulk delete", async () => {
-          await this.getTable().delete(where);
+          await this.getTable().delete(`id = '${id}'`);
         });
-        deleted += batch.length;
+        deleted++;
       }
       return deleted;
     } catch (err) {
