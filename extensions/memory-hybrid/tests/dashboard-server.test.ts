@@ -724,6 +724,19 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("POST /api/viewer/facts/:id/forget accepts malformed JSON bodies", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "To forget malformed", category: "fact", source: "test" });
+      const { body: lb } = await apiGet(port, "/api/viewer/facts");
+      const { facts } = JSON.parse(lb);
+      const target = facts.find((fact: { text: string; id: string }) => fact.text === "To forget malformed");
+      expect(target?.id).toBeTruthy();
+      const { status, body } = await apiPost(port, `/api/viewer/facts/${target.id}/forget`, "{not-json");
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+    });
+  });
+
   it("GET /api/viewer/verified honors the limit parameter", async () => {
     await withServer(async (ctx, port) => {
       const a = ctx.factsDb.store({ text: "v1", category: "fact", source: "test" });

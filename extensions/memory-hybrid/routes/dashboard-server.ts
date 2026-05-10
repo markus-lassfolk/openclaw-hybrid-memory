@@ -1999,8 +1999,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
             res.end(JSON.stringify({ error: "PayloadTooLarge" }));
             return;
           }
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          // Body content is ignored for forget; malformed JSON should not block the action.
+          const result = performFactAction(ctx, "forget", factId, {});
+          res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
         });
       return;
     }
