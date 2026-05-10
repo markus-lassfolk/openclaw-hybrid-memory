@@ -272,6 +272,15 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
     typeof thRaw?.heartbeatNudgeMaxChars === "number" && thRaw.heartbeatNudgeMaxChars >= 200
       ? Math.floor(thRaw.heartbeatNudgeMaxChars)
       : 2500;
+  const lrRaw = thRaw?.longRunningRegistration as Record<string, unknown> | undefined;
+  const longRunningModeRaw = typeof lrRaw?.mode === "string" ? lrRaw.mode.trim() : "";
+  const longRunningMode =
+    longRunningModeRaw === "off" ||
+    longRunningModeRaw === "suggest" ||
+    longRunningModeRaw === "confirm" ||
+    longRunningModeRaw === "auto_main_private"
+      ? longRunningModeRaw
+      : "suggest";
   const ledgerRaw = activeTaskRaw?.ledger;
   const ledger = ledgerRaw === "facts" ? "facts" : "markdown";
   const projRaw = activeTaskRaw?.projection as Record<string, unknown> | undefined;
@@ -309,6 +318,9 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
       heartbeatEscalation: thRaw?.heartbeatEscalation !== false,
       suggestGoalAfterTaskAgeDays: suggestDays,
       heartbeatNudgeMaxChars,
+      longRunningRegistration: {
+        mode: longRunningMode,
+      },
     },
     projection,
   };

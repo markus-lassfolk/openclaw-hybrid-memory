@@ -257,6 +257,19 @@ export type VectorConfig = {
 };
 
 /** Optional heartbeat / long-running hints for ACTIVE-TASKS.md rows (not goals). */
+export type ActiveTaskLongRunningRegistrationMode = "off" | "suggest" | "confirm" | "auto_main_private";
+
+/** Policy for long-running external workflows detected from user requests. */
+export type ActiveTaskLongRunningRegistrationConfig = {
+  /**
+   * `off`: do nothing.
+   * `suggest`: prepend a suggested active-task payload.
+   * `confirm`: prepend a guard requiring explicit task registration/confirmation first.
+   * `auto_main_private`: auto-create a task in main/private sessions; otherwise suggest.
+   */
+  mode: ActiveTaskLongRunningRegistrationMode;
+};
+
 export type ActiveTaskHygieneConfig = {
   /**
    * When the last user message matches goal stewardship heartbeat patterns,
@@ -270,6 +283,8 @@ export type ActiveTaskHygieneConfig = {
   suggestGoalAfterTaskAgeDays: number;
   /** Character budget for the heartbeat task-hygiene block. Default: 2500. */
   heartbeatNudgeMaxChars: number;
+  /** Guard/auto-proposal policy for long-running external workflows (default: suggest). */
+  longRunningRegistration?: ActiveTaskLongRunningRegistrationConfig;
 };
 
 export type ActiveTaskProjectionDedupeBy = "none" | "label" | "normalizedTitle";

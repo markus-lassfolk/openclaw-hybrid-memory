@@ -1982,6 +1982,18 @@
               "heartbeatNudgeMaxChars": {
                 "type": "number",
                 "description": "Max characters for the heartbeat hygiene block (default: 2500, min 200 in parser)"
+              },
+              "longRunningRegistration": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["off", "suggest", "confirm", "auto_main_private"],
+                    "description": "Long-running external workflow guard: suggest payload, require confirmation, or auto-create tasks for main/private sessions (default: suggest)."
+                  }
+                },
+                "description": "Task registration policy when user asks for long-running external workflows (PR queues, CI monitoring, deployments, issue sweeps)."
               }
             },
             "description": "Heartbeat nudges for tactical tasks; see docs/TASK-HYGIENE.md"
