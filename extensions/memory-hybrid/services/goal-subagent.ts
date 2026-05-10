@@ -33,15 +33,25 @@ export async function resolveGoalForSpawn(event: GoalSubagentSpawnEvent, goalsDi
   const label = event.label?.trim();
   if (!label) return null;
   const active = await listActiveGoals(goalsDir);
-  const matches: Goal[] = [];
+  let bestMatch: Goal | null = null;
+  let bestLen = -1;
+  let tiedAtBestLen = false;
   for (const g of active) {
     const prefix = `${g.label}-`;
     const prefix2 = `${g.label}/`;
     if (label.startsWith(prefix) || label.startsWith(prefix2)) {
-      matches.push(g);
+      const currentLen = g.label.length;
+      if (currentLen > bestLen) {
+        bestMatch = g;
+        bestLen = currentLen;
+        tiedAtBestLen = false;
+      } else if (currentLen === bestLen) {
+        tiedAtBestLen = true;
+      }
     }
   }
-  return matches.length === 1 ? matches[0].id : null;
+  if (!bestMatch || tiedAtBestLen) return null;
+  return bestMatch.id;
 }
 
 export async function linkSubagentToGoal(

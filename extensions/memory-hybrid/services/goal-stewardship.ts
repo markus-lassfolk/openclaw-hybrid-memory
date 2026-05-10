@@ -3,7 +3,17 @@
  * @see docs/GOAL-STEWARDSHIP-DESIGN.md
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
 import type { GoalDefaults } from "./goal-stewardship-types.js";
@@ -18,28 +28,89 @@ export * from "./goal-circuit-breaker.js";
 
 const globalDispatchTimestamps: number[] = [];
 const GLOBAL_RATE_LIMIT_FILENAME = "_global_dispatch_rate_limit.json";
+const GLOBAL_RATE_LOCK_FILENAME = ".global-dispatch-rate.lock";
+const GLOBAL_RATE_LOCK_RETRY_MS = 25;
+const GLOBAL_RATE_LOCK_MAX_RETRIES = 200;
+const GLOBAL_RATE_LOCK_STALE_MS = 2 * 60 * 1000;
+const DISPATCH_LOCK_SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
-function readPersistedDispatchTimestamps(goalsDir?: string): number[] {
-  if (!goalsDir?.trim()) return [];
+function sleepSync(ms: number): void {
+  Atomics.wait(DISPATCH_LOCK_SLEEP, 0, 0, ms);
+}
+
+function persistedDispatchPath(goalsDir: string): string {
+  return join(goalsDir, GLOBAL_RATE_LIMIT_FILENAME);
+}
+
+function readPersistedDispatchWindow(goalsDir: string): { timestamps: number[]; exists: boolean } {
+  const filePath = persistedDispatchPath(goalsDir);
+  if (!existsSync(filePath)) return { timestamps: [], exists: false };
   try {
-    const raw = readFileSync(join(goalsDir, GLOBAL_RATE_LIMIT_FILENAME), "utf-8");
+    const raw = readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw) as { timestamps?: unknown };
-    if (!Array.isArray(parsed.timestamps)) return [];
-    return parsed.timestamps
-      .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0)
-      .sort((a, b) => a - b);
+    if (!Array.isArray(parsed.timestamps)) return { timestamps: [], exists: true };
+    return {
+      timestamps: parsed.timestamps
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0)
+        .sort((a, b) => a - b),
+      exists: true,
+    };
   } catch {
-    return [];
+    return { timestamps: [], exists: true };
   }
 }
 
 function writePersistedDispatchTimestamps(goalsDir: string, timestamps: number[]): void {
   mkdirSync(goalsDir, { recursive: true });
-  const path = join(goalsDir, GLOBAL_RATE_LIMIT_FILENAME);
+  const path = persistedDispatchPath(goalsDir);
   const payload = JSON.stringify({ timestamps, updatedAt: new Date().toISOString() }, null, 2);
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpPath, payload, "utf-8");
   renameSync(tmpPath, path);
+}
+
+function withPersistedDispatchLock<T>(goalsDir: string, fn: () => T): T {
+  mkdirSync(goalsDir, { recursive: true });
+  const lockPath = join(goalsDir, GLOBAL_RATE_LOCK_FILENAME);
+  let acquired = false;
+  for (let attempt = 0; attempt < GLOBAL_RATE_LOCK_MAX_RETRIES; attempt++) {
+    try {
+      const fd = openSync(lockPath, "wx");
+      try {
+        writeFileSync(fd, `${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
+      } finally {
+        closeSync(fd);
+      }
+      acquired = true;
+      break;
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "EEXIST") throw err;
+      try {
+        const lockStat = statSync(lockPath);
+        if (Date.now() - lockStat.mtimeMs > GLOBAL_RATE_LOCK_STALE_MS) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        // Another process may have rotated the lock; continue retrying.
+      }
+      sleepSync(GLOBAL_RATE_LOCK_RETRY_MS);
+    }
+  }
+  if (!acquired) {
+    throw new Error("Timed out waiting for global dispatch rate lock");
+  }
+
+  try {
+    return fn();
+  } finally {
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // Best effort lock cleanup.
+    }
+  }
 }
 
 function pruneOldTimestamps(timestamps: number[]): number[] {
@@ -51,33 +122,39 @@ function pruneOldTimestamps(timestamps: number[]): number[] {
   return firstValid > 0 ? timestamps.slice(firstValid) : timestamps;
 }
 
-function getRateLimitWindow(goalsDir?: string): { timestamps: number[]; persisted: boolean } {
-  if (!goalsDir?.trim()) {
-    const pruned = pruneOldTimestamps(globalDispatchTimestamps);
-    if (pruned !== globalDispatchTimestamps) {
-      globalDispatchTimestamps.splice(0, globalDispatchTimestamps.length, ...pruned);
-    }
-    return { timestamps: globalDispatchTimestamps, persisted: false };
+function getInMemoryRateLimitWindow(): number[] {
+  const pruned = pruneOldTimestamps(globalDispatchTimestamps);
+  if (pruned !== globalDispatchTimestamps) {
+    globalDispatchTimestamps.splice(0, globalDispatchTimestamps.length, ...pruned);
   }
-  return { timestamps: pruneOldTimestamps(readPersistedDispatchTimestamps(goalsDir)), persisted: true };
+  return globalDispatchTimestamps;
 }
 
 export function recordGoalDispatch(goalsDir?: string): void {
-  const window = getRateLimitWindow(goalsDir);
-  const next = [...window.timestamps, Date.now()];
-  if (window.persisted && goalsDir?.trim()) {
-    writePersistedDispatchTimestamps(goalsDir, next);
+  if (goalsDir?.trim()) {
+    withPersistedDispatchLock(goalsDir, () => {
+      const persisted = readPersistedDispatchWindow(goalsDir);
+      const next = [...pruneOldTimestamps(persisted.timestamps), Date.now()];
+      writePersistedDispatchTimestamps(goalsDir, next);
+    });
     return;
   }
+  const next = [...getInMemoryRateLimitWindow(), Date.now()];
   globalDispatchTimestamps.splice(0, globalDispatchTimestamps.length, ...next);
 }
 
 export function isGlobalRateLimited(maxPerHour: number, goalsDir?: string): boolean {
-  const window = getRateLimitWindow(goalsDir);
-  if (window.persisted && goalsDir?.trim()) {
-    writePersistedDispatchTimestamps(goalsDir, window.timestamps);
+  if (goalsDir?.trim()) {
+    return withPersistedDispatchLock(goalsDir, () => {
+      const persisted = readPersistedDispatchWindow(goalsDir);
+      const pruned = pruneOldTimestamps(persisted.timestamps);
+      if (persisted.exists && pruned.length !== persisted.timestamps.length) {
+        writePersistedDispatchTimestamps(goalsDir, pruned);
+      }
+      return pruned.length >= maxPerHour;
+    });
   }
-  return window.timestamps.length >= maxPerHour;
+  return getInMemoryRateLimitWindow().length >= maxPerHour;
 }
 
 export function goalStewardshipDefaultsFromConfig(cfg: GoalStewardshipConfig): GoalDefaults {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { mkdir as mkdirAsync, rm as rmAsync } from "node:fs/promises";
+import { mkdir as mkdirAsync, rm as rmAsync, stat as statAsync } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -17,6 +17,7 @@ const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
 const ACTIVE_TASK_WAKE_GUARD_YEARS = 10;
 const CRON_JOBS_LOCK_RETRY_MS = 25;
 const CRON_JOBS_LOCK_MAX_RETRIES = 200;
+const CRON_JOBS_LOCK_STALE_MS = 2 * 60 * 1000;
 
 export interface ActiveTaskCheckpointInput {
   entity?: string;
@@ -352,6 +353,15 @@ async function acquireCronJobsLock(openclawDir: string): Promise<string> {
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "EEXIST") throw err;
+      try {
+        const lockStat = await statAsync(lockPath);
+        if (Date.now() - lockStat.mtimeMs > CRON_JOBS_LOCK_STALE_MS) {
+          await rmAsync(lockPath, { recursive: true, force: true }).catch(() => {});
+          continue;
+        }
+      } catch {
+        // Lock may be replaced/removed by another process; continue retrying.
+      }
       await new Promise((resolve) => setTimeout(resolve, CRON_JOBS_LOCK_RETRY_MS));
     }
   }

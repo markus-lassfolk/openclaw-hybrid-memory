@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,5 +42,27 @@ describe("goal-stewardship global dispatch rate limit persistence", () => {
     );
 
     expect(isGlobalRateLimited(1, goalsDir)).toBe(false);
+  });
+
+  it("does not create persistence file for read-only checks with empty state", async () => {
+    const goalsDir = await mkdtemp(join(tmpdir(), "gs-rate-limit-empty-"));
+    dirs.push(goalsDir);
+    expect(isGlobalRateLimited(1, goalsDir)).toBe(false);
+    expect(existsSync(join(goalsDir, "_global_dispatch_rate_limit.json"))).toBe(false);
+  });
+
+  it("recovers stale dispatch lock before recording", async () => {
+    const goalsDir = await mkdtemp(join(tmpdir(), "gs-rate-limit-lock-"));
+    dirs.push(goalsDir);
+    const lockPath = join(goalsDir, ".global-dispatch-rate.lock");
+    await writeFile(lockPath, "stale\n", "utf-8");
+    const stale = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(lockPath, stale, stale);
+
+    recordGoalDispatch(goalsDir);
+    const raw = await readFile(join(goalsDir, "_global_dispatch_rate_limit.json"), "utf-8");
+    const parsed = JSON.parse(raw) as { timestamps?: unknown[] };
+    expect(Array.isArray(parsed.timestamps)).toBe(true);
+    expect((parsed.timestamps ?? []).length).toBe(1);
   });
 });

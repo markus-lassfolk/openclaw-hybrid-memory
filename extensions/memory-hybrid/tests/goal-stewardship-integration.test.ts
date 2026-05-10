@@ -260,6 +260,34 @@ describe("goal stewardship integration (mock plugin API)", () => {
     expect(task?.dispatchFailureReason).toBe("previous dispatch diagnostics");
   });
 
+  it("subagent_spawned picks the longest matching goal-label prefix", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
+
+    const shorter = await createGoal(
+      goalsDir,
+      { label: "deploy", description: "deploy", acceptanceCriteria: ["ok"] },
+      defaults,
+    );
+    const longer = await createGoal(
+      goalsDir,
+      { label: "deploy-a", description: "deploy variant", acceptanceCriteria: ["ok"] },
+      defaults,
+    );
+
+    await api.emitAll("subagent_spawned", {
+      label: "deploy-a/task-1",
+      childSessionKey: "session-deploy-a",
+    });
+
+    const shorterAfter = await readGoal(goalsDir, shorter.id);
+    const longerAfter = await readGoal(goalsDir, longer.id);
+    expect(shorterAfter?.linkedTasks.some((t) => t.sessionKey === "session-deploy-a")).toBe(false);
+    expect(longerAfter?.linkedTasks.some((t) => t.sessionKey === "session-deploy-a")).toBe(true);
+  });
+
   it("subagent_ended skips ambiguous label-only matches across multiple goals", async () => {
     const cfg = parseCfg();
     const ctx = minimalLifecycleContext(cfg);

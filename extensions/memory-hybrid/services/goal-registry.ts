@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import type { EventLog } from "../backends/event-log.js";
@@ -46,6 +46,7 @@ function nowIso(): string {
 
 const GOAL_LOCK_RETRY_MS = 25;
 const GOAL_LOCK_MAX_RETRIES = 200;
+const GOAL_LOCK_STALE_MS = 2 * 60 * 1000;
 
 function lockKey(raw: string): string {
   return (
@@ -68,6 +69,15 @@ async function acquireGoalLock(goalsDir: string, key: string): Promise<string> {
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "EEXIST") throw err;
+      try {
+        const lockStat = await stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > GOAL_LOCK_STALE_MS) {
+          await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+          continue;
+        }
+      } catch {
+        // Lock may disappear between stat/remove attempts; continue retrying.
+      }
       await new Promise((resolve) => setTimeout(resolve, GOAL_LOCK_RETRY_MS));
     }
   }
