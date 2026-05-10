@@ -155,6 +155,29 @@ describe("TimerManager", () => {
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
+    it("handles rejected thenables that are not Promise instances", async () => {
+      vi.useFakeTimers();
+      const shuttingDown = () => false;
+      const warnSpy = vi.fn();
+      const manager = new TimerManager({ shuttingDown, logger: { warn: warnSpy } });
+      const callback = vi.fn(
+        () =>
+          ({
+            // biome-ignore lint/suspicious/noThenProperty: intentional thenable to test non-Promise async handling
+            then: (_resolve: (v?: unknown) => void, reject: (reason?: unknown) => void) => {
+              reject(new Error("Thenable rejection"));
+            },
+          }) as unknown as Promise<void>,
+      );
+
+      manager.schedule(callback, 1000);
+      vi.advanceTimersByTime(1000);
+      await vi.runAllTimersAsync();
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Thenable rejection"));
+    });
+
     it("logs debug message when skipped due to shutdown", async () => {
       vi.useFakeTimers();
       let shutdownFlag = false;

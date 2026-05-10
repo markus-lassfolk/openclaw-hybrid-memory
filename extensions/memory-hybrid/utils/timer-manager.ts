@@ -80,14 +80,12 @@ export class TimerManager {
       // Execute callback with error handling
       try {
         const result = callback();
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            // Suppress expected shutdown errors
-            if (!/database connection is not open/i.test(String(err))) {
-              this.options.logger?.warn?.(`Timer ${id} callback failed: ${err}`);
-            }
-          });
-        }
+        void Promise.resolve(result).catch((err) => {
+          // Suppress expected shutdown errors
+          if (!/database connection is not open/i.test(String(err))) {
+            this.options.logger?.warn?.(`Timer ${id} callback failed: ${err}`);
+          }
+        });
       } catch (err) {
         // Suppress expected shutdown errors
         if (!/database connection is not open/i.test(String(err))) {
@@ -131,14 +129,12 @@ export class TimerManager {
       // Execute callback with error handling
       try {
         const result = callback();
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            // Suppress expected shutdown errors
-            if (!/database connection is not open/i.test(String(err))) {
-              this.options.logger?.warn?.(`Interval ${id} callback failed: ${err}`);
-            }
-          });
-        }
+        void Promise.resolve(result).catch((err) => {
+          // Suppress expected shutdown errors
+          if (!/database connection is not open/i.test(String(err))) {
+            this.options.logger?.warn?.(`Interval ${id} callback failed: ${err}`);
+          }
+        });
       } catch (err) {
         // Suppress expected shutdown errors
         if (!/database connection is not open/i.test(String(err))) {
@@ -182,14 +178,12 @@ export class TimerManager {
       // Execute callback with error handling
       try {
         const result = callback();
-        if (result instanceof Promise) {
-          result.catch((err) => {
-            // Suppress expected shutdown errors
-            if (!/database connection is not open/i.test(String(err))) {
-              this.options.logger?.warn?.(`Immediate ${id} callback failed: ${err}`);
-            }
-          });
-        }
+        void Promise.resolve(result).catch((err) => {
+          // Suppress expected shutdown errors
+          if (!/database connection is not open/i.test(String(err))) {
+            this.options.logger?.warn?.(`Immediate ${id} callback failed: ${err}`);
+          }
+        });
       } catch (err) {
         // Suppress expected shutdown errors
         if (!/database connection is not open/i.test(String(err))) {
