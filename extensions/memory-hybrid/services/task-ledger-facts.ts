@@ -364,7 +364,11 @@ export async function refreshActiveTaskProjectionBestEffort(opts: {
     return { rendered: true, staleMarked: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await markActiveTaskProjectionStale(opts.filePath, opts.reason, { source: opts.source, factId: opts.factId });
+    try {
+      await markActiveTaskProjectionStale(opts.filePath, opts.reason, { source: opts.source, factId: opts.factId });
+    } catch {
+      // Ignore stale marker write failures (best-effort)
+    }
     opts.logger?.warn?.(`memory-hybrid: active-task projection refresh failed: ${message}`);
     return { rendered: false, staleMarked: true, error: message };
   }
