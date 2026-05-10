@@ -400,7 +400,6 @@ export function createPluginService(ctx: PluginServiceContext) {
                         subsystem: "plugin-service",
                         operation: "wal-recovery-vector-store",
                       });
-                      throw err;
                     }
                   }
 

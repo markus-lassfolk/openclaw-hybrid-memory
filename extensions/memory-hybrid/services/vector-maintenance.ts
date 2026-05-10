@@ -54,7 +54,7 @@ export async function storeCanonicalVectorForFact(options: {
   vector: number[];
   importance: number;
   category: string;
-  embeddingModel: string | null;
+  embeddingModel: string;
 }): Promise<string> {
   const storedId = await options.vectorDb.store({
     text: options.text,
