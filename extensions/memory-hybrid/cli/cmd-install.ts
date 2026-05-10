@@ -35,6 +35,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
+import { DEFAULT_COMPACTION_MODEL } from "../utils/compaction-model-watchdog.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import {
   extractCronStoreJobModel,
@@ -1399,6 +1400,8 @@ export function buildInstallDefaults(pluginId: string = PLUGIN_ID): Record<strin
         },
         compaction: {
           mode: "default",
+          // Keep compaction on a cheap model by default; do not inherit agent primary.
+          model: DEFAULT_COMPACTION_MODEL,
           memoryFlush: {
             enabled: true,
             softThresholdTokens: 4000,

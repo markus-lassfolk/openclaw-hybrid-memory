@@ -81,6 +81,26 @@ describe("workspace skill install", () => {
     }
   });
 
+  it("resolveOpenclawJsonPathForWorkspace honors OPENCLAW_HOME when explicit config vars are unset", () => {
+    const openclawHome = "/tmp/openclaw-home-verify";
+    const savedHome = process.env.OPENCLAW_HOME;
+    const savedPath = process.env.OPENCLAW_CONFIG_PATH;
+    const savedConfig = process.env.OPENCLAW_CONFIG;
+    try {
+      Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG");
+      Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG_PATH");
+      process.env.OPENCLAW_HOME = openclawHome;
+      expect(resolveOpenclawJsonPathForWorkspace()).toBe(join(openclawHome, "openclaw.json"));
+    } finally {
+      if (savedConfig !== undefined) process.env.OPENCLAW_CONFIG = savedConfig;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG");
+      if (savedPath !== undefined) process.env.OPENCLAW_CONFIG_PATH = savedPath;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG_PATH");
+      if (savedHome !== undefined) process.env.OPENCLAW_HOME = savedHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+    }
+  });
+
   it("installHybridMemoryWorkspaceSkill copies bundled SKILL.md", () => {
     const pluginRoot = PLUGIN_ROOT;
     const destRoot = join(tmp, "ws");
