@@ -179,8 +179,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
    * Includes facts already below 0.1 confidence AND facts that will be halved below 0.1.
    * Call this *before* `decayConfidence()` to capture the complete set for vector cleanup.
    */
-  listFactIdsToBeDeletedByDecayRun(): string[] {
-    return listFactIdsToBeDeletedByDecayRunImpl(this.liveDb);
+  listFactIdsToBeDeletedByDecayRun(nowSec?: number): string[] {
+    return listFactIdsToBeDeletedByDecayRunImpl(this.liveDb, nowSec);
   }
 
   pruneExpired(): number {
@@ -206,8 +206,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return promoteScopeImpl(this.liveDb, factId, newScope, newScopeTarget);
   }
 
-  decayConfidence(): number {
-    return decayConfidenceImpl(this.liveDb);
+  decayConfidence(nowSec?: number): number {
+    return decayConfidenceImpl(this.liveDb, nowSec);
   }
 
   confirmFact(id: string): boolean {

@@ -565,8 +565,7 @@ export function listLowConfidenceFactIdsPendingPrune(db: DatabaseSync): string[]
  * cleanup for the full set of facts that will be removed, avoiding orphaned LanceDB vectors
  * when facts are newly pushed below the 0.1 floor by the halving step.
  */
-export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync): string[] {
-  const nowSec = Math.floor(Date.now() / 1000);
+export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync, nowSec = Math.floor(Date.now() / 1000)): string[] {
   // Already below the 0.1 floor — deleted unconditionally.
   const alreadyLow = db
     .prepare(
@@ -657,9 +656,7 @@ export function promoteScope(
   return result.changes > 0;
 }
 
-export function decayConfidence(db: DatabaseSync): number {
-  const nowSec = Math.floor(Date.now() / 1000);
-
+export function decayConfidence(db: DatabaseSync, nowSec = Math.floor(Date.now() / 1000)): number {
   // Return the number of facts whose confidence was halved — this is the true
   // "decayed" count.  The subsequent hard-delete of facts that have already
   // fallen below the 0.1 floor is an implementation side-effect and should NOT

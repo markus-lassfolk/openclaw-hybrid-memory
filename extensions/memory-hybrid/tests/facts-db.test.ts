@@ -1572,6 +1572,35 @@ describe("FactsDB.decayConfidence", () => {
     expect(edgeFact).not.toBeNull();
     expect(edgeFact?.confidence ?? 0).toBeCloseTo(0.1, 8);
   });
+
+  it("keeps decay preview and execution aligned when reusing the same nowSec", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const edge = db.store({
+      text: "Boundary decay candidate",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.19,
+      expiresAt: nowSec + 25,
+    });
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb
+      .prepare("UPDATE facts SET last_confirmed_at = ? WHERE id = ?")
+      .run(nowSec - 75, edge.id);
+
+    const pendingAtBoundary = new Set(db.listFactIdsToBeDeletedByDecayRun(nowSec));
+    expect(pendingAtBoundary.has(edge.id)).toBe(false);
+    expect(db.decayConfidence(nowSec)).toBe(0);
+    expect(db.getById(edge.id)).not.toBeNull();
+
+    const pendingAfterBoundary = new Set(db.listFactIdsToBeDeletedByDecayRun(nowSec + 1));
+    expect(pendingAfterBoundary.has(edge.id)).toBe(true);
+    expect(db.decayConfidence(nowSec + 1)).toBe(1);
+    expect(db.getById(edge.id)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

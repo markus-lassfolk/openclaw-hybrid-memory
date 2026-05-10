@@ -407,17 +407,17 @@ export function createPluginService(ctx: PluginServiceContext) {
                 } else if (entry.data.vector) {
                   // SQLite fact already exists (crash after SQL write, before vector write).
                   // Re-attempt the vector store so the fact is searchable via semantics.
-                  let existingId = factsDb.getDuplicateIdByNormalizedHash(text);
-                  if (!existingId) {
-                    const sourceForLookup = String(source || "conversation").trim() || "conversation";
-                    const row = factsDb
-                      .getRawDb()
-                      .prepare(
-                        "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
-                      )
-                      .get(text, sourceForLookup) as { id: string } | undefined;
-                    existingId = row?.id ?? null;
-                  }
+                  const sourceForLookup = String(source || "conversation").trim() || "conversation";
+                  let existingId =
+                    (
+                      factsDb
+                        .getRawDb()
+                        .prepare(
+                          "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+                        )
+                        .get(text, sourceForLookup) as { id: string } | undefined
+                    )?.id ?? null;
+                  if (!existingId) existingId = factsDb.getDuplicateIdByNormalizedHash(text);
                   if (existingId) {
                     try {
                       await vectorDb.store({
@@ -550,10 +550,11 @@ export function createPluginService(ctx: PluginServiceContext) {
         try {
           if (shuttingDown) return;
           if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
+          const decayNowSec = Math.floor(Date.now() / 1000);
           const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
-          const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun();
+          const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
           const hardPruned = factsDb.pruneExpired();
-          const softPruned = factsDb.decayConfidence();
+          const softPruned = factsDb.decayConfidence(decayNowSec);
           const expiredCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
             operation: "plugin-periodic-prune-expired",
             logger: api.logger,

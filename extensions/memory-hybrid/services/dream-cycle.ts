@@ -591,8 +591,9 @@ export async function runDreamCycle(
   }
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
     try {
-      const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun();
-      factsDecayed = factsDb.decayConfidence();
+      const decayNowSec = Math.floor(Date.now() / 1000);
+      const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
+      factsDecayed = factsDb.decayConfidence(decayNowSec);
       const vectorCleanup = await deleteVectorsForFactIds(vectorDb, decayDeleteIds, {
         operation: "dream-cycle-decay",
         logger,
