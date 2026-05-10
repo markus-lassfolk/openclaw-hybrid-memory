@@ -118,7 +118,7 @@ export type {
   ClusterFactLookup,
 } from "./services/topic-clusters.js";
 import type { MemoryPluginAPI } from "./api/memory-plugin-api.js";
-import { type PluginRuntime, createTimers } from "./api/plugin-runtime.js";
+import { type PluginRuntime, clearRuntimeTimers, createTimers } from "./api/plugin-runtime.js";
 import {
   type AuthFailurePattern,
   DEFAULT_AUTH_FAILURE_PATTERNS,
@@ -324,11 +324,15 @@ const runtimeRef: { value: PluginRuntime | null } = { value: null };
 async function performHybridMemCliTeardown(): Promise<void> {
   const r = runtimeRef.value;
   if (!r) return;
+  // Stop long-lived service timers first so one-shot CLI commands can exit promptly.
+  clearRuntimeTimers(r.timers);
   try {
     await r.bootstrapAsyncInit;
   } catch {
     /* embedding/vault init may fail; still close handles */
   }
+  // Startup can race with command completion; clear again after async init settles.
+  clearRuntimeTimers(r.timers);
   try {
     r.lifecycleHooksHandle?.dispose();
   } catch (err) {
@@ -442,16 +446,8 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   }
 
   if (old) {
-    // Clear old timer handles to prevent leaks
-    if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);
-    if (old.timers.classifyTimer.value) clearInterval(old.timers.classifyTimer.value);
-    if (old.timers.classifyStartupTimeout.value) clearTimeout(old.timers.classifyStartupTimeout.value);
-    if (old.timers.proposalsPruneTimer.value) clearInterval(old.timers.proposalsPruneTimer.value);
-    if (old.timers.languageKeywordsTimer.value) clearInterval(old.timers.languageKeywordsTimer.value);
-    if (old.timers.languageKeywordsStartupTimeout.value) clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
-    if (old.timers.postUpgradeTimeout.value) clearTimeout(old.timers.postUpgradeTimeout.value);
-    if (old.timers.passiveObserverTimer.value) clearInterval(old.timers.passiveObserverTimer.value);
-    if (old.timers.watchdogTimer.value) clearInterval(old.timers.watchdogTimer.value);
+    // Clear old timer handles to prevent leaks.
+    clearRuntimeTimers(old.timers);
     // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
     old.lifecycleHooksHandle?.dispose();
     // Close SQLite/Lance and related stores before opening new connections (issue #802 — same paths must not be double-opened).
