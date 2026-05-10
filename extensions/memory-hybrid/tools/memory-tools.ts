@@ -303,23 +303,26 @@ export function registerMemoryTools(
     }
   }
 
-  const activeTaskProjectionPath = resolveWorkspacePath(cfg.activeTask.filePath);
+  const activeTaskCfg = cfg.activeTask;
+  const activeTaskProjectionPath = activeTaskCfg ? resolveWorkspacePath(activeTaskCfg.filePath) : null;
   const activeTaskStaleMinutes = (() => {
+    if (!activeTaskCfg) return parseDuration("24h");
     try {
-      return parseDuration(cfg.activeTask.staleThreshold);
+      return parseDuration(activeTaskCfg.staleThreshold);
     } catch {
       return parseDuration("24h");
     }
   })();
 
   const maybeRefreshProjectActiveTaskProjection = async (factCategory: string, factId: string): Promise<void> => {
-    if (!cfg.activeTask.enabled || cfg.activeTask.ledger !== "facts") return;
+    if (!activeTaskCfg || !activeTaskCfg.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath)
+      return;
     if (factCategory !== TASK_LEDGER_CATEGORY) return;
     await refreshActiveTaskProjectionBestEffort({
       factsDb,
       staleMinutes: activeTaskStaleMinutes,
       filePath: activeTaskProjectionPath,
-      projection: cfg.activeTask.projection,
+      projection: activeTaskCfg.projection,
       reason: "memory_store_project_fact_write",
       source: "memory_store",
       factId,
