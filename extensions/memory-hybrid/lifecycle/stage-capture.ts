@@ -175,6 +175,7 @@ async function runCapture(
           source: "humanizer",
           decayClass: "normal",
         });
+        // Note: Humanizer scores don't generate vectors, so no evictedFactId handling needed here
         api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
     } catch (err) {
@@ -429,7 +430,7 @@ async function runCapture(
                       classification.targetId,
                     );
                     const nowSec = Math.floor(Date.now() / 1000);
-                    const newEntry = ctx.factsDb.store({
+                    const storeResult = ctx.factsDb.store({
                       text: textToStore,
                       category,
                       importance: finalImportance,
@@ -447,6 +448,22 @@ async function runCapture(
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
+                    const newEntry = storeResult.entry;
+                    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                    if (storeResult.evictedFactId) {
+                      try {
+                        const deleted = await ctx.vectorDb.delete(storeResult.evictedFactId);
+                        if (deleted) {
+                          api.logger.info?.(
+                            `memory-hybrid: auto-capture evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                          );
+                        }
+                      } catch (evictErr) {
+                        api.logger.warn(
+                          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+                        );
+                      }
+                    }
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
                     try {
@@ -530,7 +547,7 @@ async function runCapture(
             },
             api.logger,
           );
-          const storedEntry = ctx.factsDb.store({
+          const storeResult = ctx.factsDb.store({
             text: textToStore,
             category,
             importance: CLI_STORE_IMPORTANCE,
@@ -545,6 +562,22 @@ async function runCapture(
             extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
             extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
           });
+          const storedEntry = storeResult.entry;
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          if (storeResult.evictedFactId) {
+            try {
+              const deleted = await ctx.vectorDb.delete(storeResult.evictedFactId);
+              if (deleted) {
+                api.logger.info?.(
+                  `memory-hybrid: auto-capture evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                );
+              }
+            } catch (evictErr) {
+              api.logger.warn(
+                `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+              );
+            }
+          }
           try {
             if (vector) {
               ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
@@ -801,7 +834,7 @@ async function runCapture(
               }
             } else {
               const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
-              const entry = ctx.factsDb.store({
+              const storeResult = ctx.factsDb.store({
                 text,
                 category: "technical" as MemoryCategory,
                 importance: 0.9,
@@ -812,6 +845,22 @@ async function runCapture(
                 decayClass: "permanent",
                 tags: ["auth", "credential"],
               });
+              const entry = storeResult.entry;
+              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+              if (storeResult.evictedFactId) {
+                try {
+                  const deleted = await ctx.vectorDb.delete(storeResult.evictedFactId);
+                  if (deleted) {
+                    api.logger.info?.(
+                      `memory-hybrid: credential capture evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                    );
+                  }
+                } catch (evictErr) {
+                  api.logger.warn(
+                    `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+                  );
+                }
+              }
               if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   const vector = await ctx.embeddings.embed(text);

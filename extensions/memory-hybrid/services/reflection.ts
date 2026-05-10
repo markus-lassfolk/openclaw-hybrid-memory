@@ -632,7 +632,7 @@ export async function runReflection(
     }
 
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store(
+    const storeResult = factsDb.store(
       {
         text: patternText,
         category: "pattern" as MemoryCategory,
@@ -651,6 +651,22 @@ export async function runReflection(
         suppressVectorFallbackWarning: true,
       },
     );
+    const entry = storeResult.entry;
+    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+    if (storeResult.evictedFactId) {
+      try {
+        const deleted = await vectorDb.delete(storeResult.evictedFactId);
+        if (deleted) {
+          logger.info?.(
+            `memory-hybrid: reflection evicted fact ${storeResult.evictedFactId}, vector deleted`,
+          );
+        }
+      } catch (evictErr) {
+        logger.warn?.(
+          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+        );
+      }
+    }
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -900,7 +916,7 @@ export async function runReflectionRules(
       continue;
     }
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store(
+    const storeResult = factsDb.store(
       {
         text: ruleText,
         category: "rule" as MemoryCategory,
@@ -919,6 +935,22 @@ export async function runReflectionRules(
         suppressVectorFallbackWarning: true,
       },
     );
+    const entry = storeResult.entry;
+    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+    if (storeResult.evictedFactId) {
+      try {
+        const deleted = await vectorDb.delete(storeResult.evictedFactId);
+        if (deleted) {
+          logger.info?.(
+            `memory-hybrid: reflect-rules evicted fact ${storeResult.evictedFactId}, vector deleted`,
+          );
+        }
+      } catch (evictErr) {
+        logger.warn?.(
+          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+        );
+      }
+    }
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -1149,7 +1181,7 @@ export async function runReflectionMeta(
       continue;
     }
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store(
+    const storeResult = factsDb.store(
       {
         text: metaText,
         category: "pattern" as MemoryCategory,
@@ -1168,6 +1200,22 @@ export async function runReflectionMeta(
         suppressVectorFallbackWarning: true,
       },
     );
+    const entry = storeResult.entry;
+    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+    if (storeResult.evictedFactId) {
+      try {
+        const deleted = await vectorDb.delete(storeResult.evictedFactId);
+        if (deleted) {
+          logger.info?.(
+            `memory-hybrid: reflect-meta evicted fact ${storeResult.evictedFactId}, vector deleted`,
+          );
+        }
+      } catch (evictErr) {
+        logger.warn?.(
+          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+        );
+      }
+    }
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {

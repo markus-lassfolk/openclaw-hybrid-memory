@@ -14,6 +14,7 @@ import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
 import {
   type StoreFactInput,
+  type StoreFactResult,
   deleteFact,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
@@ -228,7 +229,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
       suppressVectorFallbackWarning?: boolean;
     },
-  ): MemoryEntry {
+  ): StoreFactResult {
     const warnOnce = (key: string, message: string): void => {
       if (this.storeDedupeWarnedKeys.has(key)) return;
       this.storeDedupeWarnedKeys.add(key);
@@ -250,14 +251,9 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       },
       entry,
     );
-    // CRITICAL FIX (#2): If a fact was evicted, log it here. The caller with access to
-    // VectorDB must handle the vector deletion. This is documented in StoreFactResult.
-    if (result.evictedFactId) {
-      process.stderr.write(
-        `memory-hybrid: CRITICAL: Fact ${result.evictedFactId} was evicted but vector cleanup is not yet implemented. Vector orphan created.\n`,
-      );
-    }
-    return result.entry;
+    // Issue #2 COMPLETED: evictedFactId is now returned to the caller.
+    // The caller with access to VectorDB should delete the vector if evictedFactId is present.
+    return result;
   }
 
   statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {
