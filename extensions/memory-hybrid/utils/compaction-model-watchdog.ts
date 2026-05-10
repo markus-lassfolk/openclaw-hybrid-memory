@@ -238,9 +238,10 @@ function isMiniMaxFamilyModel(model: string): boolean {
 function matchesHighTierCompactionFamily(model: string): string | null {
   const lower = (model.split("/").pop() ?? model).toLowerCase();
 
-  // Explicitly requested high-tier families.
-  if (/\bgpt-5\b|\bgpt-5\.\d+\b/.test(lower)) return "GPT-5 class model";
+  // Check for gpt-5.4-pro first (most specific)
   if (/\bgpt-5\.4-pro\b/.test(lower)) return "gpt-5.4-pro high-tier model";
+  // Then check for broader GPT-5 class models
+  if (/\bgpt-5\b|\bgpt-5\.\d+\b/.test(lower)) return "GPT-5 class model";
   if (/\bpro\b|\bfull\b|high[-_]?tier|\bheavy\b|\bultra\b|\blarge\b/.test(lower)) {
     return "pro/full/high-tier model keyword match";
   }
@@ -347,7 +348,8 @@ export function classifyCompactionModelStrength(model: string): CompactionModelS
     };
   }
   // Explicit denylist families from incident request.
-  if (/\bo3(?:[-_a-z0-9.]*)\b/.test(lowerTail)) {
+  // Exclude o3-mini and o3-nano (allowlisted as legitimate cheap models)
+  if (/\bo3\b/i.test(lowerTail) && !/o3-mini|o3-nano/i.test(lowerTail)) {
     return {
       tooStrong: true,
       reason: "o3 class model",

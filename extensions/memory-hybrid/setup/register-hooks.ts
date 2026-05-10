@@ -6,10 +6,10 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
+import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -26,7 +26,6 @@ import {
   resolveCompactionModelSelection,
   type CompactionWatchdogContext,
 } from "../utils/compaction-model-watchdog.js";
-import { expandTilde } from "../utils/path.js";
 import {
   type MessageLike,
   sanitizeMessagesForClaude,
@@ -42,20 +41,12 @@ export interface LifecycleHooksHandle {
   dispose: () => void;
 }
 
-function resolveOpenclawJsonPathForCompactionWatchdog(): string {
-  const explicit = process.env.OPENCLAW_CONFIG?.trim() || process.env.OPENCLAW_CONFIG_PATH?.trim();
-  if (explicit) return expandTilde(explicit);
-  const openclawHome = process.env.OPENCLAW_HOME?.trim();
-  if (openclawHome) return join(expandTilde(openclawHome), "openclaw.json");
-  return join(homedir(), ".openclaw", "openclaw.json");
-}
-
 function emitCompactionModelWatchdogAlert(
   api: ClawdbotPluginApi,
   context: CompactionWatchdogContext,
   opts?: { event?: unknown; hookCtx?: unknown },
 ): void {
-  const configPath = resolveOpenclawJsonPathForCompactionWatchdog();
+  const configPath = resolveOpenclawJsonPathForWorkspace();
   let selectionUnknownReason: string | null = null;
   const identity = resolveCompactionHookIdentity(opts?.event, opts?.hookCtx, api.context);
   const scopeNote = describeCompactionFallbackScope(identity);
