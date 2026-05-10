@@ -8,7 +8,7 @@ import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLL
 import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
-import { renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
+import { groupProjectFactsByEntity, renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
@@ -257,15 +257,13 @@ function projectFactCacheKey(entity: string, key: string): string {
 }
 
 function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry> {
+  const facts = factsDb.listFactsByCategory("project", Number.MAX_SAFE_INTEGER);
+  const grouped = groupProjectFactsByEntity(facts);
   const cache = new Map<string, MemoryEntry>();
-  for (const row of factsDb.listFactsByCategory("project", Number.MAX_SAFE_INTEGER)) {
-    const entity = trimToString(row.entity);
-    if (!entity) continue;
-    const key = (row.key ?? "").trim();
-    const cacheKey = projectFactCacheKey(entity, key);
-    const prev = cache.get(cacheKey);
-    if (!prev || row.createdAt > prev.createdAt) {
-      cache.set(cacheKey, row);
+  for (const [entity, keyMap] of grouped) {
+    for (const [key, entry] of keyMap) {
+      const actualKey = key === "_body" ? "" : key;
+      cache.set(projectFactCacheKey(entity, actualKey), entry);
     }
   }
   return cache;
@@ -296,7 +294,7 @@ function resolveWorkspaceRoot(override?: string): string {
 }
 
 function scheduleToCronExpr(resumeAt: Date): string {
-  return `${resumeAt.getUTCMinutes()} ${resumeAt.getUTCHours()} ${resumeAt.getUTCDate()} ${resumeAt.getUTCMonth() + 1} * ${resumeAt.getUTCFullYear()}`;
+  return `${resumeAt.getUTCMinutes()} ${resumeAt.getUTCHours()} ${resumeAt.getUTCDate()} ${resumeAt.getUTCMonth() + 1} *`;
 }
 
 function resolveCronModel(cfg: HybridMemoryConfig): string {
