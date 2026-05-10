@@ -123,15 +123,19 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
           } else if (guard.action === "block") {
             api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
-            ctx.auditStore?.append({
-              agentId: ctx.currentAgentIdRef.value ?? "unknown",
-              action: "cleanup:pre-finalization-guard-blocked",
-              outcome: "failed",
-              context: {
-                missingFields: guard.checkpoint.missingFields,
-                signals: guard.signals,
-              },
-            });
+            try {
+              ctx.auditStore?.append({
+                agentId: ctx.currentAgentIdRef.value ?? "unknown",
+                action: "cleanup:pre-finalization-guard-blocked",
+                outcome: "failed",
+                context: {
+                  missingFields: guard.checkpoint.missingFields,
+                  signals: guard.signals,
+                },
+              });
+            } catch (auditErr) {
+              api.logger.debug?.(`memory-hybrid: audit store append failed (non-fatal): ${String(auditErr)}`);
+            }
             throw new PreFinalizationGuardBlockingError(`memory-hybrid: ${guardMessage}`);
           }
         } catch (err) {
