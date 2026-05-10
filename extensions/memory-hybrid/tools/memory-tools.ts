@@ -1972,7 +1972,7 @@ export function registerMemoryTools(
                   }
 
                   await walRemove(walEntryId, api.logger);
-                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id);
+                  void maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id);
 
                   // Issue #159: enqueue contextual variant generation (non-blocking)
                   if (variantQueue) {
@@ -2156,7 +2156,7 @@ export function registerMemoryTools(
           }
 
           await walRemove(walEntryId, api.logger);
-          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id);
+          void maybeRefreshProjectActiveTaskProjection(entry.category, entry.id);
 
           // Issue #150: write event to episodic event log
           if (eventLog) {
