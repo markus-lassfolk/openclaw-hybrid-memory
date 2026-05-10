@@ -99,10 +99,11 @@ function replaceDirectoryAtomically(tempDir: string, outputPath: string): void {
 
   const outName = basename(outputPath);
   const backupDir = existsSync(outputPath) ? join(parent, `${outName}.bak-${Date.now()}`) : null;
+  let replaced = false;
   try {
     if (backupDir) renameSync(outputPath, backupDir);
     renameSync(tempDir, outputPath);
-    if (backupDir) rmSync(backupDir, { recursive: true, force: true });
+    replaced = true;
   } catch (err) {
     // Best-effort rollback: restore backup if we created one.
     try {
@@ -112,7 +113,20 @@ function replaceDirectoryAtomically(tempDir: string, outputPath: string): void {
     } catch {
       // ignore rollback errors; caller will see original failure
     }
+    // Best-effort cleanup of temporary export directory on failed replace.
+    try {
+      if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore temp cleanup errors
+    }
     throw err;
+  }
+  if (backupDir && replaced) {
+    try {
+      rmSync(backupDir, { recursive: true, force: true });
+    } catch {
+      // Non-fatal: export is already committed to outputPath.
+    }
   }
 }
 

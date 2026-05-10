@@ -3,7 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve as pathResolve } from "node:path";
@@ -31,10 +31,19 @@ import { withTimeout } from "../utils/timeout.js";
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
 
-function isPathInsideDir(rootDirAbs: string, candidateAbs: string): boolean {
-  const root = pathResolve(rootDirAbs);
-  const candidate = pathResolve(candidateAbs);
-  const rel = relative(root, candidate);
+function resolvedPathOrFallback(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return pathResolve(path);
+  }
+}
+
+function isPathInsideDir(rootDirAbs: string, candidatePath: string): boolean {
+  const rootResolved = resolvedPathOrFallback(rootDirAbs);
+  const candidateAbs = isAbsolute(candidatePath) ? candidatePath : pathResolve(candidatePath);
+  const candidateResolved = resolvedPathOrFallback(candidateAbs);
+  const rel = relative(rootResolved, candidateResolved);
   if (rel === "") return true;
   return !rel.startsWith("..") && !isAbsolute(rel);
 }
@@ -409,7 +418,7 @@ export class VectorDB {
     // absolute path. If dbPath somehow ends up relative (e.g. due to a config serialization
     // edge case or WSL path mapping), resolve it relative to process.cwd() so the binding
     // can still locate the data directory.
-    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const resolvedPath = resolvedPathOrFallback(this.dbPath);
 
     try {
       this.db = await lancedb.connect(resolvedPath);
