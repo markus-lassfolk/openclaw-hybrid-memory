@@ -37,6 +37,7 @@ import { runPassiveObserver } from "../services/passive-observer.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
@@ -325,8 +326,18 @@ export function createPluginService(ctx: PluginServiceContext) {
       })();
 
       if (expired > 0) {
+        const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
         const pruned = factsDb.pruneExpired();
+        const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
+          operation: "plugin-startup-prune-expired",
+          logger: api.logger,
+        });
         api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
+        if (vectorCleanup.failed > 0) {
+          api.logger.warn(
+            `memory-hybrid: startup vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+          );
+        }
       }
 
       // WAL Recovery: replay uncommitted operations from previous session
@@ -481,10 +492,20 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
 
       // Periodic prune timer
-      timers.pruneTimer.value = setInterval(() => {
+      timers.pruneTimer.value = setInterval(async () => {
         try {
+          const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
+          const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
+          const expiredCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
+            operation: "plugin-periodic-prune-expired",
+            logger: api.logger,
+          });
+          const decayedCleanup = await deleteVectorsForFactIds(vectorDb, lowConfidenceIds, {
+            operation: "plugin-periodic-decay",
+            logger: api.logger,
+          });
           const edictsPruned = edictStore.pruneExpired();
           let auditPruned = 0;
           if (auditStore) {
@@ -505,6 +526,11 @@ export function createPluginService(ctx: PluginServiceContext) {
           if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0 || healthPruned > 0) {
             api.logger.info(
               `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}${healthPruned > 0 ? `, ${healthPruned} agent-health rows` : ""}`,
+            );
+          }
+          if (expiredCleanup.failed > 0 || decayedCleanup.failed > 0) {
+            api.logger.warn(
+              `memory-hybrid: periodic vector cleanup partial — expired deleted ${expiredCleanup.deleted}/${expiredCleanup.attempted} (failed ${expiredCleanup.failed}), decayed deleted ${decayedCleanup.deleted}/${decayedCleanup.attempted} (failed ${decayedCleanup.failed})`,
             );
           }
         } catch (err) {

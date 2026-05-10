@@ -22,6 +22,7 @@ import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
+import { deleteVectorsForFactIds } from "./vector-maintenance.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -336,6 +337,10 @@ export async function runConsolidate(
       aliasDb?.deleteByFactId(id);
       deleted++;
     }
+    await deleteVectorsForFactIds(vectorDb, clusterIds, {
+      operation: "consolidate-cleanup",
+      logger,
+    });
     merged++;
   }
 

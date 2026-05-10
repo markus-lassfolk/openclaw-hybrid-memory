@@ -26,6 +26,7 @@ import {
   runReflection,
   runReflectionRules,
 } from "./reflection.js";
+import { deleteVectorsForFactIds } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -511,9 +512,19 @@ export async function runDreamCycle(
   let factsPruned = 0;
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
+    const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
     try {
       factsPruned = factsDb.pruneExpired();
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
+        operation: "dream-cycle-prune-expired",
+        logger,
+      });
       logger.info(`memory-hybrid: dream-cycle — pruned ${factsPruned} expired facts`);
+      if (vectorCleanup.failed > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — expired vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — pruneExpired failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -523,9 +534,19 @@ export async function runDreamCycle(
     }
   }
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
+    const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
     try {
       factsDecayed = factsDb.decayConfidence();
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, lowConfidenceIds, {
+        operation: "dream-cycle-decay",
+        logger,
+      });
       logger.info(`memory-hybrid: dream-cycle — decayed ${factsDecayed} facts`);
+      if (vectorCleanup.failed > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — decay vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — decayConfidence failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

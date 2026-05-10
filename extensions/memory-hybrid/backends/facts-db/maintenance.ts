@@ -540,6 +540,20 @@ export function listExpiredFactIdsPendingPrune(db: DatabaseSync): string[] {
   return rows.map((r) => r.id);
 }
 
+/** Same row filter as `decayConfidence` DELETE on `facts` (for vector cleanup preview/maintenance). */
+export function listLowConfidenceFactIdsPendingPrune(db: DatabaseSync): string[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts
+         WHERE confidence < 0.1
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all({ "@now": nowSec }) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
 export function pruneExpired(db: DatabaseSync): number {
   const nowSec = Math.floor(Date.now() / 1000);
   db.prepare(
@@ -559,6 +573,17 @@ export function pruneExpired(db: DatabaseSync): number {
     )
     .run({ "@now": nowSec });
   return Number(result.changes ?? 0);
+}
+
+/** Same row filter as `pruneSessionScope` DELETE on `facts` (for vector cleanup preview/maintenance). */
+export function listSessionFactIdsPendingPrune(db: DatabaseSync, sessionId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all(sessionId) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }
 
 export function pruneSessionScope(db: DatabaseSync, sessionId: string): number {

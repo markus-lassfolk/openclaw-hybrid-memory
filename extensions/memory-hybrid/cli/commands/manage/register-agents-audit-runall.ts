@@ -9,6 +9,7 @@ import { mergeAgentHealthDashboard } from "../../../backends/agent-health-store.
 import { collectForgeState } from "../../../routes/dashboard-server.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { countActivePatternFactsForMaintenance } from "../../../services/reflection.js";
+import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -17,6 +18,7 @@ import type { ManageBindings } from "./bindings.js";
 export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
+    vectorDb,
     auditStore,
     agentHealthStore,
     resolvedSqlitePath,
@@ -142,8 +144,14 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "prune",
             run: async () => {
+              const pendingVectorDeletes = factsDb.listExpiredFactIdsPendingPrune();
               const n = factsDb.prune();
-              log(`Pruned ${n} expired facts.`);
+              const vectorCleanup = await deleteVectorsForFactIds(vectorDb, pendingVectorDeletes, {
+                operation: "run-all-prune-expired",
+              });
+              log(
+                `Pruned ${n} expired facts (vector cleanup: ${vectorCleanup.deleted}/${vectorCleanup.attempted}${vectorCleanup.failed > 0 ? `, failed=${vectorCleanup.failed}` : ""}).`,
+              );
             },
           },
           {

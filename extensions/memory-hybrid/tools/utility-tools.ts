@@ -13,6 +13,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { analyzeKnowledgeGaps } from "../services/knowledge-gaps.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { detectClusters } from "../services/topic-clusters.js";
+import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -167,10 +168,20 @@ export function registerUtilityTools(
         let linksPruned = 0;
 
         if (mode === "hard" || mode === "both") {
+          const pendingExpiredIds = factsDb.listExpiredFactIdsPendingPrune();
           hardPruned = factsDb.pruneExpired();
+          await deleteVectorsForFactIds(vectorDb, pendingExpiredIds, {
+            operation: "tool-memory-prune-expired",
+            logger: api.logger,
+          });
         }
         if (mode === "soft" || mode === "both") {
+          const pendingLowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
           softPruned = factsDb.decayConfidence();
+          await deleteVectorsForFactIds(vectorDb, pendingLowConfidenceIds, {
+            operation: "tool-memory-prune-decay",
+            logger: api.logger,
+          });
         }
 
         // Always prune orphaned links (fast, no-op if none exist)
