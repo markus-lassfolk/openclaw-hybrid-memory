@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -391,5 +391,59 @@ describe("memory tools embedding registry wiring", () => {
     const stored = factsDb.getEmbeddings(id!);
     const models = stored.map((r) => r.model).sort();
     expect(models).toEqual(["nomic-embed-text", "text-embedding-3-small"]);
+  });
+
+  it("refreshes ACTIVE-TASKS.md projection on project memory_store writes when ledger=facts", async () => {
+    vi.stubEnv("OPENCLAW_WORKSPACE", tmpDir);
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg({
+      activeTask: {
+        enabled: true,
+        ledger: "facts",
+        filePath: "ACTIVE-TASKS.md",
+      },
+    });
+    const vectorDb = makeMockVectorDb();
+
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_store");
+    expect(tool).toBeTruthy();
+    await tool?.execute("tool-call", {
+      text: "Task title: ship lightweight active-task snapshot",
+      category: "project",
+      entity: "task-1272",
+      key: "title",
+      value: "Ship lightweight active-task snapshot",
+      importance: 0.9,
+    });
+
+    const renderedPath = join(tmpDir, "ACTIVE-TASKS.md");
+    expect(existsSync(renderedPath)).toBe(true);
+    const projection = readFileSync(renderedPath, "utf-8");
+    expect(projection).toContain("[task-1272]");
+    expect(projection).toContain("**Projection** of hybrid-memory `category:project` facts");
   });
 });
