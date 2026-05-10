@@ -683,7 +683,7 @@ export async function runVerifyForCli(
 
   // Maintenance routing warnings: flag when maintenance-adjacent tasks are routed to heavy/expensive models unintentionally.
   // NOTE: cmd-distill.ts now clamps distill.modelTier=heavy to maintenance, so this check uses effectiveDistillMainTier.
-  if (effectiveDistillMainTier !== "heavy" && distillMainEffective !== "—" && isHeavyModel(distillMainEffective)) {
+  if (distillMainEffective !== "—" && isHeavyModel(distillMainEffective)) {
     warnings.push(
       `distill.modelTier=${distillMainTier} routes the main distill pass to a heavy/expensive first-choice model (${distillMainEffective}); configure llm.maintenance with a cheap-first list or set distill.modelTier=nano`,
     );
