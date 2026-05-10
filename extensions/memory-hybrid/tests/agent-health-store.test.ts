@@ -12,11 +12,16 @@ import type { ForgeTaskItem } from "../types/dashboard-types.js";
 type AgentHealthStoreTestAccess = AgentHealthStore & {
   liveDb: {
     prepare: (sql: string) => {
-      all: () => unknown[];
+      all: (...args: unknown[]) => unknown[];
+      run: (...args: unknown[]) => unknown;
     };
   };
   getSubsystemName: () => string;
 };
+
+function storeTestDb(store: AgentHealthStore) {
+  return (store as unknown as AgentHealthStoreTestAccess).liveDb;
+}
 
 describe("agent-health-store", () => {
   let testDir: string;
@@ -43,7 +48,7 @@ describe("agent-health-store", () => {
     });
 
     it("should create agent_health table with correct schema", () => {
-      const tables = (store as unknown as AgentHealthStoreTestAccess).liveDb
+      const tables = storeTestDb(store)
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_health'")
         .all() as Array<{ name: string }>;
 
@@ -356,7 +361,7 @@ describe("agent-health-store", () => {
       });
 
       // Manually update the updated_at timestamp
-      store["liveDb"]
+      storeTestDb(store)
         .prepare("UPDATE agent_health SET updated_at = ? WHERE agent_id = ?")
         .run(thirtyOneDaysAgo, "old-agent");
 
@@ -412,7 +417,9 @@ describe("agent-health-store", () => {
         nextAgent: [],
       });
 
-      store["liveDb"].prepare("UPDATE agent_health SET updated_at = ? WHERE agent_id = ?").run(eightDaysAgo, "agent");
+      storeTestDb(store)
+        .prepare("UPDATE agent_health SET updated_at = ? WHERE agent_id = ?")
+        .run(eightDaysAgo, "agent");
 
       // Should not be pruned with 30 days retention
       expect(store.prune(30)).toBe(0);
@@ -437,7 +444,7 @@ describe("agent-health-store", () => {
           anomalyScore: 0,
           nextAgent: [],
         });
-        store["liveDb"]
+        storeTestDb(store)
           .prepare("UPDATE agent_health SET updated_at = ? WHERE agent_id = ?")
           .run(oldTimestamp, `agent-${i}`);
       }
