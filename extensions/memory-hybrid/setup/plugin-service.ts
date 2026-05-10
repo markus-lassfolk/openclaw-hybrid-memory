@@ -409,25 +409,32 @@ export function createPluginService(ctx: PluginServiceContext) {
                   // Re-attempt the vector store so the fact is searchable via semantics.
                   const existingId = factsDb.getDuplicateIdByNormalizedHash(text);
                   if (existingId) {
-                    void vectorDb
-                      .store({
+                    try {
+                      await vectorDb.store({
                         text,
                         vector: entry.data.vector,
                         importance: importance ?? 0.5,
                         category: category || "other",
                         id: existingId,
-                      })
-                      .then(() => {
-                        factsDb.setEmbeddingModel(existingId, embeddings.modelName);
-                        api.logger.info(
-                          `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
-                        );
-                      })
-                      .catch((err) => {
-                        api.logger.warn(
-                          `memory-hybrid: WAL recovery vector re-store failed for existing fact ${existingId.slice(0, 8)}: ${err}`,
-                        );
                       });
+                      factsDb.setEmbeddingModel(existingId, embeddings.modelName);
+                      api.logger.info(
+                        `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
+                      );
+                    } catch (err) {
+                      api.logger.warn(
+                        `memory-hybrid: WAL recovery vector re-store failed for existing fact ${existingId.slice(0, 8)}: ${err}`,
+                      );
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "plugin-service",
+                        operation: "wal-recovery-existing-vector-store",
+                      });
+                      throw err;
+                    }
+                  } else {
+                    throw new Error(
+                      `WAL recovery duplicate fact ID lookup failed for pending entry ${entry.id}; keeping WAL entry for retry`,
+                    );
                   }
                 }
               } else {
