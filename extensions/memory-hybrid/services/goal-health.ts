@@ -306,12 +306,12 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       let executionReason: string | null = null;
       let waitingReason: string | null = null;
 
-      let metadataFailureHandled = false;
+      let shouldContinueToNextGoal = false;
       for (const lt of g.linkedTasks) {
         if (lt.status !== "in_progress" && lt.status !== "In progress") continue;
         const hasSession = typeof lt.sessionKey === "string" && lt.sessionKey.trim().length > 0;
         const hasRunId = typeof lt.runId === "string" && lt.runId.trim().length > 0;
-        if (hasSession || hasRunId) continue;
+        if (hasSession) continue;
         const reason = `Linked task "${lt.label}" is missing dispatch metadata (sessionKey/runId).`;
         const updatedTasks = g.linkedTasks.map((t) =>
           t.label === lt.label
@@ -341,10 +341,10 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         result.goalsUpdated++;
         result.actions.push({ goalId: g.id, label: g.label, action: "dispatch-metadata-missing", reason });
         recordOutcome("blocked", reason, { taskLabel: lt.label, sessionKey: null, runId: null });
-        metadataFailureHandled = true;
+        shouldContinueToNextGoal = true;
         break;
       }
-      if (metadataFailureHandled) continue;
+      if (shouldContinueToNextGoal) continue;
 
       for (const lt of g.linkedTasks) {
         if (lt.status !== "in_progress" && lt.status !== "In progress") continue;
@@ -381,7 +381,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
               sessionKey: lt.sessionKey,
               runId: lt.runId ?? null,
             });
-            metadataFailureHandled = true;
+            shouldContinueToNextGoal = true;
             const reread = await readGoal(goalsDir, goal.id);
             if (!reread) break;
             g = reread;
@@ -389,7 +389,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           }
         }
       }
-      if (metadataFailureHandled) continue;
+      if (shouldContinueToNextGoal) continue;
 
       const reread2 = await readGoal(goalsDir, goal.id);
       if (!reread2) {
@@ -495,8 +495,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         recordOutcome("executed", executionReason);
       } else if (inProgress) {
         const hasSession = typeof inProgress.sessionKey === "string" && inProgress.sessionKey.trim().length > 0;
-        const hasRunId = typeof inProgress.runId === "string" && inProgress.runId.trim().length > 0;
-        if (hasSession || hasRunId) {
+        if (hasSession) {
           recordOutcome("dispatched", `Task "${inProgress.label}" is in progress.`, {
             taskLabel: inProgress.label,
             sessionKey: inProgress.sessionKey ?? null,
