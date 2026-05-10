@@ -25,6 +25,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.100] - 2026-05-10
+
+### Fixed
+
+- **Active-task continuity / hygiene** ([#1270](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1270), [#1272](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1272), [#1273](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1273), [#1274](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1274), [#1276](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1276)): add `active_task_checkpoint`, auto-register long-running workflows, reduce stale/deduplicated task entities, and improve snapshot/render reliability.
+- **Goal stewardship verification / finalization guards** ([#1271](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1271), [#1278](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1278)): add `verify --fix` heartbeat cron installer and block premature finalization while external work remains unfinished.
+- **Memory storage / recall / vector correctness** ([#1264](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1264), [#1265](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1265), [#1266](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1266), [#1267](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1267), [#1277](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1277)): harden WAL replay idempotency, fix memory integrity gaps across prune/recall/merge, and complete vector lifecycle cleanup across CLI and maintenance paths.
+- **Issue sweep / stewardship observability** ([#1285](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1285), [#1287](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1287)): tighten `issue_sweep` matching to avoid false positives and record explicit per-goal stewardship outcomes.
+
+### Changed
+
+- Bump plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.5.100** (lockfile aligned).
+
+---
+
 ## [2026.5.94] - 2026-05-09
 
 ### Fixed
