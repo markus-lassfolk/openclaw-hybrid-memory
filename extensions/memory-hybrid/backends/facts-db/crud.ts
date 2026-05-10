@@ -59,7 +59,9 @@ export function validateStoreEntryInput(
 
 export function getDuplicateIdByNormalizedHash(db: DatabaseSync, text: string): string | null {
   const hash = normalizedHash(text);
-  const row = db.prepare("SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1").get(hash) as
+  const row = db
+    .prepare("SELECT id FROM facts WHERE normalized_hash = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1")
+    .get(hash) as
     | { id: string }
     | undefined;
   return row?.id ?? null;
