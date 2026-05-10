@@ -8,7 +8,7 @@ import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLL
 import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
-import { groupProjectFactsByEntity, renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
+import { renderActiveTaskMarkdownFile, taskEntityKey, upsertProjectTaskKey } from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
@@ -264,10 +264,6 @@ function slugify(input: string): string {
     .slice(0, 64);
 }
 
-function projectFactCacheKey(entity: string, key: string): string {
-  return `${entity}\u0000${key}`;
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -283,21 +279,26 @@ function extractProjectValueFromText(text: string, key: string): string | undefi
   return trimToString(trimmedText);
 }
 
-function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry> {
-  const facts = factsDb.listFactsByCategory("project", Number.MAX_SAFE_INTEGER);
-  const grouped = groupProjectFactsByEntity(facts);
-  const cache = new Map<string, MemoryEntry>();
-  for (const [entity, keyMap] of grouped) {
-    for (const [key, entry] of keyMap) {
-      const actualKey = key === "_body" ? "" : key;
-      cache.set(projectFactCacheKey(entity, actualKey), entry);
-    }
+function primeLatestProjectFactCacheForEntityKeys(
+  factsDb: FactsDB,
+  cache: Map<string, MemoryEntry>,
+  entity: string,
+  keys: readonly string[],
+): void {
+  for (const key of keys) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) continue;
+    const cacheKey = taskEntityKey(entity, normalizedKey);
+    if (cache.has(cacheKey)) continue;
+    const hit = factsDb.lookup(entity, normalizedKey, undefined, { includeSuperseded: false, limit: 1 })[0]?.entry;
+    if (!hit) continue;
+    if ((hit.category ?? "").trim() !== "project") continue;
+    cache.set(cacheKey, hit);
   }
-  return cache;
 }
 
 function getLatestProjectValue(cache: Map<string, MemoryEntry>, entity: string, key: string): string | undefined {
-  const row = cache.get(projectFactCacheKey(entity, key));
+  const row = cache.get(taskEntityKey(entity, key));
   if (!row) return undefined;
   if (typeof row.value === "string") return row.value.trim();
   if (typeof row.text === "string") {
@@ -311,6 +312,64 @@ function wakeEntityKey(entity: string): string {
   const digest = createHash("sha1").update(entity).digest("hex").slice(0, 12);
   return `${slug}-${digest}`;
 }
+
+function disableActiveTaskWakeJobs(
+  jobs: Array<Record<string, unknown>>,
+  entity: string,
+  opts?: { excludeJobId?: string },
+): number {
+  const entityPrefix = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${wakeEntityKey(entity)}:`;
+  let disabled = 0;
+  for (const row of jobs) {
+    const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : "";
+    const id = typeof row.id === "string" ? row.id : "";
+    const rowId = pluginJobId || id;
+    if (!rowId) continue;
+    if (opts?.excludeJobId && (pluginJobId === opts.excludeJobId || id === opts.excludeJobId)) continue;
+    if (!rowId.startsWith(entityPrefix)) continue;
+    if (row.enabled !== false) {
+      row.enabled = false;
+      disabled += 1;
+    }
+  }
+  return disabled;
+}
+
+function disableActiveTaskWakeJobsForEntity(
+  entity: string,
+  openclawDirOverride?: string,
+): { jobsPath: string; disabled: number } {
+  const openclawDir = resolveOpenclawDir(openclawDirOverride);
+  const cronDir = join(openclawDir, "cron");
+  const jobsPath = join(cronDir, "jobs.json");
+  if (!existsSync(jobsPath)) {
+    return { jobsPath, disabled: 0 };
+  }
+
+  let store: { jobs?: unknown[] };
+  try {
+    store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
+  } catch (err) {
+    throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+  }
+
+  if (!Array.isArray(store.jobs)) {
+    return { jobsPath, disabled: 0 };
+  }
+
+  const jobs = store.jobs as Array<Record<string, unknown>>;
+  const disabled = disableActiveTaskWakeJobs(jobs, entity);
+  if (disabled <= 0) {
+    return { jobsPath, disabled: 0 };
+  }
+
+  const payload = JSON.stringify(store, null, 2);
+  const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, payload, "utf-8");
+  renameSync(tmpPath, jobsPath);
+  return { jobsPath, disabled };
+}
+
 function resolveOpenclawDir(override?: string): string {
   if (override?.trim()) return override.trim();
   const env = getEnv("OPENCLAW_HOME")?.trim();
@@ -401,17 +460,7 @@ async function scheduleActiveTaskWakeReminder(
   const resumeEpochSec = Math.floor(input.resumeAt.getTime() / 1000);
   const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:${resumeEpochSec}`;
 
-  let disabledPreviousJobs = 0;
-  const entityPrefix = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:`;
-  for (const row of jobs) {
-    const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : undefined;
-    if (!pluginJobId || pluginJobId === jobId) continue;
-    if (!pluginJobId.startsWith(entityPrefix)) continue;
-    if (row.enabled !== false) {
-      row.enabled = false;
-      disabledPreviousJobs += 1;
-    }
-  }
+  const disabledPreviousJobs = disableActiveTaskWakeJobs(jobs, input.entity, { excludeJobId: jobId });
 
   const model = resolveCronModel(input.cfg);
   const minIntervalMs = ACTIVE_TASK_WAKE_GUARD_YEARS * 365 * 24 * 60 * 60 * 1000;
@@ -576,7 +625,14 @@ export async function runActiveTaskCheckpoint(
   }
 
   const checkpoint = validation.normalized;
-  const latestProjectFacts = buildLatestProjectFactCache(deps.factsDb);
+  const latestProjectFacts = new Map<string, MemoryEntry>();
+  primeLatestProjectFactCacheForEntityKeys(deps.factsDb, latestProjectFacts, checkpoint.entity, [
+    "status",
+    "owner",
+    "next",
+    "related_session",
+    "title",
+  ]);
   const existingStatus = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status");
   const resolvedStatus = checkpoint.status ?? normalizeExistingStatus(existingStatus) ?? "in_progress";
   const resolvedOwner = checkpoint.owner ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "owner") ?? "";
@@ -629,6 +685,13 @@ export async function runActiveTaskCheckpoint(
   if (checkpoint.resumeAtIso) {
     updates.push({ key: "resume_at", value: checkpoint.resumeAtIso });
   }
+
+  primeLatestProjectFactCacheForEntityKeys(
+    deps.factsDb,
+    latestProjectFacts,
+    checkpoint.entity,
+    updates.map((u) => u.key),
+  );
 
   for (const update of updates) {
     try {
@@ -694,6 +757,8 @@ export async function runActiveTaskCheckpoint(
   let wakeScheduled = false;
   let wakeSkippedReason: string | undefined;
   let wakeResult: ActiveTaskWakeScheduleResult | undefined;
+  let wakeJobsPath: string | undefined;
+  let wakeDisabledPreviousJobs: number | undefined;
 
   if (failedKeys.length > 0) {
     wakeSkippedReason = "facts_write_failed";
@@ -714,11 +779,20 @@ export async function runActiveTaskCheckpoint(
         openclawDir: deps.openclawDir,
       });
       wakeScheduled = wakeResult.scheduled;
+      wakeJobsPath = wakeResult.jobsPath;
+      wakeDisabledPreviousJobs = wakeResult.disabledPreviousJobs;
     } catch (err) {
       errors.push(stepError("schedule", err));
     }
   } else {
     wakeSkippedReason = checkpoint.resumeAtIso ? "schedule_wake_disabled" : "resumeAt_not_provided";
+    try {
+      const cleanup = disableActiveTaskWakeJobsForEntity(checkpoint.entity, deps.openclawDir);
+      wakeJobsPath = cleanup.jobsPath;
+      wakeDisabledPreviousJobs = cleanup.disabled;
+    } catch (err) {
+      errors.push(stepError("schedule", err));
+    }
   }
 
   let projection = {
@@ -798,8 +872,8 @@ export async function runActiveTaskCheckpoint(
         jobId: wakeResult?.jobId,
         scheduleKind: wakeResult?.scheduleKind,
         scheduleAt: wakeResult?.scheduleAt,
-        jobsPath: wakeResult?.jobsPath,
-        disabledPreviousJobs: wakeResult?.disabledPreviousJobs,
+        jobsPath: wakeJobsPath,
+        disabledPreviousJobs: wakeDisabledPreviousJobs,
         skippedReason: wakeSkippedReason,
       },
       projection,

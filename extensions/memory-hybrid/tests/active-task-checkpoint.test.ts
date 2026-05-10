@@ -217,6 +217,50 @@ describe("active-task-checkpoint", () => {
     factsDb.close();
   });
 
+  it("disables stale wake reminder when a follow-up checkpoint omits resumeAt", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const resumeAtDate = new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+    const first = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-wake-cleanup",
+        status: "waiting",
+        next: "Resume later",
+        resumeAt: resumeAtDate.toISOString(),
+      },
+    );
+    expect(first.ok).toBe(true);
+    expect(first.steps.schedule.scheduled).toBe(true);
+    expect(first.steps.schedule.jobId).toBeTruthy();
+
+    const second = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-wake-cleanup",
+        status: "done",
+      },
+    );
+    expect(second.ok).toBe(true);
+    expect(second.steps.schedule.attempted).toBe(false);
+    expect(second.steps.schedule.scheduled).toBe(false);
+    expect(second.steps.schedule.skippedReason).toBe("resumeAt_not_provided");
+    expect(second.steps.schedule.disabledPreviousJobs).toBe(1);
+
+    const jobsPath = second.steps.schedule.jobsPath;
+    expect(jobsPath).toBeTruthy();
+    const raw = readFileSync(jobsPath as string, "utf-8");
+    const store = JSON.parse(raw) as { jobs?: Array<Record<string, unknown>> };
+    const wakeJobs = (store.jobs ?? []).filter((j) => {
+      const pluginJobId = typeof j.pluginJobId === "string" ? j.pluginJobId : "";
+      return pluginJobId.startsWith("hybrid-mem:active-task-wake:");
+    });
+    expect(wakeJobs.length).toBeGreaterThan(0);
+    expect(wakeJobs.filter((j) => j.enabled !== false).length).toBe(0);
+
+    factsDb.close();
+  });
+
   it("preserves existing status/owner/next/related_session when optional fields are omitted", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
 

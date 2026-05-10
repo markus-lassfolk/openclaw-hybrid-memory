@@ -774,7 +774,7 @@ export function buildFactsSectionedMarkdownBody(
   return parts.join("\n");
 }
 
-function taskEntityKey(entity: string, key: string): string {
+export function taskEntityKey(entity: string, key: string): string {
   return `${entity}\u0000${key}`;
 }
 
