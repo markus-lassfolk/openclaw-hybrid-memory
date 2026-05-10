@@ -579,6 +579,28 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("GET /api/viewer/facts does not leak verified cache across dashboard contexts", async () => {
+    // Ensure we prime a fresh cache entry from a different context within the 5s cache TTL window.
+    await new Promise((resolve) => setTimeout(resolve, 5200));
+
+    await withServer(async (_ctx, port) => {
+      const { status } = await apiGet(port, "/api/viewer/facts");
+      expect(status).toBe(200);
+    });
+
+    await withServer(async (ctx, port) => {
+      const fact = ctx.factsDb.store({ text: "isolated verified fact", category: "fact", source: "test" });
+      ctx.verificationStore.verify(fact.id, fact.text, "agent");
+
+      const { status, body } = await apiGet(port, "/api/viewer/facts?search=isolated%20verified%20fact&limit=50");
+      expect(status).toBe(200);
+      const parsed = JSON.parse(body);
+      const row = parsed.facts.find((f: { id: string }) => f.id === fact.id);
+      expect(row).toBeTruthy();
+      expect(row.verified).toBe(true);
+    });
+  });
+
   it("GET /api/viewer/facts/:id returns a single fact", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "Target fact", category: "fact", source: "test" });
@@ -662,17 +684,28 @@ describe("Memory Viewer API (Issue #1023)", () => {
       );
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
+
+      const { status: listStatus, body: listBody } = await apiGet(
+        port,
+        "/api/viewer/facts?search=To%20verify&limit=50",
+      );
+      expect(listStatus).toBe(200);
+      const listPayload = JSON.parse(listBody);
+      const updated = listPayload.facts.find((fact: { id: string }) => fact.id === target.id);
+      expect(updated).toBeTruthy();
+      expect(updated.verified).toBe(true);
     });
   });
 
-  it("POST /api/viewer/facts/:id/verify rejects oversized request bodies", async () => {
+  it("POST /api/viewer/facts/:id/verify rejects oversized request bodies by UTF-8 byte length", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "To verify big", category: "fact", source: "test" });
       const { body: lb } = await apiGet(port, "/api/viewer/facts");
       const { facts } = JSON.parse(lb);
       const target = facts.find((fact: { text: string; id: string }) => fact.text === "To verify big");
       expect(target?.id).toBeTruthy();
-      const big = JSON.stringify({ verifiedBy: "agent", note: "a".repeat(70 * 1024) });
+      // 20k emojis are ~80KiB UTF-8, but only 40k UTF-16 code units.
+      const big = JSON.stringify({ verifiedBy: "agent", note: "😀".repeat(20_000) });
       const { status } = await apiPost(port, `/api/viewer/facts/${target.id}/verify`, big);
       expect(status).toBe(413);
     });

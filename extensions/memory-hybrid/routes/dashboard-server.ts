@@ -17,14 +17,14 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
 import type { AuditStore } from "../backends/audit-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
-import type { VerificationStore } from "../services/verification-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { ProvenanceService } from "../services/provenance.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -37,18 +37,28 @@ const require = createRequire(import.meta.url);
 
 const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
 const VERIFIED_FACT_SET_TTL_MS = 5000;
-let verifiedFactIdCache: { at: number; ids: Set<string> } | null = null;
+const verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
+
+function clearVerifiedFactIdCache(ctx: DashboardContext): void {
+  const store = ctx.verificationStore;
+  if (!store) return;
+  verifiedFactIdCacheByStore.delete(store);
+}
 
 function getVerifiedFactIdSet(ctx: DashboardContext): Set<string> {
-  if (!ctx.verificationStore) return new Set();
+  const store = ctx.verificationStore;
+  if (!store) return new Set();
   const now = Date.now();
-  if (verifiedFactIdCache && now - verifiedFactIdCache.at < VERIFIED_FACT_SET_TTL_MS) {
-    return verifiedFactIdCache.ids;
+  const cached = verifiedFactIdCacheByStore.get(store);
+  if (cached && now - cached.at < VERIFIED_FACT_SET_TTL_MS) {
+    return cached.ids;
   }
   try {
     const ids = new Set<string>();
-    ctx.verificationStore.listLatestVerified().forEach((v) => ids.add(v.factId));
-    verifiedFactIdCache = { at: now, ids };
+    for (const v of store.listLatestVerified()) {
+      ids.add(v.factId);
+    }
+    verifiedFactIdCacheByStore.set(store, { at: now, ids });
     return ids;
   } catch {
     return new Set();
@@ -67,24 +77,63 @@ function parseUrlPathSegment(input: string): string | null {
 
 function readJsonBody(req: import("node:http").IncomingMessage, maxBytes: number): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk: Buffer) => {
-      body += chunk.toString("utf-8");
-      if (body.length > maxBytes) {
-        reject(new Error("Request body too large"));
-        req.pause();
+    const chunks: Buffer[] = [];
+    let sizeBytes = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+    };
+
+    const resolveOnce = (value: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const rejectOnce = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const chunkBytes = Buffer.isBuffer(chunk) ? chunk.byteLength : Buffer.byteLength(chunk, "utf-8");
+      if (sizeBytes + chunkBytes > maxBytes) {
+        rejectOnce(new Error("Request body too large"));
+        try {
+          req.resume();
+        } catch {
+          /* ignore */
+        }
+        return;
       }
-    });
-    req.on("end", () => {
-      if (!body) return resolve({});
+      sizeBytes += chunkBytes;
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8"));
+    };
+
+    const onEnd = () => {
+      if (chunks.length === 0) return resolveOnce({});
       try {
-        const parsed = JSON.parse(body);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return resolve({});
-        resolve(parsed as Record<string, unknown>);
+        const parsed = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return resolveOnce({});
+        resolveOnce(parsed as Record<string, unknown>);
       } catch (err) {
-        reject(err);
+        rejectOnce(err);
       }
-    });
+    };
+
+    const onError = (err: unknown) => {
+      rejectOnce(err);
+    };
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
   });
 }
 
@@ -1067,18 +1116,19 @@ function performFactAction(
       if (!ctx.verificationStore) return { ok: false, message: "Verification store not available" };
       const verifiedBy = (body.verifiedBy as "agent" | "user" | "system") ?? "agent";
       ctx.verificationStore.verify(factId, fact.text, verifiedBy);
+      clearVerifiedFactIdCache(ctx);
       return { ok: true, message: `Fact ${factId} verified as ${verifiedBy}` };
-    } else {
-      // forget: supersede with null to mark the fact as superseded (soft-delete).
-      // superseded_at IS NOT NULL filters it out of all recall paths.
-      try {
-        const ok = factsDb.supersede(factId, null);
-        if (!ok) return { ok: false, message: `Could not supersede fact ${factId}` };
-      } catch (err) {
-        return { ok: false, message: `Could not forget fact ${factId}: ${String(err)}` };
-      }
-      return { ok: true, message: `Fact ${factId} forgotten` };
     }
+    // forget: supersede with null to mark the fact as superseded (soft-delete).
+    // superseded_at IS NOT NULL filters it out of all recall paths.
+    try {
+      const ok = factsDb.supersede(factId, null);
+      if (!ok) return { ok: false, message: `Could not supersede fact ${factId}` };
+    } catch (err) {
+      return { ok: false, message: `Could not forget fact ${factId}: ${String(err)}` };
+    }
+    clearVerifiedFactIdCache(ctx);
+    return { ok: true, message: `Fact ${factId} forgotten` };
   } catch (err) {
     return { ok: false, message: String(err) };
   }
@@ -1918,11 +1968,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           if (err instanceof Error && err.message === "Request body too large") {
             res.writeHead(413, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "PayloadTooLarge" }));
-            try {
-              req.resume();
-            } catch {
-              /* ignore */
-            }
             return;
           }
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1952,11 +1997,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           if (err instanceof Error && err.message === "Request body too large") {
             res.writeHead(413, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "PayloadTooLarge" }));
-            try {
-              req.resume();
-            } catch {
-              /* ignore */
-            }
             return;
           }
           res.writeHead(400, { "Content-Type": "application/json" });
