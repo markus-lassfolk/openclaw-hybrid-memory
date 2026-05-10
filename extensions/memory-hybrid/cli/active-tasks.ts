@@ -461,9 +461,7 @@ function printActiveTaskList(result: ActiveTaskListResult): void {
 }
 
 function printActiveTaskHygiene(result: ActiveTaskHygieneResult): void {
-  console.log(
-    `Active-task hygiene report [${result.ledger}] (older than ${formatDuration(result.olderThanMinutes)}):`,
-  );
+  console.log(`Active-task hygiene report [${result.ledger}] (older than ${formatDuration(result.olderThanMinutes)}):`);
   console.log(`  Duplicate groups: ${result.duplicates.length}`);
   console.log(`  Stale candidates: ${result.stale.length}`);
   console.log(`  Actions: ${result.actions.length}`);

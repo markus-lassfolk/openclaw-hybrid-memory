@@ -218,7 +218,13 @@ describe("task-ledger-facts", () => {
     } as unknown as EmbeddingProvider;
     const staleIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const freshIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const storeTask = (entity: string, title: string, status: string, updated: string, relatedSession?: string): void => {
+    const storeTask = (
+      entity: string,
+      title: string,
+      status: string,
+      updated: string,
+      relatedSession?: string,
+    ): void => {
       const base = {
         category: "project",
         importance: 0.7,
