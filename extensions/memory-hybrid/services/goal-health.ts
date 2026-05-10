@@ -313,13 +313,20 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       if (pidMatch) {
         const pid = Number(pidMatch[1]);
         if (!Number.isNaN(pid) && !isPidAlive(pid)) {
+          const reason = `Linked task "${lt.label}" died: pid ${pid} is no longer alive`;
           const updatedTasks = g.linkedTasks.map((t) =>
             t.label === lt.label ? { ...t, status: "failed", updatedAt: nowIso() } : t,
           );
+          const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];
           await updateGoal(
             goalsDir,
             g.id,
-            { linkedTasks: updatedTasks, consecutiveFailures: g.consecutiveFailures + 1 },
+            {
+              linkedTasks: updatedTasks,
+              consecutiveFailures: g.consecutiveFailures + 1,
+              status: "blocked",
+              currentBlockers: blockers,
+            },
             {
               timestamp: nowIso(),
               action: "subagent-died",
@@ -329,7 +336,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           );
           result.goalsUpdated++;
           result.actions.push({ goalId: g.id, label: g.label, action: "subagent-died", reason: `pid ${pid}` });
-          recordOutcome("blocked", `Linked task "${lt.label}" died: pid ${pid} is no longer alive`, {
+          recordOutcome("blocked", reason, {
             taskLabel: lt.label,
             sessionKey: lt.sessionKey,
             runId: lt.runId ?? null,
@@ -438,7 +445,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       }
     }
 
-    if (g.status === "verifying" && !executionReason) {
+    if (g.status === "verifying" && !executionReason && !waitingReason) {
       waitingReason = "Goal is in verifying state; awaiting completion confirmation.";
     }
 
