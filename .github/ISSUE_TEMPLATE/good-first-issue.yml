@@ -1,0 +1,44 @@
+name: Good First Issue Candidate
+description: Propose a beginner-friendly issue with clear scope and acceptance criteria
+title: "[good first issue] "
+labels:
+  - good first issue
+  - help wanted
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose a newcomer-friendly issue.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user/developer pain does this issue solve?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope (small, well-bounded)
+      description: List exact files/components expected to change.
+      placeholder: |
+        - extensions/memory-hybrid/...
+        - docs/...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete checks to verify completion.
+      placeholder: |
+        - [ ] Behavior X works
+        - [ ] Tests added/updated
+        - [ ] Docs updated
+    validations:
+      required: true
+  - type: textarea
+    id: starter_hints
+    attributes:
+      label: Starter hints
+      description: Helpful pointers for first-time contributors (commands, docs, entry points).
