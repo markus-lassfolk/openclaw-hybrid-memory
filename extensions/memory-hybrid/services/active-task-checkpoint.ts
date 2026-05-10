@@ -226,9 +226,8 @@ function normalizeCheckpointInput(
       const parsed = new Date(rawResumeAt);
       if (Number.isNaN(parsed.getTime())) {
         errors.push({ step: "validation", message: "resumeAt must be a valid ISO timestamp" });
-      } else if (parsed.getTime() <= now.getTime()) {
-        errors.push({ step: "validation", message: "resumeAt must be in the future" });
       } else {
+        // Accept past timestamps so missed reminders can be caught up by the cron scanner.
         resumeAtDate = parsed;
         resumeAtIso = parsed.toISOString();
       }
