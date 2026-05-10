@@ -5,6 +5,7 @@
 
 import { basename } from "node:path";
 import type { ActiveTaskEntry } from "./active-task.js";
+import { isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
@@ -194,16 +195,11 @@ function isMainOrPrivateSessionKey(sessionKey?: string | null): boolean {
   return trimmed === "main" || trimmed === "private";
 }
 
-function isSubagentSessionKey(sessionKey?: string | null): boolean {
-  if (!sessionKey) return false;
-  return sessionKey.trim().toLowerCase().includes("subagent:");
-}
-
 export function shouldAutoRegisterLongRunningTask(
   mode: LongRunningRegistrationMode,
   sessionKey?: string | null,
 ): boolean {
-  return mode === "auto_main_private" && isMainOrPrivateSessionKey(sessionKey) && !isSubagentSessionKey(sessionKey);
+  return mode === "auto_main_private" && isMainOrPrivateSessionKey(sessionKey) && !isSubagentSession(sessionKey);
 }
 
 export function buildLongRunningTaskRegistrationBlock(
