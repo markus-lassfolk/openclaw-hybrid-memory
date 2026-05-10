@@ -9,23 +9,16 @@ import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
+import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
-import type { MemoryEntry, MemoryScope } from "../types/memory.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
-
-function matchesExactScope(entry: MemoryEntry, scope: MemoryScope, scopeTarget: string | null): boolean {
-  const entryScope = entry.scope ?? "global";
-  const entryScopeTarget = entry.scopeTarget ?? null;
-  if (scope === "global") return entryScope === "global";
-  return entryScope === scope && entryScopeTarget === scopeTarget;
-}
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -175,16 +168,16 @@ export async function runStoreForCli(
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
-            const target = factsDb.getById(classification.targetId);
-            const allowed =
-              !!target &&
-              similarFacts.some((fact) => fact.id === classification.targetId) &&
-              matchesExactScope(target, scope, scopeTarget);
-            if (!allowed) {
-              log.warn(
-                `memory-hybrid: blocked cross-scope or unknown classification DELETE target ${classification.targetId}`,
-              );
-            } else {
+            const target = validateScopedClassificationTarget({
+              targetId: classification.targetId,
+              candidates: similarFacts,
+              getById: (id) => factsDb.getById(id),
+              scope,
+              scopeTarget,
+              warn: (message) => log.warn(message),
+              warnMessage: `memory-hybrid: blocked cross-scope or unknown classification DELETE target ${classification.targetId}`,
+            });
+            if (target) {
               factsDb.supersede(classification.targetId, null);
               aliasDb?.deleteByFactId(classification.targetId);
               await deleteVectorForFactId({
@@ -197,13 +190,16 @@ export async function runStoreForCli(
             }
           }
           if (classification.action === "UPDATE" && classification.targetId) {
-            const oldFact = factsDb.getById(classification.targetId);
-            if (oldFact && similarFacts.some((fact) => fact.id === classification.targetId)) {
-              if (!matchesExactScope(oldFact, scope, scopeTarget)) {
-                log.warn(
-                  `memory-hybrid: blocked cross-scope classification UPDATE target ${classification.targetId}`,
-                );
-              } else {
+            const oldFact = validateScopedClassificationTarget({
+              targetId: classification.targetId,
+              candidates: similarFacts,
+              getById: (id) => factsDb.getById(id),
+              scope,
+              scopeTarget,
+              warn: (message) => log.warn(message),
+              warnMessage: `memory-hybrid: blocked cross-scope classification UPDATE target ${classification.targetId}`,
+            });
+            if (oldFact) {
                 const nowSec = Math.floor(Date.now() / 1000);
                 const storeResult = factsDb.storeWithResult({
                   text,
@@ -251,7 +247,6 @@ export async function runStoreForCli(
                   supersededId: classification.targetId,
                   reason: classification.reason ?? "",
                 };
-              }
             }
           }
         } catch (err) {

@@ -25,6 +25,7 @@ import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } fr
 import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
+import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -41,7 +42,6 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
-import type { MemoryEntry, MemoryScope } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
@@ -53,8 +53,7 @@ import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
-import { deleteVectorForFactId } from "../services/vector-maintenance.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type {
   ExtractDailyResult,
   ExtractDailySink,
@@ -110,13 +109,6 @@ export function getMaxMtime(filePaths: string[]): number | undefined {
     }
   }
   return maxMtime;
-}
-
-function matchesExactScope(entry: MemoryEntry, scope: MemoryScope, scopeTarget: string | null): boolean {
-  const entryScope = entry.scope ?? "global";
-  const entryScopeTarget = entry.scopeTarget ?? null;
-  if (scope === "global") return entryScope === "global";
-  return entryScope === scope && entryScopeTarget === scopeTarget;
 }
 
 /**
@@ -999,14 +991,16 @@ export async function runExtractDailyForCli(
         const { trimmed, extracted, category, storePayload, sourceDateSec, vecForStore } = c;
         if (classification.action === "NOOP") continue;
         if (classification.action === "DELETE" && classification.targetId) {
-          const target = factsDb.getById(classification.targetId);
-          const allowed =
-            !!target &&
-            c.similarFacts.some((fact) => fact.id === classification.targetId) &&
-            matchesExactScope(target, "global", null);
-          if (!allowed) {
-            sink.warn(`memory-hybrid: blocked cross-scope or unknown extract-daily DELETE target ${classification.targetId}`);
-          } else {
+          const target = validateScopedClassificationTarget({
+            targetId: classification.targetId,
+            candidates: c.similarFacts,
+            getById: (id) => factsDb.getById(id),
+            scope: "global",
+            scopeTarget: null,
+            warn: (message) => sink.warn(message),
+            warnMessage: `memory-hybrid: blocked cross-scope or unknown extract-daily DELETE target ${classification.targetId}`,
+          });
+          if (target) {
             factsDb.supersede(classification.targetId, null);
             aliasDb?.deleteByFactId(classification.targetId);
             await deleteVectorForFactId({
@@ -1019,12 +1013,16 @@ export async function runExtractDailyForCli(
           continue;
         }
         if (classification.action === "UPDATE" && classification.targetId) {
-          const oldFact = factsDb.getById(classification.targetId);
-          if (oldFact && c.similarFacts.some((fact) => fact.id === classification.targetId)) {
-            if (!matchesExactScope(oldFact, "global", null)) {
-              sink.warn(`memory-hybrid: blocked cross-scope extract-daily UPDATE target ${classification.targetId}`);
-              continue;
-            }
+          const oldFact = validateScopedClassificationTarget({
+            targetId: classification.targetId,
+            candidates: c.similarFacts,
+            getById: (id) => factsDb.getById(id),
+            scope: "global",
+            scopeTarget: null,
+            warn: (message) => sink.warn(message),
+            warnMessage: `memory-hybrid: blocked cross-scope extract-daily UPDATE target ${classification.targetId}`,
+          });
+          if (oldFact) {
             const storeResult = factsDb.storeWithResult({
               ...storePayload,
               entity: extracted.entity ?? oldFact.entity,

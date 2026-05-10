@@ -4,24 +4,12 @@
 
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry, MemoryScope } from "../types/memory.js";
+import { matchesExactScope } from "./classification-scope.js";
 
-type ScopedClassificationOptions = {
+export type ScopedClassificationOptions = {
   scope?: MemoryScope;
   scopeTarget?: string | null;
 };
-
-function matchesExactScope(
-  entry: MemoryEntry,
-  scope: MemoryScope,
-  scopeTarget: string | null,
-): boolean {
-  const entryScope = entry.scope ?? "global";
-  const entryScopeTarget = entry.scopeTarget ?? null;
-  if (scope === "global") {
-    return entryScope === "global";
-  }
-  return entryScope === scope && entryScopeTarget === scopeTarget;
-}
 
 /**
  * Find similar memories by embedding vector.

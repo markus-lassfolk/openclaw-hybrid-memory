@@ -55,6 +55,7 @@ import {
 } from "../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
 import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../services/task-ledger-facts.js";
+import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import {
@@ -130,13 +131,6 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
 
   return hasAllNewHelpers && !hasLegacyWal;
-}
-
-function matchesExactScope(entry: MemoryEntry, scope: "global" | "user" | "agent" | "session", scopeTarget: string | null): boolean {
-  const entryScope = entry.scope ?? "global";
-  const entryScopeTarget = entry.scopeTarget ?? null;
-  if (scope === "global") return entryScope === "global";
-  return entryScope === scope && entryScopeTarget === scopeTarget;
 }
 
 function isEdictWriteToolEnabled(): boolean {
@@ -1915,12 +1909,16 @@ export function registerMemoryTools(
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
-                const target = factsDb.getById(classification.targetId);
-                const allowed =
-                  !!target &&
-                  similarFacts.some((fact) => fact.id === classification.targetId) &&
-                  matchesExactScope(target, scope, scopeTarget);
-                if (allowed) {
+                const target = validateScopedClassificationTarget({
+                  targetId: classification.targetId,
+                  candidates: similarFacts,
+                  getById: (id) => factsDb.getById(id),
+                  scope,
+                  scopeTarget,
+                  warn: (message) => api.logger.warn?.(message),
+                  warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store DELETE target ${classification.targetId}`,
+                });
+                if (target) {
                   factsDb.supersede(classification.targetId, null);
                   aliasDb?.deleteByFactId(classification.targetId);
                   await deleteVectorForFactId({
@@ -1936,18 +1934,19 @@ export function registerMemoryTools(
                     details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
                   };
                 }
-                api.logger.warn?.(
-                  `memory-hybrid: blocked cross-scope or unknown memory_store DELETE target ${classification.targetId}`,
-                );
               }
 
               if (classification.action === "UPDATE" && classification.targetId) {
-                const oldFact = factsDb.getById(classification.targetId);
-                if (
-                  oldFact &&
-                  similarFacts.some((fact) => fact.id === classification.targetId) &&
-                  matchesExactScope(oldFact, scope, scopeTarget)
-                ) {
+                const oldFact = validateScopedClassificationTarget({
+                  targetId: classification.targetId,
+                  candidates: similarFacts,
+                  getById: (id) => factsDb.getById(id),
+                  scope,
+                  scopeTarget,
+                  warn: (message) => api.logger.warn?.(message),
+                  warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
+                });
+                if (oldFact) {
                   const walEntryId = await walWrite(
                     "update",
                     {
@@ -2076,9 +2075,6 @@ export function registerMemoryTools(
                     },
                   };
                 }
-                api.logger.warn?.(
-                  `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
-                );
               }
               // action === "ADD" falls through to normal store
             }
