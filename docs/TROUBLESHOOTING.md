@@ -110,6 +110,8 @@ If the semantic path **exceeds the vector-step budget**, you see a **warn** such
 2. Run **`openclaw hybrid-mem verify`** again — it performs a **live embedding call** to confirm dimensions.
 3. If the table was built with the wrong model, run **`openclaw hybrid-mem re-index`** after config is correct (or enable `vector.autoRepair` only if you understand it will rebuild the vector table).
 
+**Safety note:** If you configured `lanceDbPath` outside `~/.openclaw/memory/`, destructive re-index operations may refuse to delete table directories by default. Set `OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS=1` to override.
+
 **Note:** Older installs might have passed verify even when semantic search was silently broken. Newer versions fail verify on mismatch so automation can catch it.
 
 ---
