@@ -680,7 +680,7 @@ export async function runActiveTaskCheckpoint(
   }
 
   const ok = errors.length === 0;
-  const partial = !ok;
+  const partial = !ok && updatedKeys.length > 0;
 
   const summaryBits: string[] = [
     `entity=${checkpoint.entity}`,
