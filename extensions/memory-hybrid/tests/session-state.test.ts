@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { createSessionState, resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { SessionSeenFacts } from "../services/ambient-retrieval.js";
 
@@ -166,20 +166,18 @@ describe("session-state", () => {
       });
 
       it("should update timestamp on subsequent touches", () => {
+        const nowSpy = vi.spyOn(Date, "now");
+        nowSpy.mockReturnValueOnce(1000);
         state.touchSession("session-1");
-        const firstTimestamp = state.sessionLastActivity.get("session-1")!;
+        const firstTimestamp = state.sessionLastActivity.get("session-1");
 
-        // Wait a bit
-        const waitMs = 10;
-        const waitUntil = Date.now() + waitMs;
-        while (Date.now() < waitUntil) {
-          // busy wait
-        }
-
+        nowSpy.mockReturnValueOnce(2000);
         state.touchSession("session-1");
-        const secondTimestamp = state.sessionLastActivity.get("session-1")!;
+        const secondTimestamp = state.sessionLastActivity.get("session-1");
+        nowSpy.mockRestore();
 
-        expect(secondTimestamp).toBeGreaterThan(firstTimestamp);
+        expect(firstTimestamp).toBe(1000);
+        expect(secondTimestamp).toBe(2000);
       });
 
       it("should track multiple sessions independently", () => {

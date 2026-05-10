@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runBackup, runBackupVerify, type BackupCliResult } from "../cli/backup.js";
+import { runBackup, runBackupVerify } from "../cli/backup.js";
 
 describe("backup", () => {
   let testDir: string;
@@ -54,7 +54,7 @@ describe("backup", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.backupDir).toMatch(/backups\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+        expect(result.backupDir).toMatch(/[\\/]backups[\\/]\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
         expect(existsSync(result.backupDir)).toBe(true);
       }
     });
@@ -192,8 +192,8 @@ describe("backup", () => {
     });
 
     it("should return error when backup directory cannot be created", async () => {
-      // Try to create backup in a non-existent parent with no permissions
-      const invalidBackupDir = "/root/impossible/backups";
+      const invalidBackupDir = join(testDir, "backup-root-is-a-file");
+      writeFileSync(invalidBackupDir, "not-a-directory");
       const result = await runBackup({
         resolvedSqlitePath: sqlitePath,
         resolvedLancePath: lancePath,
