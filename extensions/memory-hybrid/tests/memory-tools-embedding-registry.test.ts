@@ -212,6 +212,128 @@ describe("memory tools embedding registry wiring", () => {
     expect(addEdict).toHaveBeenCalledTimes(1);
   });
 
+  it("validates memory_add_edict ttl strictly", async () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg();
+    const vectorDb = makeMockVectorDb();
+    const addEdict = vi.fn().mockReturnValue({
+      id: "edict-2",
+      text: "verified fact",
+      tags: [],
+      source: "human:markus",
+      ttl: "never",
+      expiresAt: null,
+    });
+
+    registerMemoryTools(
+      {
+        factsDb,
+        edictStore: { add: addEdict } as never,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    vi.stubEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL", "true");
+    const tool = api.getTool("memory_add_edict");
+    expect(tool).toBeTruthy();
+    if (!tool) throw new Error("memory_add_edict not registered");
+
+    const badString = await tool.execute("tc-ttl-1", { text: "verified fact", ttl: "foo" });
+    expect(badString).toMatchObject({ details: { error: "invalid_ttl" } });
+
+    const badFloat = await tool.execute("tc-ttl-2", { text: "verified fact", ttl: "0.5" });
+    expect(badFloat).toMatchObject({ details: { error: "invalid_ttl" } });
+
+    const missingEventExpiry = await tool.execute("tc-ttl-3", { text: "verified fact", ttl: "event" });
+    expect(missingEventExpiry).toMatchObject({ details: { error: "missing_expiresAt" } });
+
+    const ok = await tool.execute("tc-ttl-4", { text: "verified fact", ttl: "300", source: "human:markus" });
+    expect(ok).toMatchObject({ details: { edict: { id: "edict-2" } } });
+    expect(addEdict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ttl: 300,
+      }),
+    );
+  });
+
+  it("validates memory_update_edict ttl strictly", async () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg();
+    const vectorDb = makeMockVectorDb();
+    const updateEdict = vi.fn().mockReturnValue({
+      id: "edict-1",
+      text: "updated fact",
+      tags: [],
+      source: "human:markus",
+      ttl: "never",
+      expiresAt: null,
+    });
+
+    registerMemoryTools(
+      {
+        factsDb,
+        edictStore: { update: updateEdict } as never,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    vi.stubEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL", "true");
+    const tool = api.getTool("memory_update_edict");
+    expect(tool).toBeTruthy();
+    if (!tool) throw new Error("memory_update_edict not registered");
+
+    const badString = await tool.execute("tc-uttl-1", { id: "edict-1", ttl: "not-a-ttl" });
+    expect(badString).toMatchObject({ details: { error: "invalid_ttl" } });
+
+    const badFloat = await tool.execute("tc-uttl-2", { id: "edict-1", ttl: "2.5" });
+    expect(badFloat).toMatchObject({ details: { error: "invalid_ttl" } });
+
+    const missingEventExpiry = await tool.execute("tc-uttl-3", { id: "edict-1", ttl: "event" });
+    expect(missingEventExpiry).toMatchObject({ details: { error: "missing_expiresAt" } });
+
+    const ok = await tool.execute("tc-uttl-4", { id: "edict-1", ttl: "never" });
+    expect(ok).toMatchObject({ details: { edict: { id: "edict-1" } } });
+    expect(updateEdict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ttl: "never",
+      }),
+    );
+  });
+
   it("memory_directory list_contacts and org_view return structured results", async () => {
     const api = makeMockApi();
     const embeddings = makeMockEmbeddings();
