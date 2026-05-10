@@ -800,6 +800,40 @@ describe("runDreamCycle", () => {
     expect(result.orphanVectorsRemoved).toBe(2);
     expect(result.digestSummary).toContain("2 orphaned vectors reconciled");
   });
+
+  it("warns when active SQLite facts remain vectorless after reconciliation", async () => {
+    factsDb.store({
+      text: "Vectorless after reconcile",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const vectorDb = {
+      getAllIds: vi.fn().mockResolvedValue([]),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+    const warn = vi.fn();
+
+    await runDreamCycle(
+      factsDb,
+      vectorDb as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      baseConfig,
+      { info: () => undefined, warn },
+    );
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("active SQLite fact(s) without vectors"));
+  });
 });
 
 // ---------------------------------------------------------------------------

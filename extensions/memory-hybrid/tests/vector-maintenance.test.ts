@@ -1,5 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+import { deleteVectorsForFactIds, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+
+describe("deleteVectorsForFactIds", () => {
+  it("uses deleteMany when available", async () => {
+    const deleteMany = vi.fn().mockResolvedValue(2);
+    const result = await deleteVectorsForFactIds(
+      { delete: vi.fn(), deleteMany } as never,
+      ["a", "a", "b"],
+      { operation: "test-op" },
+    );
+    expect(deleteMany).toHaveBeenCalledWith(["a", "b"]);
+    expect(result).toEqual({ attempted: 2, deleted: 2, failed: 0 });
+  });
+
+  it("falls back to per-id delete when deleteMany fails", async () => {
+    const deleteMany = vi.fn().mockRejectedValue(new Error("bulk failed"));
+    const del = vi.fn().mockResolvedValue(true);
+    const result = await deleteVectorsForFactIds(
+      { delete: del, deleteMany } as never,
+      ["a", "b"],
+      { operation: "test-op" },
+    );
+    expect(del).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ attempted: 2, deleted: 2, failed: 0 });
+  });
+});
 
 describe("storeCanonicalVectorForFact", () => {
   it("stores a canonical vector with the fact id and records embedding metadata after success", async () => {
