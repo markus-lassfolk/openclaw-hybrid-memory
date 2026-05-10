@@ -34,6 +34,7 @@ import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { recordMaintenanceTimestamp } from "./maintenance-timestamp.js";
 import type { ProvenanceService } from "./provenance.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
@@ -445,10 +446,14 @@ export async function runReflection(
     return { factsAnalyzed: 0, patternsExtracted: 0, patternsStored: 0, window: opts.window };
   }
   const windowDays = Math.min(90, Math.max(1, opts.window));
+  const touchReflectLastRun = () => {
+    if (!opts.dryRun) recordMaintenanceTimestamp(factsDb.sqlitePath, ".reflect_last_run");
+  };
   const recentFacts = factsDb.getRecentFacts(windowDays);
 
   if (recentFacts.length < config.minObservations) {
     logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
+    touchReflectLastRun();
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
@@ -474,6 +479,7 @@ export async function runReflection(
     logger.info(
       `memory-hybrid: reflection — ${recentFacts.length} recent facts but all too short after trimming; skipping LLM`,
     );
+    touchReflectLastRun();
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
@@ -493,6 +499,7 @@ export async function runReflection(
   const prevHash = factsDb.getMaintenanceState("reflection_input_hash");
   if (prevHash === inputHash) {
     logger.info("memory-hybrid: reflection — input facts unchanged since last run, skipping LLM call");
+    touchReflectLastRun();
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
@@ -534,6 +541,7 @@ export async function runReflection(
       windowDays,
       retryAttempt,
     });
+    touchReflectLastRun();
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
@@ -544,6 +552,7 @@ export async function runReflection(
     if (!opts.dryRun) {
       factsDb.setMaintenanceState("reflection_input_hash", inputHash);
     }
+    touchReflectLastRun();
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
@@ -733,6 +742,7 @@ export async function runReflection(
     );
   }
 
+  touchReflectLastRun();
   return {
     factsAnalyzed: recentFacts.length,
     patternsExtracted: uniqueNewPatterns.length,
