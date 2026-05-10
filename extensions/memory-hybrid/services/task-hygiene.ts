@@ -20,27 +20,16 @@ export type LongRunningWorkflowProposal = {
 };
 
 const REPO_REF_RE = /\b([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})\b/gi;
-const GITHUB_URL_RE = /(?:https?:\/\/)?(?:www\.)?github\.com\/([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})(?:[/?#]|$)/gi;
+const GITHUB_URL_RE =
+  /(?:https?:\/\/)?(?:www\.)?github\.com\/([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})(?:[/?#\s,;.)]|$)/gi;
 const PR_NUM_RE = /(?:\bpr\b|\bpull request\b)?\s*#(\d+)\b/i;
 const DEPLOY_TARGET_RE = /\b(prod|production|staging|stage|qa|dev|preview)\b/i;
-const DEPLOY_ACTION_RE = /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\b(deploy|deployment|rollout)\b/i;
+const DEPLOY_ACTION_RE =
+  /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\b(deploy|deployment|rollout)\b/i;
 const RELEASE_TO_ENV_RE =
   /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\brelease\b[\s\S]{0,25}\b(to|into)\b[\s\S]{0,10}\b(prod|production|staging|stage|qa|dev|preview)\b/i;
 const GENERIC_WORKSPACE_NAMES = new Set(["workspace", "workspaces", "tmp", "home", "openclaw", "task"]);
-const SLASH_NOISE_TOKENS = new Set([
-  "and",
-  "or",
-  "on",
-  "off",
-  "to",
-  "for",
-  "in",
-  "by",
-  "up",
-  "down",
-  "yes",
-  "no",
-]);
+const SLASH_NOISE_TOKENS = new Set(["and", "or", "on", "off", "to", "for", "in", "by", "up", "down", "yes", "no"]);
 
 function slugifyToken(value: string): string {
   const slug = value
