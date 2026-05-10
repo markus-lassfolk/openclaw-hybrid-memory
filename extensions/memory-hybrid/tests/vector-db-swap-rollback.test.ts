@@ -21,15 +21,16 @@ describe("VectorDB swap rollback", () => {
     vectorDb.setLogger({ warn: vi.fn() });
     await vectorDb.open();
     let renameCalls = 0;
-    vi.spyOn(vectorDb as unknown as { renamePath: (fromPath: string, toPath: string) => Promise<void> }, "renamePath").mockImplementation(
-      async (fromPath, toPath) => {
-        renameCalls++;
-        if (renameCalls === 2) {
-          throw new Error("injected failure on shadow->main rename");
-        }
-        await renameFsPath(fromPath, toPath);
-      },
-    );
+    vi.spyOn(
+      vectorDb as unknown as { renamePath: (fromPath: string, toPath: string) => Promise<void> },
+      "renamePath",
+    ).mockImplementation(async (fromPath, toPath) => {
+      renameCalls++;
+      if (renameCalls === 2) {
+        throw new Error("injected failure on shadow->main rename");
+      }
+      await renameFsPath(fromPath, toPath);
+    });
 
     for (let i = 0; i < 5; i++) {
       await vectorDb.store({
@@ -54,6 +55,7 @@ describe("VectorDB swap rollback", () => {
     await expect(vectorDb.swapShadowTable(shadowTable, 0.5, 5)).rejects.toThrow(
       /injected failure on shadow->main rename/,
     );
+    await vectorDb.close();
 
     const vectorDbAfter = new VectorDB(testDbPath, 64, false);
     vectorDbAfter.setLogger({ warn: vi.fn() });

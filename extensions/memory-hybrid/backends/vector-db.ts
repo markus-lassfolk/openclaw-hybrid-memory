@@ -15,15 +15,15 @@ import {
   LANCE_NO_VECTOR_COL_MSG,
   LANCE_VECTOR_SEARCH_MAX_LIMIT,
   UUID_REGEX,
-  VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS,
-  VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS,
-  VECTORDB_WRITE_CONFLICT_MAX_RETRIES,
   VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
   VECTORDB_INIT_TIMEOUT_MS,
   VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
   VECTORDB_READER_DRAIN_TIMEOUT_MS,
+  VECTORDB_WRITE_CONFLICT_BASE_BACKOFF_MS,
+  VECTORDB_WRITE_CONFLICT_MAX_BACKOFF_MS,
+  VECTORDB_WRITE_CONFLICT_MAX_RETRIES,
 } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withTimeout } from "../utils/timeout.js";
@@ -922,7 +922,7 @@ export class VectorDB {
     try {
       await this.renamePath(shadowTableDir, mainTableDir);
     } catch (swapErr) {
-      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
+      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
         try {
           await this.renamePath(oldTableDir, mainTableDir);
           this.logWarn("memory-hybrid: shadow swap failed; rolled back old table to main successfully");
@@ -931,6 +931,9 @@ export class VectorDB {
             `Shadow table swap failed and rollback failed. swapErr=${String(swapErr)} rollbackErr=${String(rollbackErr)}`,
           );
         }
+      }
+      if (existsSync(shadowTableDir)) {
+        this.logWarn(`memory-hybrid: shadow swap failed; shadow table preserved for inspection: ${shadowTableName}`);
       }
       throw swapErr;
     }

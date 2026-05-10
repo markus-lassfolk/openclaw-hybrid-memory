@@ -18,8 +18,11 @@ export function getVectorLifecycleAuditPath(resolvedSqlitePath: string): string 
 }
 
 export function appendVectorLifecycleAuditEvent(resolvedSqlitePath: string, event: VectorLifecycleAuditEvent): void {
-  const path = getVectorLifecycleAuditPath(resolvedSqlitePath);
-  mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify(event)}\n`, "utf-8");
+  try {
+    const path = getVectorLifecycleAuditPath(resolvedSqlitePath);
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${JSON.stringify(event)}\n`, "utf-8");
+  } catch {
+    // Best-effort observability must not make otherwise safe vector lifecycle operations fail.
+  }
 }
-

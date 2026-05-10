@@ -7,9 +7,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
+import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
-import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
@@ -17,13 +17,13 @@ import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from 
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
+import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
-import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import type { ManageBindings } from "./bindings.js";
 import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 
@@ -91,6 +91,18 @@ function readReindexCheckpoint(path: string): ReindexCheckpoint | null {
 function writeReindexCheckpoint(path: string, state: ReindexCheckpoint): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(state, null, 2), "utf-8");
+}
+
+function parseBoundedIntOption(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(String(raw ?? fallback), 10);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
+}
+
+function parseBoundedFloatOption(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseFloat(String(raw ?? fallback));
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
 }
 
 /**
@@ -1448,15 +1460,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           resume?: boolean;
           checkpointFile?: string;
         }) => {
-          const batchSize = Math.max(1, Math.min(500, Number.parseInt(String(opts?.batchSize ?? "50"), 10) || 50));
-          const delayMsBetweenBatches = Math.max(
-            0,
-            Math.min(120_000, Number.parseInt(String(opts?.delayMsBetweenBatches ?? "0"), 10) || 0),
-          );
-          const minFractionSuccess = Math.max(
-            0.0,
-            Math.min(1.0, Number.parseFloat(String(opts?.minFractionSuccess ?? "0.95")) || 0.95),
-          );
+          const batchSize = parseBoundedIntOption(opts?.batchSize, 50, 1, 500);
+          const delayMsBetweenBatches = parseBoundedIntOption(opts?.delayMsBetweenBatches, 0, 0, 120_000);
+          const minFractionSuccess = parseBoundedFloatOption(opts?.minFractionSuccess, 0.95, 0.0, 1.0);
           const checkpointPath =
             opts?.checkpointFile?.trim() ||
             (ctx.resolvedSqlitePath ? defaultReindexCheckpointPath(ctx.resolvedSqlitePath) : "");
@@ -1473,10 +1479,17 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const runReindex = async () => {
             console.log(`Re-index: starting non-destructive re-index of ${totalFacts} facts...`);
             if (resumeCheckpoint) {
-              console.log(`Re-index: resume enabled — checkpoint offset ${resumeCheckpoint.offset}/${resumeCheckpoint.total}`);
+              console.log(
+                `Re-index: resume enabled — checkpoint offset ${resumeCheckpoint.offset}/${resumeCheckpoint.total}`,
+              );
               if (resumeCheckpoint.total !== totalFacts) {
                 console.warn(
                   `Re-index: checkpoint total (${resumeCheckpoint.total}) differs from current fact count (${totalFacts}); checkpoint will be ignored for safety.`,
+                );
+                resumeCheckpoint = null;
+              } else if (resumeCheckpoint.offset > 0) {
+                console.warn(
+                  "Re-index: checkpoint offsets cannot be resumed with a newly-created shadow table; restarting from offset 0 for safety.",
                 );
                 resumeCheckpoint = null;
               }
@@ -1682,9 +1695,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           if (policy === "balanced") return maxFixes;
           return Math.max(maxFixes, 2000);
         };
-        const policyRaw = String(opts?.reconcilePolicy ?? "balanced").trim().toLowerCase();
+        const policyRaw = String(opts?.reconcilePolicy ?? "balanced")
+          .trim()
+          .toLowerCase();
         const policy = policyRaw === "conservative" || policyRaw === "aggressive" ? policyRaw : "balanced";
-        const maxFixes = Math.max(0, Math.min(5000, Number.parseInt(String(opts?.maxFixes ?? "200"), 10) || 200));
+        const maxFixes = parseBoundedIntOption(opts?.maxFixes, 200, 0, 5000);
         const report = {
           policy,
           maxFixes,
@@ -1704,7 +1719,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         };
 
         // Step 1: reembed vectorless facts
-        const candidates = factsDb.listVectorlessActiveFacts(undefined, Math.max(200, maxFixes));
+        const candidates = factsDb.listVectorlessActiveFacts({ limit: Math.max(200, maxFixes) });
         const allowedRebuilds = resolveRepairBudget(policy, maxFixes);
         for (const fact of candidates.slice(0, allowedRebuilds)) {
           try {
@@ -1713,7 +1728,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
               id: fact.id,
               text: fact.text,
               vector: vec,
-              importance: fact.importance ?? 0.5,
+              importance: 0.5,
               category: fact.category,
             });
             report.reembedded++;
@@ -1748,10 +1763,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             }
           }
 
-          const rebuildLimit = Math.min(
-            resolveRepairBudget(policy, maxFixes),
-            sqliteOrphans.length,
-          );
+          const rebuildLimit = Math.min(resolveRepairBudget(policy, maxFixes), sqliteOrphans.length);
           for (const id of sqliteOrphans.slice(0, rebuildLimit)) {
             try {
               const fact = factsDb.getById(id);
@@ -2339,7 +2351,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         degradedState:
           typeof (vectorDb as { getDegradedState?: unknown }).getDegradedState === "function"
             ? (
-                vectorDb as { getDegradedState: () => { active: boolean; reason: string | null; sinceEpochMs: number | null } }
+                vectorDb as {
+                  getDegradedState: () => { active: boolean; reason: string | null; sinceEpochMs: number | null };
+                }
               ).getDegradedState()
             : { active: false, reason: null },
       },

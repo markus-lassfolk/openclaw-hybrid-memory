@@ -161,7 +161,12 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   let currentGeneration = vectorDb.getCloseGeneration();
   let offset = 0;
   const checkpointState = opts.checkpoint?.load();
-  if (checkpointState && Number.isFinite(checkpointState.offset) && checkpointState.offset > 0 && checkpointState.offset < total) {
+  if (
+    checkpointState &&
+    Number.isFinite(checkpointState.offset) &&
+    checkpointState.offset > 0 &&
+    checkpointState.offset < total
+  ) {
     offset = Math.floor(checkpointState.offset);
     log.info(`memory-hybrid: embedding-migration: resuming from checkpoint offset ${offset}/${total}`);
   }
@@ -361,13 +366,17 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     }
 
     offset += batch.length;
-    opts.checkpoint?.save({
-      offset,
-      total,
-      migrated,
-      skipped,
-      ts: Date.now(),
-    });
+    try {
+      opts.checkpoint?.save({
+        offset,
+        total,
+        migrated,
+        skipped,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      log.warn(`memory-hybrid: embedding-migration: checkpoint save failed (non-fatal): ${err}`);
+    }
     onProgress?.(offset, total);
 
     // Periodic progress log for large datasets

@@ -55,14 +55,17 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
           reconcileMaxFixes?: string;
         }) => {
           if (opts.noEmoji) setEnv("HYBRID_MEM_NO_EMOJI", "1");
-          const reconcilePolicyRaw = String(opts.reconcilePolicy ?? "balanced").trim().toLowerCase();
+          const reconcilePolicyRaw = String(opts.reconcilePolicy ?? "balanced")
+            .trim()
+            .toLowerCase();
           const reconcilePolicy =
             reconcilePolicyRaw === "conservative" || reconcilePolicyRaw === "aggressive"
               ? reconcilePolicyRaw
               : "balanced";
+          const parsedReconcileMaxFixes = Number.parseInt(String(opts.reconcileMaxFixes ?? "200"), 10);
           const reconcileMaxFixes = Math.max(
             0,
-            Math.min(5000, Number.parseInt(String(opts.reconcileMaxFixes ?? "200"), 10) || 200),
+            Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
           );
           try {
             await runVerify(
