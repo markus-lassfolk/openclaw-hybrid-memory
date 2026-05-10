@@ -3,6 +3,7 @@
  * Must match `openclaw.plugin.json` → `contracts.tools` (see contract test).
  */
 export const AGENT_TOOL_CONTRACT_NAMES = [
+  "active_task_checkpoint",
   "active_task_propose_goal",
   "apitap_capture",
   "apitap_list",

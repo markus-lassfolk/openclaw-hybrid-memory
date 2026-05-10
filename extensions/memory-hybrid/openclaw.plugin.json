@@ -4,6 +4,7 @@
   "version": "2026.5.94",
   "contracts": {
     "tools": [
+      "active_task_checkpoint",
       "active_task_propose_goal",
       "apitap_capture",
       "apitap_list",

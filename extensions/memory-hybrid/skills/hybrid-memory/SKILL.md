@@ -54,6 +54,7 @@ When goal stewardship is enabled, use these tools for long-running, multi-sessio
 | `goal_update` | Goal description, criteria, or priority needs updating as context evolves |
 | `goal_complete` | ALL acceptance criteria are verifiably met — include a clear verification summary |
 | `goal_abandon` | Goal is no longer relevant (user changed their mind) |
+| `active_task_checkpoint` | Atomically checkpoint active work (project facts + episode audit + optional wake schedule + optional ACTIVE-TASKS projection refresh) |
 | `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASKS.md` row (task hygiene) |
 
 **Subagent naming convention for automatic goal linkage:**
