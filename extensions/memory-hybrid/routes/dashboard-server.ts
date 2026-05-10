@@ -1124,13 +1124,13 @@ function performFactAction(
     try {
       const ok = factsDb.supersede(factId, null);
       if (!ok) return { ok: false, message: `Could not supersede fact ${factId}` };
-    } catch (err) {
-      return { ok: false, message: `Could not forget fact ${factId}: ${String(err)}` };
+    } catch {
+      return { ok: false, message: `Could not forget fact ${factId}` };
     }
     clearVerifiedFactIdCache(ctx);
     return { ok: true, message: `Fact ${factId} forgotten` };
-  } catch (err) {
-    return { ok: false, message: String(err) };
+  } catch {
+    return { ok: false, message: "Fact action failed" };
   }
 }
 
