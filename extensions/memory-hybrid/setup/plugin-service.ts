@@ -759,9 +759,12 @@ export function createPluginService(ctx: PluginServiceContext) {
               logger: api.logger,
               eventLog: eventLog ?? null,
             });
-            if (gh.goalsUpdated > 0) {
+            if (gh.goalsChecked > 0) {
+              const compact = gh.outcomes
+                .map((o) => `${o.label}:${o.outcome}${o.reason ? `(${o.reason.slice(0, 80)})` : ""}`)
+                .join("; ");
               api.logger.info?.(
-                `memory-hybrid: goal health check — ${gh.goalsChecked} checked, ${gh.goalsUpdated} updated`,
+                `memory-hybrid: goal health check — ${gh.goalsChecked} checked, ${gh.goalsUpdated} updated; outcomes: ${compact || "none"}`,
               );
             }
           } catch (ghErr) {
