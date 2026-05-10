@@ -86,10 +86,13 @@ export function mergeResults(
     factsDb && typeof factsDb.getById !== "function" && typeof factsDb.getSupersededTexts === "function"
       ? factsDb.getSupersededTexts()
       : new Set<string>();
+  const entryStateById = new Map<string, MemoryEntry | null>();
 
   const isInactive = (result: SearchResult): boolean => {
     if (factsDb && typeof factsDb.getById === "function") {
-      const entry = factsDb.getById(result.entry.id);
+      const cached = entryStateById.get(result.entry.id);
+      const entry = cached !== undefined ? cached : factsDb.getById(result.entry.id);
+      if (cached === undefined) entryStateById.set(result.entry.id, entry);
       if (!entry) return true;
       if (entry.supersededAt != null) return true;
       if (entry.expiresAt != null && entry.expiresAt <= nowSec) return true;

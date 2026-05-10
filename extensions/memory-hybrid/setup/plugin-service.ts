@@ -492,8 +492,13 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
 
       // Periodic prune timer
+      let pruneTickInFlight = false;
       timers.pruneTimer.value = setInterval(async () => {
+        if (pruneTickInFlight) return;
+        pruneTickInFlight = true;
         try {
+          if (shuttingDown) return;
+          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
           const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
           const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
           const hardPruned = factsDb.pruneExpired();
@@ -539,6 +544,8 @@ export function createPluginService(ctx: PluginServiceContext) {
             subsystem: "plugin-service",
             operation: "periodic-prune",
           });
+        } finally {
+          pruneTickInFlight = false;
         }
       }, 60 * 60_000); // every hour
 

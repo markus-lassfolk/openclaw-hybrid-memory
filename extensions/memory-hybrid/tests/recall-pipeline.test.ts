@@ -66,7 +66,7 @@ function makeSearchResult(id: string, score = 0.8, overrides: Partial<MemoryEntr
 function makeDeps(overrides: Partial<RecallPipelineDeps> = {}): RecallPipelineDeps {
   const factsDb = {
     search: vi.fn(() => [] as SearchResult[]),
-    getById: vi.fn((_id: string) => null as MemoryEntry | null),
+    getById: vi.fn((id: string) => makeEntry(id)),
     lookup: vi.fn((_entity: string) => [] as SearchResult[]),
     getSupersededTexts: vi.fn(() => new Set<string>()),
   };
@@ -190,9 +190,7 @@ describe("runRecallPipelineQuery — semantic mode", () => {
 
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([ftsResult]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([vecResult]);
-    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      id === "vec-1" ? makeEntry("vec-1") : null,
-    );
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => makeEntry(id));
 
     const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
 
