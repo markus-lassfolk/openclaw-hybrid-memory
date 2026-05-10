@@ -160,15 +160,11 @@ function normalizeStatus(raw?: string): string | undefined {
   }
   if (value === "blocked" || value === "stalled") return "blocked";
   if (value === "waiting" || value === "on_hold" || value === "on hold") return "waiting";
-  if (
-    value === "done" ||
-    value === "completed" ||
-    value === "closed" ||
-    value === "cancelled" ||
-    value === "canceled" ||
-    value === "abandoned"
-  ) {
+  if (value === "done" || value === "completed" || value === "closed") {
     return "done";
+  }
+  if (value === "cancelled" || value === "canceled" || value === "abandoned") {
+    return "cancelled";
   }
   if (value === "failed" || value === "error") return "failed";
   return undefined;
@@ -193,7 +189,7 @@ function normalizeCheckpointInput(
     errors.push({
       step: "validation",
       message:
-        "status must be one of: open, in_progress, blocked, waiting, done/completed/closed/cancelled/abandoned, failed",
+        "status must be one of: open, in_progress, blocked, waiting, done/completed/closed, cancelled/canceled/abandoned, failed",
     });
   }
 
@@ -292,7 +288,7 @@ function resolveOpenclawDir(override?: string): string {
   return join(homedir(), ".openclaw");
 }
 
-function resolveWorkspaceRoot(cfg: HybridMemoryConfig, override?: string): string {
+function resolveWorkspaceRoot(override?: string): string {
   if (override?.trim()) return override.trim();
   const env = getEnv("OPENCLAW_WORKSPACE")?.trim();
   if (env) return env;
@@ -464,7 +460,7 @@ async function refreshActiveTaskProjectionFromFacts(
     return { attempted: true, refreshed: false, reason: "active_task_ledger_not_facts" };
   }
 
-  const workspaceRoot = resolveWorkspaceRoot(input.cfg, input.workspaceRoot);
+  const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot);
   const activeTaskPath = isAbsolute(input.cfg.activeTask.filePath)
     ? input.cfg.activeTask.filePath
     : join(workspaceRoot, input.cfg.activeTask.filePath);
@@ -481,6 +477,7 @@ function stepError(step: ActiveTaskCheckpointStep, err: unknown): ActiveTaskChec
 function outcomeFromStatus(status: string): EpisodeOutcome {
   if (status === "done") return "success";
   if (status === "failed") return "failure";
+  if (status === "cancelled") return "partial";
   if (status === "blocked" || status === "waiting") return "partial";
   return "unknown";
 }
