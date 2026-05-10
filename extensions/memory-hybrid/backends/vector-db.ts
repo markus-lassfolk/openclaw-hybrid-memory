@@ -1633,6 +1633,51 @@ export class VectorDB {
     }
   }
 
+  /**
+   * Best-effort batched delete for many IDs.
+   * Returns the number of IDs accepted for deletion (same semantics as repeated delete()).
+   */
+  async deleteMany(ids: readonly string[]): Promise<number> {
+    const normalized = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
+    if (normalized.length === 0) return 0;
+    try {
+      if (!this.lanceDbAvailable) return 0;
+      await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
+      if (this.optimizePromise) {
+        try {
+          await this.optimizePromise;
+        } catch (optimizeErr) {
+          this.logWarn(
+            `memory-hybrid: auto-optimize failed before LanceDB bulk delete; continuing with delete anyway (non-fatal). Error: ${optimizeErr}`,
+          );
+        }
+      }
+      const BATCH_SIZE = 200;
+      let deleted = 0;
+      for (let i = 0; i < normalized.length; i += BATCH_SIZE) {
+        const batch = normalized.slice(i, i + BATCH_SIZE);
+        const where = `id IN (${batch.map((id) => `'${id}'`).join(", ")})`;
+        await this.withRetryableWriteConflictRetry("LanceDB bulk delete", async () => {
+          await this.getTable().delete(where);
+        });
+        deleted += batch.length;
+      }
+      return deleted;
+    } catch (err) {
+      this.logWarn(`memory-hybrid: LanceDB bulk delete failed, falling back to per-id delete: ${err}`);
+      let deleted = 0;
+      for (const id of normalized) {
+        try {
+          if (await this.delete(id)) deleted++;
+        } catch {
+          // ignore individual failures in fallback
+        }
+      }
+      return deleted;
+    }
+  }
+
   async count(): Promise<number> {
     const tryCount = async (): Promise<number> => {
       if (!this.lanceDbAvailable) return 0;

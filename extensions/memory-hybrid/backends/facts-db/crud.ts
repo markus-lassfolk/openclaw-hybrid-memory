@@ -410,10 +410,13 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
 }
 
 export function deleteFact(db: DatabaseSync, id: string): boolean {
-  db.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
-  db.prepare("DELETE FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?").run(id, id);
-  const result = db.prepare("DELETE FROM facts WHERE id = ?").run(id);
-  return result.changes > 0;
+  const tx = createTransaction(db, () => {
+    db.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
+    db.prepare("DELETE FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?").run(id, id);
+    const result = db.prepare("DELETE FROM facts WHERE id = ?").run(id);
+    return result.changes > 0;
+  });
+  return tx();
 }
 
 /**

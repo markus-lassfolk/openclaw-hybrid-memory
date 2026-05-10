@@ -13,6 +13,40 @@ import { parseTags } from "../../utils/tags.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
+function collectIds(rows: Array<{ id: string }>): string[] {
+  return rows.map((row) => row.id);
+}
+
+function batchedInClauseBinds(ids: readonly string[], batchSize = 500): string[][] {
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += batchSize) {
+    batches.push(ids.slice(i, i + batchSize));
+  }
+  return batches;
+}
+
+function deleteLinksForFactIds(db: DatabaseSync, factIds: readonly string[]): void {
+  if (factIds.length === 0) return;
+  for (const batch of batchedInClauseBinds(factIds)) {
+    const placeholders = batch.map(() => "?").join(",");
+    db.prepare(
+      `DELETE FROM memory_links
+       WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})`,
+    ).run(...batch, ...batch);
+  }
+}
+
+function deleteFactsByIds(db: DatabaseSync, factIds: readonly string[]): number {
+  if (factIds.length === 0) return 0;
+  let deleted = 0;
+  for (const batch of batchedInClauseBinds(factIds)) {
+    const placeholders = batch.map(() => "?").join(",");
+    const result = db.prepare(`DELETE FROM facts WHERE id IN (${placeholders})`).run(...batch);
+    deleted += Number(result.changes ?? 0);
+  }
+  return deleted;
+}
+
 export function logRecall(db: DatabaseSync, hit: boolean, occurredAtSec?: number): void {
   const id = randomUUID();
   const nowSec = occurredAtSec ?? Math.floor(Date.now() / 1000);
@@ -256,33 +290,43 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
     .all(nowSec) as TierCandidate[];
 
   const hotByRecallIds = computeHotByRecallIds(rows, nowSec, normalized);
-  const desired = rows.map((row) => ({
-    id: row.id,
-    from: row.tier,
-    to: chooseTier(row, nowSec, normalized, { hotByRecallIds }),
-  }));
+  const desired: Array<{ id: string; from: MemoryTier; to: MemoryTier }> = [];
+  const hotDesired: Array<{
+    id: string;
+    score: number;
+    importance: number;
+    lastAccess: number;
+    tokens: number;
+  }> = [];
 
-  const rowsById = new Map(rows.map((row) => [row.id, row]));
-  const hotDesired = desired
-    .filter((d) => d.to === "hot")
-    .map((d) => rowsById.get(d.id) as TierCandidate)
+  for (const row of rows) {
+    const to = chooseTier(row, nowSec, normalized, { hotByRecallIds });
+    desired.push({ id: row.id, from: row.tier, to });
+    if (to === "hot") {
+      const lastAccess = row.last_accessed ?? row.last_confirmed_at ?? row.created_at;
+      hotDesired.push({
+        id: row.id,
+        score: Math.max(row.recall_count ?? 0, row.access_count ?? 0),
+        importance: row.importance,
+        lastAccess,
+        tokens: Math.ceil((row.summary || row.text).length / 4),
+      });
+    }
+  }
+
+  hotDesired
     .sort((a, b) => {
-      const bScore = Math.max(b.recall_count ?? 0, b.access_count ?? 0);
-      const aScore = Math.max(a.recall_count ?? 0, a.access_count ?? 0);
-      if (bScore !== aScore) return bScore - aScore;
+      if (b.score !== a.score) return b.score - a.score;
       if (b.importance !== a.importance) return b.importance - a.importance;
-      const bAccess = b.last_accessed ?? b.last_confirmed_at ?? b.created_at;
-      const aAccess = a.last_accessed ?? a.last_confirmed_at ?? a.created_at;
-      return bAccess - aAccess;
+      return b.lastAccess - a.lastAccess;
     });
   const keepHot = new Set<string>();
   let hotTokens = 0;
-  for (const row of hotDesired) {
+  for (const candidate of hotDesired) {
     if (keepHot.size >= normalized.hotMaxFacts) break;
-    const tokens = Math.ceil((row.summary || row.text).length / 4);
-    if (hotTokens + tokens > normalized.hotMaxTokens) continue;
-    hotTokens += tokens;
-    keepHot.add(row.id);
+    if (hotTokens + candidate.tokens > normalized.hotMaxTokens) continue;
+    hotTokens += candidate.tokens;
+    keepHot.add(candidate.id);
   }
   for (const d of desired) {
     if (d.to === "hot" && !keepHot.has(d.id)) d.to = "warm";
@@ -593,25 +637,29 @@ export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync, nowSec = Math
   return [...alreadyLow, ...aboutToFall].map((r) => r.id);
 }
 
+export function pruneExpiredWithDetails(
+  db: DatabaseSync,
+  nowSec = Math.floor(Date.now() / 1000),
+): { factsPruned: number; deletedFactIds: string[] } {
+  const tx = createTransaction(db, () => {
+    const rows = db
+      .prepare(
+        `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
+      .all({ "@now": nowSec }) as Array<{ id: string }>;
+    const deletedFactIds = collectIds(rows);
+    if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds };
+    deleteLinksForFactIds(db, deletedFactIds);
+    const factsPruned = deleteFactsByIds(db, deletedFactIds);
+    return { factsPruned, deletedFactIds };
+  });
+  return tx();
+}
+
 export function pruneExpired(db: DatabaseSync): number {
-  const nowSec = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `DELETE FROM memory_links
-         WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-             AND id NOT IN (SELECT fact_id FROM verified_facts)
-         )
-         AND link_type != 'DERIVED_FROM'`,
-  ).run({ "@now": nowSec });
-  const result = db
-    .prepare(
-      `DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-    )
-    .run({ "@now": nowSec });
-  return Number(result.changes ?? 0);
+  return pruneExpiredWithDetails(db).factsPruned;
 }
 
 /** Same row filter as `pruneSessionScope` DELETE on `facts` (for vector cleanup preview/maintenance). */
@@ -626,21 +674,19 @@ export function listSessionFactIdsPendingPrune(db: DatabaseSync, sessionId: stri
 }
 
 export function pruneSessionScope(db: DatabaseSync, sessionId: string): number {
-  db.prepare(
-    `DELETE FROM memory_links
-         WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
-             AND id NOT IN (SELECT fact_id FROM verified_facts)
-         )
-         AND link_type != 'DERIVED_FROM'`,
-  ).run(sessionId);
-  const result = db
-    .prepare(
-      `DELETE FROM facts WHERE scope = 'session' AND scope_target = ?
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-    )
-    .run(sessionId);
-  return Number(result.changes ?? 0);
+  const tx = createTransaction(db, () => {
+    const rows = db
+      .prepare(
+        `SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
+      .all(sessionId) as Array<{ id: string }>;
+    const factIds = collectIds(rows);
+    if (factIds.length === 0) return 0;
+    deleteLinksForFactIds(db, factIds);
+    return deleteFactsByIds(db, factIds);
+  });
+  return tx();
 }
 
 export function promoteScope(
@@ -658,13 +704,15 @@ export function promoteScope(
 
 export function decayConfidence(db: DatabaseSync, nowSec = Math.floor(Date.now() / 1000)): number {
   // Return the number of facts whose confidence was halved — this is the true
-  // "decayed" count.  The subsequent hard-delete of facts that have already
-  // fallen below the 0.1 floor is an implementation side-effect and should NOT
-  // be confused with "decayed" (bug: previously the DELETE count was returned).
-  //
-  // Bug fix: both statements run inside a single transaction so a crash between
-  // UPDATE and DELETE cannot leave facts in a partially-decayed state visible to
-  // concurrent readers.
+  // "decayed" count.  The hard-delete count remains available via
+  // decayConfidenceWithDetails(...).deletedFactIds.length.
+  return decayConfidenceWithDetails(db, nowSec).factsDecayed;
+}
+
+export function decayConfidenceWithDetails(
+  db: DatabaseSync,
+  nowSec = Math.floor(Date.now() / 1000),
+): { factsDecayed: number; deletedFactIds: string[] } {
   const tx = createTransaction(db, () => {
     const updateResult = db
       .prepare(
@@ -679,23 +727,17 @@ export function decayConfidence(db: DatabaseSync, nowSec = Math.floor(Date.now()
              AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run({ "@now": nowSec });
-
-    db.prepare(
-      `DELETE FROM memory_links
-           WHERE target_fact_id IN (
-             SELECT id FROM facts WHERE confidence < 0.1
-               AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-               AND id NOT IN (SELECT fact_id FROM verified_facts)
-           )
-           AND link_type != 'DERIVED_FROM'`,
-    ).run({ "@now": nowSec });
-    db.prepare(
-      `DELETE FROM facts WHERE confidence < 0.1
-                  AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-                  AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-    ).run({ "@now": nowSec });
-
-    return Number(updateResult.changes ?? 0);
+    const rows = db
+      .prepare(
+        `SELECT id FROM facts WHERE confidence < 0.1
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
+      .all({ "@now": nowSec }) as Array<{ id: string }>;
+    const deletedFactIds = collectIds(rows);
+    deleteLinksForFactIds(db, deletedFactIds);
+    deleteFactsByIds(db, deletedFactIds);
+    return { factsDecayed: Number(updateResult.changes ?? 0), deletedFactIds };
   });
   return tx();
 }
