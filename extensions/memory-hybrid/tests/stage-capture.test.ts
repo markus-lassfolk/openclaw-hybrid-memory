@@ -101,7 +101,7 @@ describe("runCaptureStage", () => {
 
     expect(store).not.toHaveBeenCalled();
     expect(ctx.walWrite).not.toHaveBeenCalled();
-    expect(api.logger.debug).toHaveBeenCalledWith(expect.stringContaining("skipped auto-capture"));
+    expect(api.logger.debug).toHaveBeenCalledWith(expect.stringContaining("skipped conversational auto-capture"));
   });
 
   it("stores interactive captures with provenance metadata", async () => {

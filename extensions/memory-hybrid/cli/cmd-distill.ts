@@ -53,6 +53,7 @@ import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -656,19 +657,19 @@ export async function runDistillForCli(
           if (!opts.dryRun) {
             let storedInVault = false;
             try {
-              const storeResult = credentialsDb.storeIfNew({
+              const credStoreResult = credentialsDb.storeIfNew({
                 service: parsed.service,
                 type: parsed.type as any,
                 value: parsed.secretValue,
                 url: parsed.url,
                 notes: parsed.notes,
               });
-              if (!storeResult) {
+              if (!credStoreResult) {
                 continue;
               }
               storedInVault = true;
               const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
-              const entry = factsDb.store({
+              const storeResult = factsDb.storeWithResult({
                 text: pointerText,
                 category: "technical",
                 importance: BATCH_STORE_IMPORTANCE,
@@ -677,6 +678,14 @@ export async function runDistillForCli(
                 value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
                 source: "distillation",
                 sourceDate: sourceDateSec(fact.source_date),
+              });
+              const entry = storeResult.entry;
+              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+              await cleanupEvictedVector({
+                vectorDb: vectorDb,
+                evictedFactId: storeResult.evictedFactId,
+                logger: sink,
+                context: "distill",
               });
               try {
                 const vector = await embeddings.embed(pointerText);
@@ -728,7 +737,7 @@ export async function runDistillForCli(
           skipped++;
           continue;
         }
-        const entry = factsDb.store({
+        const storeResult = factsDb.storeWithResult({
           text: fact.text,
           category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
           importance: BATCH_STORE_IMPORTANCE,
@@ -738,6 +747,14 @@ export async function runDistillForCli(
           source: "distillation",
           sourceDate: sourceDateSec(fact.source_date),
           tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
+        });
+        const entry = storeResult.entry;
+        // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+        await cleanupEvictedVector({
+          vectorDb: vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: sink,
+          context: "distill",
         });
         try {
           await vectorDb.store({
