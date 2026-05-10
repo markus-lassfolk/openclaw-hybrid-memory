@@ -131,7 +131,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     if (dedupe.reason === "vector" || dedupe.reason === "lexical" || dedupe.reason === "hash") {
       ctx.db
         .prepare(
-          `UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_confirmed_at = ? WHERE id = ?`,
+          "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_confirmed_at = ? WHERE id = ?",
         )
         .run(nowSec, dedupe.existingId);
     }
@@ -253,7 +253,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
               .get(sourceForPolicy) as { id: string } | undefined;
             if (victim) {
               ctx.db
-                .prepare(`UPDATE facts SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL`)
+                .prepare("UPDATE facts SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL")
                 .run(nowSec, victim.id);
               evictedFactId = victim.id;
               ctx.db
@@ -391,7 +391,7 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
 
 export function deleteFact(db: DatabaseSync, id: string): boolean {
   db.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
-  db.prepare(`DELETE FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?`).run(id, id);
+  db.prepare("DELETE FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?").run(id, id);
   const result = db.prepare("DELETE FROM facts WHERE id = ?").run(id);
   return result.changes > 0;
 }
