@@ -185,17 +185,18 @@ export function applyDedupe(
   const entity = candidate.entity?.trim();
   const key = candidate.key?.trim();
   if (category === "project" && entity && key) {
-    const existing = candidate.value != null
-      ? (ctx.db
-          .prepare(
-            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND superseded_at IS NULL LIMIT 1",
-          )
-          .get(entity, key, candidate.value) as { id: string } | undefined)
-      : (ctx.db
-          .prepare(
-            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND superseded_at IS NULL LIMIT 1",
-          )
-          .get(entity, key, candidate.text) as { id: string } | undefined);
+    const existing =
+      candidate.value != null
+        ? (ctx.db
+            .prepare(
+              "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND superseded_at IS NULL LIMIT 1",
+            )
+            .get(entity, key, candidate.value) as { id: string } | undefined)
+        : (ctx.db
+            .prepare(
+              "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND superseded_at IS NULL LIMIT 1",
+            )
+            .get(entity, key, candidate.text) as { id: string } | undefined);
     if (existing) {
       return mapOnDuplicate(profile, existing.id, "exact");
     }

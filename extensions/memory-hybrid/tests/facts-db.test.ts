@@ -1049,9 +1049,9 @@ describe("FactsDB fuzzy deduplication", () => {
       source: "conversation",
     });
     expect(second.id).toBe(first.id);
-    expect(dedupeDb.listFactsByCategory("project", 20).filter((f) => f.entity === entity && f.key === "title")).toHaveLength(
-      1,
-    );
+    expect(
+      dedupeDb.listFactsByCategory("project", 20).filter((f) => f.entity === entity && f.key === "title"),
+    ).toHaveLength(1);
   });
 });
 
