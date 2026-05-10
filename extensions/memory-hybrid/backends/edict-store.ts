@@ -181,9 +181,7 @@ export class EdictStore extends BaseSqliteStore {
       // SQLite cannot add a PRIMARY KEY via ALTER TABLE; add a plain column + unique index instead.
       this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT");
       // Populate ids for existing rows deterministically enough for our use-case.
-      this.db.exec(
-        "UPDATE edicts SET id = ('e_' || lower(hex(randomblob(6)))) WHERE id IS NULL OR id = ''",
-      );
+      this.db.exec("UPDATE edicts SET id = ('e_' || lower(hex(randomblob(6)))) WHERE id IS NULL OR id = ''");
       this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_edicts_id_unique ON edicts(id)");
     }
 
@@ -193,13 +191,16 @@ export class EdictStore extends BaseSqliteStore {
 
     if (!hasCol("expires_at_sec")) {
       this.db.exec("ALTER TABLE edicts ADD COLUMN expires_at_sec INTEGER");
-      this.db.exec("CREATE INDEX IF NOT EXISTS idx_edicts_expires_sec ON edicts(expires_at_sec)");
     }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_edicts_expires_sec ON edicts(expires_at_sec)");
 
     // Backfill derived columns best-effort (id may already exist).
-    const rows = this.db
-      .prepare("SELECT rowid, id, text, expires_at FROM edicts ORDER BY rowid ASC")
-      .all() as Array<{ rowid: number; id: string | null; text: string; expires_at: string | null }>;
+    const rows = this.db.prepare("SELECT rowid, id, text, expires_at FROM edicts ORDER BY rowid ASC").all() as Array<{
+      rowid: number;
+      id: string | null;
+      text: string;
+      expires_at: string | null;
+    }>;
 
     const updateNorm = this.db.prepare("UPDATE edicts SET normalized_text = ? WHERE rowid = ?");
     const updateExpires = this.db.prepare("UPDATE edicts SET expires_at_sec = ? WHERE rowid = ?");
@@ -228,8 +229,10 @@ export class EdictStore extends BaseSqliteStore {
   isExpired(edict: EdictEntry): boolean {
     if (edict.ttl === "never") return false;
     if (edict.ttl === "event") {
-      if (!edict.expiresAt) return false;
-      const sec = edict.expiresAtSec ?? parseIsoDateToUnixSeconds(edict.expiresAt);
+      const expiresAt = edict.expiresAt?.trim();
+      // Fail closed for malformed legacy rows: event TTL without a valid expiry is considered expired.
+      if (!expiresAt) return true;
+      const sec = edict.expiresAtSec ?? parseIsoDateToUnixSeconds(expiresAt);
       if (sec == null) return true;
       return Math.floor(Date.now() / 1000) >= sec;
     }
@@ -252,8 +255,8 @@ export class EdictStore extends BaseSqliteStore {
 
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
 
-    if (typeof ttl === "number" && (!Number.isFinite(ttl) || ttl <= 0)) {
-      throw new Error("Edict ttl must be a positive number of seconds, 'never', or 'event'");
+    if (typeof ttl === "number" && (!Number.isFinite(ttl) || ttl <= 0 || !Number.isInteger(ttl))) {
+      throw new Error("Edict ttl must be a positive integer number of seconds, 'never', or 'event'");
     }
 
     const expiresAt = input.expiresAt ?? null;
@@ -308,9 +311,9 @@ export class EdictStore extends BaseSqliteStore {
 
   /** Find an edict by normalized text (for duplicate detection) */
   private findByNormalizedTextInternal(normalized: string): EdictEntry | null {
-    const rows = this.liveDb
-      .prepare("SELECT * FROM edicts WHERE normalized_text = ? LIMIT 1")
-      .all(normalized) as Array<Record<string, unknown>>;
+    const rows = this.liveDb.prepare("SELECT * FROM edicts WHERE normalized_text = ? LIMIT 1").all(normalized) as Array<
+      Record<string, unknown>
+    >;
     return rows.length > 0 ? this.rowToEntry(rows[0]) : null;
   }
 
@@ -346,7 +349,7 @@ export class EdictStore extends BaseSqliteStore {
 
     if (!includeExpired) {
       parts.push(
-        `((ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at = '' OR (expires_at_sec IS NOT NULL AND expires_at_sec > ?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
+        `((ttl = 'never') OR (ttl = 'event' AND expires_at_sec IS NOT NULL AND expires_at_sec > ?) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
       );
       params.push(nowSec, nowSec);
     }
@@ -418,8 +421,8 @@ export class EdictStore extends BaseSqliteStore {
     const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
     const expiresAtSec = expiresAt ? parseIsoDateToUnixSeconds(expiresAt) : null;
-    if (typeof ttl === "number" && (!Number.isFinite(ttl) || ttl <= 0)) {
-      throw new Error("Edict ttl must be a positive number of seconds, 'never', or 'event'");
+    if (typeof ttl === "number" && (!Number.isFinite(ttl) || ttl <= 0 || !Number.isInteger(ttl))) {
+      throw new Error("Edict ttl must be a positive integer number of seconds, 'never', or 'event'");
     }
     if (ttl === "event") {
       if (!expiresAt) {
@@ -479,7 +482,7 @@ export class EdictStore extends BaseSqliteStore {
     const expiredRow = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at != '' AND (expires_at_sec IS NULL OR expires_at_sec <= ?))
+         (ttl = 'event' AND (expires_at_sec IS NULL OR expires_at_sec <= ?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
       )
       .get(nowSec, nowSec) as { cnt: number };
@@ -513,7 +516,7 @@ export class EdictStore extends BaseSqliteStore {
       const result = this.liveDb
         .prepare(
           `DELETE FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at != '' AND (expires_at_sec IS NULL OR expires_at_sec <= ?))
+         (ttl = 'event' AND (expires_at_sec IS NULL OR expires_at_sec <= ?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
         )
         .run(nowSec, nowSec);
@@ -529,7 +532,7 @@ export class EdictStore extends BaseSqliteStore {
     else if (ttlRaw === "event") ttl = "event";
     else {
       const parsed = Number(ttlRaw);
-      ttl = Number.isFinite(parsed) ? parsed : 0;
+      ttl = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
     }
 
     return {

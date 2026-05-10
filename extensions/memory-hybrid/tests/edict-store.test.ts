@@ -31,6 +31,18 @@ describe("EdictStore", () => {
     expect(g.renderForPrompt).toContain("Verified fact one");
   });
 
+  it("creates expires_at_sec index on fresh databases", () => {
+    const db = new DatabaseSync(join(dir, "edicts.db"));
+    try {
+      const row = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_edicts_expires_sec'")
+        .get() as { name: string } | undefined;
+      expect(row?.name).toBe("idx_edicts_expires_sec");
+    } finally {
+      db.close();
+    }
+  });
+
   it("returns empty reads when _isReady is false (issue #964)", () => {
     (store as unknown as { _isReady: boolean })._isReady = false;
     expect(store.list()).toEqual([]);
@@ -43,7 +55,12 @@ describe("EdictStore", () => {
     const b = store.add({ text: "Verified B", tags: ["b"] });
     expect(store.list({ tags: ["b"] }).map((e) => e.id)).toEqual([b.id]);
     expect(store.list({ tags: ["a"] }).map((e) => e.id)).toEqual([a.id]);
-    expect(store.list({ tags: ["a", "b"] }).map((e) => e.id).sort()).toEqual([a.id, b.id].sort());
+    expect(
+      store
+        .list({ tags: ["a", "b"] })
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual([a.id, b.id].sort());
   });
 
   it("treats % and _ literally in tag filters", () => {
@@ -58,6 +75,12 @@ describe("EdictStore", () => {
     const expired = store.add({ text: "Expired", ttl: "event", expiresAt: past, tags: ["ops"] });
     expect(store.list({ tags: ["ops"] })).toEqual([]);
     expect(store.list({ includeExpired: true, tags: ["ops"] }).map((e) => e.id)).toEqual([expired.id]);
+  });
+
+  it("requires integer numeric TTL values", () => {
+    expect(() => store.add({ text: "fractional ttl", ttl: 0.5 })).toThrow(/positive integer/i);
+    const created = store.add({ text: "Integer ttl", ttl: 120 });
+    expect(() => store.update({ id: created.id, ttl: 3.14 })).toThrow(/positive integer/i);
   });
 
   it("detects duplicates using normalized_text (case/whitespace)", () => {
@@ -91,6 +114,40 @@ describe("EdictStore", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].id).toMatch(/^e_/);
       expect(legacy.getById(rows[0].id)?.text).toBe("Legacy row");
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it("treats legacy ttl='event' rows without valid expiry as expired (fail-closed)", () => {
+    const legacyPath = join(dir, "legacy-event-edicts.db");
+    const db = new DatabaseSync(legacyPath);
+    db.exec(`
+      CREATE TABLE edicts (
+        text TEXT NOT NULL,
+        source TEXT,
+        verified_at INTEGER,
+        expires_at TEXT,
+        ttl TEXT NOT NULL DEFAULT 'never',
+        tags TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.prepare(
+      "INSERT INTO edicts (text, source, verified_at, expires_at, ttl, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("Legacy event row", null, 0, null, "event", "ops", 1, 1);
+    db.close();
+
+    const legacy = new EdictStore(legacyPath);
+    try {
+      expect(legacy.list({ tags: ["ops"] })).toEqual([]);
+      const includeExpired = legacy.list({ includeExpired: true, tags: ["ops"] });
+      expect(includeExpired).toHaveLength(1);
+      expect(legacy.isExpired(includeExpired[0])).toBe(true);
+      expect(legacy.stats().expired).toBe(1);
+      expect(legacy.pruneExpired()).toBe(1);
+      expect(legacy.list({ includeExpired: true, tags: ["ops"] })).toEqual([]);
     } finally {
       legacy.close();
     }
