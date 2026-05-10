@@ -11,6 +11,17 @@ export type HybridMemCronStep = { name: string; cmd: string };
 export const HYBRID_MEM_CRON_ENV_SANITIZER_MARKER =
   "# Hybrid-mem env sanitizer (strip service vars that can break plugin CLI discovery)";
 
+/**
+ * Bash wrapper function that sanitizes environment variables before invoking openclaw.
+ *
+ * Issue #1209: OpenClaw CLI skips loading plugin CLIs when OPENCLAW_SERVICE_KIND or
+ * OPENCLAW_SERVICE_MARKER are present, treating the invocation as a service context
+ * where CLI commands shouldn't be available. We must unset these markers BEFORE
+ * invoking openclaw to ensure hybrid-mem CLI commands are discovered.
+ *
+ * Also unsets OPENCLAW_CLI (can interfere with arg parsing) and
+ * OPENCLAW_SKIP_HYBRID_MEMORY_CLI (if somehow set).
+ */
 export function hybridMemCronEnvSanitizerBashLines(): string[] {
   return [
     HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,

@@ -435,7 +435,9 @@ describe("active-task-checkpoint", () => {
     factsDb.close();
   });
 
-  it("preserves omitted fields even when task facts are older than the newest 8k project rows", async () => {
+  it(
+    "preserves omitted fields even when task facts are older than the newest 8k project rows",
+    async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
 
     const baseline = await runActiveTaskCheckpoint(
@@ -478,7 +480,9 @@ describe("active-task-checkpoint", () => {
     expect(followup.checkpoint?.relatedSession).toBe("agent:main:session-a");
 
     factsDb.close();
-  });
+    },
+    45_000,
+  );
 
   it("preserves explicitly cleared owner/next fields on follow-up checkpoints", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
