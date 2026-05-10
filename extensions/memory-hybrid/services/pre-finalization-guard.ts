@@ -227,9 +227,10 @@ function isCommandExecutionTool(name: string): boolean {
 function extractCommandCandidates(call: ToolCallSnapshot): string[] {
   const candidates: string[] = [];
   if (isCommandExecutionTool(call.name) && call.rawArguments.trim()) candidates.push(call.rawArguments);
-
   const parsed = call.parsedArgs;
-  if (!parsed) return candidates;
+  if (!parsed) {
+    return candidates;
+  }
 
   const preferredKeys = ["cmd", "command", "script", "bash", "args"];
   for (const key of preferredKeys) {
