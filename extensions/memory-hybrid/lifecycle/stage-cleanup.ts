@@ -27,12 +27,12 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
-import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import {
   type SubagentEndedEvent,
   findActiveTaskForSubagentEnd,
   subagentEndedIsSuccess,
 } from "../utils/subagent-ended-utils.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -303,7 +303,10 @@ export function createStaleSweepTimer(sessionState: SessionState): ReturnType<ty
       // Suppress expected database connection errors during shutdown
       const e = err instanceof Error ? err : new Error(String(err));
       if (!/database connection is not open/i.test(e.message)) {
-        // Log unexpected errors but don't crash - timer will retry on next interval
+        capturePluginError(e, {
+          operation: "stale-session-sweep",
+          subsystem: "active-task",
+        });
       }
     }
   }, STALE_SWEEP_INTERVAL_MS);
