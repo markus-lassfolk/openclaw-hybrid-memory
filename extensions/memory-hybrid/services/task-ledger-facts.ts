@@ -3,12 +3,12 @@
  * Aligns hybrid-mem active-tasks with memory_store / memory_recall workflows.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import {
   type ActiveTaskEntry,
@@ -32,6 +32,26 @@ export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
+const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
+const ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER: ScopeFilter = { agentId: "__active_task_projection_global__" };
+
+type ActiveTaskProjectionStaleMarker = {
+  staleAt: string;
+  reason: string;
+  source?: string;
+  factId?: string;
+};
+
+export type ActiveTaskProjectionStatus = {
+  filePath: string;
+  markerPath: string;
+  exists: boolean;
+  stale: boolean;
+  staleReasons: string[];
+  latestProjectFactAt: string | null;
+  renderedAt: string | null;
+  marker: ActiveTaskProjectionStaleMarker | null;
+};
 
 /** Latest value per entity+key from non-superseded project facts */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
@@ -192,11 +212,15 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
 export function loadTaskLedgerFromFacts(
   factsDb: FactsDB,
   factLimit = 8000,
+  scopeFilter?: ScopeFilter | null,
 ): {
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
 } {
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, factLimit);
+  const facts = factsDb
+    .getAll({ scopeFilter })
+    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
+    .slice(0, factLimit);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
 }
@@ -204,10 +228,169 @@ export function loadTaskLedgerFromFacts(
 export function readActiveTaskRowsFromFacts(
   factsDb: FactsDB,
   staleMinutes: number,
-): { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] } {
-  const { active, completed } = loadTaskLedgerFromFacts(factsDb);
+  scopeFilter?: ScopeFilter | null,
+): { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[]; latestProjectFactSec: number | null } {
+  const { active, completed } = loadTaskLedgerFromFacts(factsDb, 8000, scopeFilter);
   const staleActive = detectStaleTasks(active, staleMinutes);
-  return { active: staleActive, completed };
+  const latestProjectFactSec = getLatestProjectFactCreatedAtSec(factsDb, scopeFilter);
+  return { active: staleActive, completed, latestProjectFactSec };
+}
+
+export function getActiveTaskProjectionStaleMarkerPath(filePath: string): string {
+  return `${filePath}${PROJECTION_STALE_MARKER_SUFFIX}`;
+}
+
+function parseProjectionMarker(raw: string): ActiveTaskProjectionStaleMarker | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<ActiveTaskProjectionStaleMarker>;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof parsed.staleAt === "string" &&
+      parsed.staleAt.trim().length > 0 &&
+      typeof parsed.reason === "string" &&
+      parsed.reason.trim().length > 0
+    ) {
+      return {
+        staleAt: parsed.staleAt.trim(),
+        reason: parsed.reason.trim(),
+        ...(typeof parsed.source === "string" && parsed.source.trim().length > 0
+          ? { source: parsed.source.trim() }
+          : {}),
+        ...(typeof parsed.factId === "string" && parsed.factId.trim().length > 0
+          ? { factId: parsed.factId.trim() }
+          : {}),
+      };
+    }
+  } catch {
+    // ignore malformed marker JSON
+  }
+  return null;
+}
+
+async function readActiveTaskProjectionStaleMarker(filePath: string): Promise<ActiveTaskProjectionStaleMarker | null> {
+  const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
+  try {
+    const raw = await readFile(markerPath, "utf-8");
+    return parseProjectionMarker(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function markActiveTaskProjectionStale(
+  filePath: string,
+  reason: string,
+  meta: { source?: string; factId?: string } = {},
+): Promise<void> {
+  const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
+  const marker: ActiveTaskProjectionStaleMarker = {
+    staleAt: new Date().toISOString(),
+    reason: reason.trim().length > 0 ? reason.trim() : "projection marked stale",
+    ...(meta.source ? { source: meta.source } : {}),
+    ...(meta.factId ? { factId: meta.factId } : {}),
+  };
+  await mkdir(dirname(markerPath), { recursive: true });
+  await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf-8");
+}
+
+export async function clearActiveTaskProjectionStale(filePath: string): Promise<void> {
+  await rm(getActiveTaskProjectionStaleMarkerPath(filePath), { force: true });
+}
+
+export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): number | null {
+  const projectFacts = factsDb
+    .getAll({ scopeFilter })
+    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
+    .slice(0, 8000);
+  if (projectFacts.length === 0) return null;
+  let maxSec = Number.NEGATIVE_INFINITY;
+  for (const fact of projectFacts) {
+    if (typeof fact.createdAt === "number" && Number.isFinite(fact.createdAt)) {
+      maxSec = Math.max(maxSec, fact.createdAt);
+    }
+  }
+  return maxSec === Number.NEGATIVE_INFINITY ? null : maxSec;
+}
+
+function toIsoOrNull(unixSeconds: number | null): string | null {
+  if (unixSeconds === null) return null;
+  return new Date(unixSeconds * 1000).toISOString();
+}
+
+export async function getActiveTaskProjectionStatus(
+  factsDb: FactsDB,
+  filePath: string,
+  opts: { scopeFilter?: ScopeFilter | null; latestProjectFactSec?: number | null } = {},
+): Promise<ActiveTaskProjectionStatus> {
+  const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
+  const marker = await readActiveTaskProjectionStaleMarker(filePath);
+  const latestProjectFactSec =
+    opts.latestProjectFactSec ?? getLatestProjectFactCreatedAtSec(factsDb, opts.scopeFilter);
+  const latestProjectFactAt = toIsoOrNull(latestProjectFactSec);
+
+  let exists = false;
+  let renderedAt: string | null = null;
+  let renderedMs: number | null = null;
+  try {
+    const fileStat = await stat(filePath);
+    exists = fileStat.isFile();
+    if (exists) {
+      renderedMs = fileStat.mtimeMs;
+      renderedAt = new Date(fileStat.mtimeMs).toISOString();
+    }
+  } catch {
+    // no projection file
+  }
+
+  const staleReasons = new Set<string>();
+  if (latestProjectFactSec !== null && !exists) {
+    staleReasons.add("projection_missing");
+  }
+  if (latestProjectFactSec !== null && renderedMs !== null && latestProjectFactSec * 1000 > renderedMs + 1000) {
+    staleReasons.add("project_facts_newer_than_projection");
+  }
+  if (marker) {
+    staleReasons.add("projection_marked_stale");
+  }
+
+  return {
+    filePath,
+    markerPath,
+    exists,
+    stale: staleReasons.size > 0,
+    staleReasons: [...staleReasons],
+    latestProjectFactAt,
+    renderedAt,
+    marker,
+  };
+}
+
+export async function refreshActiveTaskProjectionBestEffort(opts: {
+  factsDb: FactsDB;
+  staleMinutes: number;
+  filePath: string;
+  projection: ActiveTaskProjectionConfig;
+  reason: string;
+  source?: string;
+  factId?: string;
+  logger?: { warn?: (m: string) => void };
+}): Promise<{ rendered: boolean; staleMarked: boolean; error?: string }> {
+  try {
+    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection);
+    return { rendered: true, staleMarked: false };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    let staleMarked = false;
+    try {
+      await markActiveTaskProjectionStale(opts.filePath, opts.reason, { source: opts.source, factId: opts.factId });
+      staleMarked = true;
+    } catch {
+      // Ignore stale marker write failures (best-effort)
+    }
+    opts.logger?.warn?.(`memory-hybrid: active-task projection refresh failed: ${message}`);
+    return { rendered: false, staleMarked, error: message };
+  }
 }
 
 /** Normalize description for `dedupeBy: normalizedTitle`. */
@@ -796,7 +979,7 @@ export async function renderActiveTaskMarkdownFile(
   filePath: string,
   projection: ActiveTaskProjectionConfig,
 ): Promise<void> {
-  let { active, completed } = loadTaskLedgerFromFacts(factsDb);
+  let { active, completed } = loadTaskLedgerFromFacts(factsDb, 8000, ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER);
   active = applyActiveTaskProjectionFilters(active, projection);
   completed = applyActiveTaskProjectionFilters(completed, projection);
   active = detectStaleTasks(active, staleMinutes);
@@ -845,6 +1028,11 @@ export async function renderActiveTaskMarkdownFile(
   );
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, lines.join("\n"), "utf-8");
+  try {
+    await clearActiveTaskProjectionStale(filePath);
+  } catch {
+    // Keep render success best-effort even when marker cleanup fails.
+  }
 }
 
 /**
