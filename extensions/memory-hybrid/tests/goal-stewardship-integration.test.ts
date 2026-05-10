@@ -260,6 +260,44 @@ describe("goal stewardship integration (mock plugin API)", () => {
     expect(task?.dispatchFailureReason).toBe("previous dispatch diagnostics");
   });
 
+  it("subagent_ended skips ambiguous label-only matches across multiple goals", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
+
+    const g1 = await createGoal(goalsDir, { label: "deploy-a", description: "deploy a", acceptanceCriteria: ["ok"] }, defaults);
+    const g2 = await createGoal(goalsDir, { label: "deploy-b", description: "deploy b", acceptanceCriteria: ["ok"] }, defaults);
+    const now = new Date().toISOString();
+    await updateGoal(
+      goalsDir,
+      g1.id,
+      {
+        linkedTasks: [{ label: "shared-task", sessionKey: null, runId: null, status: "in_progress", linkedAt: now, updatedAt: now }],
+      },
+      { timestamp: now, action: "test", detail: "seed linked task", actor: "user" },
+    );
+    await updateGoal(
+      goalsDir,
+      g2.id,
+      {
+        linkedTasks: [{ label: "shared-task", sessionKey: null, runId: null, status: "in_progress", linkedAt: now, updatedAt: now }],
+      },
+      { timestamp: now, action: "test", detail: "seed linked task", actor: "user" },
+    );
+
+    await api.emitAll("subagent_ended", {
+      label: "shared-task",
+      success: true,
+      outcome: "success",
+    });
+
+    const after1 = await readGoal(goalsDir, g1.id);
+    const after2 = await readGoal(goalsDir, g2.id);
+    expect(after1?.linkedTasks.find((t) => t.label === "shared-task")?.status).toBe("in_progress");
+    expect(after2?.linkedTasks.find((t) => t.label === "shared-task")?.status).toBe("in_progress");
+  });
+
   it("before_agent_start returns undefined when no active goals exist", async () => {
     const cfg = parseCfg();
     const ctx = minimalLifecycleContext(cfg);
