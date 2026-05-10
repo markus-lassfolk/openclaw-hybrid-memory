@@ -175,6 +175,17 @@ openclaw hybrid-mem goals stewardship-run
 
 This runs the same **non-LLM** checks as the periodic watchdog (budgets, staleness, mechanical verification, etc.). It does **not** replace a heartbeat turn.
 
+Each run now prints **per-goal outcomes** so operators can inspect what happened for every considered goal, not just a global "ok":
+
+- `done`
+- `blocked`
+- `dispatched`
+- `executed`
+- `waiting`
+- `noop`
+
+When a dispatch is observed, outcome rows include `task`, `session`, and `run` metadata when available.
+
 ## CLI (observability)
 
 All commands are under **`openclaw hybrid-mem goals`**:
@@ -206,6 +217,8 @@ On the timer (when enabled), the plugin checks each non-terminal goal for: dispa
 | `pr_merged` | GitHub REST API: PR must be merged | **`goalStewardship.allowPrVerification: true`** and **`GITHUB_TOKEN`** or **`GH_TOKEN`** set. Target: `owner/repo#N` or `https://github.com/owner/repo/pull/N` |
 
 Each run records **`lastMechanicalCheck`** on the goal JSON (`at`, `ok`, `detail`). On success, non-terminal **`active`** / **`stalled`** goals move to **`verifying`** (same as before); **`goal_complete`** is still for the agent when policy allows.
+
+If an in-progress linked task lacks both `sessionKey` and `runId`, stewardship marks that dispatch attempt as failed with an inspectable reason (`dispatchFailureReason`), blocks the goal, and reports a `blocked` outcome instead of a vague dispatched/ok summary.
 
 ## Escalation ladder (watchdog vs tools vs circuit breaker)
 
