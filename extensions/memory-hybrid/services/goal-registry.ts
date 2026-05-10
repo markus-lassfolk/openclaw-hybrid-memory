@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import type { EventLog } from "../backends/event-log.js";
@@ -42,6 +42,38 @@ export function validateGoalLabel(label: string): { ok: true } | { ok: false; er
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const GOAL_LOCK_RETRY_MS = 25;
+const GOAL_LOCK_MAX_RETRIES = 200;
+
+function lockKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "goal";
+}
+
+async function acquireGoalLock(goalsDir: string, key: string): Promise<string> {
+  const lockPath = join(goalsDir, `.lock-${lockKey(key)}`);
+  await ensureDir(goalsDir);
+  for (let attempt = 0; attempt < GOAL_LOCK_MAX_RETRIES; attempt++) {
+    try {
+      await mkdir(lockPath);
+      return lockPath;
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "EEXIST") throw err;
+      await new Promise((resolve) => setTimeout(resolve, GOAL_LOCK_RETRY_MS));
+    }
+  }
+  throw new Error(`Timed out waiting for goal lock: ${key}`);
+}
+
+async function withGoalLock<T>(goalsDir: string, key: string, fn: () => Promise<T>): Promise<T> {
+  const lockPath = await acquireGoalLock(goalsDir, key);
+  try {
+    return await fn();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -148,50 +180,53 @@ export async function createGoal(
   defaults: GoalDefaults,
   eventLog?: EventLog | null,
 ): Promise<Goal> {
-  const v = validateGoalLabel(input.label);
-  if (!v.ok) throw new Error(v.error);
+  const goal = await withGoalLock(goalsDir, `label:${input.label}`, async () => {
+    const v = validateGoalLabel(input.label);
+    if (!v.ok) throw new Error(v.error);
 
-  const existing = await readGoalByLabel(goalsDir, input.label);
-  if (existing && !isTerminalStatus(existing.status)) {
-    throw new Error(`A goal with label "${input.label}" already exists (status: ${existing.status})`);
-  }
+    const existing = await readGoalByLabel(goalsDir, input.label);
+    if (existing && !isTerminalStatus(existing.status)) {
+      throw new Error(`A goal with label "${input.label}" already exists (status: ${existing.status})`);
+    }
 
-  const id = randomUUID();
-  const ts = nowIso();
-  const goal: Goal = {
-    id,
-    label: input.label.trim(),
-    description: input.description.trim(),
-    acceptanceCriteria: input.acceptanceCriteria.map((c) => c.trim()).filter(Boolean),
-    verification: input.verification,
-    status: "active",
-    priority: input.priority ?? defaults.priority,
-    createdAt: ts,
-    lastAssessedAt: null,
-    lastDispatchedAt: null,
-    assessmentCount: 0,
-    dispatchCount: 0,
-    currentBlockers: [],
-    lastOutcome: null,
-    maxDispatches: input.maxDispatches ?? defaults.maxDispatches,
-    maxAssessments: input.maxAssessments ?? defaults.maxAssessments,
-    cooldownMinutes: input.cooldownMinutes ?? defaults.cooldownMinutes,
-    escalateAfterFailures: input.escalateAfterFailures ?? defaults.escalateAfterFailures,
-    consecutiveFailures: 0,
-    lastBlockerFingerprint: null,
-    sameBlockerStreak: 0,
-    circuitBreakerLastProgressAssessmentCount: 0,
-    humanEscalationSummary: null,
-    escalationKind: null,
-    linkedTasks: [],
-    history: [{ timestamp: ts, action: "created", detail: input.description.slice(0, 500), actor: "user" }],
-  };
+    const id = randomUUID();
+    const ts = nowIso();
+    const draft: Goal = {
+      id,
+      label: input.label.trim(),
+      description: input.description.trim(),
+      acceptanceCriteria: input.acceptanceCriteria.map((c) => c.trim()).filter(Boolean),
+      verification: input.verification,
+      status: "active",
+      priority: input.priority ?? defaults.priority,
+      createdAt: ts,
+      lastAssessedAt: null,
+      lastDispatchedAt: null,
+      assessmentCount: 0,
+      dispatchCount: 0,
+      currentBlockers: [],
+      lastOutcome: null,
+      maxDispatches: input.maxDispatches ?? defaults.maxDispatches,
+      maxAssessments: input.maxAssessments ?? defaults.maxAssessments,
+      cooldownMinutes: input.cooldownMinutes ?? defaults.cooldownMinutes,
+      escalateAfterFailures: input.escalateAfterFailures ?? defaults.escalateAfterFailures,
+      consecutiveFailures: 0,
+      lastBlockerFingerprint: null,
+      sameBlockerStreak: 0,
+      circuitBreakerLastProgressAssessmentCount: 0,
+      humanEscalationSummary: null,
+      escalationKind: null,
+      linkedTasks: [],
+      history: [{ timestamp: ts, action: "created", detail: input.description.slice(0, 500), actor: "user" }],
+    };
 
-  if (goal.acceptanceCriteria.length === 0) {
-    throw new Error("acceptanceCriteria must contain at least one item");
-  }
+    if (draft.acceptanceCriteria.length === 0) {
+      throw new Error("acceptanceCriteria must contain at least one item");
+    }
 
-  await writeGoal(goalsDir, goal);
+    await writeGoal(goalsDir, draft);
+    return draft;
+  });
 
   try {
     eventLog?.append({
@@ -241,12 +276,14 @@ export async function updateGoal(
   >,
   historyEntry: GoalHistoryEntry | GoalHistoryEntry[],
 ): Promise<Goal> {
-  const g = await readGoal(goalsDir, id);
-  if (!g) throw new Error(`Goal not found: ${id}`);
-  const entries = Array.isArray(historyEntry) ? historyEntry : [historyEntry];
-  const next = { ...g, ...patch, history: [...(g.history ?? []), ...entries] };
-  await writeGoal(goalsDir, next);
-  return next;
+  return withGoalLock(goalsDir, id, async () => {
+    const g = await readGoal(goalsDir, id);
+    if (!g) throw new Error(`Goal not found: ${id}`);
+    const entries = Array.isArray(historyEntry) ? historyEntry : [historyEntry];
+    const next = { ...g, ...patch, history: [...(g.history ?? []), ...entries] };
+    await writeGoal(goalsDir, next);
+    return next;
+  });
 }
 
 export async function terminateGoal(
@@ -257,16 +294,20 @@ export async function terminateGoal(
   actor: GoalHistoryActor,
   eventLog?: EventLog | null,
 ): Promise<Goal> {
-  const g = await readGoal(goalsDir, id);
-  if (!g) throw new Error(`Goal not found: ${id}`);
+  const next = await withGoalLock(goalsDir, id, async () => {
+    const g = await readGoal(goalsDir, id);
+    if (!g) throw new Error(`Goal not found: ${id}`);
+    const ts = nowIso();
+    const updated: Goal = {
+      ...g,
+      status,
+      lastOutcome: reason,
+      history: [...(g.history ?? []), { timestamp: ts, action: status, detail: reason, actor }],
+    };
+    await writeGoal(goalsDir, updated);
+    return updated;
+  });
   const ts = nowIso();
-  const next: Goal = {
-    ...g,
-    status,
-    lastOutcome: reason,
-    history: [...(g.history ?? []), { timestamp: ts, action: status, detail: reason, actor }],
-  };
-  await writeGoal(goalsDir, next);
 
   const kind = status === "completed" ? "goal.completed" : status === "failed" ? "goal.failed" : "goal.abandoned";
   try {
@@ -291,10 +332,12 @@ export async function terminateGoal(
 }
 
 export async function appendGoalHistory(goalsDir: string, id: string, entry: GoalHistoryEntry): Promise<void> {
-  const g = await readGoal(goalsDir, id);
-  if (!g) throw new Error(`Goal not found: ${id}`);
-  const next = { ...g, history: [...(g.history ?? []), entry] };
-  await writeGoal(goalsDir, next);
+  await withGoalLock(goalsDir, id, async () => {
+    const g = await readGoal(goalsDir, id);
+    if (!g) throw new Error(`Goal not found: ${id}`);
+    const next = { ...g, history: [...(g.history ?? []), entry] };
+    await writeGoal(goalsDir, next);
+  });
 }
 
 export async function resolveGoalId(goalsDir: string, idOrLabel: string): Promise<Goal | null> {

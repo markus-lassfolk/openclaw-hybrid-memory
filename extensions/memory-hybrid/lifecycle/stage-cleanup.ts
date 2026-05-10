@@ -63,7 +63,13 @@ async function consumePendingTaskSignals(
   factsDb: import("../backends/facts-db.js").FactsDB,
   vectorDb: import("../backends/vector-db.js").VectorDB,
   embeddings: import("../services/embeddings.js").EmbeddingProvider,
+  sessionKey?: string,
 ): Promise<void> {
+  if (isSubagentSession(sessionKey)) {
+    logger?.debug?.("memory-hybrid: skipping pending task signal consumption in sub-agent session");
+    return;
+  }
+
   if (ledger === "facts") {
     await consumePendingTaskSignalsFacts(
       workspaceRoot,
@@ -420,6 +426,7 @@ export function registerCleanupHandlers(
           ctx.factsDb,
           ctx.vectorDb,
           ctx.embeddings,
+          api.context?.sessionKey,
         );
         return;
       }
@@ -442,6 +449,7 @@ export function registerCleanupHandlers(
           ctx.factsDb,
           ctx.vectorDb,
           ctx.embeddings,
+          api.context?.sessionKey,
         );
         return;
       }
@@ -458,6 +466,7 @@ export function registerCleanupHandlers(
           ctx.factsDb,
           ctx.vectorDb,
           ctx.embeddings,
+          api.context?.sessionKey,
         );
         return;
       }
@@ -571,6 +580,7 @@ export function registerCleanupHandlers(
         ctx.factsDb,
         ctx.vectorDb,
         ctx.embeddings,
+        api.context?.sessionKey,
       );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
