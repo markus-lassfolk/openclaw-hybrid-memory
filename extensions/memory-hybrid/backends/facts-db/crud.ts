@@ -164,8 +164,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
 
   const importance = entry.importance ?? 0.5;
   const why = entry.why ?? null;
-  const entity = entry.entity ?? null;
-  const key = entry.key ?? null;
+  const entity = entry.entity?.trim() || null;
+  const key = entry.key?.trim() || null;
   const value = entry.value ?? null;
   const source = entry.source ?? "conversation";
   const category = entry.category ?? "other";
