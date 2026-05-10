@@ -9,6 +9,7 @@ import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { slugify } from "./credential-scanner.js";
 
 const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
 const ACTIVE_TASK_WAKE_GUARD_YEARS = 10;
@@ -243,14 +244,6 @@ function normalizeCheckpointInput(
     },
     errors,
   };
-}
-
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
 }
 
 function resolveOpenclawDir(override?: string): string {
