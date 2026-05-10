@@ -356,9 +356,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
       sessionTarget: "main",
       delivery: { mode: "none" },
       payload: {
-        kind: "agentTurn",
-        sessionTarget: "main",
-        message: desiredMessage,
+        kind: "systemEvent",
+        text: desiredMessage,
       },
     });
     const payload = JSON.stringify(store, null, 2);
@@ -409,27 +408,31 @@ export function ensureGoalStewardshipHeartbeatCronJob(
     changed = true;
   }
   const payload =
-    typeof existing.payload === "object" && existing.payload !== null
+    typeof existing.payload === "object" && existing.payload !== null && !Array.isArray(existing.payload)
       ? (existing.payload as Record<string, unknown>)
       : {};
   if (existing.payload !== payload) {
     existing.payload = payload;
     changed = true;
   }
-  if (payload.kind !== "agentTurn") {
-    payload.kind = "agentTurn";
+  if (payload.kind !== "systemEvent") {
+    payload.kind = "systemEvent";
     changed = true;
   }
-  if (payload.sessionTarget !== "main") {
-    payload.sessionTarget = "main";
+  if (payload.sessionTarget !== undefined) {
+    payload.sessionTarget = undefined;
     changed = true;
   }
   if (payload.isolated !== undefined) {
     payload.isolated = undefined;
     changed = true;
   }
-  if (payload.message !== desiredMessage) {
-    payload.message = desiredMessage;
+  if (payload.message !== undefined) {
+    payload.message = undefined;
+    changed = true;
+  }
+  if (payload.text !== desiredMessage) {
+    payload.text = desiredMessage;
     changed = true;
   }
 

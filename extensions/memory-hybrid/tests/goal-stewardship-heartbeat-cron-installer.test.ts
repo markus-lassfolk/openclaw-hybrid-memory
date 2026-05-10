@@ -33,9 +33,9 @@ describe("ensureGoalStewardshipHeartbeatCronJob", () => {
       expect(job?.schedule).toEqual({ kind: "cron", expr: "*/30 * * * *" });
 
       const payload = job?.payload as Record<string, unknown> | undefined;
-      expect(payload?.kind).toBe("agentTurn");
-      expect(payload?.sessionTarget).toBe("main");
-      const message = String(payload?.message ?? "");
+      expect(payload?.kind).toBe("systemEvent");
+      expect(payload?.sessionTarget).toBeUndefined();
+      const message = String(payload?.text ?? "");
       expect(message.startsWith("cron heartbeat")).toBe(true);
       const matchers = compileHeartbeatMatchers([]);
       expect(matchers.some((re) => re.test(message))).toBe(true);
@@ -93,12 +93,63 @@ describe("ensureGoalStewardshipHeartbeatCronJob", () => {
       expect(job?.isolated).toBeUndefined();
 
       const payload = job?.payload as Record<string, unknown> | undefined;
-      expect(payload?.kind).toBe("agentTurn");
-      expect(payload?.sessionTarget).toBe("main");
-      const message = String(payload?.message ?? "");
+      expect(payload?.kind).toBe("systemEvent");
+      expect(payload?.sessionTarget).toBeUndefined();
+      expect(payload?.message).toBeUndefined();
+      const message = String(payload?.text ?? "");
       expect(message.startsWith("cron heartbeat")).toBe(true);
       const matchers = compileHeartbeatMatchers(["steward pulse"]);
       expect(matchers.some((re) => re.test(message))).toBe(true);
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces non-plain payloads while normalizing existing jobs", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-heartbeat-array-payload-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(
+        join(openclawDir, "cron", "jobs.json"),
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "goal-stewardship-heartbeat",
+                payload: ["not", "a", "plain", "object"],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureGoalStewardshipHeartbeatCronJob(openclawDir, { heartbeatPatterns: [] });
+      expect(result).toEqual({ added: false, normalized: true });
+
+      const store = readCronStore(openclawDir);
+      const job = store.jobs.find((j) => j.pluginJobId === "goal-stewardship-heartbeat");
+      expect(Array.isArray(job?.payload)).toBe(false);
+      expect(job?.payload).toMatchObject({ kind: "systemEvent", text: "cron heartbeat" });
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips installation when heartbeat patterns cannot match synthesized candidates", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-heartbeat-skip-"));
+    try {
+      const result = ensureGoalStewardshipHeartbeatCronJob(openclawDir, {
+        heartbeatPatterns: ["^definitely-not-a-heartbeat$"],
+      });
+      expect(result).toEqual({
+        added: false,
+        normalized: false,
+        skippedReason:
+          "could not synthesize a 'cron heartbeat …' message that matches goalStewardship.heartbeatPatterns",
+      });
     } finally {
       rmSync(openclawDir, { recursive: true, force: true });
     }
