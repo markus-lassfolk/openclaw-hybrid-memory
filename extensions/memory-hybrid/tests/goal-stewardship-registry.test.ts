@@ -116,13 +116,13 @@ describe("goal registry", () => {
     ).rejects.toThrow(/already exists/);
   });
 
-  it("createGoal allows reuse of label after terminal goal", async () => {
+  it("createGoal rejects label reuse after terminal goal", async () => {
     dir = await makeTempDir();
     const g = await createGoal(dir, { label: "reuse", description: "d", acceptanceCriteria: ["a"] }, defaults);
     await terminateGoal(dir, g.id, "completed", "done", "user");
-    const g2 = await createGoal(dir, { label: "reuse", description: "d2", acceptanceCriteria: ["b"] }, defaults);
-    expect(g2.status).toBe("active");
-    expect(g2.id).not.toBe(g.id);
+    await expect(
+      createGoal(dir, { label: "reuse", description: "d2", acceptanceCriteria: ["b"] }, defaults),
+    ).rejects.toThrow(/already exists/);
   });
 
   it("listActiveGoals excludes terminal goals", async () => {
@@ -185,23 +185,37 @@ describe("goal registry", () => {
   it("readGoalByLabel prefers active over terminal when labels collide", async () => {
     dir = await makeTempDir();
     const g1 = await createGoal(dir, { label: "pref", description: "d", acceptanceCriteria: ["c"] }, defaults);
-    await terminateGoal(dir, g1.id, "completed", "done", "user");
-    const g2 = await createGoal(dir, { label: "pref", description: "d2", acceptanceCriteria: ["c2"] }, defaults);
+    const terminal = await terminateGoal(dir, g1.id, "completed", "done", "user");
+    const activeLegacy = {
+      ...terminal,
+      id: "legacy-pref-active",
+      status: "active" as const,
+      description: "legacy duplicate fixture",
+    };
+    await writeFile(join(dir, `${activeLegacy.id}.json`), JSON.stringify(activeLegacy), "utf-8");
+    await rebuildGoalIndex(dir);
     const found = await readGoalByLabel(dir, "pref");
-    expect(found?.id).toBe(g2.id);
+    expect(found?.id).toBe(activeLegacy.id);
     expect(found?.status).toBe("active");
   });
 
   it("readGoalByLabel uses index and prefers active over terminal", async () => {
     dir = await makeTempDir();
     const g1 = await createGoal(dir, { label: "idx_pref", description: "d", acceptanceCriteria: ["c"] }, defaults);
-    await terminateGoal(dir, g1.id, "completed", "done", "user");
-    const g2 = await createGoal(dir, { label: "idx_pref", description: "d2", acceptanceCriteria: ["c2"] }, defaults);
+    const terminal = await terminateGoal(dir, g1.id, "completed", "done", "user");
+    const activeLegacy = {
+      ...terminal,
+      id: "legacy-idx-pref-active",
+      status: "active" as const,
+      description: "legacy duplicate fixture",
+    };
+    await writeFile(join(dir, `${activeLegacy.id}.json`), JSON.stringify(activeLegacy), "utf-8");
+    await rebuildGoalIndex(dir);
     const indexRaw = JSON.parse(await readFile(join(dir, "_index.json"), "utf-8"));
     expect(indexRaw.goals.some((x: { id: string }) => x.id === g1.id)).toBe(true);
-    expect(indexRaw.goals.some((x: { id: string }) => x.id === g2.id)).toBe(true);
+    expect(indexRaw.goals.some((x: { id: string }) => x.id === activeLegacy.id)).toBe(true);
     const found = await readGoalByLabel(dir, "idx_pref");
-    expect(found?.id).toBe(g2.id);
+    expect(found?.id).toBe(activeLegacy.id);
     expect(found?.status).toBe("active");
   });
 
