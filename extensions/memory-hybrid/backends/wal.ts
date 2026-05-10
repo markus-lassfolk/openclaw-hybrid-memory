@@ -114,9 +114,10 @@ export class WriteAheadLog {
         // Instead of silently degrading durability forever, try fsync() as a fallback.
         // If both fail, throw an error so operators know their WAL has no crash safety.
         try {
-          if (fh) {
-            await fh.sync(); // Try fsync() instead of datasync()
+          if (!fh) {
+            throw new Error(`fallback fsync could not open WAL file after datasync() failed with ${code}`);
           }
+          await fh.sync(); // Try fsync() instead of datasync()
         } catch (fsyncErr) {
           if (!this.fsyncWarnEmitted) {
             pluginLogger.error(
@@ -126,7 +127,9 @@ export class WriteAheadLog {
             this.fsyncWarnEmitted = true;
           }
           // Throw so the write operation fails fast rather than silently losing crash safety.
-          throw new Error(`WAL fsync unavailable: ${code}`);
+          throw new Error(
+            `WAL fsync unavailable: ${code}: ${fsyncErr instanceof Error ? fsyncErr.message : String(fsyncErr)}`,
+          );
         }
         // fsync() succeeded as fallback
         if (!this.fsyncWarnEmitted) {

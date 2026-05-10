@@ -26,15 +26,15 @@ import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
-import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
@@ -246,9 +246,8 @@ async function runCapture(
       const captureProvenance = resolveCaptureProvenance(event, api, sessionKey);
       if (!captureProvenance.shouldAutoCapture) {
         api.logger.debug?.(
-          `memory-hybrid: skipped auto-capture for ${captureProvenance.origin} session (${captureProvenance.reason ?? "provenance blocked"})`,
+          `memory-hybrid: skipped conversational auto-capture for ${captureProvenance.origin} session (${captureProvenance.reason ?? "provenance blocked"})`,
         );
-        return;
       }
 
       const candidates: Array<{ role: "user" | "assistant"; text: string; sourceTurn: number }> = [];
