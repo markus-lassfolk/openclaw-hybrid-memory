@@ -4,14 +4,29 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "../services/active-task.js";
+import {
+  buildActiveTaskInjection,
+  buildStaleWarningInjection,
+  readActiveTaskFile,
+  upsertTask,
+  writeActiveTaskFileGuarded,
+} from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
-import { buildGoalEscalationHeartbeatBlock, buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
-import { readActiveTaskRowsFromFacts } from "../services/task-ledger-facts.js";
+import {
+  buildGoalEscalationHeartbeatBlock,
+  buildHeartbeatTaskHygieneBlock,
+  buildLongRunningTaskDraft,
+  buildLongRunningTaskRegistrationBlock,
+  detectLongRunningWorkflowProposal,
+  shouldAutoRegisterLongRunningTask,
+} from "../services/task-hygiene.js";
+import { readActiveTaskRowsFromFacts, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
+import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
 
 export function registerActiveTaskInjection(
@@ -22,25 +37,71 @@ export function registerActiveTaskInjection(
 ): void {
   if (!ctx.cfg.activeTask.enabled || ctx.cfg.verbosity === "silent") return;
 
-  api.on("before_agent_start", async (event: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     try {
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
       let activeForInjection: import("../services/active-task.js").ActiveTaskEntry[] = [];
+      let completedForWrite: import("../services/active-task.js").ActiveTaskEntry[] = [];
+      const userText = extractLastUserMessageText(event);
+      const longRunningMode = ctx.cfg.activeTask.taskHygiene.longRunningRegistration?.mode ?? "suggest";
+      const proposal =
+        userText && longRunningMode !== "off" ? detectLongRunningWorkflowProposal(userText, workspaceRoot) : null;
+      const resolvedApi = withHookResolutionApi(api, hookCtx);
+      const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
 
       if (ctx.cfg.activeTask.ledger === "facts") {
         const { active } = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes);
         activeForInjection = active;
       } else {
         const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
-        if (!taskFile || taskFile.active.length === 0) return undefined;
-        activeForInjection = taskFile.active;
+        activeForInjection = taskFile?.active ?? [];
+        completedForWrite = taskFile?.completed ?? [];
       }
 
-      if (activeForInjection.length === 0) return undefined;
+      let longRunningBlock = "";
+      if (proposal) {
+        const draft = buildLongRunningTaskDraft(proposal);
+        const alreadyActive = activeForInjection.some((t) => t.label === draft.label);
+        let autoCreated = false;
 
-      const injection = buildActiveTaskInjection(activeForInjection, ctx.cfg.activeTask.injectionBudget);
+        if (!alreadyActive && shouldAutoRegisterLongRunningTask(longRunningMode, sessionKey)) {
+          if (ctx.cfg.activeTask.ledger === "facts") {
+            await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, draft, api.logger);
+            activeForInjection = upsertTask(activeForInjection, draft, true);
+            autoCreated = true;
+          } else {
+            const updated = upsertTask(activeForInjection, draft, true);
+            const writeResult = await writeActiveTaskFileGuarded(
+              resolvedActiveTaskPath,
+              updated,
+              completedForWrite,
+              sessionKey ?? undefined,
+            );
+            if (writeResult.skipped) {
+              api.logger?.debug?.(`memory-hybrid: skipped long-running task auto-registration: ${writeResult.reason}`);
+            } else {
+              activeForInjection = updated;
+              autoCreated = true;
+            }
+          }
+        }
+
+        longRunningBlock = buildLongRunningTaskRegistrationBlock(proposal, draft, {
+          mode: longRunningMode,
+          autoCreated,
+          alreadyActive,
+          sessionKey,
+        });
+      }
+
+      if (activeForInjection.length === 0 && !longRunningBlock) return undefined;
+
+      const injection =
+        activeForInjection.length > 0
+          ? buildActiveTaskInjection(activeForInjection, ctx.cfg.activeTask.injectionBudget)
+          : "";
       let staleWarningBlock = "";
-      if (ctx.cfg.activeTask.staleWarning.enabled) {
+      if (ctx.cfg.activeTask.staleWarning.enabled && activeForInjection.length > 0) {
         const injectionChars = injection.length;
         const budgetChars = ctx.cfg.activeTask.injectionBudget * 4;
         const remainingChars = Math.max(0, budgetChars - injectionChars);
@@ -50,7 +111,6 @@ export function registerActiveTaskInjection(
       const th = ctx.cfg.activeTask.taskHygiene;
       let hygieneBlock = "";
       let goalEscalationBlock = "";
-      const userText = extractLastUserMessageText(event);
       if (
         th.heartbeatEscalation &&
         ctx.cfg.goalStewardship.enabled &&
@@ -72,7 +132,7 @@ export function registerActiveTaskInjection(
         api.logger?.info?.("memory-hybrid: task hygiene block appended (heartbeat match)");
       }
 
-      const parts = [injection, staleWarningBlock, hygieneBlock, goalEscalationBlock].filter(Boolean);
+      const parts = [injection, staleWarningBlock, longRunningBlock, hygieneBlock, goalEscalationBlock].filter(Boolean);
       if (parts.length === 0) return undefined;
 
       const context = parts.join("\n\n");
