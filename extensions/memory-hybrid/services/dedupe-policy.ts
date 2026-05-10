@@ -108,6 +108,10 @@ export function shouldReportVectorDedupeFallback(input: {
 export type DedupeCandidate = {
   text: string;
   source: string;
+  category?: string | null;
+  entity?: string | null;
+  key?: string | null;
+  value?: string | null;
 };
 
 export type ApplyDedupeContext = {
@@ -173,6 +177,31 @@ export function applyDedupe(
   candidate: DedupeCandidate,
   ctx: ApplyDedupeContext,
 ): ApplyDedupeResult {
+  // Issue #1276: project-task facts rely on explicit keys (title/status/next/...)
+  // for ACTIVE-TASKS projection. For category=project with entity+key, treat
+  // (category, entity, key) as the identity boundary and only dedupe on the same
+  // key/value pair, not semantic/text similarity across different keys.
+  const category = candidate.category?.trim().toLowerCase();
+  const entity = candidate.entity?.trim();
+  const key = candidate.key?.trim();
+  if (category === "project" && entity && key) {
+    const existing = candidate.value != null
+      ? (ctx.db
+          .prepare(
+            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND superseded_at IS NULL LIMIT 1",
+          )
+          .get(entity, key, candidate.value) as { id: string } | undefined)
+      : (ctx.db
+          .prepare(
+            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND superseded_at IS NULL LIMIT 1",
+          )
+          .get(entity, key, candidate.text) as { id: string } | undefined);
+    if (existing) {
+      return mapOnDuplicate(profile, existing.id, "exact");
+    }
+    return { action: "store" };
+  }
+
   const exact = ctx.db
     .prepare("SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL LIMIT 1")
     .get(candidate.text, candidate.source) as { id: string } | undefined;
