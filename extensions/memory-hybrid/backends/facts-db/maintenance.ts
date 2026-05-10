@@ -13,7 +13,7 @@ import { parseTags } from "../../utils/tags.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
-function collectIds(rows: Array<{ id: string }>): string[] {
+function extractFactIds(rows: Array<{ id: string }>): string[] {
   return rows.map((row) => row.id);
 }
 
@@ -120,6 +120,16 @@ type TierCandidate = {
   last_confirmed_at: number | null;
   preserve_until: number | null;
   preserve_tags: string | null;
+};
+
+type TierTransition = { id: string; from: MemoryTier; to: MemoryTier };
+
+type HotCandidate = {
+  id: string;
+  score: number;
+  importance: number;
+  lastAccess: number;
+  tokens: number;
 };
 
 function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions> {
@@ -290,14 +300,8 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
     .all(nowSec) as TierCandidate[];
 
   const hotByRecallIds = computeHotByRecallIds(rows, nowSec, normalized);
-  const desired: Array<{ id: string; from: MemoryTier; to: MemoryTier }> = [];
-  const hotDesired: Array<{
-    id: string;
-    score: number;
-    importance: number;
-    lastAccess: number;
-    tokens: number;
-  }> = [];
+  const desired: TierTransition[] = [];
+  const hotDesired: HotCandidate[] = [];
 
   for (const row of rows) {
     const to = chooseTier(row, nowSec, normalized, { hotByRecallIds });
@@ -649,7 +653,7 @@ export function pruneExpiredWithDetails(
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .all({ "@now": nowSec }) as Array<{ id: string }>;
-    const deletedFactIds = collectIds(rows);
+    const deletedFactIds = extractFactIds(rows);
     if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds };
     deleteLinksForFactIds(db, deletedFactIds);
     const factsPruned = deleteFactsByIds(db, deletedFactIds);
@@ -681,7 +685,7 @@ export function pruneSessionScope(db: DatabaseSync, sessionId: string): number {
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .all(sessionId) as Array<{ id: string }>;
-    const factIds = collectIds(rows);
+    const factIds = extractFactIds(rows);
     if (factIds.length === 0) return 0;
     deleteLinksForFactIds(db, factIds);
     return deleteFactsByIds(db, factIds);
@@ -734,7 +738,7 @@ export function decayConfidenceWithDetails(
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .all({ "@now": nowSec }) as Array<{ id: string }>;
-    const deletedFactIds = collectIds(rows);
+    const deletedFactIds = extractFactIds(rows);
     deleteLinksForFactIds(db, deletedFactIds);
     deleteFactsByIds(db, deletedFactIds);
     return { factsDecayed: Number(updateResult.changes ?? 0), deletedFactIds };
