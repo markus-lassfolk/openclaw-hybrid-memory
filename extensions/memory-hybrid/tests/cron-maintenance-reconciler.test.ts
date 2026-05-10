@@ -330,6 +330,93 @@ describe("reconcileCronRunLedger", () => {
     const finishedEntry = updated.find((e) => e.action === "finished");
     expect(finishedEntry?.status).toBe("ok"); // Still "ok"
   });
+
+  it("should detect false-OK with runAtMs format (current managed cron)", () => {
+    // This tests the actual format used by OpenClaw managed cron (issue reproduction)
+    const ledgerPath = join(cronRunsDir, "hybrid-mem:nightly-dream-cycle.jsonl");
+    rmSync(cronRunsDir, { recursive: true, force: true });
+    mkdirSync(cronRunsDir, { recursive: true });
+    writeFileSync(ledgerPath, "");
+
+    // Timestamp for 2026-05-09T02:45:20Z (matching the artifact filename)
+    const runTimestamp = Date.UTC(2026, 4, 9, 2, 45, 20);
+
+    // Current managed cron format: runAtMs, no action field
+    const entries: CronRunLedgerEntry[] = [
+      {
+        runAtMs: runTimestamp,
+        jobId: "hybrid-mem:nightly-dream-cycle",
+        status: "ok",
+        summary: "FAILED dream-cycle",
+      },
+    ];
+    writeCronRunLedger(ledgerPath, entries);
+
+    // Create artifacts showing failed validation
+    rmSync(logDir, { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(join(logDir, "nightly-dream-cycle-20260509T024520Z-14763.exit.txt"), ""); // Empty = failed
+    writeFileSync(
+      join(logDir, "nightly-dream-cycle-20260509T024520Z-14763.log"),
+      "error: unknown command 'consolidate-episodes'\n",
+    );
+
+    const result = reconcileCronRunLedger(ledgerPath, logDir, ["dream-cycle"], false);
+
+    expect(result.examined).toBe(1);
+    expect(result.falseOk).toBe(1);
+    expect(result.corrected).toBe(1);
+    expect(result.corrections).toHaveLength(1);
+    expect(result.corrections[0].originalStatus).toBe("ok");
+    expect(result.corrections[0].newStatus).toBe("error");
+    expect(result.corrections[0].timestamp).toBe(runTimestamp);
+
+    // Verify ledger was updated
+    const updated = parseCronRunLedger(ledgerPath);
+    expect(updated).toHaveLength(1);
+    expect(updated[0].status).toBe("error");
+    expect(updated[0].summary).toContain("[RECONCILED]");
+    expect(updated[0].summary).toContain("Unknown command");
+  });
+
+  it("should handle genuine OK with runAtMs format", () => {
+    const ledgerPath = join(cronRunsDir, "hybrid-mem:nightly-dream-cycle.jsonl");
+    rmSync(cronRunsDir, { recursive: true, force: true });
+    mkdirSync(cronRunsDir, { recursive: true });
+    writeFileSync(ledgerPath, "");
+
+    const runTimestamp = Date.UTC(2026, 4, 9, 2, 45, 20);
+
+    const entries: CronRunLedgerEntry[] = [
+      {
+        runAtMs: runTimestamp,
+        jobId: "hybrid-mem:nightly-dream-cycle",
+        status: "ok",
+        summary: "SUCCESS",
+      },
+    ];
+    writeCronRunLedger(ledgerPath, entries);
+
+    // Create artifacts showing successful validation
+    rmSync(logDir, { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(
+      join(logDir, "nightly-dream-cycle-20260509T024520Z-14763.exit.txt"),
+      "2026-05-09T02:45:20Z dream-cycle exit=0\n",
+    );
+    writeFileSync(join(logDir, "nightly-dream-cycle-20260509T024520Z-14763.log"), "All OK");
+
+    const result = reconcileCronRunLedger(ledgerPath, logDir, ["dream-cycle"], false);
+
+    expect(result.examined).toBe(1);
+    expect(result.falseOk).toBe(0);
+    expect(result.corrected).toBe(0);
+
+    // Verify ledger was not modified
+    const updated = parseCronRunLedger(ledgerPath);
+    expect(updated[0].status).toBe("ok");
+    expect(updated[0].summary).not.toContain("[RECONCILED]");
+  });
 });
 
 describe("reconcileAllCronRunLedgers", () => {
