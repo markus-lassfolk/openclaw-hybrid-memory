@@ -21,6 +21,7 @@ export type WALEntry = {
   targetId?: string;
   data: {
     text: string;
+    why?: string | null;
     category?: string;
     importance?: number;
     entity?: string | null;
@@ -31,6 +32,18 @@ export type WALEntry = {
     summary?: string | null;
     tags?: string[];
     vector?: number[];
+    // Optional metadata fields (best-effort) so replay can preserve semantics.
+    scope?: "global" | "user" | "agent" | "session";
+    scopeTarget?: string | null;
+    sourceSessions?: string | null;
+    provenanceSession?: string | null;
+    sourceTurn?: number | null;
+    extractionMethod?: string | null;
+    extractionConfidence?: number | null;
+    decayFreezeUntil?: number | null;
+    preserveUntil?: number | null;
+    preserveTags?: string[] | null;
+    provenanceJson?: string | null;
   };
 };
 

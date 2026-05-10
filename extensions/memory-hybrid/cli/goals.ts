@@ -30,8 +30,42 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
 
   g.command("config")
     .description("Show goal stewardship settings from plugin config (same keys as openclaw.json)")
-    .action(() => {
-      for (const line of formatGoalStewardshipConfigLines(ctx.cfg.goalStewardship)) {
+    .option("--json", "output raw JSON config snapshot")
+    .action((opts: { json?: boolean }) => {
+      const gs = ctx.cfg.goalStewardship;
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              enabled: gs.enabled,
+              goalsDir: gs.goalsDir,
+              resolvedGoalsDir: goalsDir(ctx.cfg),
+              workspaceRoot: workspaceRoot(),
+              model: gs.model,
+              heartbeatStewardship: gs.heartbeatStewardship,
+              watchdogHealthCheck: gs.watchdogHealthCheck,
+              heartbeatRefreshActiveTask: gs.heartbeatRefreshActiveTask,
+              llmTriageOnHeartbeat: gs.llmTriageOnHeartbeat,
+              triageSuggestHeavyDirective: gs.triageSuggestHeavyDirective,
+              heartbeatPatterns: gs.heartbeatPatterns,
+              attentionWeights: gs.attentionWeights,
+              multiGoalMaxChars: gs.multiGoalMaxChars,
+              multiGoalMaxGoals: gs.multiGoalMaxGoals,
+              confirmationPolicy: gs.confirmationPolicy,
+              circuitBreaker: gs.circuitBreaker,
+              escalationPolicy: gs.escalationPolicy,
+              allowCommandVerification: gs.allowCommandVerification,
+              allowPrVerification: gs.allowPrVerification,
+              globalLimits: gs.globalLimits,
+              defaults: gs.defaults,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      for (const line of formatGoalStewardshipConfigLines(gs)) {
         console.log(line);
       }
     });
@@ -292,6 +326,15 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         logger: console,
       });
       console.log(`Checked ${result.goalsChecked}, updated ${result.goalsUpdated}`);
+      if (result.outcomes.length > 0) {
+        console.log("Per-goal outcomes:");
+        for (const o of result.outcomes) {
+          const task = o.taskLabel ? ` task=${o.taskLabel}` : "";
+          const session = o.sessionKey ? ` session=${o.sessionKey}` : "";
+          const run = o.runId ? ` run=${o.runId}` : "";
+          console.log(`  ${o.label}: ${o.outcome} — ${o.reason}${task}${session}${run}`);
+        }
+      }
       for (const a of result.actions) {
         console.log(`  ${a.label}: ${a.action} — ${a.reason}`);
       }
