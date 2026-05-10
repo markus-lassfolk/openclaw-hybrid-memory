@@ -423,18 +423,21 @@ export function listForDashboard(
     params.push(opts.decayClass);
   }
   if (opts.entity) {
-    where += " AND entity = ?";
+    // Keep dashboard entity filters aligned with `list(...)` semantics.
+    where += " AND lower(entity) = lower(?)";
     params.push(opts.entity);
   }
 
   const toDashboardRow = (row: Record<string, unknown>) => ({
     id: row.id,
     text: row.text,
+    why: (row.why as string | null) ?? null,
     category: row.category,
     importance: row.importance,
     entity: row.entity ?? null,
     key: row.key ?? null,
     value: row.value ?? null,
+    source: row.source ?? "",
     tags:
       typeof row.tags === "string"
         ? (row.tags || "")
@@ -449,12 +452,30 @@ export function listForDashboard(
     confidence: row.confidence ?? 1,
     created_at: row.created_at,
     recall_count: row.recall_count ?? 0,
+    expires_at: row.expires_at ?? null,
+    summary: (row.summary as string | null) ?? null,
+    superseded_at: row.superseded_at ?? null,
+    superseded_by: (row.superseded_by as string | null) ?? null,
+    provenance_session: (row.provenance_session as string | null) ?? null,
+    reinforced_count: row.reinforced_count ?? null,
   });
 
   if (opts.search?.trim()) {
-    const ftsResults = searchFts(db, opts.search.trim(), { limit: 2000 });
-    const allFtsIds = ftsResults.map((r) => r.factId);
-    if (allFtsIds.length === 0) return { facts: [], total: 0 };
+    const targetWindow = Math.max(1, opts.offset + opts.limit);
+    let searchLimit = Math.max(2000, targetWindow);
+    let allFtsIds: string[] = [];
+
+    // Avoid direct facts_fts↔facts JOIN (known node:sqlite performance pathology).
+    // Instead, reuse searchFts' two-phase rowid-first strategy and progressively
+    // expand until the full result-set is collected for accurate `total`.
+    for (;;) {
+      const ftsResults = searchFts(db, opts.search.trim(), { limit: searchLimit, entityFilter: opts.entity });
+      allFtsIds = ftsResults.map((r) => r.factId);
+      if (allFtsIds.length === 0) return { facts: [], total: 0 };
+      if (ftsResults.length < searchLimit) break;
+      searchLimit *= 2;
+    }
+
     const CHUNK_SIZE = 500;
     const filteredIdRows: Array<{ id: string }> = [];
     for (let i = 0; i < allFtsIds.length; i += CHUNK_SIZE) {
@@ -467,15 +488,16 @@ export function listForDashboard(
     }
     const filteredSet = new Set(filteredIdRows.map((r) => r.id));
     const filteredIds = allFtsIds.filter((id) => filteredSet.has(id));
-    const searchTotal = filteredIds.length;
+    const total = filteredIds.length;
     const pageIds = filteredIds.slice(opts.offset, opts.offset + opts.limit);
-    if (pageIds.length === 0) return { facts: [], total: searchTotal };
+    if (pageIds.length === 0) return { facts: [], total };
     const placeholders = pageIds.map(() => "?").join(",");
     const pageRows = db
       .prepare(
-        `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+        `SELECT id, text, why, category, importance, entity, key, value, source, tags, COALESCE(tier, 'warm') as tier,
          COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-         created_at, recall_count FROM facts WHERE id IN (${placeholders})`,
+         created_at, recall_count, expires_at, summary, superseded_at, superseded_by, provenance_session, reinforced_count
+         FROM facts WHERE id IN (${placeholders})`,
       )
       .all(...pageIds) as Array<Record<string, unknown>>;
     const byId = new Map<string, Record<string, unknown>>();
@@ -484,7 +506,7 @@ export function listForDashboard(
       const r = byId.get(id);
       return r ? [toDashboardRow(r)] : [];
     });
-    return { facts, total: searchTotal };
+    return { facts, total };
   }
 
   const countRow = db.prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`).get(...params) as {
@@ -494,9 +516,10 @@ export function listForDashboard(
 
   const rows = db
     .prepare(
-      `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+      `SELECT id, text, why, category, importance, entity, key, value, source, tags, COALESCE(tier, 'warm') as tier,
        COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-       created_at, recall_count FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+       created_at, recall_count, expires_at, summary, superseded_at, superseded_by, provenance_session, reinforced_count
+       FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, opts.limit, opts.offset) as Array<Record<string, unknown>>;
 
