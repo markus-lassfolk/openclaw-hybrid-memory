@@ -33,14 +33,28 @@ export async function cleanupEvictedVector(options: {
 }): Promise<boolean> {
   const { evictedFactId } = options;
   if (!evictedFactId) return false;
+  const deleted = await deleteVectorForFactId({
+    vectorDb: options.vectorDb,
+    factId: evictedFactId,
+    logger: options.logger,
+    context: options.context,
+  });
+  if (deleted) {
+    options.logger?.info?.(`memory-hybrid: ${options.context} evicted fact ${evictedFactId}, vector deleted`);
+  }
+  return deleted;
+}
+
+export async function deleteVectorForFactId(options: {
+  vectorDb: Pick<VectorDB, "delete">;
+  factId: string;
+  logger?: { warn?: (message: string) => void; info?: (message: string) => void; debug?: (message: string) => void };
+  context: string;
+}): Promise<boolean> {
   try {
-    const deleted = await options.vectorDb.delete(evictedFactId);
-    if (deleted) {
-      options.logger?.info?.(`memory-hybrid: ${options.context} evicted fact ${evictedFactId}, vector deleted`);
-    }
-    return deleted;
+    return await options.vectorDb.delete(options.factId);
   } catch (err) {
-    options.logger?.warn?.(`memory-hybrid: failed to delete vector for evicted fact ${evictedFactId}: ${err}`);
+    options.logger?.warn?.(`memory-hybrid: ${options.context} vector delete failed for ${options.factId}: ${err}`);
     return false;
   }
 }

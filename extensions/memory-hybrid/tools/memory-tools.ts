@@ -57,7 +57,11 @@ import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../s
 import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../services/task-ledger-facts.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
-import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+import {
+  cleanupEvictedVector,
+  deleteVectorForFactId,
+  storeCanonicalVectorForFact,
+} from "../services/vector-maintenance.js";
 import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
 import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
@@ -335,21 +339,6 @@ export function registerMemoryTools(
       factId,
       logger: api.logger,
     });
-  };
-
-  const deleteStaleVector = async (factId: string, operation: string): Promise<void> => {
-    try {
-      await vectorDb.delete(factId);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "vector",
-        operation,
-        phase: "runtime",
-        backend: "lancedb",
-        factId,
-      });
-      api.logger.warn(`memory-hybrid: failed to delete stale vector for ${factId}: ${err}`);
-    }
   };
 
   const storeActiveCanonicalVector = async (options: {
@@ -1920,7 +1909,12 @@ export function registerMemoryTools(
               if (classification.action === "DELETE" && classification.targetId) {
                 factsDb.supersede(classification.targetId, null);
                 aliasDb?.deleteByFactId(classification.targetId);
-                await deleteStaleVector(classification.targetId, "store-delete-action-delete-vector");
+                await deleteVectorForFactId({
+                  vectorDb,
+                  factId: classification.targetId,
+                  logger: api.logger,
+                  context: "store-delete-action",
+                });
                 return {
                   content: [
                     { type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` },
@@ -1984,7 +1978,12 @@ export function registerMemoryTools(
                   recordActiveStoreProvenance(newEntry.id, textToStore);
                   factsDb.supersede(classification.targetId, newEntry.id);
                   aliasDb?.deleteByFactId(classification.targetId);
-                  await deleteStaleVector(classification.targetId, "store-update-delete-superseded-vector");
+                  await deleteVectorForFactId({
+                    vectorDb,
+                    factId: classification.targetId,
+                    logger: api.logger,
+                    context: "store-update-delete-superseded",
+                  });
                   maybeAutoVerify(
                     newEntry.id,
                     textToStore,
@@ -2182,7 +2181,12 @@ export function registerMemoryTools(
             const supersededId = supersedes.trim();
             factsDb.supersede(supersededId, entry.id);
             aliasDb?.deleteByFactId(supersededId);
-            await deleteStaleVector(supersededId, "store-manual-supersede-delete-vector");
+            await deleteVectorForFactId({
+              vectorDb,
+              factId: supersededId,
+              logger: api.logger,
+              context: "store-manual-supersede",
+            });
           }
 
           try {
