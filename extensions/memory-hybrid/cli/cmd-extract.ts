@@ -42,6 +42,7 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";

@@ -204,7 +204,13 @@ describe("findSimilarByEmbedding", () => {
       scopeTarget: "agent-1",
     });
 
-    await vectorDb.store({ text: globalEntry.text, vector, importance: 0.8, category: "preference", id: globalEntry.id });
+    await vectorDb.store({
+      text: globalEntry.text,
+      vector,
+      importance: 0.8,
+      category: "preference",
+      id: globalEntry.id,
+    });
     await vectorDb.store({ text: agentEntry.text, vector, importance: 0.8, category: "preference", id: agentEntry.id });
 
     const globalOnly = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, {

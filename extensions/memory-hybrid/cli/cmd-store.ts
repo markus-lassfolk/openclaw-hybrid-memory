@@ -200,53 +200,53 @@ export async function runStoreForCli(
               warnMessage: `memory-hybrid: blocked cross-scope classification UPDATE target ${classification.targetId}`,
             });
             if (oldFact) {
-                const nowSec = Math.floor(Date.now() / 1000);
-                const storeResult = factsDb.storeWithResult({
-                  text,
-                  category,
-                  importance: CLI_STORE_IMPORTANCE,
-                  entity: entity ?? oldFact.entity,
-                  key: opts.key ?? extracted.key ?? oldFact.key ?? null,
-                  value: opts.value ?? extracted.value ?? oldFact.value ?? null,
-                  source: "cli",
-                  sourceDate,
-                  tags: tags ?? extractTags(text, entity),
-                  validFrom: sourceDate ?? nowSec,
-                  supersedesId: classification.targetId,
-                  scope,
-                  scopeTarget,
-                });
-                const newEntry = storeResult.entry;
-                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                await cleanupEvictedVector({
-                  vectorDb: vectorDb,
-                  evictedFactId: storeResult.evictedFactId,
-                  logger: log,
-                  context: "cli-store",
-                });
-                factsDb.supersede(classification.targetId, newEntry.id);
-                aliasDb?.deleteByFactId(classification.targetId);
-                await deleteVectorForFactId({
-                  vectorDb: vectorDb,
-                  factId: classification.targetId,
-                  logger: log,
-                  context: "cli-store-update-superseded",
-                });
-                try {
-                  factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
-                  if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
-                  }
-                } catch (err) {
-                  log.warn(`memory-hybrid: vector store failed: ${err}`);
-                  capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
+              const nowSec = Math.floor(Date.now() / 1000);
+              const storeResult = factsDb.storeWithResult({
+                text,
+                category,
+                importance: CLI_STORE_IMPORTANCE,
+                entity: entity ?? oldFact.entity,
+                key: opts.key ?? extracted.key ?? oldFact.key ?? null,
+                value: opts.value ?? extracted.value ?? oldFact.value ?? null,
+                source: "cli",
+                sourceDate,
+                tags: tags ?? extractTags(text, entity),
+                validFrom: sourceDate ?? nowSec,
+                supersedesId: classification.targetId,
+                scope,
+                scopeTarget,
+              });
+              const newEntry = storeResult.entry;
+              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+              await cleanupEvictedVector({
+                vectorDb: vectorDb,
+                evictedFactId: storeResult.evictedFactId,
+                logger: log,
+                context: "cli-store",
+              });
+              factsDb.supersede(classification.targetId, newEntry.id);
+              aliasDb?.deleteByFactId(classification.targetId);
+              await deleteVectorForFactId({
+                vectorDb: vectorDb,
+                factId: classification.targetId,
+                logger: log,
+                context: "cli-store-update-superseded",
+              });
+              try {
+                factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                if (!(await vectorDb.hasDuplicate(vector))) {
+                  await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
                 }
-                return {
-                  outcome: "updated",
-                  id: newEntry.id,
-                  supersededId: classification.targetId,
-                  reason: classification.reason ?? "",
-                };
+              } catch (err) {
+                log.warn(`memory-hybrid: vector store failed: ${err}`);
+                capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
+              }
+              return {
+                outcome: "updated",
+                id: newEntry.id,
+                supersededId: classification.targetId,
+                reason: classification.reason ?? "",
+              };
             }
           }
         } catch (err) {

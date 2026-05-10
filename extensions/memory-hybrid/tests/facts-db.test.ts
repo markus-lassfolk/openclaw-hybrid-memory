@@ -2408,7 +2408,14 @@ describe("FactsDB.findSimilarForClassification", () => {
     const globalOnly = db.findSimilarForClassification("timezone preference", "user", "timezone", 10, "global", null);
     expect(globalOnly.some((f) => (f.scope ?? "global") === "agent")).toBe(false);
 
-    const agentOnly = db.findSimilarForClassification("timezone preference", "user", "timezone", 10, "agent", "agent-1");
+    const agentOnly = db.findSimilarForClassification(
+      "timezone preference",
+      "user",
+      "timezone",
+      10,
+      "agent",
+      "agent-1",
+    );
     expect(agentOnly.length).toBeGreaterThan(0);
     expect(agentOnly.every((f) => f.scope === "agent" && f.scopeTarget === "agent-1")).toBe(true);
   });

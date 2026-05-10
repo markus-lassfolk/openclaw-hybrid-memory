@@ -5,7 +5,11 @@ import type { MemoryEntry, MemoryScope } from "../types/memory.js";
  * - `global` only matches `global` entries.
  * - non-global scopes must match both `scope` and `scopeTarget` exactly.
  */
-export function matchesExactScope(entry: Pick<MemoryEntry, "scope" | "scopeTarget">, scope: MemoryScope, scopeTarget: string | null): boolean {
+export function matchesExactScope(
+  entry: Pick<MemoryEntry, "scope" | "scopeTarget">,
+  scope: MemoryScope,
+  scopeTarget: string | null,
+): boolean {
   const entryScope = entry.scope ?? "global";
   const entryScopeTarget = entry.scopeTarget ?? null;
   if (scope === "global") return entryScope === "global";
@@ -28,7 +32,9 @@ export function validateScopedClassificationTarget(params: {
 }): MemoryEntry | null {
   const target = params.getById(params.targetId);
   const allowed =
-    !!target && params.candidates.some((candidate) => candidate.id === params.targetId) && matchesExactScope(target, params.scope, params.scopeTarget);
+    !!target &&
+    params.candidates.some((candidate) => candidate.id === params.targetId) &&
+    matchesExactScope(target, params.scope, params.scopeTarget);
   if (!allowed) {
     params.warn?.(params.warnMessage);
     return null;
