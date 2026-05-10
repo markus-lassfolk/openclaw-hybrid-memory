@@ -44,3 +44,26 @@ export async function cleanupEvictedVector(options: {
     return false;
   }
 }
+
+export async function storeCanonicalVectorForFact(options: {
+  vectorDb: Pick<VectorDB, "store">;
+  factsDb: { setEmbeddingModel: (id: string, model: string | null) => void };
+  factId: string;
+  text: string;
+  why?: string | null;
+  vector: number[];
+  importance: number;
+  category: string;
+  embeddingModel: string | null;
+}): Promise<string> {
+  const storedId = await options.vectorDb.store({
+    text: options.text,
+    why: options.why,
+    vector: options.vector,
+    importance: options.importance,
+    category: options.category,
+    id: options.factId,
+  });
+  options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
+  return storedId;
+}

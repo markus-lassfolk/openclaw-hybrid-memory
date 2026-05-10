@@ -57,6 +57,7 @@ import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../s
 import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../services/task-ledger-facts.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
+import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
 import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
 import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
@@ -333,6 +334,43 @@ export function registerMemoryTools(
       source: "memory_store",
       factId,
       logger: api.logger,
+    });
+  };
+
+  const deleteStaleVector = async (factId: string, operation: string): Promise<void> => {
+    try {
+      await vectorDb.delete(factId);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "vector",
+        operation,
+        phase: "runtime",
+        backend: "lancedb",
+        factId,
+      });
+      api.logger.warn(`memory-hybrid: failed to delete stale vector for ${factId}: ${err}`);
+    }
+  };
+
+  const storeActiveCanonicalVector = async (options: {
+    factId: string;
+    text: string;
+    why?: string | null;
+    vector: number[];
+    importance: number;
+    category: string;
+    operation: string;
+  }): Promise<void> => {
+    await storeCanonicalVectorForFact({
+      vectorDb,
+      factsDb,
+      factId: options.factId,
+      text: options.text,
+      why: options.why,
+      vector: options.vector,
+      importance: options.importance,
+      category: options.category,
+      embeddingModel: embeddings.modelName,
     });
   };
 
@@ -1730,7 +1768,7 @@ export function registerMemoryTools(
               }
               const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
               const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-              const pointerEntry = factsDb.store({
+              const pointerStoreResult = factsDb.storeWithResult({
                 text: pointerText,
                 why,
                 category: "technical" as MemoryCategory,
@@ -1745,6 +1783,13 @@ export function registerMemoryTools(
                 extractionMethod: "active",
                 extractionConfidence: importance,
               });
+              const pointerEntry = pointerStoreResult.entry;
+              await cleanupEvictedVector({
+                vectorDb,
+                evictedFactId: pointerStoreResult.evictedFactId,
+                logger: api.logger,
+                context: "memory-store-credential-pointer",
+              });
               recordActiveStoreProvenance(pointerEntry.id, pointerText);
               try {
                 addOperationBreadcrumb("vector", "store-credential-pointer");
@@ -1752,17 +1797,15 @@ export function registerMemoryTools(
                   () => embeddings.embed(pointerText),
                   "memory-tools:store-credential-pointer",
                 );
-                factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
-                if (!(await vectorDb.hasDuplicate(vector))) {
-                  await vectorDb.store({
-                    text: pointerText,
-                    why,
-                    vector,
-                    importance,
-                    category: "technical",
-                    id: pointerEntry.id,
-                  });
-                }
+                await storeActiveCanonicalVector({
+                  factId: pointerEntry.id,
+                  text: pointerText,
+                  why,
+                  vector,
+                  importance,
+                  category: "technical",
+                  operation: "store-credential-pointer",
+                });
                 await storeRegistryEmbeddings({
                   factsDb,
                   embeddingRegistry,
@@ -1877,6 +1920,7 @@ export function registerMemoryTools(
               if (classification.action === "DELETE" && classification.targetId) {
                 factsDb.supersede(classification.targetId, null);
                 aliasDb?.deleteByFactId(classification.targetId);
+                await deleteStaleVector(classification.targetId, "store-delete-action-delete-vector");
                 return {
                   content: [
                     { type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` },
@@ -1909,7 +1953,7 @@ export function registerMemoryTools(
                   );
 
                   const nowSec = Math.floor(Date.now() / 1000);
-                  const newEntry = factsDb.store({
+                  const updateStoreResult = factsDb.storeWithResult({
                     text: textToStore,
                     why,
                     category: category as MemoryCategory,
@@ -1930,9 +1974,17 @@ export function registerMemoryTools(
                     extractionMethod: "active",
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
+                  const newEntry = updateStoreResult.entry;
+                  await cleanupEvictedVector({
+                    vectorDb,
+                    evictedFactId: updateStoreResult.evictedFactId,
+                    logger: api.logger,
+                    context: "memory-store-update",
+                  });
                   recordActiveStoreProvenance(newEntry.id, textToStore);
                   factsDb.supersede(classification.targetId, newEntry.id);
                   aliasDb?.deleteByFactId(classification.targetId);
+                  await deleteStaleVector(classification.targetId, "store-update-delete-superseded-vector");
                   maybeAutoVerify(
                     newEntry.id,
                     textToStore,
@@ -1945,17 +1997,15 @@ export function registerMemoryTools(
                   const finalImportance = Math.max(importance, oldFact.importance);
                   try {
                     if (vector) {
-                      factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
-                      if (!(await vectorDb.hasDuplicate(vector))) {
-                        await vectorDb.store({
-                          text: textToStore,
-                          why,
-                          vector,
-                          importance: finalImportance,
-                          category,
-                          id: newEntry.id,
-                        });
-                      }
+                      await storeActiveCanonicalVector({
+                        factId: newEntry.id,
+                        text: textToStore,
+                        why,
+                        vector,
+                        importance: finalImportance,
+                        category,
+                        operation: "store-update-supersede",
+                      });
                     }
                     await storeRegistryEmbeddings({
                       factsDb,
@@ -2099,7 +2149,7 @@ export function registerMemoryTools(
 
           const nowSec = Math.floor(Date.now() / 1000);
           const storeSessionId = api.context?.sessionId ?? null;
-          const entry = factsDb.store({
+          const storeResult = factsDb.storeWithResult({
             text: textToStore,
             why,
             category: category as MemoryCategory,
@@ -2120,26 +2170,33 @@ export function registerMemoryTools(
             decayFreezeUntil: decayFreezeUntil ?? undefined,
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
+          const entry = storeResult.entry;
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: api.logger,
+            context: "memory-store",
+          });
           recordActiveStoreProvenance(entry.id, textToStore);
           if (supersedes?.trim()) {
-            factsDb.supersede(supersedes.trim(), entry.id);
-            aliasDb?.deleteByFactId(supersedes.trim());
+            const supersededId = supersedes.trim();
+            factsDb.supersede(supersededId, entry.id);
+            aliasDb?.deleteByFactId(supersededId);
+            await deleteStaleVector(supersededId, "store-manual-supersede-delete-vector");
           }
 
           try {
             addOperationBreadcrumb("vector", "store-fact");
             if (vector) {
-              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-              if (!(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({
-                  text: textToStore,
-                  why,
-                  vector,
-                  importance,
-                  category,
-                  id: entry.id,
-                });
-              }
+              await storeActiveCanonicalVector({
+                factId: entry.id,
+                text: textToStore,
+                why,
+                vector,
+                importance,
+                category,
+                operation: "store-fact",
+              });
             }
             await storeRegistryEmbeddings({
               factsDb,
