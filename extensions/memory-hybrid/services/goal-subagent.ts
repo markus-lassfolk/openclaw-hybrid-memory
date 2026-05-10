@@ -65,7 +65,10 @@ export async function linkSubagentToGoal(
               ...t,
               sessionKey: task.sessionKey,
               runId: task.runId ?? t.runId ?? null,
-              dispatchFailureReason: task.dispatchFailureReason ?? null,
+              dispatchFailureReason:
+                task.dispatchFailureReason === undefined
+                  ? (t.dispatchFailureReason ?? null)
+                  : (task.dispatchFailureReason ?? null),
               status: task.status,
               updatedAt: ts,
             }

@@ -430,6 +430,20 @@ describe("runGoalHealthCheck", () => {
     expect(r.goalsUpdated).toBe(0);
   });
 
+  it("persists noop pulse outcome in goal history when no action is eligible", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(goalsDir, { label: "noop_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const outcome = r.outcomes.find((o) => o.goalId === g.id);
+    expect(outcome?.outcome).toBe("noop");
+    const after = await readGoal(goalsDir, g.id);
+    const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
+    expect(pulse?.detail).toContain("outcome=noop");
+    expect(pulse?.detail).toContain("No eligible deterministic action");
+  });
+
   it("records waiting outcome when actionable next exists but no dispatch/execution occurs", async () => {
     goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
     workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
@@ -453,6 +467,10 @@ describe("runGoalHealthCheck", () => {
     expect(outcome).toBeDefined();
     expect(outcome?.outcome).toBe("waiting");
     expect(outcome?.reason).toContain("Actionable next step pending");
+    const after = await readGoal(goalsDir, g.id);
+    const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
+    expect(pulse?.detail).toContain("outcome=waiting");
+    expect(pulse?.detail).toContain("Actionable next step pending");
   });
 
   it("marks goal blocked when in-progress dispatch has no sessionKey/runId metadata", async () => {
@@ -490,5 +508,8 @@ describe("runGoalHealthCheck", () => {
     const after = await readGoal(goalsDir, g.id);
     expect(after?.status).toBe("blocked");
     expect(after?.linkedTasks.find((t) => t.label === "dispatch-attempt-1")?.status).toBe("failed");
+    const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
+    expect(pulse?.detail).toContain("outcome=blocked");
+    expect(pulse?.detail).toContain("dispatch-attempt-1");
   });
 });

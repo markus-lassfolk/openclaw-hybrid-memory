@@ -31,13 +31,14 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
         (typeof ev.metadata?.runId === "string" ? ev.metadata.runId : null) ??
         (typeof ev.metadata?.run_id === "string" ? ev.metadata.run_id : null);
       const label = ev.label ?? childOrSession ?? `subagent-${Date.now()}`;
-      if (!childOrSession && !runId) {
-        const reason =
-          "Subagent dispatch missing ACP session metadata (no childSessionKey/sessionKey or runId in spawn event).";
+      if (!childOrSession) {
+        const reason = runId
+          ? "Subagent dispatch missing ACP session metadata (runId-only dispatch cannot be correlated without childSessionKey/sessionKey)."
+          : "Subagent dispatch missing ACP session metadata (no childSessionKey/sessionKey in spawn event).";
         await markGoalDispatchFailure(goalsDir, gid, {
           label,
           sessionKey: null,
-          runId: null,
+          runId: runId ?? null,
           reason,
         });
         return;

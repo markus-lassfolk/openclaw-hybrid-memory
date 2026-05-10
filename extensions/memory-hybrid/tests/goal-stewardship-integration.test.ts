@@ -188,6 +188,78 @@ describe("goal stewardship integration (mock plugin API)", () => {
     expect(task?.dispatchFailureReason).toContain("missing ACP session metadata");
   });
 
+  it("subagent_spawned runId-only metadata is treated as dispatch failure", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
+
+    const g = await createGoal(
+      goalsDir,
+      { label: "deploy-runid-only", description: "deploy app", acceptanceCriteria: ["live"] },
+      defaults,
+    );
+
+    await api.emitAll("subagent_spawned", {
+      goalId: g.id,
+      label: "task-runid-only",
+      runId: "run-123",
+    });
+
+    const afterSpawn = await readGoal(goalsDir, g.id);
+    expect(afterSpawn?.status).toBe("blocked");
+    expect(afterSpawn?.lastOutcome).toContain("runId-only dispatch cannot be correlated");
+    const task = afterSpawn?.linkedTasks.find((t) => t.label === "task-runid-only");
+    expect(task?.status).toBe("failed");
+    expect(task?.sessionKey).toBeNull();
+    expect(task?.runId).toBe("run-123");
+    expect(afterSpawn?.linkedTasks.some((t) => t.status === "in_progress" || t.status === "In progress")).toBe(false);
+  });
+
+  it("subagent relink update preserves existing dispatchFailureReason when omitted", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
+
+    const g = await createGoal(
+      goalsDir,
+      { label: "deploy-preserve-failure", description: "deploy app", acceptanceCriteria: ["live"] },
+      defaults,
+    );
+    const now = new Date().toISOString();
+    await updateGoal(
+      goalsDir,
+      g.id,
+      {
+        linkedTasks: [
+          {
+            label: "task-relink",
+            sessionKey: null,
+            runId: null,
+            dispatchFailureReason: "previous dispatch diagnostics",
+            status: "failed",
+            linkedAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      { timestamp: now, action: "test", detail: "seed previous failure", actor: "user" },
+    );
+
+    await api.emitAll("subagent_spawned", {
+      goalId: g.id,
+      label: "task-relink",
+      childSessionKey: "session-child-keep-reason",
+    });
+
+    const afterRelink = await readGoal(goalsDir, g.id);
+    const task = afterRelink?.linkedTasks.find((t) => t.label === "task-relink");
+    expect(task?.status).toBe("in_progress");
+    expect(task?.sessionKey).toBe("session-child-keep-reason");
+    expect(task?.dispatchFailureReason).toBe("previous dispatch diagnostics");
+  });
+
   it("before_agent_start returns undefined when no active goals exist", async () => {
     const cfg = parseCfg();
     const ctx = minimalLifecycleContext(cfg);
