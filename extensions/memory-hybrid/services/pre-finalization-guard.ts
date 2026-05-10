@@ -24,9 +24,11 @@ const NEGATED_WAITING_OR_PENDING_RE =
 const CLEARED_WAITING_OR_PENDING_RE =
   /\b(?:pending|waiting|awaiting)\b[\s\S]{0,24}\b(?:cleared|resolved|finished|complete|completed|done|over)\b/i;
 const NEGATED_EXTERNAL_STATUS_RE =
-  /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|running|in progress|queued|awaiting|blocked)\b/i;
+  /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,32}\b(?:pending|running|still running|in progress|queued|awaiting|blocked)\b/i;
 const CLEARED_EXTERNAL_STATUS_RE =
-  /\b(?:pending|running|in progress|queued|awaiting|blocked)\b[\s\S]{0,24}\b(?:cleared|resolved|finished|complete|completed|done|over)\b/i;
+  /\b(?:pending|running|still running|in progress|queued|awaiting|blocked)\b[\s\S]{0,32}\b(?:cleared|resolved|finished|complete|completed|done|over|stopped|succeeded)\b/i;
+const EXTERNAL_STATUS_FINISHED_RE =
+  /\b(?:finished|complete(?:d)?|done|resolved|cleared|stopped|succeeded)\b[\s\S]{0,24}\b(?:running|still running|pending|queued|awaiting|blocked|in progress)\b/i;
 const CRON_WAKE_RE =
   /\b(?:cron wake|scheduled?\s+(?:a\s+)?(?:wake|wake-?up|recheck)|wake(?:\s|-)?at|resume(?:\s+at|\s+on)|next\s+(?:wake|check))\b/i;
 const BACKGROUND_TEXT_RE =
@@ -64,6 +66,11 @@ interface ToolCallSnapshot {
   name: string;
   rawArguments: string;
   parsedArgs: Record<string, unknown> | null;
+}
+
+interface GoalAssessEvidence {
+  called: boolean;
+  assessedGoalIds: Set<string>;
 }
 
 interface ProjectCheckpointEvaluation {
@@ -166,10 +173,11 @@ function collectToolCalls(messages: unknown[]): ToolCallSnapshot[] {
       for (const block of content) {
         if (!block || typeof block !== "object") continue;
         const b = block as Record<string, unknown>;
-        if (b.type !== "tool_use") continue;
-        const name = b.name;
+        const blockType = typeof b.type === "string" ? b.type : "";
+        if (blockType !== "tool_use" && blockType !== "toolCall") continue;
+        const name = typeof b.name === "string" ? b.name : typeof b.toolName === "string" ? b.toolName : null;
         if (typeof name !== "string" || !name.trim()) continue;
-        const input = b.input;
+        const input = b.input ?? b.arguments;
         let rawArguments = "";
         let parsedArgs: Record<string, unknown> | null = null;
         if (typeof input === "string") {
@@ -255,6 +263,30 @@ function extractCommandCandidates(call: ToolCallSnapshot): string[] {
   return candidates;
 }
 
+function normalizeGoalId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function collectGoalAssessEvidence(toolCalls: ToolCallSnapshot[]): GoalAssessEvidence {
+  const assessedGoalIds = new Set<string>();
+  let called = false;
+  for (const call of toolCalls) {
+    if (call.name.toLowerCase() !== "goal_assess") continue;
+    called = true;
+    const parsedId =
+      normalizeGoalId(call.parsedArgs?.goal_id) ??
+      normalizeGoalId(call.parsedArgs?.goalId) ??
+      normalizeGoalId(call.parsedArgs?.related_goal) ??
+      normalizeGoalId(call.parsedArgs?.goal);
+    if (parsedId) {
+      assessedGoalIds.add(parsedId);
+    }
+  }
+  return { called, assessedGoalIds };
+}
+
 function hasAffirmativeWaitingOrPending(text: string): boolean {
   if (!WAITING_OR_PENDING_RE.test(text)) return false;
   if (NEGATED_WAITING_OR_PENDING_RE.test(text)) return false;
@@ -266,6 +298,7 @@ function hasUnresolvedExternalMention(text: string): boolean {
   if (!UNRESOLVED_EXTERNAL_RE.test(text)) return false;
   if (NEGATED_EXTERNAL_STATUS_RE.test(text)) return false;
   if (CLEARED_EXTERNAL_STATUS_RE.test(text)) return false;
+  if (EXTERNAL_STATUS_FINISHED_RE.test(text)) return false;
   return true;
 }
 
@@ -301,7 +334,7 @@ function evaluateProjectCheckpoint(
   projectFacts: MemoryEntry[],
   nowMs: number,
   taskUpdatedFreshnessMs: number,
-  goalAssessCalled: boolean,
+  goalAssess: GoalAssessEvidence,
   currentSessionKey?: string,
 ): ProjectCheckpointEvaluation {
   if (projectFacts.length === 0) return { satisfied: false, missingFields: ["status"] };
@@ -338,7 +371,17 @@ function evaluateProjectCheckpoint(
     if (!updatedFresh) missingFields.push("task_updated");
     if (!relatedSessionMatches) missingFields.push("related_session");
     if (!wakeLinked) missingFields.push("wake_link");
-    if (relatedGoal && !goalAssessCalled) missingFields.push("goal_assess");
+    const normalizedRelatedGoal = relatedGoal.trim().toLowerCase();
+    if (normalizedRelatedGoal) {
+      if (!goalAssess.called) {
+        missingFields.push("goal_assess");
+      } else if (
+        goalAssess.assessedGoalIds.size > 0 &&
+        !goalAssess.assessedGoalIds.has(normalizedRelatedGoal)
+      ) {
+        missingFields.push("goal_assess");
+      }
+    }
 
     if (missingFields.length === 0) {
       return { satisfied: true, candidateEntity: entity, missingFields: [] };
@@ -368,10 +411,11 @@ function extractBypassReason(text: string): string | null {
   return reason.length >= 3 && reason.length <= 160 ? reason : null;
 }
 
-function detectSignals(finalAssistantText: string, toolCalls: ToolCallSnapshot[]): PreFinalizationGuardSignals {
+function detectSignals(assistantTexts: string[], toolCalls: ToolCallSnapshot[]): PreFinalizationGuardSignals {
+  const fullAssistantText = assistantTexts.join("\n");
   let gitOrGithubMutation = false;
-  let backgroundProcessRunning = BACKGROUND_TEXT_RE.test(finalAssistantText);
-  let cronWakeScheduled = CRON_WAKE_RE.test(finalAssistantText);
+  let backgroundProcessRunning = BACKGROUND_TEXT_RE.test(fullAssistantText);
+  let cronWakeScheduled = CRON_WAKE_RE.test(fullAssistantText);
 
   for (const call of toolCalls) {
     const commands = extractCommandCandidates(call);
@@ -393,11 +437,11 @@ function detectSignals(finalAssistantText: string, toolCalls: ToolCallSnapshot[]
   }
 
   return {
-    waitingOrPending: hasAffirmativeWaitingOrPending(finalAssistantText),
+    waitingOrPending: assistantTexts.some((text) => hasAffirmativeWaitingOrPending(text)),
     cronWakeScheduled,
     backgroundProcessRunning,
     gitOrGithubMutation,
-    unresolvedExternalMention: hasUnresolvedExternalMention(finalAssistantText),
+    unresolvedExternalMention: assistantTexts.some((text) => hasUnresolvedExternalMention(text)),
   };
 }
 
@@ -414,8 +458,8 @@ export function evaluatePreFinalizationGuard(
   const bypassReason = extractBypassReason(finalAssistantText);
 
   const activeTaskCheckpointCalled = toolCalls.some((c) => c.name.toLowerCase() === "active_task_checkpoint");
-  const goalAssessCalled = toolCalls.some((c) => c.name.toLowerCase() === "goal_assess");
-  const signals = detectSignals(finalAssistantText, toolCalls);
+  const goalAssess = collectGoalAssessEvidence(toolCalls);
+  const signals = detectSignals(assistantTexts, toolCalls);
   const strongSignals =
     signals.waitingOrPending ||
     signals.cronWakeScheduled ||
@@ -431,7 +475,7 @@ export function evaluatePreFinalizationGuard(
       signals,
       checkpoint: {
         activeTaskCheckpointCalled,
-        goalAssessCalled,
+        goalAssessCalled: goalAssess.called,
         projectFactsSatisfied: false,
         missingFields: [],
       },
@@ -444,7 +488,7 @@ export function evaluatePreFinalizationGuard(
     allProjectFacts,
     nowMs,
     taskUpdatedFreshnessMs,
-    goalAssessCalled,
+    goalAssess,
     options.sessionKey,
   );
   const checkpointSatisfied = activeTaskCheckpointCalled || projectCheckpoint.satisfied;
@@ -456,7 +500,7 @@ export function evaluatePreFinalizationGuard(
       signals,
       checkpoint: {
         activeTaskCheckpointCalled,
-        goalAssessCalled,
+        goalAssessCalled: goalAssess.called,
         projectFactsSatisfied: projectCheckpoint.satisfied,
         projectCheckpointEntity: projectCheckpoint.candidateEntity,
         missingFields: projectCheckpoint.missingFields,
@@ -472,7 +516,7 @@ export function evaluatePreFinalizationGuard(
       signals,
       checkpoint: {
         activeTaskCheckpointCalled,
-        goalAssessCalled,
+        goalAssessCalled: goalAssess.called,
         projectFactsSatisfied: projectCheckpoint.satisfied,
         projectCheckpointEntity: projectCheckpoint.candidateEntity,
         missingFields: projectCheckpoint.missingFields,
@@ -487,7 +531,7 @@ export function evaluatePreFinalizationGuard(
     signals,
     checkpoint: {
       activeTaskCheckpointCalled,
-      goalAssessCalled,
+      goalAssessCalled: goalAssess.called,
       projectFactsSatisfied: false,
       projectCheckpointEntity: projectCheckpoint.candidateEntity,
       missingFields: projectCheckpoint.missingFields,
