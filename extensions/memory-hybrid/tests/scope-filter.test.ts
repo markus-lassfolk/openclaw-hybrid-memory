@@ -10,21 +10,13 @@ describe("buildToolScopeFilter", () => {
 
   describe("Security: Tool scope params ignored by default", () => {
     it("should ignore userId when trustToolScopeParams is false", () => {
-      const result = buildToolScopeFilter(
-        { userId: "user-123", confirmCrossTenantScope: true },
-        null,
-        mockConfig,
-      );
+      const result = buildToolScopeFilter({ userId: "user-123", confirmCrossTenantScope: true }, null, mockConfig);
 
       expect(result).toBeUndefined();
     });
 
     it("should ignore agentId when trustToolScopeParams is false", () => {
-      const result = buildToolScopeFilter(
-        { agentId: "agent-456", confirmCrossTenantScope: true },
-        null,
-        mockConfig,
-      );
+      const result = buildToolScopeFilter({ agentId: "agent-456", confirmCrossTenantScope: true }, null, mockConfig);
 
       expect(result).toBeUndefined();
     });
@@ -62,11 +54,7 @@ describe("buildToolScopeFilter", () => {
     };
 
     it("should apply userId when trust is enabled and confirmed", () => {
-      const result = buildToolScopeFilter(
-        { userId: "user-123", confirmCrossTenantScope: true },
-        null,
-        trustedConfig,
-      );
+      const result = buildToolScopeFilter({ userId: "user-123", confirmCrossTenantScope: true }, null, trustedConfig);
 
       expect(result).toEqual({
         userId: "user-123",

@@ -493,7 +493,7 @@ describe("agent-health-store", () => {
 
       // mergeAgentHealthDashboard always includes all default agents (7 total)
       expect(merged.length).toBeGreaterThanOrEqual(1);
-      const forgeAgent = merged.find(a => a.agentId === "forge");
+      const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
       expect(forgeAgent!.errorCount).toBe(2); // From DB
     });
@@ -536,7 +536,7 @@ describe("agent-health-store", () => {
 
       // mergeAgentHealthDashboard always includes all default agents
       expect(merged.length).toBeGreaterThanOrEqual(1);
-      const forgeAgent = merged.find(a => a.agentId === "forge");
+      const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
       expect(forgeAgent!.agentId).toBe("forge");
     });
@@ -556,7 +556,7 @@ describe("agent-health-store", () => {
 
       const merged = mergeAgentHealthDashboard(forge, []);
 
-      const forgeAgent = merged.find(a => a.agentId === "forge");
+      const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
       expect(forgeAgent!.lastSeen).toBeGreaterThan(0);
     });
@@ -587,7 +587,7 @@ describe("agent-health-store", () => {
 
       const merged = mergeAgentHealthDashboard(forge, dbRows);
 
-      const forgeAgent = merged.find(a => a.agentId === "forge");
+      const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
       expect(forgeAgent!.lastTask).toBe("live task");
       expect(forgeAgent!.outcome).toBe("success");

@@ -329,10 +329,7 @@ describe("embed-call", () => {
     });
 
     it("should handle transient network failure", async () => {
-      const mockEmbed = vi
-        .fn()
-        .mockRejectedValueOnce(new Error("ECONNRESET"))
-        .mockResolvedValueOnce([0.4, 0.5, 0.6]);
+      const mockEmbed = vi.fn().mockRejectedValueOnce(new Error("ECONNRESET")).mockResolvedValueOnce([0.4, 0.5, 0.6]);
 
       const resultPromise = embedCallWithTimeoutAndRetry(mockEmbed, "network-retry");
 
