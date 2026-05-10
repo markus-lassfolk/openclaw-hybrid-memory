@@ -360,6 +360,7 @@ When a session nears auto-compaction, the model gets a chance to save important 
     "defaults": {
       "compaction": {
         "mode": "default",
+        "model": "minimax/MiniMax-M2.7",
         "memoryFlush": {
           "enabled": true,
           "softThresholdTokens": 4000,
@@ -375,10 +376,16 @@ When a session nears auto-compaction, the model gets a chance to save important 
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `model` | `"minimax/MiniMax-M2.7"` (when set by `hybrid-mem install`) | Compaction model target. Use a mini/nano model to keep compaction cheap. |
 | `enabled` | `false` | Enable the pre-compaction memory flush turn |
 | `softThresholdTokens` | `4000` | Flush triggers when tokens cross `contextWindow - reserveTokensFloor - softThresholdTokens` |
 | `systemPrompt` | (generic) | System prompt appended to the flush turn |
 | `prompt` | (generic) | User prompt for the flush turn |
+
+`openclaw hybrid-mem verify` and runtime `before_compaction`/`after_compaction` hooks include a watchdog warning when compaction appears to route to a stronger-than-mini model (for example `gpt-5.5`).
+`minimax/MiniMax-M2.7` is explicitly treated as safe and is not flagged.
+
+Limitation: OpenClaw core owns the final compaction model resolver when `agents.*.compaction.model` is unset. The plugin can set safe defaults and alert, but it cannot enforce a global core fallback by itself.
 
 ---
 
