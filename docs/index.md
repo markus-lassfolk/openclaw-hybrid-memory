@@ -15,6 +15,7 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 {: .fs-5 .fw-300 }
 
 [Get Started](QUICKSTART){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
+[Common tasks](TASKS){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [Scenarios & benefits](SCENARIOS){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory){: .btn .fs-5 .mb-4 .mb-md-0 }
 
@@ -53,6 +54,8 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 |----------|-------------|
 | **[Scenarios & benefits](SCENARIOS)** | Before/after diagrams and real-life stories |
 | **[Quick Start](QUICKSTART)** | Install, configure, verify &mdash; get running in 10 minutes |
+| **[Tasks](TASKS)** | Task-based entry points: “I want to…” |
+| **[Common Tasks Cheatsheet](COMMON-TASKS-CHEATSHEET)** | Copy/paste commands for the most common workflows |
 | **[Autonomous Setup](SETUP-AUTONOMOUS)** | Let an OpenClaw agent install it for you |
 | **[Configuration](CONFIGURATION)** | Full `openclaw.json` reference |
 | **[LLMs and Providers](LLM-AND-PROVIDERS)** | Prerequisites, what LLMs are used for, gateway routing, `llm` config |
@@ -144,9 +147,9 @@ openclaw plugins install openclaw-hybrid-memory
 # 2. Apply recommended config
 openclaw hybrid-mem install
 
-# 3. Set your OpenAI API key in ~/.openclaw/openclaw.json
-
-# 4. Restart and verify
+# 3. Restart and verify
 openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
+openclaw hybrid-mem status
+openclaw hybrid-mem dashboard
 ```

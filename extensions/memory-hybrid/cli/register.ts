@@ -14,12 +14,14 @@ import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { PLUGIN_ID } from "../utils/constants.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
 import { type DistillContext, registerDistillCommands } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
+import { registerStatusCommands } from "./cmd-status.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
   BackfillCliResult,
@@ -417,6 +419,26 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "register-cli:task-queue-status",
+    });
+    throw err;
+  }
+
+  try {
+    registerStatusCommands(mem, {
+      factsDb: ctx.factsDb,
+      vectorDb: ctx.vectorDb,
+      resolvedSqlitePath: ctx.resolvedSqlitePath,
+      resolvedLancePath: ctx.resolvedLancePath,
+      pluginId: PLUGIN_ID,
+      cfg: ctx.cfg as unknown as Record<string, unknown>,
+      costTracker: ctx.costTracker ?? null,
+      auditStore: ctx.auditStore ?? null,
+      agentHealthStore: ctx.agentHealthStore ?? null,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:status",
     });
     throw err;
   }

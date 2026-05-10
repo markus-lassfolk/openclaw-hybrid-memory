@@ -18,6 +18,8 @@ openclaw hybrid-mem verify
 
 Upgrade: `openclaw hybrid-mem upgrade` (then restart the gateway).
 
+Useful follow-up commands: `openclaw hybrid-mem status` for a one-screen health summary and `openclaw hybrid-mem dashboard` for the Mission Control URL.
+
 ---
 
 ## Requirements (short)

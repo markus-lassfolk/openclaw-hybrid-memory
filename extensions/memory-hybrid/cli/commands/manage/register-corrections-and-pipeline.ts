@@ -295,9 +295,11 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       ),
     );
 
-  mem
+  const configCommand = mem
     .command("config")
-    .description("Show current configuration and feature toggles (use config-set to change)")
+    .description("Show current configuration and feature toggles (good first stop for understanding your setup)");
+  configCommand.alias?.("settings");
+  configCommand
     .option("--json", "Output configuration as JSON")
     .option("--format <format>", "Output format: text (default) or json")
     .action(
@@ -350,9 +352,11 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       }),
     );
 
-  mem
+  const configModeCommand = mem
     .command("config-mode <mode>")
-    .description("Set memory mode (local, minimal, enhanced, complete). Writes memory/.config if needed.")
+    .description("Set a preset: local (offline), minimal (cheap), enhanced (balanced), complete (verbose)");
+  configModeCommand.alias?.("mode");
+  configModeCommand
     .action(
       withExit(async (mode: string) => {
         let res;
@@ -374,11 +378,13 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       }),
     );
 
-  mem
+  const configSetCommand = mem
     .command("config-set <key> <value>")
     .description(
       'Set a config key in plugins.entries[…].config. Toggles: config-set <feature> enabled|disabled (e.g. nightlyCycle, goalStewardship, activeTask, extraction). Other keys: errorReporting.botName "MyBot". For help: hybrid-mem help config-set <key>',
-    )
+    );
+  configSetCommand.alias?.("set");
+  configSetCommand
     .action(
       withExit(async (key: string, value: string) => {
         let res;

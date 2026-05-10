@@ -8,11 +8,14 @@ const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 import {
   applyHybridMemoryToolsMd,
+  detectRecommendedEmbeddingSetup,
+  getDashboardUrl,
   ensureHybridMemoryWorkspaceSkillIfMissing,
   installHybridMemoryWorkspaceSkill,
   resolveAgentWorkspaceRoot,
   resolveOpenclawJsonPathForWorkspace,
 } from "../cli/cmd-install.js";
+import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
 
 describe("workspace skill install", () => {
   const originalEnv = process.env.OPENCLAW_WORKSPACE;
@@ -238,5 +241,67 @@ describe("applyHybridMemoryToolsMd", () => {
     const body = readFileSync(join(tmp, "TOOLS.md"), "utf-8");
     expect(body).toContain("## My notes");
     expect(body).toContain("openclaw-hybrid-memory:managed-begin");
+  });
+});
+
+describe("ensureWorkspaceBootstrap", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = join(tmpdir(), `mh-bootstrap-${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("creates starter directories and files without overwriting existing ones", () => {
+    writeFileSync(join(tmp, "USER.md"), "# custom\n", "utf-8");
+    const result = ensureWorkspaceBootstrap({ workspaceRoot: tmp, dryRun: false });
+    expect(result.directories.some((entry) => entry.path.endsWith("memory/projects") && entry.created)).toBe(true);
+    expect(result.files.some((entry) => entry.path.endsWith("AGENTS.md") && entry.created)).toBe(true);
+    expect(readFileSync(join(tmp, "USER.md"), "utf-8")).toBe("# custom\n");
+  });
+
+  it("dry-run reports what would be created", () => {
+    const result = ensureWorkspaceBootstrap({ workspaceRoot: tmp, dryRun: true });
+    expect(result.directories.some((entry) => entry.created)).toBe(true);
+    expect(result.files.some((entry) => entry.created)).toBe(true);
+    expect(() => readFileSync(join(tmp, "AGENTS.md"), "utf-8")).toThrow();
+  });
+});
+
+describe("install UX helpers", () => {
+  it("prefers local runtimes for embedding recommendations", () => {
+    const saved = process.env.OLLAMA_HOST;
+    process.env.OLLAMA_HOST = "http://127.0.0.1:11434";
+    try {
+      const result = detectRecommendedEmbeddingSetup({}, PLUGIN_ROOT);
+      expect(["onnx", "ollama"]).toContain(result.provider);
+    } finally {
+      if (saved !== undefined) process.env.OLLAMA_HOST = saved;
+      else Reflect.deleteProperty(process.env, "OLLAMA_HOST");
+    }
+  });
+
+  it("builds dashboard URL from plugin config", () => {
+    expect(
+      getDashboardUrl({
+        plugins: {
+          entries: {
+            "openclaw-hybrid-memory": {
+              config: {
+                dashboard: { port: 7788 },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe("http://127.0.0.1:7788/");
   });
 });

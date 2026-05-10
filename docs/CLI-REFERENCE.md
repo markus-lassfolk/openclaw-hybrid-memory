@@ -8,6 +8,8 @@ nav_order: 1
 
 All commands are available via `openclaw hybrid-mem <command>`.
 
+If you are new here, start with [TASKS.md](TASKS.md) for the task-based map and [COMMON-TASKS-CHEATSHEET.md](COMMON-TASKS-CHEATSHEET.md) for copy/paste commands.
+
 > **Note:** Below OpenClaw **v2026.3.8** the plugin **warns** at startup (peer + `MIN_OPENCLAW_VERSION`); CLI subcommands and `api.version` may be missing. Prefer a **current 2026.3.x** gateway; CI uses the `openclaw` version in `extensions/memory-hybrid/package-lock.json`.
 
 ---
@@ -21,7 +23,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 
 | Category | Commands |
 |----------|----------|
-| **Setup & installation** | `install`, `verify [--fix]`, `config` |
+| **Setup & installation** | `install` (`setup`), `verify [--fix]` (`preflight`), `status`, `dashboard`, `config` (`settings`) |
 | **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
@@ -29,7 +31,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages`, `enrich-entities` |
 | **Dedup & consolidation** | `find-duplicates`, `consolidate` |
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
-| **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
+| **Export & config** | `export`, `config`, `config-mode <mode>` (`mode`), `config-set <key> <value>` (`set`) |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
 | **Goals & working memory** | `goals …`, `goals config`, `active-tasks`, `active-tasks config`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks hygiene [--dry-run|--apply] [--older-than <duration>]`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
@@ -70,14 +72,16 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `reflect [--window <days>] [--dry-run] [--model M] [--force]` | Analyze recent facts, extract behavioral patterns. |
 | `reflect-rules [--dry-run] [--model M] [--force]` | Synthesize patterns into actionable rules. |
 | `reflect-meta [--dry-run] [--model M] [--force]` | Synthesize higher-level meta-patterns. |
-| `install [--dry-run]` | Apply full recommended config, compaction prompts, and **maintenance cron jobs** (nightly distill, weekly reflection, weekly extract-procedures, self-correction). Idempotent. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
-| `config-mode <preset>` | Set preset: **local** \| **minimal** \| **enhanced** \| **complete**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options; Minimal uses nano/flash-tier LLM only. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode complete`). |
+| `install [--dry-run]` | Guided first-run setup. Applies recommended config, auto-detects a sensible embedding default, creates starter workspace files/directories, refreshes the workspace skill + TOOLS.md block, and prints what is done vs left. Alias: `setup`. |
+| `config-mode <preset>` | Set preset: **local** (offline), **minimal** (cheap cloud help), **enhanced** (balanced), **complete** (enhanced + verbose). Writes to openclaw.json. Restart gateway after. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Aliases: `mode`, `set-mode`. |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
-| `config` | Show current configuration and feature toggles (mode, core and optional features on/off). Includes **goal stewardship** on/off, **active task** on/off, **ledger** (`markdown` or `facts`), and resolved **ACTIVE-TASKS.md** path. Use **config-set** to change settings; use **`goals config`** / **`active-tasks config`** for full detail. |
-| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`, **`goalStewardship enabled`** / **`disabled`** (same style as `nightlyCycle`), **`activeTask enabled`** / **`disabled`**). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
+| `config` | Show current configuration and feature toggles (mode, core and optional features on/off), plus a plain-English mode summary. Alias: `settings`. |
+| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). Alias: `set`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
-| `verify [--fix] [--log-file <path>] [--test-llm]` | Verify infrastructure and functionality: config (embedding key/model), SQLite, LanceDB, embedding API, credentials vault, scheduled jobs. Use **config** to view or change feature toggles. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. `--test-llm` tests each configured LLM model. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
-\| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `distill.defaultModel` if set, else `distill.modelTier` (unset → `maintenance`) and the first model in that tier. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
+| `verify [--fix] [--log-file <path>] [--test-llm]` | Beginner-friendly preflight check for config, SQLite, LanceDB, embeddings, credentials, and scheduled jobs. Prints guided fix suggestions plus the Mission Control URL. Alias: `preflight`. |
+| `status [--json]` | Unified health home: quick summary of memory size, cron health, audit failures, agent alerts, current task, and the Mission Control dashboard URL. Alias: `home`. |
+| `dashboard` | Print the Mission Control dashboard URL. Alias: `mission-control`. |
+| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `distill.defaultModel` if set, else `distill.modelTier` (unset → `maintenance`) and the first model in that tier. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
 | `export --output <path> [--include-credentials] [--sources X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source with `--sources` (e.g. conversation, distillation, cli, ingest, reflection). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
