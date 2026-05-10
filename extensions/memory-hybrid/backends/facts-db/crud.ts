@@ -168,7 +168,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const key = entry.key?.trim() || null;
   const value = entry.value ?? null;
   const source = entry.source ?? "conversation";
-  const category = (entry.category ?? "other").toLowerCase();
+  const category = (entry.category?.trim() || "other").toLowerCase();
   const decayClass =
     entry.decayClass || classifyDecay(entity, key, value, entry.text, { source, category, importance });
   const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
