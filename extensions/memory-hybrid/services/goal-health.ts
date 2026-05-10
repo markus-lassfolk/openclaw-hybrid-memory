@@ -275,7 +275,14 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       const reason = `Linked task "${lt.label}" is missing dispatch metadata (sessionKey/runId).`;
       const updatedTasks = g.linkedTasks.map((t) =>
         t.label === lt.label
-          ? { ...t, status: "failed", dispatchFailureReason: reason, updatedAt: nowIso(), sessionKey: null, runId: null }
+          ? {
+              ...t,
+              status: "failed",
+              dispatchFailureReason: reason,
+              updatedAt: nowIso(),
+              sessionKey: null,
+              runId: null,
+            }
           : t,
       );
       const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];

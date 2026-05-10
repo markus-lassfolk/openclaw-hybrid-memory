@@ -46,7 +46,13 @@ export async function resolveGoalForSpawn(event: GoalSubagentSpawnEvent, goalsDi
 export async function linkSubagentToGoal(
   goalsDir: string,
   goalId: string,
-  task: { label: string; sessionKey: string | null; runId?: string | null; status: string; dispatchFailureReason?: string },
+  task: {
+    label: string;
+    sessionKey: string | null;
+    runId?: string | null;
+    status: string;
+    dispatchFailureReason?: string;
+  },
 ): Promise<void> {
   const g = await readGoal(goalsDir, goalId);
   if (!g || isTerminalStatus(g.status)) return;
@@ -125,7 +131,9 @@ export async function markGoalDispatchFailure(
         },
       ];
 
-  const mergedBlockers = g.currentBlockers.includes(info.reason) ? g.currentBlockers : [...g.currentBlockers, info.reason];
+  const mergedBlockers = g.currentBlockers.includes(info.reason)
+    ? g.currentBlockers
+    : [...g.currentBlockers, info.reason];
   await updateGoal(
     goalsDir,
     g.id,

@@ -433,7 +433,11 @@ describe("runGoalHealthCheck", () => {
   it("records waiting outcome when actionable next exists but no dispatch/execution occurs", async () => {
     goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
     workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
-    const g = await createGoal(goalsDir, { label: "actionable_wait", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    const g = await createGoal(
+      goalsDir,
+      { label: "actionable_wait", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
     await updateGoal(
       goalsDir,
       g.id,
