@@ -3,12 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import {
-  type HybridMemoryConfig,
-  getCronModelConfig,
-  getDefaultCronModel,
-  getLLMModelPreference,
-} from "../config.js";
+import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import type { EpisodeOutcome, ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
@@ -176,7 +171,10 @@ function normalizeStatus(raw?: string): string | null {
   return null;
 }
 
-function normalizeCheckpointInput(input: ActiveTaskCheckpointInput, now: Date): {
+function normalizeCheckpointInput(
+  input: ActiveTaskCheckpointInput,
+  now: Date,
+): {
   normalized?: NormalizedCheckpointInput;
   errors: ActiveTaskCheckpointError[];
 } {
@@ -283,7 +281,7 @@ function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
-    return "{\"error\":\"unserializable\"}";
+    return '{"error":"unserializable"}';
   }
 }
 
@@ -664,7 +662,11 @@ export async function runActiveTaskCheckpoint(
     wakeSkippedReason = checkpoint.resumeAtIso ? "schedule_wake_disabled" : "resumeAt_not_provided";
   }
 
-  let projection = { attempted: false, refreshed: false, reason: "refresh_not_requested" } as ActiveTaskProjectionRefreshResult;
+  let projection = {
+    attempted: false,
+    refreshed: false,
+    reason: "refresh_not_requested",
+  } as ActiveTaskProjectionRefreshResult;
   if (checkpoint.refreshProjection) {
     try {
       const refreshFn = deps.refreshProjectionFn ?? refreshActiveTaskProjectionFromFacts;

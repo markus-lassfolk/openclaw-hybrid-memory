@@ -113,7 +113,7 @@ describe("active-task-checkpoint", () => {
     expect(latestProjectValue(factsDb, "task-1270", "related_session")).toBe("agent:forge:subagent:1");
     expect(latestProjectValue(factsDb, "task-1270", "title")).toBe("Implement checkpoint tool");
     expect(latestProjectValue(factsDb, "task-1270", "task_updated")).toBeTruthy();
-    expect(latestProjectValue(factsDb, "task-1270", "checkpoint_state")).toContain("\"phase\":\"coding\"");
+    expect(latestProjectValue(factsDb, "task-1270", "checkpoint_state")).toContain('"phase":"coding"');
 
     expect(factsDb.episodesCount()).toBe(1);
 

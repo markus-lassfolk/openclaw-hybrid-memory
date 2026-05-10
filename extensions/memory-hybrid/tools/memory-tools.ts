@@ -2738,7 +2738,9 @@ export function registerMemoryTools(
       owner: Type.Optional(Type.String({ description: "Task owner (free-form, e.g. subagent/session/role)." })),
       next: Type.Optional(Type.String({ description: "Next concrete action for safe resume." })),
       relatedSession: Type.Optional(Type.String({ description: "Related OpenClaw session key/id." })),
-      title: Type.Optional(Type.String({ description: "Human-readable task title (defaults to existing or Project task)." })),
+      title: Type.Optional(
+        Type.String({ description: "Human-readable task title (defaults to existing or Project task)." }),
+      ),
       resumeAt: Type.Optional(
         Type.String({
           description: "Optional future ISO timestamp for wake/reminder scheduling via cron jobs store.",
@@ -2754,8 +2756,7 @@ export function registerMemoryTools(
       ),
       refreshProjection: Type.Optional(
         Type.Boolean({
-          description:
-            "When true, best-effort refresh ACTIVE-TASKS.md projection (activeTask.ledger=facts only).",
+          description: "When true, best-effort refresh ACTIVE-TASKS.md projection (activeTask.ledger=facts only).",
         }),
       ),
       recordEpisode: Type.Optional(
