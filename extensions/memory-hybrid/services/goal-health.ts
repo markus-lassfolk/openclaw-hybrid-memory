@@ -11,7 +11,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
 import { isTerminalStatus, listGoals, readGoal, updateGoal, writeGoal } from "./goal-registry.js";
-import type { Goal, GoalHistoryEntry } from "./goal-stewardship-types.js";
+import type { Goal, GoalHistoryEntry, GoalPulseOutcome } from "./goal-stewardship-types.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
 
 const execFileAsync = promisify(execFile);
@@ -28,10 +28,30 @@ export interface GoalHealthCheckResult {
   goalsChecked: number;
   goalsUpdated: number;
   actions: Array<{ goalId: string; label: string; action: string; reason: string }>;
+  outcomes: Array<{
+    goalId: string;
+    label: string;
+    outcome: GoalPulseOutcome;
+    reason: string;
+    taskLabel?: string;
+    sessionKey?: string | null;
+    runId?: string | null;
+  }>;
 }
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function extractActionableNext(goal: Goal): string | null {
+  const text = goal.lastOutcome?.trim();
+  if (!text) return null;
+  const m = /\|\s*next:\s*(.+)$/i.exec(text);
+  if (!m) return null;
+  const next = m[1]?.trim() ?? "";
+  if (!next) return null;
+  if (/^(none|n\/a|n-a|unknown|tbd)$/i.test(next)) return null;
+  return next;
 }
 
 const SHELL_DENY_RE = /[;&|`$(){}!\n\\<>~#]/;
@@ -151,7 +171,7 @@ async function runMechanicalVerification(
 
 export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<GoalHealthCheckResult> {
   const { goalsDir, cfg, workspaceRoot, logger, eventLog } = opts;
-  const result: GoalHealthCheckResult = { goalsChecked: 0, goalsUpdated: 0, actions: [] };
+  const result: GoalHealthCheckResult = { goalsChecked: 0, goalsUpdated: 0, actions: [], outcomes: [] };
 
   if (!cfg.enabled || !cfg.watchdogHealthCheck) {
     return result;
@@ -163,13 +183,28 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
   for (const goal of goals) {
     if (isTerminalStatus(goal.status)) continue;
     result.goalsChecked++;
+    const recordOutcome = (
+      outcome: GoalPulseOutcome,
+      reason: string,
+      extra?: { taskLabel?: string; sessionKey?: string | null; runId?: string | null },
+    ): void => {
+      result.outcomes.push({
+        goalId: goal.id,
+        label: goal.label,
+        outcome,
+        reason,
+        ...(extra?.taskLabel ? { taskLabel: extra.taskLabel } : {}),
+        ...(extra?.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
+        ...(extra?.runId !== undefined ? { runId: extra.runId } : {}),
+      });
+    };
 
     if (goal.dispatchCount >= goal.maxDispatches || goal.assessmentCount >= goal.maxAssessments) {
+      const reason =
+        goal.dispatchCount >= goal.maxDispatches
+          ? `Budget exhausted: dispatches ${goal.dispatchCount}/${goal.maxDispatches}`
+          : `Budget exhausted: assessments ${goal.assessmentCount}/${goal.maxAssessments}`;
       if (goal.status !== "blocked") {
-        const reason =
-          goal.dispatchCount >= goal.maxDispatches
-            ? `Budget exhausted: dispatches ${goal.dispatchCount}/${goal.maxDispatches}`
-            : `Budget exhausted: assessments ${goal.assessmentCount}/${goal.maxAssessments}`;
         await updateGoal(
           goalsDir,
           goal.id,
@@ -194,6 +229,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           /* non-fatal */
         }
       }
+      recordOutcome("blocked", reason);
       continue;
     }
 
@@ -217,11 +253,52 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       );
       result.goalsUpdated++;
       result.actions.push({ goalId: goal.id, label: goal.label, action: "escalated", reason: "failures" });
+      recordOutcome("blocked", `Escalated after ${goal.consecutiveFailures} consecutive failures`);
       continue;
     }
 
     let g = await readGoal(goalsDir, goal.id);
-    if (!g) continue;
+    if (!g) {
+      recordOutcome("blocked", "Goal state could not be loaded for stewardship processing.");
+      continue;
+    }
+
+    let executionReason: string | null = null;
+    let waitingReason: string | null = null;
+
+    let metadataFailureHandled = false;
+    for (const lt of g.linkedTasks) {
+      if (lt.status !== "in_progress" && lt.status !== "In progress") continue;
+      const hasSession = typeof lt.sessionKey === "string" && lt.sessionKey.trim().length > 0;
+      const hasRunId = typeof lt.runId === "string" && lt.runId.trim().length > 0;
+      if (hasSession || hasRunId) continue;
+      const reason = `Linked task "${lt.label}" is missing dispatch metadata (sessionKey/runId).`;
+      const updatedTasks = g.linkedTasks.map((t) =>
+        t.label === lt.label
+          ? { ...t, status: "failed", dispatchFailureReason: reason, updatedAt: nowIso(), sessionKey: null, runId: null }
+          : t,
+      );
+      const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];
+      await updateGoal(
+        goalsDir,
+        g.id,
+        {
+          linkedTasks: updatedTasks,
+          consecutiveFailures: g.consecutiveFailures + 1,
+          status: "blocked",
+          currentBlockers: blockers,
+          lastOutcome: reason,
+        },
+        { timestamp: nowIso(), action: "dispatch-metadata-missing", detail: reason, actor: "watchdog" },
+      );
+      result.goalsUpdated++;
+      result.actions.push({ goalId: g.id, label: g.label, action: "dispatch-metadata-missing", reason });
+      recordOutcome("blocked", reason, { taskLabel: lt.label, sessionKey: null, runId: null });
+      metadataFailureHandled = true;
+      break;
+    }
+    if (metadataFailureHandled) continue;
+
     for (const lt of g.linkedTasks) {
       if (lt.status !== "in_progress" && lt.status !== "In progress") continue;
       if (!lt.sessionKey) continue;
@@ -245,15 +322,30 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           );
           result.goalsUpdated++;
           result.actions.push({ goalId: g.id, label: g.label, action: "subagent-died", reason: `pid ${pid}` });
+          recordOutcome("blocked", `Linked task "${lt.label}" died: pid ${pid} is no longer alive`, {
+            taskLabel: lt.label,
+            sessionKey: lt.sessionKey,
+            runId: lt.runId ?? null,
+          });
           const reread = await readGoal(goalsDir, goal.id);
           if (!reread) continue;
           g = reread;
+          metadataFailureHandled = true;
+          break;
         }
       }
     }
+    if (metadataFailureHandled) continue;
 
     const reread2 = await readGoal(goalsDir, goal.id);
-    if (!reread2 || isTerminalStatus(reread2.status)) continue;
+    if (!reread2) {
+      recordOutcome("blocked", "Goal state disappeared during stewardship processing.");
+      continue;
+    }
+    if (isTerminalStatus(reread2.status)) {
+      recordOutcome(reread2.status === "completed" ? "done" : "noop", `Goal is already ${reread2.status}.`);
+      continue;
+    }
     g = reread2;
 
     const staleThresholdMs = g.cooldownMinutes * 2 * 60 * 1000;
@@ -275,6 +367,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       );
       result.goalsUpdated++;
       result.actions.push({ goalId: g.id, label: g.label, action: "stalled", reason: "idle" });
+      waitingReason = `No activity for ${Math.round(idleMs / 60000)}m (threshold ${g.cooldownMinutes * 2}m)`;
       try {
         eventLog?.append({
           sessionId: "goal-stewardship",
@@ -294,38 +387,89 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       );
       result.goalsUpdated++;
       result.actions.push({ goalId: g.id, label: g.label, action: "unstalled", reason: "activity" });
+      executionReason = "Activity resumed after stalled state.";
     }
 
     const reread3 = await readGoal(goalsDir, goal.id);
-    if (!reread3 || isTerminalStatus(reread3.status) || reread3.status === "blocked") continue;
+    if (!reread3) {
+      recordOutcome("blocked", "Goal state disappeared during stewardship processing.");
+      continue;
+    }
+    if (isTerminalStatus(reread3.status)) {
+      recordOutcome(reread3.status === "completed" ? "done" : "noop", `Goal is already ${reread3.status}.`);
+      continue;
+    }
     g = reread3;
+    if (reread3.status === "blocked") {
+      recordOutcome("blocked", g.currentBlockers[0] ?? "Goal is blocked.");
+      continue;
+    }
     if (g.verification && g.verification.type !== "manual") {
       const mech = await runMechanicalVerification(g, workspaceRoot, cfg);
-      if (mech.detail === "skip") continue;
-
-      const checkAt = nowIso();
-      if (mech.ok && (g.status === "active" || g.status === "stalled")) {
-        await updateGoal(
-          goalsDir,
-          g.id,
-          {
-            status: "verifying",
-            lastOutcome: mech.detail,
-            lastMechanicalCheck: { at: checkAt, ok: true, detail: mech.detail },
-          },
-          { timestamp: checkAt, action: "verification-passed", detail: mech.detail, actor: "watchdog" },
-        );
-        result.goalsUpdated++;
-        result.actions.push({ goalId: g.id, label: g.label, action: "verifying", reason: mech.detail });
-      } else {
-        await writeGoal(goalsDir, { ...g, lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } });
+      if (mech.detail !== "skip") {
+        const checkAt = nowIso();
+        if (mech.ok && (g.status === "active" || g.status === "stalled")) {
+          await updateGoal(
+            goalsDir,
+            g.id,
+            {
+              status: "verifying",
+              lastOutcome: mech.detail,
+              lastMechanicalCheck: { at: checkAt, ok: true, detail: mech.detail },
+            },
+            { timestamp: checkAt, action: "verification-passed", detail: mech.detail, actor: "watchdog" },
+          );
+          result.goalsUpdated++;
+          result.actions.push({ goalId: g.id, label: g.label, action: "verifying", reason: mech.detail });
+          executionReason = `Mechanical verification passed: ${mech.detail}`;
+          const rereadAfterVerify = await readGoal(goalsDir, goal.id);
+          if (rereadAfterVerify) g = rereadAfterVerify;
+        } else {
+          await writeGoal(goalsDir, { ...g, lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } });
+          if (!mech.ok) waitingReason = `Mechanical verification failed: ${mech.detail}`;
+        }
       }
+    }
+
+    if (g.status === "verifying" && !executionReason) {
+      waitingReason = "Goal is in verifying state; awaiting completion confirmation.";
+    }
+
+    const inProgress = g.linkedTasks.find((lt) => lt.status === "in_progress" || lt.status === "In progress");
+    const actionableNext = extractActionableNext(g);
+    if (executionReason) {
+      recordOutcome("executed", executionReason);
+    } else if (inProgress) {
+      const hasSession = typeof inProgress.sessionKey === "string" && inProgress.sessionKey.trim().length > 0;
+      const hasRunId = typeof inProgress.runId === "string" && inProgress.runId.trim().length > 0;
+      if (hasSession || hasRunId) {
+        recordOutcome("dispatched", `Task "${inProgress.label}" is in progress.`, {
+          taskLabel: inProgress.label,
+          sessionKey: inProgress.sessionKey ?? null,
+          runId: inProgress.runId ?? null,
+        });
+      } else {
+        recordOutcome("blocked", `Task "${inProgress.label}" has no dispatch metadata (sessionKey/runId).`, {
+          taskLabel: inProgress.label,
+          sessionKey: null,
+          runId: null,
+        });
+      }
+    } else if (waitingReason) {
+      recordOutcome("waiting", waitingReason);
+    } else if (actionableNext) {
+      recordOutcome("waiting", `Actionable next step pending: ${actionableNext}`);
+    } else if (g.status === "blocked") {
+      recordOutcome("blocked", g.currentBlockers[0] ?? "Goal is blocked.");
+    } else {
+      recordOutcome("noop", "No eligible deterministic action for this goal in this pulse.");
     }
   }
 
-  if (result.goalsUpdated > 0) {
+  if (result.goalsChecked > 0) {
+    const summary = result.outcomes.map((o) => `${o.label}(${o.outcome})`).join(", ");
     logger.debug?.(
-      `goal health: checked ${result.goalsChecked}, updated ${result.goalsUpdated}: ${result.actions.map((a) => `${a.label}(${a.action})`).join(", ")}`,
+      `goal health: checked ${result.goalsChecked}, updated ${result.goalsUpdated}: ${summary || "no outcomes"}`,
     );
   }
 

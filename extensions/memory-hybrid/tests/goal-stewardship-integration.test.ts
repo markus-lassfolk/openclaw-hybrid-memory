@@ -162,6 +162,32 @@ describe("goal stewardship integration (mock plugin API)", () => {
     expect(task?.status).toBe("completed");
   });
 
+  it("subagent_spawned marks goal blocked when dispatch metadata is missing", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
+
+    const g = await createGoal(
+      goalsDir,
+      { label: "deploy-metadata", description: "deploy app", acceptanceCriteria: ["live"] },
+      defaults,
+    );
+
+    await api.emitAll("subagent_spawned", {
+      goalId: g.id,
+      label: "task-missing-meta",
+    });
+
+    const afterSpawn = await readGoal(goalsDir, g.id);
+    expect(afterSpawn?.status).toBe("blocked");
+    expect(afterSpawn?.lastOutcome).toContain("missing ACP session metadata");
+    expect(afterSpawn?.currentBlockers.some((b) => b.includes("missing ACP session metadata"))).toBe(true);
+    const task = afterSpawn?.linkedTasks.find((t) => t.label === "task-missing-meta");
+    expect(task?.status).toBe("failed");
+    expect(task?.dispatchFailureReason).toContain("missing ACP session metadata");
+  });
+
   it("before_agent_start returns undefined when no active goals exist", async () => {
     const cfg = parseCfg();
     const ctx = minimalLifecycleContext(cfg);

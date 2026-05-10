@@ -8,6 +8,7 @@ import type { Goal } from "./goal-stewardship-types.js";
 export type GoalSubagentSpawnEvent = {
   childSessionKey?: string;
   sessionKey?: string;
+  runId?: string;
   label?: string;
   task?: string;
   goalId?: string;
@@ -45,7 +46,7 @@ export async function resolveGoalForSpawn(event: GoalSubagentSpawnEvent, goalsDi
 export async function linkSubagentToGoal(
   goalsDir: string,
   goalId: string,
-  task: { label: string; sessionKey: string | null; status: string },
+  task: { label: string; sessionKey: string | null; runId?: string | null; status: string; dispatchFailureReason?: string },
 ): Promise<void> {
   const g = await readGoal(goalsDir, goalId);
   if (!g || isTerminalStatus(g.status)) return;
@@ -53,13 +54,24 @@ export async function linkSubagentToGoal(
   const existing = g.linkedTasks.find((t) => t.label === task.label);
   const linkedTasks = existing
     ? g.linkedTasks.map((t) =>
-        t.label === task.label ? { ...t, sessionKey: task.sessionKey, status: task.status, updatedAt: ts } : t,
+        t.label === task.label
+          ? {
+              ...t,
+              sessionKey: task.sessionKey,
+              runId: task.runId ?? t.runId ?? null,
+              dispatchFailureReason: task.dispatchFailureReason ?? null,
+              status: task.status,
+              updatedAt: ts,
+            }
+          : t,
       )
     : [
         ...g.linkedTasks,
         {
           label: task.label,
           sessionKey: task.sessionKey,
+          runId: task.runId ?? null,
+          dispatchFailureReason: task.dispatchFailureReason ?? null,
           status: task.status,
           linkedAt: ts,
           updatedAt: ts,
@@ -72,7 +84,62 @@ export async function linkSubagentToGoal(
     {
       timestamp: ts,
       action: "subagent-linked",
-      detail: `${task.label} (${task.sessionKey ?? "no session"})`,
+      detail: `${task.label} (${task.sessionKey ?? "no session"}${task.runId ? `, run=${task.runId}` : ""})`,
+      actor: "agent",
+    },
+  );
+}
+
+export async function markGoalDispatchFailure(
+  goalsDir: string,
+  goalId: string,
+  info: { label: string; sessionKey: string | null; runId: string | null; reason: string },
+): Promise<void> {
+  const g = await readGoal(goalsDir, goalId);
+  if (!g || isTerminalStatus(g.status)) return;
+  const ts = nowIso();
+  const existing = g.linkedTasks.find((t) => t.label === info.label);
+  const linkedTasks = existing
+    ? g.linkedTasks.map((t) =>
+        t.label === info.label
+          ? {
+              ...t,
+              sessionKey: info.sessionKey ?? t.sessionKey ?? null,
+              runId: info.runId ?? t.runId ?? null,
+              dispatchFailureReason: info.reason,
+              status: "failed",
+              updatedAt: ts,
+            }
+          : t,
+      )
+    : [
+        ...g.linkedTasks,
+        {
+          label: info.label,
+          sessionKey: info.sessionKey,
+          runId: info.runId,
+          dispatchFailureReason: info.reason,
+          status: "failed",
+          linkedAt: ts,
+          updatedAt: ts,
+        },
+      ];
+
+  const mergedBlockers = g.currentBlockers.includes(info.reason) ? g.currentBlockers : [...g.currentBlockers, info.reason];
+  await updateGoal(
+    goalsDir,
+    g.id,
+    {
+      linkedTasks,
+      consecutiveFailures: g.consecutiveFailures + 1,
+      status: "blocked",
+      currentBlockers: mergedBlockers,
+      lastOutcome: info.reason,
+    },
+    {
+      timestamp: ts,
+      action: "dispatch-failed",
+      detail: `${info.label}: ${info.reason}`,
       actor: "agent",
     },
   );
