@@ -287,14 +287,7 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
 }
 
 export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, factLimit = 8000): number | null {
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, factLimit);
-  let maxSec: number | null = null;
-  for (const fact of facts) {
-    const createdAt = fact.createdAt;
-    if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) continue;
-    maxSec = maxSec === null ? createdAt : Math.max(maxSec, createdAt);
-  }
-  return maxSec;
+  return factsDb.getMaxCreatedAtByCategory(TASK_LEDGER_CATEGORY);
 }
 
 function toIsoOrNull(unixSeconds: number | null): string | null {

@@ -5,8 +5,6 @@
  * Extracted from index.ts for better modularity.
  */
 
-import { homedir } from "node:os";
-import { isAbsolute, join as pathJoin } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -67,6 +65,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { getEnv } from "../utils/env-manager.js";
+import { resolveWorkspaceRoot, resolveWorkspacePath } from "../utils/path.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 
@@ -304,10 +303,8 @@ export function registerMemoryTools(
     }
   }
 
-  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
-  const activeTaskProjectionPath = isAbsolute(cfg.activeTask.filePath)
-    ? cfg.activeTask.filePath
-    : pathJoin(workspaceRoot, cfg.activeTask.filePath);
+  const workspaceRoot = resolveWorkspaceRoot();
+  const activeTaskProjectionPath = resolveWorkspacePath(cfg.activeTask.filePath);
   const activeTaskStaleMinutes = (() => {
     try {
       return parseDuration(cfg.activeTask.staleThreshold);

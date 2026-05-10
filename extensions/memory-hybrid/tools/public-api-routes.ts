@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { isAbsolute, join as pathJoin } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
@@ -14,7 +12,7 @@ import {
 } from "../services/task-ledger-facts.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
-import { getEnv } from "../utils/env-manager.js";
+import { resolveWorkspacePath } from "../utils/path.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
 import { type SafeRouteLogger, createSafeRegisterHttpRoute } from "./safe-register-http-route.js";
@@ -103,14 +101,6 @@ function resolveActiveTaskConfig(cfg: PublicApiConfig): ActiveTaskConfigSubset {
   };
 }
 
-function resolveWorkspaceRoot(): string {
-  return getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
-}
-
-function resolveActiveTaskFilePath(filePath: string): string {
-  return isAbsolute(filePath) ? filePath : pathJoin(resolveWorkspaceRoot(), filePath);
-}
-
 function extractFactId(url: URL): string | null {
   const byQuery = url.searchParams.get("id")?.trim();
   if (byQuery) return byQuery;
@@ -174,7 +164,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   const register = createSafeRegisterHttpRoute(api, logger, "memory-public");
   const makeRoute = (path: string, handler: HttpRequestHandler) => register(path, handler, routeOpts);
   const activeTaskCfg = resolveActiveTaskConfig(ctx.cfg);
-  const activeTaskFilePath = resolveActiveTaskFilePath(activeTaskCfg.filePath);
+  const activeTaskFilePath = resolveWorkspacePath(activeTaskCfg.filePath);
   const staleMinutes = (() => {
     try {
       return parseDuration(activeTaskCfg.staleThreshold);
