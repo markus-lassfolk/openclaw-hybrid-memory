@@ -348,7 +348,6 @@ export function registerMemoryTools(
     vector: number[];
     importance: number;
     category: string;
-    operation: string;
   }): Promise<void> => {
     await storeCanonicalVectorForFact({
       vectorDb,
@@ -1793,7 +1792,6 @@ export function registerMemoryTools(
                   vector,
                   importance,
                   category: "technical",
-                  operation: "store-credential-pointer",
                 });
                 await storeRegistryEmbeddings({
                   factsDb,
@@ -2003,7 +2001,6 @@ export function registerMemoryTools(
                         vector,
                         importance: finalImportance,
                         category,
-                        operation: "store-update-supersede",
                       });
                     }
                     await storeRegistryEmbeddings({
@@ -2199,7 +2196,6 @@ export function registerMemoryTools(
                 vector,
                 importance,
                 category,
-                operation: "store-fact",
               });
             }
             await storeRegistryEmbeddings({

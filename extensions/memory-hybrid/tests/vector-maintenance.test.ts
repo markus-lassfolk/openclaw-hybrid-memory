@@ -51,4 +51,24 @@ describe("storeCanonicalVectorForFact", () => {
 
     expect(setEmbeddingModel).not.toHaveBeenCalled();
   });
+
+  it("does not record embedding metadata when LanceDB is unavailable", async () => {
+    const store = vi.fn().mockResolvedValue("fact-3");
+    const setEmbeddingModel = vi.fn();
+
+    await expect(
+      storeCanonicalVectorForFact({
+        vectorDb: { store, isLanceDbAvailable: () => false },
+        factsDb: { setEmbeddingModel },
+        factId: "fact-3",
+        text: "fallback fact",
+        vector: [0.9, 0.1],
+        importance: 0.5,
+        category: "other",
+        embeddingModel: "text-embedding-test",
+      }),
+    ).resolves.toBe("fact-3");
+
+    expect(setEmbeddingModel).not.toHaveBeenCalled();
+  });
 });

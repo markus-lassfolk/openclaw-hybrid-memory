@@ -60,7 +60,7 @@ export async function deleteVectorForFactId(options: {
 }
 
 export async function storeCanonicalVectorForFact(options: {
-  vectorDb: Pick<VectorDB, "store">;
+  vectorDb: Pick<VectorDB, "store"> & Partial<Pick<VectorDB, "isLanceDbAvailable">>;
   factsDb: { setEmbeddingModel: (id: string, model: string | null) => void };
   factId: string;
   text: string;
@@ -78,6 +78,10 @@ export async function storeCanonicalVectorForFact(options: {
     category: options.category,
     id: options.factId,
   });
-  options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
+  const canPersistEmbeddingModel =
+    typeof options.vectorDb.isLanceDbAvailable === "function" ? options.vectorDb.isLanceDbAvailable() : true;
+  if (canPersistEmbeddingModel) {
+    options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
+  }
   return storedId;
 }
