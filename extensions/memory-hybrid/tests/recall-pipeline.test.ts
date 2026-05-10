@@ -887,3 +887,36 @@ describe("runRecallPipelineQuery — retrieval mode policy (#639)", () => {
     expect(deps.embeddings.embed).toHaveBeenCalledWith("interactive mode query");
   });
 });
+
+describe("runRecallPipelineQuery — stale vector hit filtering", () => {
+  it("drops semantic hits whose hydrated facts are superseded or expired", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const active = makeSearchResult("active", 0.9);
+    const superseded = makeSearchResult("superseded", 0.8);
+    const expired = makeSearchResult("expired", 0.7);
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([active, superseded, expired]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
+      if (id === "superseded") return makeEntry(id, { supersededAt: nowSec });
+      if (id === "expired") return makeEntry(id, { expiresAt: nowSec });
+      return makeEntry(id, { expiresAt: nowSec + 60 });
+    });
+
+    const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+
+    expect(result.map((r) => r.entry.id)).toEqual(["active"]);
+  });
+});

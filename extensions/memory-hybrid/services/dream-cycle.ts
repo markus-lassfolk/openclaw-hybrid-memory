@@ -512,8 +512,8 @@ export async function runDreamCycle(
   let factsPruned = 0;
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
-    const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
     try {
+      const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
       factsPruned = factsDb.pruneExpired();
       const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
         operation: "dream-cycle-prune-expired",
@@ -534,8 +534,8 @@ export async function runDreamCycle(
     }
   }
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
-    const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
     try {
+      const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
       factsDecayed = factsDb.decayConfidence();
       const vectorCleanup = await deleteVectorsForFactIds(vectorDb, lowConfidenceIds, {
         operation: "dream-cycle-decay",

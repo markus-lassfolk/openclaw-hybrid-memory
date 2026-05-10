@@ -1,5 +1,4 @@
 import type { VectorDB } from "../backends/vector-db.js";
-import { capturePluginError } from "./error-reporter.js";
 
 export async function deleteVectorsForFactIds(
   vectorDb: Pick<VectorDB, "delete">,
@@ -20,10 +19,6 @@ export async function deleteVectorsForFactIds(
     } catch (err) {
       failed++;
       const error = err instanceof Error ? err : new Error(String(err));
-      capturePluginError(error, {
-        subsystem: "vector",
-        operation: options.operation,
-      });
       options.logger?.warn?.(`memory-hybrid: ${options.operation} vector delete failed for ${id}: ${error.message}`);
     }
   }
