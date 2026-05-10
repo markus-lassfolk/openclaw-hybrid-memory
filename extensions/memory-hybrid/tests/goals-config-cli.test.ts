@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
-import { hybridConfigSchema } from "../config.js";
 import { registerGoalCommands } from "../cli/goals.js";
+import { hybridConfigSchema } from "../config.js";
 import { setEnv } from "../utils/env-manager.js";
 
 function makeCfg() {
@@ -50,6 +50,7 @@ describe("goals config CLI", () => {
       expect(parsed.resolvedGoalsDir).toBe("/tmp/openclaw-goals-config-test/state/goals-test");
       expect(parsed.heartbeatPatterns).toEqual(["^cron heartbeat"]);
       expect(parsed.heartbeatStewardship).toBe(true);
+      expect(parsed.triageSuggestHeavyDirective).toBe(true);
       expect(parsed.globalLimits.maxActiveGoals).toBeGreaterThan(0);
       expect(parsed.defaults.maxDispatches).toBeGreaterThan(0);
     } finally {

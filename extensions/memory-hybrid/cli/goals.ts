@@ -46,6 +46,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
               watchdogHealthCheck: gs.watchdogHealthCheck,
               heartbeatRefreshActiveTask: gs.heartbeatRefreshActiveTask,
               llmTriageOnHeartbeat: gs.llmTriageOnHeartbeat,
+              triageSuggestHeavyDirective: gs.triageSuggestHeavyDirective,
               heartbeatPatterns: gs.heartbeatPatterns,
               attentionWeights: gs.attentionWeights,
               multiGoalMaxChars: gs.multiGoalMaxChars,
