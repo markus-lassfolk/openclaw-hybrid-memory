@@ -61,6 +61,11 @@ import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import { isHeavyModel } from "../utils/model-tier.js";
 import {
+  DEFAULT_COMPACTION_MODEL,
+  isCompactionModelTooStrong,
+  resolveCompactionModelSelection,
+} from "../utils/compaction-model-watchdog.js";
+import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
@@ -635,6 +640,16 @@ export async function runVerifyForCli(
       : null;
   const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
   const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+  let compactionSelection = resolveCompactionModelSelection(undefined);
+  try {
+    if (existsSync(defaultConfigPath)) {
+      const root = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
+      // Use inheritance fallback here to mirror OpenClaw behavior when compaction.model is unset.
+      compactionSelection = resolveCompactionModelSelection(root, { fallbackPolicy: "inherit-agent-primary" });
+    }
+  } catch {
+    // Keep default mini fallback when openclaw.json is unavailable/unreadable.
+  }
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
@@ -642,6 +657,9 @@ export async function runVerifyForCli(
   );
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
+  );
+  tableLog(
+    `    Compaction (agents.*.compaction): provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}`,
   );
 
   const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
@@ -700,6 +718,11 @@ export async function runVerifyForCli(
   if (dreamEffective !== "—" && isHeavyModel(dreamEffective)) {
     warnings.push(
       `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
+    );
+  }
+  if (isCompactionModelTooStrong(compactionSelection.model)) {
+    warnings.push(
+      `compaction routing uses a stronger-than-mini model (provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}). Set agents.defaults.compaction.model (or agents.list[id=main].compaction.model) to a mini/nano model such as ${DEFAULT_COMPACTION_MODEL}.`,
     );
   }
   const _allModelsFiltered: string[] = [
