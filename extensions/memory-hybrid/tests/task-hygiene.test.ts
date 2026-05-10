@@ -126,6 +126,13 @@ describe("task-hygiene", () => {
     expect(proposal?.label).toContain("deploy-production");
   });
 
+  it("detectLongRunningWorkflowProposal detects direct deploy commands", () => {
+    const proposal = detectLongRunningWorkflowProposal("Deploy to production after smoke tests pass");
+    expect(proposal).toBeTruthy();
+    expect(proposal?.kind).toBe("deployment");
+    expect(proposal?.label).toContain("deploy-production");
+  });
+
   it("detectLongRunningWorkflowProposal does not classify generic release-note work as deployment", () => {
     const proposal = detectLongRunningWorkflowProposal("Please draft release notes for this branch and/or docs");
     expect(proposal).toBeNull();
@@ -138,6 +145,23 @@ describe("task-hygiene", () => {
     expect(proposal).toBeTruthy();
     expect(proposal?.label).toContain("wf-openai-openclaw-hybrid-memory-pr-queue");
     expect(proposal?.label).not.toContain("wf-github-com-openai");
+  });
+
+  it("detectLongRunningWorkflowProposal strips .git suffix in GitHub URL repo context", () => {
+    const proposal = detectLongRunningWorkflowProposal("Process PR queue for https://github.com/openai/openclaw-hybrid-memory.git");
+    expect(proposal).toBeTruthy();
+    expect(proposal?.label).toContain("wf-openai-openclaw-hybrid-memory-pr-queue");
+    expect(proposal?.label).not.toContain("-git-pr-queue");
+  });
+
+  it("detectLongRunningWorkflowProposal preserves repo separators for label stability", () => {
+    const dotted = detectLongRunningWorkflowProposal("Process PR queue for https://github.com/acme/foo.bar");
+    const dashed = detectLongRunningWorkflowProposal("Process PR queue for https://github.com/acme/foo-bar");
+    expect(dotted).toBeTruthy();
+    expect(dashed).toBeTruthy();
+    expect(dotted?.label).toContain("wf-acme-foo.bar-pr-queue");
+    expect(dashed?.label).toContain("wf-acme-foo-bar-pr-queue");
+    expect(dotted?.label).not.toBe(dashed?.label);
   });
 
   it("detectLongRunningWorkflowProposal ignores slash-noise tokens and picks explicit repo", () => {
@@ -171,6 +195,7 @@ describe("task-hygiene", () => {
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:private:session-1")).toBe(true);
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:main:subagent:abc123")).toBe(false);
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:forge:main")).toBe(false);
+    expect(shouldAutoRegisterLongRunningTask("auto_main_private", null)).toBe(false);
     expect(shouldAutoRegisterLongRunningTask("suggest", "agent:main:main")).toBe(false);
   });
 });
