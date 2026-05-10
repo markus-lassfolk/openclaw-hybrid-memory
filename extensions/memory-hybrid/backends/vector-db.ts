@@ -864,7 +864,16 @@ export class VectorDB {
       await import("node:fs/promises").then((fs) => fs.rename(shadowTableDir, mainTableDir));
     } catch (swapErr) {
       // Rollback: restore old → main so the database is not left in a broken state.
-      if (mainWasRenamed && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
+      // Only attempt rollback when: (a) we actually renamed main→old, (b) the old
+      // backup still exists, (c) the main directory is still absent (swap did not
+      // partially succeed), AND (d) the shadow source still exists (nothing was moved
+      // out from under us in an unexpected partial-success scenario).
+      if (
+        mainWasRenamed &&
+        existsSync(oldTableDir) &&
+        !existsSync(mainTableDir) &&
+        existsSync(shadowTableDir)
+      ) {
         try {
           await import("node:fs/promises").then((fs) => fs.rename(oldTableDir, mainTableDir));
           this.logWarn(

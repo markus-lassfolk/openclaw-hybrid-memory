@@ -184,6 +184,9 @@ export function applyDedupe(
   // Scope-aware deduplication: only match facts within the same scope/scopeTarget.
   // Global facts (scope='global', scopeTarget=null) are only matched against global facts;
   // scoped facts are matched only against facts with the same scope+target.
+  // Note: `storeFact` enforces that non-global facts always supply a non-null scopeTarget
+  // (throws otherwise), so `candidateScopeTarget` being null for non-global scopes only
+  // occurs when callers pass a partial/synthetic DedupeCandidate outside of storeFact.
   const candidateScope = candidate.scope ?? "global";
   const candidateScopeTarget = candidateScope === "global" ? null : (candidate.scopeTarget ?? null);
   const isGlobal = candidateScope === "global";

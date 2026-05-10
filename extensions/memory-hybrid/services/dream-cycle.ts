@@ -472,12 +472,15 @@ export async function runEpisodicConsolidation(
 
     // Embed and store the consolidated fact in LanceDB so it is discoverable by
     // semantic search.  This is non-fatal: the fact is already safely in SQLite.
+    // Use the same truncated text for both the embedding call and the store payload
+    // so the embedding always matches the text that will be returned by search.
     if (vectorDb && embeddings) {
+      const truncatedText = mergedText.slice(0, 500);
       try {
-        const vector = await embeddings.embed(mergedText.slice(0, 500));
+        const vector = await embeddings.embed(truncatedText);
         await vectorDb.store({
           id: consolidatedFact.id,
-          text: mergedText.slice(0, 500),
+          text: truncatedText,
           vector,
           importance: consolidatedFact.importance,
           category: consolidatedFact.category,
