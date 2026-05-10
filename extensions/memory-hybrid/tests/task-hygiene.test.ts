@@ -164,6 +164,18 @@ describe("task-hygiene", () => {
     expect(dotted?.label).not.toBe(dashed?.label);
   });
 
+  it("detectLongRunningWorkflowProposal detects repo-wide issue sweep requests", () => {
+    const proposal = detectLongRunningWorkflowProposal("Fix all open issues in this repository");
+    expect(proposal).toBeTruthy();
+    expect(proposal?.kind).toBe("issue_sweep");
+    expect(proposal?.label).toContain("issue-sweep");
+  });
+
+  it("detectLongRunningWorkflowProposal ignores scoped issue-fix requests", () => {
+    const proposal = detectLongRunningWorkflowProposal("Fix all issues with the login page in auth service");
+    expect(proposal).toBeNull();
+  });
+
   it("detectLongRunningWorkflowProposal ignores slash-noise tokens and picks explicit repo", () => {
     const proposal = detectLongRunningWorkflowProposal(
       "Process the PR queue and/or review open PRs for my-org/my-repo",
