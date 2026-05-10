@@ -812,8 +812,19 @@ export async function upsertProjectTaskKey(
     source: "active-task",
     decayClass: "permanent",
   });
+  // Bug #20 fix: Validate scope before superseding
   if (previous) {
-    factsDb.supersede(previous.id, entry.id);
+    const prevScope = previous.scope ?? "global";
+    const entryScope = entry.scope ?? "global";
+    const prevTarget = previous.scopeTarget ?? null;
+    const entryTarget = entry.scopeTarget ?? null;
+    if (prevScope === entryScope && prevTarget === entryTarget) {
+      factsDb.supersede(previous.id, entry.id);
+    } else {
+      log?.warn?.(
+        `memory-hybrid: skipped supersede for task [${entity}].${key} due to scope mismatch (prev: ${prevScope}/${prevTarget}, new: ${entryScope}/${entryTarget})`,
+      );
+    }
   }
   opts?.latestByEntityKey?.set(cacheKey, entry);
   try {
@@ -1224,9 +1235,10 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     memoryDir?: string;
     dryRun?: boolean;
     log?: { warn?: (m: string) => void };
+    scopeFilter?: ScopeFilter | null; // Bug #13 fix: Add scope filter support
   } = {},
 ): Promise<FactsReconcileResult> {
-  const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
+  const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes, opts.scopeFilter);
   const reconciledLabels: string[] = [];
   const toFlush: ActiveTaskEntry[] = [];
   const openclawHome = opts.openclawHome;

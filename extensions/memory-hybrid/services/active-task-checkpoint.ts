@@ -396,10 +396,19 @@ function resolveCronModel(cfg: HybridMemoryConfig): string {
 }
 
 function safeJson(value: unknown): string {
+  // Bug #11 fix: Better error handling for unserializable objects
   try {
     return JSON.stringify(value);
-  } catch {
-    return '{"error":"unserializable"}';
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // Return error info with truncated string representation
+    const truncatedStr = String(value).slice(0, 200);
+    return JSON.stringify({
+      _error: "unserializable_state",
+      _message: errorMsg,
+      _preview: truncatedStr,
+      _note: "Original state contained circular references or unserializable objects",
+    });
   }
 }
 

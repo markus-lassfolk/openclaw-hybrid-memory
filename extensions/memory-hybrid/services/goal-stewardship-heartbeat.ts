@@ -42,22 +42,23 @@ export function compileHeartbeatMatchers(patterns: string[]): RegExp[] {
   return out;
 }
 
-let cachedPatternKey: string | null = null;
-let cachedMatchers: RegExp[] = [];
+// Bug #18 fix: Use immutable cache with Map for thread safety
+const cachedPatterns = new Map<string, RegExp[]>();
 
 export function getCachedMatchers(patterns: string[]): RegExp[] {
   const key = patterns.join("\0");
-  if (key !== cachedPatternKey) {
-    cachedPatternKey = key;
-    cachedMatchers = compileHeartbeatMatchers(patterns);
+  const cached = cachedPatterns.get(key);
+  if (cached !== undefined) {
+    return cached;
   }
-  return cachedMatchers;
+  const matchers = compileHeartbeatMatchers(patterns);
+  cachedPatterns.set(key, matchers);
+  return matchers;
 }
 
 /** Clear the module-level regex cache (primarily for test isolation). */
 export function clearMatcherCache(): void {
-  cachedPatternKey = null;
-  cachedMatchers = [];
+  cachedPatterns.clear();
 }
 
 export function matchesHeartbeat(userText: string, cfg: GoalStewardshipConfig): boolean {
