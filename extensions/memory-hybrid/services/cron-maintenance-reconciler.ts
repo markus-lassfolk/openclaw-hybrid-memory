@@ -11,9 +11,13 @@ import { basename, join } from "node:path";
 import { type ExitValidationResult, validateMaintenanceExecution } from "./cron-exit-validator.js";
 
 export interface CronRunLedgerEntry {
-  ts: number;
-  jobId: string;
-  action: "started" | "finished";
+  // Legacy format (action-based)
+  ts?: number;
+  action?: "started" | "finished";
+  // Current managed cron format (runAtMs-based)
+  runAtMs?: number;
+  // Common fields
+  jobId?: string; // Optional - can be inferred from filename
   status?: "ok" | "error";
   summary?: string;
   [key: string]: unknown;
@@ -37,6 +41,42 @@ export interface CronRunCorrection {
   newStatus: string;
   validationResult: ExitValidationResult;
   ledgerPath: string;
+}
+
+/**
+ * Check if a ledger entry should be examined for false-OK detection.
+ * Supports both legacy (action: "finished", ts) and current (runAtMs) formats.
+ */
+function isExaminableEntry(entry: CronRunLedgerEntry): boolean {
+  // Must have status "ok" to be a candidate for false-OK
+  if (entry.status !== "ok") {
+    return false;
+  }
+
+  // Legacy format: action="finished" with ts
+  if (entry.action === "finished" && typeof entry.ts === "number") {
+    return true;
+  }
+
+  // Current managed cron format: runAtMs without action field
+  if (typeof entry.runAtMs === "number" && entry.action === undefined) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Extract timestamp from a ledger entry (supports both formats).
+ */
+function getEntryTimestamp(entry: CronRunLedgerEntry): number {
+  if (typeof entry.runAtMs === "number") {
+    return entry.runAtMs;
+  }
+  if (typeof entry.ts === "number") {
+    return entry.ts;
+  }
+  return 0;
 }
 
 /**
@@ -210,13 +250,19 @@ export function reconcileCronRunLedger(
   const entries = parseCronRunLedger(ledgerPath);
   let modified = false;
 
+  // Infer jobId from filename (e.g., "hybrid-mem:nightly-dream-cycle.jsonl" -> "hybrid-mem:nightly-dream-cycle")
+  const inferredJobId = basename(ledgerPath, ".jsonl");
+
   for (const entry of entries) {
-    // Only check "finished" entries with status "ok"
-    if (entry.action !== "finished" || entry.status !== "ok") {
+    // Check if entry should be examined (supports both legacy and current formats)
+    if (!isExaminableEntry(entry)) {
       continue;
     }
 
     result.examined++;
+
+    // Use entry.jobId if present, otherwise fall back to inferred job ID from filename
+    const jobId = entry.jobId || inferredJobId;
 
     // Try to find artifact paths from summary
     const paths = entry.summary ? extractArtifactPathsFromSummary(entry.summary) : {};
@@ -227,10 +273,11 @@ export function reconcileCronRunLedger(
     // If paths not found in summary, try to find matching artifacts by job ID and timestamp
     if (!exitPath || !logPath || !existsSync(exitPath)) {
       // Look for artifacts that match this job and timestamp
-      const jobSlug = entry.jobId.replace(/^hybrid-mem:/, "");
+      const jobSlug = jobId.replace(/^hybrid-mem:/, "");
       const artifacts = findMaintenanceArtifacts(logDir, jobSlug);
 
-      const closestArtifact = pickMaintenanceArtifactForFinishedEntry(artifacts, entry.ts);
+      const entryTimestamp = getEntryTimestamp(entry);
+      const closestArtifact = pickMaintenanceArtifactForFinishedEntry(artifacts, entryTimestamp);
 
       if (closestArtifact) {
         exitPath = closestArtifact.exitPath;
@@ -262,8 +309,8 @@ export function reconcileCronRunLedger(
       }
 
       result.corrections.push({
-        jobId: entry.jobId,
-        timestamp: entry.ts,
+        jobId,
+        timestamp: getEntryTimestamp(entry),
         originalStatus: "ok",
         newStatus: "error",
         validationResult: validation,
