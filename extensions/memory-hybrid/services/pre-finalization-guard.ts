@@ -18,7 +18,7 @@ export class PreFinalizationGuardBlockingError extends Error {
 }
 
 const WAITING_OR_PENDING_RE =
-  /\b(wait(?:ing)?|pending|recheck|check back|continue (?:later|after|tomorrow)|follow up(?: later)?|await(?:ing)?)\b/i;
+  /\b(waiting\s+(?:for|on|to)|still\s+waiting|pending|recheck|check back|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
 const CRON_WAKE_RE =
   /\b(?:cron wake|scheduled?\s+(?:a\s+)?(?:wake|wake-?up|recheck)|wake(?:\s|-)?at|resume(?:\s+at|\s+on)|next\s+(?:wake|check))\b/i;
 const BACKGROUND_TEXT_RE =

@@ -112,40 +112,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       const rApi = withHookResolutionApi(api, hookCtx);
       const ev = event as { messages?: unknown[]; success?: boolean };
 
-      if (ev?.success !== false) {
-        try {
-          const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-          const guard = evaluatePreFinalizationGuard(ev?.messages ?? [], { projectFacts });
-          const guardMessage = formatPreFinalizationGuardMessage(guard);
-          if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {
-            api.logger.info?.(`memory-hybrid: ${guardMessage}`);
-          } else if (guard.action === "warn") {
-            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
-          } else if (guard.action === "block") {
-            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
-            try {
-              ctx.auditStore?.append({
-                agentId: ctx.currentAgentIdRef.value ?? "unknown",
-                action: "cleanup:pre-finalization-guard-blocked",
-                outcome: "failed",
-                context: {
-                  missingFields: guard.checkpoint.missingFields,
-                  signals: guard.signals,
-                },
-              });
-            } catch (auditErr) {
-              api.logger.debug?.(`memory-hybrid: audit store append failed (non-fatal): ${String(auditErr)}`);
-            }
-            throw new PreFinalizationGuardBlockingError(`memory-hybrid: ${guardMessage}`);
-          }
-        } catch (err) {
-          if (err instanceof PreFinalizationGuardBlockingError) {
-            throw err;
-          }
-          api.logger.debug?.(`memory-hybrid: pre-finalization guard skipped (non-fatal): ${String(err)}`);
-        }
-      }
-
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
@@ -260,6 +226,40 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.info?.(`memory-hybrid: session narrative skipped (LLM unavailable or aborted): ${detail}`);
         } else {
           api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+        }
+      }
+
+      if (ev?.success !== false) {
+        try {
+          const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+          const guard = evaluatePreFinalizationGuard(ev?.messages ?? [], { projectFacts });
+          const guardMessage = formatPreFinalizationGuardMessage(guard);
+          if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {
+            api.logger.info?.(`memory-hybrid: ${guardMessage}`);
+          } else if (guard.action === "warn") {
+            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+          } else if (guard.action === "block") {
+            api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+            try {
+              ctx.auditStore?.append({
+                agentId: ctx.currentAgentIdRef.value ?? "unknown",
+                action: "cleanup:pre-finalization-guard-blocked",
+                outcome: "failed",
+                context: {
+                  missingFields: guard.checkpoint.missingFields,
+                  signals: guard.signals,
+                },
+              });
+            } catch (auditErr) {
+              api.logger.debug?.(`memory-hybrid: audit store append failed (non-fatal): ${String(auditErr)}`);
+            }
+            throw new PreFinalizationGuardBlockingError(`memory-hybrid: ${guardMessage}`);
+          }
+        } catch (err) {
+          if (err instanceof PreFinalizationGuardBlockingError) {
+            throw err;
+          }
+          api.logger.debug?.(`memory-hybrid: pre-finalization guard skipped (non-fatal): ${String(err)}`);
         }
       }
     });
