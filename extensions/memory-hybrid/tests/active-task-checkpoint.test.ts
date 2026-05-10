@@ -202,7 +202,7 @@ describe("active-task-checkpoint", () => {
     expect(result.steps.schedule.scheduleAt).toBe(resumeAtDate.toISOString());
     expect(result.steps.schedule.jobsPath).toBeTruthy();
 
-    const jobsPath = result.steps.schedule.jobsPath!;
+    const jobsPath = result.steps.schedule.jobsPath as string;
     const raw = readFileSync(jobsPath, "utf-8");
     const store = JSON.parse(raw) as { jobs?: Array<Record<string, unknown>> };
     const job = (store.jobs ?? []).find((j) => j.pluginJobId === result.steps.schedule.jobId);
@@ -244,8 +244,59 @@ describe("active-task-checkpoint", () => {
     expect(second.ok).toBe(true);
     expect(second.steps.schedule.attempted).toBe(false);
     expect(second.steps.schedule.scheduled).toBe(false);
-    expect(second.steps.schedule.skippedReason).toBe("resumeAt_not_provided");
+    expect(second.steps.schedule.skippedReason).toBe("terminal_status_no_wake");
     expect(second.steps.schedule.disabledPreviousJobs).toBe(1);
+    const clearedResumeAt = latestProjectValue(factsDb, "task-1270-wake-cleanup", "resume_at") ?? "";
+    expect(clearedResumeAt).not.toContain(resumeAtDate.toISOString());
+
+    const jobsPath = second.steps.schedule.jobsPath;
+    expect(jobsPath).toBeTruthy();
+    const raw = readFileSync(jobsPath as string, "utf-8");
+    const store = JSON.parse(raw) as { jobs?: Array<Record<string, unknown>> };
+    const wakeJobs = (store.jobs ?? []).filter((j) => {
+      const pluginJobId = typeof j.pluginJobId === "string" ? j.pluginJobId : "";
+      return pluginJobId.startsWith("hybrid-mem:active-task-wake:");
+    });
+    expect(wakeJobs.length).toBeGreaterThan(0);
+    expect(wakeJobs.filter((j) => j.enabled !== false).length).toBe(0);
+
+    factsDb.close();
+  });
+
+  it("does not schedule a wake when terminal status includes resumeAt and clears stale wake metadata", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const firstResumeAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const staleResumeAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+
+    const first = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-terminal-stale-wake",
+        status: "waiting",
+        next: "Resume later",
+        resumeAt: firstResumeAt.toISOString(),
+      },
+    );
+    expect(first.ok).toBe(true);
+    expect(first.steps.schedule.scheduled).toBe(true);
+
+    const second = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-terminal-stale-wake",
+        status: "done",
+        resumeAt: staleResumeAt,
+      },
+    );
+
+    expect(second.ok).toBe(true);
+    expect(second.steps.schedule.attempted).toBe(false);
+    expect(second.steps.schedule.scheduled).toBe(false);
+    expect(second.steps.schedule.skippedReason).toBe("terminal_status_no_wake");
+    expect(second.steps.schedule.disabledPreviousJobs).toBe(1);
+    const clearedResumeAt = latestProjectValue(factsDb, "task-1270-terminal-stale-wake", "resume_at") ?? "";
+    expect(clearedResumeAt).not.toContain(firstResumeAt.toISOString());
+    expect(clearedResumeAt).not.toContain(staleResumeAt);
 
     const jobsPath = second.steps.schedule.jobsPath;
     expect(jobsPath).toBeTruthy();
@@ -489,7 +540,7 @@ describe("active-task-checkpoint", () => {
     expect(second.ok).toBe(true);
     expect(second.steps.schedule.disabledPreviousJobs).toBe(0);
 
-    const jobsPath = second.steps.schedule.jobsPath!;
+    const jobsPath = second.steps.schedule.jobsPath as string;
     const raw = readFileSync(jobsPath, "utf-8");
     const store = JSON.parse(raw) as { jobs?: Array<Record<string, unknown>> };
     const activeWakeJobs = (store.jobs ?? []).filter(
