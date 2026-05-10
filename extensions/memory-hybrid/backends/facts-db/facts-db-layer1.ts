@@ -472,8 +472,12 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   }
 
   /** Exact match or dedupe policy would block a new insert (per-source if `source` set; global probe if omitted, #1202). */
-  hasDuplicate(text: string, source?: string): boolean {
-    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source);
+  hasDuplicate(
+    text: string,
+    source?: string,
+    structured?: { category?: string | null; entity?: string | null; key?: string | null; value?: string | null },
+  ): boolean {
+    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source, structured);
   }
 
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
