@@ -540,6 +540,20 @@ export function listExpiredFactIdsPendingPrune(db: DatabaseSync): string[] {
   return rows.map((r) => r.id);
 }
 
+/** Same row filter as `decayConfidence` DELETE on `facts` (for vector cleanup preview/maintenance). */
+export function listLowConfidenceFactIdsPendingPrune(db: DatabaseSync): string[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts
+         WHERE confidence < 0.1
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all({ "@now": nowSec }) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
 export function pruneExpired(db: DatabaseSync): number {
   const nowSec = Math.floor(Date.now() / 1000);
   db.prepare(
@@ -559,6 +573,17 @@ export function pruneExpired(db: DatabaseSync): number {
     )
     .run({ "@now": nowSec });
   return Number(result.changes ?? 0);
+}
+
+/** Same row filter as `pruneSessionScope` DELETE on `facts` (for vector cleanup preview/maintenance). */
+export function listSessionFactIdsPendingPrune(db: DatabaseSync, sessionId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all(sessionId) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }
 
 export function pruneSessionScope(db: DatabaseSync, sessionId: string): number {
@@ -595,8 +620,13 @@ export function promoteScope(
 export function decayConfidence(db: DatabaseSync): number {
   const nowSec = Math.floor(Date.now() / 1000);
 
-  db.prepare(
-    `UPDATE facts
+  // Return the number of facts whose confidence was halved — this is the true
+  // "decayed" count.  The subsequent hard-delete of facts that have already
+  // fallen below the 0.1 floor is an implementation side-effect and should NOT
+  // be confused with "decayed" (bug: previously the DELETE count was returned).
+  const updateResult = db
+    .prepare(
+      `UPDATE facts
          SET confidence = confidence * 0.5
          WHERE expires_at IS NOT NULL
            AND expires_at > @now
@@ -605,7 +635,8 @@ export function decayConfidence(db: DatabaseSync): number {
            AND confidence > 0.1
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-  ).run({ "@now": nowSec });
+    )
+    .run({ "@now": nowSec });
 
   db.prepare(
     `DELETE FROM memory_links
@@ -616,14 +647,13 @@ export function decayConfidence(db: DatabaseSync): number {
          )
          AND link_type != 'DERIVED_FROM'`,
   ).run({ "@now": nowSec });
-  const result = db
-    .prepare(
-      `DELETE FROM facts WHERE confidence < 0.1
+  db.prepare(
+    `DELETE FROM facts WHERE confidence < 0.1
                 AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-    )
-    .run({ "@now": nowSec });
-  return Number(result.changes ?? 0);
+  ).run({ "@now": nowSec });
+
+  return Number(updateResult.changes ?? 0);
 }
 
 export function confirmFact(db: DatabaseSync, id: string): boolean {

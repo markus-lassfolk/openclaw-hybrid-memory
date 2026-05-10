@@ -325,8 +325,7 @@ export async function getActiveTaskProjectionStatus(
 ): Promise<ActiveTaskProjectionStatus> {
   const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
   const marker = await readActiveTaskProjectionStaleMarker(filePath);
-  const latestProjectFactSec =
-    opts.latestProjectFactSec ?? getLatestProjectFactCreatedAtSec(factsDb, opts.scopeFilter);
+  const latestProjectFactSec = opts.latestProjectFactSec ?? getLatestProjectFactCreatedAtSec(factsDb, opts.scopeFilter);
   const latestProjectFactAt = toIsoOrNull(latestProjectFactSec);
 
   let exists = false;
@@ -861,7 +860,16 @@ export async function syncActiveTaskEntryToFacts(
   );
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log, upsertOpts);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log, upsertOpts);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log, upsertOpts);
+  await upsertProjectTaskKey(
+    factsDb,
+    vectorDb,
+    embeddings,
+    entity,
+    "branch",
+    entry.branch?.trim() || "",
+    log,
+    upsertOpts,
+  );
   await upsertProjectTaskKey(
     factsDb,
     vectorDb,

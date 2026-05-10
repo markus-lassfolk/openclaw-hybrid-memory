@@ -475,6 +475,66 @@ describe("runEpisodicConsolidation", () => {
     // No unconsolidated events should remain
     expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
   });
+
+  it("embeds consolidated facts into LanceDB and keeps embed/store failures non-fatal", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Semantic consolidation should be searchable" },
+      entities: ["Search"],
+    });
+
+    const embeddings = { embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]) };
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const result = await runEpisodicConsolidation(
+      factsDb,
+      eventLog,
+      7,
+      silentLogger,
+      false,
+      200,
+      null,
+      vectorDb as never,
+      embeddings as never,
+    );
+
+    expect(result.factsCreated).toBe(1);
+    expect(embeddings.embed).toHaveBeenCalledWith("Semantic consolidation should be searchable");
+    const consolidated = factsDb.getByCategory("fact").find((f) => f.source === "dream-cycle");
+    expect(vectorDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: consolidated?.id,
+        text: "Semantic consolidation should be searchable",
+        vector: [0.1, 0.2, 0.3],
+      }),
+    );
+
+    eventLog.append({
+      sessionId: "s2",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Vector failure must not abort consolidation" },
+      entities: ["Failure"],
+    });
+    const warn = vi.fn();
+    const failingEmbeddings = { embed: vi.fn().mockRejectedValue(new Error("embed failed")) };
+    const nonFatal = await runEpisodicConsolidation(
+      factsDb,
+      eventLog,
+      7,
+      { info: () => undefined, warn },
+      false,
+      200,
+      null,
+      vectorDb as never,
+      failingEmbeddings as never,
+    );
+
+    expect(nonFatal.factsCreated).toBe(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to embed consolidated fact"));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -710,6 +770,35 @@ describe("runDreamCycle", () => {
     );
     // Permanent fact must still be there
     expect(factsDb.count()).toBe(beforeCount);
+  });
+
+  it("removes orphaned vectors and reports reconciliation in the digest", async () => {
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const vectorDb = {
+      getAllIds: vi
+        .fn()
+        .mockResolvedValue(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runDreamCycle(
+      factsDb,
+      vectorDb as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      baseConfig,
+      silentLogger,
+    );
+
+    expect(vectorDb.delete).toHaveBeenCalledTimes(2);
+    expect(vectorDb.delete).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    expect(vectorDb.delete).toHaveBeenCalledWith("22222222-2222-4222-8222-222222222222");
+    expect(result.orphanVectorsRemoved).toBe(2);
+    expect(result.digestSummary).toContain("2 orphaned vectors reconciled");
   });
 });
 

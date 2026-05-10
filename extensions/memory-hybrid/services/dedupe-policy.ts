@@ -108,6 +108,14 @@ export function shouldReportVectorDedupeFallback(input: {
 export type DedupeCandidate = {
   text: string;
   source: string;
+  /**
+   * Scope of the incoming fact.  When set, deduplication is restricted to facts
+   * with the same scope/scopeTarget so that different users or agents cannot
+   * inadvertently share dedupe state (cross-scope deduplication bug).
+   * Defaults to 'global' (null scopeTarget) when omitted.
+   */
+  scope?: "global" | "user" | "agent" | "session";
+  scopeTarget?: string | null;
   category?: string | null;
   entity?: string | null;
   key?: string | null;
@@ -177,6 +185,16 @@ export function applyDedupe(
   candidate: DedupeCandidate,
   ctx: ApplyDedupeContext,
 ): ApplyDedupeResult {
+  // Scope-aware deduplication: only match facts within the same scope/scopeTarget.
+  // Global facts (scope='global', scopeTarget=null) are only matched against global facts;
+  // scoped facts are matched only against facts with the same scope+target.
+  // Note: `storeFact` enforces that non-global facts always supply a non-null scopeTarget
+  // (throws otherwise), so `candidateScopeTarget` being null for non-global scopes only
+  // occurs when callers pass a partial/synthetic DedupeCandidate outside of storeFact.
+  const candidateScope = candidate.scope ?? "global";
+  const candidateScopeTarget = candidateScope === "global" ? null : (candidate.scopeTarget ?? null);
+  const isGlobal = candidateScope === "global";
+
   // Issue #1276: project-task facts rely on explicit keys (title/status/next/...)
   // for ACTIVE-TASKS projection. For category=project with entity+key, treat
   // (category, entity, key) as the identity boundary and only dedupe on the same
@@ -185,27 +203,58 @@ export function applyDedupe(
   const entity = candidate.entity?.trim();
   const key = candidate.key?.trim();
   if (category === "project" && entity && key) {
-    const existing =
-      candidate.value != null
-        ? (ctx.db
-            .prepare(
-              "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND source = ? AND superseded_at IS NULL LIMIT 1",
-            )
-            .get(entity, key, candidate.value, candidate.source) as { id: string } | undefined)
-        : (ctx.db
-            .prepare(
-              "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND source = ? AND superseded_at IS NULL LIMIT 1",
-            )
-            .get(entity, key, candidate.text, candidate.source) as { id: string } | undefined);
+    let existing: { id: string } | undefined;
+    if (candidate.value != null) {
+      if (isGlobal) {
+        existing = ctx.db
+          .prepare(
+            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND source = ? AND superseded_at IS NULL AND scope = 'global' LIMIT 1",
+          )
+          .get(entity, key, candidate.value, candidate.source) as { id: string } | undefined;
+      } else {
+        existing = ctx.db
+          .prepare(
+            "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND value = ? AND source = ? AND superseded_at IS NULL AND scope = ? AND scope_target = ? LIMIT 1",
+          )
+          .get(entity, key, candidate.value, candidate.source, candidateScope, candidateScopeTarget) as
+          | { id: string }
+          | undefined;
+      }
+    } else if (isGlobal) {
+      existing = ctx.db
+        .prepare(
+          "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND source = ? AND superseded_at IS NULL AND scope = 'global' LIMIT 1",
+        )
+        .get(entity, key, candidate.text, candidate.source) as { id: string } | undefined;
+    } else {
+      existing = ctx.db
+        .prepare(
+          "SELECT id FROM facts WHERE category = 'project' AND entity = ? AND key = ? AND text = ? AND source = ? AND superseded_at IS NULL AND scope = ? AND scope_target = ? LIMIT 1",
+        )
+        .get(entity, key, candidate.text, candidate.source, candidateScope, candidateScopeTarget) as
+        | { id: string }
+        | undefined;
+    }
     if (existing) {
       return mapOnDuplicate(profile, existing.id, "exact");
     }
     return { action: "store" };
   }
 
-  const exact = ctx.db
-    .prepare("SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL LIMIT 1")
-    .get(candidate.text, candidate.source) as { id: string } | undefined;
+  let exact: { id: string } | undefined;
+  if (isGlobal) {
+    exact = ctx.db
+      .prepare(
+        "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL AND scope = 'global' LIMIT 1",
+      )
+      .get(candidate.text, candidate.source) as { id: string } | undefined;
+  } else {
+    exact = ctx.db
+      .prepare(
+        "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL AND scope = ? AND scope_target = ? LIMIT 1",
+      )
+      .get(candidate.text, candidate.source, candidateScope, candidateScopeTarget) as { id: string } | undefined;
+  }
   if (exact) {
     const mapped = mapOnDuplicate(profile, exact.id, "exact");
     if (mapped.action !== "store") {
@@ -222,9 +271,20 @@ export function applyDedupe(
   }
 
   const hash = normalizedHash(candidate.text);
-  const hashRow = ctx.db
-    .prepare("SELECT id FROM facts WHERE normalized_hash = ? AND source = ? AND superseded_at IS NULL LIMIT 1")
-    .get(hash, candidate.source) as { id: string } | undefined;
+  let hashRow: { id: string } | undefined;
+  if (isGlobal) {
+    hashRow = ctx.db
+      .prepare(
+        "SELECT id FROM facts WHERE normalized_hash = ? AND source = ? AND superseded_at IS NULL AND scope = 'global' LIMIT 1",
+      )
+      .get(hash, candidate.source) as { id: string } | undefined;
+  } else {
+    hashRow = ctx.db
+      .prepare(
+        "SELECT id FROM facts WHERE normalized_hash = ? AND source = ? AND superseded_at IS NULL AND scope = ? AND scope_target = ? LIMIT 1",
+      )
+      .get(hash, candidate.source, candidateScope, candidateScopeTarget) as { id: string } | undefined;
+  }
 
   if (hashRow) {
     return mapOnDuplicate(profile, hashRow.id, "hash");
@@ -276,11 +336,23 @@ export function applyDedupe(
 
   if (typeof profile.lexicalJaccard === "number" && profile.lexicalJaccard > 0 && profile.lexicalJaccard <= 1) {
     const since = ctx.nowSec - JACCARD_LOOKBACK_SEC;
-    const rows = ctx.db
-      .prepare(
-        `SELECT id, text FROM facts WHERE source = ? AND superseded_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
-      )
-      .all(candidate.source, since, JACCARD_ROW_LIMIT) as Array<{ id: string; text: string }>;
+    let rows: Array<{ id: string; text: string }>;
+    if (isGlobal) {
+      rows = ctx.db
+        .prepare(
+          `SELECT id, text FROM facts WHERE source = ? AND superseded_at IS NULL AND created_at >= ? AND scope = 'global' ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(candidate.source, since, JACCARD_ROW_LIMIT) as Array<{ id: string; text: string }>;
+    } else {
+      rows = ctx.db
+        .prepare(
+          `SELECT id, text FROM facts WHERE source = ? AND superseded_at IS NULL AND created_at >= ? AND scope = ? AND scope_target = ? ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(candidate.source, since, candidateScope, candidateScopeTarget, JACCARD_ROW_LIMIT) as Array<{
+        id: string;
+        text: string;
+      }>;
+    }
 
     const candTokens = tokenizeForJaccard(candidate.text);
     let best: { id: string; score: number } | null = null;

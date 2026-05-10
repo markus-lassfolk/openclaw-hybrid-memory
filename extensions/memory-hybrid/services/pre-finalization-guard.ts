@@ -375,10 +375,7 @@ function evaluateProjectCheckpoint(
     if (normalizedRelatedGoal) {
       if (!goalAssess.called) {
         missingFields.push("goal_assess");
-      } else if (
-        goalAssess.assessedGoalIds.size > 0 &&
-        !goalAssess.assessedGoalIds.has(normalizedRelatedGoal)
-      ) {
+      } else if (goalAssess.assessedGoalIds.size > 0 && !goalAssess.assessedGoalIds.has(normalizedRelatedGoal)) {
         missingFields.push("goal_assess");
       }
     }
@@ -557,7 +554,9 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
   const mode = result.action === "block" ? "blocking" : "warning";
   const conditionalHints: string[] = [];
   if (result.checkpoint.missingFields.includes("wake_link")) {
-    conditionalHints.push("For waiting tasks, persist a wake field in project facts (e.g. wake_link/wake_at/resume_at).");
+    conditionalHints.push(
+      "For waiting tasks, persist a wake field in project facts (e.g. wake_link/wake_at/resume_at).",
+    );
   }
   if (result.checkpoint.missingFields.includes("goal_assess")) {
     conditionalHints.push("If the task is goal-backed (related_goal/goal_id), call goal_assess in this turn.");

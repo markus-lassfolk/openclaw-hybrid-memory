@@ -229,3 +229,28 @@ describe("filterByScope", () => {
     expect(filtered.length).toBe(3);
   });
 });
+
+describe("mergeResults — getById activity filtering", () => {
+  it("filters missing, superseded, and expired facts via getById", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const active = makeResult("active", 0.9, "lancedb", { id: "active" });
+    const missing = makeResult("missing", 0.8, "lancedb", { id: "missing" });
+    const superseded = makeResult("superseded", 0.7, "lancedb", { id: "superseded" });
+    const expired = makeResult("expired", 0.6, "lancedb", { id: "expired" });
+    const boundaryExpired = makeResult("boundary", 0.5, "lancedb", { id: "boundary" });
+
+    const provider = {
+      getById: (id: string) => {
+        if (id === "missing") return null;
+        if (id === "superseded") return { ...superseded.entry, supersededAt: nowSec };
+        if (id === "expired") return { ...expired.entry, expiresAt: nowSec - 1 };
+        if (id === "boundary") return { ...boundaryExpired.entry, expiresAt: nowSec };
+        return { ...active.entry, expiresAt: nowSec + 60 };
+      },
+    };
+
+    const merged = mergeResults([], [active, missing, superseded, expired, boundaryExpired], 10, provider);
+
+    expect(merged.map((r) => r.entry.id)).toEqual(["active"]);
+  });
+});
