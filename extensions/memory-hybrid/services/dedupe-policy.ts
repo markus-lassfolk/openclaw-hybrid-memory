@@ -298,13 +298,10 @@ export function applyDedupe(
         .prepare(
           `SELECT id, text FROM facts WHERE source = ? AND superseded_at IS NULL AND created_at >= ? AND scope = ? AND scope_target = ? ORDER BY created_at DESC LIMIT ?`,
         )
-        .all(
-          candidate.source,
-          since,
-          candidateScope,
-          candidateScopeTarget,
-          JACCARD_ROW_LIMIT,
-        ) as Array<{ id: string; text: string }>;
+        .all(candidate.source, since, candidateScope, candidateScopeTarget, JACCARD_ROW_LIMIT) as Array<{
+        id: string;
+        text: string;
+      }>;
     }
 
     const candTokens = tokenizeForJaccard(candidate.text);

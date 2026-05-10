@@ -92,7 +92,12 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
   const dedupe = applyDedupe(
     profile,
-    { text: entry.text, source: sourceForPolicy, scope: entry.scope ?? "global", scopeTarget: entry.scopeTarget ?? null },
+    {
+      text: entry.text,
+      source: sourceForPolicy,
+      scope: entry.scope ?? "global",
+      scopeTarget: entry.scopeTarget ?? null,
+    },
     {
       db: ctx.db,
       nowSec,
