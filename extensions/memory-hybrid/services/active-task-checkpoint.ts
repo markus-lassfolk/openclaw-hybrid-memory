@@ -1,13 +1,15 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import type { EpisodeOutcome, ScopeFilter } from "../types/memory.js";
+import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
+import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
 const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
@@ -43,10 +45,10 @@ export interface ActiveTaskCheckpointDeps {
 
 interface NormalizedCheckpointInput {
   entity: string;
-  status: string;
-  owner: string;
-  next: string;
-  relatedSession: string;
+  status?: string;
+  owner?: string;
+  next?: string;
+  relatedSession?: string;
   title?: string;
   resumeAtIso?: string;
   resumeAtDate?: Date;
@@ -150,7 +152,8 @@ function trimToString(value: unknown): string | undefined {
 }
 
 function normalizeStatus(raw?: string): string | null {
-  if (!raw?.trim()) return "in_progress";
+  if (raw === undefined) return null;
+  if (!raw.trim()) return "in_progress";
   const value = raw.trim().toLowerCase();
   if (value === "open" || value === "in_progress" || value === "in progress" || value === "working") {
     return "in_progress";
@@ -186,7 +189,7 @@ function normalizeCheckpointInput(
   }
 
   const status = normalizeStatus(input.status);
-  if (!status) {
+  if (input.status !== undefined && !status) {
     errors.push({
       step: "validation",
       message:
@@ -195,9 +198,9 @@ function normalizeCheckpointInput(
   }
 
   const title = trimToString(input.title);
-  const owner = trimToString(input.owner) ?? "";
-  const next = trimToString(input.next) ?? "";
-  const relatedSession = trimToString(input.relatedSession) ?? "";
+  const owner = input.owner !== undefined ? trimToString(input.owner) ?? "" : undefined;
+  const next = input.next !== undefined ? trimToString(input.next) ?? "" : undefined;
+  const relatedSession = input.relatedSession !== undefined ? trimToString(input.relatedSession) ?? "" : undefined;
 
   let resumeAtIso: string | undefined;
   let resumeAtDate: Date | undefined;
@@ -222,7 +225,7 @@ function normalizeCheckpointInput(
     errors.push({ step: "validation", message: "state must be an object when provided" });
   }
 
-  if (errors.length > 0 || !entity || !status) {
+  if (errors.length > 0 || !entity) {
     return { errors };
   }
 
@@ -251,6 +254,40 @@ function slugify(input: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
+}
+
+function projectFactCacheKey(entity: string, key: string): string {
+  return `${entity}\u0000${key}`;
+}
+
+function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry> {
+  const cache = new Map<string, MemoryEntry>();
+  for (const row of factsDb.listFactsByCategory("project", 8000)) {
+    const entity = trimToString(row.entity);
+    if (!entity) continue;
+    const key = (row.key ?? "").trim();
+    const cacheKey = projectFactCacheKey(entity, key);
+    const prev = cache.get(cacheKey);
+    if (!prev || row.createdAt > prev.createdAt) {
+      cache.set(cacheKey, row);
+    }
+  }
+  return cache;
+}
+
+function getLatestProjectValue(
+  cache: Map<string, MemoryEntry>,
+  entity: string,
+  key: string,
+): string | undefined {
+  const row = cache.get(projectFactCacheKey(entity, key));
+  return trimToString(row?.value) ?? trimToString(row?.text) ?? undefined;
+}
+
+function wakeEntityKey(entity: string): string {
+  const slug = slugify(entity).slice(0, 40) || "task";
+  const digest = createHash("sha1").update(entity).digest("hex").slice(0, 12);
+  return `${slug}-${digest}`;
 }
 
 function resolveOpenclawDir(override?: string): string {
@@ -342,12 +379,13 @@ export async function scheduleActiveTaskWakeReminder(
 
   const jobs = store.jobs as Array<Record<string, unknown>>;
   const entitySlug = slugify(input.entity) || "task";
+  const entityKey = wakeEntityKey(input.entity);
   const resumeAtIso = input.resumeAt.toISOString();
   const resumeEpochSec = Math.floor(input.resumeAt.getTime() / 1000);
-  const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entitySlug}:${resumeEpochSec}`;
+  const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:${resumeEpochSec}`;
 
   let disabledPreviousJobs = 0;
-  const entityPrefix = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entitySlug}:`;
+  const entityPrefix = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:`;
   for (const row of jobs) {
     const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : undefined;
     if (!pluginJobId || pluginJobId === jobId) continue;
@@ -361,13 +399,8 @@ export async function scheduleActiveTaskWakeReminder(
   const cronExpr = scheduleToCronExpr(input.resumeAt);
   const model = resolveCronModel(input.cfg);
   const minIntervalMs = ACTIVE_TASK_WAKE_GUARD_YEARS * 365 * 24 * 60 * 60 * 1000;
-  const guardFile = join(openclawDir, "cron", "guard", `active-task-wake-${entitySlug}.ms`);
-  const guardPrefix = [
-    `GUARD CHECK: Before continuing, read \"${guardFile}\" if it exists.`,
-    `If current epoch ms minus the stored value is less than ${minIntervalMs}, reply only \"Skipped: active-task wake already delivered recently\" and stop.`,
-    `After a successful reminder, write the current epoch ms back to \"${guardFile}\".`,
-    "",
-  ].join("\n");
+  const guardJobName = `active-task-wake-${entityKey}-${resumeEpochSec}`;
+  const guardPrefix = buildGuardPrefix(guardJobName, minIntervalMs);
 
   const job: Record<string, unknown> = {
     id: jobId,
@@ -522,6 +555,17 @@ export async function runActiveTaskCheckpoint(
   }
 
   const checkpoint = validation.normalized;
+  const latestProjectFacts = buildLatestProjectFactCache(deps.factsDb);
+  const resolvedStatus =
+    checkpoint.status ??
+    normalizeStatus(getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status")) ??
+    "in_progress";
+  const resolvedOwner = checkpoint.owner ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "owner") ?? "";
+  const resolvedNext = checkpoint.next ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "next") ?? "";
+  const resolvedRelatedSession =
+    checkpoint.relatedSession ??
+    getLatestProjectValue(latestProjectFacts, checkpoint.entity, "related_session") ??
+    "";
   const taskUpdated = now.toISOString();
   const errors: ActiveTaskCheckpointError[] = [];
   const updatedKeys: string[] = [];
@@ -534,12 +578,7 @@ export async function runActiveTaskCheckpoint(
     if (effectiveTitle) {
       titleSource = "provided";
     } else {
-      const existingTitleHit = deps.factsDb.lookup(checkpoint.entity, "title", undefined, {
-        includeSuperseded: false,
-        limit: 1,
-      })[0];
-      const existingTitle =
-        trimToString(existingTitleHit?.entry?.value) ?? trimToString(existingTitleHit?.entry?.text) ?? undefined;
+      const existingTitle = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "title");
       if (existingTitle) {
         effectiveTitle = existingTitle;
         titleSource = "existing";
@@ -555,10 +594,10 @@ export async function runActiveTaskCheckpoint(
   }
 
   const updates: Array<{ key: string; value: string }> = [
-    { key: "status", value: checkpoint.status },
-    { key: "next", value: checkpoint.next },
-    { key: "owner", value: checkpoint.owner },
-    { key: "related_session", value: checkpoint.relatedSession },
+    { key: "status", value: resolvedStatus },
+    { key: "next", value: resolvedNext },
+    { key: "owner", value: resolvedOwner },
+    { key: "related_session", value: resolvedRelatedSession },
     { key: "task_updated", value: taskUpdated },
   ];
 
@@ -584,6 +623,7 @@ export async function runActiveTaskCheckpoint(
         update.key,
         update.value,
         deps.logger,
+        { latestByEntityKey: latestProjectFacts },
       );
       updatedKeys.push(update.key);
     } catch (err) {
@@ -603,10 +643,10 @@ export async function runActiveTaskCheckpoint(
       const scope = scopeFromFilter(deps.episodeScopeFilter);
       const contextLines: string[] = [
         `entity=${checkpoint.entity}`,
-        `status=${checkpoint.status}`,
-        `owner=${checkpoint.owner || "n/a"}`,
-        `next=${checkpoint.next || "n/a"}`,
-        `relatedSession=${checkpoint.relatedSession || "n/a"}`,
+        `status=${resolvedStatus}`,
+        `owner=${resolvedOwner || "n/a"}`,
+        `next=${resolvedNext || "n/a"}`,
+        `relatedSession=${resolvedRelatedSession || "n/a"}`,
         `taskUpdated=${taskUpdated}`,
       ];
       if (checkpoint.resumeAtIso) contextLines.push(`resumeAt=${checkpoint.resumeAtIso}`);
@@ -614,9 +654,9 @@ export async function runActiveTaskCheckpoint(
 
       const ep = deps.factsDb.recordEpisode({
         event: `Active task checkpoint: ${checkpoint.entity}`,
-        outcome: outcomeFromStatus(checkpoint.status),
+        outcome: outcomeFromStatus(resolvedStatus),
         context: contextLines.join("\n"),
-        importance: checkpoint.status === "failed" ? 0.8 : 0.6,
+        importance: resolvedStatus === "failed" ? 0.8 : 0.6,
         tags: ["active-task", "checkpoint", slugify(checkpoint.entity)],
         scope: scope.scope,
         scopeTarget: scope.scopeTarget,
@@ -638,17 +678,19 @@ export async function runActiveTaskCheckpoint(
   let wakeSkippedReason: string | undefined;
   let wakeResult: ActiveTaskWakeScheduleResult | undefined;
 
-  if (checkpoint.resumeAtIso && checkpoint.resumeAtDate && checkpoint.scheduleWake) {
+  if (failedKeys.length > 0) {
+    wakeSkippedReason = "facts_write_failed";
+  } else if (checkpoint.resumeAtIso && checkpoint.resumeAtDate && checkpoint.scheduleWake) {
     wakeAttempted = true;
     try {
       const scheduleWake = deps.scheduleWakeFn ?? scheduleActiveTaskWakeReminder;
       wakeResult = await scheduleWake({
         cfg: deps.cfg,
         entity: checkpoint.entity,
-        status: checkpoint.status,
-        owner: checkpoint.owner || undefined,
-        next: checkpoint.next || undefined,
-        relatedSession: checkpoint.relatedSession || undefined,
+        status: resolvedStatus,
+        owner: resolvedOwner || undefined,
+        next: resolvedNext || undefined,
+        relatedSession: resolvedRelatedSession || undefined,
         title: effectiveTitle,
         resumeAt: checkpoint.resumeAtDate,
         state: checkpoint.state,
@@ -686,7 +728,7 @@ export async function runActiveTaskCheckpoint(
 
   const summaryBits: string[] = [
     `entity=${checkpoint.entity}`,
-    `status=${checkpoint.status}`,
+    `status=${resolvedStatus}`,
     `facts=${updatedKeys.length}/${updates.length}`,
     checkpoint.recordEpisode ? `episode=${episodeOk ? "recorded" : "failed"}` : "episode=skipped",
   ];
@@ -711,10 +753,10 @@ export async function runActiveTaskCheckpoint(
     message,
     checkpoint: {
       entity: checkpoint.entity,
-      status: checkpoint.status,
-      owner: checkpoint.owner,
-      next: checkpoint.next,
-      relatedSession: checkpoint.relatedSession,
+      status: resolvedStatus,
+      owner: resolvedOwner,
+      next: resolvedNext,
+      relatedSession: resolvedRelatedSession,
       title: effectiveTitle,
       resumeAt: checkpoint.resumeAtIso,
       taskUpdated,

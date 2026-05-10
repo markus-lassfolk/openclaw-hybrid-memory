@@ -2764,7 +2764,7 @@ export function registerMemoryTools(
       ),
     });
     const _activeTaskCheckpointDesc =
-      "Atomically checkpoint active task state for reliable resume. One call updates project facts (status/next/owner/related_session/task_updated/title), records an episode audit trail, optionally schedules wake/reminder from resumeAt, and optionally refreshes ACTIVE-TASKS.md projection. Returns structured partial-failure details when later steps fail.";
+      "Best-effort checkpoint active task state for reliable resume. One call updates project facts (status/next/owner/related_session/task_updated/title), records an episode audit trail, optionally schedules wake/reminder from resumeAt, and optionally refreshes ACTIVE-TASKS.md projection. Returns structured partial-failure details when later steps fail.";
     const _execActiveTaskCheckpoint = async (_toolCallId: string, params: Record<string, unknown>) => {
       const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
       try {

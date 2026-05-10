@@ -7,6 +7,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { hybridConfigSchema, type HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { runActiveTaskCheckpoint } from "../services/active-task-checkpoint.js";
+import * as taskLedgerFacts from "../services/task-ledger-facts.js";
 
 function makeConfig(root: string): HybridMemoryConfig {
   return hybridConfigSchema.parse({
@@ -55,11 +56,10 @@ function makeVectorDb(): VectorDB {
 }
 
 function latestProjectValue(factsDb: FactsDB, entity: string, key: string): string | undefined {
-  const rows = factsDb
-    .listFactsByCategory("project", 5000)
-    .filter((f) => f.entity === entity && (f.key ?? "") === key)
-    .sort((a, b) => b.createdAt - a.createdAt);
-  const hit = rows[0];
+  const hit = factsDb.lookup(entity, key, undefined, {
+    includeSuperseded: false,
+    limit: 1,
+  })[0]?.entry;
   if (!hit) return undefined;
   return hit.value ?? hit.text;
 }
@@ -197,7 +197,7 @@ describe("active-task-checkpoint", () => {
     expect(result.ok).toBe(true);
     expect(result.steps.schedule.attempted).toBe(true);
     expect(result.steps.schedule.scheduled).toBe(true);
-    expect(result.steps.schedule.jobId).toContain("hybrid-mem:active-task-wake:task-1270-wake:");
+    expect(result.steps.schedule.jobId).toMatch(/^hybrid-mem:active-task-wake:[a-z0-9-]+:\d+$/);
     expect(result.steps.schedule.jobsPath).toBeTruthy();
 
     const jobsPath = result.steps.schedule.jobsPath!;
@@ -208,7 +208,105 @@ describe("active-task-checkpoint", () => {
     const schedule = job?.schedule as { kind?: string; expr?: string } | undefined;
     expect(schedule?.kind).toBe("cron");
     expect(schedule?.expr).toBe(result.steps.schedule.cronExpr);
+    expect(String(job?.message ?? "")).toContain("mkdir -p");
 
     factsDb.close();
+  });
+
+  it("preserves existing status/owner/next/related_session when optional fields are omitted", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    const baseline = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-preserve",
+        status: "blocked",
+        owner: "agent:forge",
+        next: "Wait for dependency",
+        relatedSession: "agent:main:session-a",
+      },
+    );
+    expect(baseline.ok).toBe(true);
+
+    const followup = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-preserve",
+        title: "Updated title only",
+        scheduleWake: false,
+      },
+    );
+    expect(followup.ok).toBe(true);
+    expect(followup.checkpoint?.status).toBe("blocked");
+    expect(followup.checkpoint?.owner).toBe("agent:forge");
+    expect(followup.checkpoint?.next).toBe("Wait for dependency");
+    expect(followup.checkpoint?.relatedSession).toBe("agent:main:session-a");
+    expect(followup.steps.facts.updatedKeys).toEqual(expect.arrayContaining(["status", "owner", "next", "related_session"]));
+
+    factsDb.close();
+  });
+
+  it("keeps wake jobs isolated for long similar entity names", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const base = "task-with-a-very-long-entity-name-that-shares-a-prefix-between-two-different-items-";
+    const resumeA = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const resumeB = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+
+    const first = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: `${base}alpha`,
+        status: "waiting",
+        next: "resume alpha",
+        resumeAt: resumeA,
+      },
+    );
+    const second = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: `${base}beta`,
+        status: "waiting",
+        next: "resume beta",
+        resumeAt: resumeB,
+      },
+    );
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(second.steps.schedule.disabledPreviousJobs).toBe(0);
+
+    const jobsPath = second.steps.schedule.jobsPath!;
+    const raw = readFileSync(jobsPath, "utf-8");
+    const store = JSON.parse(raw) as { jobs?: Array<Record<string, unknown>> };
+    const activeWakeJobs = (store.jobs ?? []).filter(
+      (j) => typeof j.pluginJobId === "string" && j.pluginJobId.startsWith("hybrid-mem:active-task-wake:"),
+    );
+    expect(activeWakeJobs.filter((j) => j.enabled !== false).length).toBeGreaterThanOrEqual(2);
+
+    factsDb.close();
+  });
+
+  it("skips wake scheduling when fact writes fail", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const spy = vi.spyOn(taskLedgerFacts, "upsertProjectTaskKey").mockRejectedValue(new Error("write failed"));
+    const resumeAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    try {
+      const result = await runActiveTaskCheckpoint(
+        { cfg, factsDb, vectorDb, embeddings, openclawDir },
+        {
+          entity: "task-1270-fail-facts",
+          status: "waiting",
+          next: "recheck",
+          resumeAt,
+        },
+      );
+      expect(result.steps.facts.ok).toBe(false);
+      expect(result.steps.schedule.attempted).toBe(false);
+      expect(result.steps.schedule.skippedReason).toBe("facts_write_failed");
+    } finally {
+      spy.mockRestore();
+      factsDb.close();
+    }
   });
 });
