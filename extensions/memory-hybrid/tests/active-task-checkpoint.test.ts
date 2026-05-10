@@ -349,6 +349,15 @@ describe("active-task-checkpoint", () => {
       value: "superseded",
       source: "conversation",
     });
+    factsDb.store({
+      text: "Task task-1270-terminal-abandoned status: abandoned",
+      category: "project",
+      importance: 0.3,
+      entity: "task-1270-terminal-abandoned",
+      key: "status",
+      value: "abandoned",
+      source: "conversation",
+    });
 
     const result = await runActiveTaskCheckpoint(
       { cfg, factsDb, vectorDb, embeddings, openclawDir },
@@ -362,6 +371,18 @@ describe("active-task-checkpoint", () => {
     expect(result.ok).toBe(true);
     expect(result.checkpoint?.status).toBe("superseded");
     expect(latestProjectValue(factsDb, "task-1270-terminal", "status")).toBe("superseded");
+
+    const abandonedResult = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-terminal-abandoned",
+        title: "Metadata only checkpoint",
+        scheduleWake: false,
+      },
+    );
+    expect(abandonedResult.ok).toBe(true);
+    expect(abandonedResult.checkpoint?.status).toBe("abandoned");
+    expect(latestProjectValue(factsDb, "task-1270-terminal-abandoned", "status")).toBe("abandoned");
 
     factsDb.close();
   });

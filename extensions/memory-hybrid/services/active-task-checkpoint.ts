@@ -175,10 +175,10 @@ function normalizeStatus(raw?: string): string | undefined {
 function normalizeExistingStatus(raw?: string): string | undefined {
   const value = trimToString(raw);
   if (value === undefined) return undefined;
-  const normalized = normalizeStatus(value);
-  if (normalized) return normalized;
   const lower = value.toLowerCase();
   if (lower === "abandoned" || lower === "superseded") return lower;
+  const normalized = normalizeStatus(value);
+  if (normalized) return normalized;
   return lower;
 }
 
