@@ -430,11 +430,13 @@ export function listForDashboard(
   const toDashboardRow = (row: Record<string, unknown>) => ({
     id: row.id,
     text: row.text,
+    why: (row.why as string | null) ?? null,
     category: row.category,
     importance: row.importance,
     entity: row.entity ?? null,
     key: row.key ?? null,
     value: row.value ?? null,
+    source: row.source ?? "",
     tags:
       typeof row.tags === "string"
         ? (row.tags || "")
@@ -449,6 +451,12 @@ export function listForDashboard(
     confidence: row.confidence ?? 1,
     created_at: row.created_at,
     recall_count: row.recall_count ?? 0,
+    expires_at: row.expires_at ?? null,
+    summary: (row.summary as string | null) ?? null,
+    superseded_at: row.superseded_at ?? null,
+    superseded_by: (row.superseded_by as string | null) ?? null,
+    provenance_session: (row.provenance_session as string | null) ?? null,
+    reinforced_count: row.reinforced_count ?? null,
   });
 
   if (opts.search?.trim()) {
@@ -473,9 +481,10 @@ export function listForDashboard(
     const placeholders = pageIds.map(() => "?").join(",");
     const pageRows = db
       .prepare(
-        `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+        `SELECT id, text, why, category, importance, entity, key, value, source, tags, COALESCE(tier, 'warm') as tier,
          COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-         created_at, recall_count FROM facts WHERE id IN (${placeholders})`,
+         created_at, recall_count, expires_at, summary, superseded_at, superseded_by, provenance_session, reinforced_count
+         FROM facts WHERE id IN (${placeholders})`,
       )
       .all(...pageIds) as Array<Record<string, unknown>>;
     const byId = new Map<string, Record<string, unknown>>();
@@ -494,9 +503,10 @@ export function listForDashboard(
 
   const rows = db
     .prepare(
-      `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
+      `SELECT id, text, why, category, importance, entity, key, value, source, tags, COALESCE(tier, 'warm') as tier,
        COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-       created_at, recall_count FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+       created_at, recall_count, expires_at, summary, superseded_at, superseded_by, provenance_session, reinforced_count
+       FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, opts.limit, opts.offset) as Array<Record<string, unknown>>;
 

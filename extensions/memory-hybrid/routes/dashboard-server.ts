@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -28,9 +29,64 @@ import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
 import { execFile as execFileCb } from "../utils/process-runner.js";
+import { parseTags } from "../utils/tags.js";
 import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
 
 const execFile = promisify(execFileCb);
+const require = createRequire(import.meta.url);
+
+const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
+const VERIFIED_FACT_SET_TTL_MS = 5000;
+let verifiedFactIdCache: { at: number; ids: Set<string> } | null = null;
+
+function getVerifiedFactIdSet(ctx: DashboardContext): Set<string> {
+  if (!ctx.verificationStore) return new Set();
+  const now = Date.now();
+  if (verifiedFactIdCache && now - verifiedFactIdCache.at < VERIFIED_FACT_SET_TTL_MS) {
+    return verifiedFactIdCache.ids;
+  }
+  try {
+    const ids = new Set<string>();
+    ctx.verificationStore.listLatestVerified().forEach((v) => ids.add(v.factId));
+    verifiedFactIdCache = { at: now, ids };
+    return ids;
+  } catch {
+    return new Set();
+  }
+}
+
+function parseUrlPathSegment(input: string): string | null {
+  try {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    return decodeURIComponent(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function readJsonBody(req: import("node:http").IncomingMessage, maxBytes: number): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf-8");
+      if (body.length > maxBytes) {
+        reject(new Error("Request body too large"));
+        req.pause();
+      }
+    });
+    req.on("end", () => {
+      if (!body) return resolve({});
+      try {
+        const parsed = JSON.parse(body);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return resolve({});
+        resolve(parsed as Record<string, unknown>);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -666,7 +722,7 @@ function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
 /** Open a read-only handle to the facts DB for internal dashboard use. */
 function openFactsDbReadonly(path: string): import("node:sqlite").DatabaseSync | null {
   try {
-    const { DatabaseSync: DBSync } = require("node:sqlite");
+    const { DatabaseSync: DBSync } = require("node:sqlite") as typeof import("node:sqlite");
     const db = new DBSync(path, { readOnly: true });
     return db;
   } catch {
@@ -896,7 +952,7 @@ function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
 function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): MemoryViewerVerification[] {
   try {
     if (!ctx.verificationStore) return [];
-    const verified = ctx.verificationStore.listLatestVerified();
+    const verified = ctx.verificationStore.listLatestVerified().slice(0, Math.max(1, Math.min(500, Math.floor(limit))));
     return verified.map((v) => ({
       factId: v.factId,
       canonicalText: v.canonicalText,
@@ -1411,10 +1467,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
-    const pathname = url.split("?")[0];
+    let pathname: string;
     let searchParams: URLSearchParams;
     try {
-      searchParams = new URL(url, "http://127.0.0.1").searchParams;
+      const parsed = new URL(url, "http://127.0.0.1");
+      pathname = parsed.pathname;
+      searchParams = parsed.searchParams;
     } catch {
       res.writeHead(400, { "Content-Type": "text/plain" });
       res.end("Bad Request");
@@ -1535,26 +1593,27 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/viewer/facts") {
       try {
         const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
-        // Use the public FactsDB.list() API with filters for the dashboard facts endpoint
+        const offset = Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0);
         const categoryFilter = searchParams.get("category") || undefined;
         const entityFilter = searchParams.get("entity") || undefined;
         // #1187: honor `?tier=hot|warm|cold|structural` so operators can drill into a single tier
-        // from the dashboard. Invalid tiers are dropped server-side by `listFacts`.
+        // from the dashboard. Invalid tiers are dropped server-side by `listForDashboard`.
         const tierFilter = searchParams.get("tier") || undefined;
-        const allFacts = ctx.factsDb.list(limit, { category: categoryFilter, entity: entityFilter, tier: tierFilter });
-        const verifiedFactIds = new Set<string>();
-        try {
-          if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified();
-            verified.forEach((v) => verifiedFactIds.add(v.factId));
-          }
-        } catch {
-          /* non-fatal */
-        }
-        const facts: MemoryViewerFact[] = allFacts.map((f) => {
-          const record = f as Record<string, unknown>;
+        const search = searchParams.get("search") || searchParams.get("q") || undefined;
+
+        const { facts: pageFacts, total } = ctx.factsDb.listForDashboard({
+          limit,
+          offset,
+          category: categoryFilter,
+          tier: tierFilter,
+          entity: entityFilter,
+          search,
+        });
+        const verifiedFactIds = getVerifiedFactIdSet(ctx);
+        const facts: MemoryViewerFact[] = pageFacts.map((record) => {
+          const id = String(record.id ?? "");
           return {
-            id: String(record.id ?? ""),
+            id,
             text: String(record.text ?? ""),
             why: (record.why as string | null) ?? null,
             category: String(record.category ?? ""),
@@ -1568,23 +1627,17 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
             expiresAt: record.expires_at != null ? Number(record.expires_at) : null,
             confidence: Number(record.confidence ?? 0.5),
             summary: (record.summary as string | null) ?? null,
-            tags: (() => {
-              try {
-                return JSON.parse(String(record.tags ?? "[]"));
-              } catch {
-                return [];
-              }
-            })(),
+            tags: parseTags(typeof record.tags === "string" ? record.tags : null),
             supersededAt: record.superseded_at != null ? Number(record.superseded_at) : null,
             supersededBy: (record.superseded_by as string | null) ?? null,
-            verified: verifiedFactIds.has(String(record.id ?? "")),
+            verified: verifiedFactIds.has(id),
             scope: record.scope as string | undefined,
             provenanceSession: (record.provenance_session as string | null) ?? null,
             reinforcedCount: record.reinforced_count != null ? Number(record.reinforced_count) : undefined,
           };
         });
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-        res.end(JSON.stringify({ facts, total: allFacts.length }));
+        res.end(JSON.stringify({ facts, total }));
       } catch (err: unknown) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
@@ -1593,8 +1646,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     }
 
     // GET /api/viewer/facts/:id
-    if (req.method === "GET" && pathname.startsWith("/api/viewer/facts/")) {
-      const factId = pathname.replace("/api/viewer/facts/", "");
+    if (req.method === "GET" && pathname.startsWith("/api/viewer/facts/") && !pathname.endsWith("/provenance")) {
+      const factIdRaw = pathname.slice("/api/viewer/facts/".length);
+      const factId = parseUrlPathSegment(factIdRaw);
       if (!factId) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Missing fact id" }));
@@ -1607,15 +1661,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify({ error: "Fact not found" }));
           return;
         }
-        const verifiedFactIds = new Set<string>();
-        try {
-          if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified();
-            verified.forEach((v) => verifiedFactIds.add(v.factId));
-          }
-        } catch {
-          /* non-fatal */
-        }
+        const verifiedFactIds = getVerifiedFactIdSet(ctx);
         const f: MemoryViewerFact = {
           id: fact.id,
           text: fact.text,
@@ -1653,7 +1699,13 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // dumping the JSON blob into the dashboard. Falls back to raw JSON when the event log is
     // unavailable so the UI can still render *something*.
     if (req.method === "GET" && /^\/api\/viewer\/facts\/[^/]+\/provenance$/.test(pathname)) {
-      const factId = pathname.replace(/^\/api\/viewer\/facts\/([^/]+)\/provenance$/, "$1");
+      const factIdRaw = pathname.replace(/^\/api\/viewer\/facts\/([^/]+)\/provenance$/, "$1");
+      const factId = parseUrlPathSegment(factIdRaw);
+      if (!factId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing fact id" }));
+        return;
+      }
       try {
         const fact = ctx.factsDb.getById(factId);
         if (!fact) {
@@ -1848,42 +1900,68 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
     // POST /api/viewer/facts/:id/verify
     if (req.method === "POST" && pathname.match(/^\/api\/viewer\/facts\/[^/]+\/verify$/)) {
-      const factId = pathname.split("/")[4];
-      let body = "";
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-      req.on("end", () => {
-        try {
-          const parsed = body ? JSON.parse(body) : {};
+      const factIdRaw = pathname.split("/")[4];
+      const factId = parseUrlPathSegment(factIdRaw ?? "");
+      if (!factId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing fact id" }));
+        return;
+      }
+
+      readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
+        .then((parsed) => {
           const result = performFactAction(ctx, "verify", factId, parsed);
           res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
           res.end(JSON.stringify(result));
-        } catch (err: unknown) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
-        }
-      });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.message === "Request body too large") {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+            try {
+              req.resume();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+        });
       return;
     }
 
     // POST /api/viewer/facts/:id/forget
     if (req.method === "POST" && pathname.match(/^\/api\/viewer\/facts\/[^/]+\/forget$/)) {
-      const factId = pathname.split("/")[4];
-      let body = "";
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-      req.on("end", () => {
-        try {
+      const factIdRaw = pathname.split("/")[4];
+      const factId = parseUrlPathSegment(factIdRaw ?? "");
+      if (!factId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing fact id" }));
+        return;
+      }
+
+      // Drain any body (defensive) and enforce size.
+      readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
+        .then(() => {
           const result = performFactAction(ctx, "forget", factId, {});
           res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
           res.end(JSON.stringify(result));
-        } catch (err: unknown) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
-        }
-      });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.message === "Request body too large") {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+            try {
+              req.resume();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+        });
       return;
     }
 

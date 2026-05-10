@@ -542,6 +542,43 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("GET /api/viewer/facts honors offset and search and returns correct total", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "alpha one", category: "fact", source: "test" });
+      ctx.factsDb.store({ text: "beta two", category: "fact", source: "test" });
+      ctx.factsDb.store({ text: "beta three", category: "fact", source: "test" });
+
+      const { status: s1, body: b1 } = await apiGet(port, "/api/viewer/facts?search=beta&limit=50&offset=0");
+      expect(s1).toBe(200);
+      const r1 = JSON.parse(b1);
+      expect(r1.total).toBe(2);
+      expect(r1.facts.length).toBe(2);
+      expect(r1.facts.every((f: { text: string }) => f.text.includes("beta"))).toBe(true);
+
+      const { status: s2, body: b2 } = await apiGet(port, "/api/viewer/facts?search=beta&limit=1&offset=1");
+      expect(s2).toBe(200);
+      const r2 = JSON.parse(b2);
+      expect(r2.total).toBe(2);
+      expect(r2.facts.length).toBe(1);
+      expect(r2.facts[0].text.includes("beta")).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/facts parses comma-separated tags into an array", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Tag test", category: "fact", source: "test", tags: ["alpha", "beta"] });
+      const { status, body } = await apiGet(port, "/api/viewer/facts?limit=50");
+      expect(status).toBe(200);
+      const d = JSON.parse(body);
+      expect(Array.isArray(d.facts)).toBe(true);
+      const target = d.facts.find((f: { text: string }) => f.text === "Tag test");
+      expect(target).toBeTruthy();
+      expect(Array.isArray(target.tags)).toBe(true);
+      expect(target.tags).toContain("alpha");
+      expect(target.tags).toContain("beta");
+    });
+  });
+
   it("GET /api/viewer/facts/:id returns a single fact", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "Target fact", category: "fact", source: "test" });
@@ -552,6 +589,22 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const f = JSON.parse(body);
       expect(f.id).toBe(facts[0].id);
       expect(typeof f.text).toBe("string");
+    });
+  });
+
+  it("GET /api/viewer/facts/:id/provenance is reachable and does not get shadowed by :id route", async () => {
+    await withServer(async (ctx, port) => {
+      const entry = ctx.factsDb.store({ text: "Provenance fact", category: "fact", source: "test" });
+      ctx.factsDb
+        .getRawDb()
+        .prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
+        .run(JSON.stringify({ method: "test", sourceEventIds: ["evt-1"] }), entry.id);
+
+      const { status, body } = await apiGet(port, `/api/viewer/facts/${entry.id}/provenance`);
+      expect(status).toBe(200);
+      const d = JSON.parse(body);
+      expect(d.factId).toBe(entry.id);
+      expect(Array.isArray(d.events)).toBe(true);
     });
   });
 
@@ -612,6 +665,19 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("POST /api/viewer/facts/:id/verify rejects oversized request bodies", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "To verify big", category: "fact", source: "test" });
+      const { body: lb } = await apiGet(port, "/api/viewer/facts");
+      const { facts } = JSON.parse(lb);
+      const target = facts.find((fact: { text: string; id: string }) => fact.text === "To verify big");
+      expect(target?.id).toBeTruthy();
+      const big = JSON.stringify({ verifiedBy: "agent", note: "a".repeat(70 * 1024) });
+      const { status } = await apiPost(port, `/api/viewer/facts/${target.id}/verify`, big);
+      expect(status).toBe(413);
+    });
+  });
+
   it("POST /api/viewer/facts/:id/forget forgets a fact", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "To forget", category: "fact", source: "test" });
@@ -622,6 +688,24 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const { status, body } = await apiPost(port, `/api/viewer/facts/${target.id}/forget`, "{}");
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/verified honors the limit parameter", async () => {
+    await withServer(async (ctx, port) => {
+      const a = ctx.factsDb.store({ text: "v1", category: "fact", source: "test" });
+      const b = ctx.factsDb.store({ text: "v2", category: "fact", source: "test" });
+      const c = ctx.factsDb.store({ text: "v3", category: "fact", source: "test" });
+
+      await apiPost(port, `/api/viewer/facts/${a.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
+      await apiPost(port, `/api/viewer/facts/${b.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
+      await apiPost(port, `/api/viewer/facts/${c.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
+
+      const { status, body } = await apiGet(port, "/api/viewer/verified?limit=2");
+      expect(status).toBe(200);
+      const rows = JSON.parse(body);
+      expect(Array.isArray(rows)).toBe(true);
+      expect(rows.length).toBe(2);
     });
   });
 });
