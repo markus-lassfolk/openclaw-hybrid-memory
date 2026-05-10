@@ -85,7 +85,7 @@ export interface DreamCycleConfig {
 export interface DreamCycleResult {
   /** Facts removed by pruneExpired(). */
   factsPruned: number;
-  /** Facts whose confidence was decayed. */
+  /** Facts whose confidence was decayed (confidence halved). */
   factsDecayed: number;
   /** Orphaned memory_links rows removed. */
   linksPruned: number;
@@ -103,6 +103,8 @@ export interface DreamCycleResult {
   vacuumRan: boolean;
   /** Number of facts re-tiered by the source-/importance-aware reclassifier (#1189). */
   decayReclassified: number;
+  /** Number of orphaned LanceDB vector entries removed during reconciliation. */
+  orphanVectorsRemoved: number;
   /** Human-readable summary of the cycle. */
   digestSummary: string;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
@@ -218,12 +220,16 @@ export function buildDigestSummary(counts: {
   logRowsPruned?: number;
   vacuumRan?: boolean;
   decayReclassified?: number;
+  orphanVectorsRemoved?: number;
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
   if (counts.factsDecayed > 0) parts.push(`${counts.factsDecayed} facts decayed`);
   if (counts.decayReclassified && counts.decayReclassified > 0) {
     parts.push(`${counts.decayReclassified} facts re-tiered`);
+  }
+  if (counts.orphanVectorsRemoved && counts.orphanVectorsRemoved > 0) {
+    parts.push(`${counts.orphanVectorsRemoved} orphaned vectors reconciled`);
   }
   if (counts.linksPruned && counts.linksPruned > 0) parts.push(`${counts.linksPruned} orphaned links removed`);
   if (counts.eventsConsolidated > 0) {
@@ -247,6 +253,8 @@ export function buildDigestSummary(counts: {
  *  2. Group by primary entity.
  *  3. For each group, create a consolidated fact with structured provenance_json.
  *  4. Mark all events as consolidated in the event log.
+ *  5. Optionally embed and store consolidated facts in LanceDB so they are
+ *     discoverable by semantic search (non-fatal; requires vectorDb + embeddings).
  *
  * Historical versions created one DERIVED_FROM graph edge per source event; new
  * consolidations keep that lineage on the fact row to avoid provenance mega-hubs.
@@ -259,6 +267,8 @@ export async function runEpisodicConsolidation(
   verbose?: boolean,
   maxEventsPerConsolidation = DEFAULT_MAX_EVENTS_PER_CONSOLIDATION,
   eventTypeFilter?: EpisodicConsolidationEventTypeFilter | null,
+  vectorDb?: VectorDB | null,
+  embeddings?: EmbeddingProvider | null,
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
@@ -459,6 +469,25 @@ export async function runEpisodicConsolidation(
     logger.info(
       `memory-hybrid: dream-cycle — consolidated ${cappedGroupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
     );
+
+    // Embed and store the consolidated fact in LanceDB so it is discoverable by
+    // semantic search.  This is non-fatal: the fact is already safely in SQLite.
+    if (vectorDb && embeddings) {
+      try {
+        const vector = await embeddings.embed(mergedText.slice(0, 500));
+        await vectorDb.store({
+          id: consolidatedFact.id,
+          text: mergedText.slice(0, 500),
+          vector,
+          importance: consolidatedFact.importance,
+          category: consolidatedFact.category,
+        });
+      } catch (embedErr) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — failed to embed consolidated fact ${consolidatedFact.id.slice(0, 8)} into LanceDB (non-fatal): ${embedErr}`,
+        );
+      }
+    }
   }
 
   return { eventsConsolidated, factsCreated };
@@ -494,6 +523,7 @@ export async function runDreamCycle(
       logRowsPruned: 0,
       vacuumRan: false,
       decayReclassified: 0,
+      orphanVectorsRemoved: 0,
       digestSummary: "Dream cycle disabled.",
       skipped: true,
     };
@@ -598,6 +628,41 @@ export async function runDreamCycle(
     }
   }
 
+  // ── Step 1e: Reconcile LanceDB orphaned vectors ──────────────────────────
+  // After SQLite pruning (pruneExpired, decayConfidence), any LanceDB vector whose
+  // corresponding SQLite fact was hard-deleted is now an orphan.  Orphaned vectors
+  // pollute semantic search results with stale or deleted facts.  We reconcile here
+  // by computing the symmetric difference between the two stores and removing orphans.
+  step("reconcile LanceDB orphaned vectors");
+  let orphanVectorsRemoved = 0;
+  try {
+    const sqliteIds = new Set(factsDb.getAllIds());
+    const vectorIds = await vectorDb.getAllIds();
+    const orphans = vectorIds.filter((id) => !sqliteIds.has(id));
+    if (orphans.length > 0) {
+      logger.info(`memory-hybrid: dream-cycle — reconciling ${orphans.length} orphaned vector(s)...`);
+      let removed = 0;
+      for (const id of orphans) {
+        try {
+          await vectorDb.delete(id);
+          removed++;
+        } catch (delErr) {
+          logger.warn(`memory-hybrid: dream-cycle — failed to delete orphaned vector ${id}: ${delErr}`);
+        }
+      }
+      orphanVectorsRemoved = removed;
+      if (removed > 0) {
+        logger.info(`memory-hybrid: dream-cycle — removed ${removed} orphaned vector(s) from LanceDB`);
+      }
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — vector reconciliation failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-vector-reconcile",
+      subsystem: "vector",
+    });
+  }
+
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
@@ -612,6 +677,8 @@ export async function runDreamCycle(
         v,
         config.maxEventsPerConsolidation,
         config.episodicConsolidationEventTypes ?? null,
+        vectorDb,
+        embeddings,
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
@@ -813,6 +880,7 @@ export async function runDreamCycle(
     logRowsPruned,
     vacuumRan,
     decayReclassified,
+    orphanVectorsRemoved,
   });
 
   logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
@@ -828,6 +896,7 @@ export async function runDreamCycle(
     logRowsPruned,
     vacuumRan,
     decayReclassified,
+    orphanVectorsRemoved,
     digestSummary,
     skipped: false,
   };

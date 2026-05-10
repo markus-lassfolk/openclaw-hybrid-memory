@@ -206,8 +206,12 @@ describe("DB lifecycle: verified_facts in same DB as facts (prune/decay exclusio
     });
     verificationStore.verify(verifiedEntry.id, verifiedEntry.text, "agent");
 
-    const removed = factsDb.decayConfidence();
-    expect(removed).toBe(1);
+    // Both facts already have confidence < 0.1, so the decay UPDATE step does not
+    // touch them (they're already below the floor).  decayConfidence() returns the
+    // count of facts whose confidence was *halved* (UPDATE changes), not the count
+    // of facts that were hard-deleted afterward.  In this scenario: 0 decayed, 1 deleted.
+    const decayed = factsDb.decayConfidence();
+    expect(decayed).toBe(0);
     expect(factsDb.getById(lowConf.id)).toBeNull();
     expect(factsDb.getById(verifiedEntry.id)).not.toBeNull();
   });
