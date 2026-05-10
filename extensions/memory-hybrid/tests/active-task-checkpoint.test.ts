@@ -248,6 +248,51 @@ describe("active-task-checkpoint", () => {
     factsDb.close();
   });
 
+  it("preserves omitted fields even when task facts are older than the newest 8k project rows", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    const baseline = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-old-preserve",
+        status: "blocked",
+        owner: "agent:forge",
+        next: "Wait for dependency",
+        relatedSession: "agent:main:session-a",
+      },
+    );
+    expect(baseline.ok).toBe(true);
+
+    for (let i = 0; i < 8105; i++) {
+      factsDb.store({
+        text: `Noise task status ${i}`,
+        category: "project",
+        importance: 0.2,
+        entity: `noise-${i}`,
+        key: "status",
+        value: "in_progress",
+        source: "conversation",
+      });
+    }
+
+    const followup = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-old-preserve",
+        title: "Updated title only",
+        scheduleWake: false,
+      },
+    );
+
+    expect(followup.ok).toBe(true);
+    expect(followup.checkpoint?.status).toBe("blocked");
+    expect(followup.checkpoint?.owner).toBe("agent:forge");
+    expect(followup.checkpoint?.next).toBe("Wait for dependency");
+    expect(followup.checkpoint?.relatedSession).toBe("agent:main:session-a");
+
+    factsDb.close();
+  });
+
   it("keeps wake jobs isolated for long similar entity names", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
     const base = "task-with-a-very-long-entity-name-that-shares-a-prefix-between-two-different-items-";

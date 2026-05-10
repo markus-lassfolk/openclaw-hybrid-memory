@@ -11,7 +11,6 @@ import { getEnv } from "../utils/env-manager.js";
 import { renderActiveTaskMarkdownFile, upsertProjectTaskKey } from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
-import { slugify } from "./credential-scanner.js";
 
 const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
 const ACTIVE_TASK_WAKE_GUARD_YEARS = 10;
@@ -152,8 +151,8 @@ function trimToString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizeStatus(raw?: string): string | null {
-  if (raw === undefined) return null;
+function normalizeStatus(raw?: string): string | undefined {
+  if (raw === undefined) return undefined;
   if (!raw.trim()) return "in_progress";
   const value = raw.trim().toLowerCase();
   if (value === "open" || value === "in_progress" || value === "in progress" || value === "working") {
@@ -172,7 +171,7 @@ function normalizeStatus(raw?: string): string | null {
     return "done";
   }
   if (value === "failed" || value === "error") return "failed";
-  return null;
+  return undefined;
 }
 
 function normalizeCheckpointInput(
@@ -263,7 +262,8 @@ function projectFactCacheKey(entity: string, key: string): string {
 
 function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry> {
   const cache = new Map<string, MemoryEntry>();
-  for (const row of factsDb.listFactsByCategory("project", 8000)) {
+  for (const row of factsDb.getAll({ includeSuperseded: false })) {
+    if (row.category !== "project") continue;
     const entity = trimToString(row.entity);
     if (!entity) continue;
     const key = (row.key ?? "").trim();

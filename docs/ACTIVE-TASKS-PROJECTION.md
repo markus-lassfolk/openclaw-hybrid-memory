@@ -35,7 +35,8 @@ Empty sections are **omitted** (no blank headings), except the all-empty case wh
 
 1. **Close or update work** via `memory_store` / facts (set status to `done`, `failed`, etc., or update `task_updated` and narrative keys).
 2. Run **`hybrid-mem active-tasks reconcile`** when subagent **Session:** references point at missing transcripts—rows can be completed automatically.
-3. Run **`hybrid-mem active-tasks render`** to refresh the markdown.
+3. Run **`hybrid-mem active-tasks hygiene --dry-run`** to detect stale failed rows and duplicate normalized entities; use `--apply` to mark stale/superseded rows without deleting history.
+4. Run **`hybrid-mem active-tasks render`** to refresh the markdown.
 
 See also [TASK-HYGIENE.md](TASK-HYGIENE.md) for heartbeat nudges and `active_task_propose_goal`.
 
