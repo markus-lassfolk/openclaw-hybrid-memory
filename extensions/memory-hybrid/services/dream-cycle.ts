@@ -904,9 +904,24 @@ export async function runDreamCycle(
   if (config.vacuumOnCycle) {
     step("VACUUM + WAL checkpoint");
     try {
-      factsDb.vacuumAndCheckpoint();
-      vacuumRan = true;
-      logger.info("memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete");
+      // Cost optimization: Skip VACUUM when freed space < 10MB (low benefit, high I/O cost)
+      const pageCountResult = factsDb.getDb().prepare("PRAGMA page_count").get() as { page_count: number } | undefined;
+      const freelistCountResult = factsDb.getDb().prepare("PRAGMA freelist_count").get() as { freelist_count: number } | undefined;
+      const pageSizeResult = factsDb.getDb().prepare("PRAGMA page_size").get() as { page_size: number } | undefined;
+
+      const pageCount = pageCountResult?.page_count ?? 0;
+      const freelistCount = freelistCountResult?.freelist_count ?? 0;
+      const pageSize = pageSizeResult?.page_size ?? 4096;
+      const freedBytes = freelistCount * pageSize;
+      const freedMB = freedBytes / (1024 * 1024);
+
+      if (freedMB < 10) {
+        logger.info(`memory-hybrid: dream-cycle — Skipping VACUUM (only ${freedMB.toFixed(2)}MB freed space, threshold: 10MB)`);
+      } else {
+        factsDb.vacuumAndCheckpoint();
+        vacuumRan = true;
+        logger.info(`memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete (reclaimed ${freedMB.toFixed(2)}MB)`);
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

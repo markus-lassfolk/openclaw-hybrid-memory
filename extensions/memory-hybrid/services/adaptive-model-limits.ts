@@ -73,9 +73,12 @@ export function getEffectiveModelLimits(opts: {
   const minOut = opts.minMaxOutputTokens ?? 128;
   const entry = state.models[model];
   if (!entry) {
+    // Start at 50% of catalog limits to reduce initial failure rate (cost optimization)
+    const conservativeBatch = Math.floor(catalogBatchTokenLimit * 0.5);
+    const conservativeOut = Math.floor(catalogMaxOutputTokens * 0.5);
     return {
-      batchTokenLimit: clampInt(catalogBatchTokenLimit, minBatch, catalogBatchTokenLimit),
-      maxOutputTokens: clampInt(catalogMaxOutputTokens, minOut, catalogMaxOutputTokens),
+      batchTokenLimit: clampInt(conservativeBatch, minBatch, catalogBatchTokenLimit),
+      maxOutputTokens: clampInt(conservativeOut, minOut, catalogMaxOutputTokens),
       source: "catalog",
     };
   }
