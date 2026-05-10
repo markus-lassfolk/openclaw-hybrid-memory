@@ -70,6 +70,7 @@ import {
   statsReflection as statsReflectionImpl,
   uniqueScopes as uniqueScopesImpl,
   vacuumAndCheckpoint as vacuumAndCheckpointImpl,
+  countActiveFactsByCategory as countActiveFactsByCategoryImpl,
 } from "./housekeeping.js";
 
 export class FactsDB extends FactsDBLayer2 {
@@ -85,6 +86,14 @@ export class FactsDB extends FactsDBLayer2 {
    */
   pruneOrphanedLinks(): number {
     return pruneOrphanedLinksImpl(this.liveDb);
+  }
+
+  /**
+   * SQL COUNT of active (non-superseded, non-expired) facts for a given category.
+   * More efficient than getByCategory() + in-JS filter for maintenance/reporting.
+   */
+  countActiveFactsByCategory(category: string): number {
+    return countActiveFactsByCategoryImpl(this.liveDb, category);
   }
 
   /** Alias for backfillDecayClasses() for backward compatibility */

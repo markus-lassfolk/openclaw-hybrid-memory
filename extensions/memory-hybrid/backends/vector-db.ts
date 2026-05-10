@@ -68,6 +68,8 @@ export class VectorDB {
   private storeCount = 0;
   private optimizePromise: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
   private initGeneration = 0;
+  /** Cache of open shadow table handles keyed by table name. Cleared on close/swap. */
+  private shadowTableCache = new Map<string, lancedb.Table>();
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -312,6 +314,7 @@ export class VectorDB {
         } catch {
           /* ignore */
         }
+        this.shadowTableCache.clear();
         this.db = null;
       }
       this.initPromise = null;
@@ -336,6 +339,7 @@ export class VectorDB {
         } catch {
           /* ignore close on timeout */
         }
+        this.shadowTableCache.clear();
         this.db = null;
         this.table = null;
         this.semanticQueryCacheTable = null;
@@ -754,6 +758,7 @@ export class VectorDB {
     } catch {
       // ignore
     }
+    this.shadowTableCache.clear();
     this.db = null;
     this.table = null;
     this.semanticQueryCacheTable = null;
@@ -902,6 +907,7 @@ export class VectorDB {
     } catch {
       // ignore close errors
     }
+    this.shadowTableCache.clear();
     this.db = null;
     this.table = null;
     this.semanticQueryCacheTable = null;
@@ -922,14 +928,19 @@ export class VectorDB {
     try {
       await this.renamePath(shadowTableDir, mainTableDir);
     } catch (swapErr) {
-      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
+      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
         try {
           await this.renamePath(oldTableDir, mainTableDir);
-          this.logWarn("memory-hybrid: shadow swap failed; rolled back old table to main successfully");
-        } catch (rollbackErr) {
-          throw new Error(
-            `Shadow table swap failed and rollback failed. swapErr=${String(swapErr)} rollbackErr=${String(rollbackErr)}`,
+          this.logWarn(
+            `memory-hybrid: shadow swap failed — successfully rolled back main table from backup. Error: ${swapErr}`,
           );
+        } catch (rollbackErr) {
+          const rollbackMessage =
+            `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state!` +
+            ` Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'.` +
+            ` SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
+          this.logWarn(rollbackMessage);
+          throw new Error(rollbackMessage);
         }
       }
       if (existsSync(shadowTableDir)) {
@@ -981,7 +992,14 @@ export class VectorDB {
       throw new Error("VectorDB connection not available");
     }
 
-    const table = await this.db.openTable(tableName);
+    // Cache the table handle so we don't pay an openTable() round-trip per row
+    // during bulk re-index operations.
+    let table = this.shadowTableCache.get(tableName);
+    if (!table) {
+      table = await this.db.openTable(tableName);
+      this.shadowTableCache.set(tableName, table);
+    }
+
     const row = {
       id: entry.id.toLowerCase(),
       text: entry.text,
@@ -1870,6 +1888,7 @@ export class VectorDB {
     this.clearDegradedState("closed");
     this.table = null;
     this.semanticQueryCacheTable = null;
+    this.shadowTableCache.clear();
     if (this.db) {
       try {
         this.db.close();

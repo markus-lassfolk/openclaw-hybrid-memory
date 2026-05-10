@@ -1506,8 +1506,12 @@ describe("FactsDB.decayConfidence", () => {
       decayClass: "active",
       confidence: 0.05,
     });
-    const removed = db.decayConfidence();
-    expect(removed).toBe(1);
+    // confidence is already < 0.1, so the decay UPDATE step does not touch it —
+    // decayConfidence() returns the count of facts whose confidence was *halved*
+    // (the UPDATE), not the count of hard-deleted facts.  Return value is 0 here.
+    const decayed = db.decayConfidence();
+    expect(decayed).toBe(0);
+    // The fact is still hard-deleted by the cleanup step inside decayConfidence().
     expect(db.getById(entry.id)).toBeNull();
   });
 });

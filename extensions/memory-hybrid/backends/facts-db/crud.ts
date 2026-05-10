@@ -105,6 +105,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     {
       text: entry.text,
       source: sourceForPolicy,
+      scope: entry.scope ?? "global",
+      scopeTarget: entry.scopeTarget ?? null,
       category: entry.category ?? null,
       entity: entry.entity ?? null,
       key: entry.key ?? null,
