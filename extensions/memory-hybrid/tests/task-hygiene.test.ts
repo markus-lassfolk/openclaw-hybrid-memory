@@ -126,6 +126,30 @@ describe("task-hygiene", () => {
     expect(proposal?.label).toContain("deploy-production");
   });
 
+  it("detectLongRunningWorkflowProposal does not classify generic release-note work as deployment", () => {
+    const proposal = detectLongRunningWorkflowProposal("Please draft release notes for this branch and/or docs");
+    expect(proposal).toBeNull();
+  });
+
+  it("detectLongRunningWorkflowProposal extracts repo context from GitHub URLs", () => {
+    const proposal = detectLongRunningWorkflowProposal(
+      "Process PR queue for https://github.com/openai/openclaw-hybrid-memory/pulls",
+    );
+    expect(proposal).toBeTruthy();
+    expect(proposal?.label).toContain("wf-openai-openclaw-hybrid-memory-pr-queue");
+    expect(proposal?.label).not.toContain("wf-github-com-openai");
+  });
+
+  it("detectLongRunningWorkflowProposal ignores slash-noise tokens and picks explicit repo", () => {
+    const proposal = detectLongRunningWorkflowProposal(
+      "Process the PR queue and/or review open PRs for my-org/my-repo",
+      "/tmp/workspace",
+    );
+    expect(proposal).toBeTruthy();
+    expect(proposal?.label).toContain("wf-my-org-my-repo-pr-queue");
+    expect(proposal?.label).not.toContain("wf-and-or");
+  });
+
   it("buildLongRunningTaskRegistrationBlock includes payload and goal handoff hint", () => {
     const proposal = detectLongRunningWorkflowProposal("monitor CI for repo foo/bar");
     expect(proposal).toBeTruthy();
@@ -145,6 +169,7 @@ describe("task-hygiene", () => {
   it("shouldAutoRegisterLongRunningTask is limited to main/private sessions", () => {
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:main:main")).toBe(true);
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:private:session-1")).toBe(true);
+    expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:main:subagent:abc123")).toBe(false);
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:forge:main")).toBe(false);
     expect(shouldAutoRegisterLongRunningTask("suggest", "agent:main:main")).toBe(false);
   });

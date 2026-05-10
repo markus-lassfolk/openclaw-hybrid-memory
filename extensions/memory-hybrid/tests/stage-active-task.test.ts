@@ -110,4 +110,43 @@ describe("stage-active-task long-running registration", () => {
     const raw = await readFile(activeTaskPath, "utf8");
     expect(raw).toContain("Deployment workflow (production)");
   });
+
+  it("does not auto-register deployment task for subagent sessions in auto_main_private mode", async () => {
+    const cfg = parseCfg({
+      activeTask: {
+        enabled: true,
+        ledger: "markdown",
+        filePath: "ACTIVE-TASKS.md",
+        taskHygiene: {
+          longRunningRegistration: {
+            mode: "auto_main_private",
+          },
+        },
+      },
+    });
+    const ctx = { cfg } as LifecycleContext;
+    const api = createMockPluginApi();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+    };
+    const apiWithLogger = { ...api, logger, context: {} } as unknown as ClawdbotPluginApi;
+
+    registerActiveTaskInjection(apiWithLogger, ctx, activeTaskPath, workspaceRoot);
+
+    const result = await api.emitFirstResult(
+      "before_agent_start",
+      {
+        messages: [{ role: "user", content: "Monitor deployment to production and keep going until stable." }],
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    const prep = (result as { prependContext?: string } | undefined)?.prependContext ?? "";
+    expect(prep).toContain("<active-task-registration>");
+    expect(prep).toContain("Auto-registration policy only applies to main/private sessions");
+    expect(prep).not.toContain("<active-tasks>");
+    await expect(access(activeTaskPath, fsConstants.F_OK)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });

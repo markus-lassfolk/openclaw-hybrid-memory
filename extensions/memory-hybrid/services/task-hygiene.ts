@@ -18,10 +18,28 @@ export type LongRunningWorkflowProposal = {
   repoContext?: string;
 };
 
-const REPO_REF_RE = /\b([a-z0-9_.-]+\/[a-z0-9_.-]+)\b/i;
+const REPO_REF_RE = /\b([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})\b/gi;
+const GITHUB_URL_RE = /(?:https?:\/\/)?(?:www\.)?github\.com\/([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})(?:[/?#]|$)/gi;
 const PR_NUM_RE = /(?:\bpr\b|\bpull request\b)?\s*#(\d+)\b/i;
 const DEPLOY_TARGET_RE = /\b(prod|production|staging|stage|qa|dev|preview)\b/i;
+const DEPLOY_ACTION_RE = /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\b(deploy|deployment|rollout)\b/i;
+const RELEASE_TO_ENV_RE =
+  /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\brelease\b[\s\S]{0,25}\b(to|into)\b[\s\S]{0,10}\b(prod|production|staging|stage|qa|dev|preview)\b/i;
 const GENERIC_WORKSPACE_NAMES = new Set(["workspace", "workspaces", "tmp", "home", "openclaw", "task"]);
+const SLASH_NOISE_TOKENS = new Set([
+  "and",
+  "or",
+  "on",
+  "off",
+  "to",
+  "for",
+  "in",
+  "by",
+  "up",
+  "down",
+  "yes",
+  "no",
+]);
 
 function slugifyToken(value: string): string {
   const slug = value
@@ -32,9 +50,28 @@ function slugifyToken(value: string): string {
   return slug || "task";
 }
 
+function toRepoContext(owner: string, repo: string): string | undefined {
+  const o = owner.trim().toLowerCase();
+  const r = repo.trim().toLowerCase();
+  if (!o || !r) return undefined;
+  if (o.includes(".")) return undefined;
+  if (SLASH_NOISE_TOKENS.has(o) || SLASH_NOISE_TOKENS.has(r)) return undefined;
+  return slugifyToken(`${o}-${r}`);
+}
+
 function normalizeRepoContext(userText: string, workspaceRoot?: string): string | undefined {
-  const explicitRepo = REPO_REF_RE.exec(userText)?.[1];
-  if (explicitRepo) return slugifyToken(explicitRepo.replace("/", "-"));
+  for (const match of userText.matchAll(GITHUB_URL_RE)) {
+    const owner = match[1] ?? "";
+    const repo = match[2] ?? "";
+    const ctx = toRepoContext(owner, repo);
+    if (ctx) return ctx;
+  }
+  for (const match of userText.matchAll(REPO_REF_RE)) {
+    const owner = match[1] ?? "";
+    const repo = match[2] ?? "";
+    const ctx = toRepoContext(owner, repo);
+    if (ctx) return ctx;
+  }
   if (!workspaceRoot?.trim()) return undefined;
   const base = basename(workspaceRoot.trim());
   const normalized = slugifyToken(base);
@@ -129,11 +166,7 @@ export function detectLongRunningWorkflowProposal(
   if (/\bfix\b[\s\S]{0,20}\ball\b[\s\S]{0,20}\bissues?\b/i.test(text)) {
     return buildWorkflowProposal("issue_sweep", text, workspaceRoot);
   }
-  if (
-    /\b(run|start|trigger|execute|perform|monitor|watch|track)\b[\s\S]{0,30}\b(deploy|deployment|rollout|release)\b/i.test(
-      text,
-    )
-  ) {
+  if (DEPLOY_ACTION_RE.test(text) || RELEASE_TO_ENV_RE.test(text)) {
     return buildWorkflowProposal("deployment", text, workspaceRoot);
   }
   return null;
@@ -161,11 +194,16 @@ function isMainOrPrivateSessionKey(sessionKey?: string | null): boolean {
   return trimmed === "main" || trimmed === "private";
 }
 
+function isSubagentSessionKey(sessionKey?: string | null): boolean {
+  if (!sessionKey) return false;
+  return sessionKey.trim().toLowerCase().includes("subagent:");
+}
+
 export function shouldAutoRegisterLongRunningTask(
   mode: LongRunningRegistrationMode,
   sessionKey?: string | null,
 ): boolean {
-  return mode === "auto_main_private" && isMainOrPrivateSessionKey(sessionKey);
+  return mode === "auto_main_private" && isMainOrPrivateSessionKey(sessionKey) && !isSubagentSessionKey(sessionKey);
 }
 
 export function buildLongRunningTaskRegistrationBlock(
