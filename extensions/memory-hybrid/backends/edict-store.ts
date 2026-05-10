@@ -22,6 +22,16 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 /** TTL modes for edicts */
 type EdictTtl = "never" | "event" | number;
 
+function normalizeEdictText(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function parseIsoDateToUnixSeconds(iso: string): number | null {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  return Math.floor(ms / 1000);
+}
+
 /** An edict entry — verified ground-truth fact */
 interface EdictEntry {
   id: string;
@@ -33,6 +43,8 @@ interface EdictEntry {
   verifiedAt: number | null;
   /** ISO 8601 date or null. Edict expires after this date (for ttl="event"). */
   expiresAt: string | null;
+  /** Unix epoch seconds expiry (preferred for comparisons); derived from expiresAt. */
+  expiresAtSec: number | null;
   /** TTL mode: "never" (permanent), "event" (expiresAt date), or seconds (ttl as number) */
   ttl: EdictTtl;
   /** Labels for filtering (e.g. ["operations", "ssh"]) */
@@ -84,8 +96,15 @@ interface EdictStats {
 
 /** Render an edict as a Markdown bullet line with tag prefix */
 function renderEdictLine(edict: EdictEntry): string {
+  // Edicts are intended to be short and declarative, but cap pathological cases so
+  // forced injection cannot explode prompt size.
+  const MAX_EDICT_PROMPT_TEXT_CHARS = 1000;
   const tagStr = edict.tags.length > 0 ? `[${edict.tags[0]}] ` : "";
-  return `- ${tagStr}${edict.text}`;
+  const text =
+    edict.text.length > MAX_EDICT_PROMPT_TEXT_CHARS
+      ? `${edict.text.slice(0, MAX_EDICT_PROMPT_TEXT_CHARS)}…`
+      : edict.text;
+  return `- ${tagStr}${text}`;
 }
 
 /** Render a list of edicts as a Markdown block for system prompt injection */
@@ -98,7 +117,7 @@ function renderEdictsForPrompt(edicts: EdictEntry[]): string {
 
 /** Escape a string for safe use as a SQLite LIKE pattern */
 function escapeLikePattern(s: string): string {
-  return s.replace(/[%_\\]/g, "\\$&");
+  return s.replace(/[~%_]/g, "~$&");
 }
 
 export class EdictStore extends BaseSqliteStore {
@@ -132,9 +151,11 @@ export class EdictStore extends BaseSqliteStore {
       CREATE TABLE IF NOT EXISTS edicts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
+        normalized_text TEXT,
         source TEXT,
         verified_at INTEGER,
         expires_at TEXT,
+        expires_at_sec INTEGER,
         ttl TEXT NOT NULL DEFAULT 'never',
         tags TEXT,
         created_at INTEGER NOT NULL,
@@ -152,10 +173,55 @@ export class EdictStore extends BaseSqliteStore {
         WHERE expires_at IS NOT NULL
     `);
 
-    // Ensure the id column is present (backward compat for edicts created before id was added)
+    // Backward-compat migrations for databases created before these columns existed.
     const tableInfo = this.db.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
-    if (!tableInfo.some((c) => c.name === "id")) {
-      this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
+    const hasCol = (name: string) => tableInfo.some((c) => c.name === name);
+
+    if (!hasCol("id")) {
+      // SQLite cannot add a PRIMARY KEY via ALTER TABLE; add a plain column + unique index instead.
+      this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT");
+    }
+    // Populate ids for any legacy/incomplete rows deterministically enough for our use-case.
+    this.db.exec("UPDATE edicts SET id = ('e_' || lower(hex(randomblob(6)))) WHERE id IS NULL OR id = ''");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_edicts_id_unique ON edicts(id)");
+
+    if (!hasCol("normalized_text")) {
+      this.db.exec("ALTER TABLE edicts ADD COLUMN normalized_text TEXT");
+    }
+
+    if (!hasCol("expires_at_sec")) {
+      this.db.exec("ALTER TABLE edicts ADD COLUMN expires_at_sec INTEGER");
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_edicts_expires_sec ON edicts(expires_at_sec)");
+
+    // Backfill derived columns best-effort (id may already exist).
+    const rows = this.db.prepare("SELECT rowid, id, text, expires_at FROM edicts ORDER BY rowid ASC").all() as Array<{
+      rowid: number;
+      id: string | null;
+      text: string;
+      expires_at: string | null;
+    }>;
+
+    const updateNorm = this.db.prepare("UPDATE edicts SET normalized_text = ? WHERE rowid = ?");
+    const updateExpires = this.db.prepare("UPDATE edicts SET expires_at_sec = ? WHERE rowid = ?");
+    for (const row of rows) {
+      // Keep normalized_text in sync even for legacy rows.
+      try {
+        updateNorm.run(normalizeEdictText(row.text), row.rowid);
+      } catch {
+        // Best-effort only.
+      }
+
+      if (row.expires_at?.trim()) {
+        const sec = parseIsoDateToUnixSeconds(row.expires_at.trim());
+        if (sec != null) {
+          try {
+            updateExpires.run(sec, row.rowid);
+          } catch {
+            // Best-effort only.
+          }
+        }
+      }
     }
   }
 
@@ -163,8 +229,12 @@ export class EdictStore extends BaseSqliteStore {
   isExpired(edict: EdictEntry): boolean {
     if (edict.ttl === "never") return false;
     if (edict.ttl === "event") {
-      if (!edict.expiresAt) return false;
-      return new Date(edict.expiresAt) <= new Date();
+      const expiresAt = edict.expiresAt?.trim();
+      // Fail closed for malformed legacy rows: event TTL without a valid expiry is considered expired.
+      if (!expiresAt) return true;
+      const sec = edict.expiresAtSec ?? parseIsoDateToUnixSeconds(expiresAt);
+      if (sec == null) return true;
+      return Math.floor(Date.now() / 1000) >= sec;
     }
     // Numeric TTL: seconds since creation
     const ttlSec = typeof edict.ttl === "number" ? edict.ttl : 0;
@@ -185,9 +255,22 @@ export class EdictStore extends BaseSqliteStore {
 
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
 
-    const expiresAt = input.expiresAt ?? (ttl === "event" ? null : null);
+    if (typeof ttl === "number" && (!Number.isFinite(ttl) || ttl <= 0 || !Number.isInteger(ttl))) {
+      throw new Error("Edict ttl must be a positive integer number of seconds, 'never', or 'event'");
+    }
 
-    const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
+    const expiresAt = input.expiresAt ?? null;
+    const expiresAtSec = expiresAt ? parseIsoDateToUnixSeconds(expiresAt) : null;
+    if (ttl === "event") {
+      if (!expiresAt) {
+        throw new Error("Edict ttl='event' requires expiresAt (ISO 8601)");
+      }
+      if (expiresAtSec == null) {
+        throw new Error("Edict expiresAt must be a valid ISO 8601 date");
+      }
+    }
+
+    const normalizedText = normalizeEdictText(input.text);
     const existing = this.findByNormalizedTextInternal(normalizedText);
     if (existing) {
       throw new Error(`Edict with similar text already exists: ${existing.id}`);
@@ -195,10 +278,22 @@ export class EdictStore extends BaseSqliteStore {
 
     this.liveDb
       .prepare(
-        `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO edicts (id, text, normalized_text, source, verified_at, expires_at, expires_at_sec, ttl, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.text.trim(), source, nowSec, expiresAt, ttlStr, tagsStr, nowSec, nowSec);
+      .run(
+        id,
+        input.text.trim(),
+        normalizedText,
+        source,
+        nowSec,
+        expiresAt,
+        expiresAtSec,
+        ttlStr,
+        tagsStr,
+        nowSec,
+        nowSec,
+      );
 
     return {
       id,
@@ -206,6 +301,7 @@ export class EdictStore extends BaseSqliteStore {
       source,
       verifiedAt: nowSec,
       expiresAt,
+      expiresAtSec,
       ttl,
       tags: input.tags ?? [],
       createdAt: nowSec,
@@ -215,9 +311,9 @@ export class EdictStore extends BaseSqliteStore {
 
   /** Find an edict by normalized text (for duplicate detection) */
   private findByNormalizedTextInternal(normalized: string): EdictEntry | null {
-    const rows = this.liveDb
-      .prepare("SELECT * FROM edicts WHERE LOWER(REPLACE(text, ' ', ' ')) = ?")
-      .all(normalized.replace(/\s+/g, " ")) as Array<Record<string, unknown>>;
+    const rows = this.liveDb.prepare("SELECT * FROM edicts WHERE normalized_text = ? LIMIT 1").all(normalized) as Array<
+      Record<string, unknown>
+    >;
     return rows.length > 0 ? this.rowToEntry(rows[0]) : null;
   }
 
@@ -253,20 +349,25 @@ export class EdictStore extends BaseSqliteStore {
 
     if (!includeExpired) {
       parts.push(
-        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
+        `((ttl = 'never') OR (ttl = 'event' AND expires_at_sec IS NOT NULL AND expires_at_sec > ?) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
       );
-      params.push(new Date().toISOString(), nowSec);
+      params.push(nowSec, nowSec);
     }
 
     if (tags && tags.length > 0) {
+      const tagParts: string[] = [];
       for (const tag of tags) {
-        parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
-        params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+        const t = tag.trim();
+        if (!t) continue;
+        tagParts.push(`(',' || LOWER(COALESCE(tags, '')) || ',') LIKE ? ESCAPE '~'`);
+        params.push(`%,${escapeLikePattern(t.toLowerCase())},%`);
       }
+      if (tagParts.length > 0) parts.push(`(${tagParts.join(" OR ")})`);
     }
 
+    const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
     const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
-    params.push(limit);
+    params.push(safeLimit);
 
     const rows = this.liveDb
       .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
@@ -319,15 +420,31 @@ export class EdictStore extends BaseSqliteStore {
     const ttl = input.ttl !== undefined ? input.ttl : existing.ttl;
     const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
+    const expiresAtSec = expiresAt ? parseIsoDateToUnixSeconds(expiresAt) : null;
+    if (typeof ttl === "number" && (!Number.isFinite(ttl) || ttl <= 0 || !Number.isInteger(ttl))) {
+      throw new Error("Edict ttl must be a positive integer number of seconds, 'never', or 'event'");
+    }
+    if (ttl === "event") {
+      if (!expiresAt) {
+        throw new Error("Edict ttl='event' requires expiresAt (ISO 8601)");
+      }
+      if (expiresAtSec == null) {
+        throw new Error("Edict expiresAt must be a valid ISO 8601 date");
+      }
+    }
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
+    const normalizedText = normalizeEdictText(text);
 
     this.liveDb
-      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
-      .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
+      .prepare(
+        "UPDATE edicts SET text = ?, normalized_text = ?, source = ?, expires_at = ?, expires_at_sec = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(text, normalizedText, source ?? null, expiresAt ?? null, expiresAtSec, ttlStr, tagsStr, nowSec, input.id);
 
     return {
       ...existing,
       text,
+      expiresAtSec,
       source,
       expiresAt,
       ttl,
@@ -365,18 +482,18 @@ export class EdictStore extends BaseSqliteStore {
     const expiredRow = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
+         (ttl = 'event' AND (expires_at_sec IS NULL OR expires_at_sec <= ?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
       )
-      .get(new Date().toISOString(), nowSec) as { cnt: number };
+      .get(nowSec, nowSec) as { cnt: number };
     const expired = expiredRow.cnt;
 
-    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    const sevenDaysFromNowSec = nowSec + 7 * 24 * 3600;
     const expiringRow = this.liveDb
       .prepare(
-        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND expires_at > datetime(?) AND expires_at <= ?`,
+        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at_sec IS NOT NULL AND expires_at_sec > ? AND expires_at_sec <= ?`,
       )
-      .get(new Date().toISOString(), sevenDaysFromNow) as { cnt: number };
+      .get(nowSec, sevenDaysFromNowSec) as { cnt: number };
     const expiringIn7Days = expiringRow.cnt;
 
     const allRows = this.liveDb.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
@@ -399,10 +516,10 @@ export class EdictStore extends BaseSqliteStore {
       const result = this.liveDb
         .prepare(
           `DELETE FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
+         (ttl = 'event' AND (expires_at_sec IS NULL OR expires_at_sec <= ?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
         )
-        .run(new Date().toISOString(), nowSec);
+        .run(nowSec, nowSec);
       return Number(result.changes ?? 0);
     });
   }
@@ -410,7 +527,13 @@ export class EdictStore extends BaseSqliteStore {
   /** Convert a raw SQLite row to an EdictEntry */
   private rowToEntry(row: Record<string, unknown>): EdictEntry {
     const ttlRaw = (row.ttl as string) ?? "never";
-    const ttl: EdictTtl = ttlRaw === "never" ? "never" : ttlRaw === "event" ? "event" : Number(ttlRaw);
+    let ttl: EdictTtl;
+    if (ttlRaw === "never") ttl = "never";
+    else if (ttlRaw === "event") ttl = "event";
+    else {
+      const parsed = Number(ttlRaw);
+      ttl = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+    }
 
     return {
       id: row.id as string,
@@ -418,6 +541,7 @@ export class EdictStore extends BaseSqliteStore {
       source: (row.source as string) ?? null,
       verifiedAt: (row.verified_at as number) ?? null,
       expiresAt: (row.expires_at as string) ?? null,
+      expiresAtSec: (row.expires_at_sec as number) ?? null,
       ttl,
       tags: parseTags(row.tags as string | null),
       createdAt: row.created_at as number,
