@@ -219,6 +219,7 @@ export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean }
 export type ActiveTaskHygieneResult = {
   ledger: "markdown" | "facts";
   dryRun: boolean;
+  cannotApplyReason?: string;
   olderThanMinutes: number;
   duplicates: Array<{
     normalized: string;

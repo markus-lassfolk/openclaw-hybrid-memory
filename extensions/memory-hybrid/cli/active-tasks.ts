@@ -376,7 +376,19 @@ export async function runActiveTaskHygiene(
     olderThanMinutes,
     openclawHome: opts.openclawHome,
   });
-  if (!apply || !taskFile || plan.actions.length === 0) {
+  if (apply && !taskFile) {
+    return {
+      ledger: "markdown",
+      dryRun: true,
+      cannotApplyReason: `Cannot apply hygiene: ${ctx.activeTaskFilePath} does not exist.`,
+      olderThanMinutes,
+      duplicates: plan.duplicates,
+      stale: plan.stale,
+      actions: plan.actions,
+      appliedCount: 0,
+    };
+  }
+  if (!apply || plan.actions.length === 0) {
     return {
       ledger: "markdown",
       dryRun: !apply,
@@ -462,6 +474,9 @@ function printActiveTaskList(result: ActiveTaskListResult): void {
 
 function printActiveTaskHygiene(result: ActiveTaskHygieneResult): void {
   console.log(`Active-task hygiene report [${result.ledger}] (older than ${formatDuration(result.olderThanMinutes)}):`);
+  if (result.cannotApplyReason) {
+    console.log(`  Apply blocked: ${result.cannotApplyReason}`);
+  }
   console.log(`  Duplicate groups: ${result.duplicates.length}`);
   console.log(`  Stale candidates: ${result.stale.length}`);
   console.log(`  Actions: ${result.actions.length}`);
@@ -636,7 +651,7 @@ export function registerActiveTaskCommands(
       "Detect and optionally clean stale/duplicate task entities (dead sessions, stale failures, superseded variants)",
     )
     .option("--dry-run", "Report hygiene findings and planned actions (default)")
-    .option("--apply", "Apply hygiene actions and persist audit trail")
+    .option("--apply", "Apply hygiene actions and persist audit fact (facts ledger only)")
     .option("--older-than <duration>", `Age threshold, e.g. 24h or 2d (default: ${formatDuration(ctx.staleMinutes)})`)
     .action(async (opts: { dryRun?: boolean; apply?: boolean; olderThan?: string }) => {
       if (opts.apply && opts.dryRun) {
@@ -660,6 +675,11 @@ export function registerActiveTaskCommands(
         olderThanMinutes,
       });
       printActiveTaskHygiene(result);
+      if (apply && result.cannotApplyReason) {
+        console.error(`Error: ${result.cannotApplyReason}`);
+        process.exitCode = 1;
+        return;
+      }
       if (!apply) {
         console.log("\nDry run only. Re-run with --apply to persist hygiene actions.");
         return;

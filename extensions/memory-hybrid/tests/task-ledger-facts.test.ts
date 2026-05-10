@@ -205,6 +205,45 @@ describe("task-ledger-facts", () => {
     expect(plan.actions.some((a) => a.label === "proj_1273_copy" && a.kind === "superseded-duplicate")).toBe(true);
   });
 
+  it("planActiveTaskHygiene does not group generic fallback titles as duplicates", async () => {
+    const now = Date.now();
+    const freshIso = new Date(now - 5 * 60 * 1000).toISOString();
+    const tasks: ActiveTaskEntry[] = [
+      {
+        label: "task-alpha",
+        description: "Project task",
+        status: "In progress",
+        started: freshIso,
+        updated: freshIso,
+      },
+      {
+        label: "task-beta",
+        description: "Project task",
+        status: "In progress",
+        started: freshIso,
+        updated: freshIso,
+      },
+    ];
+    const plan = await planActiveTaskHygiene(tasks, { olderThanMinutes: 60 });
+    expect(plan.duplicates).toHaveLength(0);
+    expect(plan.actions.some((a) => a.kind === "superseded-duplicate")).toBe(false);
+  });
+
+  it("planActiveTaskHygiene explains unknown updated timestamps in stale reasons", async () => {
+    const tasks: ActiveTaskEntry[] = [
+      {
+        label: "failed-unknown-updated",
+        description: "Unknown update timestamp",
+        status: "Failed",
+        started: "2026-01-01T00:00:00.000Z",
+        updated: UNKNOWN_ACTIVE_TASK_TIME,
+      },
+    ];
+    const plan = await planActiveTaskHygiene(tasks, { olderThanMinutes: 60 });
+    expect(plan.actions).toHaveLength(1);
+    expect(plan.actions[0].reason).toContain("missing/unknown updated timestamp");
+  });
+
   it("applyActiveTaskHygieneFacts marks rows as terminal and keeps an audit trail fact", async () => {
     const dir = await mkdtemp(join(tmpdir(), "task-hygiene-facts-"));
     const db = new FactsDB(join(dir, "facts.db"));
@@ -224,6 +263,7 @@ describe("task-ledger-facts", () => {
       status: string,
       updated: string,
       relatedSession?: string,
+      started?: string,
     ): void => {
       const base = {
         category: "project",
@@ -234,7 +274,8 @@ describe("task-ledger-facts", () => {
       };
       db.store({ ...base, key: "title", value: title, text: `Task [${entity}] title: ${title}` });
       db.store({ ...base, key: "status", value: status, text: `Task [${entity}] status: ${status}` });
-      db.store({ ...base, key: "started", value: staleIso, text: `Task [${entity}] started: ${staleIso}` });
+      const startedIso = started ?? updated;
+      db.store({ ...base, key: "started", value: startedIso, text: `Task [${entity}] started: ${startedIso}` });
       db.store({ ...base, key: "task_updated", value: updated, text: `Task [${entity}] updated: ${updated}` });
       if (relatedSession) {
         db.store({

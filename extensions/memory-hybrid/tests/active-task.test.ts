@@ -1075,6 +1075,17 @@ describe("runActiveTaskHygiene", () => {
     expect(report.actions.some((a) => a.kind === "superseded-duplicate" && a.label === "dup_a_copy")).toBe(true);
   });
 
+  it("apply reports a blocking error when ACTIVE-TASKS.md is missing in markdown mode", async () => {
+    const report = await runActiveTaskHygiene(ctx, {
+      apply: true,
+      olderThanMinutes: 60,
+      openclawHome: join(tmpDir, "missing-openclaw-home"),
+    });
+    expect(report.dryRun).toBe(true);
+    expect(report.cannotApplyReason).toContain("Cannot apply hygiene");
+    expect(report.appliedCount).toBe(0);
+  });
+
   it("apply marks stale/superseded rows done without deleting history", async () => {
     const staleIso = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
     const freshIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();

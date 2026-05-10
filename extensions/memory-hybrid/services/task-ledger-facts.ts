@@ -31,6 +31,7 @@ import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./o
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
+const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
 
 /** Latest value per entity+key from non-superseded project facts */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
@@ -292,6 +293,12 @@ function normalizeTaskString(value: string): string {
     .trim();
 }
 
+function isGenericTaskTitle(value: string): boolean {
+  const normalized = normalizeTaskString(value);
+  if (!normalized) return true;
+  return GENERIC_TASK_TITLE_NORMALIZED.has(normalized);
+}
+
 function staleHoursFromUpdated(updated: string, nowMs: number): number | "?" {
   const ms = parseTaskUpdatedMs(updated);
   if (ms == null) return "?";
@@ -324,7 +331,7 @@ function buildDuplicateComponents(tasks: ActiveTaskEntry[]): number[][] {
       arr.push(i);
       byLabel.set(labelKey, arr);
     }
-    if (titleKey) {
+    if (titleKey && !isGenericTaskTitle(tasks[i].description)) {
       const arr = byTitle.get(titleKey) ?? [];
       arr.push(i);
       byTitle.set(titleKey, arr);
@@ -387,9 +394,23 @@ export async function planActiveTaskHygiene(
   const nowMs = opts.nowMs ?? Date.now();
   const olderThanMinutes = Math.max(1, Math.floor(opts.olderThanMinutes));
   const olderThanMs = olderThanMinutes * 60 * 1000;
-  const isOlderThan = (task: ActiveTaskEntry): boolean => {
+  const classifyAge = (
+    task: ActiveTaskEntry,
+  ): {
+    stale: boolean;
+    reasonQualifier: string;
+  } => {
     const updatedMs = parseTaskUpdatedMs(task.updated);
-    return updatedMs == null || nowMs - updatedMs > olderThanMs;
+    if (updatedMs == null) {
+      return {
+        stale: true,
+        reasonQualifier: "missing/unknown updated timestamp",
+      };
+    }
+    return {
+      stale: nowMs - updatedMs > olderThanMs,
+      reasonQualifier: `older than ${olderThanMinutes}m`,
+    };
   };
   const checkSessionPresent =
     opts.checkSessionPresent ??
@@ -400,8 +421,9 @@ export async function planActiveTaskHygiene(
 
   for (const task of tasks) {
     if (task.status !== "Failed") continue;
-    if (!isOlderThan(task)) continue;
-    const reason = `Failed task older than ${olderThanMinutes}m; marking abandoned.`;
+    const age = classifyAge(task);
+    if (!age.stale) continue;
+    const reason = `Failed task ${age.reasonQualifier}; marking abandoned.`;
     stale.push({
       label: task.label,
       status: task.status,
@@ -417,14 +439,24 @@ export async function planActiveTaskHygiene(
     });
   }
 
-  for (const task of tasks) {
-    if (task.status !== "In progress") continue;
-    const sessionRef = task.subagent?.trim();
-    if (!sessionRef || !looksLikeOpenClawSessionRef(sessionRef)) continue;
-    if (!isOlderThan(task)) continue;
-    const present = await checkSessionPresent(sessionRef);
+  const staleSessionCandidates = tasks
+    .filter((task) => task.status === "In progress")
+    .map((task) => ({ task, sessionRef: task.subagent?.trim() ?? "" }))
+    .filter(({ sessionRef }) => sessionRef.length > 0 && looksLikeOpenClawSessionRef(sessionRef))
+    .map(({ task, sessionRef }) => ({ task, sessionRef, age: classifyAge(task) }))
+    .filter(({ age }) => age.stale);
+  const uniqueSessionRefs = [...new Set(staleSessionCandidates.map((c) => c.sessionRef))];
+  const sessionPresentByRef = new Map<string, boolean>();
+  await Promise.all(
+    uniqueSessionRefs.map(async (sessionRef) => {
+      const present = await checkSessionPresent(sessionRef);
+      sessionPresentByRef.set(sessionRef, present);
+    }),
+  );
+  for (const { task, sessionRef, age } of staleSessionCandidates) {
+    const present = sessionPresentByRef.get(sessionRef) ?? false;
     if (present) continue;
-    const reason = `In-progress task has missing session transcript (${sessionRef}) and is older than ${olderThanMinutes}m; marking abandoned.`;
+    const reason = `In-progress task has missing session transcript (${sessionRef}) and is ${age.reasonQualifier}; marking abandoned.`;
     stale.push({
       label: task.label,
       status: task.status,
@@ -560,6 +592,10 @@ export function buildFactsSectionedMarkdownBody(
   return parts.join("\n");
 }
 
+function taskEntityKey(entity: string, key: string): string {
+  return `${entity}\u0000${key}`;
+}
+
 export async function upsertProjectTaskKey(
   factsDb: FactsDB,
   vectorDb: VectorDB,
@@ -568,11 +604,18 @@ export async function upsertProjectTaskKey(
   key: string,
   value: string,
   log?: { warn?: (m: string) => void },
+  opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
 ): Promise<void> {
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-  const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
-  same.sort((a, b) => b.createdAt - a.createdAt);
-  const previous = same[0];
+  const cacheKey = taskEntityKey(entity, key);
+  let previous: MemoryEntry | undefined;
+  if (opts?.latestByEntityKey) {
+    previous = opts.latestByEntityKey.get(cacheKey);
+  } else {
+    const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+    const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
+    same.sort((a, b) => b.createdAt - a.createdAt);
+    previous = same[0];
+  }
   const text = `Task [${entity}] ${key}: ${value}`;
   const entry = factsDb.store({
     text,
@@ -587,6 +630,7 @@ export async function upsertProjectTaskKey(
   if (previous) {
     factsDb.supersede(previous.id, entry.id);
   }
+  opts?.latestByEntityKey?.set(cacheKey, entry);
   try {
     const vector = await embeddings.embed(text);
     factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
@@ -613,13 +657,15 @@ export async function syncActiveTaskEntryToFacts(
   log?: { warn?: (m: string) => void },
   opts?: {
     statusOverride?: string;
+    latestByEntityKey?: Map<string, MemoryEntry>;
   },
 ): Promise<void> {
   const entity = entry.label;
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log);
+  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log, upsertOpts);
   const statusValue = opts?.statusOverride?.trim() || displayStatusToFact(entry.status);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", statusValue, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next?.trim() || "", log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", statusValue, log, upsertOpts);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next?.trim() || "", log, upsertOpts);
   await upsertProjectTaskKey(
     factsDb,
     vectorDb,
@@ -628,10 +674,11 @@ export async function syncActiveTaskEntryToFacts(
     "related_session",
     entry.subagent?.trim() || "",
     log,
+    upsertOpts,
   );
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log, upsertOpts);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log, upsertOpts);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log, upsertOpts);
   await upsertProjectTaskKey(
     factsDb,
     vectorDb,
@@ -640,6 +687,7 @@ export async function syncActiveTaskEntryToFacts(
     "stash_commit",
     entry.stashCommit?.trim() || "",
     log,
+    upsertOpts,
   );
   await upsertProjectTaskKey(
     factsDb,
@@ -649,6 +697,7 @@ export async function syncActiveTaskEntryToFacts(
     "handoff",
     entry.handoff ? JSON.stringify(entry.handoff) : "",
     log,
+    upsertOpts,
   );
 }
 
@@ -673,26 +722,19 @@ export async function applyActiveTaskHygieneFacts(
   }
 
   const runAt = new Date().toISOString();
-  const audit = {
-    runAt,
-    olderThanMinutes: plan.olderThanMinutes,
-    duplicates: plan.duplicates,
-    stale: plan.stale,
-    actions: plan.actions,
-  };
-  const auditFact = factsDb.store({
-    text: `Active-task hygiene audit ${runAt}: ${plan.actions.length} action(s), ${plan.duplicates.length} duplicate group(s).`,
-    category: "episode",
-    importance: CLI_STORE_IMPORTANCE,
-    source: "active-task-hygiene",
-    decayClass: "permanent",
-    entity: `active-task-hygiene:${runAt}`,
-    key: "report",
-    value: JSON.stringify(audit),
-  });
-
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
+  const latestByEntityKey = new Map<string, MemoryEntry>();
+  for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
+    const entity = fact.entity?.trim();
+    if (!entity) continue;
+    const key = (fact.key ?? "").trim();
+    const cacheKey = taskEntityKey(entity, key);
+    const prev = latestByEntityKey.get(cacheKey);
+    if (!prev || fact.createdAt > prev.createdAt) {
+      latestByEntityKey.set(cacheKey, fact);
+    }
+  }
   let appliedCount = 0;
   for (const action of plan.actions) {
     const task = byLabel.get(action.label);
@@ -706,6 +748,7 @@ export async function applyActiveTaskHygieneFacts(
     };
     await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log, {
       statusOverride: action.toStatus,
+      latestByEntityKey,
     });
     if (action.kind === "superseded-duplicate" && action.canonicalLabel) {
       await upsertProjectTaskKey(
@@ -716,6 +759,7 @@ export async function applyActiveTaskHygieneFacts(
         "superseded_by",
         action.canonicalLabel,
         opts.log,
+        { latestByEntityKey },
       );
     }
     if (opts.flushOnComplete && opts.memoryDir) {
@@ -723,6 +767,25 @@ export async function applyActiveTaskHygieneFacts(
     }
     appliedCount++;
   }
+
+  const audit = {
+    runAt,
+    olderThanMinutes: plan.olderThanMinutes,
+    duplicates: plan.duplicates,
+    stale: plan.stale,
+    actions: plan.actions,
+    appliedCount,
+  };
+  const auditFact = factsDb.store({
+    text: `Active-task hygiene audit ${runAt}: ${plan.actions.length} action(s), ${plan.duplicates.length} duplicate group(s), ${appliedCount} applied.`,
+    category: "episode",
+    importance: CLI_STORE_IMPORTANCE,
+    source: "active-task-hygiene",
+    decayClass: "permanent",
+    entity: `active-task-hygiene:${runAt}`,
+    key: "report",
+    value: JSON.stringify(audit),
+  });
 
   return { appliedCount, auditFactId: auditFact.id };
 }
