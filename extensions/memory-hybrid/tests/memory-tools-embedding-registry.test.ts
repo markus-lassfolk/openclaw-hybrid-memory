@@ -140,6 +140,7 @@ describe("memory tools embedding registry wiring", () => {
     );
 
     const names = api.getToolNames();
+    expect(names).toContain("active_task_checkpoint");
     expect(names).toContain("memory_directory");
     expect(names).toContain("memory_record_episode");
     expect(names).toContain("memory_search_episodes");

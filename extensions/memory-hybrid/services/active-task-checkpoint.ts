@@ -1,0 +1,883 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
+import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.js";
+import { parseDuration } from "../utils/duration.js";
+import { getEnv } from "../utils/env-manager.js";
+import { renderActiveTaskMarkdownFile, taskEntityKey, upsertProjectTaskKey } from "./task-ledger-facts.js";
+import { buildGuardPrefix } from "./cron-guard.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+
+const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
+const ACTIVE_TASK_WAKE_GUARD_YEARS = 10;
+
+export interface ActiveTaskCheckpointInput {
+  entity?: string;
+  status?: string;
+  owner?: string;
+  next?: string;
+  relatedSession?: string;
+  title?: string;
+  resumeAt?: string;
+  state?: Record<string, unknown>;
+  scheduleWake?: boolean;
+  refreshProjection?: boolean;
+  recordEpisode?: boolean;
+}
+
+export interface ActiveTaskCheckpointDeps {
+  factsDb: FactsDB;
+  vectorDb: VectorDB;
+  embeddings: EmbeddingProvider;
+  cfg: HybridMemoryConfig;
+  logger?: { warn?: (msg: string) => void; info?: (msg: string) => void };
+  openclawDir?: string;
+  workspaceRoot?: string;
+  now?: () => Date;
+  episodeScopeFilter?: ScopeFilter | null;
+  scheduleWakeFn?: (args: ActiveTaskWakeScheduleInput) => Promise<ActiveTaskWakeScheduleResult>;
+  refreshProjectionFn?: (args: ActiveTaskProjectionRefreshInput) => Promise<ActiveTaskProjectionRefreshResult>;
+}
+
+interface NormalizedCheckpointInput {
+  entity: string;
+  status?: string;
+  owner?: string;
+  next?: string;
+  relatedSession?: string;
+  title?: string;
+  resumeAtIso?: string;
+  resumeAtDate?: Date;
+  state?: Record<string, unknown>;
+  scheduleWake: boolean;
+  refreshProjection: boolean;
+  recordEpisode: boolean;
+}
+
+export type ActiveTaskCheckpointStep = "validation" | "facts" | "episode" | "schedule" | "projection";
+
+export interface ActiveTaskCheckpointError {
+  step: ActiveTaskCheckpointStep;
+  message: string;
+}
+
+export interface ActiveTaskWakeScheduleInput {
+  cfg: HybridMemoryConfig;
+  entity: string;
+  status: string;
+  owner?: string;
+  next?: string;
+  relatedSession?: string;
+  title?: string;
+  resumeAt: Date;
+  state?: Record<string, unknown>;
+  openclawDir?: string;
+}
+
+export interface ActiveTaskWakeScheduleResult {
+  scheduled: boolean;
+  jobId: string;
+  scheduleKind: "at";
+  scheduleAt: string;
+  jobsPath: string;
+  disabledPreviousJobs: number;
+}
+
+export interface ActiveTaskProjectionRefreshInput {
+  cfg: HybridMemoryConfig;
+  factsDb: FactsDB;
+  workspaceRoot?: string;
+}
+
+export interface ActiveTaskProjectionRefreshResult {
+  attempted: boolean;
+  refreshed: boolean;
+  path?: string;
+  reason?: string;
+}
+
+export interface ActiveTaskCheckpointResult {
+  ok: boolean;
+  partial: boolean;
+  message: string;
+  checkpoint?: {
+    entity: string;
+    status: string;
+    owner: string;
+    next: string;
+    relatedSession: string;
+    title?: string;
+    resumeAt?: string;
+    taskUpdated: string;
+    state?: Record<string, unknown>;
+  };
+  steps: {
+    facts: {
+      ok: boolean;
+      updatedKeys: string[];
+      failedKeys: string[];
+      titleSource?: "provided" | "existing" | "defaulted";
+    };
+    episode: {
+      attempted: boolean;
+      ok: boolean;
+      episodeId?: string;
+      skippedReason?: string;
+    };
+    schedule: {
+      attempted: boolean;
+      scheduled: boolean;
+      jobId?: string;
+      scheduleKind?: "at";
+      scheduleAt?: string;
+      jobsPath?: string;
+      disabledPreviousJobs?: number;
+      skippedReason?: string;
+    };
+    projection: ActiveTaskProjectionRefreshResult;
+  };
+  errors: ActiveTaskCheckpointError[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function trimToString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeStatus(raw?: string): string | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw.trim()) return "in_progress";
+  const value = raw.trim().toLowerCase();
+  if (value === "open" || value === "in_progress" || value === "in progress" || value === "working") {
+    return "in_progress";
+  }
+  if (value === "blocked" || value === "stalled") return "blocked";
+  if (value === "waiting" || value === "on_hold" || value === "on hold") return "waiting";
+  if (value === "done" || value === "completed" || value === "closed") {
+    return "done";
+  }
+  if (value === "cancelled" || value === "canceled" || value === "abandoned") {
+    return "cancelled";
+  }
+  if (value === "failed" || value === "error") return "failed";
+  return undefined;
+}
+
+function normalizeExistingStatus(raw?: string): string | undefined {
+  const value = trimToString(raw);
+  if (value === undefined) return undefined;
+  const lower = value.toLowerCase();
+  if (lower === "abandoned" || lower === "superseded") return lower;
+  const normalized = normalizeStatus(value);
+  if (normalized) return normalized;
+  return lower;
+}
+
+function normalizeCheckpointInput(
+  input: ActiveTaskCheckpointInput,
+  now: Date,
+): {
+  normalized?: NormalizedCheckpointInput;
+  errors: ActiveTaskCheckpointError[];
+} {
+  const errors: ActiveTaskCheckpointError[] = [];
+
+  const entity = trimToString(input.entity);
+  if (!entity) {
+    errors.push({ step: "validation", message: "entity is required" });
+  }
+
+  const status = normalizeStatus(input.status);
+  if (input.status !== undefined && !status) {
+    errors.push({
+      step: "validation",
+      message:
+        "status must be one of: open, in_progress, blocked, waiting, done/completed/closed, cancelled/canceled/abandoned, failed",
+    });
+  }
+
+  const title = trimToString(input.title);
+  const owner = input.owner !== undefined ? (trimToString(input.owner) ?? "") : undefined;
+  const next = input.next !== undefined ? (trimToString(input.next) ?? "") : undefined;
+  const relatedSession = input.relatedSession !== undefined ? (trimToString(input.relatedSession) ?? "") : undefined;
+
+  let resumeAtIso: string | undefined;
+  let resumeAtDate: Date | undefined;
+  if (input.resumeAt !== undefined) {
+    const rawResumeAt = trimToString(input.resumeAt);
+    if (!rawResumeAt) {
+      errors.push({ step: "validation", message: "resumeAt must be a non-empty ISO timestamp" });
+    } else {
+      const parsed = new Date(rawResumeAt);
+      if (Number.isNaN(parsed.getTime())) {
+        errors.push({ step: "validation", message: "resumeAt must be a valid ISO timestamp" });
+      } else if (parsed.getTime() <= now.getTime()) {
+        errors.push({ step: "validation", message: "resumeAt must be in the future" });
+      } else {
+        resumeAtDate = parsed;
+        resumeAtIso = parsed.toISOString();
+      }
+    }
+  }
+
+  if (input.state !== undefined && !isRecord(input.state)) {
+    errors.push({ step: "validation", message: "state must be an object when provided" });
+  }
+
+  if (errors.length > 0 || !entity) {
+    return { errors };
+  }
+
+  return {
+    normalized: {
+      entity,
+      status,
+      owner,
+      next,
+      relatedSession,
+      title,
+      resumeAtIso,
+      resumeAtDate,
+      state: input.state,
+      scheduleWake: input.scheduleWake !== false,
+      refreshProjection: input.refreshProjection === true,
+      recordEpisode: input.recordEpisode !== false,
+    },
+    errors,
+  };
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractProjectValueFromText(text: string, key: string): string | undefined {
+  const trimmedText = text.trim();
+  if (!trimmedText) return undefined;
+  const keyPattern = escapeRegExp(key);
+  const match = trimmedText.match(new RegExp(`^Task \\[[^\\]]+\\] ${keyPattern}:\\s*(.*)$`));
+  if (match) {
+    return (match[1] ?? "").trim();
+  }
+  return trimToString(trimmedText);
+}
+
+function primeLatestProjectFactCacheForEntityKeys(
+  factsDb: FactsDB,
+  cache: Map<string, MemoryEntry>,
+  entity: string,
+  keys: readonly string[],
+): void {
+  for (const key of keys) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) continue;
+    const cacheKey = taskEntityKey(entity, normalizedKey);
+    if (cache.has(cacheKey)) continue;
+    const hit = factsDb.lookup(entity, normalizedKey, undefined, { includeSuperseded: false, limit: 1 })[0]?.entry;
+    if (!hit) continue;
+    if ((hit.category ?? "").trim() !== "project") continue;
+    cache.set(cacheKey, hit);
+  }
+}
+
+function getLatestProjectValue(cache: Map<string, MemoryEntry>, entity: string, key: string): string | undefined {
+  const row = cache.get(taskEntityKey(entity, key));
+  if (!row) return undefined;
+  if (typeof row.value === "string") return row.value.trim();
+  if (typeof row.text === "string") {
+    return extractProjectValueFromText(row.text, key);
+  }
+  return trimToString(row.value) ?? undefined;
+}
+
+function wakeEntityKey(entity: string): string {
+  const slug = slugify(entity).slice(0, 40) || "task";
+  const digest = createHash("sha1").update(entity).digest("hex").slice(0, 12);
+  return `${slug}-${digest}`;
+}
+
+function disableActiveTaskWakeJobs(
+  jobs: Array<Record<string, unknown>>,
+  entity: string,
+  opts?: { excludeJobId?: string },
+): number {
+  const entityPrefix = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${wakeEntityKey(entity)}:`;
+  let disabled = 0;
+  for (const row of jobs) {
+    const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : "";
+    const id = typeof row.id === "string" ? row.id : "";
+    const rowId = pluginJobId || id;
+    if (!rowId) continue;
+    if (opts?.excludeJobId && (pluginJobId === opts.excludeJobId || id === opts.excludeJobId)) continue;
+    if (!rowId.startsWith(entityPrefix)) continue;
+    if (row.enabled !== false) {
+      row.enabled = false;
+      disabled += 1;
+    }
+  }
+  return disabled;
+}
+
+function disableActiveTaskWakeJobsForEntity(
+  entity: string,
+  openclawDirOverride?: string,
+): { jobsPath: string; disabled: number } {
+  const openclawDir = resolveOpenclawDir(openclawDirOverride);
+  const cronDir = join(openclawDir, "cron");
+  const jobsPath = join(cronDir, "jobs.json");
+  if (!existsSync(jobsPath)) {
+    return { jobsPath, disabled: 0 };
+  }
+
+  let store: { jobs?: unknown[] };
+  try {
+    store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
+  } catch (err) {
+    throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+  }
+
+  if (!Array.isArray(store.jobs)) {
+    return { jobsPath, disabled: 0 };
+  }
+
+  const jobs = store.jobs as Array<Record<string, unknown>>;
+  const disabled = disableActiveTaskWakeJobs(jobs, entity);
+  if (disabled <= 0) {
+    return { jobsPath, disabled: 0 };
+  }
+
+  const payload = JSON.stringify(store, null, 2);
+  const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, payload, "utf-8");
+  renameSync(tmpPath, jobsPath);
+  return { jobsPath, disabled };
+}
+
+function resolveOpenclawDir(override?: string): string {
+  if (override?.trim()) return override.trim();
+  const env = getEnv("OPENCLAW_HOME")?.trim();
+  if (env) return env;
+  return join(homedir(), ".openclaw");
+}
+
+function resolveWorkspaceRoot(override?: string): string {
+  if (override?.trim()) return override.trim();
+  const env = getEnv("OPENCLAW_WORKSPACE")?.trim();
+  if (env) return env;
+  return join(resolveOpenclawDir(), "workspace");
+}
+
+function resolveCronModel(cfg: HybridMemoryConfig): string {
+  const cronCfg = getCronModelConfig(cfg);
+  const pref = getLLMModelPreference(cronCfg, "nano");
+  return pref[0] ?? getDefaultCronModel(cronCfg, "nano");
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '{"error":"unserializable"}';
+  }
+}
+
+function buildWakeMessage(args: {
+  entity: string;
+  status: string;
+  owner?: string;
+  next?: string;
+  relatedSession?: string;
+  title?: string;
+  resumeAtIso: string;
+  state?: Record<string, unknown>;
+  guardYears: number;
+}): string {
+  const lines: string[] = [
+    `Active-task wake reminder for \"${args.entity}\".`,
+    `Scheduled resume time (UTC): ${args.resumeAtIso}`,
+    `Status: ${args.status}`,
+  ];
+
+  if (args.title) lines.push(`Title: ${args.title}`);
+  if (args.owner) lines.push(`Owner: ${args.owner}`);
+  if (args.relatedSession) lines.push(`Related session: ${args.relatedSession}`);
+  if (args.next) lines.push(`Next: ${args.next}`);
+  if (args.state) {
+    const json = safeJson(args.state);
+    lines.push(`Checkpoint state JSON: ${json.length > 1500 ? `${json.slice(0, 1500)}...` : json}`);
+  }
+
+  lines.push(
+    `This reminder is guarded to avoid duplicate reruns for approximately ${args.guardYears} year(s).`,
+    "If work is still relevant, continue execution and update task state with active_task_checkpoint.",
+  );
+
+  return lines.join("\n");
+}
+
+async function scheduleActiveTaskWakeReminder(
+  input: ActiveTaskWakeScheduleInput,
+): Promise<ActiveTaskWakeScheduleResult> {
+  const openclawDir = resolveOpenclawDir(input.openclawDir);
+  const cronDir = join(openclawDir, "cron");
+  const jobsPath = join(cronDir, "jobs.json");
+  mkdirSync(cronDir, { recursive: true });
+
+  let store: { jobs?: unknown[] } = {};
+  if (existsSync(jobsPath)) {
+    try {
+      store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
+    } catch (err) {
+      throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+    }
+  }
+
+  if (!Array.isArray(store.jobs)) {
+    store.jobs = [];
+  }
+
+  const jobs = store.jobs as Array<Record<string, unknown>>;
+  const entitySlug = slugify(input.entity) || "task";
+  const entityKey = wakeEntityKey(input.entity);
+  const resumeAtIso = input.resumeAt.toISOString();
+  const resumeEpochSec = Math.floor(input.resumeAt.getTime() / 1000);
+  const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:${resumeEpochSec}`;
+
+  const disabledPreviousJobs = disableActiveTaskWakeJobs(jobs, input.entity, { excludeJobId: jobId });
+
+  const model = resolveCronModel(input.cfg);
+  const minIntervalMs = ACTIVE_TASK_WAKE_GUARD_YEARS * 365 * 24 * 60 * 60 * 1000;
+  const guardJobName = `active-task-wake-${entityKey}-${resumeEpochSec}`;
+  const guardPrefix = buildGuardPrefix(guardJobName, minIntervalMs, openclawDir);
+
+  const job: Record<string, unknown> = {
+    id: jobId,
+    pluginJobId: jobId,
+    name: `active-task-wake-${entitySlug}`,
+    sessionTarget: "isolated",
+    schedule: { kind: "at", at: resumeAtIso },
+    deleteAfterRun: true,
+    payload: {
+      kind: "agentTurn",
+      message:
+        guardPrefix +
+        buildWakeMessage({
+          entity: input.entity,
+          status: input.status,
+          owner: input.owner,
+          next: input.next,
+          relatedSession: input.relatedSession,
+          title: input.title,
+          resumeAtIso,
+          state: input.state,
+          guardYears: ACTIVE_TASK_WAKE_GUARD_YEARS,
+        }),
+      model,
+    },
+    delivery: { mode: "announce" },
+    enabled: true,
+    metadata: {
+      source: "active_task_checkpoint",
+      entity: input.entity,
+      resumeAt: resumeAtIso,
+      createdAt: new Date().toISOString(),
+    },
+  };
+
+  const existingIdx = jobs.findIndex((row) => {
+    const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : "";
+    const id = typeof row.id === "string" ? row.id : "";
+    return pluginJobId === jobId || id === jobId;
+  });
+
+  if (existingIdx >= 0) {
+    jobs[existingIdx] = { ...(jobs[existingIdx] ?? {}), ...job };
+  } else {
+    jobs.push(job);
+  }
+
+  const payload = JSON.stringify(store, null, 2);
+  const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, payload, "utf-8");
+  renameSync(tmpPath, jobsPath);
+
+  return {
+    scheduled: true,
+    jobId,
+    scheduleKind: "at",
+    scheduleAt: resumeAtIso,
+    jobsPath,
+    disabledPreviousJobs,
+  };
+}
+
+async function refreshActiveTaskProjectionFromFacts(
+  input: ActiveTaskProjectionRefreshInput,
+): Promise<ActiveTaskProjectionRefreshResult> {
+  if (!input.cfg.activeTask.enabled) {
+    return { attempted: true, refreshed: false, reason: "active_task_disabled" };
+  }
+  if (input.cfg.activeTask.ledger !== "facts") {
+    return { attempted: true, refreshed: false, reason: "active_task_ledger_not_facts" };
+  }
+
+  const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot);
+  const activeTaskPath = isAbsolute(input.cfg.activeTask.filePath)
+    ? input.cfg.activeTask.filePath
+    : join(workspaceRoot, input.cfg.activeTask.filePath);
+  const staleMinutes = parseDuration(input.cfg.activeTask.staleThreshold);
+
+  await renderActiveTaskMarkdownFile(input.factsDb, staleMinutes, activeTaskPath, input.cfg.activeTask.projection);
+  return { attempted: true, refreshed: true, path: activeTaskPath };
+}
+
+function stepError(step: ActiveTaskCheckpointStep, err: unknown): ActiveTaskCheckpointError {
+  return { step, message: err instanceof Error ? err.message : String(err) };
+}
+
+function outcomeFromStatus(status: string): EpisodeOutcome {
+  if (status === "done") return "success";
+  if (status === "failed") return "failure";
+  if (status === "cancelled" || status === "abandoned" || status === "superseded") return "partial";
+  if (status === "blocked" || status === "waiting") return "partial";
+  return "unknown";
+}
+
+function scopeFromFilter(filter?: ScopeFilter | null): {
+  scope: "global" | "user" | "agent" | "session";
+  scopeTarget: string | null;
+  agentId?: string;
+  userId?: string;
+  sessionId?: string;
+} {
+  if (filter?.sessionId?.trim()) {
+    return {
+      scope: "session",
+      scopeTarget: filter.sessionId,
+      agentId: filter.agentId ?? undefined,
+      userId: filter.userId ?? undefined,
+      sessionId: filter.sessionId,
+    };
+  }
+  if (filter?.userId?.trim()) {
+    return {
+      scope: "user",
+      scopeTarget: filter.userId,
+      agentId: filter.agentId ?? undefined,
+      userId: filter.userId,
+      sessionId: filter.sessionId ?? undefined,
+    };
+  }
+  if (filter?.agentId?.trim()) {
+    return {
+      scope: "agent",
+      scopeTarget: filter.agentId,
+      agentId: filter.agentId,
+      userId: filter.userId ?? undefined,
+      sessionId: filter.sessionId ?? undefined,
+    };
+  }
+  return {
+    scope: "global",
+    scopeTarget: null,
+    agentId: filter?.agentId ?? undefined,
+    userId: filter?.userId ?? undefined,
+    sessionId: filter?.sessionId ?? undefined,
+  };
+}
+
+export async function runActiveTaskCheckpoint(
+  deps: ActiveTaskCheckpointDeps,
+  input: ActiveTaskCheckpointInput,
+): Promise<ActiveTaskCheckpointResult> {
+  const now = deps.now?.() ?? new Date();
+  const validation = normalizeCheckpointInput(input, now);
+  if (!validation.normalized) {
+    return {
+      ok: false,
+      partial: false,
+      message: `active_task_checkpoint validation failed: ${validation.errors.map((e) => e.message).join("; ")}`,
+      steps: {
+        facts: { ok: false, updatedKeys: [], failedKeys: [] },
+        episode: { attempted: false, ok: false, skippedReason: "validation_failed" },
+        schedule: { attempted: false, scheduled: false, skippedReason: "validation_failed" },
+        projection: { attempted: false, refreshed: false, reason: "validation_failed" },
+      },
+      errors: validation.errors,
+    };
+  }
+
+  const checkpoint = validation.normalized;
+  const latestProjectFacts = new Map<string, MemoryEntry>();
+  primeLatestProjectFactCacheForEntityKeys(deps.factsDb, latestProjectFacts, checkpoint.entity, [
+    "status",
+    "owner",
+    "next",
+    "related_session",
+    "title",
+  ]);
+  const existingStatus = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status");
+  const resolvedStatus = checkpoint.status ?? normalizeExistingStatus(existingStatus) ?? "in_progress";
+  const resolvedOwner = checkpoint.owner ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "owner") ?? "";
+  const resolvedNext = checkpoint.next ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "next") ?? "";
+  const resolvedRelatedSession =
+    checkpoint.relatedSession ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "related_session") ?? "";
+  const taskUpdated = now.toISOString();
+  const errors: ActiveTaskCheckpointError[] = [];
+  const updatedKeys: string[] = [];
+  const failedKeys: string[] = [];
+
+  let titleSource: "provided" | "existing" | "defaulted" | undefined;
+  let effectiveTitle = checkpoint.title;
+
+  try {
+    if (effectiveTitle) {
+      titleSource = "provided";
+    } else {
+      const existingTitle = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "title");
+      if (existingTitle) {
+        effectiveTitle = existingTitle;
+        titleSource = "existing";
+      } else {
+        effectiveTitle = "Project task";
+        titleSource = "defaulted";
+      }
+    }
+  } catch (err) {
+    deps.logger?.warn?.(`memory-hybrid: active-task checkpoint title lookup failed: ${String(err)}`);
+    effectiveTitle = checkpoint.title ?? "Project task";
+    titleSource = checkpoint.title ? "provided" : "defaulted";
+  }
+
+  const updates: Array<{ key: string; value: string }> = [
+    { key: "status", value: resolvedStatus },
+    { key: "next", value: resolvedNext },
+    { key: "owner", value: resolvedOwner },
+    { key: "related_session", value: resolvedRelatedSession },
+    { key: "task_updated", value: taskUpdated },
+  ];
+
+  if (effectiveTitle) {
+    updates.push({ key: "title", value: effectiveTitle });
+  }
+
+  if (checkpoint.state) {
+    updates.push({ key: "checkpoint_state", value: safeJson(checkpoint.state) });
+  }
+
+  if (checkpoint.resumeAtIso) {
+    updates.push({ key: "resume_at", value: checkpoint.resumeAtIso });
+  }
+
+  primeLatestProjectFactCacheForEntityKeys(
+    deps.factsDb,
+    latestProjectFacts,
+    checkpoint.entity,
+    updates.map((u) => u.key),
+  );
+
+  for (const update of updates) {
+    try {
+      await upsertProjectTaskKey(
+        deps.factsDb,
+        deps.vectorDb,
+        deps.embeddings,
+        checkpoint.entity,
+        update.key,
+        update.value,
+        deps.logger,
+        { latestByEntityKey: latestProjectFacts },
+      );
+      updatedKeys.push(update.key);
+    } catch (err) {
+      failedKeys.push(update.key);
+      errors.push(stepError("facts", new Error(`${update.key}: ${String(err)}`)));
+    }
+  }
+
+  let episodeId: string | undefined;
+  let episodeAttempted = false;
+  let episodeOk = false;
+  let episodeSkippedReason: string | undefined;
+
+  if (checkpoint.recordEpisode) {
+    episodeAttempted = true;
+    try {
+      const scope = scopeFromFilter(deps.episodeScopeFilter);
+      const contextLines: string[] = [
+        `entity=${checkpoint.entity}`,
+        `status=${resolvedStatus}`,
+        `owner=${resolvedOwner || "n/a"}`,
+        `next=${resolvedNext || "n/a"}`,
+        `relatedSession=${resolvedRelatedSession || "n/a"}`,
+        `taskUpdated=${taskUpdated}`,
+      ];
+      if (checkpoint.resumeAtIso) contextLines.push(`resumeAt=${checkpoint.resumeAtIso}`);
+      if (checkpoint.state) contextLines.push(`state=${safeJson(checkpoint.state)}`);
+
+      const ep = deps.factsDb.recordEpisode({
+        event: `Active task checkpoint: ${checkpoint.entity}`,
+        outcome: outcomeFromStatus(resolvedStatus),
+        context: contextLines.join("\n"),
+        importance: resolvedStatus === "failed" ? 0.8 : 0.6,
+        tags: ["active-task", "checkpoint", slugify(checkpoint.entity)],
+        scope: scope.scope,
+        scopeTarget: scope.scopeTarget,
+        agentId: scope.agentId,
+        userId: scope.userId,
+        sessionId: scope.sessionId,
+      });
+      episodeId = ep.id;
+      episodeOk = true;
+    } catch (err) {
+      errors.push(stepError("episode", err));
+    }
+  } else {
+    episodeSkippedReason = "record_episode_disabled";
+  }
+
+  let wakeAttempted = false;
+  let wakeScheduled = false;
+  let wakeSkippedReason: string | undefined;
+  let wakeResult: ActiveTaskWakeScheduleResult | undefined;
+  let wakeJobsPath: string | undefined;
+  let wakeDisabledPreviousJobs: number | undefined;
+
+  if (failedKeys.length > 0) {
+    wakeSkippedReason = "facts_write_failed";
+  } else if (checkpoint.resumeAtIso && checkpoint.resumeAtDate && checkpoint.scheduleWake) {
+    wakeAttempted = true;
+    try {
+      const scheduleWake = deps.scheduleWakeFn ?? scheduleActiveTaskWakeReminder;
+      wakeResult = await scheduleWake({
+        cfg: deps.cfg,
+        entity: checkpoint.entity,
+        status: resolvedStatus,
+        owner: resolvedOwner || undefined,
+        next: resolvedNext || undefined,
+        relatedSession: resolvedRelatedSession || undefined,
+        title: effectiveTitle,
+        resumeAt: checkpoint.resumeAtDate,
+        state: checkpoint.state,
+        openclawDir: deps.openclawDir,
+      });
+      wakeScheduled = wakeResult.scheduled;
+      wakeJobsPath = wakeResult.jobsPath;
+      wakeDisabledPreviousJobs = wakeResult.disabledPreviousJobs;
+    } catch (err) {
+      errors.push(stepError("schedule", err));
+    }
+  } else {
+    wakeSkippedReason = checkpoint.resumeAtIso ? "schedule_wake_disabled" : "resumeAt_not_provided";
+    try {
+      const cleanup = disableActiveTaskWakeJobsForEntity(checkpoint.entity, deps.openclawDir);
+      wakeJobsPath = cleanup.jobsPath;
+      wakeDisabledPreviousJobs = cleanup.disabled;
+    } catch (err) {
+      errors.push(stepError("schedule", err));
+    }
+  }
+
+  let projection = {
+    attempted: false,
+    refreshed: false,
+    reason: "refresh_not_requested",
+  } as ActiveTaskProjectionRefreshResult;
+  if (checkpoint.refreshProjection) {
+    try {
+      const refreshFn = deps.refreshProjectionFn ?? refreshActiveTaskProjectionFromFacts;
+      projection = await refreshFn({
+        cfg: deps.cfg,
+        factsDb: deps.factsDb,
+        workspaceRoot: deps.workspaceRoot,
+      });
+    } catch (err) {
+      projection = { attempted: true, refreshed: false, reason: String(err) };
+      errors.push(stepError("projection", err));
+    }
+  }
+
+  const ok = errors.length === 0;
+  const partial = !ok && updatedKeys.length > 0;
+
+  const summaryBits: string[] = [
+    `entity=${checkpoint.entity}`,
+    `status=${resolvedStatus}`,
+    `facts=${updatedKeys.length}/${updates.length}`,
+    checkpoint.recordEpisode ? `episode=${episodeOk ? "recorded" : "failed"}` : "episode=skipped",
+  ];
+  if (wakeAttempted) {
+    summaryBits.push(`wake=${wakeScheduled ? "scheduled" : "failed"}`);
+  } else if (wakeSkippedReason) {
+    summaryBits.push(`wake=skipped(${wakeSkippedReason})`);
+  }
+  if (checkpoint.refreshProjection) {
+    summaryBits.push(`projection=${projection.refreshed ? "refreshed" : "not_refreshed"}`);
+  }
+
+  const message = ok
+    ? `active_task_checkpoint completed (${summaryBits.join(", ")}).`
+    : partial
+      ? `active_task_checkpoint completed with partial failures (${summaryBits.join(", ")}).`
+      : `active_task_checkpoint failed (${summaryBits.join(", ")}).`;
+
+  return {
+    ok,
+    partial,
+    message,
+    checkpoint: {
+      entity: checkpoint.entity,
+      status: resolvedStatus,
+      owner: resolvedOwner,
+      next: resolvedNext,
+      relatedSession: resolvedRelatedSession,
+      title: effectiveTitle,
+      resumeAt: checkpoint.resumeAtIso,
+      taskUpdated,
+      state: checkpoint.state,
+    },
+    steps: {
+      facts: {
+        ok: failedKeys.length === 0,
+        updatedKeys,
+        failedKeys,
+        titleSource,
+      },
+      episode: {
+        attempted: episodeAttempted,
+        ok: episodeOk,
+        episodeId,
+        skippedReason: episodeSkippedReason,
+      },
+      schedule: {
+        attempted: wakeAttempted,
+        scheduled: wakeScheduled,
+        jobId: wakeResult?.jobId,
+        scheduleKind: wakeResult?.scheduleKind,
+        scheduleAt: wakeResult?.scheduleAt,
+        jobsPath: wakeJobsPath,
+        disabledPreviousJobs: wakeDisabledPreviousJobs,
+        skippedReason: wakeSkippedReason,
+      },
+      projection,
+    },
+    errors,
+  };
+}

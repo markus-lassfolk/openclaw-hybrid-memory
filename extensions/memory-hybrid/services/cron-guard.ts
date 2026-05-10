@@ -66,10 +66,10 @@ export function readGuardTimestampMs(jobName: string, openclawDir?: string): num
  * The persistent path (~/.openclaw/cron/guard/) survives system reboots,
  * unlike the old /tmp/ files used by issue #304.
  */
-export function buildGuardPrefix(jobName: string, minIntervalMs: number): string {
+export function buildGuardPrefix(jobName: string, minIntervalMs: number, openclawDir?: string): string {
   const hours = Math.round(minIntervalMs / (60 * 60 * 1000));
-  const guardFile = getGuardFilePath(jobName);
-  const guardDir = getGuardDir();
+  const guardFile = getGuardFilePath(jobName, openclawDir);
+  const guardDir = getGuardDir(openclawDir);
   return `GUARD CHECK (issue #305): Before running, read the last-run guard file: cat "${guardFile}" 2>/dev/null. If the file contains a number T (Unix epoch ms) where (current epoch ms − T) < ${minIntervalMs} (${hours}h guard window), reply ONLY 'Skipped: ${jobName} — ran within ${hours}h guard window' and stop. Otherwise proceed with the task below. AFTER successful completion: mkdir -p "${guardDir}" and write the current Unix epoch ms to "${guardFile}".\n\n`;
 }
 
