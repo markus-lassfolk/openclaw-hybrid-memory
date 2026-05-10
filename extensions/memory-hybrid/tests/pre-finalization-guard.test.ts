@@ -230,6 +230,16 @@ describe("pre-finalization guard", () => {
     expect(result.signals.unresolvedExternalMention).toBe(false);
   });
 
+  it("does not treat past-tense recheck language as pending work", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "I rechecked CI and it passed; no follow-up needed." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
+    expect(result.signals.waitingOrPending).toBe(false);
+    expect(result.action).toBe("allow");
+  });
+
   it("does not infer command mutations from non-command tool payload text", () => {
     const messages: unknown[] = [
       { role: "user", content: "Assess progress." },

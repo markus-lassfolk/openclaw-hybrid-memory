@@ -18,7 +18,7 @@ export class PreFinalizationGuardBlockingError extends Error {
 }
 
 const WAITING_OR_PENDING_RE =
-  /\b(waiting\s+(?:for|on|to)|still\s+waiting|pending|recheck|check back|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
+  /\b(waiting\s+(?:for|on|to)|still\s+waiting|pending|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
 const NEGATED_WAITING_OR_PENDING_RE =
   /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|waiting|awaiting)\b/i;
 const CLEARED_WAITING_OR_PENDING_RE =
