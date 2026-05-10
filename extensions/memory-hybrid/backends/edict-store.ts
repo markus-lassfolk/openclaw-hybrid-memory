@@ -180,10 +180,10 @@ export class EdictStore extends BaseSqliteStore {
     if (!hasCol("id")) {
       // SQLite cannot add a PRIMARY KEY via ALTER TABLE; add a plain column + unique index instead.
       this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT");
-      // Populate ids for existing rows deterministically enough for our use-case.
-      this.db.exec("UPDATE edicts SET id = ('e_' || lower(hex(randomblob(6)))) WHERE id IS NULL OR id = ''");
-      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_edicts_id_unique ON edicts(id)");
     }
+    // Populate ids for any legacy/incomplete rows deterministically enough for our use-case.
+    this.db.exec("UPDATE edicts SET id = ('e_' || lower(hex(randomblob(6)))) WHERE id IS NULL OR id = ''");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_edicts_id_unique ON edicts(id)");
 
     if (!hasCol("normalized_text")) {
       this.db.exec("ALTER TABLE edicts ADD COLUMN normalized_text TEXT");

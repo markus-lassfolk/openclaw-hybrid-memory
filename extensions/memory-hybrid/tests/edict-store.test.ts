@@ -119,6 +119,38 @@ describe("EdictStore", () => {
     }
   });
 
+  it("backfills missing ids when legacy table already has id column", () => {
+    const legacyPath = join(dir, "legacy-existing-id-edicts.db");
+    const db = new DatabaseSync(legacyPath);
+    db.exec(`
+      CREATE TABLE edicts (
+        id TEXT,
+        text TEXT NOT NULL,
+        source TEXT,
+        verified_at INTEGER,
+        expires_at TEXT,
+        ttl TEXT NOT NULL DEFAULT 'never',
+        tags TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.prepare(
+      "INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(null, "Legacy row with null id", null, 0, null, "never", "ops", 1, 1);
+    db.close();
+
+    const legacy = new EdictStore(legacyPath);
+    try {
+      const rows = legacy.list({ includeExpired: true });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toMatch(/^e_/);
+      expect(legacy.getById(rows[0].id)?.text).toBe("Legacy row with null id");
+    } finally {
+      legacy.close();
+    }
+  });
+
   it("treats legacy ttl='event' rows without valid expiry as expired (fail-closed)", () => {
     const legacyPath = join(dir, "legacy-event-edicts.db");
     const db = new DatabaseSync(legacyPath);
