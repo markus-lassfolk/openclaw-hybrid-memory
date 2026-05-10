@@ -19,6 +19,23 @@ export function pruneOrphanedLinks(db: DatabaseSync): number {
   return Number(result.changes ?? 0);
 }
 
+/**
+ * SQL COUNT of active (non-superseded, non-expired) facts for a given category.
+ * Replaces the previous O(n) approach of loading all rows and filtering in JS.
+ */
+export function countActiveFactsByCategory(db: DatabaseSync, category: string): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM facts
+         WHERE category = ?
+           AND superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)`,
+    )
+    .get(category, nowSec) as { count: number } | undefined;
+  return row?.count ?? 0;
+}
+
 export function pruneLogTables(db: DatabaseSync, retentionDays: number): number {
   if (retentionDays <= 0) return 0;
   const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
