@@ -407,7 +407,17 @@ export function createPluginService(ctx: PluginServiceContext) {
                 } else if (entry.data.vector) {
                   // SQLite fact already exists (crash after SQL write, before vector write).
                   // Re-attempt the vector store so the fact is searchable via semantics.
-                  const existingId = factsDb.getDuplicateIdByNormalizedHash(text);
+                  let existingId = factsDb.getDuplicateIdByNormalizedHash(text);
+                  if (!existingId) {
+                    const sourceForLookup = String(source || "conversation").trim() || "conversation";
+                    const row = factsDb
+                      .getRawDb()
+                      .prepare(
+                        "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+                      )
+                      .get(text, sourceForLookup) as { id: string } | undefined;
+                    existingId = row?.id ?? null;
+                  }
                   if (existingId) {
                     try {
                       await vectorDb.store({
@@ -432,8 +442,8 @@ export function createPluginService(ctx: PluginServiceContext) {
                       throw err;
                     }
                   } else {
-                    throw new Error(
-                      `WAL recovery duplicate fact ID lookup failed for pending entry ${entry.id}; keeping WAL entry for retry`,
+                    api.logger.warn(
+                      `memory-hybrid: WAL recovery could not resolve duplicate fact id for entry ${entry.id}; skipping vector re-store`,
                     );
                   }
                 }
