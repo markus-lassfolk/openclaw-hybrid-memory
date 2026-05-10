@@ -278,7 +278,7 @@ export async function runBackfillForCli(
       continue;
     }
     try {
-      const entry = factsDb.store({
+      const storeResult = factsDb.store({
         text: fact.text,
         category: fact.category as MemoryCategory,
         importance: 0.8,
@@ -288,6 +288,18 @@ export async function runBackfillForCli(
         source: `backfill:${fact.source}`,
         sourceDate: sourceDateSec(fact.source_date),
       });
+      const entry = storeResult.entry;
+      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+      if (storeResult.evictedFactId) {
+        try {
+          const deleted = await vectorDb.delete(storeResult.evictedFactId);
+          if (deleted) {
+            sink.warn(`memory-hybrid: backfill evicted fact ${storeResult.evictedFactId}, vector deleted`);
+          }
+        } catch (evictErr) {
+          sink.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+        }
+      }
       try {
         const vector = await embeddings.embed(fact.text);
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
@@ -672,7 +684,7 @@ export async function runIngestFilesForCli(
         skipped++;
         continue;
       }
-      const entry = factsDb.store({
+      const storeResult = factsDb.store({
         text: fact.text,
         category: (isValidCategory(fact.category) ? fact.category : "technical") as MemoryCategory,
         importance: BATCH_STORE_IMPORTANCE,
@@ -683,6 +695,18 @@ export async function runIngestFilesForCli(
         decayClass: "stable",
         tags: fact.tags,
       });
+      const entry = storeResult.entry;
+      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+      if (storeResult.evictedFactId) {
+        try {
+          const deleted = await vectorDb.delete(storeResult.evictedFactId);
+          if (deleted) {
+            sink.warn(`memory-hybrid: ingest evicted fact ${storeResult.evictedFactId}, vector deleted`);
+          }
+        } catch (evictErr) {
+          sink.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+        }
+      }
       try {
         await vectorDb.store({
           text: fact.text,

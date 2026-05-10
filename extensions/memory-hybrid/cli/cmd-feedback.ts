@@ -534,7 +534,7 @@ export async function runExtractImplicitFeedbackForCli(
           }
           if (factsDb.hasDuplicate(text, "implicit-feedback")) continue;
           if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
-          factsDb.store({
+          const storeResult = factsDb.store({
             text,
             category: "technical",
             importance: Math.max(0.3, sig.confidence * 0.6),
@@ -545,6 +545,21 @@ export async function runExtractImplicitFeedbackForCli(
             tags: ["implicit-feedback", "negative", sig.type],
             decayClass: "normal",
           });
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          if (storeResult.evictedFactId) {
+            try {
+              const deleted = await vectorDb.delete(storeResult.evictedFactId);
+              if (deleted) {
+                logger.info?.(
+                  `memory-hybrid: implicit-feedback evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                );
+              }
+            } catch (evictErr) {
+              logger.warn?.(
+                `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+              );
+            }
+          }
           lessonsStoredTodaySession++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -642,7 +657,7 @@ export async function runExtractImplicitFeedbackForCli(
               }
               if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
               try {
-                factsDb.store({
+                const storeResult = factsDb.store({
                   text: trimmedLesson,
                   category: "technical",
                   importance: 0.5,
@@ -653,6 +668,21 @@ export async function runExtractImplicitFeedbackForCli(
                   tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
                   decayClass: "normal",
                 });
+                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                if (storeResult.evictedFactId) {
+                  try {
+                    const deleted = await vectorDb.delete(storeResult.evictedFactId);
+                    if (deleted) {
+                      logger.info?.(
+                        `memory-hybrid: implicit-feedback-lesson evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                      );
+                    }
+                  } catch (evictErr) {
+                    logger.warn?.(
+                      `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+                    );
+                  }
+                }
                 lessonsStoredTodaySession++;
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {

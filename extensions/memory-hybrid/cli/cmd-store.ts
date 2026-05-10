@@ -73,7 +73,7 @@ export async function runStoreForCli(
       try {
         const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
         const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-        pointerEntry = factsDb.store({
+        const storeResult = factsDb.store({
           text: pointerText,
           category: "technical" as MemoryCategory,
           importance: CLI_STORE_IMPORTANCE,
@@ -84,6 +84,18 @@ export async function runStoreForCli(
           sourceDate,
           tags: ["auth", ...extractTags(pointerText, "Credentials")],
         });
+        pointerEntry = storeResult.entry;
+        // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+        if (storeResult.evictedFactId) {
+          try {
+            const deleted = await vectorDb.delete(storeResult.evictedFactId);
+            if (deleted) {
+              log.warn(`memory-hybrid: cli store evicted fact ${storeResult.evictedFactId}, vector deleted`);
+            }
+          } catch (evictErr) {
+            log.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+          }
+        }
         try {
           const vector = await embeddings.embed(pointerText);
           factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
@@ -166,7 +178,7 @@ export async function runStoreForCli(
             const oldFact = factsDb.getById(classification.targetId);
             if (oldFact) {
               const nowSec = Math.floor(Date.now() / 1000);
-              const newEntry = factsDb.store({
+              const storeResult = factsDb.store({
                 text,
                 category,
                 importance: CLI_STORE_IMPORTANCE,
@@ -181,6 +193,18 @@ export async function runStoreForCli(
                 scope,
                 scopeTarget,
               });
+              const newEntry = storeResult.entry;
+              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+              if (storeResult.evictedFactId) {
+                try {
+                  const deleted = await vectorDb.delete(storeResult.evictedFactId);
+                  if (deleted) {
+                    log.warn(`memory-hybrid: cli store UPDATE evicted fact ${storeResult.evictedFactId}, vector deleted`);
+                  }
+                } catch (evictErr) {
+                  log.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+                }
+              }
               factsDb.supersede(classification.targetId, newEntry.id);
               aliasDb?.deleteByFactId(classification.targetId);
               try {
@@ -212,7 +236,7 @@ export async function runStoreForCli(
   const supersedesId = opts.supersedes?.trim();
   const nowSec = supersedesId ? Math.floor(Date.now() / 1000) : undefined;
   try {
-    const entry = factsDb.store({
+    const storeResult = factsDb.store({
       text,
       category,
       importance: CLI_STORE_IMPORTANCE,
@@ -226,6 +250,18 @@ export async function runStoreForCli(
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
+    const entry = storeResult.entry;
+    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+    if (storeResult.evictedFactId) {
+      try {
+        const deleted = await vectorDb.delete(storeResult.evictedFactId);
+        if (deleted) {
+          log.warn(`memory-hybrid: cli store evicted fact ${storeResult.evictedFactId}, vector deleted`);
+        }
+      } catch (evictErr) {
+        log.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+      }
+    }
     if (supersedesId) {
       factsDb.supersede(supersedesId, entry.id);
       aliasDb?.deleteByFactId(supersedesId);

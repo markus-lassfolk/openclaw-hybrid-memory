@@ -297,7 +297,7 @@ export async function runExtractDirectivesForCli(
             fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
             storeConfig: cfg.store,
           });
-          factsDb.store(
+          const storeResult = factsDb.store(
             {
               text: incident.extractedRule,
               category: category as MemoryCategory,
@@ -313,6 +313,21 @@ export async function runExtractDirectivesForCli(
               suppressVectorFallbackWarning: true,
             },
           );
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          if (storeResult.evictedFactId) {
+            try {
+              const deleted = await vectorDb.delete(storeResult.evictedFactId);
+              if (deleted) {
+                logger.info?.(
+                  `memory-hybrid: extract-directives evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                );
+              }
+            } catch (evictErr) {
+              logger.warn?.(
+                `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+              );
+            }
+          }
           if (shouldCountVectorFallback) storeDedupeVectorFallbackSuppressed++;
           stored++;
         } catch (err) {
@@ -554,7 +569,7 @@ export async function runExtractReinforcementForCli(
             const tags: string[] = Array.isArray(obj.tags) ? obj.tags : [];
             if (isPattern && !tags.includes("reinforcement")) tags.push("reinforcement");
             if (isPattern && !tags.includes("behavioral")) tags.push("behavioral");
-            const entry = factsDb.store({
+            const storeResult = factsDb.store({
               text,
               category: isPattern ? "pattern" : "technical",
               importance: CLI_STORE_IMPORTANCE,
@@ -564,6 +579,22 @@ export async function runExtractReinforcementForCli(
               source: "reinforcement-analysis",
               tags,
             });
+            const entry = storeResult.entry;
+            // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+            if (storeResult.evictedFactId) {
+              try {
+                const deleted = await vectorDb.delete(storeResult.evictedFactId);
+                if (deleted) {
+                  logger.info?.(
+                    `memory-hybrid: extract-reinforcement evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                  );
+                }
+              } catch (evictErr) {
+                logger.warn?.(
+                  `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+                );
+              }
+            }
             if (vector) {
               await vectorDb.store({
                 text,
@@ -982,7 +1013,7 @@ export async function runExtractDailyForCli(
         if (classification.action === "UPDATE" && classification.targetId) {
           const oldFact = factsDb.getById(classification.targetId);
           if (oldFact) {
-            const newEntry = factsDb.store({
+            const storeResult = factsDb.store({
               ...storePayload,
               entity: extracted.entity ?? oldFact.entity,
               key: extracted.key ?? oldFact.key,
@@ -990,6 +1021,18 @@ export async function runExtractDailyForCli(
               validFrom: sourceDateSec,
               supersedesId: classification.targetId,
             });
+            const newEntry = storeResult.entry;
+            // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+            if (storeResult.evictedFactId) {
+              try {
+                const deleted = await vectorDb.delete(storeResult.evictedFactId);
+                if (deleted) {
+                  sink.warn(`memory-hybrid: extract-daily UPDATE evicted fact ${storeResult.evictedFactId}, vector deleted`);
+                }
+              } catch (evictErr) {
+                sink.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+              }
+            }
             factsDb.supersede(classification.targetId, newEntry.id);
             aliasDb?.deleteByFactId(classification.targetId);
             try {
@@ -1014,7 +1057,19 @@ export async function runExtractDailyForCli(
             continue;
           }
         }
-        const entry = factsDb.store(storePayload);
+        const storeResult = factsDb.store(storePayload);
+        const entry = storeResult.entry;
+        // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+        if (storeResult.evictedFactId) {
+          try {
+            const deleted = await vectorDb.delete(storeResult.evictedFactId);
+            if (deleted) {
+              sink.warn(`memory-hybrid: extract-daily evicted fact ${storeResult.evictedFactId}, vector deleted`);
+            }
+          } catch (evictErr) {
+            sink.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
+          }
+        }
         try {
           const vector = vecForStore;
           factsDb.setEmbeddingModel(entry.id, embeddings.modelName);

@@ -337,7 +337,7 @@ export async function runSelfCorrectionRunForCli(
         }
         if (opts.dryRun) continue;
         try {
-          const entry = factsDb.store({
+          const storeResult = factsDb.store({
             text,
             category: "technical",
             importance: CLI_STORE_IMPORTANCE,
@@ -347,6 +347,22 @@ export async function runSelfCorrectionRunForCli(
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
           });
+          const entry = storeResult.entry;
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          if (storeResult.evictedFactId) {
+            try {
+              const deleted = await vectorDb.delete(storeResult.evictedFactId);
+              if (deleted) {
+                logger.info?.(
+                  `memory-hybrid: self-correction evicted fact ${storeResult.evictedFactId}, vector deleted`,
+                );
+              }
+            } catch (evictErr) {
+              logger.warn?.(
+                `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+              );
+            }
+          }
           if (vector) {
             await vectorDb.store({
               text,
