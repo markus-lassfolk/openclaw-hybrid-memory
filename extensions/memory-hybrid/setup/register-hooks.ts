@@ -64,7 +64,15 @@ function emitCompactionModelWatchdogAlert(
     }
   }
   if (selectionUnknownReason) {
-    api.logger.warn?.(`memory-hybrid: ${context} watchdog — compaction routing unknown (${selectionUnknownReason}); ${scopeNote}`);
+    api.logger.warn?.(
+      `memory-hybrid: ${context} watchdog — compaction routing unknown (${selectionUnknownReason}); ${scopeNote}`,
+    );
+    return;
+  }
+  if (selection.routingUnknownFromConfig) {
+    api.logger.warn?.(
+      `memory-hybrid: ${context} watchdog — compaction routing unknown (neither agents.defaults.compaction.model nor agents.defaults.model.primary set; session chat model may apply); ${scopeNote}`,
+    );
     return;
   }
   const unsupportedWarning = buildUnsupportedPerAgentCompactionWarning(selection, { context });

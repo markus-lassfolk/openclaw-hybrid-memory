@@ -10,6 +10,11 @@ export type CompactionModelSelection = {
   reason: string;
   inherited: boolean;
   unsupportedPerAgentCompactionPaths: string[];
+  /**
+   * When using inherit-* fallback policy, config does not set compaction.model or defaults primary;
+   * OpenClaw may compact with the active session chat model (not derivable from file config).
+   */
+  routingUnknownFromConfig?: boolean;
 };
 
 export type CompactionWatchdogContext = "verify" | "before_compaction" | "after_compaction";
@@ -52,8 +57,7 @@ function collectUnsupportedPerAgentCompactionPaths(root: Record<string, unknown>
     const model = readCompactionModelFromAgentBlock(entry);
     if (!model) continue;
     const rawId = entry.id;
-    const id =
-      typeof rawId === "string" && rawId.trim().length > 0 ? rawId.trim() : `index=${String(idx)}`;
+    const id = typeof rawId === "string" && rawId.trim().length > 0 ? rawId.trim() : `index=${String(idx)}`;
     paths.push(`agents.list[id=${id}].compaction.model`);
   }
   return paths;
@@ -137,6 +141,15 @@ export function resolveCompactionModelSelection(
         unsupportedPerAgentCompactionPaths,
       };
     }
+    return {
+      model: "",
+      provider: "unknown",
+      reason:
+        "agents.defaults.compaction.model and agents.defaults.model.primary unset; OpenClaw compaction may follow the active session chat model",
+      inherited: false,
+      unsupportedPerAgentCompactionPaths,
+      routingUnknownFromConfig: true,
+    };
   }
 
   return {
@@ -148,7 +161,10 @@ export function resolveCompactionModelSelection(
   };
 }
 
-function extractCompactionHookIdentityFromSource(sourceObj: unknown, sourceName: string): CompactionHookIdentity | null {
+function extractCompactionHookIdentityFromSource(
+  sourceObj: unknown,
+  sourceName: string,
+): CompactionHookIdentity | null {
   const agentPaths: string[][] = [
     ["agentId"],
     ["agent", "id"],
@@ -451,6 +467,7 @@ export function buildCompactionModelWatchdogWarning(
   selection: CompactionModelSelection,
   opts?: { context?: CompactionWatchdogContext; recommendedModel?: string },
 ): string | null {
+  if (selection.routingUnknownFromConfig) return null;
   if (!isCompactionModelTooStrong(selection.model)) return null;
   const recommendedModel = opts?.recommendedModel?.trim() || DEFAULT_COMPACTION_MODEL;
   const contextPrefix = opts?.context ? `${opts.context}: ` : "";

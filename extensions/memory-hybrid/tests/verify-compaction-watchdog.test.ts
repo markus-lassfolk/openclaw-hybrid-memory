@@ -118,7 +118,9 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     const out = lines.join("\n");
 
     expect(out).toContain(`Config source: ${configPath}`);
-    expect(out).toMatch(/compaction model watchdog alert \(verify\)|compaction routing uses a stronger-than-mini model/);
+    expect(out).toMatch(
+      /compaction model watchdog alert \(verify\)|compaction routing uses a stronger-than-mini model/,
+    );
     expect(out).toContain("provider=openai, model=openai/gpt-4.1");
   });
 
@@ -162,6 +164,26 @@ describe("runVerifyForCli - compaction model watchdog", () => {
 
     expect(out).toContain("verify watchdog: compaction routing check is unknown");
     expect(out).toContain(`active OpenClaw config (${configPath}) is missing`);
+    expect(out).toContain("status=unknown");
+    expect(out).not.toContain("compaction model watchdog alert (verify)");
+  });
+
+  it("surfaces unknown compaction routing when defaults omit compaction and primary model", async () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-no-primary-"));
+    const openclawDir = join(homeDir, ".openclaw");
+    const configPath = join(openclawDir, "openclaw.json");
+    writeOpenclawConfigAt(configPath, {
+      agents: { defaults: {} },
+    });
+    vi.stubEnv("HOME", homeDir);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("verify watchdog: compaction routing check is unknown");
+    expect(out).toContain("neither agents.defaults.compaction.model nor agents.defaults.model.primary");
     expect(out).toContain("status=unknown");
     expect(out).not.toContain("compaction model watchdog alert (verify)");
   });

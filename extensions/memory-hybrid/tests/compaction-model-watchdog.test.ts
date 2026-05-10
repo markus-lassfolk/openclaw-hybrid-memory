@@ -43,6 +43,18 @@ describe("compaction-model-watchdog", () => {
     expect(selection.inherited).toBe(true);
   });
 
+  it("marks routing unknown when inherit policy cannot resolve defaults primary or compaction", () => {
+    const selection = resolveCompactionModelSelection(
+      { agents: { defaults: {} } },
+      { fallbackPolicy: "inherit-defaults-primary" },
+    );
+    expect(selection.routingUnknownFromConfig).toBe(true);
+    expect(selection.model).toBe("");
+    expect(selection.provider).toBe("unknown");
+    expect(selection.reason).toContain("session chat model");
+    expect(buildCompactionModelWatchdogWarning(selection, { context: "verify" })).toBeNull();
+  });
+
   it("ignores unsupported per-agent compaction model keys", () => {
     const selection = resolveCompactionModelSelection(
       {

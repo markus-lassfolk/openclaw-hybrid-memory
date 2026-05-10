@@ -683,6 +683,11 @@ export async function runVerifyForCli(
       fallbackPolicy: "inherit-defaults-primary",
     });
   }
+  const compactionRoutingUnknownReason =
+    compactionSelectionUnknownReason ??
+    (compactionSelection.routingUnknownFromConfig
+      ? "neither agents.defaults.compaction.model nor agents.defaults.model.primary is set; compaction may follow the active session chat model"
+      : null);
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
@@ -692,8 +697,8 @@ export async function runVerifyForCli(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
   );
   tableLog(
-    `    Compaction (agents.*.compaction): provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}${
-      compactionSelectionUnknownReason ? `; status=unknown (${compactionSelectionUnknownReason})` : ""
+    `    Compaction (agents.*.compaction): provider=${compactionSelection.provider}, model=${compactionSelection.model || "—"}, reason=${compactionSelection.reason}${
+      compactionRoutingUnknownReason ? `; status=unknown (${compactionRoutingUnknownReason})` : ""
     }`,
   );
 
@@ -755,15 +760,15 @@ export async function runVerifyForCli(
       `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
     );
   }
-  if (compactionSelectionUnknownReason) {
+  if (compactionRoutingUnknownReason) {
     warnings.push(
-      `verify watchdog: compaction routing check is unknown because ${compactionSelectionUnknownReason}; set/repair config and rerun verify.`,
+      `verify watchdog: compaction routing check is unknown because ${compactionRoutingUnknownReason}; set/repair config and rerun verify.`,
     );
   } else {
     const unsupportedWarning = buildUnsupportedPerAgentCompactionWarning(compactionSelection, { context: "verify" });
     if (unsupportedWarning) warnings.push(unsupportedWarning);
   }
-  if (!compactionSelectionUnknownReason && isCompactionModelTooStrong(compactionSelection.model)) {
+  if (!compactionRoutingUnknownReason && isCompactionModelTooStrong(compactionSelection.model)) {
     const alert =
       buildCompactionWatchdogAlert({
         stage: "verify",
