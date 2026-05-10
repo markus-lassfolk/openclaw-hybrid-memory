@@ -10,7 +10,6 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import OpenAI from "openai";
@@ -61,6 +60,13 @@ import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import { isHeavyModel } from "../utils/model-tier.js";
 import {
+  buildUnsupportedPerAgentCompactionWarning,
+  buildCompactionWatchdogAlert,
+  DEFAULT_COMPACTION_MODEL,
+  isCompactionModelTooStrong,
+  resolveCompactionModelSelection,
+} from "../utils/compaction-model-watchdog.js";
+import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
@@ -68,6 +74,7 @@ import {
   ensureGoalStewardshipHeartbeatCronJob,
   ensureMaintenanceCronJobs,
   getPluginConfigFromFile,
+  resolveOpenclawJsonPathForWorkspace,
 } from "./cmd-install.js";
 import { approxIntervalMs, relativeTime } from "./shared.js";
 import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth.js";
@@ -77,6 +84,11 @@ import type { VerifyCliSink } from "./types.js";
 
 const VERIFY_FACT_COUNT_TTL_MS = 5 * 60_000;
 let verifyFactCountCache: { path: string; n: number; at: number } | null = null;
+
+type OpenclawConfigReadResult =
+  | { path: string; exists: false; root: undefined; error: undefined }
+  | { path: string; exists: true; root: Record<string, unknown>; error: undefined }
+  | { path: string; exists: true; root: undefined; error: string };
 
 function readApproxFactsRowCount(db: DatabaseSync): number | null {
   try {
@@ -110,6 +122,22 @@ function getCachedFactCount(
   const n = approx != null ? approx : factsDb.count();
   verifyFactCountCache = { path: sqlitePath, n, at: now };
   return n;
+}
+
+function readOpenclawConfigRoot(configPath: string): OpenclawConfigReadResult {
+  if (!existsSync(configPath)) return { path: configPath, exists: false, root: undefined, error: undefined };
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return { path: configPath, exists: true, root: parsed, error: undefined };
+  } catch (err) {
+    return {
+      path: configPath,
+      exists: true,
+      root: undefined,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export async function runVerifyForCli(
@@ -160,6 +188,15 @@ export async function runVerifyForCli(
   /** False when probe vector length ≠ Lance expected dim or Lance schema invalid for vectors. */
   let embeddingAlignmentOk = true;
   const loadBlocking: string[] = [];
+  const defaultConfigPath = resolveOpenclawJsonPathForWorkspace();
+  const openclawDir = dirname(defaultConfigPath);
+  const openclawConfigRead = readOpenclawConfigRoot(defaultConfigPath);
+
+  if (openclawConfigRead.error) {
+    warnings.push(
+      `OpenClaw config at ${defaultConfigPath} could not be read/parsed (${openclawConfigRead.error}); compaction watchdog status is unknown and verify used fallback defaults.`,
+    );
+  }
 
   log("\n───── Infrastructure ─────");
 
@@ -170,7 +207,7 @@ export async function runVerifyForCli(
     issues.push("embedding.apiKey is missing, placeholder, or too short");
     loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
     fixes.push(
-      `LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`,
+      `LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ${defaultConfigPath} or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`,
     );
     configOk = false;
   }
@@ -180,8 +217,6 @@ export async function runVerifyForCli(
     fixes.push('Set "embedding.model" to "text-embedding-3-small" or "text-embedding-3-large" in plugin config');
     configOk = false;
   }
-  const openclawDir = join(homedir(), ".openclaw");
-  const defaultConfigPath = join(openclawDir, "openclaw.json");
   if (configOk) {
     const msg =
       cfg.embedding.provider === "openai"
@@ -199,33 +234,28 @@ export async function runVerifyForCli(
   }
 
   // Check for unsupported agents.defaults.pruning config (#105)
-  try {
-    if (existsSync(defaultConfigPath)) {
-      const rawConfig = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
-      const agentsDefaults = (rawConfig.agents as Record<string, unknown>)?.defaults as
-        | Record<string, unknown>
-        | undefined;
-      if (agentsDefaults != null && "pruning" in agentsDefaults) {
-        const WARN = noEmoji ? "[WARN]" : "⚠️";
-        log(`${WARN} Config: agents.defaults.pruning is set but not supported by OpenClaw core — it has no effect`);
-        log(
-          `  Fix: Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).`,
-        );
-        issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
-        fixes.push(
-          'Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).',
-        );
-        if (opts.fix) {
-          agentsDefaults.pruning = undefined;
-          writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2), "utf-8");
-          log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
-          fixes.pop();
-          issues.pop();
-        }
+  if (openclawConfigRead.root) {
+    const agentsDefaults = (openclawConfigRead.root.agents as Record<string, unknown>)?.defaults as
+      | Record<string, unknown>
+      | undefined;
+    if (agentsDefaults != null && "pruning" in agentsDefaults) {
+      const WARN = noEmoji ? "[WARN]" : "⚠️";
+      log(`${WARN} Config: agents.defaults.pruning is set but not supported by OpenClaw core — it has no effect`);
+      log(
+        `  Fix: Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).`,
+      );
+      issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
+      fixes.push(
+        'Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).',
+      );
+      if (opts.fix) {
+        agentsDefaults.pruning = undefined;
+        writeFileSync(defaultConfigPath, JSON.stringify(openclawConfigRead.root, null, 2), "utf-8");
+        log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
+        fixes.pop();
+        issues.pop();
       }
     }
-  } catch {
-    // non-fatal: skip pruning config check if config can't be read
   }
 
   const extDir = findPluginRoot(import.meta.url);
@@ -298,6 +328,11 @@ export async function runVerifyForCli(
   // Raw plugin config (from file) for credential Source column
   const rawPluginConfigResult = getPluginConfigFromFile(defaultConfigPath);
   const rawPluginConfig = "error" in rawPluginConfigResult ? undefined : rawPluginConfigResult.config;
+  if ("error" in rawPluginConfigResult && openclawConfigRead.exists && openclawConfigRead.error === undefined) {
+    warnings.push(
+      `OpenClaw config at ${defaultConfigPath} could not be interpreted for plugin settings (${rawPluginConfigResult.error}).`,
+    );
+  }
   function credentialSource(rawKey: unknown): string {
     if (typeof rawKey !== "string" || !rawKey.trim()) return "";
     const v = rawKey.trim();
@@ -639,6 +674,24 @@ export async function runVerifyForCli(
       : null;
   const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
   const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+  let compactionSelection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-defaults-primary" });
+  const compactionSelectionUnknownReason = openclawConfigRead.root
+    ? null
+    : openclawConfigRead.error !== undefined
+      ? `active OpenClaw config (${defaultConfigPath}) is unreadable/invalid (${openclawConfigRead.error})`
+      : `active OpenClaw config (${defaultConfigPath}) is missing`;
+  if (openclawConfigRead.root) {
+    // Use defaults-primary inheritance fallback to mirror current OpenClaw core behavior
+    // when agents.defaults.compaction.model is unset.
+    compactionSelection = resolveCompactionModelSelection(openclawConfigRead.root, {
+      fallbackPolicy: "inherit-defaults-primary",
+    });
+  }
+  const compactionRoutingUnknownReason =
+    compactionSelectionUnknownReason ??
+    (compactionSelection.routingUnknownFromConfig
+      ? "neither agents.defaults.compaction.model nor agents.defaults.model.primary is set; compaction may follow the active session chat model"
+      : null);
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
@@ -646,6 +699,11 @@ export async function runVerifyForCli(
   );
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
+  );
+  tableLog(
+    `    Compaction (agents.*.compaction): provider=${compactionSelection.provider}, model=${compactionSelection.model || "—"}, reason=${compactionSelection.reason}${
+      compactionRoutingUnknownReason ? `; status=unknown (${compactionRoutingUnknownReason})` : ""
+    }`,
   );
 
   const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
@@ -706,6 +764,25 @@ export async function runVerifyForCli(
     warnings.push(
       `dream-cycle/MEMORY_INDEX routes to a heavy/expensive model (${dreamEffective}); set nightlyCycle.model to a cheaper model or configure llm.maintenance with a cheap-first list`,
     );
+  }
+  if (compactionRoutingUnknownReason) {
+    warnings.push(
+      `verify watchdog: compaction routing check is unknown because ${compactionRoutingUnknownReason}; set/repair config and rerun verify.`,
+    );
+  } else {
+    const unsupportedWarning = buildUnsupportedPerAgentCompactionWarning(compactionSelection, { context: "verify" });
+    if (unsupportedWarning) warnings.push(unsupportedWarning);
+  }
+  if (!compactionRoutingUnknownReason && isCompactionModelTooStrong(compactionSelection.model)) {
+    const alert =
+      buildCompactionWatchdogAlert({
+        stage: "verify",
+        model: compactionSelection.model,
+        provider: compactionSelection.provider,
+        source: compactionSelection.reason,
+      }) ??
+      `compaction routing uses a stronger-than-mini model (provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}). Set agents.defaults.compaction.model to a mini/nano model such as ${DEFAULT_COMPACTION_MODEL}.`;
+    warnings.push(alert);
   }
   const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
@@ -1533,41 +1610,34 @@ export async function runVerifyForCli(
   }
 
   // Also check default config for jobs not found in cron store
-  if (existsSync(defaultConfigPath)) {
-    try {
-      const raw = readFileSync(defaultConfigPath, "utf-8");
-      const root = JSON.parse(raw) as Record<string, unknown>;
-      const jobs = root.jobs;
-      if (Array.isArray(jobs)) {
-        for (const j of jobs) {
-          if (typeof j !== "object" || j === null) continue;
-          const job = j as Record<string, unknown>;
-          const name = String(job.name ?? "");
-          const enabled = job.enabled !== false;
+  if (openclawConfigRead.root) {
+    const jobs = openclawConfigRead.root.jobs;
+    if (Array.isArray(jobs)) {
+      for (const j of jobs) {
+        if (typeof j !== "object" || j === null) continue;
+        const job = j as Record<string, unknown>;
+        const name = String(job.name ?? "");
+        const enabled = job.enabled !== false;
 
-          // Only add if not already found in cron store
-          const canonicalKey = getCanonicalJobKey(name);
-          if (canonicalKey && !allJobs.has(canonicalKey)) {
-            allJobs.set(canonicalKey, { name, enabled });
-          }
-        }
-      } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
-        const keyed = jobs as Record<string, unknown>;
-        for (const [key, value] of Object.entries(keyed)) {
-          if (typeof value !== "object" || value === null) continue;
-          const job = value as Record<string, unknown>;
-          const enabled = job.enabled !== false;
-
-          // Only add if not already found in cron store
-          const canonicalKey = getCanonicalJobKey(key);
-          if (canonicalKey && !allJobs.has(canonicalKey)) {
-            allJobs.set(canonicalKey, { name: key, enabled });
-          }
+        // Only add if not already found in cron store
+        const canonicalKey = getCanonicalJobKey(name);
+        if (canonicalKey && !allJobs.has(canonicalKey)) {
+          allJobs.set(canonicalKey, { name, enabled });
         }
       }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:read-default-config-jobs" });
-      // Continue with incomplete data
+    } else if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+      const keyed = jobs as Record<string, unknown>;
+      for (const [key, value] of Object.entries(keyed)) {
+        if (typeof value !== "object" || value === null) continue;
+        const job = value as Record<string, unknown>;
+        const enabled = job.enabled !== false;
+
+        // Only add if not already found in cron store
+        const canonicalKey = getCanonicalJobKey(key);
+        if (canonicalKey && !allJobs.has(canonicalKey)) {
+          allJobs.set(canonicalKey, { name: key, enabled });
+        }
+      }
     }
   }
 
@@ -1689,8 +1759,8 @@ export async function runVerifyForCli(
   // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than
   // agents.defaults.model.primary or OpenClaw may throw LiveSessionModelSwitchError.
   try {
-    if (existsSync(defaultConfigPath) && existsSync(cronStorePath)) {
-      const root = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
+    if (openclawConfigRead.root && existsSync(cronStorePath)) {
+      const root = openclawConfigRead.root;
       const agentPrimary = readEffectiveAgentChatPrimaryFromOpenclawJsonRoot(root);
       if (agentPrimary) {
         const agentFam = inferModelProviderPrefix(agentPrimary);
@@ -1980,7 +2050,7 @@ export async function runVerifyForCli(
     log("\n--- Fixes for detected issues ---");
     fixes.forEach((f) => log(`  • ${f}`));
     log(
-      `\nEdit config: ${defaultConfigPath} (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.`,
+      `\nEdit config: ${defaultConfigPath} (resolved via OPENCLAW_CONFIG/OPENCLAW_CONFIG_PATH/OPENCLAW_HOME). Restart gateway after changing plugin config.`,
     );
   }
 

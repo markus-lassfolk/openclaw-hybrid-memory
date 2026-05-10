@@ -26,6 +26,23 @@ These run inside the gateway process. No cron, no external scheduler.
 
 ---
 
+## Compaction cost-control watchdog (hybrid-memory scope)
+
+Hybrid-memory now treats compaction cost-control as plugin-owned guardrails where hook metadata allows it:
+
+- `openclaw hybrid-mem install` sets `agents.defaults.compaction.model` to `minimax/MiniMax-M2.7` so compaction does not silently inherit an expensive agent primary model on new/default installs.
+- `openclaw hybrid-mem verify` reports effective compaction provider/model/reason and warns when compaction resolves to a stronger-than-mini model.
+- Runtime `before_compaction` / `after_compaction` hooks run a watchdog when hook payload metadata includes compaction provider/model, and emit warnings with provider/model/reason/source when the selected model is high-tier.
+
+Allowlist/flagging policy:
+
+- Allowed: `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`, and explicit mini/nano/lite/haiku models.
+- Flagged: GPT-5.5 / full GPT-5 class, `gpt-5.4-pro`, `o3`/`o3-pro`, Claude Sonnet/Opus-class, explicit pro/full/high-tier markers, and unknown non-mini/non-nano/non-MiniMax models.
+
+If a specific OpenClaw runtime build does not expose compaction model metadata in hook payloads, runtime hook alerts cannot prove the exact selected model; in that case, use `hybrid-mem verify` output as the guardrail signal. Core resolver forcing remains local-host mitigation.
+
+---
+
 ## Optional scheduled jobs (cron / OpenClaw jobs)
 
 These are **not** required for core functionality but enhance the system for long-running setups.
