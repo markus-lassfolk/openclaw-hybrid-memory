@@ -420,27 +420,49 @@ export function createPluginService(ctx: PluginServiceContext) {
                     )?.id ?? null;
                   if (!existingId) existingId = factsDb.getDuplicateIdByNormalizedHash(text);
                   if (existingId) {
-                    try {
-                      await vectorDb.store({
-                        text,
-                        vector: entry.data.vector,
-                        importance: importance ?? 0.5,
-                        category: category || "other",
-                        id: existingId,
-                      });
-                      factsDb.setEmbeddingModel(existingId, embeddings.modelName);
-                      api.logger.info(
-                        `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
-                      );
-                    } catch (err) {
+                    // Bug #2 fix: Wrap vector re-store in retry logic for transient failures
+                    let retryCount = 0;
+                    const maxRetries = 3;
+                    let lastError: Error | null = null;
+
+                    while (retryCount < maxRetries) {
+                      try {
+                        await vectorDb.store({
+                          text,
+                          vector: entry.data.vector,
+                          importance: importance ?? 0.5,
+                          category: category || "other",
+                          id: existingId,
+                        });
+                        factsDb.setEmbeddingModel(existingId, embeddings.modelName);
+                        api.logger.info(
+                          `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}${retryCount > 0 ? ` (retry ${retryCount})` : ""}`,
+                        );
+                        lastError = null;
+                        break; // Success, exit retry loop
+                      } catch (err) {
+                        lastError = err instanceof Error ? err : new Error(String(err));
+                        retryCount++;
+                        if (retryCount < maxRetries) {
+                          const backoffMs = 100 * Math.pow(2, retryCount - 1);
+                          api.logger.warn(
+                            `memory-hybrid: WAL recovery vector re-store attempt ${retryCount} failed, retrying in ${backoffMs}ms: ${err}`,
+                          );
+                          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+                        }
+                      }
+                    }
+
+                    if (lastError) {
                       api.logger.warn(
-                        `memory-hybrid: WAL recovery vector re-store failed for existing fact ${existingId.slice(0, 8)}: ${err}`,
+                        `memory-hybrid: WAL recovery vector re-store failed after ${maxRetries} attempts for fact ${existingId.slice(0, 8)}: ${lastError}`,
                       );
-                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      capturePluginError(lastError, {
                         subsystem: "plugin-service",
                         operation: "wal-recovery-existing-vector-store",
+                        retries: retryCount,
                       });
-                      throw err;
+                      throw lastError;
                     }
                   } else {
                     api.logger.warn(

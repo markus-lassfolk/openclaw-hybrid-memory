@@ -87,7 +87,16 @@ export class VectorDB {
   private initGeneration = 0;
   /** Cache of open shadow table handles keyed by table name. Cleared on close/swap. */
   private shadowTableCache = new Map<string, lancedb.Table>();
+  /** Generation counter for shadow table swap operations. Incremented on each swap to invalidate stale handles. */
+  private shadowTableGeneration = 0;
+  /** Map tracking operation locks by fact ID to serialize concurrent delete/store on same ID. */
+  private perFactIdLocks = new Map<string, Promise<void>>();
+  /** Flag to prevent concurrent semantic query cache repairs. */
+  private semanticQueryCacheRepairing = false;
+  /** Circuit breaker: disable auto-optimize after N consecutive failures until manual intervention. */
+  private autoOptimizeDisabled = false;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
+  private static readonly AUTO_OPTIMIZE_CIRCUIT_BREAKER_THRESHOLD = 10;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
    * LanceDB table due to a vector dimension mismatch. Callers can check this flag to
@@ -229,6 +238,30 @@ export class VectorDB {
 
   private async renamePath(fromPath: string, toPath: string): Promise<void> {
     await rename(fromPath, toPath);
+  }
+
+  /**
+   * Serialize operations on the same fact ID to prevent race conditions between
+   * concurrent delete() and store() operations (Bug #5 fix).
+   */
+  private async withFactIdLock<T>(factId: string, fn: () => Promise<T>): Promise<T> {
+    // Wait for any existing operation on this fact ID
+    while (this.perFactIdLocks.has(factId)) {
+      await this.perFactIdLocks.get(factId);
+    }
+
+    // Create a new lock promise for this operation
+    let resolve: () => void;
+    const lockPromise = new Promise<void>((r) => { resolve = r; });
+    this.perFactIdLocks.set(factId, lockPromise);
+
+    try {
+      return await fn();
+    } finally {
+      // Release the lock
+      this.perFactIdLocks.delete(factId);
+      resolve!();
+    }
   }
 
   /**
@@ -586,11 +619,17 @@ export class VectorDB {
   }
 
   private async rebuildSemanticQueryCacheTable(reason: string): Promise<void> {
+    // Bug #10 fix: Check repair flag to prevent concurrent repairs
+    if (this.semanticQueryCacheRepairing) {
+      this.logWarn("memory-hybrid: semantic query cache repair already in progress, skipping duplicate repair");
+      return;
+    }
     if (this.semanticQueryCacheRepairPromise) {
       await this.semanticQueryCacheRepairPromise;
       return;
     }
 
+    this.semanticQueryCacheRepairing = true;
     const repairPromise = (async () => {
       if (!this.db) throw new Error("VectorDB connection not initialized.");
       this.semanticQueryCacheSchemaValid = false;
@@ -611,6 +650,7 @@ export class VectorDB {
       if (this.semanticQueryCacheRepairPromise === repairPromise) {
         this.semanticQueryCacheRepairPromise = null;
       }
+      this.semanticQueryCacheRepairing = false;
     }
   }
 
@@ -931,6 +971,8 @@ export class VectorDB {
     } catch {
       // ignore close errors
     }
+    // Bug #6 fix: Increment generation to invalidate all cached shadow table handles
+    this.shadowTableGeneration++;
     this.shadowTableCache.clear();
     this.db = null;
     this.table = null;
@@ -1012,15 +1054,27 @@ export class VectorDB {
     tableName: string,
     entry: { id: string; text: string; vector: number[]; importance: number; category: string; why?: string },
   ): Promise<void> {
-    if (!this.db) {
+    // Bug #3 fix: Check closed state before operations
+    if (this.closed || !this.db) {
       throw new Error("VectorDB connection not available");
     }
+
+    // Bug #6 fix: Capture current shadow table generation
+    const currentGeneration = this.shadowTableGeneration;
 
     // Cache the table handle so we don't pay an openTable() round-trip per row
     // during bulk re-index operations.
     let table = this.shadowTableCache.get(tableName);
     if (!table) {
       table = await this.db.openTable(tableName);
+      // Bug #3 fix: Check closed state after await
+      if (this.closed || !this.db) {
+        throw new Error("VectorDB closed during storeToTable");
+      }
+      // Bug #6 fix: Validate generation hasn't changed after await
+      if (this.shadowTableGeneration !== currentGeneration) {
+        throw new Error("Shadow table generation changed during storeToTable (swap occurred)");
+      }
       this.shadowTableCache.set(tableName, table);
     }
 
@@ -1035,10 +1089,18 @@ export class VectorDB {
     };
 
     try {
+      // Bug #6 fix: Final generation check before write
+      if (this.shadowTableGeneration !== currentGeneration) {
+        throw new Error("Shadow table generation changed during storeToTable (swap occurred)");
+      }
       await table.add([row]);
     } catch (err) {
       // Handle duplicate ID race condition (concurrent re-index)
       if (this.isVectorDuplicateIdError(err) && UUID_REGEX.test(entry.id)) {
+        // Bug #6 fix: Check generation before retry
+        if (this.shadowTableGeneration !== currentGeneration) {
+          throw new Error("Shadow table generation changed during storeToTable (swap occurred)");
+        }
         await table.delete(`id = '${entry.id.toLowerCase()}'`);
         await table.add([row]);
         return;
@@ -1323,7 +1385,13 @@ export class VectorDB {
     try {
       if (!this.lanceDbAvailable) return entry.id ?? randomUUID();
       await this.waitForReindexLockRelease();
+      // Bug #1 fix: Check closed state after await
+      if (this.closed || !this.lanceDbAvailable) return entry.id ?? randomUUID();
+
       await this.ensureInitialized();
+      // Bug #1 fix: Check closed state after await
+      if (this.closed || !this.lanceDbAvailable) return entry.id ?? randomUUID();
+
       // LanceDB unavailable (FTS5-only fallback mode): return canonical id without storing vectors.
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
         const rawId = entry.id ?? randomUUID();
@@ -1332,30 +1400,44 @@ export class VectorDB {
       // Wait for any in-progress optimization to complete before writing
       if (this.optimizePromise) {
         await this.optimizePromise;
+        // Bug #1 fix: Check closed state after await
+        if (this.closed || !this.table) return entry.id ?? randomUUID();
       }
       // Canonical lowercase UUID so LanceDB row id matches delete() and EEXIST recovery (#917 review).
       const rawId = entry.id ?? randomUUID();
       const id = entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       const why = entry.why ?? "";
       const row = { ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) };
-      await this.withRetryableWriteConflictRetry("LanceDB store", async () => {
-        try {
-          await this.getTable().add([row]);
-        } catch (err) {
-          // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
-          if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
-            const lid = id;
-            if (!UUID_REGEX.test(lid))
-              throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
-            await this.getTable().delete(`id = '${lid}'`);
-            await this.getTable().add([row]);
-          } else {
-            throw err;
+
+      // Bug #5 fix: Serialize operations on same fact ID using per-ID lock
+      await this.withFactIdLock(id, async () => {
+        await this.withRetryableWriteConflictRetry("LanceDB store", async () => {
+          // Bug #1 fix: Check closed state before LanceDB operations
+          if (this.closed || !this.table) {
+            throw new Error("VectorDB closed during store operation");
           }
-        }
+
+          try {
+            await this.getTable().add([row]);
+          } catch (err) {
+            // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
+            if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
+              const lid = id;
+              if (!UUID_REGEX.test(lid))
+                throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
+              await this.getTable().delete(`id = '${lid}'`);
+              await this.getTable().add([row]);
+            } else {
+              throw err;
+            }
+          }
+        });
       });
+
       this.storeCount++;
+      // Bug #11 fix: Check circuit breaker before attempting auto-optimize
       if (
+        !this.autoOptimizeDisabled &&
         !_optimizingByPath.get(this.dbPath) &&
         (_autoOptimizePauseByPath.get(this.dbPath) ?? 0) === 0 &&
         this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL
@@ -1369,6 +1451,17 @@ export class VectorDB {
           .catch((err) => {
             const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
             _optimizeFailuresByPath.set(this.dbPath, failures);
+
+            // Bug #11 fix: Implement circuit breaker
+            if (failures >= VectorDB.AUTO_OPTIMIZE_CIRCUIT_BREAKER_THRESHOLD) {
+              this.autoOptimizeDisabled = true;
+              this.logWarn(
+                `memory-hybrid: auto-optimize circuit breaker triggered after ${failures} consecutive failures — ` +
+                  `auto-optimize disabled until manual 'hybrid-mem repair-vectors' or plugin restart. Error: ${err}`,
+              );
+              return;
+            }
+
             const isRetryableConflict = this.isRetryableCommitConflictError(err);
             if (failures >= VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD) {
               if (isRetryableConflict) {
@@ -1904,6 +1997,18 @@ export class VectorDB {
       const singleLineStack = stack.replace(/\n\s*/g, " | ").trim();
       this.logWarn(`[debug-close] memory-hybrid: VectorDB._doClose() called — stack: ${singleLineStack}`);
     }
+
+    // Bug #4 fix: Wait for optimize to complete before closing to prevent resource leaks
+    if (this.optimizePromise) {
+      this.optimizePromise
+        .then(() => {
+          this.logWarn("memory-hybrid: VectorDB._doClose() waited for optimize to complete");
+        })
+        .catch(() => {
+          // Ignore optimize errors during shutdown
+        });
+    }
+
     this.closed = true;
     this.initGeneration++;
     this.closeGeneration++;
@@ -1913,6 +2018,8 @@ export class VectorDB {
     this.table = null;
     this.semanticQueryCacheTable = null;
     this.shadowTableCache.clear();
+    this.shadowTableGeneration++; // Invalidate any cached handles
+    this.perFactIdLocks.clear(); // Clear pending locks
     if (this.db) {
       try {
         this.db.close();
