@@ -28,6 +28,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
+import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
 
@@ -570,7 +571,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       const chunkText = chunk.text;
       let entry;
       try {
-        entry = factsDb.store({
+        const storeResult = factsDb.storeWithResult({
           text: chunkText,
           category: opts.category as MemoryCategory,
           importance: 0.7,
@@ -582,6 +583,13 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           source: sourceName,
           tags: chunkTags,
           decayClass: "stable",
+        });
+        entry = storeResult.entry;
+        await cleanupEvictedVector({
+          vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: api.logger,
+          context: "document-ingest",
         });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -612,16 +620,16 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
 
       try {
         const vector = await embeddings.embed(chunkText);
-        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-        if (!(await vectorDb.hasDuplicate(vector))) {
-          await vectorDb.store({
-            text: chunkText,
-            vector,
-            importance: 0.7,
-            category: opts.category,
-            id: entry.id,
-          });
-        }
+        await storeCanonicalVectorForFact({
+          vectorDb,
+          factsDb,
+          factId: entry.id,
+          text: chunkText,
+          vector,
+          importance: 0.7,
+          category: opts.category,
+          embeddingModel: embeddings.modelName,
+        });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "documents",
