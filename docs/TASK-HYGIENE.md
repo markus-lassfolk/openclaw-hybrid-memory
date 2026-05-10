@@ -39,6 +39,7 @@ Requires **`activeTask.enabled`**. The tool is registered with the plugin regard
 ## Operations
 
 - **CLI:** `openclaw hybrid-mem active-tasks reconcile` — keeps subagent bookkeeping honest before you trust **`ACTIVE-TASKS.md`** for heartbeats or audits.
+- **CLI:** `openclaw hybrid-mem active-tasks hygiene --dry-run` (or `--apply`) — reports and cleans stale failed/dead-session rows plus duplicate normalized entities while preserving history.
 - **Goals mirror:** When **`goalStewardship.heartbeatRefreshActiveTask`** is on, heartbeat also refreshes the **`## Active Goals`** mirror in **`ACTIVE-TASKS.md`** (do not edit that section by hand).
 - **Pre-finalization guard (#1271):** On `agent_end`, unfinished external-workflow signals (e.g. CI pending, background command still running, scheduled recheck) can trigger a guard that warns or blocks finalization until checkpoint evidence exists.
   Satisfy by:
