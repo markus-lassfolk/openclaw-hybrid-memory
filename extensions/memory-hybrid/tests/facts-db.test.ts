@@ -1514,6 +1514,64 @@ describe("FactsDB.decayConfidence", () => {
     // The fact is still hard-deleted by the cleanup step inside decayConfidence().
     expect(db.getById(entry.id)).toBeNull();
   });
+
+  it("lists all IDs that will be deleted by the next decay run, excluding confidence=0.2 edge", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const alreadyLow = db.store({
+      text: "Already below floor",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.05,
+    });
+    const willFallBelowFloor = db.store({
+      text: "Will be halved below floor",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.19,
+      expiresAt: nowSec + 100,
+    });
+    const edgeAtPointTwo = db.store({
+      text: "Edge confidence 0.2",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.2,
+      expiresAt: nowSec + 100,
+    });
+    // Make both expiring facts eligible for decay halving in this run.
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb
+      .prepare("UPDATE facts SET last_confirmed_at = ? WHERE id = ?")
+      .run(nowSec - 500, willFallBelowFloor.id);
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb
+      .prepare("UPDATE facts SET last_confirmed_at = ? WHERE id = ?")
+      .run(nowSec - 500, edgeAtPointTwo.id);
+
+    const pending = new Set(db.listFactIdsToBeDeletedByDecayRun());
+    expect(pending.has(alreadyLow.id)).toBe(true);
+    expect(pending.has(willFallBelowFloor.id)).toBe(true);
+    expect(pending.has(edgeAtPointTwo.id)).toBe(false);
+
+    db.decayConfidence();
+    expect(db.getById(alreadyLow.id)).toBeNull();
+    expect(db.getById(willFallBelowFloor.id)).toBeNull();
+    const edgeFact = db.getById(edgeAtPointTwo.id);
+    expect(edgeFact).not.toBeNull();
+    expect(edgeFact?.confidence ?? 0).toBeCloseTo(0.1, 8);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2669,6 +2727,51 @@ describe("FactsDB scoping", () => {
     const sessionNotes = remaining.filter((e) => e.text.includes("Session note"));
     expect(sessionNotes.length).toBe(1);
     expect(sessionNotes[0].scopeTarget).toBe("sess-abc");
+  });
+
+  it("pruneScopedFacts supports global scope filter", () => {
+    const g1 = db.store({
+      text: "Global note A",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+    });
+    const g2 = db.store({
+      text: "Global note B",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+    });
+    const session = db.store({
+      text: "Session note keep",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-keep",
+    });
+
+    const pending = new Set(db.listScopedFactIdsPendingPrune({ global: true }));
+    expect(pending.has(g1.id)).toBe(true);
+    expect(pending.has(g2.id)).toBe(true);
+    expect(pending.has(session.id)).toBe(false);
+
+    const deleted = db.pruneScopedFacts({ global: true });
+    expect(deleted).toBe(2);
+    expect(db.getById(g1.id)).toBeNull();
+    expect(db.getById(g2.id)).toBeNull();
+    expect(db.getById(session.id)).not.toBeNull();
   });
 
   it("promoteScope changes scope from session to global", () => {

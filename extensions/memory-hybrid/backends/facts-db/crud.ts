@@ -176,10 +176,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       ctx.db
         .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
         .run(mergedText, mergedHash, existing.id);
-      // Signal callers to re-embed when the text actually changed so the LanceDB vector
-      // is replaced; if the existing text already contained the candidate (alreadyContained)
-      // the text is unchanged and the vector remains valid.
-      const embeddingStale = !alreadyContained;
+      // Signal callers to re-embed only when the persisted text changed. This handles edge
+      // cases where append text is truncated and the final merged text remains unchanged.
+      const embeddingStale = mergedText !== existing.text;
       return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null, embeddingStale };
     }
     throw new Error(

@@ -489,11 +489,16 @@ async function runCapture(
                           api.logger.warn?.bind(api.logger),
                         );
                       } else if (vector) {
+                        // `storeWithResult()` can return an existing deduped fact whose text
+                        // differs from `textToStore`; keep vector content aligned to stored text.
+                        const canonicalText = newEntry.text;
+                        const canonicalVector =
+                          canonicalText === textToStore ? vector : await ctx.embeddings.embed(canonicalText);
                         ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
-                        if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                        if (!(await ctx.vectorDb.hasDuplicate(canonicalVector))) {
                           await ctx.vectorDb.store({
-                            text: textToStore,
-                            vector,
+                            text: canonicalText,
+                            vector: canonicalVector,
                             importance: finalImportance,
                             category,
                             id: newEntry.id,
@@ -502,7 +507,7 @@ async function runCapture(
                             ctx.factsDb,
                             newEntry.id,
                             ctx.embeddings.modelName,
-                            vector,
+                            canonicalVector,
                             "auto-capture-fact-embeddings",
                             "auto-capture",
                             api.logger.warn?.bind(api.logger),
@@ -864,7 +869,7 @@ async function runCapture(
                 logger: api.logger,
                 context: "stage-capture",
               });
-                if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+              if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   if (storeResult.embeddingStale) {
                     // Merge case: re-embed the merged text to keep the vector in sync.
@@ -888,11 +893,11 @@ async function runCapture(
                       api.logger.warn?.bind(api.logger),
                     );
                   } else {
-                    const vector = await ctx.embeddings.embed(text);
+                    const vector = await ctx.embeddings.embed(entry.text);
                     ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
                     if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                       await ctx.vectorDb.store({
-                        text,
+                        text: entry.text,
                         vector,
                         importance: 0.9,
                         category: "technical",

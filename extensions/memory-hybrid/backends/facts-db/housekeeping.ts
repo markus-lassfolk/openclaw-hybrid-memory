@@ -222,6 +222,9 @@ export function listScopedFactIdsPendingPrune(db: DatabaseSync, scopeFilter: Sco
   const conditions: string[] = [];
   const params: (string | null)[] = [];
 
+  if (scopeFilter.global) {
+    conditions.push(`(scope = 'global')`);
+  }
   if (scopeFilter.userId !== undefined) {
     conditions.push(`(scope = 'user' AND scope_target = ?)`);
     params.push(scopeFilter.userId);
@@ -251,6 +254,9 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): nu
   const conditions: string[] = [];
   const params: (string | null)[] = [];
 
+  if (scopeFilter.global) {
+    conditions.push(`(scope = 'global')`);
+  }
   if (scopeFilter.userId !== undefined) {
     conditions.push(`(scope = 'user' AND scope_target = ?)`);
     params.push(scopeFilter.userId);

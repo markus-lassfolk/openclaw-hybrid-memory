@@ -254,12 +254,31 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     .option("--yes", "Skip the confirmation prompt and execute immediately")
     .action(
       withExit(async (opts: { scope: string; scopeTarget?: string; dryRun?: boolean; yes?: boolean }) => {
-        const scopeFilter: ScopeFilter = {};
-        if (opts.scope === "user") scopeFilter.userId = opts.scopeTarget || null;
-        else if (opts.scope === "agent") scopeFilter.agentId = opts.scopeTarget || null;
-        else if (opts.scope === "session") scopeFilter.sessionId = opts.scopeTarget || null;
+        const scope = opts.scope.trim().toLowerCase();
+        const scopeTarget = opts.scopeTarget?.trim();
+        if (!["global", "user", "agent", "session"].includes(scope)) {
+          console.error("error: --scope must be one of global/user/agent/session");
+          process.exitCode = 1;
+          return;
+        }
+        if (scope === "global" && scopeTarget) {
+          console.error("error: --scope-target is not allowed when --scope=global");
+          process.exitCode = 1;
+          return;
+        }
+        if (scope !== "global" && !scopeTarget) {
+          console.error(`error: --scope-target is required when --scope=${scope}`);
+          process.exitCode = 1;
+          return;
+        }
 
-        const scopeLabel = `${opts.scope}${opts.scopeTarget ? ` (target=${opts.scopeTarget})` : ""}`;
+        const scopeFilter: ScopeFilter = {};
+        if (scope === "global") scopeFilter.global = true;
+        else if (scope === "user") scopeFilter.userId = scopeTarget ?? null;
+        else if (scope === "agent") scopeFilter.agentId = scopeTarget ?? null;
+        else if (scope === "session") scopeFilter.sessionId = scopeTarget ?? null;
+
+        const scopeLabel = `${scope}${scopeTarget ? ` (target=${scopeTarget})` : ""}`;
 
         // Dry-run: show what would be deleted without touching the DB.
         const pendingIds = factsDb.listScopedFactIdsPendingPrune(scopeFilter);

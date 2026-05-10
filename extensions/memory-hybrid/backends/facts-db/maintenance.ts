@@ -558,7 +558,7 @@ export function listLowConfidenceFactIdsPendingPrune(db: DatabaseSync): string[]
  * Return all fact IDs that will be hard-deleted by the next `decayConfidence()` call.
  * This includes:
  *   1. Facts whose confidence is already below 0.1 (deleted as-is).
- *   2. Facts whose confidence is in (0.1, 0.2] AND match the decay condition (will be
+ *   2. Facts whose confidence is in (0.1, 0.2) AND match the decay condition (will be
  *      halved to below 0.1 and then immediately deleted in the same run).
  *
  * Use this *before* calling `decayConfidence()` so that the caller can schedule vector
@@ -576,13 +576,13 @@ export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync): string[] {
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
     )
     .all({ "@now": nowSec }) as Array<{ id: string }>;
-  // Facts currently in (0.1, 0.2] that also meet the decay halving condition:
+  // Facts currently in (0.1, 0.2) that also meet the decay halving condition:
   // after halving they become < 0.1 and will be deleted in the same call.
   const aboutToFall = db
     .prepare(
       `SELECT id FROM facts
          WHERE confidence > 0.1
-           AND confidence <= 0.2
+           AND confidence < 0.2
            AND expires_at IS NOT NULL
            AND expires_at > @now
            AND last_confirmed_at IS NOT NULL
