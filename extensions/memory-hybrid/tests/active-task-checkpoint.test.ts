@@ -387,6 +387,35 @@ describe("active-task-checkpoint", () => {
     factsDb.close();
   });
 
+  it("preserves abandoned status from existing facts when status is omitted", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    factsDb.store({
+      text: "Task task-1270-abandoned status: abandoned",
+      category: "project",
+      importance: 0.3,
+      entity: "task-1270-abandoned",
+      key: "status",
+      value: "abandoned",
+      source: "conversation",
+    });
+
+    const result = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-abandoned",
+        title: "Metadata only checkpoint",
+        scheduleWake: false,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.checkpoint?.status).toBe("abandoned");
+    expect(latestProjectValue(factsDb, "task-1270-abandoned", "status")).toBe("abandoned");
+
+    factsDb.close();
+  });
+
   it("keeps wake jobs isolated for long similar entity names", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
     const base = "task-with-a-very-long-entity-name-that-shares-a-prefix-between-two-different-items-";
