@@ -122,7 +122,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             ctx.auditStore?.append({
               agentId: ctx.currentAgentIdRef.value ?? "unknown",
               action: "cleanup:pre-finalization-guard-blocked",
-              details: {
+              outcome: "failed",
+              context: {
                 missingFields: guard.checkpoint.missingFields,
                 signals: guard.signals,
               },
