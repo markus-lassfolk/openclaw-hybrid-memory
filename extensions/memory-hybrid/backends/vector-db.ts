@@ -5,8 +5,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { rename } from "node:fs/promises";
-import { isAbsolute, resolve as pathResolve } from "node:path";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve as pathResolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -30,6 +30,14 @@ import { withTimeout } from "../utils/timeout.js";
 
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
+
+function isPathInsideDir(rootDirAbs: string, candidateAbs: string): boolean {
+  const root = pathResolve(rootDirAbs);
+  const candidate = pathResolve(candidateAbs);
+  const rel = relative(root, candidate);
+  if (rel === "") return true;
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
 
 /**
  * Module-level optimization guard keyed by dbPath.
@@ -766,6 +774,13 @@ export class VectorDB {
     // Use the same path resolution as doInitialize() to ensure filesystem operations
     // target the same directory where LanceDB stored the data (issue #768).
     const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const dangerousPathsEnabled = process.env.OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS === "1";
+    const openclawMemoryDir = join(homedir(), ".openclaw", "memory");
+    if (!dangerousPathsEnabled && !isPathInsideDir(openclawMemoryDir, resolvedPath)) {
+      throw new Error(
+        `Refusing to remove LanceDB table directories outside ${openclawMemoryDir}. Set OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS=1 to override.`,
+      );
+    }
 
     const memoriesDir = join(resolvedPath, `${LANCE_TABLE}.lance`);
     const cacheDir = join(resolvedPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);
