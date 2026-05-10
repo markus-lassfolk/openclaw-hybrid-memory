@@ -5,6 +5,8 @@
  * Extracted from index.ts for better modularity.
  */
 
+import { homedir } from "node:os";
+import { isAbsolute, join as pathJoin } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -54,6 +56,7 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../services/task-ledger-facts.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
@@ -61,6 +64,7 @@ import { MEMORY_SCOPES } from "../types/memory.js";
 import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { parseDuration } from "../utils/duration.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractTags } from "../utils/tags.js";
@@ -299,6 +303,33 @@ export function registerMemoryTools(
       /* non-fatal */
     }
   }
+
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const activeTaskProjectionPath = isAbsolute(cfg.activeTask.filePath)
+    ? cfg.activeTask.filePath
+    : pathJoin(workspaceRoot, cfg.activeTask.filePath);
+  const activeTaskStaleMinutes = (() => {
+    try {
+      return parseDuration(cfg.activeTask.staleThreshold);
+    } catch {
+      return parseDuration("24h");
+    }
+  })();
+
+  const maybeRefreshProjectActiveTaskProjection = async (factCategory: string, factId: string): Promise<void> => {
+    if (!cfg.activeTask.enabled || cfg.activeTask.ledger !== "facts") return;
+    if (factCategory !== TASK_LEDGER_CATEGORY) return;
+    await refreshActiveTaskProjectionBestEffort({
+      factsDb,
+      staleMinutes: activeTaskStaleMinutes,
+      filePath: activeTaskProjectionPath,
+      projection: cfg.activeTask.projection,
+      reason: "memory_store_project_fact_write",
+      source: "memory_store",
+      factId,
+      logger: api.logger,
+    });
+  };
 
   api.registerTool(
     {
@@ -1942,6 +1973,7 @@ export function registerMemoryTools(
                   }
 
                   await walRemove(walEntryId, api.logger);
+                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id);
 
                   // Issue #159: enqueue contextual variant generation (non-blocking)
                   if (variantQueue) {
@@ -2125,6 +2157,7 @@ export function registerMemoryTools(
           }
 
           await walRemove(walEntryId, api.logger);
+          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id);
 
           // Issue #150: write event to episodic event log
           if (eventLog) {

@@ -1,21 +1,42 @@
+import { homedir } from "node:os";
+import { isAbsolute, join as pathJoin } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { ActiveTaskProjectionConfig } from "../config.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
+import {
+  getActiveTaskProjectionStatus,
+  readActiveTaskRowsFromFacts,
+  refreshActiveTaskProjectionBestEffort,
+} from "../services/task-ledger-facts.js";
 import type { ScopeFilter } from "../types/memory.js";
+import { parseDuration } from "../utils/duration.js";
+import { getEnv } from "../utils/env-manager.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
 import { type SafeRouteLogger, createSafeRegisterHttpRoute } from "./safe-register-http-route.js";
 
-export interface PublicApiRoutesContext {
-  cfg: {
-    health: {
-      enabled: boolean;
-      authenticated: boolean;
-    };
+type ActiveTaskConfigSubset = {
+  enabled: boolean;
+  ledger: "markdown" | "facts";
+  filePath: string;
+  staleThreshold: string;
+  projection: ActiveTaskProjectionConfig;
+};
+
+type PublicApiConfig = {
+  health: {
+    enabled: boolean;
+    authenticated: boolean;
   };
+  activeTask?: Partial<ActiveTaskConfigSubset>;
+};
+
+export interface PublicApiRoutesContext {
+  cfg: PublicApiConfig;
   factsDb: FactsDB;
   narrativesDb: NarrativesDB | null;
   auditStore?: AuditStore | null;
@@ -33,10 +54,18 @@ export const PUBLIC_API_PATHS = {
   export: "/export",
   fact: "/fact",
   session: "/session",
+  activeTasks: "/active-tasks",
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
 const DEFAULT_PUBLIC_SCOPE_SENTINEL = "__public_api_unscoped__";
+const DEFAULT_ACTIVE_TASK_PROJECTION: ActiveTaskProjectionConfig = {
+  mode: "readable",
+  excludeGenericTitle: true,
+  titleMinChars: 0,
+  dedupeBy: "none",
+  sectioned: true,
+};
 
 function toJson(status: number, body: unknown): { status: number; headers: Record<string, string>; body: string } {
   return { status, headers: { ...JSON_HEADERS }, body: JSON.stringify(body) };
@@ -51,6 +80,35 @@ function parseLimitParam(raw: string | null, fallback = 20, max = 200): number {
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, max);
+}
+
+function parseBooleanParam(raw: string | null): boolean {
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function resolveActiveTaskConfig(cfg: PublicApiConfig): ActiveTaskConfigSubset {
+  const raw = cfg.activeTask ?? {};
+  return {
+    enabled: raw.enabled !== false,
+    ledger: raw.ledger === "facts" ? "facts" : "markdown",
+    filePath: typeof raw.filePath === "string" && raw.filePath.trim().length > 0 ? raw.filePath.trim() : "ACTIVE-TASKS.md",
+    staleThreshold:
+      typeof raw.staleThreshold === "string" && raw.staleThreshold.trim().length > 0 ? raw.staleThreshold.trim() : "24h",
+    projection:
+      raw.projection && typeof raw.projection === "object"
+        ? { ...DEFAULT_ACTIVE_TASK_PROJECTION, ...raw.projection }
+        : { ...DEFAULT_ACTIVE_TASK_PROJECTION },
+  };
+}
+
+function resolveWorkspaceRoot(): string {
+  return getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+}
+
+function resolveActiveTaskFilePath(filePath: string): string {
+  return isAbsolute(filePath) ? filePath : pathJoin(resolveWorkspaceRoot(), filePath);
 }
 
 function extractFactId(url: URL): string | null {
@@ -115,6 +173,15 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   const logger = (api.logger ?? { warn: () => {} }) as SafeRouteLogger;
   const register = createSafeRegisterHttpRoute(api, logger, "memory-public");
   const makeRoute = (path: string, handler: HttpRequestHandler) => register(path, handler, routeOpts);
+  const activeTaskCfg = resolveActiveTaskConfig(ctx.cfg);
+  const activeTaskFilePath = resolveActiveTaskFilePath(activeTaskCfg.filePath);
+  const staleMinutes = (() => {
+    try {
+      return parseDuration(activeTaskCfg.staleThreshold);
+    } catch {
+      return parseDuration("24h");
+    }
+  })();
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.health}`, async () =>
     toJson(200, {
@@ -276,6 +343,60 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         outgoing: filteredOutgoingLinks,
         incoming: filteredIncomingLinks,
       },
+    });
+  });
+
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`, async (req) => {
+    const url = parseReqUrl(req.url);
+    const renderRequested = parseBooleanParam(url.searchParams.get("render"));
+    const includeCompleted = parseBooleanParam(url.searchParams.get("includeCompleted"));
+
+    let renderApplied = false;
+    let renderError: string | null = null;
+    if (renderRequested) {
+      if (activeTaskCfg.ledger !== "facts") {
+        renderError = "render_requested_but_activeTask_ledger_is_not_facts";
+      } else {
+        const result = await refreshActiveTaskProjectionBestEffort({
+          factsDb: ctx.factsDb,
+          staleMinutes,
+          filePath: activeTaskFilePath,
+          projection: activeTaskCfg.projection,
+          reason: "public_api_active_tasks_render",
+          source: "public_api",
+          logger: api.logger,
+        });
+        renderApplied = result.rendered;
+        renderError = result.error ?? null;
+      }
+    }
+
+    const rows = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes);
+    const projection = await getActiveTaskProjectionStatus(ctx.factsDb, activeTaskFilePath);
+    const warnings: string[] = [];
+    if (activeTaskCfg.ledger !== "facts") {
+      warnings.push("activeTask.ledger is markdown; DB snapshot may diverge from markdown ledger.");
+    }
+    if (projection.stale) {
+      warnings.push(`ACTIVE-TASKS.md projection is stale (${projection.staleReasons.join(", ")}).`);
+    }
+
+    return toJson(200, {
+      generatedAt: new Date().toISOString(),
+      source: "category:project",
+      staleThresholdMinutes: staleMinutes,
+      ledger: activeTaskCfg.ledger,
+      active: rows.active,
+      activeCount: rows.active.length,
+      staleCount: rows.active.filter((row) => row.stale).length,
+      ...(includeCompleted ? { completed: rows.completed, completedCount: rows.completed.length } : {}),
+      projection,
+      render: {
+        requested: renderRequested,
+        applied: renderApplied,
+        error: renderError,
+      },
+      warnings,
     });
   });
 

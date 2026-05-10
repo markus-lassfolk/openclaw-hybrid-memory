@@ -3,7 +3,7 @@
  * Aligns hybrid-mem active-tasks with memory_store / memory_recall workflows.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -31,6 +31,25 @@ import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./o
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned"]);
+const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
+
+type ActiveTaskProjectionStaleMarker = {
+  staleAt: string;
+  reason: string;
+  source?: string;
+  factId?: string;
+};
+
+export type ActiveTaskProjectionStatus = {
+  filePath: string;
+  markerPath: string;
+  exists: boolean;
+  stale: boolean;
+  staleReasons: string[];
+  latestProjectFactAt: string | null;
+  renderedAt: string | null;
+  marker: ActiveTaskProjectionStaleMarker | null;
+};
 
 /** Latest value per entity+key from non-superseded project facts */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
@@ -207,6 +226,148 @@ export function readActiveTaskRowsFromFacts(
   const { active, completed } = loadTaskLedgerFromFacts(factsDb);
   const staleActive = detectStaleTasks(active, staleMinutes);
   return { active: staleActive, completed };
+}
+
+export function getActiveTaskProjectionStaleMarkerPath(filePath: string): string {
+  return `${filePath}${PROJECTION_STALE_MARKER_SUFFIX}`;
+}
+
+function parseProjectionMarker(raw: string): ActiveTaskProjectionStaleMarker | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<ActiveTaskProjectionStaleMarker>;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof parsed.staleAt === "string" &&
+      parsed.staleAt.trim().length > 0 &&
+      typeof parsed.reason === "string" &&
+      parsed.reason.trim().length > 0
+    ) {
+      return {
+        staleAt: parsed.staleAt.trim(),
+        reason: parsed.reason.trim(),
+        ...(typeof parsed.source === "string" && parsed.source.trim().length > 0 ? { source: parsed.source } : {}),
+        ...(typeof parsed.factId === "string" && parsed.factId.trim().length > 0 ? { factId: parsed.factId } : {}),
+      };
+    }
+  } catch {
+    // ignore malformed marker JSON
+  }
+  return null;
+}
+
+async function readActiveTaskProjectionStaleMarker(filePath: string): Promise<ActiveTaskProjectionStaleMarker | null> {
+  const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
+  try {
+    const raw = await readFile(markerPath, "utf-8");
+    return parseProjectionMarker(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function markActiveTaskProjectionStale(
+  filePath: string,
+  reason: string,
+  meta: { source?: string; factId?: string } = {},
+): Promise<void> {
+  const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
+  const marker: ActiveTaskProjectionStaleMarker = {
+    staleAt: new Date().toISOString(),
+    reason: reason.trim().length > 0 ? reason.trim() : "projection marked stale",
+    ...(meta.source ? { source: meta.source } : {}),
+    ...(meta.factId ? { factId: meta.factId } : {}),
+  };
+  await mkdir(dirname(markerPath), { recursive: true });
+  await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf-8");
+}
+
+export async function clearActiveTaskProjectionStale(filePath: string): Promise<void> {
+  await rm(getActiveTaskProjectionStaleMarkerPath(filePath), { force: true });
+}
+
+export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, factLimit = 8000): number | null {
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, factLimit);
+  let maxSec: number | null = null;
+  for (const fact of facts) {
+    const createdAt = fact.createdAt;
+    if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) continue;
+    maxSec = maxSec === null ? createdAt : Math.max(maxSec, createdAt);
+  }
+  return maxSec;
+}
+
+function toIsoOrNull(unixSeconds: number | null): string | null {
+  if (unixSeconds === null) return null;
+  return new Date(unixSeconds * 1000).toISOString();
+}
+
+export async function getActiveTaskProjectionStatus(
+  factsDb: FactsDB,
+  filePath: string,
+  factLimit = 8000,
+): Promise<ActiveTaskProjectionStatus> {
+  const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
+  const marker = await readActiveTaskProjectionStaleMarker(filePath);
+  const latestProjectFactSec = getLatestProjectFactCreatedAtSec(factsDb, factLimit);
+  const latestProjectFactAt = toIsoOrNull(latestProjectFactSec);
+
+  let exists = false;
+  let renderedAt: string | null = null;
+  let renderedMs: number | null = null;
+  try {
+    const fileStat = await stat(filePath);
+    exists = fileStat.isFile();
+    if (exists) {
+      renderedMs = fileStat.mtimeMs;
+      renderedAt = new Date(fileStat.mtimeMs).toISOString();
+    }
+  } catch {
+    // no projection file
+  }
+
+  const staleReasons = new Set<string>();
+  if (latestProjectFactSec !== null && !exists) {
+    staleReasons.add("projection_missing");
+  }
+  if (latestProjectFactSec !== null && renderedMs !== null && latestProjectFactSec * 1000 > renderedMs + 1000) {
+    staleReasons.add("project_facts_newer_than_projection");
+  }
+  if (marker) {
+    staleReasons.add("projection_marked_stale");
+  }
+
+  return {
+    filePath,
+    markerPath,
+    exists,
+    stale: staleReasons.size > 0,
+    staleReasons: [...staleReasons],
+    latestProjectFactAt,
+    renderedAt,
+    marker,
+  };
+}
+
+export async function refreshActiveTaskProjectionBestEffort(opts: {
+  factsDb: FactsDB;
+  staleMinutes: number;
+  filePath: string;
+  projection: ActiveTaskProjectionConfig;
+  reason: string;
+  source?: string;
+  factId?: string;
+  logger?: { warn?: (m: string) => void };
+}): Promise<{ rendered: boolean; staleMarked: boolean; error?: string }> {
+  try {
+    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection);
+    return { rendered: true, staleMarked: false };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await markActiveTaskProjectionStale(opts.filePath, opts.reason, { source: opts.source, factId: opts.factId });
+    opts.logger?.warn?.(`memory-hybrid: active-task projection refresh failed: ${message}`);
+    return { rendered: false, staleMarked: true, error: message };
+  }
 }
 
 /** Normalize description for `dedupeBy: normalizedTitle`. */
@@ -460,6 +621,7 @@ export async function renderActiveTaskMarkdownFile(
   );
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, lines.join("\n"), "utf-8");
+  await clearActiveTaskProjectionStale(filePath);
 }
 
 /**

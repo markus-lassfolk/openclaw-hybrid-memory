@@ -10,6 +10,16 @@ openclaw hybrid-mem active-tasks render
 
 Requires `activeTask.ledger: facts`. With the default `markdown` ledger, the file **is** the ledger—no render step.
 
+## Fast snapshot/render via gateway
+
+The public gateway route `/plugins/memory-public/active-tasks` returns a DB-backed snapshot directly from
+`category:project` facts (no CLI cold start).
+
+- `GET /plugins/memory-public/active-tasks` returns active rows + projection status (`stale`, reasons, timestamps).
+- `GET /plugins/memory-public/active-tasks?render=1` does a best-effort projection refresh before returning.
+- `memory_store` writes to `category:project` also trigger a best-effort `ACTIVE-TASKS.md` refresh when
+  `activeTask.ledger: facts`; failures mark the projection stale.
+
 ## Timestamp semantics
 
 The projection must not invent “when work started” or “last touch” from the render clock.
