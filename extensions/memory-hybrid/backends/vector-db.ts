@@ -1796,13 +1796,15 @@ export class VectorDB {
       // This is a safe no-op by design; no log needed for expected behavior.
       return;
     }
+    // CRITICAL FIX: Check isPersistent again after decrement to handle race where
+    // setPersistent() is called concurrently. Do not close if persistent flag was set.
     if (this.sessionCount <= 0) {
       this.logWarn(
         "memory-hybrid: VectorDB.removeSession() called with sessionCount already 0 — possible session lifecycle mismatch (open()/removeSession() calls are unbalanced)",
       );
     }
     this.sessionCount = Math.max(0, this.sessionCount - 1);
-    if (this.sessionCount <= 0) {
+    if (this.sessionCount <= 0 && !this.isPersistent) {
       this._doClose();
     }
   }
@@ -1834,9 +1836,9 @@ export class VectorDB {
       }
     }
     this.db = null;
-    // Close invalidates any in-flight or previously-resolved init. The generation guard
-    // prevents late init continuations from committing state, and the next caller will
-    // create a single fresh initPromise that concurrent callers share.
+    // CRITICAL FIX (#9): Clear initPromise so next ensureInitialized() creates a fresh
+    // promise instead of returning a failed/stale one. This allows automatic recovery
+    // after close() during concurrent re-registration or plugin reload.
     this.initPromise = null;
   }
 

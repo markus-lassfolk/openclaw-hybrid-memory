@@ -17,6 +17,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -73,7 +74,7 @@ export async function runStoreForCli(
       try {
         const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
         const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-        pointerEntry = factsDb.store({
+        const storeResult = factsDb.storeWithResult({
           text: pointerText,
           category: "technical" as MemoryCategory,
           importance: CLI_STORE_IMPORTANCE,
@@ -83,6 +84,14 @@ export async function runStoreForCli(
           source: "cli",
           sourceDate,
           tags: ["auth", ...extractTags(pointerText, "Credentials")],
+        });
+        pointerEntry = storeResult.entry;
+        // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+        await cleanupEvictedVector({
+          vectorDb: vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: log,
+          context: "cli-store",
         });
         try {
           const vector = await embeddings.embed(pointerText);
@@ -166,7 +175,7 @@ export async function runStoreForCli(
             const oldFact = factsDb.getById(classification.targetId);
             if (oldFact) {
               const nowSec = Math.floor(Date.now() / 1000);
-              const newEntry = factsDb.store({
+              const storeResult = factsDb.storeWithResult({
                 text,
                 category,
                 importance: CLI_STORE_IMPORTANCE,
@@ -180,6 +189,14 @@ export async function runStoreForCli(
                 supersedesId: classification.targetId,
                 scope,
                 scopeTarget,
+              });
+              const newEntry = storeResult.entry;
+              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+              await cleanupEvictedVector({
+                vectorDb: vectorDb,
+                evictedFactId: storeResult.evictedFactId,
+                logger: log,
+                context: "cli-store",
               });
               factsDb.supersede(classification.targetId, newEntry.id);
               aliasDb?.deleteByFactId(classification.targetId);
@@ -212,7 +229,7 @@ export async function runStoreForCli(
   const supersedesId = opts.supersedes?.trim();
   const nowSec = supersedesId ? Math.floor(Date.now() / 1000) : undefined;
   try {
-    const entry = factsDb.store({
+    const storeResult = factsDb.storeWithResult({
       text,
       category,
       importance: CLI_STORE_IMPORTANCE,
@@ -225,6 +242,14 @@ export async function runStoreForCli(
       scope,
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
+    });
+    const entry = storeResult.entry;
+    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+    await cleanupEvictedVector({
+      vectorDb: vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger: log,
+      context: "cli-store",
     });
     if (supersedesId) {
       factsDb.supersede(supersedesId, entry.id);

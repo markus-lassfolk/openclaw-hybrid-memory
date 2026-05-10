@@ -82,7 +82,17 @@ export type StoreFactContext = {
   vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
 };
 
-export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryEntry {
+export type StoreFactResult = {
+  /** The stored fact entry */
+  entry: MemoryEntry;
+  /**
+   * CRITICAL (#2): ID of fact evicted during onOverflow=evict-lowest-confidence.
+   * Caller MUST delete the vector from VectorDB to prevent orphaned vectors.
+   */
+  evictedFactId?: string | null;
+};
+
+export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
@@ -122,7 +132,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
         .run(nowSec, dedupe.existingId);
     }
     const existing = ctx.getById(dedupe.existingId);
-    if (existing) return existing;
+    if (existing) return { entry: existing, evictedFactId: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -135,7 +145,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       )
       .run(dedupe.boostBy, dedupe.existingId);
     const boosted = ctx.getById(dedupe.existingId);
-    if (boosted) return boosted;
+    if (boosted) return { entry: boosted, evictedFactId: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -151,7 +161,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
       ctx.db
         .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
         .run(mergedText, mergedHash, existing.id);
-      return ctx.getById(existing.id) ?? existing;
+      return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null };
     }
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
@@ -338,7 +348,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   if (!loaded) {
     throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
   }
-  return loaded;
+  return { entry: loaded, evictedFactId };
 }
 
 /** Update recall_count and last_accessed for facts (bulk UPDATE). */
