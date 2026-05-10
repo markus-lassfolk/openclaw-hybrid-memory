@@ -144,4 +144,27 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     expect(out).toContain("status=unknown");
     expect(out).not.toContain("compaction routing uses a stronger-than-mini model");
   });
+
+  it("does not let unsupported per-agent compaction keys suppress strong-model warnings", async () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-unsupported-agent-"));
+    const openclawDir = join(homeDir, ".openclaw");
+    const configPath = join(openclawDir, "openclaw.json");
+    writeOpenclawConfigAt(configPath, {
+      agents: {
+        defaults: { model: { primary: "azure-foundry/gpt-5.5" } },
+        list: [{ id: "main", compaction: { model: "openai/gpt-4.1-mini" } }],
+      },
+    });
+    vi.stubEnv("HOME", homeDir);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("unsupported per-agent compaction key(s) detected");
+    expect(out).toContain("agents.list[id=main].compaction.model");
+    expect(out).toContain("compaction model watchdog alert (verify)");
+    expect(out).toContain("provider=azure-foundry, model=azure-foundry/gpt-5.5");
+  });
 });

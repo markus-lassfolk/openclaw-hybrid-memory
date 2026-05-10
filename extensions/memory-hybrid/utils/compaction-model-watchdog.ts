@@ -2,13 +2,14 @@ import { isHeavyModel } from "./model-tier.js";
 
 export const DEFAULT_COMPACTION_MODEL = "minimax/MiniMax-M2.7";
 
-export type CompactionFallbackPolicy = "default-mini" | "inherit-agent-primary";
+export type CompactionFallbackPolicy = "default-mini" | "inherit-agent-primary" | "inherit-defaults-primary";
 
 export type CompactionModelSelection = {
   model: string;
   provider: string;
   reason: string;
   inherited: boolean;
+  unsupportedPerAgentCompactionPaths: string[];
 };
 
 export type CompactionWatchdogContext = "verify" | "before_compaction" | "after_compaction";
@@ -25,16 +26,37 @@ export type CompactionHookModelMetadata = {
   source: string;
 };
 
-function readAgentById(root: Record<string, unknown> | undefined, id: string): Record<string, unknown> | undefined {
+export type CompactionHookIdentity = {
+  agentId?: string;
+  sessionId?: string;
+  source: string;
+};
+
+function readAgentList(root: Record<string, unknown> | undefined): Record<string, unknown>[] {
   const agents = root?.agents as Record<string, unknown> | undefined;
   const list = agents?.list;
-  if (!Array.isArray(list)) return undefined;
+  if (!Array.isArray(list)) return [];
+  const entries: Record<string, unknown>[] = [];
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
-    const row = entry as Record<string, unknown>;
-    if (row.id === id) return row;
+    entries.push(entry as Record<string, unknown>);
   }
-  return undefined;
+  return entries;
+}
+
+function collectUnsupportedPerAgentCompactionPaths(root: Record<string, unknown> | undefined): string[] {
+  const paths: string[] = [];
+  const list = readAgentList(root);
+  for (let idx = 0; idx < list.length; idx += 1) {
+    const entry = list[idx];
+    const model = readCompactionModelFromAgentBlock(entry);
+    if (!model) continue;
+    const rawId = entry.id;
+    const id =
+      typeof rawId === "string" && rawId.trim().length > 0 ? rawId.trim() : `index=${String(idx)}`;
+    paths.push(`agents.list[id=${id}].compaction.model`);
+  }
+  return paths;
 }
 
 function readAgentsDefaults(root: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -86,17 +108,12 @@ export function inferCompactionProvider(model: string): string {
 
 export function resolveCompactionModelSelection(
   root: Record<string, unknown> | undefined,
-  opts?: { fallbackPolicy?: CompactionFallbackPolicy; defaultModel?: string; agentId?: string },
+  opts?: { fallbackPolicy?: CompactionFallbackPolicy; defaultModel?: string },
 ): CompactionModelSelection {
   const fallbackPolicy = opts?.fallbackPolicy ?? "default-mini";
   const defaultModel = opts?.defaultModel?.trim() || DEFAULT_COMPACTION_MODEL;
-  const requestedAgentId = opts?.agentId?.trim();
-  const requestedAgent = requestedAgentId ? readAgentById(root, requestedAgentId) : undefined;
-  const mainAgent = readAgentById(root, "main");
-  const selectedAgent = requestedAgent ?? mainAgent;
   const defaults = readAgentsDefaults(root);
-  const selectedLabel =
-    requestedAgent && requestedAgentId ? `agents.list[id=${requestedAgentId}]` : "agents.list[id=main]";
+  const unsupportedPerAgentCompactionPaths = collectUnsupportedPerAgentCompactionPaths(root);
 
   const defaultsCompaction = readCompactionModelFromAgentBlock(defaults);
   if (defaultsCompaction) {
@@ -105,19 +122,11 @@ export function resolveCompactionModelSelection(
       provider: inferCompactionProvider(defaultsCompaction),
       reason: "agents.defaults.compaction.model explicitly set",
       inherited: false,
+      unsupportedPerAgentCompactionPaths,
     };
   }
 
-  if (fallbackPolicy === "inherit-agent-primary") {
-    const selectedPrimary = readPrimaryModelFromAgentBlock(selectedAgent);
-    if (selectedPrimary) {
-      return {
-        model: selectedPrimary,
-        provider: inferCompactionProvider(selectedPrimary),
-        reason: `inherited from ${selectedLabel}.model.primary (compaction model unset)`,
-        inherited: true,
-      };
-    }
+  if (fallbackPolicy === "inherit-agent-primary" || fallbackPolicy === "inherit-defaults-primary") {
     const defaultsPrimary = readPrimaryModelFromAgentBlock(defaults);
     if (defaultsPrimary) {
       return {
@@ -125,6 +134,7 @@ export function resolveCompactionModelSelection(
         provider: inferCompactionProvider(defaultsPrimary),
         reason: "inherited from agents.defaults.model.primary (compaction model unset)",
         inherited: true,
+        unsupportedPerAgentCompactionPaths,
       };
     }
   }
@@ -134,7 +144,80 @@ export function resolveCompactionModelSelection(
     provider: inferCompactionProvider(defaultModel),
     reason: "default mini compaction model (compaction model unset)",
     inherited: false,
+    unsupportedPerAgentCompactionPaths,
   };
+}
+
+function extractCompactionHookIdentityFromSource(sourceObj: unknown, sourceName: string): CompactionHookIdentity | null {
+  const agentPaths: string[][] = [
+    ["agentId"],
+    ["agent", "id"],
+    ["context", "agentId"],
+    ["metadata", "agentId"],
+    ["metadata", "agent", "id"],
+    ["payload", "agentId"],
+    ["session", "agentId"],
+    ["ctx", "agentId"],
+  ];
+  const sessionPaths: string[][] = [
+    ["sessionId"],
+    ["session", "id"],
+    ["context", "sessionId"],
+    ["metadata", "sessionId"],
+    ["payload", "sessionId"],
+    ["ctx", "sessionId"],
+  ];
+  let agentId: string | undefined;
+  let sessionId: string | undefined;
+  for (const path of agentPaths) {
+    agentId = readString(readPathValue(sourceObj, path));
+    if (agentId) break;
+  }
+  for (const path of sessionPaths) {
+    sessionId = readString(readPathValue(sourceObj, path));
+    if (sessionId) break;
+  }
+  if (!agentId && !sessionId) return null;
+  return { agentId, sessionId, source: sourceName };
+}
+
+/**
+ * Best-effort extraction of hook identity fields used to contextualize fallback watchdog warnings.
+ * Returns null when neither agent nor session metadata is available.
+ */
+export function resolveCompactionHookIdentity(
+  event: unknown,
+  hookCtx?: unknown,
+  apiContext?: unknown,
+): CompactionHookIdentity | null {
+  const candidates = [
+    extractCompactionHookIdentityFromSource(event, "event"),
+    extractCompactionHookIdentityFromSource(hookCtx, "hookCtx"),
+    extractCompactionHookIdentityFromSource(apiContext, "api.context"),
+  ].filter(Boolean) as CompactionHookIdentity[];
+  if (candidates.length === 0) return null;
+
+  const merged: CompactionHookIdentity = {
+    source: candidates.map((c) => c.source).join("+"),
+  };
+  for (const candidate of candidates) {
+    if (!merged.agentId && candidate.agentId) merged.agentId = candidate.agentId;
+    if (!merged.sessionId && candidate.sessionId) merged.sessionId = candidate.sessionId;
+  }
+  return merged;
+}
+
+export function describeCompactionFallbackScope(identity: CompactionHookIdentity | null | undefined): string {
+  const agentId = identity?.agentId?.trim() || "unknown";
+  const sessionId = identity?.sessionId?.trim() || "unknown";
+  const source = identity?.source?.trim() || "unavailable";
+  const scope =
+    agentId === "unknown"
+      ? "unknown agent context; fallback uses global defaults only"
+      : agentId === "main"
+        ? "main agent context; fallback uses global defaults only"
+        : `non-main agent context (${agentId}); fallback uses global defaults only`;
+  return `agent=${agentId}, session=${sessionId}, source=${source}; ${scope}`;
 }
 
 function isExplicitMiniOrNanoModel(model: string): boolean {
@@ -370,4 +453,16 @@ export function buildCompactionModelWatchdogWarning(
   const recommendedModel = opts?.recommendedModel?.trim() || DEFAULT_COMPACTION_MODEL;
   const contextPrefix = opts?.context ? `${opts.context}: ` : "";
   return `${contextPrefix}compaction routing uses a stronger-than-mini model (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason}). Set agents.defaults.compaction.model to a mini/nano model such as ${recommendedModel}.`;
+}
+
+export function buildUnsupportedPerAgentCompactionWarning(
+  selection: CompactionModelSelection,
+  opts?: { context?: CompactionWatchdogContext },
+): string | null {
+  if (selection.unsupportedPerAgentCompactionPaths.length === 0) return null;
+  const contextPrefix = opts?.context ? `${opts.context}: ` : "";
+  const paths = selection.unsupportedPerAgentCompactionPaths.slice(0, 3).join(", ");
+  const extraCount = selection.unsupportedPerAgentCompactionPaths.length - 3;
+  const moreSuffix = extraCount > 0 ? ` (+${extraCount} more)` : "";
+  return `${contextPrefix}unsupported per-agent compaction key(s) detected (${paths}${moreSuffix}). OpenClaw core currently resolves compaction from agents.defaults.compaction.model only; move compaction overrides to agents.defaults.compaction.model.`;
 }

@@ -60,6 +60,7 @@ import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import { isHeavyModel } from "../utils/model-tier.js";
 import {
+  buildUnsupportedPerAgentCompactionWarning,
   buildCompactionWatchdogAlert,
   DEFAULT_COMPACTION_MODEL,
   isCompactionModelTooStrong,
@@ -669,15 +670,16 @@ export async function runVerifyForCli(
       : null;
   const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
   const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
-  let compactionSelection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-agent-primary" });
+  let compactionSelection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-defaults-primary" });
   const compactionSelectionUnknownReason =
     openclawConfigRead.error === undefined
       ? null
       : `active OpenClaw config (${defaultConfigPath}) is unreadable/invalid (${openclawConfigRead.error})`;
   if (openclawConfigRead.root) {
-    // Use inheritance fallback here to mirror OpenClaw behavior when compaction.model is unset.
+    // Use defaults-primary inheritance fallback to mirror current OpenClaw core behavior
+    // when agents.defaults.compaction.model is unset.
     compactionSelection = resolveCompactionModelSelection(openclawConfigRead.root, {
-      fallbackPolicy: "inherit-agent-primary",
+      fallbackPolicy: "inherit-defaults-primary",
     });
   }
   tableLog(
@@ -756,7 +758,11 @@ export async function runVerifyForCli(
     warnings.push(
       `verify watchdog: compaction routing check is unknown because ${compactionSelectionUnknownReason}; set/repair config and rerun verify.`,
     );
-  } else if (isCompactionModelTooStrong(compactionSelection.model)) {
+  } else {
+    const unsupportedWarning = buildUnsupportedPerAgentCompactionWarning(compactionSelection, { context: "verify" });
+    if (unsupportedWarning) warnings.push(unsupportedWarning);
+  }
+  if (!compactionSelectionUnknownReason && isCompactionModelTooStrong(compactionSelection.model)) {
     const alert =
       buildCompactionWatchdogAlert({
         stage: "verify",
@@ -764,7 +770,7 @@ export async function runVerifyForCli(
         provider: compactionSelection.provider,
         source: compactionSelection.reason,
       }) ??
-      `compaction routing uses a stronger-than-mini model (provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}). Set agents.defaults.compaction.model (or agents.list[id=main].compaction.model) to a mini/nano model such as ${DEFAULT_COMPACTION_MODEL}.`;
+      `compaction routing uses a stronger-than-mini model (provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}). Set agents.defaults.compaction.model to a mini/nano model such as ${DEFAULT_COMPACTION_MODEL}.`;
     warnings.push(alert);
   }
   const _allModelsFiltered: string[] = [

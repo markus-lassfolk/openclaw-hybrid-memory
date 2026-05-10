@@ -17,8 +17,11 @@ import { buildPostCompactionRecallSnippet } from "../services/post-compaction-re
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
+  buildUnsupportedPerAgentCompactionWarning,
   buildCompactionWatchdogAlert,
   buildCompactionModelWatchdogWarning,
+  describeCompactionFallbackScope,
+  resolveCompactionHookIdentity,
   resolveCompactionHookModelMetadata,
   resolveCompactionModelSelection,
   type CompactionWatchdogContext,
@@ -47,37 +50,40 @@ function resolveOpenclawJsonPathForCompactionWatchdog(): string {
   return join(homedir(), ".openclaw", "openclaw.json");
 }
 
-function emitCompactionModelWatchdogAlert(api: ClawdbotPluginApi, context: CompactionWatchdogContext): void {
+function emitCompactionModelWatchdogAlert(
+  api: ClawdbotPluginApi,
+  context: CompactionWatchdogContext,
+  opts?: { event?: unknown; hookCtx?: unknown },
+): void {
   const configPath = resolveOpenclawJsonPathForCompactionWatchdog();
-  const activeAgentId = api.context?.agentId;
   let selectionUnknownReason: string | null = null;
-  let selection = resolveCompactionModelSelection(undefined, {
-    fallbackPolicy: "inherit-agent-primary",
-    agentId: activeAgentId,
-  });
+  const identity = resolveCompactionHookIdentity(opts?.event, opts?.hookCtx, api.context);
+  const scopeNote = describeCompactionFallbackScope(identity);
+  let selection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-defaults-primary" });
   if (existsSync(configPath)) {
     try {
       const root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-      selection = resolveCompactionModelSelection(root, {
-        fallbackPolicy: "inherit-agent-primary",
-        agentId: activeAgentId,
-      });
+      selection = resolveCompactionModelSelection(root, { fallbackPolicy: "inherit-defaults-primary" });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       selectionUnknownReason = `failed reading ${configPath}: ${message}`;
-      api.logger.debug?.(`memory-hybrid: ${context} watchdog — failed reading ${configPath}: ${err}`);
+      api.logger.debug?.(`memory-hybrid: ${context} watchdog — failed reading ${configPath}: ${err}; ${scopeNote}`);
     }
   }
   if (selectionUnknownReason) {
-    api.logger.warn?.(`memory-hybrid: ${context} watchdog — compaction routing unknown (${selectionUnknownReason})`);
+    api.logger.warn?.(`memory-hybrid: ${context} watchdog — compaction routing unknown (${selectionUnknownReason}); ${scopeNote}`);
     return;
+  }
+  const unsupportedWarning = buildUnsupportedPerAgentCompactionWarning(selection, { context });
+  if (unsupportedWarning) {
+    api.logger.warn?.(`memory-hybrid: ${unsupportedWarning} ${scopeNote}`);
   }
   const warning = buildCompactionModelWatchdogWarning(selection, { context });
   if (warning) {
-    api.logger.warn?.(`memory-hybrid: ${warning}`);
+    api.logger.warn?.(`memory-hybrid: ${warning} ${scopeNote}`);
   } else {
     api.logger.debug?.(
-      `memory-hybrid: ${context} watchdog — compaction model safe (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason})`,
+      `memory-hybrid: ${context} watchdog — compaction model safe (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason}); ${scopeNote}`,
     );
   }
 }
@@ -268,7 +274,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         api.logger.debug?.(
           "memory-hybrid: before_compaction watchdog — compaction provider/model metadata not exposed",
         );
-        emitCompactionModelWatchdogAlert(api, "before_compaction");
+        emitCompactionModelWatchdogAlert(api, "before_compaction", { event, hookCtx });
       }
 
       await runPreConsolidationFlush(
@@ -363,7 +369,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           api.logger.debug?.(
             "memory-hybrid: after_compaction watchdog — compaction provider/model metadata not exposed",
           );
-          emitCompactionModelWatchdogAlert(api, "after_compaction");
+          emitCompactionModelWatchdogAlert(api, "after_compaction", { event, hookCtx });
         }
 
         const msgCount = ev.messageCount ?? 0;

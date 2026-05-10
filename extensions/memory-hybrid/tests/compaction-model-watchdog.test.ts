@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_COMPACTION_MODEL,
+  buildUnsupportedPerAgentCompactionWarning,
   buildCompactionModelWatchdogWarning,
   isCompactionModelTooStrong,
   resolveCompactionModelSelection,
@@ -42,22 +43,25 @@ describe("compaction-model-watchdog", () => {
     expect(selection.inherited).toBe(true);
   });
 
-  it("uses active agent primary fallback when agentId is provided", () => {
+  it("ignores unsupported per-agent compaction model keys", () => {
     const selection = resolveCompactionModelSelection(
       {
         agents: {
           defaults: { model: { primary: "azure-foundry/gpt-5.5" } },
-          list: [
-            { id: "main", compaction: { model: "minimax/MiniMax-M2.7" } },
-            { id: "worker", model: { primary: "openai/gpt-4.1" }, compaction: { model: "openai/gpt-4.1-mini" } },
-          ],
+          list: [{ id: "main", compaction: { model: "openai/gpt-4.1-mini" } }],
         },
       },
-      { agentId: "worker", fallbackPolicy: "inherit-agent-primary" },
+      { fallbackPolicy: "inherit-defaults-primary" },
     );
-    expect(selection.model).toBe("openai/gpt-4.1");
-    expect(selection.reason).toContain("inherited from agents.list[id=worker].model.primary");
-    expect(selection.inherited).toBe(true);
+
+    expect(selection.model).toBe("azure-foundry/gpt-5.5");
+    expect(selection.unsupportedPerAgentCompactionPaths).toEqual(["agents.list[id=main].compaction.model"]);
+    expect(buildCompactionModelWatchdogWarning(selection, { context: "verify" })).toContain(
+      "provider=azure-foundry, model=azure-foundry/gpt-5.5",
+    );
+    expect(buildUnsupportedPerAgentCompactionWarning(selection, { context: "verify" })).toContain(
+      "unsupported per-agent compaction key",
+    );
   });
 
   it("ignores unsupported agents.list[id=*].compaction.model and uses defaults compaction", () => {

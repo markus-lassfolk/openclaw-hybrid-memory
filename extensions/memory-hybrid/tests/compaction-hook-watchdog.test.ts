@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCompactionWatchdogAlert,
+  describeCompactionFallbackScope,
+  resolveCompactionHookIdentity,
   resolveCompactionHookModelMetadata,
 } from "../utils/compaction-model-watchdog.js";
 
@@ -59,5 +61,26 @@ describe("compaction hook watchdog metadata", () => {
 
     expect(minimaxAlert).toBeNull();
     expect(miniAlert).toBeNull();
+  });
+
+  it("resolves fallback identity from hook payload and marks non-main context as defaults-only", () => {
+    const identity = resolveCompactionHookIdentity(
+      { metadata: { agentId: "worker-1", sessionId: "sess-42" } },
+      undefined,
+      undefined,
+    );
+    const scope = describeCompactionFallbackScope(identity);
+
+    expect(scope).toContain("agent=worker-1");
+    expect(scope).toContain("session=sess-42");
+    expect(scope).toContain("non-main agent context (worker-1)");
+    expect(scope).toContain("fallback uses global defaults only");
+  });
+
+  it("marks unknown fallback identity context safely", () => {
+    const identity = resolveCompactionHookIdentity({ messageCount: 12 }, { tokenCount: 300 }, {});
+    const scope = describeCompactionFallbackScope(identity);
+    expect(scope).toContain("agent=unknown");
+    expect(scope).toContain("unknown agent context; fallback uses global defaults only");
   });
 });
