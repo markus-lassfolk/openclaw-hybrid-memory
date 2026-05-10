@@ -145,15 +145,24 @@ function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): 
 /**
  * True when this event should not be merged into consolidated facts based on `eventType`
  * (allow/deny lists). Text-pattern skipping remains in {@link shouldSkipEpisodicConsolidation}.
+ *
+ * CRITICAL FIX (#5): Allow list now overrides deny list. If an event type is explicitly
+ * in the allow list, it is accepted even if it's in the default deny set.
  */
 export function shouldSkipEpisodicConsolidationByEventType(
   event: EventLogEntry,
   filter?: EpisodicConsolidationEventTypeFilter | null,
 ): boolean {
+  const allow = filter?.allow?.map((x) => x.trim()).filter((x) => x.length > 0);
+  // If allow list is specified and contains this event type, accept it (override deny).
+  if (allow && allow.length > 0) {
+    if (allow.includes(event.eventType)) return false;
+    // If allow list is specified but doesn't contain this event type, reject it.
+    return true;
+  }
+  // No allow list specified, check deny list.
   const deny = episodicDenySet(filter);
   if (deny.has(event.eventType)) return true;
-  const allow = filter?.allow?.map((x) => x.trim()).filter((x) => x.length > 0);
-  if (allow && allow.length > 0 && !allow.includes(event.eventType)) return true;
   return false;
 }
 

@@ -232,10 +232,9 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     const warnOnce = (key: string, message: string): void => {
       if (this.storeDedupeWarnedKeys.has(key)) return;
       this.storeDedupeWarnedKeys.add(key);
-      process.stderr.write(`${message}
-`);
+      process.stderr.write(`${message}\n`);
     };
-    return storeFact(
+    const result = storeFact(
       {
         db: this.liveDb,
         fuzzyDedupe: this.fuzzyDedupe,
@@ -251,6 +250,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       },
       entry,
     );
+    // CRITICAL FIX (#2): If a fact was evicted, log it here. The caller with access to
+    // VectorDB must handle the vector deletion. This is documented in StoreFactResult.
+    if (result.evictedFactId) {
+      process.stderr.write(
+        `memory-hybrid: CRITICAL: Fact ${result.evictedFactId} was evicted but vector cleanup is not yet implemented. Vector orphan created.\n`,
+      );
+    }
+    return result.entry;
   }
 
   statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {

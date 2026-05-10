@@ -110,13 +110,28 @@ export class WriteAheadLog {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync on the WAL
-        // or do not fully support POSIX sync semantics. The data has already been
-        // written by appendFile / writeFile; skipping datasync here is safe and the
-        // durability guarantee degrades to best-effort on those filesystems.
+        // CRITICAL FIX (#7): Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync.
+        // Instead of silently degrading durability forever, try fsync() as a fallback.
+        // If both fail, throw an error so operators know their WAL has no crash safety.
+        try {
+          if (fh) {
+            await fh.sync(); // Try fsync() instead of datasync()
+          }
+        } catch (fsyncErr) {
+          if (!this.fsyncWarnEmitted) {
+            pluginLogger.error(
+              `[WAL] CRITICAL: Both datasync() and fsync() failed (${code}) — WAL durability unavailable on this filesystem. ` +
+              `Data loss may occur on crash. Consider moving the database to a POSIX-compliant filesystem.`,
+            );
+            this.fsyncWarnEmitted = true;
+          }
+          // Throw so the write operation fails fast rather than silently losing crash safety.
+          throw new Error(`WAL fsync unavailable: ${code}`);
+        }
+        // fsync() succeeded as fallback
         if (!this.fsyncWarnEmitted) {
           pluginLogger.warn(
-            `[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`,
+            `[WAL] datasync() unsupported (${code}), using fsync() fallback — durability available but may be slower`,
           );
           this.fsyncWarnEmitted = true;
         }
