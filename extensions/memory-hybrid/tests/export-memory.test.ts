@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -146,5 +146,46 @@ describe("export-memory", () => {
     );
 
     expect(result.factsExported).toBe(1);
+  });
+
+  it("refuses mode=replace into non-empty non-export directory", () => {
+    db.store({
+      text: "User prefers dark mode",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "conversation",
+    });
+
+    const outDir = join(tmpDir, "export");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, "keep.txt"), "do not delete", "utf-8");
+
+    expect(() =>
+      runExport(db, { outputPath: outDir, mode: "replace" }, { pluginVersion: "1.0.0", schemaVersion: 3 }),
+    ).toThrow(/Refusing to export/);
+  });
+
+  it("sanitizes category/tag path segments to prevent traversal", () => {
+    db.store({
+      text: "A fact with traversal-ish category/tag",
+      category: "..",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      tags: [".."],
+    });
+
+    const outDir = join(tmpDir, "export");
+    runExport(db, { outputPath: outDir, mode: "replace" }, { pluginVersion: "1.0.0", schemaVersion: 3 });
+
+    const memDir = join(outDir, "memory");
+    const top = readdirSync(memDir);
+    expect(top.includes("..")).toBe(false);
+    expect(readdirSync(join(memDir, "other")).includes("..")).toBe(false);
   });
 });
