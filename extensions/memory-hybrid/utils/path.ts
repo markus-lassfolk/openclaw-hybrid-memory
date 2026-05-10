@@ -4,7 +4,7 @@ import { getEnv } from "./env-manager.js";
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 /**
  * Expand tilde (~) in path to user's home directory.
@@ -28,4 +28,21 @@ export function expandHomePlaceholders(p: string): string {
     return home + p.slice("$HOME".length);
   }
   return expandTilde(p);
+}
+
+/**
+ * Resolve the OpenClaw workspace root directory.
+ * Defaults to ~/.openclaw/workspace if OPENCLAW_WORKSPACE is not set.
+ */
+export function resolveWorkspaceRoot(): string {
+  return getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+}
+
+/**
+ * Resolve a potentially-relative file path against the workspace root.
+ * If the path is absolute, returns it as-is.
+ * If the path is relative, joins it with the workspace root.
+ */
+export function resolveWorkspacePath(filePath: string): string {
+  return isAbsolute(filePath) ? filePath : join(resolveWorkspaceRoot(), filePath);
 }
