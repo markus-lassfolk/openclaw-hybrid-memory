@@ -313,16 +313,33 @@ export async function runRecallPipelineQuery(
       const vecT0 = Date.now();
       const rawResults = await vectorDb.search(vector, limitNum * 2, minScore);
       stageMs.vector = Date.now() - vecT0;
-      let results = filterByScope(rawResults, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
-      results = results.map((r) => {
-        const fullEntry = factsDb.getById(r.entry.id);
-        if (fullEntry) {
-          const salienceScore = computeDynamicSalience(r.score, fullEntry);
-          const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
-          return { ...r, entry: fullEntry, score: controlledScore };
-        }
-        return r;
-      });
+      const nowSec = Math.floor(Date.now() / 1000);
+      let results = filterByScope(
+        rawResults,
+        (id, o) => {
+          const entry = factsDb.getById(id, o);
+          if (!entry) return null;
+          if (entry.supersededAt != null) return null;
+          if (entry.expiresAt != null && entry.expiresAt <= nowSec) return null;
+          return entry;
+        },
+        recallOpts.scopeFilter,
+      );
+      results = results
+        .map((r) => {
+          const fullEntry = factsDb.getById(r.entry.id);
+          if (
+            fullEntry &&
+            fullEntry.supersededAt == null &&
+            (fullEntry.expiresAt == null || fullEntry.expiresAt > nowSec)
+          ) {
+            const salienceScore = computeDynamicSalience(r.score, fullEntry);
+            const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
+            return { ...r, entry: fullEntry, score: controlledScore };
+          }
+          return null;
+        })
+        .filter((r): r is SearchResult => r !== null);
       recallTiming.phaseCompleted("lancedb_search", vectorStartedAt, {
         raw_hits: rawResults.length,
         hits: results.length,

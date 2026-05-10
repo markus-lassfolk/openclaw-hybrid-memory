@@ -17,6 +17,7 @@ import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from 
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
+import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
@@ -1417,9 +1418,18 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             console.log("No expired facts pending prune (--verbose).");
           }
         }
+        const pendingVectorDeletes = factsDb.listExpiredFactIdsPendingPrune();
         const pruned = factsDb.prune();
+        const vectorCleanup = await deleteVectorsForFactIds(vectorDb, pendingVectorDeletes, {
+          operation: "cli-prune-expired",
+          logger: {
+            warn: (msg) => console.warn(msg),
+          },
+        });
         const after = factsDb.count();
-        console.log(`Pruned ${pruned} expired facts. Before: ${before}, After: ${after}`);
+        console.log(
+          `Pruned ${pruned} expired facts. Before: ${before}, After: ${after}. Vector cleanup: ${vectorCleanup.deleted}/${vectorCleanup.attempted} deleted${vectorCleanup.failed > 0 ? ` (${vectorCleanup.failed} failed)` : ""}.`,
+        );
       }),
     );
 
