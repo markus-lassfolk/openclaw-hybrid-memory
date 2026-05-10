@@ -465,8 +465,12 @@ export async function writeActiveTaskFile(
     try {
       const existing = await readFile(pathToRead, "utf-8");
       goalsMirror = extractGoalsMirrorSection(existing);
-    } catch {
-      // Ignore read errors; write without goals section
+    } catch (err) {
+      // Bug #17 fix: Log error instead of silently ignoring
+      const errMsg = err instanceof Error ? err.message : String(err);
+      pluginLogger.warn?.(
+        `memory-hybrid: failed to preserve goals mirror section from ${pathToRead}: ${errMsg}. Section will be omitted from write.`,
+      );
     }
   }
 

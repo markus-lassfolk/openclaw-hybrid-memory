@@ -381,11 +381,23 @@ export async function refreshActiveTaskProjectionBestEffort(opts: {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     let staleMarked = false;
-    try {
-      await markActiveTaskProjectionStale(opts.filePath, opts.reason, { source: opts.source, factId: opts.factId });
-      staleMarked = true;
-    } catch {
-      // Ignore stale marker write failures (best-effort)
+    // Bug #14 fix: Retry stale marker write up to 3 times
+    const MAX_MARKER_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_MARKER_RETRIES; attempt++) {
+      try {
+        await markActiveTaskProjectionStale(opts.filePath, opts.reason, { source: opts.source, factId: opts.factId });
+        staleMarked = true;
+        break;
+      } catch (markerErr) {
+        if (attempt === MAX_MARKER_RETRIES - 1) {
+          const markerMsg = markerErr instanceof Error ? markerErr.message : String(markerErr);
+          opts.logger?.warn?.(
+            `memory-hybrid: active-task projection stale marker write failed after ${MAX_MARKER_RETRIES} retries: ${markerMsg}`,
+          );
+        }
+        // Wait briefly before retry
+        await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+      }
     }
     opts.logger?.warn?.(`memory-hybrid: active-task projection refresh failed: ${message}`);
     return { rendered: false, staleMarked, error: message };
@@ -629,10 +641,21 @@ export async function planActiveTaskHygiene(
     .filter(({ age }) => age.stale);
   const uniqueSessionRefs = [...new Set(staleSessionCandidates.map((c) => c.sessionRef))];
   const sessionPresentByRef = new Map<string, boolean>();
+  // Bug #16 fix: Add timeout and error handling to prevent blocking
+  const SESSION_CHECK_TIMEOUT_MS = 5000; // 5 second timeout per check
   await Promise.all(
     uniqueSessionRefs.map(async (sessionRef) => {
-      const present = await checkSessionPresent(sessionRef);
-      sessionPresentByRef.set(sessionRef, present);
+      try {
+        const timeoutPromise = new Promise<boolean>((_, reject) =>
+          setTimeout(() => reject(new Error("Session check timeout")), SESSION_CHECK_TIMEOUT_MS),
+        );
+        const checkPromise = checkSessionPresent(sessionRef);
+        const present = await Promise.race([checkPromise, timeoutPromise]);
+        sessionPresentByRef.set(sessionRef, present);
+      } catch (err) {
+        // On error or timeout, assume session is not present for safety
+        sessionPresentByRef.set(sessionRef, false);
+      }
     }),
   );
   for (const { task, sessionRef, age } of staleSessionCandidates) {
