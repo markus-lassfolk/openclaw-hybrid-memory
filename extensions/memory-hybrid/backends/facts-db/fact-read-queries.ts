@@ -387,6 +387,18 @@ export function listDirectives(db: DatabaseSync, limit = 100): MemoryEntry[] {
   return rows.map((row) => rowToMemoryEntry(row));
 }
 
+export function getMaxCreatedAtByCategory(db: DatabaseSync, category: string): number | null {
+  const row = db
+    .prepare("SELECT MAX(created_at) as max_created_at FROM facts WHERE category = ? AND (superseded_at IS NULL)")
+    .get(category) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const maxCreatedAt = row.max_created_at;
+  if (typeof maxCreatedAt === "number" && Number.isFinite(maxCreatedAt)) {
+    return maxCreatedAt;
+  }
+  return null;
+}
+
 export function updateCategory(db: DatabaseSync, id: string, category: string): boolean {
   const result = db.prepare("UPDATE facts SET category = ? WHERE id = ?").run(category, id);
   return result.changes > 0;
