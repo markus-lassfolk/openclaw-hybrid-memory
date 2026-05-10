@@ -671,10 +671,11 @@ export async function runVerifyForCli(
   const dreamEffective = dreamOverride ?? getLLMModelPreference(cronCfg, "maintenance")[0] ?? "—";
   const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
   let compactionSelection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-defaults-primary" });
-  const compactionSelectionUnknownReason =
-    openclawConfigRead.error === undefined
-      ? null
-      : `active OpenClaw config (${defaultConfigPath}) is unreadable/invalid (${openclawConfigRead.error})`;
+  const compactionSelectionUnknownReason = openclawConfigRead.root
+    ? null
+    : openclawConfigRead.error !== undefined
+      ? `active OpenClaw config (${defaultConfigPath}) is unreadable/invalid (${openclawConfigRead.error})`
+      : `active OpenClaw config (${defaultConfigPath}) is missing`;
   if (openclawConfigRead.root) {
     // Use defaults-primary inheritance fallback to mirror current OpenClaw core behavior
     // when agents.defaults.compaction.model is unset.

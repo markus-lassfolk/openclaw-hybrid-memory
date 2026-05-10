@@ -145,6 +145,27 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     expect(out).not.toContain("compaction routing uses a stronger-than-mini model");
   });
 
+  it("surfaces unknown compaction watchdog state when config file is missing", async () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-missing-"));
+    const externalRoot = join(homeDir, "custom-openclaw-root");
+    const configPath = join(externalRoot, "openclaw.json");
+    mkdirSync(join(externalRoot, "cron"), { recursive: true });
+    writeFileSync(join(externalRoot, "cron", "jobs.json"), JSON.stringify({ jobs: [] }, null, 2), "utf-8");
+
+    vi.stubEnv("HOME", join(homeDir, "ignored-home"));
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("verify watchdog: compaction routing check is unknown");
+    expect(out).toContain(`active OpenClaw config (${configPath}) is missing`);
+    expect(out).toContain("status=unknown");
+    expect(out).not.toContain("compaction model watchdog alert (verify)");
+  });
+
   it("does not let unsupported per-agent compaction keys suppress strong-model warnings", async () => {
     homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-unsupported-agent-"));
     const openclawDir = join(homeDir, ".openclaw");

@@ -60,7 +60,9 @@ function emitCompactionModelWatchdogAlert(
   const identity = resolveCompactionHookIdentity(opts?.event, opts?.hookCtx, api.context);
   const scopeNote = describeCompactionFallbackScope(identity);
   let selection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-defaults-primary" });
-  if (existsSync(configPath)) {
+  if (!existsSync(configPath)) {
+    selectionUnknownReason = `config file not found at ${configPath}`;
+  } else {
     try {
       const root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
       selection = resolveCompactionModelSelection(root, { fallbackPolicy: "inherit-defaults-primary" });
