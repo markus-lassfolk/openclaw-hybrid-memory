@@ -904,3 +904,38 @@ describe("migrateEmbeddings — rate-limit handling (#940)", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("batch rate-limited"));
   }, 15_000);
 });
+
+describe("migrateEmbeddings — checkpoint resume", () => {
+  it("resumes from checkpoint offset and clears checkpoint on success", async () => {
+    const facts = Array.from({ length: 6 }, (_, i) => makeFact(`cp-${i}`));
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB();
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn(async (texts: string[]) => texts.map(() => Array(1536).fill(0.2))),
+    });
+    const save = vi.fn();
+    const clear = vi.fn();
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 2,
+      checkpoint: {
+        load: () => ({ offset: 2 }),
+        save: (state) => save(state),
+        clear,
+      },
+      logger: silentLogger(),
+    });
+
+    expect(result.total).toBe(6);
+    expect(result.processed).toBe(4);
+    expect(result.migrated).toBe(4);
+    expect(result.aborted).toBe(false);
+    expect(embeddings.embedBatch).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalled();
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 6, total: 6 }));
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+});
