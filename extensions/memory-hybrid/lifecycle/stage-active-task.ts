@@ -78,7 +78,7 @@ export function registerActiveTaskInjection(
               sessionKey ?? undefined,
             );
             if (writeResult.skipped) {
-              api.logger.debug?.(`memory-hybrid: skipped long-running task auto-registration: ${writeResult.reason}`);
+              api.logger?.debug?.(`memory-hybrid: skipped long-running task auto-registration: ${writeResult.reason}`);
             } else {
               activeForInjection = updated;
               autoCreated = true;
