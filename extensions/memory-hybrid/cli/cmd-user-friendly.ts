@@ -6,7 +6,7 @@ import type { Command } from "commander";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import type { Embeddings } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import { registerDemoCommand } from "./cmd-demo.js";
 import { registerDoctorCommand } from "./cmd-doctor.js";
 import { registerExamplesCommand } from "./cmd-examples.js";
@@ -18,7 +18,7 @@ export interface UserFriendlyContext {
 	cfg: HybridMemoryConfig;
 	factsDb: FactsDB;
 	vectorDb: VectorDB;
-	embeddings: Embeddings;
+	embeddings: EmbeddingProvider;
 }
 
 export function registerUserFriendlyCommands(

@@ -36,7 +36,7 @@ export function registerDoctorCommand(
 
 			// Check 1: Database connectivity
 			try {
-				const factCount = factsDb.countActiveFacts();
+				const factCount = factsDb.countFacts();
 				checks.push({
 					name: "SQLite Database",
 					status: "pass",
@@ -53,7 +53,8 @@ export function registerDoctorCommand(
 
 			// Check 2: Vector database
 			try {
-				const vectorCount = vectorDb.countVectors();
+				const vectorIds = await vectorDb.getAllIds();
+				const vectorCount = vectorIds.length;
 				checks.push({
 					name: "Vector Database (LanceDB)",
 					status: "pass",
@@ -108,8 +109,9 @@ export function registerDoctorCommand(
 
 			// Check 5: Database synchronization
 			try {
-				const sqliteCount = factsDb.countActiveFacts();
-				const vectorCount = vectorDb.countVectors();
+				const sqliteCount = factsDb.countFacts();
+				const vectorIds = await vectorDb.getAllIds();
+				const vectorCount = vectorIds.length;
 				const diff = Math.abs(sqliteCount - vectorCount);
 				const percentDiff = (diff / Math.max(sqliteCount, 1)) * 100;
 

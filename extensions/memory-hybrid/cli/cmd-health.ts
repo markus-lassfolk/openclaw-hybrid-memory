@@ -60,7 +60,7 @@ export function registerHealthCommand(
 
 			// Check database health
 			try {
-				const factCount = factsDb.countActiveFacts();
+				const factCount = factsDb.countFacts();
 				indicators.push({
 					name: "Database",
 					status: "good",
@@ -76,8 +76,9 @@ export function registerHealthCommand(
 
 			// Check memory size
 			try {
-				const factCount = factsDb.countActiveFacts();
-				const vectorCount = vectorDb.countVectors();
+				const factCount = factsDb.countFacts();
+				const vectorIds = await vectorDb.getAllIds();
+				const vectorCount = vectorIds.length;
 
 				if (factCount === 0) {
 					indicators.push({
@@ -108,8 +109,9 @@ export function registerHealthCommand(
 
 			// Check database sync
 			try {
-				const factCount = factsDb.countActiveFacts();
-				const vectorCount = vectorDb.countVectors();
+				const factCount = factsDb.countFacts();
+				const vectorIds = await vectorDb.getAllIds();
+				const vectorCount = vectorIds.length;
 				const diff = Math.abs(factCount - vectorCount);
 				const percentDiff = (diff / Math.max(factCount, 1)) * 100;
 
