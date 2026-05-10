@@ -127,6 +127,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     runFactsMigrations(this.liveDb);
   }
 
+  /** Filesystem path to the SQLite database file (for maintenance sidecars next to the DB). */
+  get sqlitePath(): string {
+    return this.dbPath;
+  }
+
   /**
    * Hard-startup guard for SQLite FTS5 support.
    *

@@ -65,7 +65,7 @@ Commands by category:
     backfill             Seed memory from workspace Markdown/text files
 
   Stats & query
-    stats                Show memory statistics (--efficiency for tiers/tokens)
+    stats                Show memory statistics (--efficiency adds token estimate in rich output)
     test                 Run memory diagnostics (structured/semantic/hybrid/auto-recall)
     context-audit        Report token usage per injected context source
     search <query>       Hybrid search (vector + SQL)
