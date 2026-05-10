@@ -224,14 +224,33 @@ export class PythonBridge {
 
   async shutdown(): Promise<void> {
     if (!this.proc || this.proc.killed) return;
+
+    // Clear all pending request timers before shutdown
+    for (const [, req] of this.pending) {
+      clearTimeout(req.timer);
+    }
+
+    let shutdownRaceTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       await Promise.race([
         this.send<{ ok: boolean }>("shutdown", {}, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS),
-        new Promise<void>((resolve) => setTimeout(resolve, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS)),
+        new Promise<void>((resolve) => {
+          shutdownRaceTimer = setTimeout(resolve, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS);
+        }),
       ]);
     } catch {
       // Ignore errors during shutdown
+    } finally {
+      if (shutdownRaceTimer) clearTimeout(shutdownRaceTimer);
     }
+
+    // Clear any remaining pending requests after shutdown attempt
+    for (const [, req] of this.pending) {
+      clearTimeout(req.timer);
+      req.reject(new Error("Python bridge shutting down"));
+    }
+    this.pending.clear();
+
     if (this.proc && !this.proc.killed) {
       this.proc.kill("SIGTERM");
     }
