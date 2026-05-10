@@ -55,6 +55,7 @@ import {
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../services/hybrid-mem-cron-default-job-steps.js";
 import { resolveWireApi } from "../services/model-capabilities.js";
 import { callResponsesApi } from "../services/responses-adapter.js";
+import { appendVectorLifecycleAuditEvent } from "../services/vector-lifecycle-audit.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
@@ -109,7 +110,14 @@ function getCachedFactCount(
 
 export async function runVerifyForCli(
   ctx: HandlerContext,
-  opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
+  opts: {
+    fix: boolean;
+    logFile?: string;
+    testLlm?: boolean;
+    reconcile?: boolean;
+    reconcilePolicy?: "conservative" | "balanced" | "aggressive";
+    reconcileMaxFixes?: number;
+  },
   sink: VerifyCliSink,
 ): Promise<void> {
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
@@ -247,6 +255,23 @@ export async function runVerifyForCli(
     const n = await vectorDb.count();
     lanceOk = true;
     log(`${OK} LanceDB: OK (${resolvedLancePath}, ${n} vectors)`);
+    const degradedState =
+      typeof (vectorDb as { getDegradedState?: unknown }).getDegradedState === "function"
+        ? (
+            vectorDb as {
+              getDegradedState: () => { active: boolean; reason: string | null; sinceEpochMs: number | null };
+            }
+          ).getDegradedState()
+        : { active: false, reason: null as string | null, sinceEpochMs: null as number | null };
+    if (degradedState.active) {
+      const WARN = noEmoji ? "[WARN]" : "⚠️";
+      log(
+        `${WARN} LanceDB degraded mode is active${degradedState.reason ? ` (reason=${degradedState.reason})` : ""}. Use 'openclaw hybrid-mem repair-vectors' after connectivity/config fixes.`,
+      );
+      warnings.push(
+        `LanceDB degraded mode active${degradedState.reason ? ` (${degradedState.reason})` : ""}; vector retrieval may be unavailable`,
+      );
+    }
   } catch (e) {
     const msg = String(e);
     issues.push(`LanceDB: ${msg}`);
@@ -1737,6 +1762,14 @@ export async function runVerifyForCli(
       allOk = false;
     } else {
       try {
+        const reconcilePolicy = opts.reconcilePolicy ?? "balanced";
+        const reconcileMaxFixes = Math.max(0, Math.min(5000, opts.reconcileMaxFixes ?? 200));
+        const sqliteOrphanRebuildBudget =
+          reconcilePolicy === "conservative"
+            ? 0
+            : reconcilePolicy === "balanced"
+              ? reconcileMaxFixes
+              : Math.max(reconcileMaxFixes, 2000);
         const sqliteIds = new Set(factsDb.getAllIds());
         const vectorIds = await vectorDb.getAllIds();
 
@@ -1778,9 +1811,59 @@ export async function runVerifyForCli(
             log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
             sqliteOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
             if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
-            log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
+            if (opts.fix && sqliteOrphanRebuildBudget > 0) {
+              let rebuilt = 0;
+              let failed = 0;
+              for (const id of sqliteOrphans.slice(0, sqliteOrphanRebuildBudget)) {
+                try {
+                  const fact = factsDb.getById(id);
+                  if (!fact) {
+                    failed++;
+                    continue;
+                  }
+                  const vec = await embeddings.embed(fact.text);
+                  await vectorDb.store({
+                    id: fact.id,
+                    text: fact.text,
+                    vector: vec,
+                    importance: fact.importance ?? 0.5,
+                    category: fact.category,
+                  });
+                  rebuilt++;
+                } catch {
+                  failed++;
+                }
+              }
+              log(
+                `  → Rebuild policy=${reconcilePolicy}: rebuilt ${rebuilt}/${Math.min(sqliteOrphans.length, sqliteOrphanRebuildBudget)} SQLite orphan vector(s)${failed > 0 ? ` (${failed} failed)` : ""}.`,
+              );
+              if (sqliteOrphans.length > sqliteOrphanRebuildBudget) {
+                log(
+                  `  → Skipped ${sqliteOrphans.length - sqliteOrphanRebuildBudget} SQLite orphan(s) due to --reconcile-max-fixes budget.`,
+                );
+              }
+            } else if (opts.fix && sqliteOrphanRebuildBudget === 0) {
+              log(
+                `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,
+              );
+            } else {
+              log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
+            }
             issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
           }
+        }
+        if (resolvedSqlitePath) {
+          appendVectorLifecycleAuditEvent(resolvedSqlitePath, {
+            event: "reconcile_completed",
+            ts: new Date().toISOString(),
+            details: {
+              fix: opts.fix,
+              reconcilePolicy,
+              reconcileMaxFixes,
+              vectorOrphans: vectorOrphans.length,
+              sqliteOrphans: sqliteOrphans.length,
+            },
+          });
         }
       } catch (e) {
         log(`${FAIL} Reconciliation: FAIL — ${String(e)}`);
