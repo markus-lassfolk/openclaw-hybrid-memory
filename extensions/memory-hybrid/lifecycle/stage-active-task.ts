@@ -67,6 +67,8 @@ export function registerActiveTaskInjection(
         if (!alreadyActive && shouldAutoRegisterLongRunningTask(longRunningMode, sessionKey)) {
           if (ctx.cfg.activeTask.ledger === "facts") {
             await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, draft, api.logger);
+            activeForInjection = upsertTask(activeForInjection, draft, true);
+            autoCreated = true;
           } else {
             const updated = upsertTask(activeForInjection, draft, true);
             const writeResult = await writeActiveTaskFileGuarded(
@@ -81,10 +83,6 @@ export function registerActiveTaskInjection(
               activeForInjection = updated;
               autoCreated = true;
             }
-          }
-          if (ctx.cfg.activeTask.ledger === "facts") {
-            activeForInjection = upsertTask(activeForInjection, draft, true);
-            autoCreated = true;
           }
         }
 

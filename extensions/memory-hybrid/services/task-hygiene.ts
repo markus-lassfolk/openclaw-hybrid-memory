@@ -5,9 +5,10 @@
 
 import { basename } from "node:path";
 import type { ActiveTaskEntry } from "./active-task.js";
+import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
-export type LongRunningRegistrationMode = "off" | "suggest" | "confirm" | "auto_main_private";
+export type LongRunningRegistrationMode = ActiveTaskLongRunningRegistrationMode;
 
 export type LongRunningWorkflowProposal = {
   kind: LongRunningWorkflowKind;
