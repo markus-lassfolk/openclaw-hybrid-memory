@@ -395,7 +395,7 @@ export async function runEpisodicConsolidation(
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact;
     try {
-      consolidatedFact = factsDb.store({
+      const storeResult = factsDb.store({
         text: mergedText.slice(0, 500),
         category: "fact" as MemoryCategory,
         importance: 0.5,
@@ -413,6 +413,22 @@ export async function runEpisodicConsolidation(
           sourceEvents,
         }),
       });
+      consolidatedFact = storeResult.entry;
+      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+      if (storeResult.evictedFactId) {
+        try {
+          const deleted = await vectorDb.delete(storeResult.evictedFactId);
+          if (deleted) {
+            logger.info?.(
+              `memory-hybrid: dream-cycle evicted fact ${storeResult.evictedFactId}, vector deleted`,
+            );
+          }
+        } catch (evictErr) {
+          logger.warn?.(
+            `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
+          );
+        }
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
