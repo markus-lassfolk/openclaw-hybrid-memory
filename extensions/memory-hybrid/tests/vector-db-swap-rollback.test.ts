@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { rename as renameFsPath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,8 +27,7 @@ describe("VectorDB swap rollback", () => {
         if (renameCalls === 2) {
           throw new Error("injected failure on shadow->main rename");
         }
-        const fs = await import("node:fs/promises");
-        await fs.rename(fromPath, toPath);
+        await renameFsPath(fromPath, toPath);
       },
     );
 

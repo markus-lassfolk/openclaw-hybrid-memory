@@ -1460,7 +1460,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           const checkpointPath =
             opts?.checkpointFile?.trim() ||
             (ctx.resolvedSqlitePath ? defaultReindexCheckpointPath(ctx.resolvedSqlitePath) : "");
-          const resumeCheckpoint = opts?.resume === true && checkpointPath ? readReindexCheckpoint(checkpointPath) : null;
+          let resumeCheckpoint = opts?.resume === true && checkpointPath ? readReindexCheckpoint(checkpointPath) : null;
 
           // Get total facts for validation
           const totalFacts =
@@ -1478,6 +1478,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
                 console.warn(
                   `Re-index: checkpoint total (${resumeCheckpoint.total}) differs from current fact count (${totalFacts}); checkpoint will be ignored for safety.`,
                 );
+                resumeCheckpoint = null;
               }
             }
             console.log(`Re-index: creating shadow table for safe rebuild...`);
@@ -1508,7 +1509,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
               checkpoint:
                 checkpointPath.length > 0
                   ? {
-                      load: () => resumeCheckpoint && resumeCheckpoint.total === totalFacts ? { offset: resumeCheckpoint.offset } : null,
+                      load: () => (resumeCheckpoint ? { offset: resumeCheckpoint.offset } : null),
                       save: (state) => writeReindexCheckpoint(checkpointPath, state),
                       clear: () => {
                         if (existsSync(checkpointPath)) unlinkSync(checkpointPath);
