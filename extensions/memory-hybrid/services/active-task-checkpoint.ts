@@ -262,8 +262,7 @@ function projectFactCacheKey(entity: string, key: string): string {
 
 function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry> {
   const cache = new Map<string, MemoryEntry>();
-  for (const row of factsDb.getAll({ includeSuperseded: false })) {
-    if (row.category !== "project") continue;
+  for (const row of factsDb.listFactsByCategory("project", Number.MAX_SAFE_INTEGER)) {
     const entity = trimToString(row.entity);
     if (!entity) continue;
     const key = (row.key ?? "").trim();
@@ -352,7 +351,7 @@ function buildWakeMessage(args: {
   return lines.join("\n");
 }
 
-export async function scheduleActiveTaskWakeReminder(
+async function scheduleActiveTaskWakeReminder(
   input: ActiveTaskWakeScheduleInput,
 ): Promise<ActiveTaskWakeScheduleResult> {
   const openclawDir = resolveOpenclawDir(input.openclawDir);
@@ -455,7 +454,7 @@ export async function scheduleActiveTaskWakeReminder(
   };
 }
 
-export async function refreshActiveTaskProjectionFromFacts(
+async function refreshActiveTaskProjectionFromFacts(
   input: ActiveTaskProjectionRefreshInput,
 ): Promise<ActiveTaskProjectionRefreshResult> {
   if (!input.cfg.activeTask.enabled) {

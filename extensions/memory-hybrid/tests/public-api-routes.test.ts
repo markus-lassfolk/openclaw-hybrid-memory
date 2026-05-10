@@ -470,7 +470,10 @@ describe("registerPublicApiRoutes", () => {
     );
 
     const activeTasksRoute = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`)!;
-    const res = await invokeNodeHttpRoute(activeTasksRoute.handler, fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`));
+    const res = await invokeNodeHttpRoute(
+      activeTasksRoute.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`),
+    );
     expect(res.status).toBe(404);
     expect(JSON.parse(res.body).error).toBe("active_tasks_disabled");
   });
