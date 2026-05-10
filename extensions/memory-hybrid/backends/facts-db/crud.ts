@@ -102,7 +102,14 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
   const dedupe = applyDedupe(
     profile,
-    { text: entry.text, source: sourceForPolicy },
+    {
+      text: entry.text,
+      source: sourceForPolicy,
+      category: entry.category ?? null,
+      entity: entry.entity ?? null,
+      key: entry.key ?? null,
+      value: entry.value ?? null,
+    },
     {
       db: ctx.db,
       nowSec,
@@ -167,11 +174,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
   const importance = entry.importance ?? 0.5;
   const why = entry.why ?? null;
-  const entity = entry.entity ?? null;
-  const key = entry.key ?? null;
+  const entity = entry.entity?.trim() || null;
+  const key = entry.key?.trim() || null;
   const value = entry.value ?? null;
   const source = entry.source ?? "conversation";
-  const category = entry.category ?? "other";
+  const category = (entry.category?.trim() || "other").toLowerCase();
   const decayClass =
     entry.decayClass || classifyDecay(entity, key, value, entry.text, { source, category, importance });
   const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
@@ -397,13 +404,25 @@ export function hasDuplicateText(
   text: string,
   storeConfig?: StoreConfig,
   source?: string,
+  structured?: { category?: MemoryCategory | null; entity?: string | null; key?: string | null; value?: string | null },
 ): boolean {
   const nowSec = Math.floor(Date.now() / 1000);
   if (source === undefined) {
     return hasGlobalDuplicateProbe(db, text, { nowSec, fuzzyDedupe, storeConfig });
   }
   const profile = resolveDedupeProfile(source, storeConfig ?? { fuzzyDedupe });
-  const r = applyDedupe(profile, { text, source }, { db, nowSec, fuzzyDedupe });
+  const r = applyDedupe(
+    profile,
+    {
+      text,
+      source,
+      category: structured?.category ?? null,
+      entity: structured?.entity ?? null,
+      key: structured?.key ?? null,
+      value: structured?.value ?? null,
+    },
+    { db, nowSec, fuzzyDedupe },
+  );
   return r.action !== "store";
 }
 
