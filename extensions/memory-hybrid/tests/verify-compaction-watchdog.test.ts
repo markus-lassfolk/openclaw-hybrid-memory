@@ -18,14 +18,11 @@ describe("runVerifyForCli - compaction model watchdog", () => {
   function writeOpenclawFiles(compactionModel?: string): void {
     homeDir = mkdtempSync(join(tmpdir(), "oc-verify-compaction-"));
     const openclawDir = join(homeDir, ".openclaw");
-    const cronDir = join(openclawDir, "cron");
-    mkdirSync(cronDir, { recursive: true });
-
     const defaults: Record<string, unknown> = { model: { primary: "azure-foundry/gpt-5.5" } };
     if (compactionModel) defaults.compaction = { model: compactionModel };
-    const root: Record<string, unknown> = { agents: { defaults } };
-    writeFileSync(join(openclawDir, "openclaw.json"), JSON.stringify(root, null, 2), "utf-8");
-    writeFileSync(join(cronDir, "jobs.json"), JSON.stringify({ jobs: [] }, null, 2), "utf-8");
+    writeOpenclawConfigAt(join(openclawDir, "openclaw.json"), {
+      agents: { defaults },
+    });
     vi.stubEnv("HOME", homeDir);
   }
 

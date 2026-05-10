@@ -42,6 +42,24 @@ describe("compaction-model-watchdog", () => {
     expect(selection.inherited).toBe(true);
   });
 
+  it("prefers active agent-specific compaction model when agentId is provided", () => {
+    const selection = resolveCompactionModelSelection(
+      {
+        agents: {
+          defaults: { model: { primary: "azure-foundry/gpt-5.5" } },
+          list: [
+            { id: "main", compaction: { model: "minimax/MiniMax-M2.7" } },
+            { id: "worker", compaction: { model: "openai/gpt-4.1" } },
+          ],
+        },
+      },
+      { agentId: "worker", fallbackPolicy: "inherit-agent-primary" },
+    );
+    expect(selection.model).toBe("openai/gpt-4.1");
+    expect(selection.reason).toContain("agents.list[id=worker].compaction.model");
+    expect(selection.inherited).toBe(false);
+  });
+
   it("does not flag MiniMax M2.7 as too strong", () => {
     expect(isCompactionModelTooStrong("minimax/MiniMax-M2.7")).toBe(false);
     expect(isCompactionModelTooStrong("minimax/MiniMax-M2.7-highspeed")).toBe(false);

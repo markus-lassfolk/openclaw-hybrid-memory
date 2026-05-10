@@ -25,14 +25,14 @@ export type CompactionHookModelMetadata = {
   source: string;
 };
 
-function readAgentMain(root: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function readAgentById(root: Record<string, unknown> | undefined, id: string): Record<string, unknown> | undefined {
   const agents = root?.agents as Record<string, unknown> | undefined;
   const list = agents?.list;
   if (!Array.isArray(list)) return undefined;
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
     const row = entry as Record<string, unknown>;
-    if (row.id === "main") return row;
+    if (row.id === id) return row;
   }
   return undefined;
 }
@@ -86,19 +86,24 @@ export function inferCompactionProvider(model: string): string {
 
 export function resolveCompactionModelSelection(
   root: Record<string, unknown> | undefined,
-  opts?: { fallbackPolicy?: CompactionFallbackPolicy; defaultModel?: string },
+  opts?: { fallbackPolicy?: CompactionFallbackPolicy; defaultModel?: string; agentId?: string },
 ): CompactionModelSelection {
   const fallbackPolicy = opts?.fallbackPolicy ?? "default-mini";
   const defaultModel = opts?.defaultModel?.trim() || DEFAULT_COMPACTION_MODEL;
-  const mainAgent = readAgentMain(root);
+  const requestedAgentId = opts?.agentId?.trim();
+  const requestedAgent = requestedAgentId ? readAgentById(root, requestedAgentId) : undefined;
+  const mainAgent = readAgentById(root, "main");
+  const selectedAgent = requestedAgent ?? mainAgent;
   const defaults = readAgentsDefaults(root);
+  const selectedLabel =
+    requestedAgent && requestedAgentId ? `agents.list[id=${requestedAgentId}]` : "agents.list[id=main]";
 
-  const mainCompaction = readCompactionModelFromAgentBlock(mainAgent);
-  if (mainCompaction) {
+  const selectedCompaction = readCompactionModelFromAgentBlock(selectedAgent);
+  if (selectedCompaction) {
     return {
-      model: mainCompaction,
-      provider: inferCompactionProvider(mainCompaction),
-      reason: "agents.list[id=main].compaction.model explicitly set",
+      model: selectedCompaction,
+      provider: inferCompactionProvider(selectedCompaction),
+      reason: `${selectedLabel}.compaction.model explicitly set`,
       inherited: false,
     };
   }
@@ -114,12 +119,12 @@ export function resolveCompactionModelSelection(
   }
 
   if (fallbackPolicy === "inherit-agent-primary") {
-    const mainPrimary = readPrimaryModelFromAgentBlock(mainAgent);
-    if (mainPrimary) {
+    const selectedPrimary = readPrimaryModelFromAgentBlock(selectedAgent);
+    if (selectedPrimary) {
       return {
-        model: mainPrimary,
-        provider: inferCompactionProvider(mainPrimary),
-        reason: "inherited from agents.list[id=main].model.primary (compaction model unset)",
+        model: selectedPrimary,
+        provider: inferCompactionProvider(selectedPrimary),
+        reason: `inherited from ${selectedLabel}.model.primary (compaction model unset)`,
         inherited: true,
       };
     }

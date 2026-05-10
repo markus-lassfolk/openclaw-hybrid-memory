@@ -49,11 +49,18 @@ function resolveOpenclawJsonPathForCompactionWatchdog(): string {
 
 function emitCompactionModelWatchdogAlert(api: ClawdbotPluginApi, context: CompactionWatchdogContext): void {
   const configPath = resolveOpenclawJsonPathForCompactionWatchdog();
-  let selection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-agent-primary" });
+  const activeAgentId = api.context?.agentId;
+  let selection = resolveCompactionModelSelection(undefined, {
+    fallbackPolicy: "inherit-agent-primary",
+    agentId: activeAgentId,
+  });
   if (existsSync(configPath)) {
     try {
       const root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-      selection = resolveCompactionModelSelection(root, { fallbackPolicy: "inherit-agent-primary" });
+      selection = resolveCompactionModelSelection(root, {
+        fallbackPolicy: "inherit-agent-primary",
+        agentId: activeAgentId,
+      });
     } catch (err) {
       api.logger.debug?.(`memory-hybrid: ${context} watchdog — failed reading ${configPath}: ${err}`);
     }
