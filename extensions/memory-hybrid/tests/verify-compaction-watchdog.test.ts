@@ -79,9 +79,10 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
     const out = lines.join("\n");
 
-    expect(out).toContain("compaction routing uses a stronger-than-mini model");
+    expect(out).toContain("compaction model watchdog alert (verify)");
     expect(out).toContain("provider=azure-foundry, model=azure-foundry/gpt-5.5");
-    expect(out).toContain("reason=inherited from agents.defaults.model.primary");
+    expect(out).toContain("reason=GPT-5 class model");
+    expect(out).toContain("source=inherited from agents.defaults.model.primary");
   });
 
   it("does not flag explicit MiniMax M2.7 compaction model", async () => {

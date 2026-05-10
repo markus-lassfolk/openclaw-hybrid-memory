@@ -44,6 +44,7 @@ describe("compaction-model-watchdog", () => {
 
   it("does not flag MiniMax M2.7 as too strong", () => {
     expect(isCompactionModelTooStrong("minimax/MiniMax-M2.7")).toBe(false);
+    expect(isCompactionModelTooStrong("minimax/MiniMax-M2.7-highspeed")).toBe(false);
     expect(isCompactionModelTooStrong("MiniMax-M2.7")).toBe(false);
   });
 
@@ -75,5 +76,19 @@ describe("compaction-model-watchdog", () => {
       agents: { defaults: { compaction: { model: "minimax/MiniMax-M2.7" } } },
     });
     expect(buildCompactionModelWatchdogWarning(selection, { context: "after_compaction" })).toBeNull();
+  });
+
+  it("flags explicit high-tier claude sonnet/opus models", () => {
+    expect(isCompactionModelTooStrong("anthropic/claude-sonnet-4-5")).toBe(true);
+    expect(isCompactionModelTooStrong("anthropic/claude-opus-4-1")).toBe(true);
+  });
+
+  it("flags o3/o3-pro models", () => {
+    expect(isCompactionModelTooStrong("openai/o3")).toBe(true);
+    expect(isCompactionModelTooStrong("azure-foundry/o3-pro")).toBe(true);
+  });
+
+  it("flags unknown non-mini/non-nano/non-MiniMax models", () => {
+    expect(isCompactionModelTooStrong("custom-provider/smart-default")).toBe(true);
   });
 });

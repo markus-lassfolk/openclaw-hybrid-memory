@@ -12,6 +12,18 @@ export type CompactionModelSelection = {
 };
 
 export type CompactionWatchdogContext = "verify" | "before_compaction" | "after_compaction";
+export type CompactionModelStrength = {
+  tooStrong: boolean;
+  reason: string;
+  provider: string;
+  model: string;
+};
+
+export type CompactionHookModelMetadata = {
+  model: string;
+  provider: string;
+  source: string;
+};
 
 function readAgentMain(root: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   const agents = root?.agents as Record<string, unknown> | undefined;
@@ -42,6 +54,21 @@ function readPrimaryModelFromAgentBlock(agentBlock: Record<string, unknown> | un
   const primary = model?.primary;
   if (typeof primary !== "string") return undefined;
   const trimmed = primary.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readPathValue(obj: unknown, path: readonly string[]): unknown {
+  let cur: unknown = obj;
+  for (const key of path) {
+    if (!cur || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
@@ -122,7 +149,209 @@ function isExplicitMiniOrNanoLikeModel(model: string): boolean {
 
 function isMiniMaxM27(model: string): boolean {
   const lower = (model.split("/").pop() ?? model).toLowerCase();
-  return /minimax[-_]?m2\.7/.test(lower);
+  return /minimax[-_]?m2\.7(?:[-_]?high[-_]?speed)?/.test(lower);
+}
+
+function isMiniMaxFamilyModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return lower.includes("minimax");
+}
+
+function matchesHighTierCompactionFamily(model: string): string | null {
+  const lower = (model.split("/").pop() ?? model).toLowerCase();
+
+  // Explicitly requested high-tier families.
+  if (/\bgpt-5\b|\bgpt-5\.\d+\b/.test(lower)) return "GPT-5 class model";
+  if (/\bgpt-5\.4-pro\b/.test(lower)) return "gpt-5.4-pro high-tier model";
+  if (/\bpro\b|\bfull\b|high[-_]?tier|\bheavy\b|\bultra\b|\blarge\b/.test(lower)) {
+    return "pro/full/high-tier model keyword match";
+  }
+  return null;
+}
+
+function parseProviderAndModelFromText(raw: string): { provider?: string; model?: string } | null {
+  const modelMatch = raw.match(/\bmodel\s*[=:]\s*([a-z0-9._:/-]+)/i);
+  if (!modelMatch?.[1]) return null;
+  const model = modelMatch[1].trim();
+  if (!model) return null;
+  const providerMatch = raw.match(/\bprovider\s*[=:]\s*([a-z0-9._-]+)/i);
+  const provider = providerMatch?.[1]?.trim();
+  return { provider, model };
+}
+
+function extractCompactionModelMetadataFromSource(
+  sourceObj: unknown,
+  sourceName: string,
+): CompactionHookModelMetadata | null {
+  const candidatePaths: Array<{ modelPath: string[]; providerPath?: string[] }> = [
+    { modelPath: ["compaction", "model"], providerPath: ["compaction", "provider"] },
+    { modelPath: ["metadata", "compaction", "model"], providerPath: ["metadata", "compaction", "provider"] },
+    { modelPath: ["context", "compaction", "model"], providerPath: ["context", "compaction", "provider"] },
+    { modelPath: ["payload", "compaction", "model"], providerPath: ["payload", "compaction", "provider"] },
+    { modelPath: ["logMetadata", "compaction", "model"], providerPath: ["logMetadata", "compaction", "provider"] },
+    { modelPath: ["resolvedCompactionModel"], providerPath: ["resolvedCompactionProvider"] },
+    { modelPath: ["selectedCompactionModel"], providerPath: ["selectedCompactionProvider"] },
+    { modelPath: ["compactionModel"], providerPath: ["compactionProvider"] },
+    { modelPath: ["compaction_model"], providerPath: ["compaction_provider"] },
+    { modelPath: ["model"], providerPath: ["provider"] },
+  ];
+
+  for (const candidate of candidatePaths) {
+    const model = readString(readPathValue(sourceObj, candidate.modelPath));
+    if (!model) continue;
+    const provider =
+      readString(candidate.providerPath ? readPathValue(sourceObj, candidate.providerPath) : undefined) ??
+      inferCompactionProvider(model);
+    return {
+      model,
+      provider,
+      source: `${sourceName}.${candidate.modelPath.join(".")}`,
+    };
+  }
+
+  const textPaths: string[][] = [["metadata"], ["logMetadata"], ["context"], ["details"]];
+  for (const textPath of textPaths) {
+    const raw = readString(readPathValue(sourceObj, textPath));
+    if (!raw) continue;
+    const parsed = parseProviderAndModelFromText(raw);
+    if (!parsed?.model) continue;
+    return {
+      model: parsed.model,
+      provider: (parsed.provider ?? inferCompactionProvider(parsed.model)).toLowerCase(),
+      source: `${sourceName}.${textPath.join(".")} (text)`,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Best-effort extraction of compaction provider/model from hook payloads.
+ * Returns null when runtime does not expose compaction model metadata.
+ */
+export function resolveCompactionHookModelMetadata(
+  event: unknown,
+  hookCtx?: unknown,
+): CompactionHookModelMetadata | null {
+  const eventCandidate = extractCompactionModelMetadataFromSource(event, "event");
+  if (eventCandidate) return eventCandidate;
+  const hookCandidate = extractCompactionModelMetadataFromSource(hookCtx, "hookCtx");
+  if (hookCandidate) return hookCandidate;
+  return null;
+}
+
+/**
+ * Explain whether a compaction model is cost-safe. Policy:
+ * - allow MiniMax M2.7 / M2.7-highspeed
+ * - allow explicit mini/nano/lite/haiku
+ * - allow local ollama models
+ * - flag high-tier families and unknown non-mini/non-nano/non-MiniMax models
+ */
+export function classifyCompactionModelStrength(model: string): CompactionModelStrength {
+  const normalizedModel = model.trim();
+  const lowerTail = (normalizedModel.split("/").pop() ?? normalizedModel).toLowerCase();
+  const provider = inferCompactionProvider(normalizedModel);
+
+  if (!normalizedModel) {
+    return {
+      tooStrong: false,
+      reason: "model metadata unavailable",
+      provider,
+      model: normalizedModel,
+    };
+  }
+  if (provider === "ollama") {
+    return {
+      tooStrong: false,
+      reason: "local ollama model (no remote LLM cost)",
+      provider,
+      model: normalizedModel,
+    };
+  }
+  // Explicit denylist families from incident request.
+  if (/\bo3(?:[-_a-z0-9.]*)\b/.test(lowerTail)) {
+    return {
+      tooStrong: true,
+      reason: "o3 class model",
+      provider,
+      model: normalizedModel,
+    };
+  }
+  if (/\bsonnet\b|\bopus\b|\bclaude\b/.test(lowerTail)) {
+    return {
+      tooStrong: true,
+      reason: "Claude Sonnet/Opus class model",
+      provider,
+      model: normalizedModel,
+    };
+  }
+  if (isMiniMaxM27(normalizedModel)) {
+    return {
+      tooStrong: false,
+      reason: "MiniMax M2.7 allowlist",
+      provider,
+      model: normalizedModel,
+    };
+  }
+  if (isExplicitMiniOrNanoLikeModel(normalizedModel)) {
+    return {
+      tooStrong: false,
+      reason: "mini/nano allowlist",
+      provider,
+      model: normalizedModel,
+    };
+  }
+
+  const explicitHighTier = matchesHighTierCompactionFamily(normalizedModel);
+  if (explicitHighTier) {
+    return {
+      tooStrong: true,
+      reason: explicitHighTier,
+      provider,
+      model: normalizedModel,
+    };
+  }
+
+  if (isHeavyModel(normalizedModel)) {
+    return {
+      tooStrong: true,
+      reason: "heavy-tier model classification",
+      provider,
+      model: normalizedModel,
+    };
+  }
+
+  if (!isMiniMaxFamilyModel(normalizedModel)) {
+    return {
+      tooStrong: true,
+      reason: "unknown non-mini/non-nano/non-MiniMax model",
+      provider,
+      model: normalizedModel,
+    };
+  }
+
+  return {
+    tooStrong: false,
+    reason: "MiniMax provider allowlist",
+    provider,
+    model: normalizedModel,
+  };
+}
+
+/**
+ * Builds a user-visible watchdog warning string when a compaction model is too strong.
+ */
+export function buildCompactionWatchdogAlert(opts: {
+  stage: "before_compaction" | "after_compaction" | "verify";
+  model: string;
+  provider?: string;
+  source?: string;
+}): string | null {
+  const assessment = classifyCompactionModelStrength(opts.model);
+  if (!assessment.tooStrong) return null;
+  const provider = opts.provider?.trim() || assessment.provider;
+  const sourcePart = opts.source ? `, source=${opts.source}` : "";
+  return `memory-hybrid: compaction model watchdog alert (${opts.stage}) — provider=${provider}, model=${assessment.model}, reason=${assessment.reason}${sourcePart}. Prefer mini/nano compaction routing (recommended default: ${DEFAULT_COMPACTION_MODEL}).`;
 }
 
 /**
@@ -130,12 +359,7 @@ function isMiniMaxM27(model: string): boolean {
  * We intentionally do not flag MiniMax M2.7 and mini/nano models.
  */
 export function isCompactionModelTooStrong(model: string): boolean {
-  if (!model.trim()) return false;
-  const provider = inferCompactionProvider(model);
-  if (provider === "ollama") return false;
-  if (isMiniMaxM27(model)) return false;
-  if (isExplicitMiniOrNanoLikeModel(model)) return false;
-  return isHeavyModel(model);
+  return classifyCompactionModelStrength(model).tooStrong;
 }
 
 export function buildCompactionModelWatchdogWarning(

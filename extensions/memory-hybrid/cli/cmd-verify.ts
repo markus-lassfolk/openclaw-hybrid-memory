@@ -61,8 +61,8 @@ import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import { isHeavyModel } from "../utils/model-tier.js";
 import {
+  buildCompactionWatchdogAlert,
   DEFAULT_COMPACTION_MODEL,
-  buildCompactionModelWatchdogWarning,
   isCompactionModelTooStrong,
   resolveCompactionModelSelection,
 } from "../utils/compaction-model-watchdog.js";
@@ -722,11 +722,15 @@ export async function runVerifyForCli(
     );
   }
   if (isCompactionModelTooStrong(compactionSelection.model)) {
-    const watchdogWarning = buildCompactionModelWatchdogWarning(compactionSelection, {
-      context: "verify",
-      recommendedModel: DEFAULT_COMPACTION_MODEL,
-    });
-    if (watchdogWarning) warnings.push(watchdogWarning);
+    const alert =
+      buildCompactionWatchdogAlert({
+        stage: "verify",
+        model: compactionSelection.model,
+        provider: compactionSelection.provider,
+        source: compactionSelection.reason,
+      }) ??
+      `compaction routing uses a stronger-than-mini model (provider=${compactionSelection.provider}, model=${compactionSelection.model}, reason=${compactionSelection.reason}). Set agents.defaults.compaction.model (or agents.list[id=main].compaction.model) to a mini/nano model such as ${DEFAULT_COMPACTION_MODEL}.`;
+    warnings.push(alert);
   }
   const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
