@@ -257,8 +257,10 @@ export function resolveContradictionsAuto(
       continue;
     }
 
-    const resolvedNew = newFact!;
-    const resolvedOld = oldFact!;
+    // Both facts exist at this point (previous conditions handle null cases)
+    if (!newFact || !oldFact) continue;
+    const resolvedNew = newFact;
+    const resolvedOld = oldFact;
     const newConf = resolvedNew.confidence ?? 1.0;
     const oldConf = c.oldFactOriginalConfidence ?? resolvedOld.confidence ?? 1.0;
     const newIsNewer = resolvedNew.createdAt >= resolvedOld.createdAt;
