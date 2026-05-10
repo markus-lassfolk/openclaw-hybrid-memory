@@ -198,6 +198,8 @@ describe("active-task-checkpoint", () => {
     expect(result.steps.schedule.attempted).toBe(true);
     expect(result.steps.schedule.scheduled).toBe(true);
     expect(result.steps.schedule.jobId).toMatch(/^hybrid-mem:active-task-wake:[a-z0-9-]+:\d+$/);
+    expect(result.steps.schedule.scheduleKind).toBe("at");
+    expect(result.steps.schedule.scheduleAt).toBe(resumeAtDate.toISOString());
     expect(result.steps.schedule.jobsPath).toBeTruthy();
 
     const jobsPath = result.steps.schedule.jobsPath!;
@@ -205,10 +207,12 @@ describe("active-task-checkpoint", () => {
     const store = JSON.parse(raw) as { jobs?: Array<Record<string, unknown>> };
     const job = (store.jobs ?? []).find((j) => j.pluginJobId === result.steps.schedule.jobId);
     expect(job).toBeTruthy();
-    const schedule = job?.schedule as { kind?: string; expr?: string } | undefined;
-    expect(schedule?.kind).toBe("cron");
-    expect(schedule?.expr).toBe(result.steps.schedule.cronExpr);
-    expect(String(job?.message ?? "")).toContain("mkdir -p");
+    const schedule = job?.schedule as { kind?: string; at?: string } | undefined;
+    expect(schedule?.kind).toBe("at");
+    expect(schedule?.at).toBe(result.steps.schedule.scheduleAt);
+    const payload = job?.payload as { kind?: string; message?: string } | undefined;
+    expect(payload?.kind).toBe("agentTurn");
+    expect(String(payload?.message ?? "")).toContain("mkdir -p");
 
     factsDb.close();
   });
@@ -289,6 +293,75 @@ describe("active-task-checkpoint", () => {
     expect(followup.checkpoint?.owner).toBe("agent:forge");
     expect(followup.checkpoint?.next).toBe("Wait for dependency");
     expect(followup.checkpoint?.relatedSession).toBe("agent:main:session-a");
+
+    factsDb.close();
+  });
+
+  it("preserves explicitly cleared owner/next fields on follow-up checkpoints", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    const baseline = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-clear-fields",
+        status: "in_progress",
+        owner: "agent:forge",
+        next: "Initial next step",
+      },
+    );
+    expect(baseline.ok).toBe(true);
+
+    const clearFields = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-clear-fields",
+        owner: "",
+        next: "",
+      },
+    );
+    expect(clearFields.ok).toBe(true);
+    expect(clearFields.checkpoint?.owner).toBe("");
+    expect(clearFields.checkpoint?.next).toBe("");
+
+    const followup = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-clear-fields",
+        title: "Touch checkpoint",
+      },
+    );
+    expect(followup.ok).toBe(true);
+    expect(followup.checkpoint?.owner).toBe("");
+    expect(followup.checkpoint?.next).toBe("");
+
+    factsDb.close();
+  });
+
+  it("preserves terminal statuses from existing facts when status is omitted", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    factsDb.store({
+      text: "Task task-1270-terminal status: superseded",
+      category: "project",
+      importance: 0.3,
+      entity: "task-1270-terminal",
+      key: "status",
+      value: "superseded",
+      source: "conversation",
+    });
+
+    const result = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-terminal",
+        title: "Metadata only checkpoint",
+        scheduleWake: false,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.checkpoint?.status).toBe("superseded");
+    expect(latestProjectValue(factsDb, "task-1270-terminal", "status")).toBe("superseded");
 
     factsDb.close();
   });

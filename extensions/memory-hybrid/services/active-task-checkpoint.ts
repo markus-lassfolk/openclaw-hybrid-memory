@@ -81,7 +81,8 @@ export interface ActiveTaskWakeScheduleInput {
 export interface ActiveTaskWakeScheduleResult {
   scheduled: boolean;
   jobId: string;
-  cronExpr: string;
+  scheduleKind: "at";
+  scheduleAt: string;
   jobsPath: string;
   disabledPreviousJobs: number;
 }
@@ -131,7 +132,8 @@ export interface ActiveTaskCheckpointResult {
       attempted: boolean;
       scheduled: boolean;
       jobId?: string;
-      cronExpr?: string;
+      scheduleKind?: "at";
+      scheduleAt?: string;
       jobsPath?: string;
       disabledPreviousJobs?: number;
       skippedReason?: string;
@@ -168,6 +170,16 @@ function normalizeStatus(raw?: string): string | undefined {
   }
   if (value === "failed" || value === "error") return "failed";
   return undefined;
+}
+
+function normalizeExistingStatus(raw?: string): string | undefined {
+  const value = trimToString(raw);
+  if (value === undefined) return undefined;
+  const normalized = normalizeStatus(value);
+  if (normalized) return normalized;
+  const lower = value.toLowerCase();
+  if (lower === "abandoned" || lower === "superseded") return lower;
+  return lower;
 }
 
 function normalizeCheckpointInput(
@@ -256,6 +268,21 @@ function projectFactCacheKey(entity: string, key: string): string {
   return `${entity}\u0000${key}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractProjectValueFromText(text: string, key: string): string | undefined {
+  const trimmedText = text.trim();
+  if (!trimmedText) return undefined;
+  const keyPattern = escapeRegExp(key);
+  const match = trimmedText.match(new RegExp(`^Task \\[[^\\]]+\\] ${keyPattern}:\\s*(.*)$`));
+  if (match) {
+    return (match[1] ?? "").trim();
+  }
+  return trimToString(trimmedText);
+}
+
 function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry> {
   const facts = factsDb.listFactsByCategory("project", Number.MAX_SAFE_INTEGER);
   const grouped = groupProjectFactsByEntity(facts);
@@ -271,7 +298,12 @@ function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry>
 
 function getLatestProjectValue(cache: Map<string, MemoryEntry>, entity: string, key: string): string | undefined {
   const row = cache.get(projectFactCacheKey(entity, key));
-  return trimToString(row?.value) ?? trimToString(row?.text) ?? undefined;
+  if (!row) return undefined;
+  if (typeof row.value === "string") return row.value.trim();
+  if (typeof row.text === "string") {
+    return extractProjectValueFromText(row.text, key);
+  }
+  return trimToString(row.value) ?? undefined;
 }
 
 function wakeEntityKey(entity: string): string {
@@ -291,10 +323,6 @@ function resolveWorkspaceRoot(override?: string): string {
   const env = getEnv("OPENCLAW_WORKSPACE")?.trim();
   if (env) return env;
   return join(resolveOpenclawDir(), "workspace");
-}
-
-function scheduleToCronExpr(resumeAt: Date): string {
-  return `${resumeAt.getUTCMinutes()} ${resumeAt.getUTCHours()} ${resumeAt.getUTCDate()} ${resumeAt.getUTCMonth() + 1} *`;
 }
 
 function resolveCronModel(cfg: HybridMemoryConfig): string {
@@ -385,33 +413,35 @@ async function scheduleActiveTaskWakeReminder(
     }
   }
 
-  const cronExpr = scheduleToCronExpr(input.resumeAt);
   const model = resolveCronModel(input.cfg);
   const minIntervalMs = ACTIVE_TASK_WAKE_GUARD_YEARS * 365 * 24 * 60 * 60 * 1000;
   const guardJobName = `active-task-wake-${entityKey}-${resumeEpochSec}`;
-  const guardPrefix = buildGuardPrefix(guardJobName, minIntervalMs);
+  const guardPrefix = buildGuardPrefix(guardJobName, minIntervalMs, openclawDir);
 
   const job: Record<string, unknown> = {
     id: jobId,
     pluginJobId: jobId,
     name: `active-task-wake-${entitySlug}`,
     sessionTarget: "isolated",
-    schedule: { kind: "cron", expr: cronExpr },
-    channel: "system",
-    message:
-      guardPrefix +
-      buildWakeMessage({
-        entity: input.entity,
-        status: input.status,
-        owner: input.owner,
-        next: input.next,
-        relatedSession: input.relatedSession,
-        title: input.title,
-        resumeAtIso,
-        state: input.state,
-        guardYears: ACTIVE_TASK_WAKE_GUARD_YEARS,
-      }),
-    model,
+    schedule: { kind: "at", at: resumeAtIso },
+    deleteAfterRun: true,
+    payload: {
+      kind: "agentTurn",
+      message:
+        guardPrefix +
+        buildWakeMessage({
+          entity: input.entity,
+          status: input.status,
+          owner: input.owner,
+          next: input.next,
+          relatedSession: input.relatedSession,
+          title: input.title,
+          resumeAtIso,
+          state: input.state,
+          guardYears: ACTIVE_TASK_WAKE_GUARD_YEARS,
+        }),
+      model,
+    },
     delivery: { mode: "announce" },
     enabled: true,
     metadata: {
@@ -442,7 +472,8 @@ async function scheduleActiveTaskWakeReminder(
   return {
     scheduled: true,
     jobId,
-    cronExpr,
+    scheduleKind: "at",
+    scheduleAt: resumeAtIso,
     jobsPath,
     disabledPreviousJobs,
   };
@@ -475,7 +506,7 @@ function stepError(step: ActiveTaskCheckpointStep, err: unknown): ActiveTaskChec
 function outcomeFromStatus(status: string): EpisodeOutcome {
   if (status === "done") return "success";
   if (status === "failed") return "failure";
-  if (status === "cancelled") return "partial";
+  if (status === "cancelled" || status === "abandoned" || status === "superseded") return "partial";
   if (status === "blocked" || status === "waiting") return "partial";
   return "unknown";
 }
@@ -546,10 +577,8 @@ export async function runActiveTaskCheckpoint(
 
   const checkpoint = validation.normalized;
   const latestProjectFacts = buildLatestProjectFactCache(deps.factsDb);
-  const resolvedStatus =
-    checkpoint.status ??
-    normalizeStatus(getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status")) ??
-    "in_progress";
+  const existingStatus = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status");
+  const resolvedStatus = checkpoint.status ?? normalizeExistingStatus(existingStatus) ?? "in_progress";
   const resolvedOwner = checkpoint.owner ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "owner") ?? "";
   const resolvedNext = checkpoint.next ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "next") ?? "";
   const resolvedRelatedSession =
@@ -767,7 +796,8 @@ export async function runActiveTaskCheckpoint(
         attempted: wakeAttempted,
         scheduled: wakeScheduled,
         jobId: wakeResult?.jobId,
-        cronExpr: wakeResult?.cronExpr,
+        scheduleKind: wakeResult?.scheduleKind,
+        scheduleAt: wakeResult?.scheduleAt,
         jobsPath: wakeResult?.jobsPath,
         disabledPreviousJobs: wakeResult?.disabledPreviousJobs,
         skippedReason: wakeSkippedReason,
