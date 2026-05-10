@@ -522,7 +522,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     entity: string | null,
     key: string | null,
     limit = 5,
-    scope: MemoryScope = "global",
+    scope: MemoryScope | null = null,
     scopeTarget: string | null = null,
   ): MemoryEntry[] {
     return findSimilarForClassificationImpl(this.liveDb, text, entity, key, limit, scope, scopeTarget);

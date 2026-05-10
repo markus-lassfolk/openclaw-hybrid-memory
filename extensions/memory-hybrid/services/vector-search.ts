@@ -25,11 +25,15 @@ export async function findSimilarByEmbedding(
 ): Promise<MemoryEntry[]> {
   const scope = options?.scope ?? "global";
   const scopeTarget = scope === "global" ? null : (options?.scopeTarget ?? null);
-  const results = await vectorDb.search(vector, limit, minScore);
+  const searchLimit = Math.min(Math.max(limit * 4, limit), 200);
+  const results = await vectorDb.search(vector, searchLimit, minScore);
   const entries: MemoryEntry[] = [];
   for (const r of results) {
     const entry = factsDb.getById(r.entry.id);
-    if (entry && entry.supersededAt == null && matchesExactScope(entry, scope, scopeTarget)) entries.push(entry);
+    if (entry && entry.supersededAt == null && matchesExactScope(entry, scope, scopeTarget)) {
+      entries.push(entry);
+      if (entries.length >= limit) break;
+    }
   }
   return entries;
 }

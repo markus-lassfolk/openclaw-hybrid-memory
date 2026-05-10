@@ -188,6 +188,10 @@ export async function runStoreForCli(
               });
               return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
             }
+            return {
+              outcome: "noop",
+              reason: `blocked delete target ${classification.targetId} due to scope/candidate validation`,
+            };
           }
           if (classification.action === "UPDATE" && classification.targetId) {
             const oldFact = validateScopedClassificationTarget({
@@ -248,6 +252,10 @@ export async function runStoreForCli(
                 reason: classification.reason ?? "",
               };
             }
+            return {
+              outcome: "noop",
+              reason: `blocked update target ${classification.targetId} due to scope/candidate validation`,
+            };
           }
         } catch (err) {
           log.warn(`memory-hybrid: CLI store classification failed: ${err}`);

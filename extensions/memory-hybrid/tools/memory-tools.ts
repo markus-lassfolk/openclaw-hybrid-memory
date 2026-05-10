@@ -1934,6 +1934,15 @@ export function registerMemoryTools(
                     details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
                   };
                 }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Blocked delete target ${classification.targetId}: failed scope/candidate validation.`,
+                    },
+                  ],
+                  details: { action: "noop", reason: "blocked-delete-target-validation" },
+                };
               }
 
               if (classification.action === "UPDATE" && classification.targetId) {
@@ -2075,6 +2084,15 @@ export function registerMemoryTools(
                     },
                   };
                 }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Blocked update target ${classification.targetId}: failed scope/candidate validation.`,
+                    },
+                  ],
+                  details: { action: "noop", reason: "blocked-update-target-validation" },
+                };
               }
               // action === "ADD" falls through to normal store
             }
@@ -2314,11 +2332,15 @@ export function registerMemoryTools(
           // Auto-link to similar facts when enabled
           let autoLinked = 0;
           if (cfg.graph.enabled && cfg.graph.autoLink) {
+            const entryScope = entry.scope ?? "global";
+            const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
             const similar = factsDb.findSimilarForClassification(
               textToStore,
               entity ?? null,
               key ?? null,
               cfg.graph.autoLinkLimit,
+              entryScope,
+              entryScopeTarget,
             );
             for (const s of similar) {
               if (s.id === entry.id) continue;

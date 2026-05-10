@@ -44,15 +44,19 @@ export function findSimilarForClassification(
   entity: string | null,
   key: string | null,
   limit = 5,
-  scope: MemoryScope = "global",
+  scope: MemoryScope | null = null,
   scopeTarget: string | null = null,
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const results: MemoryEntry[] = [];
   const safeScopeTarget = scope === "global" ? null : scopeTarget;
   const scopeSql =
-    scope === "global" ? " AND COALESCE(scope, 'global') = 'global'" : " AND scope = ? AND scope_target = ?";
-  const scopeParams: SQLInputValue[] = scope === "global" ? [] : [scope, safeScopeTarget];
+    scope === null
+      ? ""
+      : scope === "global"
+        ? " AND COALESCE(scope, 'global') = 'global'"
+        : " AND scope = ? AND scope_target = ?";
+  const scopeParams: SQLInputValue[] = scope === null || scope === "global" ? [] : [scope, safeScopeTarget];
 
   if (entity && key) {
     const rows = db
