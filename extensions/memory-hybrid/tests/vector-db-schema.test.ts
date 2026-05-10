@@ -843,6 +843,58 @@ describe("VectorDB write conflict retries (#reembed-vectorless)", () => {
     }
   });
 
+  it("serializes concurrent delete() and store() on the same fact id", async () => {
+    const db = new VectorDB(`/tmp/test-lance-delete-store-lock-${randomUUID()}`, DIM);
+    (db as unknown as { table: object }).table = {};
+    vi.spyOn(db as unknown as { ensureInitialized: () => Promise<void> }, "ensureInitialized").mockResolvedValue(
+      undefined,
+    );
+
+    let resolveDelete: (() => void) | undefined;
+    let markDeleteStarted: (() => void) | undefined;
+    const deleteStarted = new Promise<void>((resolve) => {
+      markDeleteStarted = resolve;
+    });
+    const deleteGate = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+
+    const callOrder: string[] = [];
+    const del = vi.fn<() => Promise<void>>().mockImplementation(async () => {
+      callOrder.push("delete-start");
+      markDeleteStarted?.();
+      await deleteGate;
+      callOrder.push("delete-end");
+    });
+    const add = vi.fn<() => Promise<void>>().mockImplementation(async () => {
+      callOrder.push("store-add");
+    });
+    vi.spyOn(db as unknown as { getTable: () => { add: typeof add; delete: typeof del } }, "getTable").mockReturnValue({
+      add,
+      delete: del,
+    });
+
+    const factId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const deletePromise = db.delete(factId);
+    await deleteStarted;
+
+    const storePromise = db.store({
+      id: factId,
+      text: "locked write",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.5,
+      category: "fact",
+    });
+
+    await Promise.resolve();
+    expect(add).not.toHaveBeenCalled();
+
+    resolveDelete?.();
+    await expect(deletePromise).resolves.toBe(true);
+    await expect(storePromise).resolves.toBe(factId);
+    expect(callOrder).toEqual(["delete-start", "delete-end", "store-add"]);
+  });
+
   it("still attempts delete() when a background auto-optimize promise rejects", async () => {
     const db = new VectorDB(`/tmp/test-lance-delete-optimize-failure-${randomUUID()}`, DIM);
     (db as unknown as { table: object }).table = {};

@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { findPluginRoot } from "../utils/plugin-root.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { clearRuntimeTimers } from "../api/plugin-runtime.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -12,10 +12,8 @@ import type { IssueStore } from "../backends/issue-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
@@ -43,10 +41,12 @@ import {
   deleteVectorsForFactIds,
   storeCanonicalVectorForFact,
 } from "../services/vector-maintenance.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   type VersionCheckCacheEntry,
   fetchLatestPublishedVersion,
@@ -444,7 +444,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                         lastError = err instanceof Error ? err : new Error(String(err));
                         retryCount++;
                         if (retryCount < maxRetries) {
-                          const backoffMs = 100 * Math.pow(2, retryCount - 1);
+                          const backoffMs = 100 * 2 ** (retryCount - 1);
                           api.logger.warn(
                             `memory-hybrid: WAL recovery vector re-store attempt ${retryCount} failed, retrying in ${backoffMs}ms: ${err}`,
                           );

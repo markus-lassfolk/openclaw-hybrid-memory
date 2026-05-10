@@ -251,8 +251,10 @@ export class VectorDB {
     }
 
     // Create a new lock promise for this operation
-    let resolve: () => void;
-    const lockPromise = new Promise<void>((r) => { resolve = r; });
+    let resolve: (() => void) | undefined;
+    const lockPromise = new Promise<void>((r) => {
+      resolve = r;
+    });
     this.perFactIdLocks.set(factId, lockPromise);
 
     try {
@@ -260,7 +262,7 @@ export class VectorDB {
     } finally {
       // Release the lock
       this.perFactIdLocks.delete(factId);
-      resolve!();
+      resolve?.();
     }
   }
 
@@ -1712,8 +1714,10 @@ export class VectorDB {
           );
         }
       }
-      await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
-        await this.getTable().delete(`id = '${normalizedId}'`);
+      await this.withFactIdLock(normalizedId, async () => {
+        await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
+          await this.getTable().delete(`id = '${normalizedId}'`);
+        });
       });
       return true;
     } catch (err) {
