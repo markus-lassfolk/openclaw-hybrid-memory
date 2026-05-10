@@ -1611,17 +1611,17 @@ export function registerMemoryTools(
             }
           };
 
-          if (factsDb.hasDuplicate(textToStore, "conversation")) {
+          const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
+          const entity = paramEntity || extracted.entity;
+          const key = paramKey || extracted.key;
+          const value = paramValue || extracted.value;
+
+          if (factsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {
               content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },
             };
           }
-
-          const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
-          const entity = paramEntity || extracted.entity;
-          const key = paramKey || extracted.key;
-          const value = paramValue || extracted.value;
 
           // FR-006: Compute scope early so it's available for classify-before-write UPDATE path; normal path may overwrite with multiAgent logic below
           let scope: "global" | "user" | "agent" | "session" = paramScope ?? "global";
