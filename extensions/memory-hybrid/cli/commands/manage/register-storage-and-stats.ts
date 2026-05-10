@@ -12,6 +12,7 @@ import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-s
 import { runContextAudit } from "../../../services/context-audit.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
@@ -30,27 +31,6 @@ import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
 export const IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP = 20_000;
-
-/**
- * Record a maintenance command run timestamp to the memory directory.
- * Similar to runRecordDistillForCli but generic for any maintenance command.
- */
-function recordMaintenanceTimestamp(resolvedSqlitePath: string, filename: string): void {
-  const memoryDir = dirname(resolvedSqlitePath);
-  mkdirSync(memoryDir, { recursive: true });
-  const path = join(memoryDir, filename);
-  const ts = new Date().toISOString();
-  try {
-    writeFileSync(path, `${ts}\n`, "utf-8");
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "cli",
-      operation: "recordMaintenanceTimestamp",
-      severity: "info",
-    });
-    // Non-fatal: don't throw, just log the error
-  }
-}
 
 type ReindexCheckpoint = {
   offset: number;
@@ -932,7 +912,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   mem
     .command("vectordb-optimize")
-    .description("Compact LanceDB fragments and prune old versions to reclaim disk space and reduce memory usage")
+    .description(
+      "Compact LanceDB fragments and prune old versions (stats.freedBytes may be 0 while layout still improves). " +
+        "Disk size in `stats` is the whole Lance directory — remove stray `memories_reindex_*` / `memories_old_*` folders after a failed re-index swap if present.",
+    )
     .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
     .action(
       withExit(async (opts?: { olderThanDays?: string }) => {
@@ -994,7 +977,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .description(
       "Show memory statistics. Rich output includes procedures, rules, patterns, directives, graph, and operational info. Use --efficiency for tiers, sources, and token estimates.",
     )
-    .option("--efficiency", "Show tier/source breakdown, estimated tokens, and token-savings note")
+    .option(
+      "--efficiency",
+      "Add estimated stored tokens and a short note (rich mode); without rich stats, prints a compact efficiency-only report",
+    )
     .option("--brief", "Show only storage and decay counts (legacy-style)")
     .action(
       withExit(async (opts?: { efficiency?: boolean; brief?: boolean }) => {
@@ -1211,6 +1197,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             console.log(`SQLite bytes per active fact: ${bytesPerFact.toFixed(0)}`);
           }
           if (sizes.sqliteBytes != null || sizes.lanceBytes != null) console.log("");
+          if (efficiency) {
+            const estimatedTokens = factsDb.estimateStoredTokens();
+            console.log("--- Efficiency (token estimate) ---");
+            console.log(`Estimated stored tokens (all active tiers): ~${estimatedTokens}`);
+            console.log("Note: Tiering and context scoping reduce tokens in the LLM vs raw store size.");
+            console.log("");
+          }
           if (cronJobs.length > 0) {
             const nowMs = Date.now();
             const dayMs = 86_400_000;
