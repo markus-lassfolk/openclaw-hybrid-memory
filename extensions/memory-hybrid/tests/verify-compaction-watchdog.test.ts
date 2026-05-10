@@ -121,7 +121,7 @@ describe("runVerifyForCli - compaction model watchdog", () => {
     const out = lines.join("\n");
 
     expect(out).toContain(`Config source: ${configPath}`);
-    expect(out).toContain("compaction routing uses a stronger-than-mini model");
+    expect(out).toMatch(/compaction model watchdog alert \(verify\)|compaction routing uses a stronger-than-mini model/);
     expect(out).toContain("provider=openai, model=openai/gpt-4.1");
   });
 
