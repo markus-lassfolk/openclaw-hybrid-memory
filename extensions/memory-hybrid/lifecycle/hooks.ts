@@ -26,7 +26,11 @@ import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
-import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
+import {
+  formatPreFinalizationGuardMessage,
+  evaluatePreFinalizationGuard,
+  PreFinalizationGuardBlockingError,
+} from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -128,10 +132,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 signals: guard.signals,
               },
             });
-            throw new Error(`memory-hybrid: ${guardMessage}`);
+            throw new PreFinalizationGuardBlockingError(`memory-hybrid: ${guardMessage}`);
           }
         } catch (err) {
-          if (err instanceof Error && err.message.startsWith("memory-hybrid: pre-finalization guard: blocking")) {
+          if (err instanceof PreFinalizationGuardBlockingError) {
             throw err;
           }
           api.logger.debug?.(`memory-hybrid: pre-finalization guard skipped (non-fatal): ${String(err)}`);

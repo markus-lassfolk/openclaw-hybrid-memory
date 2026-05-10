@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  CHECKPOINT_GUARD_BYPASS_PREFIX,
-  evaluatePreFinalizationGuard,
-} from "../services/pre-finalization-guard.js";
+import { CHECKPOINT_GUARD_BYPASS_PREFIX, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const NOW_ISO = "2026-05-10T08:31:00.000Z";
@@ -119,7 +116,10 @@ describe("pre-finalization guard", () => {
   it("allows explicit bypass with a short reason", () => {
     const messages: unknown[] = [
       { role: "user", content: "Quick status only." },
-      { role: "assistant", content: `CI is still pending. ${CHECKPOINT_GUARD_BYPASS_PREFIX} user requested quick one-off.` },
+      {
+        role: "assistant",
+        content: `CI is still pending. ${CHECKPOINT_GUARD_BYPASS_PREFIX} user requested quick one-off.`,
+      },
     ];
 
     const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
