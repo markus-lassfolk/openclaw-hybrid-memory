@@ -65,7 +65,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { parseDuration } from "../utils/duration.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { getEnv } from "../utils/env-manager.js";
-import { resolveWorkspaceRoot, resolveWorkspacePath } from "../utils/path.js";
+import { resolveWorkspacePath } from "../utils/path.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 
@@ -303,7 +303,6 @@ export function registerMemoryTools(
     }
   }
 
-  const workspaceRoot = resolveWorkspaceRoot();
   const activeTaskProjectionPath = resolveWorkspacePath(cfg.activeTask.filePath);
   const activeTaskStaleMinutes = (() => {
     try {

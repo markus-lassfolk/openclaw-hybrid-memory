@@ -91,9 +91,12 @@ function resolveActiveTaskConfig(cfg: PublicApiConfig): ActiveTaskConfigSubset {
   return {
     enabled: raw.enabled !== false,
     ledger: raw.ledger === "facts" ? "facts" : "markdown",
-    filePath: typeof raw.filePath === "string" && raw.filePath.trim().length > 0 ? raw.filePath.trim() : "ACTIVE-TASKS.md",
+    filePath:
+      typeof raw.filePath === "string" && raw.filePath.trim().length > 0 ? raw.filePath.trim() : "ACTIVE-TASKS.md",
     staleThreshold:
-      typeof raw.staleThreshold === "string" && raw.staleThreshold.trim().length > 0 ? raw.staleThreshold.trim() : "24h",
+      typeof raw.staleThreshold === "string" && raw.staleThreshold.trim().length > 0
+        ? raw.staleThreshold.trim()
+        : "24h",
     projection:
       raw.projection && typeof raw.projection === "object"
         ? { ...DEFAULT_ACTIVE_TASK_PROJECTION, ...raw.projection }

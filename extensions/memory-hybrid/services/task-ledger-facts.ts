@@ -286,7 +286,7 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
   await rm(getActiveTaskProjectionStaleMarkerPath(filePath), { force: true });
 }
 
-export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, factLimit = 8000): number | null {
+export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB): number | null {
   return factsDb.getMaxCreatedAtByCategory(TASK_LEDGER_CATEGORY);
 }
 
@@ -298,11 +298,10 @@ function toIsoOrNull(unixSeconds: number | null): string | null {
 export async function getActiveTaskProjectionStatus(
   factsDb: FactsDB,
   filePath: string,
-  factLimit = 8000,
 ): Promise<ActiveTaskProjectionStatus> {
   const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
   const marker = await readActiveTaskProjectionStaleMarker(filePath);
-  const latestProjectFactSec = getLatestProjectFactCreatedAtSec(factsDb, factLimit);
+  const latestProjectFactSec = getLatestProjectFactCreatedAtSec(factsDb);
   const latestProjectFactAt = toIsoOrNull(latestProjectFactSec);
 
   let exists = false;
