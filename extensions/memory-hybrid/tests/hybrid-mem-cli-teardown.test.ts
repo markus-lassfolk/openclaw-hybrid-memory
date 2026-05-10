@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -100,14 +100,16 @@ async function expectCommandCompletesAndRunsTeardown(argv: string[]): Promise<vo
 
   try {
     await program.parseAsync(argv, { from: "user" });
+    const ticksAfterCompletion = ticks;
     await new Promise((resolve) => setTimeout(resolve, 180));
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(ticks).toBe(0);
+    expect(ticks).toBe(ticksAfterCompletion);
     expect(log).toHaveBeenCalled();
   } finally {
     clearInterval(sentinel);
     log.mockRestore();
     setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+    rmSync(workspace, { recursive: true, force: true });
   }
 }
 

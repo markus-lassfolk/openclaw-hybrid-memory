@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearRuntimeTimers, createTimers } from "../api/plugin-runtime.js";
 
 describe("clearRuntimeTimers", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("clears all interval/timeout refs and prevents queued callbacks from firing", async () => {
     const timers = createTimers();
     let fired = 0;
@@ -35,7 +43,7 @@ describe("clearRuntimeTimers", () => {
     }, 100);
 
     clearRuntimeTimers(timers);
-    await new Promise((resolve) => setTimeout(resolve, 160));
+    await vi.advanceTimersByTimeAsync(160);
 
     expect(fired).toBe(0);
     expect(timers.pruneTimer.value).toBeNull();
