@@ -34,13 +34,21 @@ function strengthenHebbianLinks(
   if (pairs.length === 0) return;
   setImmediate(() => {
     try {
+      // Check database connection before deferred operation to prevent race condition during shutdown (#1288)
+      if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) {
+        return;
+      }
       factsDb.strengthenRelatedLinksBatch(pairs);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "hebbian-strengthen",
-        subsystem: "stage-injection",
-      });
-      logger.warn(`memory-hybrid: hebbian link strengthening failed: ${err}`);
+      const e = err instanceof Error ? err : new Error(String(err));
+      // Expected when the plugin is shutting down or the database closed mid-operation
+      if (!/database connection is not open/i.test(e.message)) {
+        capturePluginError(e, {
+          operation: "hebbian-strengthen",
+          subsystem: "stage-injection",
+        });
+        logger.warn(`memory-hybrid: hebbian link strengthening failed: ${err}`);
+      }
     }
   });
 }
