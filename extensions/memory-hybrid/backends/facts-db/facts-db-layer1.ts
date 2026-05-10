@@ -14,6 +14,7 @@ import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
 import {
   type StoreFactInput,
+  type StoreFactResult,
   deleteFact,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
@@ -229,6 +230,22 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       suppressVectorFallbackWarning?: boolean;
     },
   ): MemoryEntry {
+    return this.storeWithResult(entry, options).entry;
+  }
+
+  storeWithResult(
+    entry: StoreFactInput,
+    options?: {
+      vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
+      /**
+       * Namespace for warn-once keys when store dedupe falls back to lexical-only because
+       * no `vectorCandidates` were provided (e.g. "reflection", "extract-directives").
+       */
+      warnContext?: string;
+      /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
+      suppressVectorFallbackWarning?: boolean;
+    },
+  ): StoreFactResult {
     const warnOnce = (key: string, message: string): void => {
       if (this.storeDedupeWarnedKeys.has(key)) return;
       this.storeDedupeWarnedKeys.add(key);

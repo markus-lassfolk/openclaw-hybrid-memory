@@ -26,12 +26,13 @@ import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { extractTags } from "../utils/tags.js";
 import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
-import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -165,7 +166,7 @@ async function runCapture(
           modelTag: humCfg.modelTag,
           skillTag: humCfg.skillTag,
         });
-        await ctx.factsDb.store({
+        const storeResult = ctx.factsDb.storeWithResult({
           text: entryText,
           category: "quality_loop",
           importance: 0.6,
@@ -174,6 +175,12 @@ async function runCapture(
           value: null,
           source: "humanizer",
           decayClass: "normal",
+        });
+        await cleanupEvictedVector({
+          vectorDb: ctx.vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: api.logger,
+          context: "humanizer-score",
         });
         api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
@@ -239,7 +246,7 @@ async function runCapture(
       const captureProvenance = resolveCaptureProvenance(event, api, sessionKey);
       if (!captureProvenance.shouldAutoCapture) {
         api.logger.debug?.(
-          `memory-hybrid: skipped auto-capture for ${captureProvenance.origin} session (${captureProvenance.reason ?? "provenance blocked"})`,
+          `memory-hybrid: skipped conversational auto-capture for ${captureProvenance.origin} session (${captureProvenance.reason ?? "provenance blocked"})`,
         );
       }
 
@@ -429,7 +436,7 @@ async function runCapture(
                       classification.targetId,
                     );
                     const nowSec = Math.floor(Date.now() / 1000);
-                    const newEntry = ctx.factsDb.store({
+                    const storeResult = ctx.factsDb.storeWithResult({
                       text: textToStore,
                       category,
                       importance: finalImportance,
@@ -446,6 +453,14 @@ async function runCapture(
                       sourceTurn: candidate.sourceTurn,
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
+                    });
+                    const newEntry = storeResult.entry;
+                    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                    await cleanupEvictedVector({
+                      vectorDb: ctx.vectorDb,
+                      evictedFactId: storeResult.evictedFactId,
+                      logger: api.logger,
+                      context: "stage-capture",
                     });
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
@@ -801,7 +816,7 @@ async function runCapture(
               }
             } else {
               const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
-              const entry = ctx.factsDb.store({
+              const storeResult = ctx.factsDb.storeWithResult({
                 text,
                 category: "technical" as MemoryCategory,
                 importance: 0.9,
@@ -811,6 +826,14 @@ async function runCapture(
                 source: "conversation",
                 decayClass: "permanent",
                 tags: ["auth", "credential"],
+              });
+              const entry = storeResult.entry;
+              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+              await cleanupEvictedVector({
+                vectorDb: ctx.vectorDb,
+                evictedFactId: storeResult.evictedFactId,
+                logger: api.logger,
+                context: "stage-capture",
               });
               if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {

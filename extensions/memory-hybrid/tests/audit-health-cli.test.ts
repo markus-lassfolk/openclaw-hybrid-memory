@@ -76,6 +76,19 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
       activeFacts: expect.any(Number),
       ratio: expect.any(Number),
     });
+    expect(report.vectorIntegrity).toMatchObject({
+      score: expect.any(Number),
+      degraded: expect.any(Boolean),
+      vectorlessRatio: expect.any(Number),
+      orphanSignals: expect.any(Object),
+    });
+    expect(
+      report.vectorIntegrity.degradedReason === null || typeof report.vectorIntegrity.degradedReason === "string",
+    ).toBe(true);
+    expect(report.vectorLifecycleSlo).toMatchObject({
+      targets: expect.any(Object),
+      breaches: expect.any(Array),
+    });
     expect(Array.isArray(report.categories.unknown)).toBe(true);
     expect(report.categories).toMatchObject({
       configured: expect.any(Array),

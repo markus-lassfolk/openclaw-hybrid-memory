@@ -32,6 +32,7 @@ import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants (self-correction-specific)
@@ -337,7 +338,7 @@ export async function runSelfCorrectionRunForCli(
         }
         if (opts.dryRun) continue;
         try {
-          const entry = factsDb.store({
+          const storeResult = factsDb.storeWithResult({
             text,
             category: "technical",
             importance: CLI_STORE_IMPORTANCE,
@@ -346,6 +347,14 @@ export async function runSelfCorrectionRunForCli(
             value: text.slice(0, 200),
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
+          });
+          const entry = storeResult.entry;
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          await cleanupEvictedVector({
+            vectorDb: vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: logger,
+            context: "self-correction",
           });
           if (vector) {
             await vectorDb.store({
