@@ -817,6 +817,11 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     setImmediate(() => {
       void (async () => {
         try {
+          // Check database connection before deferred operation
+          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) {
+            return;
+          }
+
           const { execSync } = await import("node:child_process");
 
           // Check if a backup cron is already registered

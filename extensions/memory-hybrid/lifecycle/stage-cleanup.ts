@@ -299,8 +299,12 @@ export function createStaleSweepTimer(sessionState: SessionState): ReturnType<ty
   return setInterval(() => {
     try {
       sweepStaleSessions(sessionState);
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      // Suppress expected database connection errors during shutdown
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (!/database connection is not open/i.test(e.message)) {
+        // Log unexpected errors but don't crash - timer will retry on next interval
+      }
     }
   }, STALE_SWEEP_INTERVAL_MS);
 }
