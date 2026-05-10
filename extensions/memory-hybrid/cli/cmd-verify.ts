@@ -63,7 +63,11 @@ import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
-import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
+import {
+  ensureGoalStewardshipHeartbeatCronJob,
+  ensureMaintenanceCronJobs,
+  getPluginConfigFromFile,
+} from "./cmd-install.js";
 import { approxIntervalMs, relativeTime } from "./shared.js";
 import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth.js";
 
@@ -1969,6 +1973,21 @@ export async function runVerifyForCli(
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
+          if (cfg.goalStewardship.enabled && cfg.goalStewardship.heartbeatStewardship) {
+            const heartbeat = ensureGoalStewardshipHeartbeatCronJob(openclawDir, {
+              heartbeatPatterns: cfg.goalStewardship.heartbeatPatterns,
+            });
+            if (heartbeat.added) {
+              applied.push(`Added goal-stewardship-heartbeat job to ${cronStorePath}`);
+            }
+            if (heartbeat.normalized) {
+              applied.push("Normalized goal-stewardship-heartbeat job (schedule/sessionTarget/delivery/payload)");
+            }
+            if (heartbeat.skippedReason) {
+              const WARN = noEmoji ? "[WARN]" : "⚠️";
+              log(`${WARN} Goal stewardship heartbeat installer skipped: ${heartbeat.skippedReason}`);
+            }
+          }
         } catch (e) {
           log(`Could not add optional jobs to cron store: ${String(e)}`);
           capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:add-cron-jobs" });
