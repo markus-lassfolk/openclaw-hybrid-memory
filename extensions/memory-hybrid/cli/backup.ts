@@ -21,7 +21,7 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -107,7 +107,14 @@ function copyDirSync(src: string, dest: string): void {
   for (const entry of entries) {
     const srcPath = join(src, entry.name);
     const destPath = join(dest, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isSymbolicLink()) {
+      try {
+        const linkTarget = readlinkSync(srcPath);
+        symlinkSync(linkTarget, destPath);
+      } catch {
+        // skip unreadable symlink
+      }
+    } else if (entry.isDirectory()) {
       copyDirSync(srcPath, destPath);
     } else {
       try {
