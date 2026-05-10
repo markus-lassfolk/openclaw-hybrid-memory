@@ -15,9 +15,17 @@ import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
+import type { MemoryEntry, MemoryScope } from "../types/memory.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
+
+function matchesExactScope(entry: MemoryEntry, scope: MemoryScope, scopeTarget: string | null): boolean {
+  const entryScope = entry.scope ?? "global";
+  const entryScopeTarget = entry.scopeTarget ?? null;
+  if (scope === "global") return entryScope === "global";
+  return entryScope === scope && entryScopeTarget === scopeTarget;
+}
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -150,9 +158,9 @@ export async function runStoreForCli(
       capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:embed" });
     }
     if (vector) {
-      let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+      let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, { scope, scopeTarget });
       if (similarFacts.length === 0) {
-        similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5);
+        similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5, scope, scopeTarget);
       }
       if (similarFacts.length > 0) {
         try {
@@ -167,54 +175,83 @@ export async function runStoreForCli(
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
-            factsDb.supersede(classification.targetId, null);
-            aliasDb?.deleteByFactId(classification.targetId);
-            return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
+            const target = factsDb.getById(classification.targetId);
+            const allowed =
+              !!target &&
+              similarFacts.some((fact) => fact.id === classification.targetId) &&
+              matchesExactScope(target, scope, scopeTarget);
+            if (!allowed) {
+              log.warn(
+                `memory-hybrid: blocked cross-scope or unknown classification DELETE target ${classification.targetId}`,
+              );
+            } else {
+              factsDb.supersede(classification.targetId, null);
+              aliasDb?.deleteByFactId(classification.targetId);
+              await deleteVectorForFactId({
+                vectorDb: vectorDb,
+                factId: classification.targetId,
+                logger: log,
+                context: "cli-store-delete-action",
+              });
+              return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
+            }
           }
           if (classification.action === "UPDATE" && classification.targetId) {
             const oldFact = factsDb.getById(classification.targetId);
-            if (oldFact) {
-              const nowSec = Math.floor(Date.now() / 1000);
-              const storeResult = factsDb.storeWithResult({
-                text,
-                category,
-                importance: CLI_STORE_IMPORTANCE,
-                entity: entity ?? oldFact.entity,
-                key: opts.key ?? extracted.key ?? oldFact.key ?? null,
-                value: opts.value ?? extracted.value ?? oldFact.value ?? null,
-                source: "cli",
-                sourceDate,
-                tags: tags ?? extractTags(text, entity),
-                validFrom: sourceDate ?? nowSec,
-                supersedesId: classification.targetId,
-                scope,
-                scopeTarget,
-              });
-              const newEntry = storeResult.entry;
-              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-              await cleanupEvictedVector({
-                vectorDb: vectorDb,
-                evictedFactId: storeResult.evictedFactId,
-                logger: log,
-                context: "cli-store",
-              });
-              factsDb.supersede(classification.targetId, newEntry.id);
-              aliasDb?.deleteByFactId(classification.targetId);
-              try {
-                factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
-                if (!(await vectorDb.hasDuplicate(vector))) {
-                  await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
+            if (oldFact && similarFacts.some((fact) => fact.id === classification.targetId)) {
+              if (!matchesExactScope(oldFact, scope, scopeTarget)) {
+                log.warn(
+                  `memory-hybrid: blocked cross-scope classification UPDATE target ${classification.targetId}`,
+                );
+              } else {
+                const nowSec = Math.floor(Date.now() / 1000);
+                const storeResult = factsDb.storeWithResult({
+                  text,
+                  category,
+                  importance: CLI_STORE_IMPORTANCE,
+                  entity: entity ?? oldFact.entity,
+                  key: opts.key ?? extracted.key ?? oldFact.key ?? null,
+                  value: opts.value ?? extracted.value ?? oldFact.value ?? null,
+                  source: "cli",
+                  sourceDate,
+                  tags: tags ?? extractTags(text, entity),
+                  validFrom: sourceDate ?? nowSec,
+                  supersedesId: classification.targetId,
+                  scope,
+                  scopeTarget,
+                });
+                const newEntry = storeResult.entry;
+                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                await cleanupEvictedVector({
+                  vectorDb: vectorDb,
+                  evictedFactId: storeResult.evictedFactId,
+                  logger: log,
+                  context: "cli-store",
+                });
+                factsDb.supersede(classification.targetId, newEntry.id);
+                aliasDb?.deleteByFactId(classification.targetId);
+                await deleteVectorForFactId({
+                  vectorDb: vectorDb,
+                  factId: classification.targetId,
+                  logger: log,
+                  context: "cli-store-update-superseded",
+                });
+                try {
+                  factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                  if (!(await vectorDb.hasDuplicate(vector))) {
+                    await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
+                  }
+                } catch (err) {
+                  log.warn(`memory-hybrid: vector store failed: ${err}`);
+                  capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
                 }
-              } catch (err) {
-                log.warn(`memory-hybrid: vector store failed: ${err}`);
-                capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
+                return {
+                  outcome: "updated",
+                  id: newEntry.id,
+                  supersededId: classification.targetId,
+                  reason: classification.reason ?? "",
+                };
               }
-              return {
-                outcome: "updated",
-                id: newEntry.id,
-                supersededId: classification.targetId,
-                reason: classification.reason ?? "",
-              };
             }
           }
         } catch (err) {

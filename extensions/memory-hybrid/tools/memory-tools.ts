@@ -132,6 +132,13 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   return hasAllNewHelpers && !hasLegacyWal;
 }
 
+function matchesExactScope(entry: MemoryEntry, scope: "global" | "user" | "agent" | "session", scopeTarget: string | null): boolean {
+  const entryScope = entry.scope ?? "global";
+  const entryScopeTarget = entry.scopeTarget ?? null;
+  if (scope === "global") return entryScope === "global";
+  return entryScope === scope && entryScopeTarget === scopeTarget;
+}
+
 function isEdictWriteToolEnabled(): boolean {
   const raw = getEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL");
   return raw === "1" || raw?.toLowerCase() === "true";
@@ -1881,10 +1888,13 @@ export function registerMemoryTools(
           if (cfg.store.classifyBeforeWrite) {
             let similarFacts: MemoryEntry[] = [];
             if (vector) {
-              similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+              similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, {
+                scope,
+                scopeTarget,
+              });
             }
             if (similarFacts.length === 0) {
-              similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
+              similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5, scope, scopeTarget);
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
@@ -1905,25 +1915,39 @@ export function registerMemoryTools(
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
-                factsDb.supersede(classification.targetId, null);
-                aliasDb?.deleteByFactId(classification.targetId);
-                await deleteVectorForFactId({
-                  vectorDb,
-                  factId: classification.targetId,
-                  logger: api.logger,
-                  context: "store-delete-action",
-                });
-                return {
-                  content: [
-                    { type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` },
-                  ],
-                  details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
-                };
+                const target = factsDb.getById(classification.targetId);
+                const allowed =
+                  !!target &&
+                  similarFacts.some((fact) => fact.id === classification.targetId) &&
+                  matchesExactScope(target, scope, scopeTarget);
+                if (allowed) {
+                  factsDb.supersede(classification.targetId, null);
+                  aliasDb?.deleteByFactId(classification.targetId);
+                  await deleteVectorForFactId({
+                    vectorDb,
+                    factId: classification.targetId,
+                    logger: api.logger,
+                    context: "store-delete-action",
+                  });
+                  return {
+                    content: [
+                      { type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` },
+                    ],
+                    details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
+                  };
+                }
+                api.logger.warn?.(
+                  `memory-hybrid: blocked cross-scope or unknown memory_store DELETE target ${classification.targetId}`,
+                );
               }
 
               if (classification.action === "UPDATE" && classification.targetId) {
                 const oldFact = factsDb.getById(classification.targetId);
-                if (oldFact) {
+                if (
+                  oldFact &&
+                  similarFacts.some((fact) => fact.id === classification.targetId) &&
+                  matchesExactScope(oldFact, scope, scopeTarget)
+                ) {
                   const walEntryId = await walWrite(
                     "update",
                     {
@@ -2052,6 +2076,9 @@ export function registerMemoryTools(
                     },
                   };
                 }
+                api.logger.warn?.(
+                  `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
+                );
               }
               // action === "ADD" falls through to normal store
             }

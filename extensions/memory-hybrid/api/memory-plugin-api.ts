@@ -36,7 +36,7 @@ import type { PythonBridge } from "../services/python-bridge.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import type { RunReflectionFn, RunReflectionMetaFn, RunReflectionRulesFn } from "../tools/utility-tools.js";
-import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
+import type { MemoryEntry, MemoryScope, ScopeFilter } from "../types/memory.js";
 
 /** Raw WAL helpers (caller binds wal). Used by tools and lifecycle. */
 export type WalWriteFn = typeof import("../services/wal-helpers.js").walWrite;
@@ -49,6 +49,7 @@ export type FindSimilarByEmbeddingFn = (
   vector: number[],
   limit: number,
   minScore?: number,
+  options?: { scope?: MemoryScope; scopeTarget?: string | null },
 ) => Promise<MemoryEntry[]>;
 
 /** Builds scope filter for tools from user/agent/session and config. */

@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig } from "../../config.js";
-import type { MemoryEntry, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
+import type { MemoryEntry, MemoryScope, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
@@ -517,8 +517,15 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   }
 
   /** Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
-  findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
-    return findSimilarForClassificationImpl(this.liveDb, text, entity, key, limit);
+  findSimilarForClassification(
+    text: string,
+    entity: string | null,
+    key: string | null,
+    limit = 5,
+    scope: MemoryScope = "global",
+    scopeTarget: string | null = null,
+  ): MemoryEntry[] {
+    return findSimilarForClassificationImpl(this.liveDb, text, entity, key, limit, scope, scopeTarget);
   }
 
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded. */

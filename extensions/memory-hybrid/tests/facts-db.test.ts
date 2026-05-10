@@ -2380,6 +2380,38 @@ describe("FactsDB.findSimilarForClassification", () => {
     const similar = db.findSimilarForClassification("xylophone sonata", null, null);
     expect(similar.length).toBe(0);
   });
+
+  it("filters classification candidates by exact scope", () => {
+    db.store({
+      text: "Global scope fact",
+      category: "preference",
+      importance: 0.7,
+      entity: "user",
+      key: "timezone",
+      value: "UTC",
+      source: "test",
+      scope: "global",
+      scopeTarget: null,
+    });
+    db.store({
+      text: "Agent scope fact",
+      category: "preference",
+      importance: 0.7,
+      entity: "user",
+      key: "timezone",
+      value: "CET",
+      source: "test",
+      scope: "agent",
+      scopeTarget: "agent-1",
+    });
+
+    const globalOnly = db.findSimilarForClassification("timezone preference", "user", "timezone", 10, "global", null);
+    expect(globalOnly.some((f) => (f.scope ?? "global") === "agent")).toBe(false);
+
+    const agentOnly = db.findSimilarForClassification("timezone preference", "user", "timezone", 10, "agent", "agent-1");
+    expect(agentOnly.length).toBeGreaterThan(0);
+    expect(agentOnly.every((f) => f.scope === "agent" && f.scopeTarget === "agent-1")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -176,4 +176,48 @@ describe("findSimilarByEmbedding", () => {
     const similar = await findSimilarByEmbedding(vectorDb, factsDb, v, 1, 0.3);
     expect(similar.length).toBeLessThanOrEqual(1);
   });
+
+  it("filters embedding candidates by exact scope", async () => {
+    const vector = new Array(VECTOR_DIM).fill(0.02);
+    vector[0] = 0.9;
+
+    const globalEntry = factsDb.store({
+      text: "Global memory",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "scope-test",
+      value: "global",
+      source: "conversation",
+      scope: "global",
+      scopeTarget: null,
+    });
+    const agentEntry = factsDb.store({
+      text: "Agent memory",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "scope-test",
+      value: "agent",
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-1",
+    });
+
+    await vectorDb.store({ text: globalEntry.text, vector, importance: 0.8, category: "preference", id: globalEntry.id });
+    await vectorDb.store({ text: agentEntry.text, vector, importance: 0.8, category: "preference", id: agentEntry.id });
+
+    const globalOnly = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, {
+      scope: "global",
+      scopeTarget: null,
+    });
+    expect(globalOnly.some((f) => f.id === agentEntry.id)).toBe(false);
+
+    const agentOnly = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, {
+      scope: "agent",
+      scopeTarget: "agent-1",
+    });
+    expect(agentOnly.some((f) => f.id === globalEntry.id)).toBe(false);
+    expect(agentOnly.some((f) => f.id === agentEntry.id)).toBe(true);
+  });
 });

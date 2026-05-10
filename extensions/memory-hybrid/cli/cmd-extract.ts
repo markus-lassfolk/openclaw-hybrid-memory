@@ -41,7 +41,7 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, MemoryScope } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
@@ -54,6 +54,7 @@ import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type {
   ExtractDailyResult,
   ExtractDailySink,
@@ -109,6 +110,13 @@ export function getMaxMtime(filePaths: string[]): number | undefined {
     }
   }
   return maxMtime;
+}
+
+function matchesExactScope(entry: MemoryEntry, scope: MemoryScope, scopeTarget: string | null): boolean {
+  const entryScope = entry.scope ?? "global";
+  const entryScopeTarget = entry.scopeTarget ?? null;
+  if (scope === "global") return entryScope === "global";
+  return entryScope === scope && entryScopeTarget === scopeTarget;
 }
 
 /**
@@ -991,13 +999,32 @@ export async function runExtractDailyForCli(
         const { trimmed, extracted, category, storePayload, sourceDateSec, vecForStore } = c;
         if (classification.action === "NOOP") continue;
         if (classification.action === "DELETE" && classification.targetId) {
-          factsDb.supersede(classification.targetId, null);
-          aliasDb?.deleteByFactId(classification.targetId);
+          const target = factsDb.getById(classification.targetId);
+          const allowed =
+            !!target &&
+            c.similarFacts.some((fact) => fact.id === classification.targetId) &&
+            matchesExactScope(target, "global", null);
+          if (!allowed) {
+            sink.warn(`memory-hybrid: blocked cross-scope or unknown extract-daily DELETE target ${classification.targetId}`);
+          } else {
+            factsDb.supersede(classification.targetId, null);
+            aliasDb?.deleteByFactId(classification.targetId);
+            await deleteVectorForFactId({
+              vectorDb,
+              factId: classification.targetId,
+              logger: sink,
+              context: "extract-daily-delete-action",
+            });
+          }
           continue;
         }
         if (classification.action === "UPDATE" && classification.targetId) {
           const oldFact = factsDb.getById(classification.targetId);
-          if (oldFact) {
+          if (oldFact && c.similarFacts.some((fact) => fact.id === classification.targetId)) {
+            if (!matchesExactScope(oldFact, "global", null)) {
+              sink.warn(`memory-hybrid: blocked cross-scope extract-daily UPDATE target ${classification.targetId}`);
+              continue;
+            }
             const storeResult = factsDb.storeWithResult({
               ...storePayload,
               entity: extracted.entity ?? oldFact.entity,
@@ -1016,6 +1043,12 @@ export async function runExtractDailyForCli(
             });
             factsDb.supersede(classification.targetId, newEntry.id);
             aliasDb?.deleteByFactId(classification.targetId);
+            await deleteVectorForFactId({
+              vectorDb,
+              factId: classification.targetId,
+              logger: sink,
+              context: "extract-daily-update-superseded",
+            });
             try {
               factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vecForStore))) {
@@ -1195,9 +1228,19 @@ export async function runExtractDailyForCli(
           capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:embed" });
         }
         if (vecForStore) {
-          let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3);
+          let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3, 0.3, {
+            scope: "global",
+            scopeTarget: null,
+          });
           if (similarFacts.length === 0) {
-            similarFacts = factsDb.findSimilarForClassification(trimmed, extracted.entity, extracted.key, 3);
+            similarFacts = factsDb.findSimilarForClassification(
+              trimmed,
+              extracted.entity,
+              extracted.key,
+              3,
+              "global",
+              null,
+            );
           }
           if (similarFacts.length > 0) {
             pendingExtractClassify.push({

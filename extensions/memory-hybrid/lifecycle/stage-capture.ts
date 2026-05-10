@@ -26,8 +26,8 @@ import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
-import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
+import type { EpisodeOutcome, MemoryEntry, MemoryScope } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { extractTags } from "../utils/tags.js";
@@ -110,6 +110,13 @@ function extractLastAssistantText(messages: unknown[]): string | undefined {
     if (textBlocks.length > 0) return textBlocks.join(" ");
   }
   return undefined;
+}
+
+function matchesExactScope(entry: MemoryEntry, scope: MemoryScope, scopeTarget: string | null): boolean {
+  const entryScope = entry.scope ?? "global";
+  const entryScopeTarget = entry.scopeTarget ?? null;
+  if (scope === "global") return entryScope === "global";
+  return entryScope === scope && entryScopeTarget === scopeTarget;
 }
 
 export async function runCaptureStage(
@@ -338,9 +345,21 @@ async function runCapture(
           }
           let similarFacts: MemoryEntry[] = [];
           if (ctx.cfg.store.classifyBeforeWrite) {
-            similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
+            similarFacts = vector
+              ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3, 0.3, {
+                  scope: "global",
+                  scopeTarget: null,
+                })
+              : [];
             if (similarFacts.length === 0) {
-              similarFacts = ctx.factsDb.findSimilarForClassification(textToStore, extracted.entity, extracted.key, 3);
+              similarFacts = ctx.factsDb.findSimilarForClassification(
+                textToStore,
+                extracted.entity,
+                extracted.key,
+                3,
+                "global",
+                null,
+              );
             }
           }
           prepared.push({ candidate, textToStore, category, extracted, summary, vector, similarFacts });
@@ -396,8 +415,25 @@ async function runCapture(
                   continue;
                 }
                 if (classification.action === "DELETE" && classification.targetId) {
+                  const target = ctx.factsDb.getById(classification.targetId);
+                  const allowed =
+                    !!target &&
+                    similarFacts.some((fact) => fact.id === classification.targetId) &&
+                    matchesExactScope(target, "global", null);
+                  if (!allowed) {
+                    api.logger.warn?.(
+                      `memory-hybrid: blocked cross-scope or unknown auto-capture DELETE target ${classification.targetId}`,
+                    );
+                    continue;
+                  }
                   ctx.factsDb.supersede(classification.targetId, null);
                   ctx.aliasDb?.deleteByFactId(classification.targetId);
+                  await deleteVectorForFactId({
+                    vectorDb: ctx.vectorDb,
+                    factId: classification.targetId,
+                    logger: api.logger,
+                    context: "stage-capture-delete-action",
+                  });
                   ctx.auditStore?.append({
                     agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
                     action: "auto-capture:delete",
@@ -411,7 +447,13 @@ async function runCapture(
                 }
                 if (classification.action === "UPDATE" && classification.targetId) {
                   const oldFact = ctx.factsDb.getById(classification.targetId);
-                  if (oldFact) {
+                  if (oldFact && similarFacts.some((fact) => fact.id === classification.targetId)) {
+                    if (!matchesExactScope(oldFact, "global", null)) {
+                      api.logger.warn?.(
+                        `memory-hybrid: blocked cross-scope auto-capture UPDATE target ${classification.targetId}`,
+                      );
+                      continue;
+                    }
                     const finalImportance = Math.max(0.7, oldFact.importance);
                     const walEntryId = await ctx.walWrite(
                       "update",
@@ -449,6 +491,8 @@ async function runCapture(
                       tags: extractTags(textToStore, extracted.entity),
                       validFrom: nowSec,
                       supersedesId: classification.targetId,
+                      scope: oldFact.scope ?? "global",
+                      scopeTarget: oldFact.scopeTarget ?? null,
                       provenanceSession: captureProvenance.sessionId,
                       sourceTurn: candidate.sourceTurn,
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
@@ -464,6 +508,12 @@ async function runCapture(
                     });
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
+                    await deleteVectorForFactId({
+                      vectorDb: ctx.vectorDb,
+                      factId: classification.targetId,
+                      logger: api.logger,
+                      context: "stage-capture-update-superseded",
+                    });
                     if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                       try {
                         if (storeResult.embeddingStale) {
