@@ -37,7 +37,11 @@ import { runPassiveObserver } from "../services/passive-observer.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
-import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
+import {
+  cleanupEvictedVector,
+  deleteVectorsForFactIds,
+  storeCanonicalVectorForFact,
+} from "../services/vector-maintenance.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
@@ -357,7 +361,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 // Check if already stored (idempotency)
                 if (!factsDb.hasDuplicate(text)) {
                   // Store to SQLite
-                  const stored = factsDb.store({
+                  const storeResult = factsDb.storeWithResult({
                     text,
                     category: (category as MemoryCategory) || "other",
                     importance: importance ?? 0.5,
@@ -369,29 +373,34 @@ export function createPluginService(ctx: PluginServiceContext) {
                     summary,
                     tags,
                   });
+                  const stored = storeResult.entry;
+                  await cleanupEvictedVector({
+                    vectorDb,
+                    evictedFactId: storeResult.evictedFactId,
+                    logger: api.logger,
+                    context: "wal-recovery",
+                  });
 
-                  // Store to LanceDB (async, best effort) with same fact id for classification
+                  // Store to LanceDB with same fact id for classification before clearing WAL.
                   if (entry.data.vector) {
-                    void vectorDb
-                      .store({
+                    try {
+                      await storeCanonicalVectorForFact({
+                        vectorDb,
+                        factsDb,
+                        factId: stored.id,
                         text,
                         vector: entry.data.vector,
                         importance: importance ?? 0.5,
                         category: category || "other",
-                        id: stored.id,
-                      })
-                      .then(() => {
-                        factsDb.setEmbeddingModel(stored.id, embeddings.modelName);
-                      })
-                      .catch((err) => {
-                        api.logger.warn(
-                          `memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`,
-                        );
-                        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                          subsystem: "plugin-service",
-                          operation: "wal-recovery-vector-store",
-                        });
+                        embeddingModel: embeddings.modelName,
                       });
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "plugin-service",
+                        operation: "wal-recovery-vector-store",
+                      });
+                    }
                   }
 
                   recovered++;
