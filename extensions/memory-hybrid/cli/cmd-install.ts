@@ -356,8 +356,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
       sessionTarget: "main",
       delivery: { mode: "none" },
       payload: {
-        kind: "systemEvent",
-        text: desiredMessage,
+        kind: "agentTurn",
+        message: desiredMessage,
       },
     });
     const payload = JSON.stringify(store, null, 2);
@@ -415,8 +415,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
     existing.payload = payload;
     changed = true;
   }
-  if (payload.kind !== "systemEvent") {
-    payload.kind = "systemEvent";
+  if (payload.kind !== "agentTurn") {
+    payload.kind = "agentTurn";
     changed = true;
   }
   if (payload.sessionTarget !== undefined) {
@@ -427,12 +427,12 @@ export function ensureGoalStewardshipHeartbeatCronJob(
     payload.isolated = undefined;
     changed = true;
   }
-  if (payload.message !== undefined) {
-    payload.message = undefined;
+  if (payload.text !== undefined) {
+    payload.text = undefined;
     changed = true;
   }
-  if (payload.text !== desiredMessage) {
-    payload.text = desiredMessage;
+  if (payload.message !== desiredMessage) {
+    payload.message = desiredMessage;
     changed = true;
   }
 

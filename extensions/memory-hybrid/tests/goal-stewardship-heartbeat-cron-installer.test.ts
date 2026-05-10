@@ -33,9 +33,9 @@ describe("ensureGoalStewardshipHeartbeatCronJob", () => {
       expect(job?.schedule).toEqual({ kind: "cron", expr: "*/30 * * * *" });
 
       const payload = job?.payload as Record<string, unknown> | undefined;
-      expect(payload?.kind).toBe("systemEvent");
+      expect(payload?.kind).toBe("agentTurn");
       expect(payload?.sessionTarget).toBeUndefined();
-      const message = String(payload?.text ?? "");
+      const message = String(payload?.message ?? "");
       expect(message.startsWith("cron heartbeat")).toBe(true);
       const matchers = compileHeartbeatMatchers([]);
       expect(matchers.some((re) => re.test(message))).toBe(true);
@@ -93,10 +93,10 @@ describe("ensureGoalStewardshipHeartbeatCronJob", () => {
       expect(job?.isolated).toBeUndefined();
 
       const payload = job?.payload as Record<string, unknown> | undefined;
-      expect(payload?.kind).toBe("systemEvent");
+      expect(payload?.kind).toBe("agentTurn");
       expect(payload?.sessionTarget).toBeUndefined();
-      expect(payload?.message).toBeUndefined();
-      const message = String(payload?.text ?? "");
+      expect(payload?.text).toBeUndefined();
+      const message = String(payload?.message ?? "");
       expect(message.startsWith("cron heartbeat")).toBe(true);
       const matchers = compileHeartbeatMatchers(["steward pulse"]);
       expect(matchers.some((re) => re.test(message))).toBe(true);
@@ -132,7 +132,7 @@ describe("ensureGoalStewardshipHeartbeatCronJob", () => {
       const store = readCronStore(openclawDir);
       const job = store.jobs.find((j) => j.pluginJobId === "goal-stewardship-heartbeat");
       expect(Array.isArray(job?.payload)).toBe(false);
-      expect(job?.payload).toMatchObject({ kind: "systemEvent", text: "cron heartbeat" });
+      expect(job?.payload).toMatchObject({ kind: "agentTurn", message: "cron heartbeat" });
     } finally {
       rmSync(openclawDir, { recursive: true, force: true });
     }
