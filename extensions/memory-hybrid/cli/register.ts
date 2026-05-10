@@ -93,7 +93,14 @@ export type HybridMemCliContext = {
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runVerify: (
-    opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
+    opts: {
+      fix: boolean;
+      logFile?: string;
+      testLlm?: boolean;
+      reconcile?: boolean;
+      reconcilePolicy?: "conservative" | "balanced" | "aggressive";
+      reconcileMaxFixes?: number;
+    },
     sink: VerifyCliSink,
   ) => Promise<void>;
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
