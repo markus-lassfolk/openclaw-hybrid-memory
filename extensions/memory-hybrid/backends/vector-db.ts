@@ -621,13 +621,16 @@ export class VectorDB {
   }
 
   private async rebuildSemanticQueryCacheTable(reason: string): Promise<void> {
-    // Bug #10 fix: Check repair flag to prevent concurrent repairs
-    if (this.semanticQueryCacheRepairing) {
-      this.logWarn("memory-hybrid: semantic query cache repair already in progress, skipping duplicate repair");
-      return;
-    }
+    // Bug #10 fix: concurrent callers should await the in-flight repair.
     if (this.semanticQueryCacheRepairPromise) {
       await this.semanticQueryCacheRepairPromise;
+      return;
+    }
+    if (this.semanticQueryCacheRepairing) {
+      this.logWarn("memory-hybrid: semantic query cache repair already in progress, waiting for completion");
+      if (this.semanticQueryCacheRepairPromise) {
+        await this.semanticQueryCacheRepairPromise;
+      }
       return;
     }
 
@@ -2002,11 +2005,11 @@ export class VectorDB {
       this.logWarn(`[debug-close] memory-hybrid: VectorDB._doClose() called — stack: ${singleLineStack}`);
     }
 
-    // Bug #4 fix: Wait for optimize to complete before closing to prevent resource leaks
+    // Bug #4 fix: observe optimize lifecycle during shutdown without blocking close().
     if (this.optimizePromise) {
       this.optimizePromise
         .then(() => {
-          this.logWarn("memory-hybrid: VectorDB._doClose() waited for optimize to complete");
+          this.logWarn("memory-hybrid: VectorDB optimize completed after close() began");
         })
         .catch(() => {
           // Ignore optimize errors during shutdown
