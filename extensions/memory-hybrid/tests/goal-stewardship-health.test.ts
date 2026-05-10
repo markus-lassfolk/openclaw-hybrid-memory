@@ -429,4 +429,108 @@ describe("runGoalHealthCheck", () => {
     expect(r.goalsChecked).toBe(2);
     expect(r.goalsUpdated).toBe(0);
   });
+
+  it("persists noop pulse outcome in goal history when no action is eligible", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(goalsDir, { label: "noop_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const outcome = r.outcomes.find((o) => o.goalId === g.id);
+    expect(outcome?.outcome).toBe("noop");
+    const after = await readGoal(goalsDir, g.id);
+    const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
+    expect(pulse?.detail).toContain("outcome=noop");
+    expect(pulse?.detail).toContain("No eligible deterministic action");
+  });
+
+  it("does not rewrite goal history when the pulse outcome is unchanged", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "stable_noop_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+
+    await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const afterFirst = await readGoal(goalsDir, g.id);
+    const pulseCountAfterFirst = (afterFirst?.history ?? []).filter((h) => h.action === "pulse-outcome").length;
+
+    await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const afterSecond = await readGoal(goalsDir, g.id);
+    const pulseCountAfterSecond = (afterSecond?.history ?? []).filter((h) => h.action === "pulse-outcome").length;
+
+    expect(pulseCountAfterFirst).toBe(1);
+    expect(pulseCountAfterSecond).toBe(1);
+  });
+
+  it("records waiting outcome when actionable next exists but no dispatch/execution occurs", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "actionable_wait", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      {
+        lastAssessedAt: new Date().toISOString(),
+        lastOutcome: "Reviewed state | next: dispatch worker to apply fix",
+      },
+      { timestamp: new Date().toISOString(), action: "test", detail: "assessment-only", actor: "user" },
+    );
+
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    const outcome = r.outcomes.find((o) => o.goalId === g.id);
+    expect(outcome).toBeDefined();
+    expect(outcome?.outcome).toBe("waiting");
+    expect(outcome?.reason).toContain("Actionable next step pending");
+    const after = await readGoal(goalsDir, g.id);
+    const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
+    expect(pulse?.detail).toContain("outcome=waiting");
+    expect(pulse?.detail).toContain("Actionable next step pending");
+  });
+
+  it("marks goal blocked when in-progress dispatch has no sessionKey/runId metadata", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "missing_dispatch_meta", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    const now = new Date().toISOString();
+    await updateGoal(
+      goalsDir,
+      g.id,
+      {
+        linkedTasks: [
+          {
+            label: "dispatch-attempt-1",
+            sessionKey: null,
+            runId: null,
+            status: "in_progress",
+            linkedAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      { timestamp: now, action: "test", detail: "simulate dispatch attempt", actor: "user" },
+    );
+
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a) => a.action === "dispatch-metadata-missing")).toBe(true);
+    const outcome = r.outcomes.find((o) => o.goalId === g.id);
+    expect(outcome?.outcome).toBe("blocked");
+    expect(outcome?.reason).toContain("missing dispatch metadata");
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.status).toBe("blocked");
+    expect(after?.linkedTasks.find((t) => t.label === "dispatch-attempt-1")?.status).toBe("failed");
+    const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
+    expect(pulse?.detail).toContain("outcome=blocked");
+    expect(pulse?.detail).toContain("dispatch-attempt-1");
+  });
 });
