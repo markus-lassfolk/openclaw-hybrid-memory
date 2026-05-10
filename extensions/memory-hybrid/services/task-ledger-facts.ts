@@ -775,7 +775,10 @@ export function buildFactsSectionedMarkdownBody(
 }
 
 export function taskEntityKey(entity: string, key: string): string {
-  return `${entity}\u0000${key}`;
+  // Bug #10 fix: Escape null bytes to prevent collision
+  const safeEntity = entity.replace(/\u0000/g, "\\x00");
+  const safeKey = key.replace(/\u0000/g, "\\x00");
+  return `${safeEntity}\u0000${safeKey}`;
 }
 
 export async function upsertProjectTaskKey(

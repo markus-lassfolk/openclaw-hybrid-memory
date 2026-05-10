@@ -45,8 +45,9 @@ export function resolveActiveTaskReadPath(filePath: string): string | null {
 /**
  * Unparseable or invalid signal files (and abandoned atomic-write temp files) older than this are
  * deleted to prevent unbounded accumulation (issue #812). Exported for tests.
+ * Bug #9 fix: Reduced from 5 minutes to 2 minutes for more aggressive cleanup.
  */
-export const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
+export const STALE_CORRUPT_SIGNAL_MS = 2 * 60 * 1000;
 
 async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
   try {
@@ -1056,12 +1057,10 @@ export async function writeActiveTaskFileOptimistic(
     return true;
   }
 
-  // Exhausted retries — write whatever we have (last-write-wins fallback)
-  pluginLogger.warn(
-    `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
+  // Bug #8 fix: Exhausted retries — throw error instead of silent overwrite
+  throw new Error(
+    `Active task file write failed after ${maxRetries} retries due to concurrent modifications at ${filePath}. Please retry the operation.`,
   );
-  await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-  return true;
 }
 
 /**

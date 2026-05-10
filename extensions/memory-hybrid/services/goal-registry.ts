@@ -152,8 +152,9 @@ export async function createGoal(
   if (!v.ok) throw new Error(v.error);
 
   const existing = await readGoalByLabel(goalsDir, input.label);
-  if (existing && !isTerminalStatus(existing.status)) {
-    throw new Error(`A goal with label "${input.label}" already exists (status: ${existing.status})`);
+  if (existing) {
+    // Bug #5 fix: Prevent duplicate labels even for terminal goals
+    throw new Error(`A goal with label "${input.label}" already exists (status: ${existing.status}). Please use a unique label or update the existing goal.`);
   }
 
   const id = randomUUID();
