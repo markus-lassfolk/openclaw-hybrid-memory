@@ -45,6 +45,15 @@ export interface MigrateEmbeddingsOptions {
    * table into place after successful migration. Default: undefined (write to main table).
    */
   targetTableName?: string;
+  /**
+   * Optional checkpoint persistence for resumable re-index.
+   * When provided, migration will load the last saved offset and continue from there.
+   */
+  checkpoint?: {
+    load: () => { offset: number } | null;
+    save: (state: { offset: number; total: number; migrated: number; skipped: number; ts: number }) => void;
+    clear: () => void;
+  };
 }
 
 interface MigrateEmbeddingsResult {
@@ -151,6 +160,16 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
 
   let currentGeneration = vectorDb.getCloseGeneration();
   let offset = 0;
+  const checkpointState = opts.checkpoint?.load();
+  if (
+    checkpointState &&
+    Number.isFinite(checkpointState.offset) &&
+    checkpointState.offset > 0 &&
+    checkpointState.offset < total
+  ) {
+    offset = Math.floor(checkpointState.offset);
+    log.info(`memory-hybrid: embedding-migration: resuming from checkpoint offset ${offset}/${total}`);
+  }
   const facts = useBatched ? null : factsDb.getAll({ includeSuperseded: false });
 
   // Helper to store to target table or main table
@@ -347,6 +366,17 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     }
 
     offset += batch.length;
+    try {
+      opts.checkpoint?.save({
+        offset,
+        total,
+        migrated,
+        skipped,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      log.warn(`memory-hybrid: embedding-migration: checkpoint save failed (non-fatal): ${err}`);
+    }
     onProgress?.(offset, total);
 
     // Periodic progress log for large datasets
@@ -373,6 +403,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     log.info(
       `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
     );
+    opts.checkpoint?.clear();
   }
 
   return { total, migrated, skipped, errors, aborted, abortReason, processed };

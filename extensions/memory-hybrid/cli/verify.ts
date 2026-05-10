@@ -9,7 +9,14 @@ import type { InstallCliResult, VerifyCliSink } from "./types.js";
 
 export type VerifyContext = {
   runVerify: (
-    opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
+    opts: {
+      fix: boolean;
+      logFile?: string;
+      testLlm?: boolean;
+      reconcile?: boolean;
+      reconcilePolicy?: "conservative" | "balanced" | "aggressive";
+      reconcileMaxFixes?: number;
+    },
     sink: VerifyCliSink,
   ) => Promise<void>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
@@ -29,6 +36,12 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       "--reconcile",
       "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use --fix to remove vector-side orphans.",
     )
+    .option(
+      "--reconcile-policy <policy>",
+      "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
+      "balanced",
+    )
+    .option("--reconcile-max-fixes <n>", "Max SQLite-orphan vectors to rebuild when --fix is set (default: 200)", "200")
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
       withExit(
@@ -38,11 +51,32 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
           testLlm?: boolean;
           noEmoji?: boolean;
           reconcile?: boolean;
+          reconcilePolicy?: string;
+          reconcileMaxFixes?: string;
         }) => {
           if (opts.noEmoji) setEnv("HYBRID_MEM_NO_EMOJI", "1");
+          const reconcilePolicyRaw = String(opts.reconcilePolicy ?? "balanced")
+            .trim()
+            .toLowerCase();
+          const reconcilePolicy =
+            reconcilePolicyRaw === "conservative" || reconcilePolicyRaw === "aggressive"
+              ? reconcilePolicyRaw
+              : "balanced";
+          const parsedReconcileMaxFixes = Number.parseInt(String(opts.reconcileMaxFixes ?? "200"), 10);
+          const reconcileMaxFixes = Math.max(
+            0,
+            Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
+          );
           try {
             await runVerify(
-              { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm, reconcile: !!opts.reconcile },
+              {
+                fix: !!opts.fix,
+                logFile: opts.logFile,
+                testLlm: !!opts.testLlm,
+                reconcile: !!opts.reconcile,
+                reconcilePolicy,
+                reconcileMaxFixes,
+              },
               { log: (s) => console.log(s), error: (s) => console.error(s) },
             );
           } catch (err) {
