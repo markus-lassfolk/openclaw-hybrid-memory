@@ -23,10 +23,14 @@ export interface GoalLastMechanicalCheck {
 export interface GoalLinkedTask {
   label: string;
   sessionKey: string | null;
+  runId?: string | null;
+  dispatchFailureReason?: string | null;
   status: string;
   linkedAt: string;
   updatedAt: string;
 }
+
+export type GoalPulseOutcome = "done" | "blocked" | "dispatched" | "executed" | "waiting" | "noop";
 
 export type GoalHistoryActor = "watchdog" | "steward" | "agent" | "user";
 
