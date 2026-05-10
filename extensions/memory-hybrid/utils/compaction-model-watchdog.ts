@@ -11,6 +11,8 @@ export type CompactionModelSelection = {
   inherited: boolean;
 };
 
+export type CompactionWatchdogContext = "verify" | "before_compaction" | "after_compaction";
+
 function readAgentMain(root: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   const agents = root?.agents as Record<string, unknown> | undefined;
   const list = agents?.list;
@@ -134,4 +136,14 @@ export function isCompactionModelTooStrong(model: string): boolean {
   if (isMiniMaxM27(model)) return false;
   if (isExplicitMiniOrNanoLikeModel(model)) return false;
   return isHeavyModel(model);
+}
+
+export function buildCompactionModelWatchdogWarning(
+  selection: CompactionModelSelection,
+  opts?: { context?: CompactionWatchdogContext; recommendedModel?: string },
+): string | null {
+  if (!isCompactionModelTooStrong(selection.model)) return null;
+  const recommendedModel = opts?.recommendedModel?.trim() || DEFAULT_COMPACTION_MODEL;
+  const contextPrefix = opts?.context ? `${opts.context}: ` : "";
+  return `${contextPrefix}compaction routing uses a stronger-than-mini model (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason}). Set agents.defaults.compaction.model (or agents.list[id=main].compaction.model) to a mini/nano model such as ${recommendedModel}.`;
 }

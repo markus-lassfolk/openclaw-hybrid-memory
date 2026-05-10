@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_COMPACTION_MODEL,
+  buildCompactionModelWatchdogWarning,
   isCompactionModelTooStrong,
   resolveCompactionModelSelection,
 } from "../utils/compaction-model-watchdog.js";
@@ -54,5 +55,25 @@ describe("compaction-model-watchdog", () => {
     expect(isCompactionModelTooStrong("openai/gpt-4.1-mini")).toBe(false);
     expect(isCompactionModelTooStrong("openai/gpt-4.1-nano")).toBe(false);
     expect(isCompactionModelTooStrong("openai/gpt-5-mini")).toBe(false);
+  });
+
+  it("formats a contextual watchdog warning for stronger-than-mini routing", () => {
+    const selection = resolveCompactionModelSelection(
+      {
+        agents: { defaults: { model: { primary: "azure-foundry/gpt-5.5" } } },
+      },
+      { fallbackPolicy: "inherit-agent-primary" },
+    );
+    const warning = buildCompactionModelWatchdogWarning(selection, { context: "before_compaction" });
+    expect(warning).toContain("before_compaction: compaction routing uses a stronger-than-mini model");
+    expect(warning).toContain("provider=azure-foundry, model=azure-foundry/gpt-5.5");
+    expect(warning).toContain(DEFAULT_COMPACTION_MODEL);
+  });
+
+  it("returns null warning for MiniMax M2.7", () => {
+    const selection = resolveCompactionModelSelection({
+      agents: { defaults: { compaction: { model: "minimax/MiniMax-M2.7" } } },
+    });
+    expect(buildCompactionModelWatchdogWarning(selection, { context: "after_compaction" })).toBeNull();
   });
 });

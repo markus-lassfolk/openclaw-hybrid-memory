@@ -5,6 +5,9 @@
  * Extracted from index.ts to reduce main file size.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
@@ -13,6 +16,12 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
+import {
+  buildCompactionModelWatchdogWarning,
+  resolveCompactionModelSelection,
+  type CompactionWatchdogContext,
+} from "../utils/compaction-model-watchdog.js";
+import { expandTilde } from "../utils/path.js";
 import {
   type MessageLike,
   sanitizeMessagesForClaude,
@@ -26,6 +35,35 @@ type HooksContext = MemoryPluginAPI;
 export interface LifecycleHooksHandle {
   /** Dispose all timers and clear per-session state (call on plugin stop). */
   dispose: () => void;
+}
+
+function resolveOpenclawJsonPathForCompactionWatchdog(): string {
+  const explicit = process.env.OPENCLAW_CONFIG?.trim() || process.env.OPENCLAW_CONFIG_PATH?.trim();
+  if (explicit) return expandTilde(explicit);
+  const openclawHome = process.env.OPENCLAW_HOME?.trim();
+  if (openclawHome) return join(expandTilde(openclawHome), "openclaw.json");
+  return join(homedir(), ".openclaw", "openclaw.json");
+}
+
+function emitCompactionModelWatchdogAlert(api: ClawdbotPluginApi, context: CompactionWatchdogContext): void {
+  const configPath = resolveOpenclawJsonPathForCompactionWatchdog();
+  let selection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-agent-primary" });
+  if (existsSync(configPath)) {
+    try {
+      const root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+      selection = resolveCompactionModelSelection(root, { fallbackPolicy: "inherit-agent-primary" });
+    } catch (err) {
+      api.logger.debug?.(`memory-hybrid: ${context} watchdog — failed reading ${configPath}: ${err}`);
+    }
+  }
+  const warning = buildCompactionModelWatchdogWarning(selection, { context });
+  if (warning) {
+    api.logger.warn?.(`memory-hybrid: ${warning}`);
+  } else {
+    api.logger.debug?.(
+      `memory-hybrid: ${context} watchdog — compaction model safe (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason})`,
+    );
+  }
 }
 
 /**
@@ -201,6 +239,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         sessionFile?: string;
       };
 
+      emitCompactionModelWatchdogAlert(api, "before_compaction");
+
       await runPreConsolidationFlush(
         { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
         api.logger,
@@ -285,6 +325,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       api.logger.info?.(
         `memory-hybrid: after_compaction — messages=${msgCount} tokens≈${tokenCount} compacted=${compacted}`,
       );
+      emitCompactionModelWatchdogAlert(api, "after_compaction");
 
       // Silent mode: skip memory summary injection entirely (no DB queries, no prependContext).
       if (ctx.cfg.verbosity === "silent") return;
