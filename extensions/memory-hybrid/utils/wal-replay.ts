@@ -60,6 +60,14 @@ function findExistingFactIdForWal(factsDb: FactsDB, text: string, source: string
   }
 }
 
+function hasReplayDuplicateForWal(factsDb: FactsDB, text: string, source: string | null): boolean {
+  try {
+    return factsDb.hasDuplicate(text, source?.trim() || "conversation");
+  } catch {
+    return false;
+  }
+}
+
 async function ensureVectorAndEmbeddingMeta(opts: {
   factId: string;
   text: string;
@@ -174,6 +182,16 @@ export async function replayWalEntries(
             embeddings,
             factsDb,
           });
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
+
+        // Store-side dedupe can resolve this WAL write via hash/lexical/vector policy
+        // without creating an exact text+source row. If that already happened before
+        // a crash but before WAL removal, replay must not call store() again: boost
+        // and merge dedupe actions are not idempotent.
+        if (hasReplayDuplicateForWal(factsDb, text, source)) {
           skipped++;
           await wal.remove(entry.id);
           continue;

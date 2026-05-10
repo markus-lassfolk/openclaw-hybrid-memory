@@ -107,15 +107,51 @@ describe("replayWalEntries", () => {
     expect(factsDb.getEmbeddings(stored.id)).toHaveLength(0);
   });
 
+  it("removes store entries when store-side dedupe already handled the write", async () => {
+    factsDb.store({
+      text: "Replay duplicate fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    await wal.write(
+      walEntry({
+        data: {
+          text: "Replay duplicate fact",
+          category: "fact",
+          source: "test",
+          importance: 0.9,
+        },
+      }),
+    );
+
+    const result = await replayWalEntries(wal, factsDb);
+
+    expect(result).toEqual({ committed: 0, skipped: 1 });
+    expect(factsDb.getRawDb().prepare("SELECT COUNT(*) as count FROM facts").get()).toEqual({ count: 1 });
+    expect(await wal.readAll()).toHaveLength(0);
+  });
+
   it("does not link an update replay to an unrelated existing fact with identical text and source", async () => {
     const target = factsDb.store({
       text: "Old target",
       category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
       source: "test",
     });
     const unrelated = factsDb.store({
       text: "Shared replacement",
       category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
       source: "test",
     });
     await wal.write(
