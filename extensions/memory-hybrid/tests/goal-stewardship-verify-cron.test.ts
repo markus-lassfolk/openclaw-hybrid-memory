@@ -8,19 +8,21 @@ import {
 } from "../services/goal-stewardship-verify-cron.js";
 
 describe("goal-stewardship-verify-cron", () => {
-  it("extractCronJobMessageEntries reads payload.message and top-level message", () => {
+  it("extractCronJobMessageEntries reads payload.message/text and top-level message/text", () => {
     const store = {
       jobs: [
         { pluginJobId: "a", payload: { message: "cron heartbeat" } },
-        { id: "b", message: "scheduled ping" },
-        { name: "c" },
+        { id: "b", payload: { text: "scheduled ping" } },
+        { name: "c", text: "fallback text" },
+        { name: "d" },
       ],
     };
     const e = extractCronJobMessageEntries(store);
     expect(e).toEqual([
       { id: "a", text: "cron heartbeat", enabled: true },
       { id: "b", text: "scheduled ping", enabled: true },
-      { id: "c", text: "", enabled: true },
+      { id: "c", text: "fallback text", enabled: true },
+      { id: "d", text: "", enabled: true },
     ]);
   });
 
