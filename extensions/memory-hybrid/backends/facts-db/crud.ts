@@ -59,9 +59,11 @@ export function validateStoreEntryInput(
 
 export function getDuplicateIdByNormalizedHash(db: DatabaseSync, text: string): string | null {
   const hash = normalizedHash(text);
-  const row = db.prepare("SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1").get(hash) as
-    | { id: string }
-    | undefined;
+  const row = db
+    .prepare(
+      "SELECT id FROM facts WHERE normalized_hash = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    )
+    .get(hash) as { id: string } | undefined;
   return row?.id ?? null;
 }
 
@@ -90,6 +92,12 @@ export type StoreFactResult = {
    * Caller MUST delete the vector from VectorDB to prevent orphaned vectors.
    */
   evictedFactId?: string | null;
+  /**
+   * True when the stored fact's text was updated in-place by a dedupe merge, so the
+   * existing LanceDB vector now encodes stale content.  Caller MUST re-embed
+   * `entry.text` and replace the vector for `entry.id` in VectorDB.
+   */
+  embeddingStale?: boolean;
 };
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
@@ -158,14 +166,26 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   if (dedupe.action === "merge") {
     const existing = ctx.getById(dedupe.existingId);
     if (existing) {
-      const mergedText = existing.text.includes(entry.text)
-        ? existing.text
-        : `${existing.text}\n${entry.text}`.slice(0, 4000);
+      const alreadyContained = existing.text.includes(entry.text);
+      if (alreadyContained) {
+        return { entry: existing, evictedFactId: null, embeddingStale: false };
+      }
+
+      const rawMergedText = `${existing.text}\n${entry.text}`;
+      if (rawMergedText.length > 4000) {
+        process.stderr.write(
+          `memory-hybrid: dedupe merge for fact ${existing.id} truncated to 4000 chars (combined length=${rawMergedText.length}); some content may be lost\n`,
+        );
+      }
+      const mergedText = rawMergedText.slice(0, 4000);
       const mergedHash = normalizedHash(mergedText);
       ctx.db
         .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
         .run(mergedText, mergedHash, existing.id);
-      return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null };
+      // Signal callers to re-embed only when the persisted text changed. This handles edge
+      // cases where append text is truncated and the final merged text remains unchanged.
+      const embeddingStale = mergedText !== existing.text;
+      return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null, embeddingStale };
     }
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,

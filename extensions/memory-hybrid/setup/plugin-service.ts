@@ -404,6 +404,48 @@ export function createPluginService(ctx: PluginServiceContext) {
                   }
 
                   recovered++;
+                } else if (entry.data.vector) {
+                  // SQLite fact already exists (crash after SQL write, before vector write).
+                  // Re-attempt the vector store so the fact is searchable via semantics.
+                  const sourceForLookup = String(source || "wal-recovery").trim() || "wal-recovery";
+                  let existingId =
+                    (
+                      factsDb
+                        .getRawDb()
+                        .prepare(
+                          "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+                        )
+                        .get(text, sourceForLookup) as { id: string } | undefined
+                    )?.id ?? null;
+                  if (!existingId) existingId = factsDb.getDuplicateIdByNormalizedHash(text);
+                  if (existingId) {
+                    try {
+                      await vectorDb.store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.5,
+                        category: category || "other",
+                        id: existingId,
+                      });
+                      factsDb.setEmbeddingModel(existingId, embeddings.modelName);
+                      api.logger.info(
+                        `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
+                      );
+                    } catch (err) {
+                      api.logger.warn(
+                        `memory-hybrid: WAL recovery vector re-store failed for existing fact ${existingId.slice(0, 8)}: ${err}`,
+                      );
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "plugin-service",
+                        operation: "wal-recovery-existing-vector-store",
+                      });
+                      throw err;
+                    }
+                  } else {
+                    api.logger.warn(
+                      `memory-hybrid: WAL recovery could not resolve duplicate fact id for entry ${entry.id}; skipping vector re-store`,
+                    );
+                  }
                 }
               } else {
                 // Known but unhandled operation type (e.g., "delete")
@@ -508,15 +550,16 @@ export function createPluginService(ctx: PluginServiceContext) {
         try {
           if (shuttingDown) return;
           if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
+          const decayNowSec = Math.floor(Date.now() / 1000);
           const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
-          const lowConfidenceIds = factsDb.listLowConfidenceFactIdsPendingPrune();
+          const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
           const hardPruned = factsDb.pruneExpired();
-          const softPruned = factsDb.decayConfidence();
+          const softPruned = factsDb.decayConfidence(decayNowSec);
           const expiredCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
             operation: "plugin-periodic-prune-expired",
             logger: api.logger,
           });
-          const decayedCleanup = await deleteVectorsForFactIds(vectorDb, lowConfidenceIds, {
+          const decayedCleanup = await deleteVectorsForFactIds(vectorDb, decayDeleteIds, {
             operation: "plugin-periodic-decay",
             logger: api.logger,
           });

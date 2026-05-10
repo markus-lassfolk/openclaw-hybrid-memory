@@ -63,6 +63,7 @@ import {
   pruneLogTables as pruneLogTablesImpl,
   pruneOrphanedLinks as pruneOrphanedLinksImpl,
   pruneScopedFacts as pruneScopedFactsImpl,
+  listScopedFactIdsPendingPrune as listScopedFactIdsPendingPruneImpl,
   recentActivity as recentActivityImpl,
   scopeStats as scopeStatsImpl,
   selfCorrectionIncidentsCount as selfCorrectionIncidentsCountImpl,
@@ -143,6 +144,15 @@ export class FactsDB extends FactsDBLayer2 {
 
   pruneScopedFacts(scopeFilter: ScopeFilter): number {
     return pruneScopedFactsImpl(this.liveDb, scopeFilter);
+  }
+
+  /**
+   * Return the fact IDs that `pruneScopedFacts(scopeFilter)` would delete.
+   * Call this *before* `pruneScopedFacts` to collect IDs for LanceDB vector cleanup.
+   * Excludes verified/pinned facts (same guard as the DELETE).
+   */
+  listScopedFactIdsPendingPrune(scopeFilter: ScopeFilter): string[] {
+    return listScopedFactIdsPendingPruneImpl(this.liveDb, scopeFilter);
   }
 
   findSessionFactsForPromotion(thresholdDays: number, minImportance: number): MemoryEntry[] {

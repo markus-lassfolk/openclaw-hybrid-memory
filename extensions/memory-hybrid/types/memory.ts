@@ -101,6 +101,7 @@ export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
 /** Scope filter for recall — include global + matching user/agent/session. Empty = all (backward compat). */
 export type ScopeFilter = {
+  global?: boolean;
   userId?: string | null;
   agentId?: string | null;
   sessionId?: string | null;
