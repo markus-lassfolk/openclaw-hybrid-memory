@@ -8,7 +8,7 @@ import { getCachedMatchers } from "./goal-stewardship-heartbeat.js";
 
 export type CronJobMessageEntry = { id: string; text: string; enabled: boolean };
 
-/** Parse cron store JSON; extract per-job message text (payload.message or top-level message). */
+/** Parse cron store JSON; extract per-job message text from common cron payload fields. */
 export function extractCronJobMessageEntries(store: { jobs?: unknown[] } | null | undefined): CronJobMessageEntry[] {
   const out: CronJobMessageEntry[] = [];
   const rawJobs = store?.jobs;
@@ -18,7 +18,7 @@ export function extractCronJobMessageEntries(store: { jobs?: unknown[] } | null 
     const job = j as Record<string, unknown>;
     const id = String(job.pluginJobId ?? job.id ?? job.name ?? "unnamed");
     const payload = job.payload as Record<string, unknown> | undefined;
-    const raw = payload?.message ?? job.message;
+    const raw = payload?.message ?? payload?.text ?? job.message ?? job.text;
     const text = typeof raw === "string" ? raw.trim() : "";
     const enabled = typeof job.enabled === "boolean" ? job.enabled : true;
     out.push({ id, text, enabled });

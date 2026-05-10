@@ -32,6 +32,7 @@ import {
 } from "../services/cron-job-bash-harness.js";
 import { findDeprecatedHybridMemCronTokens } from "../services/deprecated-cron-commands.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
 import { PLUGIN_ID } from "../utils/constants.js";
@@ -278,6 +279,199 @@ export function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
 const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
+const GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID = "goal-stewardship-heartbeat";
+const GOAL_STEWARDSHIP_HEARTBEAT_CRON_EXPR = "*/30 * * * *";
+
+function extractPlainHeartbeatPatternHints(patterns: string[]): string[] {
+  const out: string[] = [];
+  for (const rawPattern of patterns) {
+    const raw = rawPattern.trim();
+    if (!raw) continue;
+    let hint: string | null = null;
+    if (raw.startsWith("/") && raw.lastIndexOf("/") > 0) {
+      const last = raw.lastIndexOf("/");
+      const body = raw.slice(1, last).trim().replace(/^\^/, "").replace(/\$$/, "").trim();
+      if (/^[\w -]+$/.test(body)) hint = body;
+    } else if (/^[\w -]+$/.test(raw)) {
+      hint = raw;
+    }
+    if (!hint) continue;
+    const normalized = hint.replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    if (!out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
+function selectGoalStewardshipHeartbeatMessage(heartbeatPatterns: string[]): string | null {
+  const matchers = compileHeartbeatMatchers(heartbeatPatterns);
+  const candidates = ["cron heartbeat"];
+  for (const hint of extractPlainHeartbeatPatternHints(heartbeatPatterns)) {
+    const candidate = `cron heartbeat ${hint}`.replace(/\s+/g, " ").trim();
+    if (!candidates.includes(candidate)) candidates.push(candidate);
+    if (!candidates.includes(hint)) candidates.push(hint);
+  }
+  return candidates.find((candidate) => matchers.some((re) => re.test(candidate))) ?? null;
+}
+
+function collectHeartbeatMessageCandidatesFromJob(job: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const payload =
+    typeof job.payload === "object" && job.payload !== null && !Array.isArray(job.payload)
+      ? (job.payload as Record<string, unknown>)
+      : undefined;
+  const candidates = [payload?.text, payload?.message, job.text, job.message];
+  for (const raw of candidates) {
+    if (typeof raw !== "string") continue;
+    const normalized = raw.trim();
+    if (!normalized || out.includes(normalized)) continue;
+    out.push(normalized);
+  }
+  return out;
+}
+
+function selectExistingGoalStewardshipHeartbeatMessage(
+  existing: Record<string, unknown> | undefined,
+  heartbeatPatterns: string[],
+): string | null {
+  if (!existing) return null;
+  const matchers = compileHeartbeatMatchers(heartbeatPatterns);
+  const candidates = collectHeartbeatMessageCandidatesFromJob(existing);
+  return candidates.find((candidate) => matchers.some((re) => re.test(candidate))) ?? null;
+}
+
+/**
+ * Ensure there is one enabled, heartbeat-shaped cron job for goal stewardship.
+ * The job is intentionally simple and should be safe to run continuously.
+ */
+export function ensureGoalStewardshipHeartbeatCronJob(
+  openclawDir: string,
+  options: { heartbeatPatterns: string[] },
+): { added: boolean; normalized: boolean; skippedReason?: string } {
+  const cronDir = join(openclawDir, "cron");
+  const cronStorePath = join(cronDir, "jobs.json");
+  mkdirSync(cronDir, { recursive: true });
+  const store: { jobs?: unknown[] } = existsSync(cronStorePath)
+    ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
+    : {};
+  if (!Array.isArray(store.jobs)) store.jobs = [];
+  const jobsArr = store.jobs as Array<Record<string, unknown>>;
+  const existing = jobsArr.find(
+    (j) =>
+      j &&
+      (j.pluginJobId === GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID ||
+        j.id === GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID ||
+        j.name === GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID),
+  );
+  const desiredMessage =
+    selectGoalStewardshipHeartbeatMessage(options.heartbeatPatterns) ??
+    selectExistingGoalStewardshipHeartbeatMessage(existing, options.heartbeatPatterns);
+  if (!desiredMessage) {
+    return {
+      added: false,
+      normalized: false,
+      skippedReason: "could not synthesize a 'cron heartbeat …' message that matches goalStewardship.heartbeatPatterns",
+    };
+  }
+
+  if (!existing) {
+    jobsArr.push({
+      pluginJobId: GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID,
+      id: GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID,
+      name: GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID,
+      schedule: { kind: "cron", expr: GOAL_STEWARDSHIP_HEARTBEAT_CRON_EXPR },
+      enabled: true,
+      sessionTarget: "main",
+      delivery: { mode: "none" },
+      payload: {
+        kind: "systemEvent",
+        text: desiredMessage,
+      },
+    });
+    const payload = JSON.stringify(store, null, 2);
+    const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpPath, payload, "utf-8");
+    renameSync(tmpPath, cronStorePath);
+    return { added: true, normalized: false };
+  }
+
+  let changed = false;
+  if (existing.pluginJobId !== GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID) {
+    existing.pluginJobId = GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID;
+    changed = true;
+  }
+  if (existing.id !== GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID) {
+    existing.id = GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID;
+    changed = true;
+  }
+  if (existing.name !== GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID) {
+    existing.name = GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID;
+    changed = true;
+  }
+  const currentSchedule = existing.schedule as { kind?: unknown; expr?: unknown } | undefined;
+  if (
+    typeof currentSchedule !== "object" ||
+    currentSchedule === null ||
+    currentSchedule.kind !== "cron" ||
+    currentSchedule.expr !== GOAL_STEWARDSHIP_HEARTBEAT_CRON_EXPR
+  ) {
+    existing.schedule = { kind: "cron", expr: GOAL_STEWARDSHIP_HEARTBEAT_CRON_EXPR };
+    changed = true;
+  }
+  if (existing.enabled !== true) {
+    existing.enabled = true;
+    changed = true;
+  }
+  if (existing.sessionTarget !== "main") {
+    existing.sessionTarget = "main";
+    changed = true;
+  }
+  if (existing.isolated !== undefined) {
+    existing.isolated = undefined;
+    changed = true;
+  }
+  const currentDelivery = existing.delivery as { mode?: unknown } | undefined;
+  if (typeof currentDelivery !== "object" || currentDelivery === null || currentDelivery.mode !== "none") {
+    existing.delivery = { mode: "none" };
+    changed = true;
+  }
+  const payload =
+    typeof existing.payload === "object" && existing.payload !== null && !Array.isArray(existing.payload)
+      ? (existing.payload as Record<string, unknown>)
+      : {};
+  if (existing.payload !== payload) {
+    existing.payload = payload;
+    changed = true;
+  }
+  if (payload.kind !== "systemEvent") {
+    payload.kind = "systemEvent";
+    changed = true;
+  }
+  if (payload.sessionTarget !== undefined) {
+    payload.sessionTarget = undefined;
+    changed = true;
+  }
+  if (payload.isolated !== undefined) {
+    payload.isolated = undefined;
+    changed = true;
+  }
+  if (payload.message !== undefined) {
+    payload.message = undefined;
+    changed = true;
+  }
+  if (payload.text !== desiredMessage) {
+    payload.text = desiredMessage;
+    changed = true;
+  }
+
+  if (!changed) return { added: false, normalized: false };
+
+  const nextPayload = JSON.stringify(store, null, 2);
+  const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpPath, nextPayload, "utf-8");
+  renameSync(tmpPath, cronStorePath);
+  return { added: false, normalized: true };
+}
 
 /**
  * Minimum run interval guard (in milliseconds) for each job frequency tier.
