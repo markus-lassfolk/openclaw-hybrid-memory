@@ -614,6 +614,8 @@ export function createPluginService(ctx: PluginServiceContext) {
 
         timers.classifyTimer.value = setInterval(async () => {
           try {
+            if (shuttingDown) return;
+            if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
             await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
               discoveredCategoriesPath: discoveredPath,
               model: classifyModel,
@@ -727,6 +729,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         const intervalMs = cfg.passiveObserver.intervalMinutes * 60_000;
         timers.passiveObserverTimer.value = setInterval(() => {
           if (shuttingDown) return;
+          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
           if (observerRunning) return;
           observerRunning = true;
           observerRunPromise = runObserver().finally(() => {
@@ -819,6 +822,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       };
       timers.watchdogTimer.value = setInterval(() => {
         if (shuttingDown) return;
+        if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
         if (watchdogRunning) return;
         watchdogRunning = true;
         watchdogRunPromise = watchdogRun().finally(() => {
