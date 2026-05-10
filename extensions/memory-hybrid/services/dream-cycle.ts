@@ -635,7 +635,7 @@ export async function runDreamCycle(
   // After SQLite pruning (pruneExpired, decayConfidence), any LanceDB vector whose
   // corresponding SQLite fact was hard-deleted is now an orphan.  Orphaned vectors
   // pollute semantic search results with stale or deleted facts.  We reconcile here
-  // by computing the symmetric difference between the two stores and removing orphans.
+  // by deleting vector IDs that no longer have a corresponding SQLite fact.
   step("reconcile LanceDB orphaned vectors");
   let orphanVectorsRemoved = 0;
   try {

@@ -256,6 +256,7 @@ export class VectorDB {
         } catch {
           /* ignore */
         }
+        this.shadowTableCache.clear();
         this.db = null;
       }
       this.initPromise = null;
@@ -280,6 +281,7 @@ export class VectorDB {
         } catch {
           /* ignore close on timeout */
         }
+        this.shadowTableCache.clear();
         this.db = null;
         this.table = null;
         this.semanticQueryCacheTable = null;
@@ -694,6 +696,7 @@ export class VectorDB {
     } catch {
       // ignore
     }
+    this.shadowTableCache.clear();
     this.db = null;
     this.table = null;
     this.semanticQueryCacheTable = null;
@@ -842,6 +845,7 @@ export class VectorDB {
     } catch {
       // ignore close errors
     }
+    this.shadowTableCache.clear();
     this.db = null;
     this.table = null;
     this.semanticQueryCacheTable = null;
@@ -868,12 +872,7 @@ export class VectorDB {
       // backup still exists, (c) the main directory is still absent (swap did not
       // partially succeed), AND (d) the shadow source still exists (nothing was moved
       // out from under us in an unexpected partial-success scenario).
-      if (
-        mainWasRenamed &&
-        existsSync(oldTableDir) &&
-        !existsSync(mainTableDir) &&
-        existsSync(shadowTableDir)
-      ) {
+      if (mainWasRenamed && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
         try {
           await import("node:fs/promises").then((fs) => fs.rename(oldTableDir, mainTableDir));
           this.logWarn(
