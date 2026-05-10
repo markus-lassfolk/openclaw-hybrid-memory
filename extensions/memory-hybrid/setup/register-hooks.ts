@@ -5,14 +5,27 @@
  * Extracted from index.ts to reduce main file size.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
+import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
+import {
+  buildUnsupportedPerAgentCompactionWarning,
+  buildCompactionWatchdogAlert,
+  buildCompactionModelWatchdogWarning,
+  describeCompactionFallbackScope,
+  resolveCompactionHookIdentity,
+  resolveCompactionHookModelMetadata,
+  resolveCompactionModelSelection,
+  type CompactionWatchdogContext,
+} from "../utils/compaction-model-watchdog.js";
 import {
   type MessageLike,
   sanitizeMessagesForClaude,
@@ -26,6 +39,54 @@ type HooksContext = MemoryPluginAPI;
 export interface LifecycleHooksHandle {
   /** Dispose all timers and clear per-session state (call on plugin stop). */
   dispose: () => void;
+}
+
+function emitCompactionModelWatchdogAlert(
+  api: ClawdbotPluginApi,
+  context: CompactionWatchdogContext,
+  opts?: { event?: unknown; hookCtx?: unknown },
+): void {
+  const configPath = resolveOpenclawJsonPathForWorkspace();
+  let selectionUnknownReason: string | null = null;
+  const identity = resolveCompactionHookIdentity(opts?.event, opts?.hookCtx, api.context);
+  const scopeNote = describeCompactionFallbackScope(identity);
+  let selection = resolveCompactionModelSelection(undefined, { fallbackPolicy: "inherit-defaults-primary" });
+  if (!existsSync(configPath)) {
+    selectionUnknownReason = `config file not found at ${configPath}`;
+  } else {
+    try {
+      const root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+      selection = resolveCompactionModelSelection(root, { fallbackPolicy: "inherit-defaults-primary" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      selectionUnknownReason = `failed reading ${configPath}: ${message}`;
+      api.logger.debug?.(`memory-hybrid: ${context} watchdog — failed reading ${configPath}: ${err}; ${scopeNote}`);
+    }
+  }
+  if (selectionUnknownReason) {
+    api.logger.warn?.(
+      `memory-hybrid: ${context} watchdog — compaction routing unknown (${selectionUnknownReason}); ${scopeNote}`,
+    );
+    return;
+  }
+  if (selection.routingUnknownFromConfig) {
+    api.logger.warn?.(
+      `memory-hybrid: ${context} watchdog — compaction routing unknown (neither agents.defaults.compaction.model nor agents.defaults.model.primary set; session chat model may apply); ${scopeNote}`,
+    );
+    return;
+  }
+  const unsupportedWarning = buildUnsupportedPerAgentCompactionWarning(selection, { context });
+  if (unsupportedWarning) {
+    api.logger.warn?.(`memory-hybrid: ${unsupportedWarning} ${scopeNote}`);
+  }
+  const warning = buildCompactionModelWatchdogWarning(selection, { context });
+  if (warning) {
+    api.logger.warn?.(`memory-hybrid: ${warning} ${scopeNote}`);
+  } else {
+    api.logger.debug?.(
+      `memory-hybrid: ${context} watchdog — compaction model safe (provider=${selection.provider}, model=${selection.model}, reason=${selection.reason}); ${scopeNote}`,
+    );
+  }
 }
 
 /**
@@ -193,13 +254,29 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Feature detection: if the hook name is not recognised by this OpenClaw version
   // the api.on() call will silently no-op (unknown hooks are ignored by the registry).
   try {
-    api.on("before_compaction", async (event: unknown) => {
+    api.on("before_compaction", async (event: unknown, hookCtx: unknown) => {
       const ev = event as {
         messageCount?: number;
         tokenCount?: number;
         compactingCount?: number;
         sessionFile?: string;
       };
+
+      const hookModel = resolveCompactionHookModelMetadata(event, hookCtx);
+      if (hookModel) {
+        const alert = buildCompactionWatchdogAlert({
+          stage: "before_compaction",
+          model: hookModel.model,
+          provider: hookModel.provider,
+          source: hookModel.source,
+        });
+        if (alert) api.logger.warn?.(alert);
+      } else {
+        api.logger.debug?.(
+          "memory-hybrid: before_compaction watchdog — compaction provider/model metadata not exposed",
+        );
+        emitCompactionModelWatchdogAlert(api, "before_compaction", { event, hookCtx });
+      }
 
       await runPreConsolidationFlush(
         { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
@@ -270,108 +347,127 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // WAL flush before compaction-style work is handled solely by `before_compaction` above (runPreConsolidationFlush).
 
   try {
-    api.on("after_compaction", async (event: unknown): Promise<undefined | { prependContext: string }> => {
-      const ev = event as {
-        messageCount?: number;
-        tokenCount?: number;
-        compactedCount?: number;
-        sessionFile?: string;
-      };
+    api.on(
+      "after_compaction",
+      async (event: unknown, hookCtx: unknown): Promise<undefined | { prependContext: string }> => {
+        const ev = event as {
+          messageCount?: number;
+          tokenCount?: number;
+          compactedCount?: number;
+          sessionFile?: string;
+        };
 
-      const msgCount = ev.messageCount ?? 0;
-      const compacted = ev.compactedCount ?? 0;
-      const tokenCount = ev.tokenCount ?? 0;
+        const hookModel = resolveCompactionHookModelMetadata(event, hookCtx);
+        if (hookModel) {
+          const alert = buildCompactionWatchdogAlert({
+            stage: "after_compaction",
+            model: hookModel.model,
+            provider: hookModel.provider,
+            source: hookModel.source,
+          });
+          if (alert) api.logger.warn?.(alert);
+        } else {
+          api.logger.debug?.(
+            "memory-hybrid: after_compaction watchdog — compaction provider/model metadata not exposed",
+          );
+          emitCompactionModelWatchdogAlert(api, "after_compaction", { event, hookCtx });
+        }
 
-      api.logger.info?.(
-        `memory-hybrid: after_compaction — messages=${msgCount} tokens≈${tokenCount} compacted=${compacted}`,
-      );
+        const msgCount = ev.messageCount ?? 0;
+        const compacted = ev.compactedCount ?? 0;
+        const tokenCount = ev.tokenCount ?? 0;
 
-      // Silent mode: skip memory summary injection entirely (no DB queries, no prependContext).
-      if (ctx.cfg.verbosity === "silent") return;
-
-      // Verify SQLite is still accessible after compaction
-      let factCount = 0;
-      try {
-        factCount = ctx.factsDb.getCount();
-        api.logger.debug?.(`memory-hybrid: after_compaction — SQLite health OK, ${factCount} facts in store`);
-      } catch (dbErr) {
-        api.logger.warn?.(
-          `memory-hybrid: after_compaction — SQLite health check failed: ${dbErr}. Memory may be unavailable until restart.`,
+        api.logger.info?.(
+          `memory-hybrid: after_compaction — messages=${msgCount} tokens≈${tokenCount} compacted=${compacted}`,
         );
-        // No summary injection if DB is unavailable
-        return;
-      }
 
-      // Build post-compaction memory summary to help the agent resume with full context.
-      // Inject the top-N most recent/important facts so the agent's first post-compaction
-      // response references the right state.
-      //
-      // Issue #957: When auto-recall is on, re-run the recall pipeline against the last user
-      // prompt (see lastAutoRecallPromptRef) so semantic/FTS matches are not lost after compaction.
-      //
-      // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
-      // The return value is a best-effort injection — older runtimes will silently ignore it.
-      try {
-        const blocks: string[] = [];
+        // Silent mode: skip memory summary injection entirely (no DB queries, no prependContext).
+        if (ctx.cfg.verbosity === "silent") return;
 
-        if (ctx.cfg.autoRecall.enabled) {
-          const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
-          if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
-            const recallBlock = await buildPostCompactionRecallSnippet(lifecycleContext, api, lastPrompt);
-            if (recallBlock) {
-              blocks.push(recallBlock);
-              api.logger.debug?.("memory-hybrid: after_compaction — injecting post-compaction recall snippet (#957)");
-            }
-          }
+        // Verify SQLite is still accessible after compaction
+        let factCount = 0;
+        try {
+          factCount = ctx.factsDb.getCount();
+          api.logger.debug?.(`memory-hybrid: after_compaction — SQLite health OK, ${factCount} facts in store`);
+        } catch (dbErr) {
+          api.logger.warn?.(
+            `memory-hybrid: after_compaction — SQLite health check failed: ${dbErr}. Memory may be unavailable until restart.`,
+          );
+          // No summary injection if DB is unavailable
+          return;
         }
 
-        const summaryFacts = ctx.factsDb.list(8);
-        const summaryLines: string[] = [];
+        // Build post-compaction memory summary to help the agent resume with full context.
+        // Inject the top-N most recent/important facts so the agent's first post-compaction
+        // response references the right state.
+        //
+        // Issue #957: When auto-recall is on, re-run the recall pipeline against the last user
+        // prompt (see lastAutoRecallPromptRef) so semantic/FTS matches are not lost after compaction.
+        //
+        // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
+        // The return value is a best-effort injection — older runtimes will silently ignore it.
+        try {
+          const blocks: string[] = [];
 
-        if (summaryFacts.length > 0) {
-          summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
-          summaryLines.push("Key memories retained across compaction:");
-          for (const f of summaryFacts) {
-            const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-            const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
-            summaryLines.push(`- ${entityPrefix}${preview}`);
-          }
-        }
-
-        // Append open issues summary if IssueStore is available
-        if (ctx.issueStore) {
-          try {
-            const openIssues = ctx.issueStore.list({
-              status: ["open", "diagnosed", "fix-attempted"],
-              limit: 5,
-            });
-            if (openIssues.length > 0) {
-              summaryLines.push("");
-              summaryLines.push("Open issues:");
-              for (const issue of openIssues) {
-                summaryLines.push(`- [${issue.severity}] ${issue.title} (${issue.status})`);
+          if (ctx.cfg.autoRecall.enabled) {
+            const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
+            if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
+              const recallBlock = await buildPostCompactionRecallSnippet(lifecycleContext, api, lastPrompt);
+              if (recallBlock) {
+                blocks.push(recallBlock);
+                api.logger.debug?.("memory-hybrid: after_compaction — injecting post-compaction recall snippet (#957)");
               }
             }
-          } catch {
-            // Non-fatal
           }
-        }
 
-        if (summaryLines.length > 0) {
-          summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
-          blocks.push(summaryLines.join("\n"));
-        }
+          const summaryFacts = ctx.factsDb.list(8);
+          const summaryLines: string[] = [];
 
-        if (blocks.length > 0) {
-          api.logger.debug?.(
-            `memory-hybrid: after_compaction — injecting post-compaction context (${summaryFacts.length} summary facts)`,
-          );
-          return { prependContext: blocks.join("\n\n") };
+          if (summaryFacts.length > 0) {
+            summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
+            summaryLines.push("Key memories retained across compaction:");
+            for (const f of summaryFacts) {
+              const entityPrefix = f.entity ? `[${f.entity}] ` : "";
+              const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
+              summaryLines.push(`- ${entityPrefix}${preview}`);
+            }
+          }
+
+          // Append open issues summary if IssueStore is available
+          if (ctx.issueStore) {
+            try {
+              const openIssues = ctx.issueStore.list({
+                status: ["open", "diagnosed", "fix-attempted"],
+                limit: 5,
+              });
+              if (openIssues.length > 0) {
+                summaryLines.push("");
+                summaryLines.push("Open issues:");
+                for (const issue of openIssues) {
+                  summaryLines.push(`- [${issue.severity}] ${issue.title} (${issue.status})`);
+                }
+              }
+            } catch {
+              // Non-fatal
+            }
+          }
+
+          if (summaryLines.length > 0) {
+            summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
+            blocks.push(summaryLines.join("\n"));
+          }
+
+          if (blocks.length > 0) {
+            api.logger.debug?.(
+              `memory-hybrid: after_compaction — injecting post-compaction context (${summaryFacts.length} summary facts)`,
+            );
+            return { prependContext: blocks.join("\n\n") };
+          }
+        } catch {
+          // Non-fatal — summary injection failure should not disrupt normal operation
         }
-      } catch {
-        // Non-fatal — summary injection failure should not disrupt normal operation
-      }
-    });
+      },
+    );
   } catch (err) {
     // Older runtimes may throw on unknown hook names
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
