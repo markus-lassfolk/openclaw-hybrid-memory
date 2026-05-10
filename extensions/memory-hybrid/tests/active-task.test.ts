@@ -164,6 +164,18 @@ describe("parseActiveTaskFile", () => {
     expect(task.next).toBe("Wait for CI to pass");
   });
 
+  it("preserves unknown timestamps when Started/Updated are missing", () => {
+    const md = `## Active Tasks
+
+### [missing-times]: Task without timestamps
+- **Status:** In progress
+`;
+    const result = parseActiveTaskFile(md);
+    expect(result.active).toHaveLength(1);
+    expect(result.active[0].started).toBe("Unknown");
+    expect(result.active[0].updated).toBe("Unknown");
+  });
+
   it("moves Done tasks to completed section", () => {
     const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
     expect(result.completed).toHaveLength(1);
@@ -1012,6 +1024,24 @@ describe("runActiveTaskAdd", () => {
     const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
     expect(taskFile?.active[0].status).toBe("In progress");
   });
+
+  it("upserts against completed rows without duplicating completed history", async () => {
+    await writeActiveTaskFile(ctx.activeTaskFilePath, [], [makeEntry({ label: "done-task", status: "Done" })]);
+    const result = await runActiveTaskAdd(ctx, {
+      label: "done-task",
+      description: "Updated done entry",
+      status: "Done",
+    });
+    expect(result.ok).toBe(true);
+    const ok = result as { ok: true; label: string; upserted: boolean };
+    expect(ok.upserted).toBe(true);
+
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(0);
+    expect(taskFile?.completed).toHaveLength(1);
+    expect(taskFile?.completed[0].label).toBe("done-task");
+    expect(taskFile?.completed[0].description).toBe("Updated done entry");
+  });
 });
 
 describe("runActiveTaskHygiene", () => {
@@ -1588,6 +1618,24 @@ describe("writeActiveTaskFileOptimistic", () => {
     );
     const result = await readActiveTaskFile(newPath);
     expect(result?.active[0].label).toBe("new");
+  });
+
+  it("returns false when retries are exhausted to avoid clobbering concurrent writes", async () => {
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "original" })], []);
+    const read = await readActiveTaskFileWithMtime(filePath);
+    expect(read).not.toBeNull();
+    if (!read) return;
+
+    const wrote = await writeActiveTaskFileOptimistic(
+      filePath,
+      [makeEntry({ label: "mine" })],
+      [],
+      read.mtime - 1,
+      async (fresh) => [[...fresh.active, makeEntry({ label: "mine" })], fresh.completed],
+      0,
+    );
+
+    expect(wrote).toBe(false);
   });
 });
 

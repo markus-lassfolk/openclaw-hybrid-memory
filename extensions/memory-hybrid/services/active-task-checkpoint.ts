@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdir as mkdirAsync, rm as rmAsync, stat as statAsync } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -14,6 +15,9 @@ import type { EmbeddingProvider } from "./embeddings.js";
 
 const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
 const ACTIVE_TASK_WAKE_GUARD_YEARS = 10;
+const CRON_JOBS_LOCK_RETRY_MS = 25;
+const CRON_JOBS_LOCK_MAX_RETRIES = 200;
+const CRON_JOBS_LOCK_STALE_MS = 2 * 60 * 1000;
 
 export interface ActiveTaskCheckpointInput {
   entity?: string;
@@ -340,39 +344,75 @@ function disableActiveTaskWakeJobs(
   return disabled;
 }
 
-function disableActiveTaskWakeJobsForEntity(
+async function acquireCronJobsLock(openclawDir: string): Promise<string> {
+  const lockPath = join(openclawDir, "cron", ".jobs-write-lock");
+  for (let attempt = 0; attempt < CRON_JOBS_LOCK_MAX_RETRIES; attempt++) {
+    try {
+      await mkdirAsync(lockPath, { recursive: false });
+      return lockPath;
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "EEXIST") throw err;
+      try {
+        const lockStat = await statAsync(lockPath);
+        if (Date.now() - lockStat.mtimeMs > CRON_JOBS_LOCK_STALE_MS) {
+          await rmAsync(lockPath, { recursive: true, force: true }).catch(() => {});
+          continue;
+        }
+      } catch {
+        // Lock may be replaced/removed by another process; continue retrying.
+      }
+      await new Promise((resolve) => setTimeout(resolve, CRON_JOBS_LOCK_RETRY_MS));
+    }
+  }
+  throw new Error("timed out waiting for cron jobs lock");
+}
+
+async function withCronJobsLock<T>(openclawDir: string, fn: () => T | Promise<T>): Promise<T> {
+  await mkdirAsync(join(openclawDir, "cron"), { recursive: true });
+  const lockPath = await acquireCronJobsLock(openclawDir);
+  try {
+    return await fn();
+  } finally {
+    await rmAsync(lockPath, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function disableActiveTaskWakeJobsForEntity(
   entity: string,
   openclawDirOverride?: string,
-): { jobsPath: string; disabled: number } {
+): Promise<{ jobsPath: string; disabled: number }> {
   const openclawDir = resolveOpenclawDir(openclawDirOverride);
-  const cronDir = join(openclawDir, "cron");
-  const jobsPath = join(cronDir, "jobs.json");
-  if (!existsSync(jobsPath)) {
-    return { jobsPath, disabled: 0 };
-  }
+  return withCronJobsLock(openclawDir, () => {
+    const cronDir = join(openclawDir, "cron");
+    const jobsPath = join(cronDir, "jobs.json");
+    if (!existsSync(jobsPath)) {
+      return { jobsPath, disabled: 0 };
+    }
 
-  let store: { jobs?: unknown[] };
-  try {
-    store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
-  } catch (err) {
-    throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
-  }
+    let store: { jobs?: unknown[] };
+    try {
+      store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
+    } catch (err) {
+      throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+    }
 
-  if (!Array.isArray(store.jobs)) {
-    return { jobsPath, disabled: 0 };
-  }
+    if (!Array.isArray(store.jobs)) {
+      return { jobsPath, disabled: 0 };
+    }
 
-  const jobs = store.jobs as Array<Record<string, unknown>>;
-  const disabled = disableActiveTaskWakeJobs(jobs, entity);
-  if (disabled <= 0) {
-    return { jobsPath, disabled: 0 };
-  }
+    const jobs = store.jobs as Array<Record<string, unknown>>;
+    const disabled = disableActiveTaskWakeJobs(jobs, entity);
+    if (disabled <= 0) {
+      return { jobsPath, disabled: 0 };
+    }
 
-  const payload = JSON.stringify(store, null, 2);
-  const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmpPath, payload, "utf-8");
-  renameSync(tmpPath, jobsPath);
-  return { jobsPath, disabled };
+    const payload = JSON.stringify(store, null, 2);
+    const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpPath, payload, "utf-8");
+    renameSync(tmpPath, jobsPath);
+    return { jobsPath, disabled };
+  });
 }
 
 function resolveOpenclawDir(override?: string): string {
@@ -441,96 +481,97 @@ async function scheduleActiveTaskWakeReminder(
   input: ActiveTaskWakeScheduleInput,
 ): Promise<ActiveTaskWakeScheduleResult> {
   const openclawDir = resolveOpenclawDir(input.openclawDir);
-  const cronDir = join(openclawDir, "cron");
-  const jobsPath = join(cronDir, "jobs.json");
-  mkdirSync(cronDir, { recursive: true });
+  return withCronJobsLock(openclawDir, () => {
+    const cronDir = join(openclawDir, "cron");
+    const jobsPath = join(cronDir, "jobs.json");
 
-  let store: { jobs?: unknown[] } = {};
-  if (existsSync(jobsPath)) {
-    try {
-      store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
-    } catch (err) {
-      throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+    let store: { jobs?: unknown[] } = {};
+    if (existsSync(jobsPath)) {
+      try {
+        store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
+      } catch (err) {
+        throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+      }
     }
-  }
 
-  if (!Array.isArray(store.jobs)) {
-    store.jobs = [];
-  }
+    if (!Array.isArray(store.jobs)) {
+      store.jobs = [];
+    }
 
-  const jobs = store.jobs as Array<Record<string, unknown>>;
-  const entitySlug = slugify(input.entity) || "task";
-  const entityKey = wakeEntityKey(input.entity);
-  const resumeAtIso = input.resumeAt.toISOString();
-  const resumeEpochSec = Math.floor(input.resumeAt.getTime() / 1000);
-  const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:${resumeEpochSec}`;
+    const jobs = store.jobs as Array<Record<string, unknown>>;
+    const entitySlug = slugify(input.entity) || "task";
+    const entityKey = wakeEntityKey(input.entity);
+    const resumeAtIso = input.resumeAt.toISOString();
+    const resumeEpochSec = Math.floor(input.resumeAt.getTime() / 1000);
+    const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:${resumeEpochSec}`;
 
-  const disabledPreviousJobs = disableActiveTaskWakeJobs(jobs, input.entity, { excludeJobId: jobId });
+    const disabledPreviousJobs = disableActiveTaskWakeJobs(jobs, input.entity, { excludeJobId: jobId });
 
-  const model = resolveCronModel(input.cfg);
-  const minIntervalMs = ACTIVE_TASK_WAKE_GUARD_YEARS * 365 * 24 * 60 * 60 * 1000;
-  const guardJobName = `active-task-wake-${entityKey}-${resumeEpochSec}`;
-  const guardPrefix = buildGuardPrefix(guardJobName, minIntervalMs, openclawDir);
+    const model = resolveCronModel(input.cfg);
+    const minIntervalMs = ACTIVE_TASK_WAKE_GUARD_YEARS * 365 * 24 * 60 * 60 * 1000;
+    const guardJobName = `active-task-wake-${entityKey}-${resumeEpochSec}`;
+    const guardPrefix = buildGuardPrefix(guardJobName, minIntervalMs, openclawDir);
 
-  const job: Record<string, unknown> = {
-    id: jobId,
-    pluginJobId: jobId,
-    name: `active-task-wake-${entitySlug}`,
-    sessionTarget: "isolated",
-    schedule: { kind: "at", at: resumeAtIso },
-    deleteAfterRun: true,
-    payload: {
-      kind: "agentTurn",
-      message:
-        guardPrefix +
-        buildWakeMessage({
-          entity: input.entity,
-          status: input.status,
-          owner: input.owner,
-          next: input.next,
-          relatedSession: input.relatedSession,
-          title: input.title,
-          resumeAtIso,
-          state: input.state,
-          guardYears: ACTIVE_TASK_WAKE_GUARD_YEARS,
-        }),
-      model,
-    },
-    delivery: { mode: "announce" },
-    enabled: true,
-    metadata: {
-      source: "active_task_checkpoint",
-      entity: input.entity,
-      resumeAt: resumeAtIso,
-      createdAt: new Date().toISOString(),
-    },
-  };
+    const job: Record<string, unknown> = {
+      id: jobId,
+      pluginJobId: jobId,
+      name: `active-task-wake-${entitySlug}`,
+      sessionTarget: "isolated",
+      schedule: { kind: "at", at: resumeAtIso },
+      deleteAfterRun: true,
+      payload: {
+        kind: "agentTurn",
+        message:
+          guardPrefix +
+          buildWakeMessage({
+            entity: input.entity,
+            status: input.status,
+            owner: input.owner,
+            next: input.next,
+            relatedSession: input.relatedSession,
+            title: input.title,
+            resumeAtIso,
+            state: input.state,
+            guardYears: ACTIVE_TASK_WAKE_GUARD_YEARS,
+          }),
+        model,
+      },
+      delivery: { mode: "announce" },
+      enabled: true,
+      metadata: {
+        source: "active_task_checkpoint",
+        entity: input.entity,
+        resumeAt: resumeAtIso,
+        createdAt: new Date().toISOString(),
+      },
+    };
 
-  const existingIdx = jobs.findIndex((row) => {
-    const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : "";
-    const id = typeof row.id === "string" ? row.id : "";
-    return pluginJobId === jobId || id === jobId;
+    const existingIdx = jobs.findIndex((row) => {
+      const pluginJobId = typeof row.pluginJobId === "string" ? row.pluginJobId : "";
+      const id = typeof row.id === "string" ? row.id : "";
+      return pluginJobId === jobId || id === jobId;
+    });
+
+    if (existingIdx >= 0) {
+      jobs[existingIdx] = { ...(jobs[existingIdx] ?? {}), ...job };
+    } else {
+      jobs.push(job);
+    }
+
+    const payload = JSON.stringify(store, null, 2);
+    const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpPath, payload, "utf-8");
+    renameSync(tmpPath, jobsPath);
+
+    return {
+      scheduled: true,
+      jobId,
+      scheduleKind: "at" as const,
+      scheduleAt: resumeAtIso,
+      jobsPath,
+      disabledPreviousJobs,
+    };
   });
-
-  if (existingIdx >= 0) {
-    jobs[existingIdx] = { ...(jobs[existingIdx] ?? {}), ...job };
-  } else {
-    jobs.push(job);
-  }
-
-  const payload = JSON.stringify(store, null, 2);
-  const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmpPath, payload, "utf-8");
-  renameSync(tmpPath, jobsPath);
-
-  return {
-    scheduled: true,
-    jobId,
-    scheduleKind: "at",
-    scheduleAt: resumeAtIso,
-    jobsPath,
-    disabledPreviousJobs,
-  };
 }
 
 async function refreshActiveTaskProjectionFromFacts(
@@ -803,7 +844,7 @@ export async function runActiveTaskCheckpoint(
         ? "schedule_wake_disabled"
         : "resumeAt_not_provided";
     try {
-      const cleanup = disableActiveTaskWakeJobsForEntity(checkpoint.entity, deps.openclawDir);
+      const cleanup = await disableActiveTaskWakeJobsForEntity(checkpoint.entity, deps.openclawDir);
       wakeJobsPath = cleanup.jobsPath;
       wakeDisabledPreviousJobs = cleanup.disabled;
     } catch (err) {
