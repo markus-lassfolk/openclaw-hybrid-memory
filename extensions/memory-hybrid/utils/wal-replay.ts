@@ -146,7 +146,8 @@ export async function replayWalEntries(
   for (const entry of walEntries) {
     try {
       if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
-        const text = safeString(entry.data.text)!;
+        const text = safeString(entry.data.text);
+        if (!text) continue;
         const source = safeString(entry.data.source) ?? "conversation";
         const category = (safeString(entry.data.category) ?? "other") as import("../config.js").MemoryCategory;
         const importance = safeNumber(entry.data.importance) ?? 0.5;
@@ -237,7 +238,8 @@ export async function replayWalEntries(
         await wal.remove(entry.id);
       } else if (entry.operation === "update" && entry.targetId && isSafeWalText(entry.data?.text)) {
         const targetId = entry.targetId;
-        const text = safeString(entry.data.text)!;
+        const text = safeString(entry.data.text);
+        if (!text) continue;
         const source = safeString(entry.data.source) ?? "conversation";
         const category = (safeString(entry.data.category) ?? "other") as import("../config.js").MemoryCategory;
         const importance = safeNumber(entry.data.importance) ?? 0.5;
