@@ -376,6 +376,105 @@ describe("registerPublicApiRoutes", () => {
     expect(staleAgain.projection.staleReasons).toContain("project_facts_newer_than_projection");
   });
 
+  it("active-tasks endpoint applies scope filtering", async () => {
+    factsDb.store({
+      text: "Global task title",
+      category: "project",
+      importance: 0.9,
+      entity: "task-global",
+      key: "title",
+      value: "Global task",
+      source: "conversation",
+      scope: "global",
+      scopeTarget: null,
+    });
+    factsDb.store({
+      text: "Global task status",
+      category: "project",
+      importance: 0.9,
+      entity: "task-global",
+      key: "status",
+      value: "in_progress",
+      source: "conversation",
+      scope: "global",
+      scopeTarget: null,
+    });
+    factsDb.store({
+      text: "Scoped task title",
+      category: "project",
+      importance: 0.9,
+      entity: "task-agent-a",
+      key: "title",
+      value: "Agent A task",
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-a",
+    });
+    factsDb.store({
+      text: "Scoped task status",
+      category: "project",
+      importance: 0.9,
+      entity: "task-agent-a",
+      key: "status",
+      value: "in_progress",
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-a",
+    });
+
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true, { ledger: "facts", staleThreshold: "4h", filePath: "ACTIVE-TASKS.md" }),
+        factsDb,
+        narrativesDb,
+      },
+      api,
+    );
+
+    const activeTasksRoute = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`)!;
+
+    const unscopedRes = await invokeNodeHttpRoute(
+      activeTasksRoute.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`),
+    );
+    expect(unscopedRes.status).toBe(200);
+    const unscopedBody = JSON.parse(unscopedRes.body);
+    expect(unscopedBody.active.map((row: { label: string }) => row.label)).toContain("task-global");
+    expect(unscopedBody.active.map((row: { label: string }) => row.label)).not.toContain("task-agent-a");
+
+    const scopedReq = {
+      method: "GET",
+      url: `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`,
+      headers: { "x-openclaw-agent-id": "agent-a" },
+    };
+    const scopedRes = await invokeNodeHttpRoute(activeTasksRoute.handler, scopedReq as ReturnType<typeof fakeReq>);
+    expect(scopedRes.status).toBe(200);
+    const scopedBody = JSON.parse(scopedRes.body);
+    expect(scopedBody.active.map((row: { label: string }) => row.label)).toContain("task-global");
+    expect(scopedBody.active.map((row: { label: string }) => row.label)).toContain("task-agent-a");
+  });
+
+  it("active-tasks endpoint returns 404 when activeTask is disabled", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes(
+      {
+        cfg: {
+          ...makeCfg(true, { ledger: "facts" }),
+          activeTask: { ...makeCfg(true, { ledger: "facts" }).activeTask, enabled: false },
+        },
+        factsDb,
+        narrativesDb,
+      },
+      api,
+    );
+
+    const activeTasksRoute = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`)!;
+    const res = await invokeNodeHttpRoute(activeTasksRoute.handler, fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`));
+    expect(res.status).toBe(404);
+    expect(JSON.parse(res.body).error).toBe("active_tasks_disabled");
+  });
+
   it("does not register routes when health is disabled", () => {
     const { api, routes } = makeApi();
     registerPublicApiRoutes(

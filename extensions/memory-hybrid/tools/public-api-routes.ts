@@ -343,13 +343,18 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     const url = parseReqUrl(req.url);
     const renderRequested = parseBooleanParam(url.searchParams.get("render"));
     const includeCompleted = parseBooleanParam(url.searchParams.get("includeCompleted"));
+    const scopeFilter = resolveScopeFilter(req);
+
+    if (!activeTaskCfg.enabled) {
+      return toJson(404, {
+        error: "active_tasks_disabled",
+      });
+    }
 
     let renderApplied = false;
     let renderError: string | null = null;
     if (renderRequested) {
-      if (!activeTaskCfg.enabled) {
-        renderError = "render_requested_but_activeTask_is_disabled";
-      } else if (activeTaskCfg.ledger !== "facts") {
+      if (activeTaskCfg.ledger !== "facts") {
         renderError = "render_requested_but_activeTask_ledger_is_not_facts";
       } else {
         const result = await refreshActiveTaskProjectionBestEffort({
@@ -366,8 +371,11 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       }
     }
 
-    const rows = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes);
-    const projection = await getActiveTaskProjectionStatus(ctx.factsDb, activeTaskFilePath);
+    const rows = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes, scopeFilter);
+    const projection = await getActiveTaskProjectionStatus(ctx.factsDb, activeTaskFilePath, {
+      scopeFilter,
+      latestProjectFactSec: rows.latestProjectFactSec,
+    });
     const warnings: string[] = [];
     if (activeTaskCfg.ledger !== "facts") {
       warnings.push("activeTask.ledger is markdown; DB snapshot may diverge from markdown ledger.");

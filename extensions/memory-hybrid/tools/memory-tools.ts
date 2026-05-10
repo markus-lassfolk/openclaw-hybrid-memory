@@ -314,10 +314,15 @@ export function registerMemoryTools(
     }
   })();
 
-  const maybeRefreshProjectActiveTaskProjection = async (factCategory: string, factId: string): Promise<void> => {
+  const maybeRefreshProjectActiveTaskProjection = async (
+    factCategory: string,
+    factId: string,
+    factScope: string | null | undefined,
+  ): Promise<void> => {
     if (!activeTaskCfg || !activeTaskCfg.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath)
       return;
     if (factCategory !== TASK_LEDGER_CATEGORY) return;
+    if ((factScope ?? "global") !== "global") return;
     await refreshActiveTaskProjectionBestEffort({
       factsDb,
       staleMinutes: activeTaskStaleMinutes,
@@ -1972,7 +1977,7 @@ export function registerMemoryTools(
                   }
 
                   await walRemove(walEntryId, api.logger);
-                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id);
+                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
                   // Issue #159: enqueue contextual variant generation (non-blocking)
                   if (variantQueue) {
@@ -2156,7 +2161,7 @@ export function registerMemoryTools(
           }
 
           await walRemove(walEntryId, api.logger);
-          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id);
+          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
           // Issue #150: write event to episodic event log
           if (eventLog) {
