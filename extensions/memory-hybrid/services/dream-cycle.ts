@@ -20,6 +20,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
 import type { ProvenanceService } from "./provenance.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 import {
   type ReflectionConfig,
   countActivePatternFactsForMaintenance,
@@ -268,6 +269,7 @@ export async function runEpisodicConsolidation(
   verbose?: boolean,
   maxEventsPerConsolidation = DEFAULT_MAX_EVENTS_PER_CONSOLIDATION,
   eventTypeFilter?: EpisodicConsolidationEventTypeFilter | null,
+  options?: { vectorDb?: VectorDB },
 ): Promise<{ eventsConsolidated: number; factsCreated: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
@@ -395,7 +397,7 @@ export async function runEpisodicConsolidation(
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact;
     try {
-      const storeResult = factsDb.store({
+      const storeResult = factsDb.storeWithResult({
         text: mergedText.slice(0, 500),
         category: "fact" as MemoryCategory,
         importance: 0.5,
@@ -415,19 +417,13 @@ export async function runEpisodicConsolidation(
       });
       consolidatedFact = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-      if (storeResult.evictedFactId) {
-        try {
-          const deleted = await vectorDb.delete(storeResult.evictedFactId);
-          if (deleted) {
-            logger.info?.(
-              `memory-hybrid: dream-cycle evicted fact ${storeResult.evictedFactId}, vector deleted`,
-            );
-          }
-        } catch (evictErr) {
-          logger.warn?.(
-            `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-          );
-        }
+      if (options?.vectorDb) {
+        await cleanupEvictedVector({
+          vectorDb: options.vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger,
+          context: "dream-cycle",
+        });
       }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
@@ -637,6 +633,7 @@ export async function runDreamCycle(
         v,
         config.maxEventsPerConsolidation,
         config.episodicConsolidationEventTypes ?? null,
+        { vectorDb },
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;

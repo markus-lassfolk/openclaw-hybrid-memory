@@ -36,6 +36,7 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;
@@ -632,7 +633,7 @@ export async function runReflection(
     }
 
     storeDedupeVectorFallbackSuppressed++;
-    const storeResult = factsDb.store(
+    const storeResult = factsDb.storeWithResult(
       {
         text: patternText,
         category: "pattern" as MemoryCategory,
@@ -653,20 +654,12 @@ export async function runReflection(
     );
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-    if (storeResult.evictedFactId) {
-      try {
-        const deleted = await vectorDb.delete(storeResult.evictedFactId);
-        if (deleted) {
-          logger.info?.(
-            `memory-hybrid: reflection evicted fact ${storeResult.evictedFactId}, vector deleted`,
-          );
-        }
-      } catch (evictErr) {
-        logger.warn?.(
-          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-        );
-      }
-    }
+    await cleanupEvictedVector({
+      vectorDb: vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger: logger,
+      context: "reflection",
+    });
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -916,7 +909,7 @@ export async function runReflectionRules(
       continue;
     }
     storeDedupeVectorFallbackSuppressed++;
-    const storeResult = factsDb.store(
+    const storeResult = factsDb.storeWithResult(
       {
         text: ruleText,
         category: "rule" as MemoryCategory,
@@ -937,20 +930,12 @@ export async function runReflectionRules(
     );
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-    if (storeResult.evictedFactId) {
-      try {
-        const deleted = await vectorDb.delete(storeResult.evictedFactId);
-        if (deleted) {
-          logger.info?.(
-            `memory-hybrid: reflect-rules evicted fact ${storeResult.evictedFactId}, vector deleted`,
-          );
-        }
-      } catch (evictErr) {
-        logger.warn?.(
-          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-        );
-      }
-    }
+    await cleanupEvictedVector({
+      vectorDb: vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger: logger,
+      context: "reflection",
+    });
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {
@@ -1181,7 +1166,7 @@ export async function runReflectionMeta(
       continue;
     }
     storeDedupeVectorFallbackSuppressed++;
-    const storeResult = factsDb.store(
+    const storeResult = factsDb.storeWithResult(
       {
         text: metaText,
         category: "pattern" as MemoryCategory,
@@ -1202,20 +1187,12 @@ export async function runReflectionMeta(
     );
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-    if (storeResult.evictedFactId) {
-      try {
-        const deleted = await vectorDb.delete(storeResult.evictedFactId);
-        if (deleted) {
-          logger.info?.(
-            `memory-hybrid: reflect-meta evicted fact ${storeResult.evictedFactId}, vector deleted`,
-          );
-        }
-      } catch (evictErr) {
-        logger.warn?.(
-          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-        );
-      }
-    }
+    await cleanupEvictedVector({
+      vectorDb: vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger: logger,
+      context: "reflection",
+    });
     if (provenanceService && reflectionRunId) {
       try {
         provenanceService.addEdge(entry.id, {

@@ -127,7 +127,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
         .run(nowSec, dedupe.existingId);
     }
     const existing = ctx.getById(dedupe.existingId);
-    if (existing) return existing;
+    if (existing) return { entry: existing, evictedFactId: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -140,7 +140,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       )
       .run(dedupe.boostBy, dedupe.existingId);
     const boosted = ctx.getById(dedupe.existingId);
-    if (boosted) return boosted;
+    if (boosted) return { entry: boosted, evictedFactId: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -156,7 +156,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       ctx.db
         .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
         .run(mergedText, mergedHash, existing.id);
-      return ctx.getById(existing.id) ?? existing;
+      return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null };
     }
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,

@@ -34,6 +34,7 @@ import { withTimeout } from "../utils/timeout.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
@@ -165,7 +166,7 @@ async function runCapture(
           modelTag: humCfg.modelTag,
           skillTag: humCfg.skillTag,
         });
-        await ctx.factsDb.store({
+        const storeResult = ctx.factsDb.storeWithResult({
           text: entryText,
           category: "quality_loop",
           importance: 0.6,
@@ -175,7 +176,12 @@ async function runCapture(
           source: "humanizer",
           decayClass: "normal",
         });
-        // Note: Humanizer scores don't generate vectors, so no evictedFactId handling needed here
+        await cleanupEvictedVector({
+          vectorDb: ctx.vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: api.logger,
+          context: "humanizer-score",
+        });
         api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
     } catch (err) {
@@ -430,7 +436,7 @@ async function runCapture(
                       classification.targetId,
                     );
                     const nowSec = Math.floor(Date.now() / 1000);
-                    const storeResult = ctx.factsDb.store({
+                    const storeResult = ctx.factsDb.storeWithResult({
                       text: textToStore,
                       category,
                       importance: finalImportance,
@@ -450,20 +456,12 @@ async function runCapture(
                     });
                     const newEntry = storeResult.entry;
                     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                    if (storeResult.evictedFactId) {
-                      try {
-                        const deleted = await ctx.vectorDb.delete(storeResult.evictedFactId);
-                        if (deleted) {
-                          api.logger.info?.(
-                            `memory-hybrid: auto-capture evicted fact ${storeResult.evictedFactId}, vector deleted`,
-                          );
-                        }
-                      } catch (evictErr) {
-                        api.logger.warn(
-                          `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-                        );
-                      }
-                    }
+                    await cleanupEvictedVector({
+                      vectorDb: ctx.vectorDb,
+                      evictedFactId: storeResult.evictedFactId,
+                      logger: api.logger,
+                      context: "stage-capture",
+                    });
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
                     try {
@@ -547,7 +545,7 @@ async function runCapture(
             },
             api.logger,
           );
-          const storeResult = ctx.factsDb.store({
+          const storeResult = ctx.factsDb.storeWithResult({
             text: textToStore,
             category,
             importance: CLI_STORE_IMPORTANCE,
@@ -564,20 +562,12 @@ async function runCapture(
           });
           const storedEntry = storeResult.entry;
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-          if (storeResult.evictedFactId) {
-            try {
-              const deleted = await ctx.vectorDb.delete(storeResult.evictedFactId);
-              if (deleted) {
-                api.logger.info?.(
-                  `memory-hybrid: auto-capture evicted fact ${storeResult.evictedFactId}, vector deleted`,
-                );
-              }
-            } catch (evictErr) {
-              api.logger.warn(
-                `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-              );
-            }
-          }
+          await cleanupEvictedVector({
+            vectorDb: ctx.vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: api.logger,
+            context: "stage-capture",
+          });
           try {
             if (vector) {
               ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
@@ -834,7 +824,7 @@ async function runCapture(
               }
             } else {
               const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
-              const storeResult = ctx.factsDb.store({
+              const storeResult = ctx.factsDb.storeWithResult({
                 text,
                 category: "technical" as MemoryCategory,
                 importance: 0.9,
@@ -847,20 +837,12 @@ async function runCapture(
               });
               const entry = storeResult.entry;
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-              if (storeResult.evictedFactId) {
-                try {
-                  const deleted = await ctx.vectorDb.delete(storeResult.evictedFactId);
-                  if (deleted) {
-                    api.logger.info?.(
-                      `memory-hybrid: credential capture evicted fact ${storeResult.evictedFactId}, vector deleted`,
-                    );
-                  }
-                } catch (evictErr) {
-                  api.logger.warn(
-                    `memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`,
-                  );
-                }
-              }
+              await cleanupEvictedVector({
+                vectorDb: ctx.vectorDb,
+                evictedFactId: storeResult.evictedFactId,
+                logger: api.logger,
+                context: "stage-capture",
+              });
               if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   const vector = await ctx.embeddings.embed(text);

@@ -229,13 +229,30 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
       suppressVectorFallbackWarning?: boolean;
     },
+  ): MemoryEntry {
+    return this.storeWithResult(entry, options).entry;
+  }
+
+  storeWithResult(
+    entry: StoreFactInput,
+    options?: {
+      vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
+      /**
+       * Namespace for warn-once keys when store dedupe falls back to lexical-only because
+       * no `vectorCandidates` were provided (e.g. "reflection", "extract-directives").
+       */
+      warnContext?: string;
+      /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
+      suppressVectorFallbackWarning?: boolean;
+    },
   ): StoreFactResult {
     const warnOnce = (key: string, message: string): void => {
       if (this.storeDedupeWarnedKeys.has(key)) return;
       this.storeDedupeWarnedKeys.add(key);
-      process.stderr.write(`${message}\n`);
+      process.stderr.write(`${message}
+`);
     };
-    const result = storeFact(
+    return storeFact(
       {
         db: this.liveDb,
         fuzzyDedupe: this.fuzzyDedupe,
@@ -251,9 +268,6 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       },
       entry,
     );
-    // Issue #2 COMPLETED: evictedFactId is now returned to the caller.
-    // The caller with access to VectorDB should delete the vector if evictedFactId is present.
-    return result;
   }
 
   statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {

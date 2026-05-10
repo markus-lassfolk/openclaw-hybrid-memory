@@ -121,7 +121,7 @@ export class WriteAheadLog {
           if (!this.fsyncWarnEmitted) {
             pluginLogger.error(
               `[WAL] CRITICAL: Both datasync() and fsync() failed (${code}) — WAL durability unavailable on this filesystem. ` +
-              `Data loss may occur on crash. Consider moving the database to a POSIX-compliant filesystem.`,
+                `Data loss may occur on crash. Consider moving the database to a POSIX-compliant filesystem.`,
             );
             this.fsyncWarnEmitted = true;
           }

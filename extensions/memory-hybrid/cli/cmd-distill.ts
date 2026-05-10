@@ -53,6 +53,7 @@ import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -668,7 +669,7 @@ export async function runDistillForCli(
               }
               storedInVault = true;
               const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
-              const storeResult = factsDb.store({
+              const storeResult = factsDb.storeWithResult({
                 text: pointerText,
                 category: "technical",
                 importance: BATCH_STORE_IMPORTANCE,
@@ -680,16 +681,12 @@ export async function runDistillForCli(
               });
               const entry = storeResult.entry;
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-              if (storeResult.evictedFactId) {
-                try {
-                  const deleted = await vectorDb.delete(storeResult.evictedFactId);
-                  if (deleted) {
-                    sink.warn(`memory-hybrid: distill credential evicted fact ${storeResult.evictedFactId}, vector deleted`);
-                  }
-                } catch (evictErr) {
-                  sink.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
-                }
-              }
+              await cleanupEvictedVector({
+                vectorDb: vectorDb,
+                evictedFactId: storeResult.evictedFactId,
+                logger: sink,
+                context: "distill",
+              });
               try {
                 const vector = await embeddings.embed(pointerText);
                 factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
@@ -740,7 +737,7 @@ export async function runDistillForCli(
           skipped++;
           continue;
         }
-        const storeResult = factsDb.store({
+        const storeResult = factsDb.storeWithResult({
           text: fact.text,
           category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
           importance: BATCH_STORE_IMPORTANCE,
@@ -753,16 +750,12 @@ export async function runDistillForCli(
         });
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-        if (storeResult.evictedFactId) {
-          try {
-            const deleted = await vectorDb.delete(storeResult.evictedFactId);
-            if (deleted) {
-              sink.warn(`memory-hybrid: distill evicted fact ${storeResult.evictedFactId}, vector deleted`);
-            }
-          } catch (evictErr) {
-            sink.warn(`memory-hybrid: failed to delete vector for evicted fact ${storeResult.evictedFactId}: ${evictErr}`);
-          }
-        }
+        await cleanupEvictedVector({
+          vectorDb: vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: sink,
+          context: "distill",
+        });
         try {
           await vectorDb.store({
             text: fact.text,
