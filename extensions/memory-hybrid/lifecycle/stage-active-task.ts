@@ -99,7 +99,9 @@ export function registerActiveTaskInjection(
       if (activeForInjection.length === 0 && !longRunningBlock) return undefined;
 
       const injection =
-        activeForInjection.length > 0 ? buildActiveTaskInjection(activeForInjection, ctx.cfg.activeTask.injectionBudget) : "";
+        activeForInjection.length > 0
+          ? buildActiveTaskInjection(activeForInjection, ctx.cfg.activeTask.injectionBudget)
+          : "";
       let staleWarningBlock = "";
       if (ctx.cfg.activeTask.staleWarning.enabled && activeForInjection.length > 0) {
         const injectionChars = injection.length;

@@ -45,7 +45,11 @@ function withRepoPrefix(base: string, repo?: string): string {
   return repo?.trim() ? `wf-${repo}-${base}` : `wf-${base}`;
 }
 
-function buildWorkflowProposal(kind: LongRunningWorkflowKind, userText: string, workspaceRoot?: string): LongRunningWorkflowProposal {
+function buildWorkflowProposal(
+  kind: LongRunningWorkflowKind,
+  userText: string,
+  workspaceRoot?: string,
+): LongRunningWorkflowProposal {
   const repoContext = normalizeRepoContext(userText, workspaceRoot);
   const prNumber = PR_NUM_RE.exec(userText)?.[1];
   const deployTarget = DEPLOY_TARGET_RE.exec(userText)?.[1]?.toLowerCase();
@@ -102,7 +106,10 @@ function buildWorkflowProposal(kind: LongRunningWorkflowKind, userText: string, 
   };
 }
 
-export function detectLongRunningWorkflowProposal(userText: string, workspaceRoot?: string): LongRunningWorkflowProposal | null {
+export function detectLongRunningWorkflowProposal(
+  userText: string,
+  workspaceRoot?: string,
+): LongRunningWorkflowProposal | null {
   const text = userText.trim();
   if (!text) return null;
 
@@ -198,7 +205,9 @@ export function buildLongRunningTaskRegistrationBlock(
     ),
   );
   lines.push("```");
-  lines.push("- For outcome-oriented multi-session execution, follow with `active_task_propose_goal` + `goal_register`.");
+  lines.push(
+    "- For outcome-oriented multi-session execution, follow with `active_task_propose_goal` + `goal_register`.",
+  );
   lines.push("</active-task-registration>");
   return lines.join("\n");
 }

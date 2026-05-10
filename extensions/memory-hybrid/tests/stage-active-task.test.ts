@@ -111,4 +111,3 @@ describe("stage-active-task long-running registration", () => {
     expect(raw).toContain("Deployment workflow (production)");
   });
 });
-
