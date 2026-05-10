@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -248,7 +249,7 @@ describe("ensureWorkspaceBootstrap", () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = join(tmpdir(), `mh-bootstrap-${Date.now()}`);
+    tmp = join(tmpdir(), `mh-bootstrap-${randomUUID()}`);
     mkdirSync(tmp, { recursive: true });
   });
 

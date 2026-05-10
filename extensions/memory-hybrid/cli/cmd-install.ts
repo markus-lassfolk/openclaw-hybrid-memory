@@ -1454,9 +1454,7 @@ function isPlaceholderSecret(value: unknown): boolean {
   const lower = trimmed.toLowerCase();
   return (
     lower === "your_openai_api_key" ||
-    lower === "<openai_api_key>" ||
-    trimmed === "YOUR_OPENAI_API_KEY" ||
-    trimmed === "<OPENAI_API_KEY>"
+    lower === "<openai_api_key>"
   );
 }
 

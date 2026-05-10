@@ -29,7 +29,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
   const verifyCommand = mem
     .command("verify")
     .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)");
-  verifyCommand.alias?.("preflight");
+  if (verifyCommand.alias) verifyCommand.alias("preflight");
   verifyCommand
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
@@ -108,7 +108,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .description(
       "Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.",
     );
-  installCommand.alias?.("setup");
+  if (installCommand.alias) installCommand.alias("setup");
   installCommand
     .option("--dry-run", "Print what would be merged without writing")
     .action(
