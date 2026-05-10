@@ -625,9 +625,11 @@ export async function runVerifyForCli(
     `    First choice per tier: nano=${tierNano[0] ?? "—"} | maintenance=${tierMaintenance[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
   );
   const distillMainTier = cfg.distill?.modelTier ?? "maintenance";
-  const distillMainEffective = getLLMModelPreference(cronCfg, distillMainTier)[0] ?? "—";
+  // Show the actual effective tier after clamping (cmd-distill.ts clamps "heavy" to "maintenance")
+  const effectiveDistillMainTier = distillMainTier === "heavy" ? "maintenance" : distillMainTier;
+  const distillMainEffective = getLLMModelPreference(cronCfg, effectiveDistillMainTier)[0] ?? "—";
   tableLog(
-    `    Distill main pass: distill.modelTier=${distillMainTier} -> ${distillMainEffective}; --model overrides one run.`,
+    `    Distill main pass: distill.modelTier=${distillMainTier}${distillMainTier === "heavy" ? " (clamped to maintenance)" : ""} -> ${distillMainEffective}; --model overrides one run.`,
   );
   const dreamOverride =
     typeof cfg.nightlyCycle?.model === "string" && cfg.nightlyCycle.model.trim().length > 0
@@ -680,14 +682,15 @@ export async function runVerifyForCli(
   }
 
   // Maintenance routing warnings: flag when maintenance-adjacent tasks are routed to heavy/expensive models unintentionally.
-  if (distillMainTier !== "heavy" && distillMainEffective !== "—" && isHeavyModel(distillMainEffective)) {
+  // NOTE: cmd-distill.ts now clamps distill.modelTier=heavy to maintenance, so this check uses effectiveDistillMainTier.
+  if (effectiveDistillMainTier !== "heavy" && distillMainEffective !== "—" && isHeavyModel(distillMainEffective)) {
     warnings.push(
-      `distill.modelTier=${distillMainTier} routes the main distill pass to a heavy/expensive first-choice model (${distillMainEffective}); configure llm.maintenance with a cheap-first list, set distill.modelTier=nano, or opt into distill.modelTier=heavy explicitly`,
+      `distill.modelTier=${distillMainTier} routes the main distill pass to a heavy/expensive first-choice model (${distillMainEffective}); configure llm.maintenance with a cheap-first list or set distill.modelTier=nano`,
     );
   }
   if (distillMainTier === "heavy") {
     warnings.push(
-      `distill.modelTier=heavy: main session distill will use the heavy tier. This is opt-in; use maintenance/nano for cheaper nightly maintenance.`,
+      `distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance in cmd-distill.ts). Use --model to override for a single run if needed.`,
     );
   }
   const extractionFirst =
