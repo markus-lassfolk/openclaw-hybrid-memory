@@ -309,7 +309,34 @@ function selectGoalStewardshipHeartbeatMessage(heartbeatPatterns: string[]): str
   for (const hint of extractPlainHeartbeatPatternHints(heartbeatPatterns)) {
     const candidate = `cron heartbeat ${hint}`.replace(/\s+/g, " ").trim();
     if (!candidates.includes(candidate)) candidates.push(candidate);
+    if (!candidates.includes(hint)) candidates.push(hint);
   }
+  return candidates.find((candidate) => matchers.some((re) => re.test(candidate))) ?? null;
+}
+
+function collectHeartbeatMessageCandidatesFromJob(job: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const payload =
+    typeof job.payload === "object" && job.payload !== null && !Array.isArray(job.payload)
+      ? (job.payload as Record<string, unknown>)
+      : undefined;
+  const candidates = [payload?.text, payload?.message, job.text, job.message];
+  for (const raw of candidates) {
+    if (typeof raw !== "string") continue;
+    const normalized = raw.trim();
+    if (!normalized || out.includes(normalized)) continue;
+    out.push(normalized);
+  }
+  return out;
+}
+
+function selectExistingGoalStewardshipHeartbeatMessage(
+  existing: Record<string, unknown> | undefined,
+  heartbeatPatterns: string[],
+): string | null {
+  if (!existing) return null;
+  const matchers = compileHeartbeatMatchers(heartbeatPatterns);
+  const candidates = collectHeartbeatMessageCandidatesFromJob(existing);
   return candidates.find((candidate) => matchers.some((re) => re.test(candidate))) ?? null;
 }
 
@@ -324,15 +351,6 @@ export function ensureGoalStewardshipHeartbeatCronJob(
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
-  const desiredMessage = selectGoalStewardshipHeartbeatMessage(options.heartbeatPatterns);
-  if (!desiredMessage) {
-    return {
-      added: false,
-      normalized: false,
-      skippedReason: "could not synthesize a 'cron heartbeat …' message that matches goalStewardship.heartbeatPatterns",
-    };
-  }
-
   const store: { jobs?: unknown[] } = existsSync(cronStorePath)
     ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
     : {};
@@ -345,6 +363,16 @@ export function ensureGoalStewardshipHeartbeatCronJob(
         j.id === GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID ||
         j.name === GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID),
   );
+  const desiredMessage =
+    selectGoalStewardshipHeartbeatMessage(options.heartbeatPatterns) ??
+    selectExistingGoalStewardshipHeartbeatMessage(existing, options.heartbeatPatterns);
+  if (!desiredMessage) {
+    return {
+      added: false,
+      normalized: false,
+      skippedReason: "could not synthesize a 'cron heartbeat …' message that matches goalStewardship.heartbeatPatterns",
+    };
+  }
 
   if (!existing) {
     jobsArr.push({
@@ -356,8 +384,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
       sessionTarget: "main",
       delivery: { mode: "none" },
       payload: {
-        kind: "agentTurn",
-        message: desiredMessage,
+        kind: "systemEvent",
+        text: desiredMessage,
       },
     });
     const payload = JSON.stringify(store, null, 2);
@@ -415,8 +443,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
     existing.payload = payload;
     changed = true;
   }
-  if (payload.kind !== "agentTurn") {
-    payload.kind = "agentTurn";
+  if (payload.kind !== "systemEvent") {
+    payload.kind = "systemEvent";
     changed = true;
   }
   if (payload.sessionTarget !== undefined) {
@@ -427,12 +455,12 @@ export function ensureGoalStewardshipHeartbeatCronJob(
     payload.isolated = undefined;
     changed = true;
   }
-  if (payload.text !== undefined) {
-    payload.text = undefined;
+  if (payload.message !== undefined) {
+    payload.message = undefined;
     changed = true;
   }
-  if (payload.message !== desiredMessage) {
-    payload.message = desiredMessage;
+  if (payload.text !== desiredMessage) {
+    payload.text = desiredMessage;
     changed = true;
   }
 
