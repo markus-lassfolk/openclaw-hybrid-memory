@@ -325,8 +325,11 @@ export async function upsertProjectTaskKey(
   key: string,
   value: string,
   log?: { warn?: (m: string) => void },
+  cache?: { latestByEntityKey: Map<string, MemoryEntry> },
 ): Promise<void> {
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+  const facts = cache?.latestByEntityKey
+    ? Array.from(cache.latestByEntityKey.values())
+    : factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
   const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
   same.sort((a, b) => b.createdAt - a.createdAt);
   const previous = same[0];

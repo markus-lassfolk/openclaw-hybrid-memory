@@ -199,9 +199,9 @@ function normalizeCheckpointInput(
   }
 
   const title = trimToString(input.title);
-  const owner = input.owner !== undefined ? trimToString(input.owner) ?? "" : undefined;
-  const next = input.next !== undefined ? trimToString(input.next) ?? "" : undefined;
-  const relatedSession = input.relatedSession !== undefined ? trimToString(input.relatedSession) ?? "" : undefined;
+  const owner = input.owner !== undefined ? (trimToString(input.owner) ?? "") : undefined;
+  const next = input.next !== undefined ? (trimToString(input.next) ?? "") : undefined;
+  const relatedSession = input.relatedSession !== undefined ? (trimToString(input.relatedSession) ?? "") : undefined;
 
   let resumeAtIso: string | undefined;
   let resumeAtDate: Date | undefined;
@@ -276,11 +276,7 @@ function buildLatestProjectFactCache(factsDb: FactsDB): Map<string, MemoryEntry>
   return cache;
 }
 
-function getLatestProjectValue(
-  cache: Map<string, MemoryEntry>,
-  entity: string,
-  key: string,
-): string | undefined {
+function getLatestProjectValue(cache: Map<string, MemoryEntry>, entity: string, key: string): string | undefined {
   const row = cache.get(projectFactCacheKey(entity, key));
   return trimToString(row?.value) ?? trimToString(row?.text) ?? undefined;
 }
@@ -563,9 +559,7 @@ export async function runActiveTaskCheckpoint(
   const resolvedOwner = checkpoint.owner ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "owner") ?? "";
   const resolvedNext = checkpoint.next ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "next") ?? "";
   const resolvedRelatedSession =
-    checkpoint.relatedSession ??
-    getLatestProjectValue(latestProjectFacts, checkpoint.entity, "related_session") ??
-    "";
+    checkpoint.relatedSession ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "related_session") ?? "";
   const taskUpdated = now.toISOString();
   const errors: ActiveTaskCheckpointError[] = [];
   const updatedKeys: string[] = [];

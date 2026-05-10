@@ -241,7 +241,9 @@ describe("active-task-checkpoint", () => {
     expect(followup.checkpoint?.owner).toBe("agent:forge");
     expect(followup.checkpoint?.next).toBe("Wait for dependency");
     expect(followup.checkpoint?.relatedSession).toBe("agent:main:session-a");
-    expect(followup.steps.facts.updatedKeys).toEqual(expect.arrayContaining(["status", "owner", "next", "related_session"]));
+    expect(followup.steps.facts.updatedKeys).toEqual(
+      expect.arrayContaining(["status", "owner", "next", "related_session"]),
+    );
 
     factsDb.close();
   });
