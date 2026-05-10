@@ -32,6 +32,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -332,7 +333,7 @@ export async function runExtractImplicitFeedbackForCli(
   sessionsScanned: number;
   closedLoopReport?: string;
 }> {
-  const { factsDb, cfg, logger, openai } = ctx;
+  const { factsDb, vectorDb, cfg, logger, openai } = ctx;
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
   const filePaths = getSessionFilePathsSince(sessionDir, days);
@@ -534,7 +535,7 @@ export async function runExtractImplicitFeedbackForCli(
           }
           if (factsDb.hasDuplicate(text, "implicit-feedback")) continue;
           if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
-          factsDb.store({
+          const storeResult = factsDb.storeWithResult({
             text,
             category: "technical",
             importance: Math.max(0.3, sig.confidence * 0.6),
@@ -544,6 +545,13 @@ export async function runExtractImplicitFeedbackForCli(
             source: "implicit-feedback",
             tags: ["implicit-feedback", "negative", sig.type],
             decayClass: "normal",
+          });
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          await cleanupEvictedVector({
+            vectorDb: vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: logger,
+            context: "implicit-feedback",
           });
           lessonsStoredTodaySession++;
         } catch (err) {
@@ -642,7 +650,7 @@ export async function runExtractImplicitFeedbackForCli(
               }
               if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
               try {
-                factsDb.store({
+                const storeResult = factsDb.storeWithResult({
                   text: trimmedLesson,
                   category: "technical",
                   importance: 0.5,
@@ -652,6 +660,13 @@ export async function runExtractImplicitFeedbackForCli(
                   source: "implicit-feedback",
                   tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
                   decayClass: "normal",
+                });
+                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                await cleanupEvictedVector({
+                  vectorDb: vectorDb,
+                  evictedFactId: storeResult.evictedFactId,
+                  logger: logger,
+                  context: "implicit-feedback",
                 });
                 lessonsStoredTodaySession++;
               } catch (err) {
