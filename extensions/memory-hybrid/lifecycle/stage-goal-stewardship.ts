@@ -5,6 +5,7 @@ import { join } from "node:path";
  */
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HybridMemoryConfig } from "../config.js";
+import { isSubagentSession } from "../services/active-task.js";
 import { refreshActiveTaskMirrorWithGoals } from "../services/goal-active-task-mirror.js";
 import {
   buildMultiGoalStewardshipPrepend,
@@ -16,6 +17,8 @@ import { isGlobalRateLimited, listActiveGoals, resolveGoalsDir } from "../servic
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
+import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
 
 export function registerGoalStewardshipInjection(
@@ -27,15 +30,17 @@ export function registerGoalStewardshipInjection(
   const gs = ctx.cfg.goalStewardship;
   if (!gs.enabled || !gs.heartbeatStewardship) return;
 
-  api.on("before_agent_start", async (event: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     try {
       const userText = extractLastUserMessageText(event);
       if (!userText || !matchesHeartbeat(userText, gs)) return undefined;
+      const resolvedApi = withHookResolutionApi(api, hookCtx);
+      const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
 
       const goals = await listActiveGoals(goalsDir);
       if (goals.length === 0) return undefined;
 
-      if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour)) {
+      if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
         api.logger?.warn?.("memory-hybrid: goal stewardship skipped — global dispatch rate limit");
         return {
           prependContext:
@@ -47,7 +52,8 @@ export function registerGoalStewardshipInjection(
         gs.heartbeatRefreshActiveTask &&
         ctx.cfg.activeTask.enabled &&
         resolvedActiveTaskPath &&
-        ctx.cfg.verbosity !== "silent"
+        ctx.cfg.verbosity !== "silent" &&
+        !isSubagentSession(sessionKey ?? undefined)
       ) {
         const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
         await refreshActiveTaskMirrorWithGoals({

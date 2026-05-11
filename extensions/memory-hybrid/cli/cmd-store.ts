@@ -9,6 +9,7 @@ import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
+import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
@@ -17,7 +18,7 @@ import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -150,9 +151,9 @@ export async function runStoreForCli(
       capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:embed" });
     }
     if (vector) {
-      let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+      let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, { scope, scopeTarget });
       if (similarFacts.length === 0) {
-        similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5);
+        similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5, scope, scopeTarget);
       }
       if (similarFacts.length > 0) {
         try {
@@ -167,12 +168,41 @@ export async function runStoreForCli(
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
-            factsDb.supersede(classification.targetId, null);
-            aliasDb?.deleteByFactId(classification.targetId);
-            return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
+            const target = validateScopedClassificationTarget({
+              targetId: classification.targetId,
+              candidates: similarFacts,
+              getById: (id) => factsDb.getById(id),
+              scope,
+              scopeTarget,
+              warn: (message) => log.warn(message),
+              warnMessage: `memory-hybrid: blocked cross-scope or unknown classification DELETE target ${classification.targetId}`,
+            });
+            if (target) {
+              factsDb.supersede(classification.targetId, null);
+              aliasDb?.deleteByFactId(classification.targetId);
+              await deleteVectorForFactId({
+                vectorDb: vectorDb,
+                factId: classification.targetId,
+                logger: log,
+                context: "cli-store-delete-action",
+              });
+              return { outcome: "retracted", targetId: classification.targetId, reason: classification.reason ?? "" };
+            }
+            return {
+              outcome: "noop",
+              reason: `blocked delete target ${classification.targetId} due to scope/candidate validation`,
+            };
           }
           if (classification.action === "UPDATE" && classification.targetId) {
-            const oldFact = factsDb.getById(classification.targetId);
+            const oldFact = validateScopedClassificationTarget({
+              targetId: classification.targetId,
+              candidates: similarFacts,
+              getById: (id) => factsDb.getById(id),
+              scope,
+              scopeTarget,
+              warn: (message) => log.warn(message),
+              warnMessage: `memory-hybrid: blocked cross-scope classification UPDATE target ${classification.targetId}`,
+            });
             if (oldFact) {
               const nowSec = Math.floor(Date.now() / 1000);
               const storeResult = factsDb.storeWithResult({
@@ -200,6 +230,12 @@ export async function runStoreForCli(
               });
               factsDb.supersede(classification.targetId, newEntry.id);
               aliasDb?.deleteByFactId(classification.targetId);
+              await deleteVectorForFactId({
+                vectorDb: vectorDb,
+                factId: classification.targetId,
+                logger: log,
+                context: "cli-store-update-superseded",
+              });
               try {
                 factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
@@ -216,6 +252,10 @@ export async function runStoreForCli(
                 reason: classification.reason ?? "",
               };
             }
+            return {
+              outcome: "noop",
+              reason: `blocked update target ${classification.targetId} due to scope/candidate validation`,
+            };
           }
         } catch (err) {
           log.warn(`memory-hybrid: CLI store classification failed: ${err}`);

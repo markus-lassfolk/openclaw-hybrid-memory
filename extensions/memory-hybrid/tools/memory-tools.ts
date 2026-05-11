@@ -55,6 +55,7 @@ import {
 } from "../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
 import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../services/task-ledger-facts.js";
+import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import {
@@ -1881,10 +1882,13 @@ export function registerMemoryTools(
           if (cfg.store.classifyBeforeWrite) {
             let similarFacts: MemoryEntry[] = [];
             if (vector) {
-              similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5);
+              similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, {
+                scope,
+                scopeTarget,
+              });
             }
             if (similarFacts.length === 0) {
-              similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5);
+              similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5, scope, scopeTarget);
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
@@ -1905,24 +1909,52 @@ export function registerMemoryTools(
               }
 
               if (classification.action === "DELETE" && classification.targetId) {
-                factsDb.supersede(classification.targetId, null);
-                aliasDb?.deleteByFactId(classification.targetId);
-                await deleteVectorForFactId({
-                  vectorDb,
-                  factId: classification.targetId,
-                  logger: api.logger,
-                  context: "store-delete-action",
+                const target = validateScopedClassificationTarget({
+                  targetId: classification.targetId,
+                  candidates: similarFacts,
+                  getById: (id) => factsDb.getById(id),
+                  scope,
+                  scopeTarget,
+                  warn: (message) => api.logger.warn?.(message),
+                  warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store DELETE target ${classification.targetId}`,
                 });
+                if (target) {
+                  factsDb.supersede(classification.targetId, null);
+                  aliasDb?.deleteByFactId(classification.targetId);
+                  await deleteVectorForFactId({
+                    vectorDb,
+                    factId: classification.targetId,
+                    logger: api.logger,
+                    context: "store-delete-action",
+                  });
+                  return {
+                    content: [
+                      { type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` },
+                    ],
+                    details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
+                  };
+                }
                 return {
                   content: [
-                    { type: "text", text: `Retracted fact ${classification.targetId}: ${classification.reason}` },
+                    {
+                      type: "text",
+                      text: `Blocked delete target ${classification.targetId}: failed scope/candidate validation.`,
+                    },
                   ],
-                  details: { action: "delete", targetId: classification.targetId, reason: classification.reason },
+                  details: { action: "noop", reason: "blocked-delete-target-validation" },
                 };
               }
 
               if (classification.action === "UPDATE" && classification.targetId) {
-                const oldFact = factsDb.getById(classification.targetId);
+                const oldFact = validateScopedClassificationTarget({
+                  targetId: classification.targetId,
+                  candidates: similarFacts,
+                  getById: (id) => factsDb.getById(id),
+                  scope,
+                  scopeTarget,
+                  warn: (message) => api.logger.warn?.(message),
+                  warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
+                });
                 if (oldFact) {
                   const walEntryId = await walWrite(
                     "update",
@@ -2052,6 +2084,15 @@ export function registerMemoryTools(
                     },
                   };
                 }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Blocked update target ${classification.targetId}: failed scope/candidate validation.`,
+                    },
+                  ],
+                  details: { action: "noop", reason: "blocked-update-target-validation" },
+                };
               }
               // action === "ADD" falls through to normal store
             }
@@ -2291,11 +2332,15 @@ export function registerMemoryTools(
           // Auto-link to similar facts when enabled
           let autoLinked = 0;
           if (cfg.graph.enabled && cfg.graph.autoLink) {
+            const entryScope = entry.scope ?? "global";
+            const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
             const similar = factsDb.findSimilarForClassification(
               textToStore,
               entity ?? null,
               key ?? null,
               cfg.graph.autoLinkLimit,
+              entryScope,
+              entryScopeTarget,
             );
             for (const s of similar) {
               if (s.id === entry.id) continue;

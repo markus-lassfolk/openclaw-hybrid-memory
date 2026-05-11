@@ -33,14 +33,25 @@ export async function resolveGoalForSpawn(event: GoalSubagentSpawnEvent, goalsDi
   const label = event.label?.trim();
   if (!label) return null;
   const active = await listActiveGoals(goalsDir);
-  for (const g of active.sort((a, b) => b.label.length - a.label.length)) {
+  let bestMatch: Goal | null = null;
+  let bestLen = -1;
+  let tiedAtBestLen = false;
+  for (const g of active) {
     const prefix = `${g.label}-`;
     const prefix2 = `${g.label}/`;
     if (label.startsWith(prefix) || label.startsWith(prefix2)) {
-      return g.id;
+      const currentLen = g.label.length;
+      if (currentLen > bestLen) {
+        bestMatch = g;
+        bestLen = currentLen;
+        tiedAtBestLen = false;
+      } else if (currentLen === bestLen) {
+        tiedAtBestLen = true;
+      }
     }
   }
-  return null;
+  if (!bestMatch || tiedAtBestLen) return null;
+  return bestMatch.id;
 }
 
 export async function linkSubagentToGoal(
@@ -173,57 +184,63 @@ export async function updateGoalOnSubagentEnd(
   },
 ): Promise<void> {
   const goals = await listActiveGoals(goalsDir);
+  const matches: Array<{ goal: Goal; taskLabel: string }> = [];
   for (const g of goals) {
-    const sessionMatch = info.sessionKey
-      ? g.linkedTasks.find((t) => t.sessionKey && t.sessionKey === info.sessionKey)
-      : undefined;
-    const match = sessionMatch ?? g.linkedTasks.find((t) => t.label === info.label);
-    if (!match) continue;
-
-    const ts = nowIso();
-    const newStatus = info.success ? "completed" : "failed";
-    const linkedTasks = g.linkedTasks.map((t) =>
-      t.label === match.label
-        ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
-        : t,
-    );
-    const consecutiveFailures = info.success ? 0 : g.consecutiveFailures + 1;
-    const lastOutcome = info.outcome ?? g.lastOutcome;
-
-    if (info.success && allLinkedTasksTerminal({ ...g, linkedTasks })) {
-      await updateGoal(
-        goalsDir,
-        g.id,
-        {
-          linkedTasks,
-          consecutiveFailures,
-          status: "verifying",
-          lastOutcome: lastOutcome ?? "All linked tasks completed — verify goal",
-        },
-        {
-          timestamp: ts,
-          action: "all-tasks-complete",
-          detail: "ready for LLM verification",
-          actor: "agent",
-        },
-      );
-    } else {
-      await updateGoal(
-        goalsDir,
-        g.id,
-        {
-          linkedTasks,
-          consecutiveFailures,
-          lastOutcome,
-        },
-        {
-          timestamp: ts,
-          action: info.success ? "subagent-succeeded" : "subagent-failed",
-          detail: info.outcome ?? (info.success ? "ok" : "failed"),
-          actor: "agent",
-        },
-      );
+    if (info.sessionKey) {
+      const task = g.linkedTasks.find((t) => t.sessionKey && t.sessionKey === info.sessionKey);
+      if (task) matches.push({ goal: g, taskLabel: task.label });
+      continue;
     }
+    const task = g.linkedTasks.find((t) => t.label === info.label);
+    if (task) matches.push({ goal: g, taskLabel: task.label });
+  }
+  if (matches.length !== 1) {
     return;
+  }
+  const { goal: g, taskLabel: matchedTaskLabel } = matches[0];
+
+  const ts = nowIso();
+  const newStatus = info.success ? "completed" : "failed";
+  const linkedTasks = g.linkedTasks.map((t) =>
+    t.label === matchedTaskLabel
+      ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
+      : t,
+  );
+  const consecutiveFailures = info.success ? 0 : g.consecutiveFailures + 1;
+  const lastOutcome = info.outcome ?? g.lastOutcome;
+
+  if (info.success && allLinkedTasksTerminal({ ...g, linkedTasks })) {
+    await updateGoal(
+      goalsDir,
+      g.id,
+      {
+        linkedTasks,
+        consecutiveFailures,
+        status: "verifying",
+        lastOutcome: lastOutcome ?? "All linked tasks completed — verify goal",
+      },
+      {
+        timestamp: ts,
+        action: "all-tasks-complete",
+        detail: "ready for LLM verification",
+        actor: "agent",
+      },
+    );
+  } else {
+    await updateGoal(
+      goalsDir,
+      g.id,
+      {
+        linkedTasks,
+        consecutiveFailures,
+        lastOutcome,
+      },
+      {
+        timestamp: ts,
+        action: info.success ? "subagent-succeeded" : "subagent-failed",
+        detail: info.outcome ?? (info.success ? "ok" : "failed"),
+        actor: "agent",
+      },
+    );
   }
 }

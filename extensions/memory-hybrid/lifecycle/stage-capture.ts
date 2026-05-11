@@ -21,12 +21,13 @@ import {
   classifyMemoryOperation,
   classifyMemoryOperationsBatch,
 } from "../services/classification.js";
+import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
@@ -338,9 +339,21 @@ async function runCapture(
           }
           let similarFacts: MemoryEntry[] = [];
           if (ctx.cfg.store.classifyBeforeWrite) {
-            similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
+            similarFacts = vector
+              ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3, 0.3, {
+                  scope: "global",
+                  scopeTarget: null,
+                })
+              : [];
             if (similarFacts.length === 0) {
-              similarFacts = ctx.factsDb.findSimilarForClassification(textToStore, extracted.entity, extracted.key, 3);
+              similarFacts = ctx.factsDb.findSimilarForClassification(
+                textToStore,
+                extracted.entity,
+                extracted.key,
+                3,
+                "global",
+                null,
+              );
             }
           }
           prepared.push({ candidate, textToStore, category, extracted, summary, vector, similarFacts });
@@ -396,8 +409,24 @@ async function runCapture(
                   continue;
                 }
                 if (classification.action === "DELETE" && classification.targetId) {
+                  const target = validateScopedClassificationTarget({
+                    targetId: classification.targetId,
+                    candidates: similarFacts,
+                    getById: (id) => ctx.factsDb.getById(id),
+                    scope: "global",
+                    scopeTarget: null,
+                    warn: (message) => api.logger.warn?.(message),
+                    warnMessage: `memory-hybrid: blocked cross-scope or unknown auto-capture DELETE target ${classification.targetId}`,
+                  });
+                  if (!target) continue;
                   ctx.factsDb.supersede(classification.targetId, null);
                   ctx.aliasDb?.deleteByFactId(classification.targetId);
+                  await deleteVectorForFactId({
+                    vectorDb: ctx.vectorDb,
+                    factId: classification.targetId,
+                    logger: api.logger,
+                    context: "stage-capture-delete-action",
+                  });
                   ctx.auditStore?.append({
                     agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
                     action: "auto-capture:delete",
@@ -410,8 +439,24 @@ async function runCapture(
                   continue;
                 }
                 if (classification.action === "UPDATE" && classification.targetId) {
-                  const oldFact = ctx.factsDb.getById(classification.targetId);
+                  const oldFact = validateScopedClassificationTarget({
+                    targetId: classification.targetId,
+                    candidates: similarFacts,
+                    getById: (id) => ctx.factsDb.getById(id),
+                    scope: "global",
+                    scopeTarget: null,
+                    warn: (message) => api.logger.warn?.(message),
+                    warnMessage: `memory-hybrid: blocked cross-scope auto-capture UPDATE target ${classification.targetId}`,
+                  });
                   if (oldFact) {
+                    const preservedScope = oldFact.scope ?? "global";
+                    const preservedScopeTarget = preservedScope === "global" ? null : (oldFact.scopeTarget ?? null);
+                    if (preservedScope !== "global" && !preservedScopeTarget) {
+                      api.logger.warn?.(
+                        `memory-hybrid: blocked auto-capture UPDATE target ${classification.targetId} due to missing non-global scopeTarget`,
+                      );
+                      continue;
+                    }
                     const finalImportance = Math.max(0.7, oldFact.importance);
                     const walEntryId = await ctx.walWrite(
                       "update",
@@ -449,6 +494,8 @@ async function runCapture(
                       tags: extractTags(textToStore, extracted.entity),
                       validFrom: nowSec,
                       supersedesId: classification.targetId,
+                      scope: preservedScope,
+                      scopeTarget: preservedScopeTarget,
                       provenanceSession: captureProvenance.sessionId,
                       sourceTurn: candidate.sourceTurn,
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
@@ -464,6 +511,12 @@ async function runCapture(
                     });
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
+                    await deleteVectorForFactId({
+                      vectorDb: ctx.vectorDb,
+                      factId: classification.targetId,
+                      logger: api.logger,
+                      context: "stage-capture-update-superseded",
+                    });
                     if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                       try {
                         if (storeResult.embeddingStale) {
