@@ -40,14 +40,12 @@ export class ProgressSpinner {
     this.stop();
     const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
     const elapsedStr = elapsed > 0 ? ` in ${elapsed}s` : "";
-    process.stdout.write(`✓ ${message ?? this.message}${elapsedStr}
-`);
+    process.stdout.write(`✓ ${message ?? this.message}${elapsedStr}\n`);
   }
 
   fail(message?: string): void {
     this.stop();
-    process.stdout.write(`✗ ${message ?? this.message}
-`);
+    process.stdout.write(`✗ ${message ?? this.message}\n`);
   }
 
   stop(): void {
@@ -134,8 +132,7 @@ export function statusMessage(type: "info" | "success" | "warning" | "error", me
     warning: "⚠️",
     error: "✗",
   };
-  process.stdout.write(`${icons[type]} ${message}
-`);
+  process.stdout.write(`${icons[type]} ${message}\n`);
 }
 
 /**
@@ -147,12 +144,9 @@ export function showCompletionSummary(
   durationMs: number,
 ): void {
   const durationStr = formatDuration(durationMs / 1000);
-  process.stdout.write(`
-✓ ${operation} complete in ${durationStr}
-`);
+  process.stdout.write(`✓ ${operation} complete in ${durationStr}\n`);
 
   for (const [key, value] of Object.entries(stats)) {
-    process.stdout.write(`  ${key}: ${value}
-`);
+    process.stdout.write(`  ${key}: ${value}\n`);
   }
 }

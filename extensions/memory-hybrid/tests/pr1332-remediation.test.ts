@@ -158,13 +158,16 @@ describe("PR #1332 unresolved feedback remediation", () => {
   it("promptHidden resolves typed answer once instead of close fallback", async () => {
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const close = vi.fn();
+    const callbacks = new Map<string, () => void>();
     await expect(
       promptHiddenWithInterface("key: ", () => ({
         question: (_question: string, cb: (answer: string) => void) => cb("secret-key"),
-        close,
-        on: vi.fn((_event: string, cb: () => void) => {
-          // Simulate a readline implementation that emits close after question callback calls close.
-          setTimeout(cb, 0);
+        close: () => {
+          close();
+          callbacks.get("close")?.();
+        },
+        on: vi.fn((event: string, cb: () => void) => {
+          callbacks.set(event, cb);
           return undefined;
         }),
       })),
