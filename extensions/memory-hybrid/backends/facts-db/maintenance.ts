@@ -649,20 +649,24 @@ export function pruneExpiredWithDetails(
   db: DatabaseSync,
   nowSec = Math.floor(Date.now() / 1000),
 ): { factsPruned: number; deletedFactIds: string[] } {
-  const tx = createTransaction(db, () => {
-    const rows = db
-      .prepare(
-        `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+  const tx = createTransaction(
+    db,
+    () => {
+      const rows = db
+        .prepare(
+          `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .all({ "@now": nowSec }) as Array<{ id: string }>;
-    const deletedFactIds = extractFactIds(rows);
-    if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds };
-    deleteLinksForFactIds(db, deletedFactIds);
-    const factsPruned = deleteFactsByIds(db, deletedFactIds);
-    return { factsPruned, deletedFactIds };
-  });
+        )
+        .all({ "@now": nowSec }) as Array<{ id: string }>;
+      const deletedFactIds = extractFactIds(rows);
+      if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds };
+      deleteLinksForFactIds(db, deletedFactIds);
+      const factsPruned = deleteFactsByIds(db, deletedFactIds);
+      return { factsPruned, deletedFactIds };
+    },
+    "IMMEDIATE",
+  );
   return tx();
 }
 
@@ -682,18 +686,22 @@ export function listSessionFactIdsPendingPrune(db: DatabaseSync, sessionId: stri
 }
 
 export function pruneSessionScope(db: DatabaseSync, sessionId: string): number {
-  const tx = createTransaction(db, () => {
-    const rows = db
-      .prepare(
-        `SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
+  const tx = createTransaction(
+    db,
+    () => {
+      const rows = db
+        .prepare(
+          `SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .all(sessionId) as Array<{ id: string }>;
-    const factIds = extractFactIds(rows);
-    if (factIds.length === 0) return 0;
-    deleteLinksForFactIds(db, factIds);
-    return deleteFactsByIds(db, factIds);
-  });
+        )
+        .all(sessionId) as Array<{ id: string }>;
+      const factIds = extractFactIds(rows);
+      if (factIds.length === 0) return 0;
+      deleteLinksForFactIds(db, factIds);
+      return deleteFactsByIds(db, factIds);
+    },
+    "IMMEDIATE",
+  );
   return tx();
 }
 
