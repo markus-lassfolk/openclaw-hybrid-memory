@@ -95,7 +95,52 @@ jobs:
 
               console.log(`  PR #${prNumber} by ${author} on branch '${branch}' — evaluating checks...`);
 
-              // Fetch all check runs for the head SHA (paginated)
+              // Require a successful *completed CI workflow run* for this exact head SHA.
+              // This prevents stale/partial check-runs from earlier attempts from enabling merge.
+              const ciRuns = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner,
+                  repo,
+                  workflow_id: 'ci.yml',
+                  head_sha: pr.head.sha,
+                  per_page: 100,
+                },
+                (response) => response.data.workflow_runs,
+              );
+
+              const completedCiRuns = ciRuns.filter(r => r.status === 'completed');
+              if (completedCiRuns.length === 0) {
+                console.log('  No completed CI workflow run found for head SHA, skipping.');
+                continue;
+              }
+
+              const successfulCiRun = completedCiRuns.find(r => r.conclusion === 'success');
+              if (!successfulCiRun) {
+                const latestCompleted = completedCiRuns[0];
+                console.log(`  Latest completed CI run is ${latestCompleted.conclusion}, skipping merge.`);
+                const body = `❌ Auto-merge skipped — CI workflow for this head SHA has not succeeded yet (latest conclusion: **${latestCompleted.conclusion}**).`;
+
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: prNumber,
+                });
+                const botComment = comments.find(
+                  c => c.user.type === 'Bot' && c.body.includes('❌ Auto-merge skipped — CI workflow for this head SHA has not succeeded yet'),
+                );
+
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner, repo, comment_id: botComment.id, body,
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: prNumber, body,
+                  });
+                }
+                continue;
+              }
+
+              // Fetch check runs to surface precise failed check names in PR comments.
               const allCheckRuns = await github.paginate(
                 github.rest.checks.listForRef,
                 { owner, repo, ref: pr.head.sha, per_page: 100 },
@@ -109,11 +154,6 @@ jobs:
                 if (r.name === 'Automerge bot PRs') return false;
                 return CI_JOB_NAME_PREFIXES.some(prefix => r.name.startsWith(prefix));
               });
-
-              if (runs.length === 0) {
-                console.log('  No CI checks found yet, skipping.');
-                continue;
-              }
 
               const pending = runs.filter(r => r.status !== 'completed');
               if (pending.length > 0) {
