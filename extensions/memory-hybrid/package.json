@@ -74,6 +74,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "commander": "^13.1.0",
     "knip": "^5.0.0",
+    "unrun": "^0.2.37",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
