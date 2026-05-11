@@ -13,10 +13,10 @@
  * - runUpgradeForCli
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve as pathResolve } from "node:path";
 
 import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
@@ -49,6 +49,40 @@ import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./t
 
 /** Subfolder under workspace `skills/` — OpenClaw loads this with highest precedence vs shared/bundled skills. */
 const HYBRID_MEMORY_SKILL_DIR = "hybrid-memory";
+
+function resolvedPathOrFallback(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return pathResolve(path);
+  }
+}
+
+function isPathInsideDir(rootDirAbs: string, candidatePath: string): boolean {
+  const rootResolved = resolvedPathOrFallback(rootDirAbs);
+  const candidateAbs = isAbsolute(candidatePath) ? candidatePath : pathResolve(candidatePath);
+  const candidateResolved = resolvedPathOrFallback(candidateAbs);
+  const rel = relative(rootResolved, candidateResolved);
+  if (rel === "") return true;
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function hasNoWhitespace(s: string): boolean {
+  return !/[\s\r\n\t]/.test(s);
+}
+
+function npxExecutable(): string {
+  if (process.platform !== "win32") return "npx";
+  const candidate = join(dirname(process.execPath), "npx.cmd");
+  return existsSync(candidate) ? candidate : "npx.cmd";
+}
+
+function assertSafeRequestedVersionArg(version: string): void {
+  const v = version.trim();
+  if (!v) throw new Error("Upgrade version is empty");
+  if (!hasNoWhitespace(v)) throw new Error("Upgrade version contains whitespace");
+  if (v.startsWith("-")) throw new Error("Upgrade version must not start with '-'");
+}
 
 /** Reject empty paths and the literal strings "undefined"/"null" (common when env vars are set incorrectly). */
 function isUsableWorkspacePath(p: string): boolean {
@@ -1894,6 +1928,8 @@ export function runUninstallForCli(
 ): UninstallCliResult {
   const { resolvedSqlitePath, resolvedLancePath } = ctx;
   const openclawDir = join(homedir(), ".openclaw");
+  const openclawMemoryDir = join(openclawDir, "memory");
+  const dangerousUninstallEnabled = getEnv("OPENCLAW_HYBRID_MEM_UNINSTALL_DANGEROUS") === "1";
   const configPath = join(openclawDir, "openclaw.json");
   const cleaned: string[] = [];
   let outcome: UninstallCliResult["outcome"];
@@ -1925,7 +1961,10 @@ export function runUninstallForCli(
   }
 
   if (opts.cleanAll) {
-    if (existsSync(resolvedSqlitePath)) {
+    if (
+      existsSync(resolvedSqlitePath) &&
+      (dangerousUninstallEnabled || isPathInsideDir(openclawMemoryDir, resolvedSqlitePath))
+    ) {
       try {
         rmSync(resolvedSqlitePath, { force: true });
         cleaned.push(resolvedSqlitePath);
@@ -1933,7 +1972,10 @@ export function runUninstallForCli(
         capturePluginError(err as Error, { subsystem: "cli", operation: "runUninstallForCli:remove-sqlite" });
       }
     }
-    if (existsSync(resolvedLancePath)) {
+    if (
+      existsSync(resolvedLancePath) &&
+      (dangerousUninstallEnabled || isPathInsideDir(openclawMemoryDir, resolvedLancePath))
+    ) {
       try {
         rmSync(resolvedLancePath, { recursive: true, force: true });
         cleaned.push(resolvedLancePath);
@@ -1954,32 +1996,70 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   const { spawnSync } = await import("node:child_process");
   const version = requestedVersion?.trim() || "latest";
   try {
-    rmSync(extDir, { recursive: true, force: true });
+    assertSafeRequestedVersionArg(version);
   } catch (e) {
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:remove-dir" });
+    return { ok: false, error: `Invalid requested version: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  const manifestPath = join(extDir, "openclaw.plugin.json");
+  const pkgPath = join(extDir, "package.json");
+  if (!existsSync(manifestPath) || !existsSync(pkgPath)) {
+    return { ok: false, error: `Refusing to upgrade: plugin directory does not look valid: ${extDir}` };
+  }
+
+  const backupDir = join(dirname(extDir), `${basename(extDir)}.bak-${Date.now()}`);
+  try {
+    renameSync(extDir, backupDir);
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:move-dir" });
     return {
       ok: false,
-      error: `Could not remove plugin directory: ${e}. Use standalone installer: npx -y openclaw-hybrid-memory-install ${version}`,
+      error: `Could not move plugin directory for upgrade: ${e}. Use standalone installer: npx -y openclaw-hybrid-memory-install ${version}`,
     };
   }
   // Use standalone installer so upgrade works even when config is invalid (plugin missing).
   const npxArgs = ["-y", "openclaw-hybrid-memory-install", version];
-  const r = spawnSync("npx", npxArgs, {
+  const r = spawnSync(npxExecutable(), npxArgs, {
     stdio: "inherit",
     cwd: homedir(),
-    shell: true,
+    shell: false,
   });
   if (r.status !== 0) {
+    // Best-effort rollback: restore original plugin directory.
+    try {
+      if (existsSync(extDir)) {
+        // Installer might have created a partial directory; avoid clobbering it.
+        const failedDir = join(dirname(extDir), `${basename(extDir)}.failed-${Date.now()}`);
+        try {
+          renameSync(extDir, failedDir);
+        } catch {
+          rmSync(extDir, { recursive: true, force: true });
+        }
+      }
+      renameSync(backupDir, extDir);
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
+      return {
+        ok: false,
+        error: `Install failed (exit ${r.status}). Rollback also failed: ${e}. Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
+      };
+    }
     return {
       ok: false,
       error: `Install failed (exit ${r.status}). Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
     };
   }
+  try {
+    rmSync(backupDir, { recursive: true, force: true });
+  } catch (e) {
+    // Non-fatal; backup cleanup failure shouldn't block upgrade.
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:cleanup-backup" });
+  }
   let installedVersion = version;
   try {
-    const pkgPath = join(extDir, "package.json");
-    if (existsSync(pkgPath)) {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
+    const pkgAfterPath = join(extDir, "package.json");
+    if (existsSync(pkgAfterPath)) {
+      const pkg = JSON.parse(readFileSync(pkgAfterPath, "utf-8")) as { version?: string };
       installedVersion = pkg.version ?? installedVersion;
     }
   } catch (err) {

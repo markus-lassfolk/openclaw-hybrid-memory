@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { isValidCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
+import type { MemoryEntry, MemoryScope, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { estimateTokensForDisplay } from "../../utils/text.js";
 import { buildClassificationFtsOrClause } from "./fact-queries.js";
@@ -44,16 +44,26 @@ export function findSimilarForClassification(
   entity: string | null,
   key: string | null,
   limit = 5,
+  scope: MemoryScope | null = null,
+  scopeTarget: string | null = null,
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const results: MemoryEntry[] = [];
+  const safeScopeTarget = scope === "global" ? null : scopeTarget;
+  const scopeSql =
+    scope === null
+      ? ""
+      : scope === "global"
+        ? " AND COALESCE(scope, 'global') = 'global'"
+        : " AND scope = ? AND scope_target = ?";
+  const scopeParams: SQLInputValue[] = scope === null || scope === "global" ? [] : [scope, safeScopeTarget];
 
   if (entity && key) {
     const rows = db
       .prepare(
-        "SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?",
+        `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)${scopeSql} ORDER BY created_at DESC LIMIT ?`,
       )
-      .all(entity, key, nowSec, limit) as Array<Record<string, unknown>>;
+      .all(entity, key, nowSec, ...scopeParams, limit) as Array<Record<string, unknown>>;
     for (const row of rows) {
       results.push(rowToMemoryEntry(row));
     }
@@ -64,9 +74,9 @@ export function findSimilarForClassification(
     const seenIds = new Set(results.map((r) => r.id));
     const rows = db
       .prepare(
-        "SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?",
+        `SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)${scopeSql} ORDER BY created_at DESC LIMIT ?`,
       )
-      .all(entity, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
+      .all(entity, nowSec, ...scopeParams, remaining + results.length) as Array<Record<string, unknown>>;
     for (const row of rows) {
       const entry = rowToMemoryEntry(row);
       if (!seenIds.has(entry.id)) {
@@ -98,9 +108,9 @@ export function findSimilarForClassification(
             allRows.push(
               ...(db
                 .prepare(
-                  `SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+                  `SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)${scopeSql}`,
                 )
-                .all(...chunk.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>),
+                .all(...chunk.map((r) => r.rowid), nowSec, ...scopeParams) as Array<Record<string, unknown>>),
             );
           }
           const factRows = allRows;

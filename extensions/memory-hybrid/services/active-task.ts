@@ -153,8 +153,8 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
     label,
     description,
     status: "In progress",
-    started: new Date().toISOString(),
-    updated: new Date().toISOString(),
+    started: UNKNOWN_ACTIVE_TASK_TIME,
+    updated: UNKNOWN_ACTIVE_TASK_TIME,
   };
 
   for (const line of lines) {
@@ -187,10 +187,10 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
         entry.next = value || undefined;
         break;
       case "started":
-        entry.started = value || new Date().toISOString();
+        entry.started = value || UNKNOWN_ACTIVE_TASK_TIME;
         break;
       case "updated":
-        entry.updated = value || new Date().toISOString();
+        entry.updated = value || UNKNOWN_ACTIVE_TASK_TIME;
         break;
       case "handoff":
         entry.handoff = parseHandoffRef(value) ?? undefined;
@@ -1008,8 +1008,8 @@ export async function readActiveTaskFileWithMtime(
  * since `knownMtime` was recorded. If the file was modified concurrently, the
  * caller-supplied `merge` callback is invoked with the freshly-read file so it
  * can re-apply its changes on top of the latest state. Up to `maxRetries`
- * attempts are made; if conflicts persist, a last-write-wins fallback write is
- * performed to avoid leaving the file untouched.
+ * attempts are made; if conflicts persist, the write is aborted to avoid clobbering
+ * concurrent changes.
  *
  * @param filePath      Absolute path to ACTIVE-TASKS.md
  * @param active        Active task entries to write
@@ -1020,7 +1020,7 @@ export async function readActiveTaskFileWithMtime(
  *                      to write. Return null to abort the write.
  * @param maxRetries    Maximum number of retry attempts (default: 3)
  * @param staleMinutes  Minutes before a task is considered stale (default: 1440)
- * @returns             True if a write occurred; false if merge aborted the write
+ * @returns             True if a write occurred; false if merge aborted or conflicts persisted
  */
 export async function writeActiveTaskFileOptimistic(
   filePath: string,
@@ -1056,12 +1056,11 @@ export async function writeActiveTaskFileOptimistic(
     return true;
   }
 
-  // Exhausted retries — write whatever we have (last-write-wins fallback)
+  // Exhausted retries — fail safely to avoid clobbering concurrent updates.
   pluginLogger.warn(
-    `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
+    `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; aborting write`,
   );
-  await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-  return true;
+  return false;
 }
 
 /**

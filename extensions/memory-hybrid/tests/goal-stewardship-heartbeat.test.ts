@@ -214,6 +214,45 @@ describe("buildMultiGoalStewardshipPrepend", () => {
     expect(result).not.toBeNull();
     expect(result!.prepend).toContain("crit-pri");
   });
+
+  it("keeps stewardship block payload within configured multiGoalMaxChars cap", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "hb-cap-"));
+    const old = new Date(Date.now() - 60 * 60_000).toISOString();
+    const huge = "x".repeat(5000);
+    for (let i = 0; i < 3; i++) {
+      const g = await createGoal(
+        goalsDir,
+        {
+          label: `cap-${i}`,
+          description: huge,
+          acceptanceCriteria: ["a", "b", "c"],
+          cooldownMinutes: 1,
+        },
+        { ...defaults, cooldownMinutes: 1 },
+      );
+      await updateGoal(
+        goalsDir,
+        g.id,
+        { lastAssessedAt: old },
+        { timestamp: new Date().toISOString(), action: "t", detail: "d", actor: "user" },
+      );
+    }
+    const goals = await listActiveGoals(goalsDir);
+    const cap = 800;
+    const result = await buildMultiGoalStewardshipPrepend(
+      goalsDir,
+      gs({ multiGoalMaxChars: cap, multiGoalMaxGoals: 3 }),
+      goals,
+      {
+        suggestHeavyDirective: false,
+        triageHeavy: false,
+      },
+    );
+    expect(result).not.toBeNull();
+    const blocks = result!.prepend.match(/<goal-stewardship>[\s\S]*?<\/goal-stewardship>/g) ?? [];
+    const totalBlockChars = blocks.reduce((sum, block) => sum + block.length, 0);
+    expect(totalBlockChars).toBeLessThanOrEqual(cap);
+  });
 });
 
 describe("heuristicNeedsHeavyAttention", () => {

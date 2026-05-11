@@ -2092,9 +2092,14 @@ export async function runVerifyForCli(
     if (lanceBindingsFailed) {
       try {
         const { spawnSync } = await import("node:child_process");
+        function npmExecutable(): string {
+          if (process.platform !== "win32") return "npm";
+          const candidate = join(dirname(process.execPath), "npm.cmd");
+          return existsSync(candidate) ? candidate : "npm.cmd";
+        }
         const pkgs = lanceBindingsFailed ? ["@lancedb/lancedb"] : [];
         for (const pkg of pkgs) {
-          const r = spawnSync("npm", ["rebuild", pkg], { cwd: extDir, shell: true });
+          const r = spawnSync(npmExecutable(), ["rebuild", pkg], { cwd: extDir, shell: false, stdio: "inherit" });
           if (r.status === 0) {
             applied.push(`Rebuilt native module: ${pkg}`);
           } else {
