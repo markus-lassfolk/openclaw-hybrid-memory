@@ -229,7 +229,10 @@ async function runMechanicalVerification(
 }
 
 function isBlockedVerificationHost(hostname: string): boolean {
-  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const h = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
   if (!h) return true;
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
   const ipKind = isIP(h);

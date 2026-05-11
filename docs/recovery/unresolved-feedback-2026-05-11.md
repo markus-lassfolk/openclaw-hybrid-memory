@@ -37,8 +37,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1308.1 — extensions/memory-hybrid/services/task-ledger-facts.ts:657
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: ALREADY FIXED
+- Evidence: Current `planActiveTaskHygiene` no longer wraps `checkSessionPresent()` in `Promise.race`/uncleared `setTimeout`; it awaits the check directly while stale session references are deduplicated first. Evidence: `extensions/memory-hybrid/services/task-ledger-facts.ts` around stale session planning.
 - Thread id: `PRRT_kwDORQuyQM6A7yo6`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -47,8 +47,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1308.2 — extensions/memory-hybrid/services/task-ledger-facts.ts:803
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Changed `taskEntityKey(entity, key)` to `JSON.stringify([entity, key])`, making entity/key cache keys injective even when inputs contain NULs or literal escape sequences. Evidence: `extensions/memory-hybrid/services/task-ledger-facts.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A7yo-`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -57,8 +57,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1308.3 — extensions/memory-hybrid/services/active-task-checkpoint.ts:411
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: ALREADY FIXED
+- Evidence: `safeJson()` currently only uses `JSON.stringify()` and falls back to a constant JSON string on failure; it does not call `String(value)`, so throwing `toString`/`Symbol.toPrimitive` cannot break the fallback. Evidence: `extensions/memory-hybrid/services/active-task-checkpoint.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A7ypC`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -67,8 +67,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1308.4 — extensions/memory-hybrid/services/active-task.ts:1067
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: ALREADY FIXED
+- Evidence: Current `writeActiveTaskFileOptimistic()` returns `false` after retry exhaustion rather than throwing, and an existing regression test covers exhausted retries. Evidence: `extensions/memory-hybrid/services/active-task.ts` and `extensions/memory-hybrid/tests/active-task.test.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A7ypG`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -77,8 +77,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1308.5 — extensions/memory-hybrid/services/goal-stewardship-heartbeat.ts:56
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: ALREADY FIXED
+- Evidence: The misleading “immutable cache” comment is not present on current main; matcher cache is described as a module-level regex cache/test-isolation helper. Evidence: `extensions/memory-hybrid/services/goal-stewardship-heartbeat.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A7ypN`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -92,8 +92,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1311.1 — extensions/memory-hybrid/services/vector-search.ts:27
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Updated `findSimilarByEmbedding()` so omitted `options.scope` keeps legacy unscoped behaviour; exact scope filtering only applies when scope is explicitly provided. Added regression assertions. Evidence: `extensions/memory-hybrid/services/vector-search.ts`, `extensions/memory-hybrid/tests/fr-008-classification.test.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A71pB`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -107,8 +107,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1317.1 — extensions/memory-hybrid/cli/commands/manage/register-storage-and-stats.ts:2697
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Bound `runExport` from `ManageBindings` in `registerManageStorageAndStats()` before `sync-export` invokes it. Evidence: `extensions/memory-hybrid/cli/commands/manage/register-storage-and-stats.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9o1E`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -117,8 +117,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1317.2 — extensions/memory-hybrid/cli/commands/manage/register-storage-and-stats.ts:2698
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `sync-export` now exports to a temporary directory and encrypts a JSON payload containing actual exported files/content, rather than reading the output directory path as a UTF-8 file. Evidence: `collectExportBundleFiles()` and sync-export implementation in `register-storage-and-stats.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9o1F`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -127,8 +127,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1317.3 — extensions/memory-hybrid/cli/verify.ts:225
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `doctor` now runs install defaults in dry-run/check mode by default; install defaults are applied only when `--fix` is supplied. Evidence: `extensions/memory-hybrid/cli/verify.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9pXu`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -137,8 +137,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1317.4 — extensions/memory-hybrid/cli/commands/manage/register-storage-and-stats.ts:2796
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Added strict sync envelope validation before PBKDF2/decryption: schema/type/alg/kdf, bounded iterations, base64 shape, salt/iv/tag byte lengths, and non-empty ciphertext. Evidence: `validateSyncEnvelope()` in `register-storage-and-stats.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9pYI`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -147,8 +147,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1317.5 — extensions/memory-hybrid/cli/benchmark.ts:144
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Benchmark quality reports now compute latency averages only from successful latency samples; when all features fail, summary latency is `null`/rendered as `n/a` instead of misleading 0ms. Added regression test. Evidence: `extensions/memory-hybrid/cli/benchmark.ts`, `extensions/memory-hybrid/tests/benchmark-report.test.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9pYa`
 - Outdated: False
 - Author: copilot-pull-request-reviewer

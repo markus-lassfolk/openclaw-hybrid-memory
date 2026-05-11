@@ -36,9 +36,9 @@ interface BenchmarkQualityReport {
   generatedAt: string;
   metrics: {
     latency: {
-      p50Ms: number;
-      p95Ms: number;
-      p99Ms: number;
+      p50Ms: number | null;
+      p95Ms: number | null;
+      p99Ms: number | null;
     };
     recallAccuracy: {
       averageScore: number | null;
@@ -138,10 +138,12 @@ export function buildBenchmarkQualityReport(results: BenchmarkResult[]): Benchma
   const successful = results.filter((r) => r.latency.samples > 0 && r.latency.p50 >= 0);
   const failedFeatures = results.length - successful.length;
   const totalFeatures = results.length;
-  const latencySource = successful.length > 0 ? successful : results;
-  const p50Avg = latencySource.reduce((sum, r) => sum + Math.max(0, r.latency.p50), 0) / Math.max(1, latencySource.length);
-  const p95Avg = latencySource.reduce((sum, r) => sum + Math.max(0, r.latency.p95), 0) / Math.max(1, latencySource.length);
-  const p99Avg = latencySource.reduce((sum, r) => sum + Math.max(0, r.latency.p99), 0) / Math.max(1, latencySource.length);
+  const p50Avg =
+    successful.length > 0 ? successful.reduce((sum, r) => sum + r.latency.p50, 0) / successful.length : null;
+  const p95Avg =
+    successful.length > 0 ? successful.reduce((sum, r) => sum + r.latency.p95, 0) / successful.length : null;
+  const p99Avg =
+    successful.length > 0 ? successful.reduce((sum, r) => sum + r.latency.p99, 0) / successful.length : null;
 
   const measuredAccuracy = results.filter((r) => r.accuracy && Number.isFinite(r.accuracy.score));
   const averageAccuracy =
@@ -156,9 +158,9 @@ export function buildBenchmarkQualityReport(results: BenchmarkResult[]): Benchma
     generatedAt: new Date().toISOString(),
     metrics: {
       latency: {
-        p50Ms: toFixedNumber(p50Avg),
-        p95Ms: toFixedNumber(p95Avg),
-        p99Ms: toFixedNumber(p99Avg),
+        p50Ms: p50Avg == null ? null : toFixedNumber(p50Avg),
+        p95Ms: p95Avg == null ? null : toFixedNumber(p95Avg),
+        p99Ms: p99Avg == null ? null : toFixedNumber(p99Avg),
       },
       recallAccuracy: {
         averageScore: averageAccuracy == null ? null : toFixedNumber(averageAccuracy, 4),
@@ -186,7 +188,11 @@ export function formatBenchmarkQualityReportMarkdown(report: BenchmarkQualityRep
   lines.push("");
   lines.push("## Summary metrics");
   lines.push("");
-  lines.push(`- Latency (avg): p50=${report.metrics.latency.p50Ms}ms, p95=${report.metrics.latency.p95Ms}ms, p99=${report.metrics.latency.p99Ms}ms`);
+  const summaryLatency =
+    report.metrics.latency.p50Ms == null
+      ? "n/a (no successful latency samples)"
+      : `p50=${report.metrics.latency.p50Ms}ms, p95=${report.metrics.latency.p95Ms}ms, p99=${report.metrics.latency.p99Ms}ms`;
+  lines.push(`- Latency (avg): ${summaryLatency}`);
   lines.push(
     `- Recall accuracy (avg): ${report.metrics.recallAccuracy.averageScore == null ? "n/a" : `${(report.metrics.recallAccuracy.averageScore * 100).toFixed(1)}%`} across ${report.metrics.recallAccuracy.measuredFeatures} feature(s)`,
   );
@@ -203,7 +209,7 @@ export function formatBenchmarkQualityReportMarkdown(report: BenchmarkQualityRep
   lines.push("|---|---:|---:|---:|---:|---:|---:|");
   for (const result of report.features) {
     lines.push(
-      `| ${result.feature} | ${result.latency.p50.toFixed(2)} | ${result.latency.p95.toFixed(2)} | ${result.latency.p99.toFixed(2)} | ${result.accuracy ? `${(result.accuracy.score * 100).toFixed(0)}%` : "n/a"} | ${(result.tokensTracked ?? 0).toLocaleString()} | ${(result.costTrackedUsd ?? 0).toFixed(6)} |`,
+      `| ${result.feature} | ${result.latency.samples > 0 && result.latency.p50 >= 0 ? result.latency.p50.toFixed(2) : "n/a"} | ${result.latency.samples > 0 && result.latency.p95 >= 0 ? result.latency.p95.toFixed(2) : "n/a"} | ${result.latency.samples > 0 && result.latency.p99 >= 0 ? result.latency.p99.toFixed(2) : "n/a"} | ${result.accuracy ? `${(result.accuracy.score * 100).toFixed(0)}%` : "n/a"} | ${(result.tokensTracked ?? 0).toLocaleString()} | ${(result.costTrackedUsd ?? 0).toFixed(6)} |`,
     );
   }
   lines.push("");
@@ -267,7 +273,8 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
         },
       );
       const report = buildBenchmarkQualityReport(results);
-      const rendered = format === "json" ? JSON.stringify(report, null, 2) : formatBenchmarkQualityReportMarkdown(report);
+      const rendered =
+        format === "json" ? JSON.stringify(report, null, 2) : formatBenchmarkQualityReportMarkdown(report);
       const outPath = typeof opts.out === "string" && opts.out.trim().length > 0 ? opts.out.trim() : "";
       if (outPath) {
         mkdirSync(dirname(outPath), { recursive: true });

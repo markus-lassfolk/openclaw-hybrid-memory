@@ -1515,7 +1515,7 @@ export interface DashboardServer {
 export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
   const html = getDashboardHtml();
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     const url = req.url ?? "/";
     let pathname: string;
     let searchParams: URLSearchParams;
@@ -2046,23 +2046,25 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         embeddingRegistry: ctx.embeddingRegistry,
       } as any);
 
-      // Handle GraphQL request
-      const response = await yoga.fetch(req.url || "", {
-        method: req.method || "POST",
-        headers: req.headers as any,
-        body: await new Promise<string>((resolve) => {
-          let body = "";
-          req.on("data", (chunk) => {
-            body += chunk;
-          });
-          req.on("end", () => {
-            resolve(body);
-          });
-        }),
-      });
+      try {
+        const graphQlBody = await readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES);
+        const response = await yoga.fetch(req.url || "", {
+          method: req.method || "POST",
+          headers: req.headers as any,
+          body: JSON.stringify(graphQlBody),
+        });
 
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.end(await response.text());
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(await response.text());
+      } catch (err) {
+        if (err instanceof Error && err.message === "Request body too large") {
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+          return;
+        }
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "InvalidGraphQLRequest" }));
+      }
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
