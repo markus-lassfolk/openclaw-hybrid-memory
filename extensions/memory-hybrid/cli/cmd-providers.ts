@@ -5,7 +5,6 @@
 import type { Chainable } from "./shared.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { detectAvailableProviders, formatProviderStatus, recommendProvider } from "../utils/provider-detection.js";
-import { withExit } from "./shared.js";
 
 export function registerProvidersCommand(program: Chainable, cfg: HybridMemoryConfig): void {
   program
