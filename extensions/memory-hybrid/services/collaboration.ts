@@ -3,7 +3,10 @@
  * Provides team-based memory management with permissions and shared spaces
  */
 
+import { createRequire } from "node:module";
 import type { FactsDB } from "../backends/facts-db.js";
+
+const require = createRequire(import.meta.url);
 
 export interface Organization {
   id: string;
@@ -97,7 +100,7 @@ export class CollaborationService {
   private db: { exec(sql: string): void; prepare(sql: string): any; close?(): void };
 
   constructor(private sqlitePath: string) {
-    this.db = new (require("node:module").createRequire(import.meta.url)("node:sqlite").DatabaseSync)(sqlitePath);
+    this.db = new (require("node:sqlite").DatabaseSync)(sqlitePath);
     this.initSchema();
   }
 

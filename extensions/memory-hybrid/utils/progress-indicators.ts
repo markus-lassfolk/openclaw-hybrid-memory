@@ -36,14 +36,18 @@ export class ProgressSpinner {
     this.message = message;
   }
 
-  success(_message?: string): void {
+  success(message?: string): void {
     this.stop();
     const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-    const _elapsedStr = elapsed > 0 ? ` in ${elapsed}s` : "";
+    const elapsedStr = elapsed > 0 ? ` in ${elapsed}s` : "";
+    process.stdout.write(`✓ ${message ?? this.message}${elapsedStr}
+`);
   }
 
-  fail(_message?: string): void {
+  fail(message?: string): void {
     this.stop();
+    process.stdout.write(`✗ ${message ?? this.message}
+`);
   }
 
   stop(): void {
@@ -122,25 +126,32 @@ function formatDuration(seconds: number): string {
 /**
  * Simple status message with icon
  */
-export function statusMessage(_type: "info" | "success" | "warning" | "error", _message: string): void {
-  const _icons = {
+export function statusMessage(type: "info" | "success" | "warning" | "error", message: string): void {
+  const icons = {
     info: "ℹ️",
     success: "✓",
     warning: "⚠️",
     error: "✗",
   };
+  process.stdout.write(`${icons[type]} ${message}
+`);
 }
 
 /**
  * Show a completion summary with stats
  */
 export function showCompletionSummary(
-  _operation: string,
+  operation: string,
   stats: Record<string, number | string>,
   durationMs: number,
 ): void {
-  const _durationStr = formatDuration(durationMs / 1000);
+  const durationStr = formatDuration(durationMs / 1000);
+  process.stdout.write(`
+✓ ${operation} complete in ${durationStr}
+`);
 
-  for (const [_key, _value] of Object.entries(stats)) {
+  for (const [key, value] of Object.entries(stats)) {
+    process.stdout.write(`  ${key}: ${value}
+`);
   }
 }
