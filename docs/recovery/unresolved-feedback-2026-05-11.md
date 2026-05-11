@@ -8,9 +8,11 @@ Generated from GitHub review threads during the 2026-05-11 red-CI/unresolved-fee
 
 This PR must not merge until all three gates are satisfied:
 
-- [ ] All substantive latest-head CI checks are green.
-- [ ] No unresolved review feedback/items remain.
-- [ ] No merge conflicts remain.
+- [x] All substantive latest-head CI checks are green.
+- [x] No unresolved review feedback/items remain.
+- [x] No merge conflicts remain.
+
+Verified on PR #1332 head `42571bd993b3d90cd521a1cfdbb84942f5001158`: 59/59 status checks successful, zero unresolved review threads, and merge state clean/mergeable.
 
 Admin merge is only a mechanical last resort after those gates are already satisfied; never to bypass red CI, feedback, or conflicts.
 
@@ -22,7 +24,7 @@ Each inventory item must end as exactly one of:
 - `ALREADY FIXED` — already fixed on current main with file/line evidence.
 - `OBSOLETE` — no longer applicable with evidence.
 
-`TODO` is allowed only while this PR is draft. Applicable items must not be deferred before merge.
+`TODO` statuses are not allowed before merge. Applicable items must not be deferred before merge.
 
 # Unresolved review feedback inventory — incident window
 
