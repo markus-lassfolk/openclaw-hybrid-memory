@@ -232,6 +232,43 @@ describe("maintenance log analyzer", () => {
     expect(findings[0].suggestedAction.toLowerCase()).toContain("stale");
   });
 
+  it("detects memory-hybrid stage markers as progress when exit ledger is empty", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(
+      logPath,
+      [
+        "memory-hybrid: dream-cycle — stage 1/6 prune expired facts start",
+        "memory-hybrid: dream-cycle — stage 1/6 prune expired facts complete in 2s",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(steps[0].line).toContain("progress-marker=present");
+  });
+
+  it("detects memory-hybrid still-running heartbeat as stale-running orchestration anomaly", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(logPath, "memory-hybrid: dream-cycle — stage 3 still running after 2210s");
+
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(exitPath, staleAt, staleAt);
+    utimesSync(logPath, staleAt, staleAt);
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 30 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-stale-running");
+  });
+
   it("keeps normal successful verbose dream-cycle runs as OK", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");

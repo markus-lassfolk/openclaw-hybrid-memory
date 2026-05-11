@@ -255,11 +255,14 @@ function extractJobFromPath(path: string, suffix: string): string {
   return extractJobName(file);
 }
 
+const DREAM_CYCLE_PROGRESS_MARKER_RE =
+  /(?:\[dream-cycle\].*(?:start|still running after|complete)|memory-hybrid:\s*dream-cycle\s*[—-].*(?:start|still running after|complete|episodic consolidation progress)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im;
+const DREAM_CYCLE_STILL_RUNNING_RE =
+  /(?:\[dream-cycle\].*still running after \d+s|memory-hybrid:\s*dream-cycle\s*[—-].*still running after \d+s)/im;
+
 function logHasDreamCycleProgress(logContent: string): boolean {
   if (!logContent) return false;
-  return /(?:\[dream-cycle\].*(?:start|still running after|complete)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im.test(
-    logContent,
-  );
+  return DREAM_CYCLE_PROGRESS_MARKER_RE.test(logContent);
 }
 
 function logHasValidateMarker(logContent: string): boolean {
@@ -283,7 +286,7 @@ function buildOrchestrationSyntheticStep(params: {
   const staleSec = Math.floor(staleMs / 1000);
   const hasProgress = logHasDreamCycleProgress(logContent);
   const hasValidate = logHasValidateMarker(logContent);
-  const hasStillRunningHeartbeat = /\[dream-cycle\].*still running after \d+s/im.test(logContent);
+  const hasStillRunningHeartbeat = DREAM_CYCLE_STILL_RUNNING_RE.test(logContent);
 
   let step = "orchestration-empty-exit";
   let line = "orchestration anomaly: exit ledger exists but has no parseable step rows";
