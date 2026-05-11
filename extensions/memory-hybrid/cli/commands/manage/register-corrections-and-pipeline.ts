@@ -26,6 +26,8 @@ export type FollowUpProgressSupplier = () => string | undefined;
 export interface RunVerboseFollowUpOptions {
   progressSupplier?: FollowUpProgressSupplier;
   heartbeatIntervalMs?: number;
+  stageIndex?: number;
+  stageTotal?: number;
 }
 
 function formatExtractImplicitFeedbackProgress(
@@ -63,9 +65,12 @@ export async function runVerboseFollowUp<T>(
   opts: RunVerboseFollowUpOptions = {},
 ): Promise<T> {
   const started = Date.now();
+  const stagePrefix =
+    opts.stageIndex && opts.stageTotal && opts.stageTotal > 0 ? `stage ${opts.stageIndex}/${opts.stageTotal} ` : "";
+  const stageLabel = `${stagePrefix}${label}`.trim();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   if (verbose) {
-    console.log(`[dream-cycle] ${label} — start`);
+    console.log(`[dream-cycle] ${stageLabel} — start`);
     heartbeat = setInterval(() => {
       const elapsedSec = Math.floor((Date.now() - started) / 1000);
       let progressSuffix = "";
@@ -77,7 +82,7 @@ export async function runVerboseFollowUp<T>(
           // Ignore progress supplier failures; heartbeat should never crash the process.
         }
       }
-      console.log(`[dream-cycle] ${label} — still running after ${elapsedSec}s${progressSuffix}`);
+      console.log(`[dream-cycle] ${stageLabel} — still running after ${elapsedSec}s${progressSuffix}`);
     }, opts.heartbeatIntervalMs ?? 60_000);
     heartbeat.unref?.();
   }
@@ -85,13 +90,13 @@ export async function runVerboseFollowUp<T>(
     const result = await fn();
     if (verbose) {
       const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.log(`[dream-cycle] ${label} — complete in ${elapsedSec}s`);
+      console.log(`[dream-cycle] ${stageLabel} — complete in ${elapsedSec}s`);
     }
     return result;
   } catch (err) {
     if (verbose) {
       const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.error(`[dream-cycle] ${label} — failed after ${elapsedSec}s: ${formatFollowUpError(err)}`);
+      console.error(`[dream-cycle] ${stageLabel} — failed after ${elapsedSec}s: ${formatFollowUpError(err)}`);
     }
     throw err;
   } finally {
@@ -799,6 +804,8 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       .action(
         withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          const pipelineStartedAt = Date.now();
+          const coreStartedAt = Date.now();
           let res;
           const followUpFailures: Array<{ phase: string; error: string }> = [];
           try {
@@ -810,15 +817,80 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             });
             throw err;
           }
+          const coreElapsedSec = Math.floor((Date.now() - coreStartedAt) / 1000);
           if (res.skipped) {
             console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
           } else {
             console.log(`Dream cycle complete: ${res.digestSummary}`);
+            console.log(`  Core cycle elapsed: ${coreElapsedSec}s`);
             console.log(`  Facts pruned: ${res.factsPruned}`);
             console.log(`  Facts decayed: ${res.factsDecayed}`);
             console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
             console.log(`  Patterns found: ${res.patternsFound}`);
             console.log(`  Rules generated: ${res.rulesGenerated}`);
+          }
+
+          const followUpPlan: string[] = [];
+          if (
+            !res.skipped &&
+            runContinuousVerification &&
+            cfg.verification.enabled &&
+            cfg.verification.continuousVerification
+          ) {
+            followUpPlan.push("continuous verification");
+          }
+          if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+            followUpPlan.push("extract implicit feedback");
+          }
+          if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+            followUpPlan.push("closed-loop effectiveness");
+          }
+          if (
+            !res.skipped &&
+            runCrossAgentLearning &&
+            cfg.crossAgentLearning?.enabled &&
+            cfg.crossAgentLearning?.runInNightlyCycle !== false
+          ) {
+            followUpPlan.push("cross-agent learning");
+          }
+          if (
+            !res.skipped &&
+            runToolEffectiveness &&
+            cfg.toolEffectiveness?.enabled !== false &&
+            cfg.toolEffectiveness?.runInNightlyCycle !== false
+          ) {
+            followUpPlan.push("tool effectiveness");
+          }
+          if (
+            !res.skipped &&
+            pruneCostLog &&
+            cfg.costTracking?.enabled !== false &&
+            cfg.costTracking?.pruneInNightlyCycle !== false
+          ) {
+            followUpPlan.push("cost log prune");
+          }
+
+          let followUpCompleted = 0;
+          const runFollowUpStage = async <T>(
+            phaseLabel: string,
+            fn: () => Promise<T> | T,
+            options?: RunVerboseFollowUpOptions,
+          ): Promise<T> => {
+            const stageIndex = followUpCompleted + 1;
+            try {
+              return await runVerboseFollowUp(phaseLabel, verbose, fn, {
+                ...options,
+                stageIndex: followUpPlan.length > 0 ? stageIndex : undefined,
+                stageTotal: followUpPlan.length > 0 ? followUpPlan.length : undefined,
+              });
+            } finally {
+              followUpCompleted++;
+            }
+          };
+
+          if (!res.skipped && verbose) {
+            const labels = followUpPlan.length > 0 ? followUpPlan.join(", ") : "none";
+            console.log(`[dream-cycle] follow-up plan: ${followUpPlan.length} stage(s) — ${labels}`);
           }
 
           if (
@@ -829,7 +901,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           ) {
             let verificationRes;
             try {
-              verificationRes = await runVerboseFollowUp("continuous verification", verbose, () =>
+              verificationRes = await runFollowUpStage("continuous verification", () =>
                 runContinuousVerification(verbose ? { verbose: true } : undefined),
               );
             } catch (err) {
@@ -851,9 +923,8 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
             try {
               let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
-              const implRes = await runVerboseFollowUp(
+              const implRes = await runFollowUpStage(
                 "extract implicit feedback",
-                verbose,
                 () =>
                   runExtractImplicitFeedback({
                     days: 3,
@@ -882,7 +953,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           // Closed-loop effectiveness analysis
           if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
             try {
-              const clReport = await runVerboseFollowUp("closed-loop effectiveness", verbose, () =>
+              const clReport = await runFollowUpStage("closed-loop effectiveness", () =>
                 runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true }, {
                   verbose,
                   logger: (msg) => console.log(msg),
@@ -911,7 +982,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.crossAgentLearning?.runInNightlyCycle !== false
           ) {
             try {
-              const caRes = await runVerboseFollowUp("cross-agent learning", verbose, () =>
+              const caRes = await runFollowUpStage("cross-agent learning", () =>
                 runCrossAgentLearning(verbose ? { verbose: true } : undefined),
               );
               console.log(
@@ -933,9 +1004,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.toolEffectiveness?.runInNightlyCycle !== false
           ) {
             try {
-              const teOutput = await runVerboseFollowUp("tool effectiveness", verbose, () =>
-                runToolEffectiveness({ verbose }),
-              );
+              const teOutput = await runFollowUpStage("tool effectiveness", () => runToolEffectiveness({ verbose }));
               if (teOutput && !teOutput.startsWith("No tool")) {
                 console.log(`Tool effectiveness: ${teOutput.split("\n")[0]}`);
               }
@@ -958,9 +1027,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             cfg.costTracking?.pruneInNightlyCycle !== false
           ) {
             try {
-              const pruned = await runVerboseFollowUp("cost log prune", verbose, () =>
-                pruneCostLog(cfg.costTracking?.retainDays),
-              );
+              const pruned = await runFollowUpStage("cost log prune", () => pruneCostLog(cfg.costTracking?.retainDays));
               if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -975,6 +1042,14 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
             for (const f of followUpFailures) {
               console.log(`  - ${f.phase}: ${f.error}`);
             }
+          }
+
+          if (!res.skipped) {
+            const totalElapsedSec = Math.floor((Date.now() - pipelineStartedAt) / 1000);
+            const followUpElapsedSec = Math.max(0, totalElapsedSec - coreElapsedSec);
+            console.log(
+              `[dream-cycle] pipeline complete in ${totalElapsedSec}s (core=${coreElapsedSec}s, follow-ups=${followUpCompleted}/${followUpPlan.length}, follow-up-elapsed=${followUpElapsedSec}s, follow-up-failures=${followUpFailures.length})`,
+            );
           }
         }),
       );
