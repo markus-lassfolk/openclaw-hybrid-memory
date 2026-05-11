@@ -20,10 +20,14 @@ export async function deleteVectorsForFactIds(
       if (deleted === 0 && typeof vectorDb.isLanceDbAvailable === "function" && !vectorDb.isLanceDbAvailable()) {
         return { attempted: 0, deleted: 0, failed: 0 };
       }
+      const normalizedDeleted = Number.isFinite(deleted)
+        ? Math.max(0, Math.min(uniqueIds.length, Math.floor(deleted)))
+        : 0;
       return {
         attempted: uniqueIds.length,
-        deleted,
-        failed: Math.max(0, uniqueIds.length - deleted),
+        deleted: normalizedDeleted,
+        // Keep failed semantics aligned with the per-id path: only count hard errors.
+        failed: 0,
       };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));

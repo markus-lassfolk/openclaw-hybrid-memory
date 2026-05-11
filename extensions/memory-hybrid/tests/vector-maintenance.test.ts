@@ -24,6 +24,14 @@ describe("deleteVectorsForFactIds", () => {
     expect(result).toEqual({ attempted: 2, deleted: 2, failed: 0 });
   });
 
+  it("does not treat partial bulk deletion as a hard failure", async () => {
+    const deleteMany = vi.fn().mockResolvedValue(1);
+    const result = await deleteVectorsForFactIds({ delete: vi.fn(), deleteMany } as never, ["a", "b"], {
+      operation: "test-op",
+    });
+    expect(result).toEqual({ attempted: 2, deleted: 1, failed: 0 });
+  });
+
   it("falls back to per-id delete when deleteMany fails", async () => {
     const deleteMany = vi.fn().mockRejectedValue(new Error("bulk failed"));
     const del = vi.fn().mockResolvedValue(true);
