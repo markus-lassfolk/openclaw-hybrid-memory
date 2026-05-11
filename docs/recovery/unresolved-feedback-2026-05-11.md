@@ -772,8 +772,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1323.1 — extensions/memory-hybrid/services/goal-registry.ts:180
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Goal registry scans now isolate corrupt goal files: `listGoals()` skips unreadable JSON instead of aborting the whole registry listing. Evidence: `goal-registry.ts`; added registry test for healthy+corrupt coexistence.
 - Thread id: `PRRT_kwDORQuyQM6A-HhK`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -782,8 +782,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1323.2 — extensions/memory-hybrid/services/active-task.ts:480
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `writeActiveTaskFile()` now preserves existing file mode on its atomic tmp-file replacement by copying the current chmod bits to the temp file before rename. Evidence: `active-task.ts`; permission-preservation test added.
 - Thread id: `PRRT_kwDORQuyQM6A-HhN`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -792,8 +792,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1323.3 — extensions/memory-hybrid/services/goal-registry.ts:181
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Duplicate of 1323.1: corrupt individual goal files no longer take down bulk goal enumeration. Evidence: `goal-registry.ts`; `goal-stewardship-registry.test.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A-Hux`
 - Outdated: True
 - Author: copilot-pull-request-reviewer
@@ -802,8 +802,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1323.4 — extensions/memory-hybrid/services/goal-health.ts:249
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `http_ok` verification blocking now catches IPv4-mapped IPv6 literals (`::ffff:*`) before fetch, preventing loopback/private SSRF bypasses. Evidence: `goal-health.ts`; mapped-IPv6 test passes.
 - Thread id: `PRRT_kwDORQuyQM6A-HvA`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -812,8 +812,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1323.5 — extensions/memory-hybrid/services/goal-health.ts:240
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Expanded blocked-host verification helper to resolve local/private literals consistently and exported helper coverage confirms blocking behavior before network fetch. Evidence: `goal-health.ts`; health tests pass.
 - Thread id: `PRRT_kwDORQuyQM6A-HvG`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -822,8 +822,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1323.6 — extensions/memory-hybrid/services/goal-active-task-mirror.ts:83
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Goal active-task mirror refresh now writes atomically via temp file + rename and preserves existing file mode, instead of truncating in-place. Evidence: `goal-active-task-mirror.ts`; mirror test verifies no temp files left and mode preserved.
 - Thread id: `PRRT_kwDORQuyQM6A-HvO`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
