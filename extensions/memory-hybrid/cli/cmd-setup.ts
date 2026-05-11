@@ -30,12 +30,12 @@ async function promptHidden(question: string): Promise<string> {
     if (typeof cb === "function") cb();
     return true;
   }) as typeof mutableOutput.write;
-  
+
   const restore = () => {
     mutableOutput.muted = false;
     mutableOutput.write = originalWrite as typeof mutableOutput.write;
   };
-  
+
   return new Promise((resolve) => {
     rl.on("close", () => {
       restore();
