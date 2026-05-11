@@ -63,7 +63,7 @@ export function registerSetupCommand(
       const spinner = new ProgressSpinner("Checking providers");
       spinner.start();
 
-      const providers = await detectAvailableProviders(cfg.embedding?.apiKey);
+      const providers = await detectAvailableProviders(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
       spinner.success("Provider detection complete");
 
       console.log("\nAvailable providers:\n");
@@ -78,13 +78,13 @@ export function registerSetupCommand(
       let selectedProvider: string;
 
       if (opts.interactive) {
-        const recommended = await recommendProvider(cfg.embedding?.apiKey);
+        const recommended = await recommendProvider(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
         console.log(`\nRecommended provider: ${recommended.toUpperCase()}\n`);
 
         const answer = await prompt(`Choose provider (ollama/onnx/openai/google) [${recommended}]: `);
         selectedProvider = answer || recommended;
       } else {
-        selectedProvider = await recommendProvider(cfg.embedding?.apiKey);
+        selectedProvider = await recommendProvider(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
         console.log(`\nUsing recommended provider: ${selectedProvider}\n`);
       }
 
