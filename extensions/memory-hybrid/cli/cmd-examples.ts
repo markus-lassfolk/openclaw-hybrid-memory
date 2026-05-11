@@ -2,7 +2,7 @@
  * CLI command showing common task examples
  */
 
-import type { Command } from "commander";
+import type { Chainable } from "./shared.js";
 
 const EXAMPLE_CATEGORIES = {
   basics: {
@@ -132,12 +132,12 @@ const EXAMPLE_CATEGORIES = {
   },
 };
 
-export function registerExamplesCommand(program: Command): void {
+export function registerExamplesCommand(program: Chainable): void {
   program
     .command("examples [category]")
     .description("Show common command examples (categories: basics, setup, maintenance, advanced, troubleshooting)")
     .action((category?: string) => {
-      if (category && category in EXAMPLE_CATEGORIES) {
+      if (category && Object.hasOwn(EXAMPLE_CATEGORIES, category)) {
         // Show specific category
         const cat = EXAMPLE_CATEGORIES[category as keyof typeof EXAMPLE_CATEGORIES];
         console.log(`\n📚 ${cat.title}\n`);

@@ -2,14 +2,14 @@
  * CLI command for interactive demo and onboarding
  */
 
-import type { Command } from "commander";
+import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { statusMessage } from "../utils/progress-indicators.js";
 
 export function registerDemoCommand(
-  program: Command,
+  program: Chainable,
   factsDb: FactsDB,
   vectorDb: VectorDB,
   embeddings: EmbeddingProvider,
@@ -30,7 +30,7 @@ export function registerDemoCommand(
 
         console.log(`  • Facts in SQLite: ${factCount}`);
         console.log(`  • Vectors in LanceDB: ${vectorCount}`);
-        console.log(`  • Embedding provider: ${embeddings.modelName || "configured"}\n`);
+        console.log(`  • Embedding provider: ${embeddings.activeProvider ?? embeddings.modelName ?? "configured"}\n`);
       } catch (_error) {
         console.log("  ⚠️  Could not retrieve stats\n");
       }

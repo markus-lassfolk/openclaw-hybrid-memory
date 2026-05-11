@@ -29,28 +29,28 @@ const ERROR_CATALOG: Record<ErrorCode, Omit<ErrorInfo, "code">> = {
     message: "The hybrid memory system requires an embedding provider to perform semantic search.",
     solution:
       "Run: openclaw hybrid-mem setup --interactive\nOr manually set: openclaw hybrid-mem config-set embedding.provider ollama",
-    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory#embedding-providers",
+    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/LLM-AND-PROVIDERS.md",
   },
   HM_E002: {
     title: "API Key Missing",
     message: "The selected embedding provider requires an API key, but none was found.",
     solution:
       "Set your API key:\nopenclaw hybrid-mem config-set embedding.apiKey YOUR_KEY\nOr use a local provider: openclaw hybrid-mem use ollama",
-    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory#configuration",
+    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md",
   },
   HM_E003: {
     title: "Provider Unavailable",
     message: "The embedding provider could not be reached or is not running.",
     solution:
       "For Ollama: Start Ollama service with 'ollama serve'\nFor OpenAI: Check your internet connection and API key\nFor ONNX: Ensure onnxruntime-node is installed",
-    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory#troubleshooting",
+    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/TROUBLESHOOTING.md",
   },
   HM_E004: {
     title: "Database Connection Failed",
     message: "Could not connect to the SQLite or LanceDB database.",
     solution:
       "Check database permissions and disk space.\nRun: openclaw hybrid-mem verify --fix\nIf issue persists, try: openclaw hybrid-mem doctor",
-    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory#database-issues",
+    docsLink: "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/TROUBLESHOOTING.md",
   },
   HM_E005: {
     title: "Invalid Configuration",
@@ -137,12 +137,11 @@ export function wrapCommonError(error: unknown): Error {
     return new UserFriendlyError("HM_E002", errorMessage);
   }
 
-  if (
-    lowerMsg.includes("econnrefused") ||
-    lowerMsg.includes("network") ||
-    lowerMsg.includes("timeout") ||
-    lowerMsg.includes("enotfound")
-  ) {
+  if (lowerMsg.includes("timeout") || lowerMsg.includes("timed out") || lowerMsg.includes("abortsignal")) {
+    return new UserFriendlyError("HM_E008", errorMessage);
+  }
+
+  if (lowerMsg.includes("econnrefused") || lowerMsg.includes("network") || lowerMsg.includes("enotfound")) {
     return new UserFriendlyError("HM_E003", errorMessage);
   }
 

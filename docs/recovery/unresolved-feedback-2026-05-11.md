@@ -517,8 +517,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.1 — extensions/memory-hybrid/cli/cmd-setup.ts:127
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Setup wizard now persists selected provider/model/API-key updates by calling the injected `runConfigSet` writer for each config key. Evidence: `registerSetupCommand(..., runConfigSet)` in `cmd-setup.ts`; `user-friendly-cli.test.ts` verifies writes occur.
 - Thread id: `PRRT_kwDORQuyQM6A9qM_`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -527,8 +527,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.2 — extensions/memory-hybrid/cli/cmd-setup.ts:43
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `--interactive` no longer defaults to true, so non-interactive setup is reachable by default. Evidence: `cmd-setup.ts`; test verifies no default value on the `--interactive` option and non-interactive action runs.
 - Thread id: `PRRT_kwDORQuyQM6A9qND`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -537,8 +537,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.3 — extensions/memory-hybrid/utils/provider-detection.ts:41
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: ONNX detection now uses `createRequire(import.meta.url).resolve(...)`, which works in ESM. Evidence: `provider-detection.ts`; provider helper tests pass.
 - Thread id: `PRRT_kwDORQuyQM6A9qzh`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -547,8 +547,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.4 — extensions/memory-hybrid/utils/provider-detection.ts:7
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed unused `execSync`/`existsSync` imports from provider detection. Evidence: `provider-detection.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9qzy`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -557,8 +557,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.5 — extensions/memory-hybrid/utils/provider-detection.ts:15
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Provider detection/status now includes `google` and reports configured when a Google/Gemini API key is present. Evidence: `ProviderStatus.provider` includes google; `detectAvailableProviders(..., googleApiKey)`; test verifies GOOGLE status.
 - Thread id: `PRRT_kwDORQuyQM6A9qz8`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -567,8 +567,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.6 — extensions/memory-hybrid/utils/progress-indicators.ts:86
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: ProgressBar non-TTY mode now uses a `lastLoggedPercent` milestone guard and a safe total to avoid duplicate logs/division-by-zero. Evidence: `progress-indicators.ts`; test verifies duplicate 10% logs are suppressed.
 - Thread id: `PRRT_kwDORQuyQM6A9q0J`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -577,8 +577,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.7 — extensions/memory-hybrid/utils/error-codes.ts:153
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Timeout-like errors now map to HM_E008 before provider-unavailable matching. Evidence: `wrapCommonError()` in `error-codes.ts`; test verifies timeout maps to HM_E008.
 - Thread id: `PRRT_kwDORQuyQM6A9q0U`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -587,8 +587,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.8 — extensions/memory-hybrid/utils/error-codes.ts:35
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Updated user-friendly error docs links to stable repo docs (`docs/LLM-AND-PROVIDERS.md`, `docs/CONFIGURATION.md`, `docs/TROUBLESHOOTING.md`) instead of missing README anchors. Evidence: `error-codes.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q0g`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -597,8 +597,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.9 — extensions/memory-hybrid/docs/QUICK-START.md:253
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Quick Start Learn More links now point from `extensions/memory-hybrid/docs/` to existing root docs via `../../../docs/...`. Evidence: `extensions/memory-hybrid/docs/QUICK-START.md`.
 - Thread id: `PRRT_kwDORQuyQM6A9q0p`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -607,8 +607,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.10 — extensions/memory-hybrid/docs/QUICK-START.md:53
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: ONNX quick-start install command now uses `npm install --prefix ~/.openclaw/extensions/openclaw-hybrid-memory onnxruntime-node`, matching extension persistence guidance. Evidence: `QUICK-START.md`.
 - Thread id: `PRRT_kwDORQuyQM6A9q0r`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -617,8 +617,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.11 — extensions/memory-hybrid/cli/register.ts:463
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: User-friendly command modules now accept the local `Chainable` abstraction and `registerHybridMemCli` no longer casts `mem as any`. Evidence: `cmd-user-friendly.ts`, user-friendly command modules, `register.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q0v`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -627,8 +627,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.12 — extensions/memory-hybrid/cli/register.ts:470
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Added focused registration tests verifying setup/demo/providers/health/doctor/examples are registered on the command tree and help-only registration stays lightweight. Evidence: `tests/user-friendly-cli.test.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q0y`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -637,8 +637,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.13 — extensions/memory-hybrid/cli/cmd-user-friendly.ts:35
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `cmd-user-friendly.ts` now types `mem` as `Chainable` instead of Commander `Command`. Evidence: `cmd-user-friendly.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q04`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -647,8 +647,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.14 — extensions/memory-hybrid/cli/cmd-setup.ts:15
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed unused Node imports from setup command. Evidence: `cmd-setup.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9q1A`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -657,8 +657,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.15 — extensions/memory-hybrid/cli/cmd-setup.ts:128
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Duplicate of 1320.1: setup now genuinely applies configuration through `runConfigSet` and errors if no config writer is available. Evidence: `cmd-setup.ts`; test verifies persisted writes.
 - Thread id: `PRRT_kwDORQuyQM6A9q1K`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -667,8 +667,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.16 — extensions/memory-hybrid/cli/cmd-setup.ts:100
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: OpenAI/Google API key prompts now use hidden input (`promptHidden`) so secrets are not echoed in interactive setup. Evidence: `cmd-setup.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q1R`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -677,8 +677,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.17 — extensions/memory-hybrid/cli/cmd-setup.ts:87
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `configUpdates` is now `Record<string, string>` and secret values are hidden in display output. Evidence: `cmd-setup.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q1g`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -687,8 +687,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.18 — extensions/memory-hybrid/cli/cmd-providers.ts:24
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `providers` async action is wrapped with `withExit(...)` for consistent CLI error/teardown handling. Evidence: `cmd-providers.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q1p`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -697,8 +697,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.19 — extensions/memory-hybrid/cli/cmd-health.ts:116
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `health` now computes `factCount` and expensive `vectorDb.getAllIds()` once and reuses those counts for Memory Size and Sync checks. Evidence: `cmd-health.ts`; test verifies one `getAllIds` call.
 - Thread id: `PRRT_kwDORQuyQM6A9q1r`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -707,8 +707,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.20 — extensions/memory-hybrid/cli/cmd-examples.ts:149
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Examples command now uses `Object.hasOwn(EXAMPLE_CATEGORIES, category)` before indexing. Evidence: `cmd-examples.ts`; test verifies `toString` does not crash.
 - Thread id: `PRRT_kwDORQuyQM6A9q1y`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -717,8 +717,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.21 — extensions/memory-hybrid/cli/cmd-doctor.ts:5
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed unused `statSync` import; doctor now imports `statfsSync` for real disk-space checking. Evidence: `cmd-doctor.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q13`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -727,8 +727,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.22 — extensions/memory-hybrid/cli/cmd-doctor.ts:31
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed misleading unsupported `--fix` option from doctor rather than advertising remediation it does not perform. Evidence: `cmd-doctor.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q18`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -737,8 +737,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.23 — extensions/memory-hybrid/cli/cmd-doctor.ts:148
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Doctor no longer uses CommonJS `require` inside ESM; it imports `homedir`/`join` at top level. Evidence: `cmd-doctor.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q2A`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -747,8 +747,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.24 — extensions/memory-hybrid/cli/cmd-doctor.ts:161
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Doctor Disk Space check now uses `statfsSync` to report available MiB and warns below threshold instead of merely checking directory existence. Evidence: `cmd-doctor.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q2H`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -757,8 +757,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1320.25 — extensions/memory-hybrid/cli/cmd-demo.ts:37
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Demo displays `embeddings.activeProvider ?? embeddings.modelName` instead of a non-existent provider property. Evidence: `cmd-demo.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9q2M`
 - Outdated: False
 - Author: copilot-pull-request-reviewer

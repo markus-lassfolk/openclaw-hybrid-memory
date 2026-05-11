@@ -2,10 +2,10 @@
  * CLI command for health diagnostics and issue detection
  */
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, statfsSync } from "node:fs";
 import { homedir } from "node:os";
-import type { Command } from "commander";
+import { join } from "node:path";
+import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -19,7 +19,7 @@ interface DiagnosticCheck {
 }
 
 export function registerDoctorCommand(
-  program: Command,
+  program: Chainable,
   cfg: HybridMemoryConfig,
   factsDb: FactsDB,
   vectorDb: VectorDB,
@@ -27,8 +27,7 @@ export function registerDoctorCommand(
   program
     .command("doctor")
     .description("Run health diagnostics and detect common issues (🟢 pass, 🟡 warn, 🔴 fail)")
-    .option("--fix", "Automatically fix issues where possible")
-    .action(async (_opts: { fix?: boolean }) => {
+    .action(async () => {
       console.log("\n🏥 Running Hybrid Memory Diagnostics...\n");
 
       const checks: DiagnosticCheck[] = [];
@@ -135,21 +134,26 @@ export function registerDoctorCommand(
         });
       }
 
-      // Check 6: Disk space (simple check for memory directory)
+      // Check 6: Disk space for the memory directory/filesystem
       try {
         const memoryDir = join(homedir(), ".openclaw/plugins/memory-hybrid");
-        if (existsSync(memoryDir)) {
-          checks.push({
-            name: "Disk Space",
-            status: "pass",
-            message: `Memory directory accessible: ${memoryDir}`,
-          });
-        } else {
+        if (!existsSync(memoryDir)) {
           checks.push({
             name: "Disk Space",
             status: "warn",
             message: `Memory directory not found: ${memoryDir}`,
             fix: "Run: openclaw hybrid-mem install",
+          });
+        } else {
+          const stats = statfsSync(memoryDir);
+          const freeBytes = Number(stats.bavail) * Number(stats.bsize);
+          const freeMiB = Math.floor(freeBytes / 1024 / 1024);
+          checks.push({
+            name: "Disk Space",
+            status: freeBytes < 100 * 1024 * 1024 ? "warn" : "pass",
+            message: `${freeMiB} MiB available at ${memoryDir}`,
+            fix:
+              freeBytes < 100 * 1024 * 1024 ? "Free disk space before running large imports/reindex jobs" : undefined,
           });
         }
       } catch (_error) {

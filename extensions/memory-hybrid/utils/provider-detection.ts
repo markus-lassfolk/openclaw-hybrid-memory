@@ -2,11 +2,12 @@
  * Auto-detect available embedding providers and their status
  */
 
-import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 export interface ProviderStatus {
-  provider: "openai" | "ollama" | "onnx";
+  provider: "openai" | "ollama" | "onnx" | "google";
   available: boolean;
   reason?: string;
   recommendation?: string;
@@ -44,17 +45,21 @@ function checkOnnxAvailable(): boolean {
 /**
  * Check OpenAI API availability (requires API key)
  */
-function checkOpenAIConfigured(apiKey?: string): boolean {
+function hasConfiguredApiKey(apiKey?: string): boolean {
   return Boolean(apiKey && apiKey.trim().length > 0);
 }
 
 /**
  * Detect all available embedding providers
  */
-export async function detectAvailableProviders(currentApiKey?: string): Promise<ProviderStatus[]> {
+export async function detectAvailableProviders(
+  currentApiKey?: string,
+  googleApiKey?: string,
+): Promise<ProviderStatus[]> {
   const ollamaAvailable = await checkOllamaAvailable();
   const onnxAvailable = checkOnnxAvailable();
-  const openaiConfigured = checkOpenAIConfigured(currentApiKey);
+  const openaiConfigured = hasConfiguredApiKey(currentApiKey);
+  const googleConfigured = hasConfiguredApiKey(googleApiKey ?? currentApiKey);
 
   return [
     {
@@ -87,14 +92,25 @@ export async function detectAvailableProviders(currentApiKey?: string): Promise<
       requiresApiKey: true,
       localOnly: false,
     },
+    {
+      provider: "google",
+      available: googleConfigured,
+      reason: googleConfigured ? "Google API key is configured" : "No API key found. Requires Google/Gemini API key",
+      recommendation: "Google embeddings via configured Gemini/Google API key",
+      requiresApiKey: true,
+      localOnly: false,
+    },
   ];
 }
 
 /**
  * Recommend the best available provider based on what's currently available
  */
-export async function recommendProvider(currentApiKey?: string): Promise<"ollama" | "onnx" | "openai"> {
-  const providers = await detectAvailableProviders(currentApiKey);
+export async function recommendProvider(
+  currentApiKey?: string,
+  googleApiKey?: string,
+): Promise<"ollama" | "onnx" | "openai" | "google"> {
+  const providers = await detectAvailableProviders(currentApiKey, googleApiKey);
 
   // Prefer local providers to avoid API costs for new users
   const ollama = providers.find((p) => p.provider === "ollama");
@@ -107,11 +123,11 @@ export async function recommendProvider(currentApiKey?: string): Promise<"ollama
     return "onnx";
   }
 
-  // Fall back to OpenAI if configured
+  // Fall back to configured cloud providers.
   const openai = providers.find((p) => p.provider === "openai");
-  if (openai?.available) {
-    return "openai";
-  }
+  if (openai?.available) return "openai";
+  const google = providers.find((p) => p.provider === "google");
+  if (google?.available) return "google";
 
   // Default to ollama with instructions to set it up
   return "ollama";

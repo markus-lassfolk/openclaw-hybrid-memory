@@ -63,6 +63,7 @@ export class ProgressBar {
   private current = 0;
   private startTime: number;
   private width = 40;
+  private lastLoggedPercent = -1;
 
   constructor(message: string, total: number) {
     this.message = message;
@@ -73,23 +74,27 @@ export class ProgressBar {
   update(current: number, status?: string): void {
     this.current = current;
 
+    const safeTotal = Math.max(1, this.total);
+    const percent = Math.max(0, Math.min(100, Math.floor((current / safeTotal) * 100)));
+
     if (!process.stdout.isTTY) {
-      // In non-TTY mode, show progress every 10%
-      const percent = Math.floor((current / this.total) * 100);
-      if (percent % 10 === 0) {
+      const milestone = Math.floor(percent / 10) * 10;
+      if (milestone > this.lastLoggedPercent) {
+        this.lastLoggedPercent = milestone;
+        const statusStr = status ? ` - ${status}` : "";
+        console.log(`${this.message}: ${milestone}% (${current}/${this.total})${statusStr}`);
       }
       return;
     }
 
-    const percent = Math.floor((current / this.total) * 100);
-    const filled = Math.floor((current / this.total) * this.width);
+    const filled = Math.floor((current / safeTotal) * this.width);
     const empty = this.width - filled;
     const bar = "█".repeat(filled) + "░".repeat(empty);
 
     // Calculate ETA
     const elapsed = Date.now() - this.startTime;
     const rate = current / (elapsed / 1000);
-    const remaining = this.total - current;
+    const remaining = Math.max(0, this.total - current);
     const eta = remaining / rate;
     const etaStr = eta > 0 && Number.isFinite(eta) ? ` ETA ${formatDuration(eta)}` : "";
 

@@ -1,0 +1,152 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { registerUserFriendlyCommands } from "../cli/cmd-user-friendly.js";
+import { registerSetupCommand } from "../cli/cmd-setup.js";
+import { registerHealthCommand } from "../cli/cmd-health.js";
+import { registerExamplesCommand } from "../cli/cmd-examples.js";
+import { wrapCommonError, UserFriendlyError } from "../utils/error-codes.js";
+import { ProgressBar } from "../utils/progress-indicators.js";
+import { detectAvailableProviders, formatProviderStatus } from "../utils/provider-detection.js";
+
+class FakeCommand {
+  children: FakeCommand[] = [];
+  name: string;
+  handler: ((...args: unknown[]) => unknown) | null = null;
+  options: Array<{ flags: string; defaultValue?: unknown }> = [];
+
+  constructor(name = "root") {
+    this.name = name;
+  }
+
+  command(name: string): FakeCommand {
+    const child = new FakeCommand(name.split(/\s+/)[0]);
+    this.children.push(child);
+    return child;
+  }
+
+  description(): FakeCommand {
+    return this;
+  }
+
+  option(flags: string, _desc?: string, defaultValue?: unknown): FakeCommand {
+    this.options.push({ flags, defaultValue });
+    return this;
+  }
+
+  requiredOption(flags: string, _desc?: string, defaultValue?: unknown): FakeCommand {
+    this.options.push({ flags, defaultValue });
+    return this;
+  }
+
+  action(fn: (...args: unknown[]) => unknown): FakeCommand {
+    this.handler = fn;
+    return this;
+  }
+}
+
+const cfg = {
+  embedding: {
+    provider: "ollama" as const,
+    model: "nomic-embed-text",
+    dimensions: 768,
+    batchSize: 32,
+  },
+};
+
+const factsDb = { getCount: vi.fn(() => 3) };
+const vectorDb = { getAllIds: vi.fn(async () => ["a", "b", "c"]) };
+const embeddings = {
+  embed: vi.fn(),
+  embedBatch: vi.fn(),
+  dimensions: 768,
+  modelName: "nomic-embed-text",
+  activeProvider: "ollama",
+};
+
+describe("user-friendly CLI registration", () => {
+  it("registers setup/demo/providers/health/doctor/examples on the command tree", () => {
+    const root = new FakeCommand();
+    registerUserFriendlyCommands(root as never, {
+      cfg: cfg as never,
+      factsDb: factsDb as never,
+      vectorDb: vectorDb as never,
+      embeddings,
+    });
+    expect(root.children.map((child) => child.name).sort()).toEqual([
+      "demo",
+      "doctor",
+      "examples",
+      "health",
+      "providers",
+      "setup",
+    ]);
+  });
+
+  it("setup is non-interactive by default and persists recommended config through runConfigSet", async () => {
+    const root = new FakeCommand();
+    const writes: Array<[string, string]> = [];
+    registerSetupCommand(root as never, cfg as never, async (key, value) => {
+      writes.push([key, value]);
+      return { ok: true };
+    });
+    const setup = root.children.find((child) => child.name === "setup");
+    expect(setup?.options.find((opt) => opt.flags === "--interactive")?.defaultValue).toBeUndefined();
+    expect(setup?.handler).toBeTypeOf("function");
+    await setup?.handler?.({ interactive: false });
+    expect(writes.some(([key]) => key === "embedding.provider")).toBe(true);
+    expect(writes.some(([key]) => key === "embedding.model")).toBe(true);
+  });
+
+  it("health reuses expensive vector id count for size and sync checks", async () => {
+    const root = new FakeCommand();
+    const localVectorDb = { getAllIds: vi.fn(async () => ["a", "b", "c"]) };
+    registerHealthCommand(root as never, cfg as never, factsDb as never, localVectorDb as never);
+    const health = root.children.find((child) => child.name === "health");
+    await health?.handler?.({ json: true });
+    expect(localVectorDb.getAllIds).toHaveBeenCalledTimes(1);
+  });
+
+  it("examples uses own-property category checks", () => {
+    const root = new FakeCommand();
+    registerExamplesCommand(root as never);
+    const examples = root.children.find((child) => child.name === "examples");
+    expect(() => examples?.handler?.("toString")).not.toThrow();
+  });
+});
+
+describe("provider detection helpers", () => {
+  it("includes google as configured when a google key is present", async () => {
+    const providers = await detectAvailableProviders(undefined, "google-key");
+    const google = providers.find((provider) => provider.provider === "google");
+    expect(google?.available).toBe(true);
+    expect(formatProviderStatus(google!)).toContain("GOOGLE");
+  });
+});
+
+describe("progress and error helpers", () => {
+  const originalIsTTY = process.stdout.isTTY;
+
+  beforeEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", { value: originalIsTTY, configurable: true });
+    vi.restoreAllMocks();
+  });
+
+  it("non-TTY progress logs each 10% milestone once", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const bar = new ProgressBar("work", 100);
+    bar.update(10);
+    bar.update(10);
+    bar.update(15);
+    bar.update(20);
+    expect(log.mock.calls.map((call) => String(call[0]))).toEqual(["work: 10% (10/100)", "work: 20% (20/100)"]);
+  });
+
+  it("maps timeout errors to HM_E008", () => {
+    const wrapped = wrapCommonError(new Error("operation timeout while embedding"));
+    expect(wrapped).toBeInstanceOf(UserFriendlyError);
+    expect((wrapped as UserFriendlyError).code).toBe("HM_E008");
+  });
+});

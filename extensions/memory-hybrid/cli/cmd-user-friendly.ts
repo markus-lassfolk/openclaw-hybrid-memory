@@ -2,7 +2,7 @@
  * Register user-friendly commands (setup, demo, providers, health, doctor, examples)
  */
 
-import type { Command } from "commander";
+import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -19,11 +19,15 @@ export interface UserFriendlyContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  runConfigSet?: (
+    key: string,
+    value: string,
+  ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
-export function registerUserFriendlyCommands(mem: Command, ctx: UserFriendlyContext): void {
+export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyContext): void {
   // Register each user-friendly command
-  registerSetupCommand(mem, ctx.cfg);
+  registerSetupCommand(mem, ctx.cfg, ctx.runConfigSet);
   registerProvidersCommand(mem, ctx.cfg);
   registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
   registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);

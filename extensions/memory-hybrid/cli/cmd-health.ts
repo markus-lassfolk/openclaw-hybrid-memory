@@ -2,7 +2,7 @@
  * CLI command for quick health status with traffic-light indicators
  */
 
-import type { Command } from "commander";
+import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -15,7 +15,7 @@ interface HealthIndicator {
 }
 
 export function registerHealthCommand(
-  program: Command,
+  program: Chainable,
   cfg: HybridMemoryConfig,
   factsDb: FactsDB,
   vectorDb: VectorDB,
@@ -52,9 +52,12 @@ export function registerHealthCommand(
         });
       }
 
+      let factCount: number | null = null;
+      let vectorCount: number | null = null;
+
       // Check database health
       try {
-        const factCount = factsDb.getCount();
+        factCount = factsDb.getCount();
         indicators.push({
           name: "Database",
           status: "good",
@@ -68,11 +71,15 @@ export function registerHealthCommand(
         });
       }
 
+      try {
+        vectorCount = (await vectorDb.getAllIds()).length;
+      } catch {
+        vectorCount = null;
+      }
+
       // Check memory size
       try {
-        const factCount = factsDb.getCount();
-        const vectorIds = await vectorDb.getAllIds();
-        const vectorCount = vectorIds.length;
+        if (factCount === null || vectorCount === null) throw new Error("count unavailable");
 
         if (factCount === 0) {
           indicators.push({
@@ -103,9 +110,7 @@ export function registerHealthCommand(
 
       // Check database sync
       try {
-        const factCount = factsDb.getCount();
-        const vectorIds = await vectorDb.getAllIds();
-        const vectorCount = vectorIds.length;
+        if (factCount === null || vectorCount === null) throw new Error("count unavailable");
         const diff = Math.abs(factCount - vectorCount);
         const percentDiff = (diff / Math.max(factCount, 1)) * 100;
 

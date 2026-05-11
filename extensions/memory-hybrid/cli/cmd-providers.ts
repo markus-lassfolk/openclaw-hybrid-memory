@@ -2,11 +2,12 @@
  * CLI command to show available embedding providers
  */
 
-import type { Command } from "commander";
+import type { Chainable } from "./shared.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { detectAvailableProviders, formatProviderStatus, recommendProvider } from "../utils/provider-detection.js";
+import { withExit } from "./shared.js";
 
-export function registerProvidersCommand(program: Command, cfg: HybridMemoryConfig): void {
+export function registerProvidersCommand(program: Chainable, cfg: HybridMemoryConfig): void {
   program
     .command("providers")
     .description("List available embedding providers and their status (✓ available, ✗ needs setup)")

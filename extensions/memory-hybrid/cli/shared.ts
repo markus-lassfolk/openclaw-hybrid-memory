@@ -32,8 +32,8 @@ export type Chainable = {
   command(name: string): Chainable;
   description(desc: string): Chainable;
   action(fn: (...args: any[]) => void | Promise<void>): Chainable;
-  option(flags: string, desc?: string, defaultValue?: string): Chainable;
-  requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
+  option(flags: string, desc?: string, defaultValue?: unknown): Chainable;
+  requiredOption(flags: string, desc?: string, defaultValue?: unknown): Chainable;
   argument?(name: string, desc?: string): Chainable;
   alias?(name: string): Chainable;
 };
