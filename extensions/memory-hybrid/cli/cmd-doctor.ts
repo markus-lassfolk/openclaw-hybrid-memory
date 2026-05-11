@@ -2,7 +2,9 @@
  * CLI command for health diagnostics and issue detection
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { Command } from "commander";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -135,7 +137,7 @@ export function registerDoctorCommand(
 
       // Check 6: Disk space (simple check for memory directory)
       try {
-        const memoryDir = require("node:path").join(require("node:os").homedir(), ".openclaw/plugins/memory-hybrid");
+        const memoryDir = join(homedir(), ".openclaw/plugins/memory-hybrid");
         if (existsSync(memoryDir)) {
           checks.push({
             name: "Disk Space",

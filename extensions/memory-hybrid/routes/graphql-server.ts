@@ -3,7 +3,10 @@
  * Provides GraphQL API endpoint with subscriptions support
  */
 
-type MemoryPluginContext = Record<string, unknown>;
+interface MemoryPluginContext {
+  config?: unknown;
+  [key: string]: unknown;
+}
 
 import { createSchema, createYoga, createPubSub } from "graphql-yoga";
 import type { FactsDB } from "../backends/facts-db.js";

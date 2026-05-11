@@ -3,7 +3,10 @@
  * Allows third-party extensions to integrate with the memory system
  */
 
-type MemoryPluginContext = Record<string, unknown>;
+interface MemoryPluginContext {
+  config?: unknown;
+  [key: string]: unknown;
+}
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";

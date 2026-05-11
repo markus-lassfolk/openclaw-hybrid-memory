@@ -3,7 +3,10 @@
  * Integrates the Plugin Manager into the main hybrid memory plugin lifecycle
  */
 
-type MemoryPluginContext = Record<string, unknown>;
+interface MemoryPluginContext {
+  config?: unknown;
+  [key: string]: unknown;
+}
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
