@@ -29,7 +29,7 @@ export function registerHealthCommand(
 
       // Check embedding provider
       try {
-        const providers = await detectAvailableProviders(cfg.embedding?.apiKey);
+        const providers = await detectAvailableProviders(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
         const current = providers.find((p) => p.provider === cfg.embedding?.provider);
         if (current?.available) {
           indicators.push({

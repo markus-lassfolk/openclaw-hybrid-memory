@@ -69,7 +69,7 @@ export function registerDoctorCommand(
       }
 
       // Check 3: Embedding provider
-      const providers = await detectAvailableProviders(cfg.embedding?.apiKey);
+      const providers = await detectAvailableProviders(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
       const currentProvider = cfg.embedding?.provider;
       const providerStatus = providers.find((p) => p.provider === currentProvider);
 

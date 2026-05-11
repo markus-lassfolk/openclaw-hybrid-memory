@@ -15,7 +15,8 @@ export function registerProvidersCommand(program: Chainable, cfg: HybridMemoryCo
         console.log("\n📡 Embedding Provider Status\n");
 
         const currentApiKey = cfg.embedding?.apiKey;
-        const providers = await detectAvailableProviders(currentApiKey);
+        const googleApiKey = cfg.embedding?.googleApiKey;
+        const providers = await detectAvailableProviders(currentApiKey, googleApiKey);
 
         for (const provider of providers) {
           console.log(formatProviderStatus(provider));
@@ -28,7 +29,7 @@ export function registerProvidersCommand(program: Chainable, cfg: HybridMemoryCo
         // Show recommendation if current provider is unavailable
         const currentStatus = providers.find((p) => p.provider === currentProvider);
         if (!currentStatus?.available) {
-          const recommended = await recommendProvider(currentApiKey);
+          const recommended = await recommendProvider(currentApiKey, googleApiKey);
           console.log(`💡 Recommended: Switch to ${recommended.toUpperCase()}`);
           console.log(`   Run: openclaw hybrid-mem config-set embedding.provider ${recommended}\n`);
         }
