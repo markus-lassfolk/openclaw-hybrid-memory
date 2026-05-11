@@ -3,8 +3,7 @@
  * Provides team-based memory management with permissions and shared spaces
  */
 
-import type { FactsDB } from "../backends/facts-db/facts-db-layer1.js";
-import Database from "better-sqlite3";
+import type { FactsDB } from "../backends/facts-db.js";
 
 export interface Organization {
   id: string;
@@ -95,10 +94,10 @@ export interface Activity {
  * Manages organizations, spaces, permissions, and team workflows
  */
 export class CollaborationService {
-  private db: Database.Database;
+  private db: { exec(sql: string): void; prepare(sql: string): any; close?(): void };
 
   constructor(private sqlitePath: string) {
-    this.db = new Database(sqlitePath);
+    this.db = new (require("node:module").createRequire(import.meta.url)("node:sqlite").DatabaseSync)(sqlitePath);
     this.initSchema();
   }
 
@@ -344,11 +343,11 @@ export class CollaborationService {
 
     if (!perm) {
       // Check if user is org admin/owner
-      const spaceStmt = this.db.prepare(`SELECT org_id FROM memory_spaces WHERE id = ?`);
+      const spaceStmt = this.db.prepare("SELECT org_id FROM memory_spaces WHERE id = ?");
       const space = spaceStmt.get(spaceId) as { org_id: string } | undefined;
 
       if (space) {
-        const memberStmt = this.db.prepare(`SELECT role FROM members WHERE user_id = ? AND org_id = ?`);
+        const memberStmt = this.db.prepare("SELECT role FROM members WHERE user_id = ? AND org_id = ?");
         const member = memberStmt.get(userId, space.org_id) as { role: string } | undefined;
 
         if (member && (member.role === "owner" || member.role === "admin")) {
@@ -538,6 +537,6 @@ export class CollaborationService {
    * Close database connection
    */
   close(): void {
-    this.db.close();
+    this.db.close?.();
   }
 }

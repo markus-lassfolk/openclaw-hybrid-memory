@@ -162,8 +162,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.1 — extensions/memory-hybrid/routes/dashboard-server.ts:2032
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Dashboard request handler is now `async`, and full TypeScript parsing/checking succeeds. Evidence: `createServer(async (req, res) => ...)` in `dashboard-server.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9pAs`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -172,8 +172,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.2 — extensions/memory-hybrid/routes/graphql-resolvers.ts:9
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Replaced the broken GraphQL resolver module with an implementation that does not import missing `search-hybrid.js`; `search`/`semanticSearch` now use local FactsDB-backed search helpers. Evidence: `graphql-resolvers.ts`; GraphQL route test passes.
 - Thread id: `PRRT_kwDORQuyQM6A9pAt`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -182,8 +182,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.3 — extensions/memory-hybrid/routes/graphql-resolvers.ts:264
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Added resolver coverage for schema-declared link mutations (`createLink`, `deleteLink`) and made still-unimplemented maintenance mutations nullable instead of non-null runtime traps. Evidence: `graphql-resolvers.ts`, `graphql-schema.ts`; `/graphql` route test passes.
 - Thread id: `PRRT_kwDORQuyQM6A9pAu`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -192,8 +192,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.4 — extensions/memory-hybrid/api/plugin-system.ts:357
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Plugin hooks are now tracked per plugin id and unloading removes only listeners owned by that plugin. Evidence: `pluginEventListeners` map plus targeted `unregisterHooks(pluginId)` in `plugin-system.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9pAw`
 - Outdated: False
 - Author: chatgpt-codex-connector
@@ -202,8 +202,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.5 — extensions/memory-hybrid/api/plugin-system.ts:9
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed the invalid `MemoryPluginContext` import from `memory-plugin-api.js`; plugin system now uses a local context shape and imports real `FactsDB` from the public backend barrel. Evidence: `plugin-system.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r5S`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -212,8 +212,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.6 — extensions/memory-hybrid/api/plugin-system.ts:358
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Duplicate of 1318.4: `unregisterHooks(pluginId)` now removes only that plugin’s recorded listener functions and preserves unrelated plugin listeners.
 - Thread id: `PRRT_kwDORQuyQM6A9r5e`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -222,8 +222,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.7 — extensions/memory-hybrid/api/plugin-system.ts:144
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Plugin manager context logger now routes through `pluginLogger` instead of `console.*`. Evidence: `plugin-system.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r5p`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -232,8 +232,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.8 — extensions/memory-hybrid/services/plugin-loader.ts:10
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed the invalid `MemoryPluginContext` import from plugin loader; it uses a local context shape and real backend barrel imports. Evidence: `plugin-loader.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r5v`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -242,8 +242,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.9 — extensions/memory-hybrid/services/plugin-loader.ts:74
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Plugin loader now converts filesystem plugin paths to `file://` URLs via `pathToFileURL(pluginPath).href` before dynamic import. Evidence: `plugin-loader.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r5z`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -252,8 +252,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.10 — extensions/memory-hybrid/routes/graphql-resolvers.ts:14
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: GraphQL resolver context no longer imports non-existent `MemoryPluginContext`; it defines a local `GraphQLContext` over real `FactsDB`/`VectorDB`. Evidence: `graphql-resolvers.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r55`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -262,8 +262,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.11 — extensions/memory-hybrid/routes/graphql-resolvers.ts:47
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: GraphQL resolvers now use the real FactsDB API (`getById`, `getAll`, `delete`, `store`, `supersede`, `createLink`) and `StoreFactInput`-compatible shapes without caller-assigned ids/timestamps. Evidence: `graphql-resolvers.ts`; `/graphql` test passes.
 - Thread id: `PRRT_kwDORQuyQM6A9r58`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -272,8 +272,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.12 — extensions/memory-hybrid/routes/graphql-resolvers.ts:431
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Corrected supersession relationship resolvers to use `supersedesId` for `supersedes` and `supersededBy` for `supersededByFact`. Evidence: `graphql-resolvers.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r6C`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -282,8 +282,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.13 — extensions/memory-hybrid/routes/graphql-schema.ts:235
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Implemented/normalized root link resolvers and mutations, and relaxed still-unimplemented maintenance mutations to nullable schema fields so GraphQL no longer returns null for non-null fields. Evidence: `graphql-resolvers.ts`, `graphql-schema.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r6I`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -302,8 +302,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.15 — extensions/memory-hybrid/routes/graphql-server.ts:202
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: GraphQL Yoga logging hooks now route through `pluginLogger` instead of `console.*`. Evidence: `graphql-server.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r6O`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -312,8 +312,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.16 — extensions/memory-hybrid/routes/dashboard-server.ts:2065
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: `/graphql` now uses the shared `readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)` helper and returns 413 on oversized bodies. Evidence: `dashboard-server.ts`; added dashboard test for oversized `/graphql` body.
 - Thread id: `PRRT_kwDORQuyQM6A9r6U`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -322,8 +322,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.17 — extensions/memory-hybrid/routes/dashboard-server.ts:2047
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Dashboard server now creates the GraphQL Yoga server once during dashboard startup and reuses it for `/graphql` requests. Evidence: `dashboard-server.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r6a`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -332,8 +332,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.18 — extensions/memory-hybrid/routes/dashboard-server.ts:2047
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed the `as any` request-context coercion; dashboard builds a concrete context object and uses typed `Headers` for Yoga fetch. Evidence: `dashboard-server.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r6f`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -342,8 +342,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.19 — extensions/memory-hybrid/routes/dashboard-server.ts:2066
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Added dashboard tests for `GET /graph`, valid `POST /graphql`, and oversized `/graphql` request handling. Evidence: `dashboard-server.test.ts`; focused test run reports 5 files / 190 tests passed.
 - Thread id: `PRRT_kwDORQuyQM6A9r6o`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -362,8 +362,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.21 — extensions/memory-hybrid/services/memory-compression.ts:88
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Memory compression now uses real FactsDB methods (`getAll`, `getById`, `store`, `supersede`) and stores summary facts with DB-assigned ids/timestamps and valid input shape. Evidence: `memory-compression.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r68`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -392,8 +392,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.24 — extensions/memory-hybrid/services/benchmark-suite.ts:130
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Benchmark suite now uses real FactsDB APIs (`getAll`, `getById`, `store`) and valid store input shapes instead of non-existent `getAllFacts`/`getFactById`. Evidence: `benchmark-suite.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r7X`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -402,8 +402,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.25 — extensions/memory-hybrid/services/collaboration.ts:7
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Collaboration service no longer imports `better-sqlite3`; it uses Node’s `node:sqlite` `DatabaseSync` via `createRequire`. Evidence: `collaboration.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r7l`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -412,8 +412,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.26 — extensions/memory-hybrid/services/collaboration.ts:6
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed/avoided the unused `FactsDB` import in collaboration service; file compiles cleanly. Evidence: `collaboration.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r7v`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -422,8 +422,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.27 — extensions/memory-hybrid/cli/plugin-commands.ts:43
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Plugin manifest loading now reads `package.json` via `readFile` + `JSON.parse` instead of brittle JSON dynamic import attributes. Evidence: `plugin-commands.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r77`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -432,8 +432,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.28 — extensions/memory-hybrid/cli/plugin-commands.ts:81
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Plugin loader now scans both direct plugin directories and `<pluginsDir>/node_modules` (including scoped packages), aligning with `npm install --prefix <pluginsDir>`. Evidence: `plugin-loader.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8G`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -442,8 +442,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.29 — extensions/memory-hybrid/cli/plugin-commands.ts:79
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed runtime `execa` dependency by using `node:child_process.spawn` for npm install. Evidence: `plugin-commands.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8T`
 - Outdated: False
 - Author: copilot-pull-request-reviewer

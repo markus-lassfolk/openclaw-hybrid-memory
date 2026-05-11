@@ -3,7 +3,7 @@
  * Implements smart memory consolidation and multi-level summaries
  */
 
-import type { FactsDB } from "../backends/facts-db/facts-db-layer1.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 
 export interface CompressionConfig {
@@ -71,10 +71,8 @@ export class MemoryCompressionService {
     olderThan?: number;
     scope?: string;
   }): Promise<CompressionResult> {
-    console.log("[Compression] Starting memory compression...");
-
     // Get facts to compress
-    let facts = this.factsDb.getAllFacts();
+    let facts = this.factsDb.getAll();
 
     // Apply filters
     if (options?.category) {
@@ -91,9 +89,6 @@ export class MemoryCompressionService {
     facts = facts.filter((f) => !f.supersededBy);
 
     if (facts.length < this.config.minFactsForCompression) {
-      console.log(
-        `[Compression] Not enough facts to compress (${facts.length} < ${this.config.minFactsForCompression})`,
-      );
       return {
         clustersCreated: 0,
         factsCompressed: 0,
@@ -106,11 +101,9 @@ export class MemoryCompressionService {
 
     // Cluster similar facts
     const clusters = await this.clusterFacts(facts);
-    console.log(`[Compression] Created ${clusters.length} clusters`);
 
     // Generate summaries for each cluster
     const summaries = await this.generateClusterSummaries(clusters);
-    console.log(`[Compression] Generated ${summaries.length} summaries`);
 
     // Store summaries and supersede original facts
     let factsCompressed = 0;
@@ -127,34 +120,31 @@ export class MemoryCompressionService {
 
       // Store summary as a new fact
       const summaryFact = {
-        id: crypto.randomUUID(),
         text: summary.summary,
         category: cluster.category,
         importance: cluster.avgImportance,
         confidence: 0.9, // Slightly lower since it's a summary
-        decayClass: "stable" as const,
+        decayClass: "durable" as const,
         tags: ["summary", "compressed"],
         source: "compression-service",
-        createdAt: Date.now(),
-        metadata: {
+        entity: null,
+        key: null,
+        value: null,
+        provenanceJson: JSON.stringify({
           compressionClusterId: cluster.id,
           originalFactCount: cluster.facts.length,
           compressionDate: Date.now(),
-        },
+        }),
       };
 
-      await this.factsDb.store(summaryFact);
+      const storedSummary = this.factsDb.store(summaryFact);
 
       // Supersede original facts if configured
       if (!this.config.preserveOriginals) {
         for (const fact of cluster.facts) {
-          const original = this.factsDb.getFactById(fact.id);
+          const original = this.factsDb.getById(fact.id);
           if (original) {
-            await this.factsDb.store({
-              ...original,
-              supersededBy: summaryFact.id,
-              updatedAt: Date.now(),
-            });
+            this.factsDb.supersede(original.id, storedSummary.id);
             factsCompressed++;
           }
         }
@@ -162,9 +152,6 @@ export class MemoryCompressionService {
     }
 
     const spaceReduction = facts.length > 0 ? (factsCompressed / facts.length) * 100 : 0;
-
-    console.log(`[Compression] Complete: ${factsCompressed} facts compressed into ${summaries.length} summaries`);
-    console.log(`[Compression] Token reduction: ${tokensReduced} tokens (~${(tokensReduced / 1000).toFixed(1)}k)`);
 
     return {
       clustersCreated: clusters.length,
@@ -299,7 +286,7 @@ export class MemoryCompressionService {
       // Generate summary prompt
       const factsText = cluster.facts.map((f, i) => `${i + 1}. ${f.text}`).join("\n");
 
-      const prompt = `Summarize the following ${cluster.size} related facts into a single, concise summary that captures the essential information:
+      const _prompt = `Summarize the following ${cluster.size} related facts into a single, concise summary that captures the essential information:
 
 ${factsText}
 
@@ -345,7 +332,7 @@ Provide a clear, factual summary that preserves the key details. The summary sho
     detailed: string;
     full: string;
   }> {
-    const fact = this.factsDb.getFactById(factId);
+    const fact = this.factsDb.getById(factId);
     if (!fact) {
       throw new Error(`Fact not found: ${factId}`);
     }
@@ -374,7 +361,7 @@ Provide a clear, factual summary that preserves the key details. The summary sho
     if (firstPara.length <= 150) {
       return firstPara;
     }
-    return text.substring(0, 150) + "...";
+    return `${text.substring(0, 150)}...`;
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {

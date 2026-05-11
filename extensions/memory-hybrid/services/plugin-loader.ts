@@ -3,13 +3,15 @@
  * Integrates the Plugin Manager into the main hybrid memory plugin lifecycle
  */
 
-import type { FactsDB } from "../backends/facts-db/facts-db-layer1.js";
+type MemoryPluginContext = Record<string, unknown>;
+
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryPluginContext } from "../api/memory-plugin-api.js";
 import { PluginManager, type MemoryPlugin } from "../api/plugin-system.js";
 import { pluginLogger } from "../utils/logger.js";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 
 /**
@@ -40,28 +42,50 @@ export class PluginLoader {
     }
 
     try {
-      const entries = await readdir(this.pluginsDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-
-        const pluginPath = join(this.pluginsDir, entry.name);
-        const pluginFile = join(pluginPath, "index.js");
-
-        if (!existsSync(pluginFile)) {
-          pluginLogger.debug(`[PluginLoader] Skipping ${entry.name}: no index.js found`);
-          continue;
-        }
-
+      for (const pluginFile of await this.discoverPluginFiles()) {
         try {
           await this.loadPlugin(pluginFile);
         } catch (error) {
-          pluginLogger.error(`[PluginLoader] Failed to load plugin from ${pluginFile}:`, error);
+          pluginLogger.error(`[PluginLoader] Failed to load plugin from ${pluginFile}: ${String(error)}`);
         }
       }
     } catch (error) {
-      pluginLogger.error(`[PluginLoader] Failed to scan plugins directory:`, error);
+      pluginLogger.error(`[PluginLoader] Failed to scan plugins directory: ${String(error)}`);
     }
+  }
+
+  private async discoverPluginFiles(): Promise<string[]> {
+    const files: string[] = [];
+    const addPluginFile = (pluginPath: string) => {
+      const pluginFile = join(pluginPath, "index.js");
+      if (existsSync(pluginFile)) files.push(pluginFile);
+    };
+
+    const entries = await readdir(this.pluginsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "node_modules") continue;
+      addPluginFile(join(this.pluginsDir, entry.name));
+    }
+
+    const nodeModulesDir = join(this.pluginsDir, "node_modules");
+    if (existsSync(nodeModulesDir)) {
+      const modules = await readdir(nodeModulesDir, { withFileTypes: true });
+      for (const entry of modules) {
+        if (!entry.isDirectory()) continue;
+        const modulePath = join(nodeModulesDir, entry.name);
+        if (entry.name.startsWith("@")) {
+          const scoped = await readdir(modulePath, { withFileTypes: true });
+          for (const scopedEntry of scoped) {
+            if (scopedEntry.isDirectory()) addPluginFile(join(modulePath, scopedEntry.name));
+          }
+        } else {
+          addPluginFile(modulePath);
+        }
+      }
+    }
+
+    return files;
   }
 
   /**
@@ -69,7 +93,7 @@ export class PluginLoader {
    */
   async loadPlugin(pluginPath: string): Promise<void> {
     try {
-      const module = await import(pluginPath);
+      const module = await import(pathToFileURL(pluginPath).href);
       const plugin: MemoryPlugin = module.default || module;
 
       if (!plugin.metadata || !plugin.init) {

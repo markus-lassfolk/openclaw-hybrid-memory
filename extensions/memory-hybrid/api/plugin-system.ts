@@ -3,9 +3,11 @@
  * Allows third-party extensions to integrate with the memory system
  */
 
-import type { FactsDB } from "../backends/facts-db/facts-db-layer1.js";
+type MemoryPluginContext = Record<string, unknown>;
+
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryPluginContext } from "../api/memory-plugin-api.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /**
  * Plugin lifecycle events
@@ -126,6 +128,10 @@ export class PluginManager {
   private plugins = new Map<string, MemoryPlugin>();
   private context: PluginExtensionContext;
   private eventListeners = new Map<PluginLifecycleEvent, Array<(data?: unknown) => Promise<void>>>();
+  private pluginEventListeners = new Map<
+    string,
+    Array<{ event: PluginLifecycleEvent; listener: (data?: unknown) => Promise<void> }>
+  >();
 
   constructor(factsDb: FactsDB, vectorDb: VectorDB | undefined, pluginContext: MemoryPluginContext) {
     this.context = {
@@ -133,10 +139,14 @@ export class PluginManager {
       vectorDb,
       config: pluginContext.config,
       logger: {
-        info: (msg, ...args) => console.log(`[PluginManager] ${msg}`, ...args),
-        warn: (msg, ...args) => console.warn(`[PluginManager] ${msg}`, ...args),
-        error: (msg, ...args) => console.error(`[PluginManager] ${msg}`, ...args),
-        debug: (msg, ...args) => console.debug(`[PluginManager] ${msg}`, ...args),
+        info: (msg, ...args) =>
+          pluginLogger.info(`[PluginManager] ${msg}${args.length ? ` ${args.map(String).join(" ")}` : ""}`),
+        warn: (msg, ...args) =>
+          pluginLogger.warn(`[PluginManager] ${msg}${args.length ? ` ${args.map(String).join(" ")}` : ""}`),
+        error: (msg, ...args) =>
+          pluginLogger.error(`[PluginManager] ${msg}${args.length ? ` ${args.map(String).join(" ")}` : ""}`),
+        debug: (msg, ...args) =>
+          pluginLogger.debug(`[PluginManager] ${msg}${args.length ? ` ${args.map(String).join(" ")}` : ""}`),
       },
       emit: async (event, data) => {
         await this.emit(event, data);
@@ -330,28 +340,32 @@ export class PluginManager {
     }
   }
 
-  private registerHooks(_pluginId: string, hooks: PluginHooks): void {
-    // Register hooks as event listeners
+  private registerHooks(pluginId: string, hooks: PluginHooks): void {
+    const ownedListeners: Array<{ event: PluginLifecycleEvent; listener: (data?: unknown) => Promise<void> }> = [];
+
     for (const [hookName, hookFn] of Object.entries(hooks)) {
-      if (typeof hookFn === "function") {
-        // Map hook names to events
-        const event = this.hookToEvent(hookName);
-        if (event) {
-          const listeners = this.eventListeners.get(event) || [];
-          listeners.push(hookFn as (data?: unknown) => Promise<void>);
-          this.eventListeners.set(event, listeners);
-        }
-      }
+      if (typeof hookFn !== "function") continue;
+      const event = this.hookToEvent(hookName);
+      if (!event) continue;
+      const listener = hookFn as (data?: unknown) => Promise<void>;
+      const listeners = this.eventListeners.get(event) || [];
+      listeners.push(listener);
+      this.eventListeners.set(event, listeners);
+      ownedListeners.push({ event, listener });
     }
+
+    this.pluginEventListeners.set(pluginId, ownedListeners);
   }
 
-  private unregisterHooks(_pluginId: string): void {
-    // Remove all event listeners for this plugin
-    // Note: This is a simplified implementation
-    // In production, you'd want to track which listeners belong to which plugin
-    for (const [_event, _listeners] of this.eventListeners.entries()) {
-      this.eventListeners.set(_event, []);
+  private unregisterHooks(pluginId: string): void {
+    const ownedListeners = this.pluginEventListeners.get(pluginId) ?? [];
+    for (const { event, listener } of ownedListeners) {
+      const listeners = this.eventListeners.get(event) ?? [];
+      const remaining = listeners.filter((candidate) => candidate !== listener);
+      if (remaining.length > 0) this.eventListeners.set(event, remaining);
+      else this.eventListeners.delete(event);
     }
+    this.pluginEventListeners.delete(pluginId);
   }
 
   private hookToEvent(hookName: string): PluginLifecycleEvent | null {
@@ -383,11 +397,10 @@ export class SlackNotificationPlugin implements MemoryPlugin {
   };
 
   hooks: PluginHooks = {
-    afterFactStore: async (fact: { importance?: number; text?: string }) => {
-      if (fact.importance && fact.importance > 0.8) {
-        // Send Slack notification for important facts
-        console.log(`[Slack] Important fact stored: ${fact.text}`);
-        // await this.sendSlackMessage(fact);
+    afterFactStore: async (fact: unknown) => {
+      const candidate = fact && typeof fact === "object" ? (fact as { importance?: number; text?: string }) : {};
+      if (candidate.importance && candidate.importance > 0.8) {
+        // await this.sendSlackMessage(candidate);
       }
     },
   };
@@ -400,7 +413,5 @@ export class SlackNotificationPlugin implements MemoryPlugin {
     this.webhookUrl = process.env.SLACK_WEBHOOK_URL;
   }
 
-  async shutdown(): Promise<void> {
-    console.log("[Slack] Plugin shutting down");
-  }
+  async shutdown(): Promise<void> {}
 }

@@ -3,104 +3,69 @@
  * Provides GraphQL API endpoint with subscriptions support
  */
 
-import { createYoga, createPubSub } from "graphql-yoga";
-import type { FactsDB } from "../backends/facts-db/facts-db-layer1.js";
+type MemoryPluginContext = Record<string, unknown>;
+
+import { createSchema, createYoga, createPubSub } from "graphql-yoga";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryPluginContext } from "../api/memory-plugin-api.js";
 import { graphqlSchema } from "./graphql-schema.js";
+import { pluginLogger } from "../utils/logger.js";
 import { resolvers, type GraphQLContext } from "./graphql-resolvers.js";
 
 // PubSub for subscriptions
 const pubSub = createPubSub<{
-	factCreated: [{ fact: unknown; category?: string; scope?: string }];
-	factUpdated: [{ fact: unknown }];
-	factDeleted: [{ id: string; category?: string }];
-	linkCreated: [{ link: unknown }];
-	statsUpdated: [{ stats: unknown }];
+  factCreated: [{ fact: unknown; category?: string; scope?: string }];
+  factUpdated: [{ fact: unknown }];
+  factDeleted: [{ id: string; category?: string }];
+  linkCreated: [{ link: unknown }];
+  statsUpdated: [{ stats: unknown }];
 }>();
 
 /**
  * Create GraphQL Yoga server instance
  */
 export function createGraphQLServer(
-	factsDb: FactsDB,
-	vectorDb: VectorDB | undefined,
-	pluginContext: MemoryPluginContext,
+  factsDb: FactsDB,
+  vectorDb: VectorDB | undefined,
+  pluginContext: MemoryPluginContext,
 ) {
-	const yoga = createYoga<GraphQLContext>({
-		schema: {
-			typeDefs: graphqlSchema,
-			resolvers: {
-				...resolvers,
-				Subscription: {
-					factCreated: {
-						subscribe: (_parent, args: { category?: string; scope?: string }) => {
-							return pubSub.subscribe("factCreated", (payload) => {
-								if (args.category && payload.category !== args.category) {
-									return false;
-								}
-								if (args.scope && payload.scope !== args.scope) {
-									return false;
-								}
-								return true;
-							});
-						},
-						resolve: (payload: { fact: unknown }) => payload.fact,
-					},
-					factUpdated: {
-						subscribe: (_parent, args: { factId?: string; category?: string }) => {
-							return pubSub.subscribe("factUpdated", (payload: { fact: { id: string; category: string } }) => {
-								if (args.factId && payload.fact.id !== args.factId) {
-									return false;
-								}
-								if (args.category && payload.fact.category !== args.category) {
-									return false;
-								}
-								return true;
-							});
-						},
-						resolve: (payload: { fact: unknown }) => payload.fact,
-					},
-					factDeleted: {
-						subscribe: (_parent, args: { category?: string }) => {
-							return pubSub.subscribe("factDeleted", (payload) => {
-								if (args.category && payload.category !== args.category) {
-									return false;
-								}
-								return true;
-							});
-						},
-						resolve: (payload: { id: string }) => payload.id,
-					},
-					linkCreated: {
-						subscribe: (_parent, args: { sourceId?: string; targetId?: string }) => {
-							return pubSub.subscribe("linkCreated", (payload: { link: { sourceId: string; targetId: string } }) => {
-								if (args.sourceId && payload.link.sourceId !== args.sourceId) {
-									return false;
-								}
-								if (args.targetId && payload.link.targetId !== args.targetId) {
-									return false;
-								}
-								return true;
-							});
-						},
-						resolve: (payload: { link: unknown }) => payload.link,
-					},
-					statsUpdated: {
-						subscribe: () => pubSub.subscribe("statsUpdated"),
-						resolve: (payload: { stats: unknown }) => payload.stats,
-					},
-				},
-			},
-		},
-		context: (): GraphQLContext => ({
-			factsDb,
-			vectorDb,
-			pluginContext,
-		}),
-		graphiql: {
-			title: "OpenClaw Hybrid Memory GraphQL API",
-			defaultQuery: `# Welcome to OpenClaw Hybrid Memory GraphQL API
+  const yoga = createYoga<GraphQLContext>({
+    schema: createSchema({
+      typeDefs: graphqlSchema,
+      resolvers: {
+        ...resolvers,
+        Subscription: {
+          factCreated: {
+            subscribe: () => pubSub.subscribe("factCreated"),
+            resolve: (payload: { fact: unknown }) => payload.fact,
+          },
+          factUpdated: {
+            subscribe: () => pubSub.subscribe("factUpdated"),
+            resolve: (payload: { fact: unknown }) => payload.fact,
+          },
+          factDeleted: {
+            subscribe: () => pubSub.subscribe("factDeleted"),
+            resolve: (payload: { id: string }) => payload.id,
+          },
+          linkCreated: {
+            subscribe: () => pubSub.subscribe("linkCreated"),
+            resolve: (payload: { link: unknown }) => payload.link,
+          },
+          statsUpdated: {
+            subscribe: () => pubSub.subscribe("statsUpdated"),
+            resolve: (payload: { stats: unknown }) => payload.stats,
+          },
+        },
+      },
+    }),
+    context: (): GraphQLContext => ({
+      factsDb,
+      vectorDb,
+      pluginContext,
+    }),
+    graphiql: {
+      title: "OpenClaw Hybrid Memory GraphQL API",
+      defaultQuery: `# Welcome to OpenClaw Hybrid Memory GraphQL API
 #
 # Example queries:
 
@@ -188,47 +153,52 @@ subscription WatchNewFacts {
   }
 }
 `,
-		},
-		cors: {
-			origin: "*",
-			credentials: true,
-			methods: ["GET", "POST", "OPTIONS"],
-		},
-		logging: {
-			debug: (...args) => console.log("[GraphQL]", ...args),
-			info: (...args) => console.log("[GraphQL]", ...args),
-			warn: (...args) => console.warn("[GraphQL]", ...args),
-			error: (...args) => console.error("[GraphQL]", ...args),
-		},
-	});
+    },
+    cors: {
+      origin: "*",
+      credentials: true,
+      methods: ["GET", "POST", "OPTIONS"],
+    },
+    logging: {
+      debug: (...args) => pluginLogger.debug(args.map(String).join(" ")),
+      info: (...args) => pluginLogger.info(args.map(String).join(" ")),
+      warn: (...args) => pluginLogger.warn(args.map(String).join(" ")),
+      error: (...args) => pluginLogger.error(args.map(String).join(" ")),
+    },
+  });
 
-	return { yoga, pubSub };
+  return { yoga, pubSub };
 }
 
 /**
  * Publish fact created event
  */
-export function publishFactCreated(pubSub: ReturnType<typeof createPubSub>, fact: unknown, category?: string, scope?: string) {
-	pubSub.publish("factCreated", { fact, category, scope });
+export function publishFactCreated(
+  pubSub: ReturnType<typeof createPubSub>,
+  fact: unknown,
+  category?: string,
+  scope?: string,
+) {
+  pubSub.publish("factCreated", { fact, category, scope });
 }
 
 /**
  * Publish fact updated event
  */
 export function publishFactUpdated(pubSub: ReturnType<typeof createPubSub>, fact: unknown) {
-	pubSub.publish("factUpdated", { fact });
+  pubSub.publish("factUpdated", { fact });
 }
 
 /**
  * Publish fact deleted event
  */
 export function publishFactDeleted(pubSub: ReturnType<typeof createPubSub>, id: string, category?: string) {
-	pubSub.publish("factDeleted", { id, category });
+  pubSub.publish("factDeleted", { id, category });
 }
 
 /**
  * Publish stats updated event
  */
 export function publishStatsUpdated(pubSub: ReturnType<typeof createPubSub>, stats: unknown) {
-	pubSub.publish("statsUpdated", { stats });
+  pubSub.publish("statsUpdated", { stats });
 }

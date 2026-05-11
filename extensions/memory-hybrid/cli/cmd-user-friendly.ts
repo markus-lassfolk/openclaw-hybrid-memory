@@ -15,21 +15,18 @@ import { registerProvidersCommand } from "./cmd-providers.js";
 import { registerSetupCommand } from "./cmd-setup.js";
 
 export interface UserFriendlyContext {
-	cfg: HybridMemoryConfig;
-	factsDb: FactsDB;
-	vectorDb: VectorDB;
-	embeddings: EmbeddingProvider;
+  cfg: HybridMemoryConfig;
+  factsDb: FactsDB;
+  vectorDb: VectorDB;
+  embeddings: EmbeddingProvider;
 }
 
-export function registerUserFriendlyCommands(
-	mem: Command,
-	ctx: UserFriendlyContext,
-): void {
-	// Register each user-friendly command
-	registerSetupCommand(mem, ctx.cfg);
-	registerProvidersCommand(mem, ctx.cfg);
-	registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
-	registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
-	registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
-	registerExamplesCommand(mem);
+export function registerUserFriendlyCommands(mem: Command, ctx: UserFriendlyContext): void {
+  // Register each user-friendly command
+  registerSetupCommand(mem, ctx.cfg);
+  registerProvidersCommand(mem, ctx.cfg);
+  registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
+  registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
+  registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
+  registerExamplesCommand(mem);
 }
