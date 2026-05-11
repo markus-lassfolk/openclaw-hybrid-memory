@@ -156,7 +156,7 @@ subscription WatchNewFacts {
     },
     cors: {
       origin: "*",
-      credentials: true,
+      credentials: false,
       methods: ["GET", "POST", "OPTIONS"],
     },
     logging: {

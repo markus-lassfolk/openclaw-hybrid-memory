@@ -164,74 +164,15 @@ export class MemoryCompressionService {
   }
 
   /**
-   * Cluster facts based on semantic similarity
+   * Cluster facts deterministically until stable vector retrieval is exposed here.
    */
   private async clusterFacts(
     facts: Array<{ id: string; text: string; category: string; importance: number }>,
   ): Promise<FactCluster[]> {
-    if (!this.vectorDb) {
-      // Fallback to category-based clustering without vectors
-      return this.clusterByCategory(facts);
-    }
-
-    // Get embeddings for all facts
-    const embeddings = new Map<string, number[]>();
-    for (const fact of facts) {
-      // TODO: Get actual embeddings from vectorDb
-      // For now, use random embeddings as placeholder
-      embeddings.set(fact.id, this.generateRandomEmbedding());
-    }
-
-    // Hierarchical clustering
-    const clusters: FactCluster[] = [];
-    const assigned = new Set<string>();
-
-    for (const fact of facts) {
-      if (assigned.has(fact.id)) continue;
-
-      const factEmbedding = embeddings.get(fact.id);
-      if (!factEmbedding) continue;
-
-      // Find similar facts
-      const cluster: FactCluster = {
-        id: crypto.randomUUID(),
-        facts: [fact],
-        centroid: factEmbedding,
-        avgImportance: fact.importance,
-        category: fact.category,
-        size: 1,
-      };
-
-      assigned.add(fact.id);
-
-      // Add similar facts to cluster
-      for (const otherFact of facts) {
-        if (assigned.has(otherFact.id)) continue;
-        if (cluster.size >= this.config.maxClusterSize) break;
-
-        const otherEmbedding = embeddings.get(otherFact.id);
-        if (!otherEmbedding) continue;
-
-        const similarity = this.cosineSimilarity(factEmbedding, otherEmbedding);
-
-        if (similarity >= this.config.clusterThreshold) {
-          cluster.facts.push(otherFact);
-          cluster.size++;
-          assigned.add(otherFact.id);
-
-          // Update centroid and average importance
-          cluster.centroid = this.updateCentroid(cluster.centroid, otherEmbedding, cluster.size);
-          cluster.avgImportance = (cluster.avgImportance * (cluster.size - 1) + otherFact.importance) / cluster.size;
-        }
-      }
-
-      // Only keep clusters with multiple facts
-      if (cluster.size > 1) {
-        clusters.push(cluster);
-      }
-    }
-
-    return clusters;
+    // Do not fabricate/randomize embeddings: non-deterministic clusters are worse
+    // than a deterministic fallback. Vector-aware clustering can be reintroduced
+    // once this service can read persisted vectors by fact id.
+    return this.clusterByCategory(facts);
   }
 
   /**
@@ -362,28 +303,6 @@ Provide a clear, factual summary that preserves the key details. The summary sho
       return firstPara;
     }
     return `${text.substring(0, 150)}...`;
-  }
-
-  private cosineSimilarity(a: number[], b: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-  }
-
-  private updateCentroid(centroid: number[], newVector: number[], clusterSize: number): number[] {
-    return centroid.map((val, i) => (val * (clusterSize - 1) + newVector[i]) / clusterSize);
-  }
-
-  private generateRandomEmbedding(dimensions = 384): number[] {
-    return Array.from({ length: dimensions }, () => Math.random() * 2 - 1);
   }
 
   private estimateTokens(text: string): number {

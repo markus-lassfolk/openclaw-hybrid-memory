@@ -292,8 +292,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.14 — extensions/memory-hybrid/routes/graphql-server.ts:193
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: GraphQL Yoga CORS no longer combines wildcard origin with credentials; `credentials` is false for the wildcard dashboard GraphQL endpoint. Evidence: `graphql-server.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r6L`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -352,8 +352,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.20 — extensions/memory-hybrid/services/memory-compression.ts:75
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Memory compression runtime module no longer uses `console.log`; prior compile batch removed runtime console progress logging. Evidence: no `console.*` in `memory-compression.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r60`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -372,8 +372,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.22 — extensions/memory-hybrid/services/memory-compression.ts:243
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed random placeholder embeddings from compression clustering; until real persisted vector retrieval is wired, compression uses deterministic category clustering instead. Evidence: `clusterFacts()` in `memory-compression.ts`.
 - Thread id: `PRRT_kwDORQuyQM6A9r7F`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -382,8 +382,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.23 — extensions/memory-hybrid/services/benchmark-suite.ts:61
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Benchmark runtime module no longer uses `console.log` progress output. Evidence: no `console.*` in `benchmark-suite.ts`; `npx tsc --noEmit` green.
 - Thread id: `PRRT_kwDORQuyQM6A9r7R`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -452,8 +452,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.30 — sdk/openclaw-memory-js/package.json:53
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed unused `graphql-request` dependency from the SDK package because the SDK uses `fetch` directly. Evidence: `sdk/openclaw-memory-js/package.json`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8X`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -462,8 +462,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.31 — sdk/openclaw-memory-js/src/index.ts:137
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed unused `restPath` config/property/constructor assignment from SDK client. Evidence: `sdk/openclaw-memory-js/src/index.ts` and README config table updated.
 - Thread id: `PRRT_kwDORQuyQM6A9r8c`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -472,8 +472,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.32 — sdk/openclaw-memory-js/README.md:91
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed unsupported `minImportance` from the SDK README `getFacts()` example. Importance filtering remains documented under `search()`, where it is supported. Evidence: `sdk/openclaw-memory-js/README.md`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8g`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -482,8 +482,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.33 — docs/tutorials/HYBRID-MEMORY-101.md:320
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Updated tutorial filtered `getFacts()` example to use supported category/tag filters only, and clarified importance filtering belongs with `search()`. Evidence: `docs/tutorials/HYBRID-MEMORY-101.md`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8k`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -492,8 +492,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.34 — docs/IMPLEMENTATION-SUMMARY.md:529
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Softened implementation summary claims: GraphQL/collaboration/plugin work is described as foundations/incremental, not “fully implemented and operational”/complete. Evidence: `docs/IMPLEMENTATION-SUMMARY.md`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8r`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
@@ -502,8 +502,8 @@ Generated from GitHub reviewThreads; only unresolved threads listed.
 
 ### 1318.35 — docs/PLUGIN-DEVELOPMENT.md:46
 
-- [ ] Status: TODO
-- Evidence: _pending_
+- [x] Status: FIXED
+- Evidence: Removed the broken self-link to `../docs/PLUGIN-DEVELOPMENT.md` from within `docs/PLUGIN-DEVELOPMENT.md`; the doc now points readers to the current guide content. Evidence: `docs/PLUGIN-DEVELOPMENT.md`.
 - Thread id: `PRRT_kwDORQuyQM6A9r8w`
 - Outdated: False
 - Author: copilot-pull-request-reviewer
