@@ -1,0 +1,65 @@
+{
+  "name": "@openclaw/memory-client",
+  "version": "1.0.0",
+  "description": "Official TypeScript/JavaScript client SDK for OpenClaw Hybrid Memory",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "openclaw",
+    "memory",
+    "ai",
+    "agent",
+    "sdk",
+    "client",
+    "hybrid-memory",
+    "vector-search",
+    "semantic-search"
+  ],
+  "author": "OpenClaw Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git",
+    "directory": "sdk/openclaw-memory-js"
+  },
+  "bugs": {
+    "url": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues"
+  },
+  "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/tree/main/sdk/openclaw-memory-js#readme",
+  "dependencies": {
+    "graphql": "^16.9.0",
+    "graphql-request": "^7.1.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
