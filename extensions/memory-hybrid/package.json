@@ -43,6 +43,7 @@
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
     "@types/node": "^25.2.3",
+    "commander": "^13.1.0",
     "franc": "^6.2.0",
     "graphql": "^16.14.0",
     "graphql-yoga": "^5.21.0"
@@ -74,11 +75,10 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@vitest/coverage-v8": "^4.0.18",
-    "commander": "^13.1.0",
     "knip": "^5.0.0",
-    "unrun": "^0.2.37",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
+    "unrun": "^0.2.37",
     "vitest": "^4.0.18"
   },
   "overrides": {
