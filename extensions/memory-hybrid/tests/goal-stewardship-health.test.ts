@@ -399,6 +399,30 @@ describe("runGoalHealthCheck", () => {
     }
   });
 
+  it("blocks http_ok verification for IPv4-mapped IPv6 loopback hosts", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await createGoal(
+        goalsDir,
+        {
+          label: "http_mapped_ipv6_blocked",
+          description: "d",
+          acceptanceCriteria: ["a"],
+          verification: { type: "http_ok", target: "http://[::ffff:127.0.0.1]/health" },
+        },
+        defaults,
+      );
+      const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+      expect(r.actions.some((a) => a.action === "verifying")).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("escalates goal after consecutive failures", async () => {
     goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
     workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));

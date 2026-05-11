@@ -229,23 +229,35 @@ async function runMechanicalVerification(
 }
 
 function isBlockedVerificationHost(hostname: string): boolean {
-  const h = hostname.trim().toLowerCase();
+  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (!h) return true;
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
   const ipKind = isIP(h);
   if (ipKind === 0) return false;
   if (ipKind === 4) {
     const octets = h.split(".").map((part) => Number(part));
-    if (octets.length !== 4 || octets.some((n) => Number.isNaN(n))) return true;
-    const [a, b] = octets;
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    return false;
+    return isPrivateOrLocalIpv4(octets);
   }
-  const normalized = h.includes(":") ? h : h.toLowerCase();
-  return normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") || normalized.startsWith("fc");
+  const normalized = h;
+  if (normalized === "::1" || normalized === "::") return true;
+  if (/^fe[89ab][0-9a-f]:/i.test(normalized)) return true; // link-local fe80::/10
+  if (/^f[cd][0-9a-f]{2}:/i.test(normalized)) return true; // unique local fc00::/7
+  if (normalized.startsWith("::ffff:")) return true; // IPv4-mapped IPv6
+  const mappedIpv4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(normalized)?.[1];
+  if (mappedIpv4) {
+    return isPrivateOrLocalIpv4(mappedIpv4.split(".").map((part) => Number(part)));
+  }
+  return false;
+}
+
+function isPrivateOrLocalIpv4(octets: number[]): boolean {
+  if (octets.length !== 4 || octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+  const [a, b] = octets;
+  if (a === 10 || a === 127 || a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
 }
 
 export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<GoalHealthCheckResult> {
