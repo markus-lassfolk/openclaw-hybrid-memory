@@ -147,11 +147,11 @@ export class PluginManager {
 			},
 			registerEndpoint: (path, _handler) => {
 				// TODO: Implement endpoint registration
-				console.log(`[PluginManager] Registered endpoint: ${path}`);
+				this.context.logger.debug(`Registered endpoint: ${path}`);
 			},
 			registerCommand: (name, _handler) => {
 				// TODO: Implement command registration
-				console.log(`[PluginManager] Registered command: ${name}`);
+				this.context.logger.debug(`Registered command: ${name}`);
 			},
 		};
 	}
@@ -334,7 +334,7 @@ export class PluginManager {
 		}
 	}
 
-	private registerHooks(pluginId: string, hooks: PluginHooks): void {
+	private registerHooks(_pluginId: string, hooks: PluginHooks): void {
 		// Register hooks as event listeners
 		for (const [hookName, hookFn] of Object.entries(hooks)) {
 			if (typeof hookFn === "function") {
@@ -349,12 +349,12 @@ export class PluginManager {
 		}
 	}
 
-	private unregisterHooks(pluginId: string): void {
+	private unregisterHooks(_pluginId: string): void {
 		// Remove all event listeners for this plugin
 		// Note: This is a simplified implementation
 		// In production, you'd want to track which listeners belong to which plugin
-		for (const [event, listeners] of this.eventListeners.entries()) {
-			this.eventListeners.set(event, []);
+		for (const [_event, _listeners] of this.eventListeners.entries()) {
+			this.eventListeners.set(_event, []);
 		}
 	}
 

@@ -346,7 +346,8 @@ export const graphExplorerHTML = `
 
         async function loadData() {
             try {
-                const response = await fetch('/plugins/memory/graphql', {
+                // Use relative path to GraphQL endpoint
+                const response = await fetch('/graphql', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
