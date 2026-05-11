@@ -6,7 +6,7 @@ This document tracks the implementation of the 10 cost-saving opportunities iden
 
 **Total Potential Savings:** $200-800/month per active deployment + significant latency/CI improvements
 
-**Status:** 5/10 optimizations completed, 5 in progress
+**Status:** 6/10 optimizations completed (3 fully complete, 3 partially complete), 4 in progress
 
 ---
 
@@ -33,7 +33,7 @@ This document tracks the implementation of the 10 cost-saving opportunities iden
 
 ---
 
-### 3. Dream Cycle Optimization (PARTIAL - 1/3 complete)
+### 3. Dream Cycle Frequency & Scope Reduction (PARTIAL - 2/3 complete)
 
 **Est. Savings:** $0.50-2/month per deployment + reduced I/O
 
@@ -43,15 +43,16 @@ This document tracks the implementation of the 10 cost-saving opportunities iden
   - Skips when freed space < 10MB (low benefit, high I/O cost)
   - Logs freed space amount for observability
 
+- ✅ **Optional reflection rules generation** (`services/dream-cycle.ts:820-851`, `config/types/maintenance.ts:82-88`)
+  - Added `nightlyCycle.enableReflectionRules` config flag
+  - Default: `true` (backward compatible)
+  - When `false`: Saves 30-40% of dream cycle LLM cost
+  - Verbose logging when disabled
+
 **Not Yet Implemented:**
 - ⏳ Activity-based dream cycle frequency tuning
   - Reduce frequency to every 3 days when < 50 new facts/day
   - Decay/pruning accumulates acceptably over 72 hours
-
-- ⏳ Make reflection rules generation optional
-  - Currently runs when > 10 patterns (MIN_PATTERNS_FOR_RULES = 3)
-  - Could be config flag: `nightlyCycle.enableRulesGeneration: false`
-  - Saves 30-40% of dream cycle LLM cost
 
 ---
 
@@ -240,13 +241,13 @@ if (!entry) {
 - `services/embeddings/shared.ts` - Increased EMBEDDING_CACHE_MAX from 500 to 5000
 - `services/embeddings/openai-provider.ts` - Increased default batch size from 2048 to 8000
 - `services/adaptive-model-limits.ts` - Start at 50% of catalog limits for new models
-- `services/dream-cycle.ts` - Smart VACUUM logic with freelist check
+- `services/dream-cycle.ts` - Smart VACUUM logic + optional reflection rules
+- `config/types/maintenance.ts` - Added enableReflectionRules flag
 - `backends/facts-db/housekeeping.ts` - Documented incremental FTS5 optimize
 - `.github/workflows/ci.yml` - Coverage upload only on main branch
 
 ### Files to Modify (Future Work)
-- `config/types/maintenance.ts` - Add nano-tier enforcement flags
-- `cli/cmd-distill.ts` - Enforce nano ceiling for distill operations
+- `cli/cmd-distill.ts` - Enforce stricter nano ceiling for distill operations
 - `services/dream-cycle.ts` - Add activity-based frequency tuning
 - `config/parsers/features.ts` - Add session fingerprinting config
 - `services/chat.ts` - Add prompt compression and model-specific variants
