@@ -201,7 +201,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           let dispatchCount = goal.dispatchCount;
           let lastDispatchedAt = goal.lastDispatchedAt;
           if (p.dispatched) {
-            if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour)) {
+            if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
               return {
                 content: [{ type: "text", text: "Global dispatch rate limit reached." }],
                 details: { error: "rate_limited" },
@@ -213,7 +213,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 details: { error: "dispatch_budget" },
               };
             }
-            recordGoalDispatch();
+            recordGoalDispatch(goalsDir);
             dispatchCount += 1;
             lastDispatchedAt = ts;
           }

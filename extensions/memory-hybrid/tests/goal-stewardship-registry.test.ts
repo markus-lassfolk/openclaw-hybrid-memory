@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -114,6 +114,20 @@ describe("goal registry", () => {
     await expect(
       createGoal(dir, { label: "dup", description: "d2", acceptanceCriteria: ["b"] }, defaults),
     ).rejects.toThrow(/already exists/);
+  });
+
+  it("createGoal recovers stale label lock directories", async () => {
+    dir = await makeTempDir();
+    const lockPath = join(dir, ".lock-label-stale-lock");
+    await mkdir(lockPath);
+    const stale = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(lockPath, stale, stale);
+    const created = await createGoal(
+      dir,
+      { label: "stale-lock", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    expect(created.label).toBe("stale-lock");
   });
 
   it("createGoal allows reuse of label after terminal goal", async () => {

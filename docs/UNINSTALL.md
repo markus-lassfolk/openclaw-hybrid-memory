@@ -68,6 +68,8 @@ Only the **main data stores** at the paths the plugin was using:
 
 These paths come from your config (`sqlitePath`, `lanceDbPath`) or defaults.
 
+**Safety note:** For safety, `--clean-all` only deletes paths under `~/.openclaw/memory/` by default. If you intentionally configured storage elsewhere and want `uninstall --clean-all` to delete it, set `OPENCLAW_HYBRID_MEM_UNINSTALL_DANGEROUS=1`.
+
 **Not removed** by `--clean-all`:
 
 - **Write-ahead log** — `wal.jsonl` (next to facts.db). Safe to delete manually if you have no data left.
