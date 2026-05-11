@@ -452,7 +452,7 @@ function classifyOrchestrationAnomaly(
   const stepName = step ?? "";
   if (!/^orchestration-/.test(stepName)) return null;
 
-  const staleHint = /stale|still running after/i.test(`${line ?? ""}\n${logContent ?? ""}`);
+  const staleHint = /stale=yes|appears stale|still running after/i.test(`${line ?? ""}\n${logContent ?? ""}`);
 
   if (stepName === "orchestration-missing-exit-ledger") {
     return {
