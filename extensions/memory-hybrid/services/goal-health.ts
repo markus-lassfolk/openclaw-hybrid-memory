@@ -4,6 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { isIP } from "node:net";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -184,8 +185,10 @@ async function runMechanicalVerification(
       return { ok: false, detail: "command_exit_zero target contains disallowed shell metacharacters" };
     }
     try {
-      const parts = v.target.split(/\s+/);
-      await execFileAsync(parts[0]!, parts.slice(1), {
+      const parts = v.target.trim().split(/\s+/).filter(Boolean);
+      const command = parts[0];
+      if (!command) return { ok: false, detail: "command_exit_zero target is empty" };
+      await execFileAsync(command, parts.slice(1), {
         cwd: workspaceRoot,
         timeout: 30_000,
         shell: false,
@@ -196,10 +199,25 @@ async function runMechanicalVerification(
     }
   }
   if (v.type === "http_ok") {
+    let parsed: URL;
+    try {
+      parsed = new URL(v.target);
+    } catch {
+      return { ok: false, detail: "http_ok: target must be a valid URL" };
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { ok: false, detail: "http_ok: only http/https URLs are allowed" };
+    }
+    if (parsed.username || parsed.password) {
+      return { ok: false, detail: "http_ok: URL credentials are not allowed" };
+    }
+    if (isBlockedVerificationHost(parsed.hostname)) {
+      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname})` };
+    }
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 10_000);
     try {
-      const res = await fetch(v.target, { signal: ac.signal });
+      const res = await fetch(parsed, { signal: ac.signal });
       return { ok: res.ok, detail: `http ${res.status}` };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : String(e) };
@@ -208,6 +226,26 @@ async function runMechanicalVerification(
     }
   }
   return { ok: false, detail: "unknown verification type" };
+}
+
+function isBlockedVerificationHost(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase();
+  if (!h) return true;
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+  const ipKind = isIP(h);
+  if (ipKind === 0) return false;
+  if (ipKind === 4) {
+    const octets = h.split(".").map((part) => Number(part));
+    if (octets.length !== 4 || octets.some((n) => Number.isNaN(n))) return true;
+    const [a, b] = octets;
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    return false;
+  }
+  const normalized = h.includes(":") ? h : h.toLowerCase();
+  return normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") || normalized.startsWith("fc");
 }
 
 export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<GoalHealthCheckResult> {
@@ -521,6 +559,12 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         recordOutcome("blocked", g.currentBlockers[0] ?? "Goal is blocked.");
       } else {
         recordOutcome("noop", "No eligible deterministic action for this goal in this pulse.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn?.(`goal health: ${goal.label} failed: ${msg}`);
+      if (!recordedOutcome) {
+        recordOutcome("blocked", `Goal health processing failed: ${msg.slice(0, 400)}`);
       }
     } finally {
       if (recordedOutcome) {
