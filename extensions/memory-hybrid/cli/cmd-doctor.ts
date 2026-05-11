@@ -136,7 +136,7 @@ export function registerDoctorCommand(
 
       // Check 6: Disk space for the memory directory/filesystem
       try {
-        const memoryDir = cfg.paths?.memory || join(homedir(), ".openclaw/plugins/memory-hybrid");
+        const memoryDir = join(homedir(), ".openclaw/plugins/memory-hybrid");
         if (!existsSync(memoryDir)) {
           checks.push({
             name: "Disk Space",
