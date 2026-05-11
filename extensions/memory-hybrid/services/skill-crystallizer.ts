@@ -171,7 +171,6 @@ set -euo pipefail
 
 ${steps}
 
-# TODO: replace the placeholder steps above with the actual commands
-echo "Skill '${skillName}' scaffold — update with actual commands"
+echo "Skill '${skillName}' scaffold generated. Replace each '# Step N' block with concrete commands before use."
 `;
 }

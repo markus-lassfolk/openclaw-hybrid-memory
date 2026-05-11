@@ -121,9 +121,16 @@ Current snapshot:
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path
 - [docs/trust-and-privacy.md](docs/trust-and-privacy.md): local-first, provenance, deletion, export
 - [docs/PRESENTATION-STRATEGY.md](docs/PRESENTATION-STRATEGY.md): product message, visuals, demos, terminology
+- [docs/DEMO-PACKAGE.md](docs/DEMO-PACKAGE.md): 60-second + 5-minute demo scripts and asset checklist
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
 - [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md): shipped productisation milestones and open lanes
+- [docs/SYNC-REPLICATION.md](docs/SYNC-REPLICATION.md): optional encrypted sync/replication workflow
+- [docs/ADDON-ECOSYSTEM.md](docs/ADDON-ECOSYSTEM.md): modular add-on ecosystem direction
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, quality gates, and first-issue guidance.
 
 ## Common commands
 
@@ -151,4 +158,3 @@ Plugin source and manifest: [extensions/memory-hybrid/README.md](extensions/memo
 ## License
 
 MIT ([LICENSE](LICENSE))
-
