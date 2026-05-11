@@ -90,7 +90,6 @@
     "unrun": "^0.2.37",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
-    "unrun": "0.2.37",
     "vitest": "^4.0.18"
   },
   "overrides": {
