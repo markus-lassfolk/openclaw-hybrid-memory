@@ -141,6 +141,12 @@ export type EpisodicConsolidationEventTypeFilter = {
   deny?: string[];
 };
 
+function isVectorBackendAvailable(vectorDb: Pick<VectorDB, "isLanceDbAvailable"> | unknown): boolean {
+  const candidate = vectorDb as { isLanceDbAvailable?: () => boolean };
+  if (typeof candidate.isLanceDbAvailable !== "function") return true;
+  return candidate.isLanceDbAvailable();
+}
+
 function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): Set<string> {
   const s = new Set<string>(DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY);
   for (const x of filter?.deny ?? []) {
@@ -648,9 +654,9 @@ export async function runDreamCycle(
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
     try {
-      const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
-      factsPruned = factsDb.pruneExpired();
-      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
+      const expiredPrune = factsDb.pruneExpiredWithDetails();
+      factsPruned = expiredPrune.factsPruned;
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredPrune.deletedFactIds, {
         operation: "dream-cycle-prune-expired",
         logger,
       });
@@ -671,9 +677,9 @@ export async function runDreamCycle(
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
     try {
       const decayNowSec = Math.floor(Date.now() / 1000);
-      const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
-      factsDecayed = factsDb.decayConfidence(decayNowSec);
-      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, decayDeleteIds, {
+      const decayRun = factsDb.decayConfidenceWithDetails(decayNowSec);
+      factsDecayed = decayRun.factsDecayed;
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, decayRun.deletedFactIds, {
         operation: "dream-cycle-decay",
         logger,
       });
@@ -770,18 +776,26 @@ export async function runDreamCycle(
     const orphans = vectorIds.filter((id) => !sqliteIds.has(id));
     if (orphans.length > 0) {
       logger.info(`memory-hybrid: dream-cycle — reconciling ${orphans.length} orphaned vector(s)...`);
-      let removed = 0;
-      for (const id of orphans) {
-        try {
-          await vectorDb.delete(id);
-          removed++;
-        } catch (delErr) {
-          logger.warn(`memory-hybrid: dream-cycle — failed to delete orphaned vector ${id}: ${delErr}`);
-        }
+      const cleanup = await deleteVectorsForFactIds(vectorDb, orphans, {
+        operation: "dream-cycle-orphan-vector-reconcile",
+        logger,
+      });
+      orphanVectorsRemoved = cleanup.deleted;
+      if (cleanup.deleted > 0) {
+        logger.info(`memory-hybrid: dream-cycle — removed ${cleanup.deleted} orphaned vector(s) from LanceDB`);
       }
-      orphanVectorsRemoved = removed;
-      if (removed > 0) {
-        logger.info(`memory-hybrid: dream-cycle — removed ${removed} orphaned vector(s) from LanceDB`);
+      if (cleanup.failed > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — orphan reconciliation partial: deleted ${cleanup.deleted}/${cleanup.attempted}, failed ${cleanup.failed}`,
+        );
+      }
+    }
+    if (isVectorBackendAvailable(vectorDb)) {
+      const vectorlessAfterReconcile = factsDb.countVectorlessActiveFacts();
+      if (vectorlessAfterReconcile > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — detected ${vectorlessAfterReconcile} active SQLite fact(s) without vectors after reconciliation; run 'hybrid-mem reembed-vectorless --apply' to restore semantic recall coverage`,
+        );
       }
     }
   } catch (err) {

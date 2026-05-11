@@ -28,11 +28,13 @@ import {
   reclassifyDecayClasses as reclassifyDecayClassesImpl,
   confirmFact as confirmFactImpl,
   decayConfidence as decayConfidenceImpl,
+  decayConfidenceWithDetails as decayConfidenceWithDetailsImpl,
   promoteScope as promoteScopeImpl,
   listExpiredFactIdsPendingPrune as listExpiredFactIdsPendingPruneImpl,
   listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
   listFactIdsToBeDeletedByDecayRun as listFactIdsToBeDeletedByDecayRunImpl,
   pruneExpired as pruneExpiredImpl,
+  pruneExpiredWithDetails as pruneExpiredWithDetailsImpl,
   listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
   pruneSessionScope as pruneSessionScopeImpl,
   restoreCheckpoint as restoreCheckpointImpl,
@@ -187,6 +189,10 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return pruneExpiredImpl(this.liveDb);
   }
 
+  pruneExpiredWithDetails(nowSec?: number): { factsPruned: number; deletedFactIds: string[] } {
+    return pruneExpiredWithDetailsImpl(this.liveDb, nowSec);
+  }
+
   /** Session-scoped fact ids that `pruneSessionScope(sessionId)` would delete. */
   listSessionFactIdsPendingPrune(sessionId: string): string[] {
     return listSessionFactIdsPendingPruneImpl(this.liveDb, sessionId);
@@ -208,6 +214,10 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   decayConfidence(nowSec?: number): number {
     return decayConfidenceImpl(this.liveDb, nowSec);
+  }
+
+  decayConfidenceWithDetails(nowSec?: number): { factsDecayed: number; deletedFactIds: string[] } {
+    return decayConfidenceWithDetailsImpl(this.liveDb, nowSec);
   }
 
   confirmFact(id: string): boolean {
