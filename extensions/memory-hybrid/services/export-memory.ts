@@ -3,8 +3,8 @@
  * Plain markdown, no frontmatter. One file per fact. Filterable by source and credentials.
  */
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 
@@ -29,15 +29,20 @@ type ExportResult = {
 };
 
 /** Sanitize a string for use as a filesystem-safe filename (no path separators, no special chars). */
+function sanitizeDirSegment(s: string): string {
+  const out = s
+    .replace(/[/\\?*:|"<>]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  if (!out) return "";
+  if (out === "." || out === "..") return "";
+  return out;
+}
+
 function sanitizeFileName(s: string): string {
-  return (
-    s
-      .replace(/[/\\?*:|"<>]/g, "-")
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 80) || "untitled"
-  );
+  return sanitizeDirSegment(s) || "untitled";
 }
 
 /** Format fact text for vanilla-compatible markdown (backfill can re-extract). */
@@ -61,14 +66,68 @@ function factFileName(entry: MemoryEntry): string {
 
 /** Category → directory name. */
 function categoryDir(category: string): string {
-  const safe = sanitizeFileName(category);
+  const safe = sanitizeDirSegment(category);
   return safe || "other";
 }
 
 /** Subdir by tag if present, else "general". */
 function tagSubdir(tags: string[] | null | undefined): string {
   const first = tags?.[0];
-  return first ? sanitizeFileName(first) : "general";
+  return first ? sanitizeDirSegment(first) || "general" : "general";
+}
+
+function assertSafeReplaceTarget(outputPath: string): void {
+  if (!existsSync(outputPath)) return;
+  const st = statSync(outputPath);
+  if (!st.isDirectory()) {
+    throw new Error(`Export output path is not a directory: ${outputPath}`);
+  }
+  const entries = readdirSync(outputPath);
+  if (entries.length === 0) return;
+  const allowed = new Set(["MEMORY.md", "manifest.json", "memory"]);
+  const unexpected = entries.filter((e) => !allowed.has(e));
+  if (unexpected.length > 0) {
+    throw new Error(
+      `Refusing to export with mode=replace into a non-empty directory that doesn't look like a prior export: ${outputPath}`,
+    );
+  }
+}
+
+function replaceDirectoryAtomically(tempDir: string, outputPath: string): void {
+  const parent = dirname(outputPath);
+  mkdirSync(parent, { recursive: true });
+
+  const outName = basename(outputPath);
+  const backupDir = existsSync(outputPath) ? join(parent, `${outName}.bak-${Date.now()}`) : null;
+  let replaced = false;
+  try {
+    if (backupDir) renameSync(outputPath, backupDir);
+    renameSync(tempDir, outputPath);
+    replaced = true;
+  } catch (err) {
+    // Best-effort rollback: restore backup if we created one.
+    try {
+      if (backupDir && existsSync(backupDir) && !existsSync(outputPath)) {
+        renameSync(backupDir, outputPath);
+      }
+    } catch {
+      // ignore rollback errors; caller will see original failure
+    }
+    // Best-effort cleanup of temporary export directory on failed replace.
+    try {
+      if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore temp cleanup errors
+    }
+    throw err;
+  }
+  if (backupDir && replaced) {
+    try {
+      rmSync(backupDir, { recursive: true, force: true });
+    } catch {
+      // Non-fatal: export is already committed to outputPath.
+    }
+  }
 }
 
 export function runExport(
@@ -77,6 +136,11 @@ export function runExport(
   versionInfo: { pluginVersion: string; schemaVersion: number },
 ): ExportResult {
   const { outputPath, mode = "replace", sources = [], excludeCredentials = true, includeCredentials = false } = opts;
+  const outAbs = resolve(outputPath);
+  if (outAbs === "/" || outAbs === dirname(outAbs)) {
+    throw new Error(`Refusing to export to an unsafe output path: ${outputPath}`);
+  }
+  if (mode === "replace") assertSafeReplaceTarget(outAbs);
 
   const includeCreds = includeCredentials || !excludeCredentials;
   const sourceSet = new Set(sources.map((s) => s.toLowerCase().trim()).filter(Boolean));
@@ -93,15 +157,11 @@ export function runExport(
 
   const procedures = factsDb.listProcedures(10_000);
 
-  if (mode === "replace" && existsSync(outputPath)) {
-    const entries = readdirSync(outputPath);
-    for (const e of entries) {
-      rmSync(join(outputPath, e), { recursive: true, force: true });
-    }
-  }
+  mkdirSync(dirname(outAbs), { recursive: true });
+  const writeRoot = mode === "replace" ? mkdtempSync(join(dirname(outAbs), ".hybrid-mem-export-")) : outAbs;
 
-  mkdirSync(outputPath, { recursive: true });
-  const memoryDir = join(outputPath, "memory");
+  mkdirSync(writeRoot, { recursive: true });
+  const memoryDir = join(writeRoot, "memory");
   mkdirSync(memoryDir, { recursive: true });
 
   let filesWritten = 0;
@@ -183,30 +243,35 @@ ${Array.from(byCategory.keys())
 ${memLinks.slice(0, 200).join("\n")}
 ${memLinks.length > 200 ? `\n... and ${memLinks.length - 200} more\n` : ""}
 `;
-  writeFileSync(join(outputPath, "MEMORY.md"), memContent, "utf-8");
+  writeFileSync(join(writeRoot, "MEMORY.md"), memContent, "utf-8");
   filesWritten++;
 
   // manifest.json (increment filesWritten first to include manifest itself)
-  filesWritten++;
+  const finalFilesWritten = filesWritten + 1;
   const manifest = {
     version: versionInfo.pluginVersion,
     schemaVersion: versionInfo.schemaVersion,
     exportedAt: new Date().toISOString(),
     factsExported: facts.length,
     proceduresExported: procedures.length,
-    filesWritten,
+    filesWritten: finalFilesWritten,
     filters: {
       excludeCredentials: !includeCreds,
       sources: sources.length > 0 ? sources : null,
       mode,
     },
   };
-  writeFileSync(join(outputPath, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+  writeFileSync(join(writeRoot, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+  filesWritten = finalFilesWritten;
+
+  if (mode === "replace") {
+    replaceDirectoryAtomically(writeRoot, outAbs);
+  }
 
   return {
     factsExported: facts.length,
     proceduresExported: procedures.length,
     filesWritten,
-    outputPath,
+    outputPath: outAbs,
   };
 }

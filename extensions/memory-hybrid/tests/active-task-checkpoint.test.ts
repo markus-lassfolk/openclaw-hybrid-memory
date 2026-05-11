@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -636,6 +636,29 @@ describe("active-task-checkpoint", () => {
     );
     expect(activeWakeJobs.filter((j) => j.enabled !== false).length).toBeGreaterThanOrEqual(2);
 
+    factsDb.close();
+  });
+
+  it("breaks stale cron jobs write locks before scheduling wake reminders", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const lockPath = join(openclawDir, "cron", ".jobs-write-lock");
+    mkdirSync(lockPath, { recursive: true });
+    const stale = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(lockPath, stale, stale);
+
+    const result = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir },
+      {
+        entity: "task-1270-stale-cron-lock",
+        status: "waiting",
+        next: "resume once lock is cleared",
+        resumeAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.steps.schedule.scheduled).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
     factsDb.close();
   });
 
