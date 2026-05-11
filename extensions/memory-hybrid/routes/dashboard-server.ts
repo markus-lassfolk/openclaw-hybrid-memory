@@ -2027,6 +2027,42 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         "Cache-Control": "no-cache",
       });
       res.end(html);
+    } else if (pathname === "/graph") {
+      // Serve the graph explorer visualization
+      const { graphExplorerHTML } = await import("./graph-explorer.js");
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+      res.end(graphExplorerHTML);
+    } else if (pathname === "/graphql" && req.method === "POST") {
+      // Handle GraphQL API requests
+      const { createGraphQLServer } = await import("./graphql-server.js");
+      const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
+        config: ctx.cfg,
+        factsDb: ctx.factsDb,
+        vectorDb: ctx.vectorDb,
+        embeddings: ctx.embeddings,
+        embeddingRegistry: ctx.embeddingRegistry,
+      } as any);
+
+      // Handle GraphQL request
+      const response = await yoga.fetch(req.url || "", {
+        method: req.method || "POST",
+        headers: req.headers as any,
+        body: await new Promise<string>((resolve) => {
+          let body = "";
+          req.on("data", (chunk) => {
+            body += chunk;
+          });
+          req.on("end", () => {
+            resolve(body);
+          });
+        }),
+      });
+
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(await response.text());
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");

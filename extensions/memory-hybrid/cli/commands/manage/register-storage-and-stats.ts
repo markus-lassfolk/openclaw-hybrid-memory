@@ -3,8 +3,10 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { isValidCategory, vectorDimsForModel } from "../../../config.js";
 import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
@@ -2508,6 +2510,333 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           }
         },
       ),
+    );
+
+  audit
+    .command("session")
+    .description("Unified session observability: timeline of capture, recall, injection, suppressions, and why-recalled")
+    .option("--session-id <id>", "Session id to inspect")
+    .option("--agent <id>", "Optional agent id filter")
+    .option("--limit <n>", "Max timeline entries per section (default 50, max 200)", "50")
+    .option("--format <f>", "Output: summary (default), timeline, or json", "summary")
+    .action(
+      withExit(
+        async (opts?: {
+          sessionId?: string;
+          agent?: string;
+          limit?: string;
+          format?: string;
+        }) => {
+          const limitRaw = Number.parseInt(String(opts?.limit ?? "50"), 10);
+          const limit = Math.max(1, Math.min(200, Number.isFinite(limitRaw) ? limitRaw : 50));
+          const format = String(opts?.format ?? "summary")
+            .trim()
+            .toLowerCase();
+          const sessionId = opts?.sessionId?.trim() || undefined;
+          const agentId = opts?.agent?.trim() || undefined;
+          const { buildSessionObservabilityReport } = await import("../../../services/session-observability.js");
+          const report = await buildSessionObservabilityReport({
+            factsDb,
+            eventLog: null,
+            narrativesDb: null,
+            auditStore: auditStore ?? null,
+            sessionId,
+            agentId,
+            limit,
+          });
+
+          if (format === "json") {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          if (format === "timeline") {
+            console.log(`Session observability timeline (${report.sessionId ?? "current"}, entries=${report.timeline.length})`);
+            for (const entry of report.timeline) {
+              const outcome = entry.outcome ? ` [${entry.outcome}]` : "";
+              const score = entry.score != null ? ` score=${entry.score.toFixed(3)}` : "";
+              console.log(`${entry.timestamp} ${entry.kind}${outcome}: ${entry.label} — ${entry.description}${score}`);
+            }
+            if (report.timeline.length === 0) {
+              console.log("(no timeline entries for the requested scope)");
+            }
+            return;
+          }
+
+          console.log(`Session: ${report.sessionId ?? "current"}${report.agentId ? `  agent=${report.agentId}` : ""}`);
+          if (report.windowStart || report.windowEnd) {
+            console.log(`Window: ${report.windowStart ?? "?"} → ${report.windowEnd ?? "?"}`);
+          }
+          console.log(report.summary);
+          console.log("");
+          console.log("Capture");
+          console.log(
+            `  stored=${report.capture.factsStored} updated=${report.capture.factsUpdated} duplicatesSuppressed=${report.capture.duplicatesSuppressed} noopSkipped=${report.capture.noopSkipped} errors=${report.capture.errorsEncountered}`,
+          );
+          console.log("Recall");
+          console.log(
+            `  candidates=${report.recall.candidatesFound} injected=${report.recall.injectedCount} omitted=${report.recall.omittedCount}`,
+          );
+          if (report.recall.strategies.length > 0) {
+            console.log(`  strategies=${report.recall.strategies.join(", ")}`);
+          }
+          if (report.recall.directiveMatches.length > 0) {
+            console.log(`  directives=${report.recall.directiveMatches.slice(0, 5).join(" | ")}`);
+          }
+          if (report.recall.suppressionReasons.length > 0) {
+            console.log(`  suppressionReasons=${report.recall.suppressionReasons.slice(0, 3).join(" | ")}`);
+          }
+          console.log("Injection");
+          console.log(
+            `  blocks=${report.injection.blocksInjected} tokens≈${report.injection.totalTokensEstimate} budget=${report.injection.budgetTokens} used≈${Math.round(report.injection.budgetUsedFraction * 100)}%`,
+          );
+          if (report.suppressions.length > 0) {
+            console.log("Suppressions");
+            for (const s of report.suppressions.slice(0, 10)) {
+              console.log(`  ${s.timestamp} [${s.outcome}] ${s.reason}${s.detail ? ` — ${s.detail}` : ""}`);
+            }
+          }
+        },
+      ),
+    );
+
+  mem
+    .command("telemetry-summary")
+    .description("Local privacy-safe telemetry summary (config state + local audit volume; no network calls)")
+    .option("--hours <n>", "Look-back window in hours for local audit volume (default 24)", "24")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { hours?: string; json?: boolean }) => {
+        const hoursRaw = Number.parseInt(String(opts?.hours ?? "24"), 10);
+        const hours = Math.max(1, Math.min(720, Number.isFinite(hoursRaw) ? hoursRaw : 24));
+        const sinceMs = Date.now() - hours * 3600 * 1000;
+        const rows = auditStore ? auditStore.query({ sinceMs, limit: 5000 }) : [];
+        const byOutcome: Record<string, number> = { success: 0, partial: 0, failed: 0 };
+        const byAction: Record<string, number> = {};
+        for (const row of rows) {
+          byOutcome[row.outcome] = (byOutcome[row.outcome] ?? 0) + 1;
+          byAction[row.action] = (byAction[row.action] ?? 0) + 1;
+        }
+        const topActions = Object.entries(byAction)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([action, count]) => ({ action, count }));
+        const summary = {
+          schemaVersion: 1,
+          generatedAt: new Date().toISOString(),
+          localFirst: true,
+          reporting: {
+            enabled: cfg.errorReporting.enabled === true,
+            consent: cfg.errorReporting.consent === true,
+            mode: cfg.errorReporting.mode,
+            destination: cfg.errorReporting.mode === "self-hosted" ? "self-hosted" : "community",
+          },
+          localAuditWindow: {
+            hours,
+            totalEvents: rows.length,
+            byOutcome,
+            topActions,
+          },
+          notes: [
+            "This command only reads local stores.",
+            "No telemetry is sent by this command.",
+            "Set errorReporting.enabled=false or errorReporting.consent=false to fully opt out.",
+          ],
+        };
+        if (opts?.json) {
+          console.log(JSON.stringify(summary, null, 2));
+          return;
+        }
+        console.log("Telemetry summary (local, privacy-safe)");
+        console.log(
+          `Reporting: enabled=${summary.reporting.enabled} consent=${summary.reporting.consent} mode=${summary.reporting.mode} destination=${summary.reporting.destination}`,
+        );
+        console.log(
+          `Local audit window (${hours}h): total=${summary.localAuditWindow.totalEvents} success=${summary.localAuditWindow.byOutcome.success} partial=${summary.localAuditWindow.byOutcome.partial} failed=${summary.localAuditWindow.byOutcome.failed}`,
+        );
+        if (topActions.length > 0) {
+          console.log("Top local actions:");
+          for (const item of topActions) {
+            console.log(`  - ${item.action}: ${item.count}`);
+          }
+        }
+      }),
+    );
+
+  mem
+    .command("sync-export")
+    .description("Create an encrypted replication bundle from local memory export (AES-256-GCM)")
+    .requiredOption("--out <path>", "Output encrypted bundle path (.hm-sync)")
+    .option(
+      "--passphrase-env <name>",
+      "Environment variable that contains encryption passphrase (default HYBRID_MEM_SYNC_PASSPHRASE)",
+      "HYBRID_MEM_SYNC_PASSPHRASE",
+    )
+    .option("--sources <csv>", "Optional comma-separated sources filter for export")
+    .action(
+      withExit(async (opts?: { out?: string; passphraseEnv?: string; sources?: string }) => {
+        const outPath = String(opts?.out ?? "").trim();
+        if (!outPath) {
+          console.error("error: --out is required");
+          process.exitCode = 1;
+          return;
+        }
+        const passphraseEnv = String(opts?.passphraseEnv ?? "HYBRID_MEM_SYNC_PASSPHRASE").trim();
+        const passphrase = getEnv(passphraseEnv);
+        if (!passphrase || passphrase.length < 20) {
+          console.error("error: set a strong sync passphrase (>=20 chars) in the configured environment variable");
+          process.exitCode = 1;
+          return;
+        }
+        const tmpDir = mkdtempSync(join(tmpdir(), "hybrid-mem-sync-"));
+        const tmpJson = join(tmpDir, "export.json");
+        const sources = opts?.sources
+          ?.split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        try {
+          const exportResult = await runExport({ outputPath: tmpJson, excludeCredentials: true, sources });
+          const plaintext = readFileSync(exportResult.outputPath, "utf-8");
+          unlinkSync(exportResult.outputPath);
+
+          const salt = randomBytes(16);
+          const iv = randomBytes(12);
+          const iterations = 600_000;
+          const key = pbkdf2Sync(passphrase, salt, iterations, 32, "sha256");
+          const cipher = createCipheriv("aes-256-gcm", key, iv);
+          const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+          const tag = cipher.getAuthTag();
+          const envelope = {
+            schemaVersion: 1,
+            type: "hybrid-memory-sync-bundle",
+            encryptedAt: new Date().toISOString(),
+            alg: "aes-256-gcm",
+            kdf: "pbkdf2-sha256",
+            iterations,
+            salt: salt.toString("base64"),
+            iv: iv.toString("base64"),
+            tag: tag.toString("base64"),
+            ciphertext: ciphertext.toString("base64"),
+            metadata: {
+              factsExported: exportResult.factsExported,
+              proceduresExported: exportResult.proceduresExported,
+              filesWritten: exportResult.filesWritten,
+            },
+          };
+          mkdirSync(dirname(outPath), { recursive: true });
+          writeFileSync(outPath, JSON.stringify(envelope, null, 2), "utf-8");
+          console.log(`Encrypted sync bundle written to ${outPath}`);
+        } finally {
+          rmSync(tmpDir, { recursive: true, force: true });
+        }
+      }),
+    );
+
+  mem
+    .command("sync-import")
+    .description("Decrypt an encrypted replication bundle into JSON export payload for restore/import workflows")
+    .requiredOption("--in <path>", "Encrypted bundle path (.hm-sync)")
+    .requiredOption("--out <path>", "Destination decrypted JSON path")
+    .option(
+      "--passphrase-env <name>",
+      "Environment variable that contains decryption passphrase (default HYBRID_MEM_SYNC_PASSPHRASE)",
+      "HYBRID_MEM_SYNC_PASSPHRASE",
+    )
+    .action(
+      withExit(async (opts?: { in?: string; out?: string; passphraseEnv?: string }) => {
+        const inPath = String(opts?.in ?? "").trim();
+        const outPath = String(opts?.out ?? "").trim();
+        if (!inPath || !outPath) {
+          console.error("error: --in and --out are required");
+          process.exitCode = 1;
+          return;
+        }
+        const passphraseEnv = String(opts?.passphraseEnv ?? "HYBRID_MEM_SYNC_PASSPHRASE").trim();
+        const passphrase = getEnv(passphraseEnv);
+        if (!passphrase) {
+          console.error("error: set the sync passphrase in the configured environment variable before running sync-import");
+          process.exitCode = 1;
+          return;
+        }
+        let envelope: {
+          schemaVersion: number;
+          alg: string;
+          iterations: number;
+          salt: string;
+          iv: string;
+          tag: string;
+          ciphertext: string;
+        };
+        try {
+          envelope = JSON.parse(readFileSync(inPath, "utf-8")) as {
+            schemaVersion: number;
+            alg: string;
+            iterations: number;
+            salt: string;
+            iv: string;
+            tag: string;
+            ciphertext: string;
+          };
+        } catch (err) {
+          console.error(`error: failed to read or parse sync bundle from ${inPath}: ${String(err)}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (envelope.schemaVersion !== 1 || envelope.alg !== "aes-256-gcm") {
+          console.error("error: unsupported sync bundle format");
+          process.exitCode = 1;
+          return;
+        }
+        const salt = Buffer.from(envelope.salt, "base64");
+        const iv = Buffer.from(envelope.iv, "base64");
+        const tag = Buffer.from(envelope.tag, "base64");
+        const ciphertext = Buffer.from(envelope.ciphertext, "base64");
+        const key = pbkdf2Sync(passphrase, salt, envelope.iterations, 32, "sha256");
+        const decipher = createDecipheriv("aes-256-gcm", key, iv);
+        decipher.setAuthTag(tag);
+        const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf-8");
+        mkdirSync(dirname(outPath), { recursive: true });
+        writeFileSync(outPath, plaintext, "utf-8");
+        console.log(`Decrypted sync payload written to ${outPath}`);
+      }),
+    );
+
+  mem
+    .command("addons")
+    .description("Inspect modular add-on domains for the hybrid-memory ecosystem")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        const domains = [
+          {
+            id: "analysis",
+            status: "planned",
+            summary: "Long-window analytics and heavy maintenance intelligence",
+          },
+          {
+            id: "learning",
+            status: "planned",
+            summary: "Optional advanced procedure/workflow learning expansions",
+          },
+          {
+            id: "observability",
+            status: "planned",
+            summary: "Extended dashboards and reporting integrations",
+          },
+          {
+            id: "self-extension",
+            status: "planned",
+            summary: "Proposal/self-evolution utilities beyond core defaults",
+          },
+        ];
+        if (opts?.json) {
+          console.log(JSON.stringify({ schemaVersion: 1, domains }, null, 2));
+          return;
+        }
+        console.log("Hybrid Memory add-on ecosystem domains:");
+        for (const domain of domains) {
+          console.log(`- ${domain.id} (${domain.status}): ${domain.summary}`);
+        }
+      }),
     );
 
   const categoriesCommand = mem

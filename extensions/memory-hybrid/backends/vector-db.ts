@@ -61,6 +61,7 @@ const _optimizeFailuresByPath = new Map<string, number>();
 /** Module-level guard for temporary auto-optimize suppression during bulk writes keyed by dbPath. */
 const _autoOptimizePauseByPath = new Map<string, number>();
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
+const VECTOR_BULK_DELETE_IN_CHUNK = 200;
 
 type VectorDBLogger = { warn: (msg: string) => void };
 
@@ -1592,6 +1593,18 @@ export class VectorDB {
     }
   }
 
+  /**
+   * LanceDB predicates are string-based (no parameter binding API), so UUID validation
+   * is the safety boundary before interpolation.
+   */
+  private toSafeUuidLiteral(id: string): string {
+    const normalized = String(id).toLowerCase();
+    if (!UUID_REGEX.test(normalized) || normalized.includes("'")) {
+      throw new Error("Invalid UUID for LanceDB predicate");
+    }
+    return `'${normalized}'`;
+  }
+
   async delete(id: string): Promise<boolean> {
     // SECURITY: UUID validation is the security boundary for delete().
     // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
@@ -1610,6 +1623,7 @@ export class VectorDB {
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
       const normalizedId = id.toLowerCase();
       if (!UUID_REGEX.test(normalizedId)) return false;
+      const idLiteral = this.toSafeUuidLiteral(normalizedId);
       if (this.optimizePromise) {
         try {
           await this.optimizePromise;
@@ -1620,7 +1634,7 @@ export class VectorDB {
         }
       }
       await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
-        await this.getTable().delete(`id = '${normalizedId}'`);
+        await this.getTable().delete(`id = ${idLiteral}`);
       });
       return true;
     } catch (err) {
@@ -1630,6 +1644,50 @@ export class VectorDB {
       });
       this.logWarn(`memory-hybrid: LanceDB delete failed: ${err}`);
       throw err;
+    }
+  }
+
+  /**
+   * Best-effort batched delete for many IDs.
+   * Returns the number of IDs accepted for deletion (same semantics as repeated delete()).
+   */
+  async deleteMany(ids: readonly string[]): Promise<number> {
+    const normalized = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
+    if (normalized.length === 0) return 0;
+    try {
+      if (!this.lanceDbAvailable) return 0;
+      await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
+      if (this.optimizePromise) {
+        try {
+          await this.optimizePromise;
+        } catch (optimizeErr) {
+          this.logWarn(
+            `memory-hybrid: auto-optimize failed before LanceDB bulk delete; continuing with delete anyway (non-fatal). Error: ${optimizeErr}`,
+          );
+        }
+      }
+      const literals = normalized.map((id) => this.toSafeUuidLiteral(id));
+      let deleted = 0;
+      for (let i = 0; i < literals.length; i += VECTOR_BULK_DELETE_IN_CHUNK) {
+        const chunk = literals.slice(i, i + VECTOR_BULK_DELETE_IN_CHUNK);
+        await this.withRetryableWriteConflictRetry("LanceDB bulk delete", async () => {
+          await this.getTable().delete(`id IN (${chunk.join(", ")})`);
+        });
+        deleted += chunk.length;
+      }
+      return deleted;
+    } catch (err) {
+      this.logWarn(`memory-hybrid: LanceDB bulk delete failed, falling back to per-id delete: ${err}`);
+      let deleted = 0;
+      for (const id of normalized) {
+        try {
+          if (await this.delete(id)) deleted++;
+        } catch {
+          // ignore individual failures in fallback
+        }
+      }
+      return deleted;
     }
   }
 

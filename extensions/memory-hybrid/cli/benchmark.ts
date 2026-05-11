@@ -11,8 +11,8 @@ import { getEnv } from "../utils/env-manager.js";
  *   openclaw benchmark run --iterations 100  — custom iteration count
  */
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { BenchmarkResult } from "../benchmark/shadow-eval.js";
 import {
   formatBenchmarkResult,
@@ -31,6 +31,46 @@ type BenchmarkRunContext = {
   /** Path to the SQLite database (llm_cost_log lives here) */
   dbPath: string;
 };
+
+interface BenchmarkQualityReport {
+  generatedAt: string;
+  metrics: {
+    latency: {
+      p50Ms: number;
+      p95Ms: number;
+      p99Ms: number;
+    };
+    recallAccuracy: {
+      averageScore: number | null;
+      measuredFeatures: number;
+    };
+    failureRate: {
+      failedFeatures: number;
+      totalFeatures: number;
+      ratio: number;
+    };
+    cost: {
+      trackedTokens: number;
+      trackedUsd: number;
+    };
+  };
+  features: BenchmarkResult[];
+}
+
+function parseBooleanOption(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+function resolveBenchmarkDbPath(cfg: Record<string, unknown>): string {
+  if (typeof cfg.sqlitePath === "string" && cfg.sqlitePath) {
+    return cfg.sqlitePath;
+  }
+  const home = getEnv("HOME");
+  if (!home) {
+    throw new Error("HOME is not set and sqlitePath is not configured; cannot resolve benchmark database path.");
+  }
+  return join(home, ".openclaw", "memory", "facts.db");
+}
 
 async function runBenchmarkCommand(
   ctx: BenchmarkRunContext,
@@ -90,6 +130,86 @@ async function runBenchmarkCommand(
   return { results };
 }
 
+function toFixedNumber(value: number, digits = 3): number {
+  return Number(value.toFixed(digits));
+}
+
+export function buildBenchmarkQualityReport(results: BenchmarkResult[]): BenchmarkQualityReport {
+  const successful = results.filter((r) => r.latency.samples > 0 && r.latency.p50 >= 0);
+  const failedFeatures = results.length - successful.length;
+  const totalFeatures = results.length;
+  const latencySource = successful.length > 0 ? successful : results;
+  const p50Avg = latencySource.reduce((sum, r) => sum + Math.max(0, r.latency.p50), 0) / Math.max(1, latencySource.length);
+  const p95Avg = latencySource.reduce((sum, r) => sum + Math.max(0, r.latency.p95), 0) / Math.max(1, latencySource.length);
+  const p99Avg = latencySource.reduce((sum, r) => sum + Math.max(0, r.latency.p99), 0) / Math.max(1, latencySource.length);
+
+  const measuredAccuracy = results.filter((r) => r.accuracy && Number.isFinite(r.accuracy.score));
+  const averageAccuracy =
+    measuredAccuracy.length > 0
+      ? measuredAccuracy.reduce((sum, r) => sum + (r.accuracy?.score ?? 0), 0) / measuredAccuracy.length
+      : null;
+
+  const trackedTokens = results.reduce((sum, r) => sum + (r.tokensTracked ?? 0), 0);
+  const trackedUsd = results.reduce((sum, r) => sum + (r.costTrackedUsd ?? 0), 0);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    metrics: {
+      latency: {
+        p50Ms: toFixedNumber(p50Avg),
+        p95Ms: toFixedNumber(p95Avg),
+        p99Ms: toFixedNumber(p99Avg),
+      },
+      recallAccuracy: {
+        averageScore: averageAccuracy == null ? null : toFixedNumber(averageAccuracy, 4),
+        measuredFeatures: measuredAccuracy.length,
+      },
+      failureRate: {
+        failedFeatures,
+        totalFeatures,
+        ratio: toFixedNumber(failedFeatures / Math.max(1, totalFeatures), 4),
+      },
+      cost: {
+        trackedTokens,
+        trackedUsd: toFixedNumber(trackedUsd, 6),
+      },
+    },
+    features: results,
+  };
+}
+
+export function formatBenchmarkQualityReportMarkdown(report: BenchmarkQualityReport): string {
+  const lines: string[] = [];
+  lines.push("# Hybrid Memory Quality Benchmark Report");
+  lines.push("");
+  lines.push(`Generated: ${report.generatedAt}`);
+  lines.push("");
+  lines.push("## Summary metrics");
+  lines.push("");
+  lines.push(`- Latency (avg): p50=${report.metrics.latency.p50Ms}ms, p95=${report.metrics.latency.p95Ms}ms, p99=${report.metrics.latency.p99Ms}ms`);
+  lines.push(
+    `- Recall accuracy (avg): ${report.metrics.recallAccuracy.averageScore == null ? "n/a" : `${(report.metrics.recallAccuracy.averageScore * 100).toFixed(1)}%`} across ${report.metrics.recallAccuracy.measuredFeatures} feature(s)`,
+  );
+  lines.push(
+    `- Failure rate: ${(report.metrics.failureRate.ratio * 100).toFixed(1)}% (${report.metrics.failureRate.failedFeatures}/${report.metrics.failureRate.totalFeatures})`,
+  );
+  lines.push(
+    `- Cost tracked: ${report.metrics.cost.trackedTokens.toLocaleString()} tokens (~$${report.metrics.cost.trackedUsd.toFixed(6)})`,
+  );
+  lines.push("");
+  lines.push("## Feature breakdown");
+  lines.push("");
+  lines.push("| Feature | p50 (ms) | p95 (ms) | p99 (ms) | Accuracy | Tracked tokens | Tracked cost USD |");
+  lines.push("|---|---:|---:|---:|---:|---:|---:|");
+  for (const result of report.features) {
+    lines.push(
+      `| ${result.feature} | ${result.latency.p50.toFixed(2)} | ${result.latency.p95.toFixed(2)} | ${result.latency.p99.toFixed(2)} | ${result.accuracy ? `${(result.accuracy.score * 100).toFixed(0)}%` : "n/a"} | ${(result.tokensTracked ?? 0).toLocaleString()} | ${(result.costTrackedUsd ?? 0).toFixed(6)} |`,
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // CLI registration
 // ---------------------------------------------------------------------------
@@ -109,22 +229,52 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
     .action(async (opts: Record<string, string | boolean | undefined>) => {
       // Resolve dbPath from HybridMemoryConfig
       const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
-      const dbPath = (
-        typeof cfg.sqlitePath === "string" && cfg.sqlitePath
-          ? cfg.sqlitePath
-          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
-      ) as string;
+      const dbPath = resolveBenchmarkDbPath(cfg);
 
       await runBenchmarkCommand(
         { dbPath },
         {
           feature: typeof opts.feature === "string" ? opts.feature : undefined,
-          accuracy: opts.accuracy === "true",
-          shadow: opts.shadow === "true",
+          accuracy: parseBooleanOption(opts.accuracy),
+          shadow: parseBooleanOption(opts.shadow),
           format: (opts.format === "json" ? "json" : "text") as "text" | "json",
           iterations: typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100,
           judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
         },
       );
+    });
+
+  benchmark
+    .command("report")
+    .description("Generate a quality benchmark report (latency, recall accuracy, failure rate, cost)")
+    .option("--format <format>", "Output format: markdown (default) or json", "markdown")
+    .option("--iterations <n>", "Latency test iterations (default 100)", "100")
+    .option("--accuracy", "Include LLM-judged accuracy scoring", "false")
+    .option("--judge-model <model>", "Model for accuracy scoring (default openai/gpt-4.1-nano)", "openai/gpt-4.1-nano")
+    .option("--out <path>", "Optional output file path")
+    .action(async (opts: Record<string, string | boolean | undefined>) => {
+      const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
+      const dbPath = resolveBenchmarkDbPath(cfg);
+      const format = opts.format === "json" ? "json" : "markdown";
+      const iterations = typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100;
+      const results = await runAllBenchmarks(
+        { dbPath },
+        {
+          accuracy: parseBooleanOption(opts.accuracy),
+          judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
+          format: "json",
+          iterations,
+        },
+      );
+      const report = buildBenchmarkQualityReport(results);
+      const rendered = format === "json" ? JSON.stringify(report, null, 2) : formatBenchmarkQualityReportMarkdown(report);
+      const outPath = typeof opts.out === "string" && opts.out.trim().length > 0 ? opts.out.trim() : "";
+      if (outPath) {
+        mkdirSync(dirname(outPath), { recursive: true });
+        writeFileSync(outPath, rendered, "utf-8");
+        console.log(`Benchmark report written to ${outPath}`);
+      } else {
+        console.log(rendered);
+      }
     });
 }

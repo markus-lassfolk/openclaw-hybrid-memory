@@ -41,7 +41,11 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
       "balanced",
     )
-    .option("--reconcile-max-fixes <n>", "Max SQLite-orphan vectors to rebuild when --fix is set (default: 200)", "200")
+    .option(
+      "--reconcile-max-fixes <n>",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
+      "200",
+    )
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
       withExit(
@@ -165,5 +169,93 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
         console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
         console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
       }),
+    );
+
+  mem
+    .command("doctor")
+    .description(
+      "Guided onboarding checks: runs install/verify in a safe sequence and optionally applies fixes.",
+    )
+    .option("--fix", "Apply recommended install defaults + verify fixes before final verification")
+    .option("--dry-run", "Preview install defaults without writing files")
+    .option("--test-llm", "Test configured LLM models as part of verification")
+    .option(
+      "--reconcile",
+      "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use with --fix to auto-heal.",
+    )
+    .option(
+      "--reconcile-policy <policy>",
+      "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
+      "balanced",
+    )
+    .option(
+      "--reconcile-max-fixes <n>",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
+      "200",
+    )
+    .action(
+      withExit(
+        async (opts: {
+          fix?: boolean;
+          dryRun?: boolean;
+          testLlm?: boolean;
+          reconcile?: boolean;
+          reconcilePolicy?: string;
+          reconcileMaxFixes?: string;
+        }) => {
+          const reconcilePolicyRaw = String(opts.reconcilePolicy ?? "balanced")
+            .trim()
+            .toLowerCase();
+          const reconcilePolicy =
+            reconcilePolicyRaw === "conservative" || reconcilePolicyRaw === "aggressive"
+              ? reconcilePolicyRaw
+              : "balanced";
+          const parsedReconcileMaxFixes = Number.parseInt(String(opts.reconcileMaxFixes ?? "200"), 10);
+          const reconcileMaxFixes = Math.max(
+            0,
+            Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
+          );
+          const applyFixes = opts.fix === true;
+          const dryRunInstall = opts.dryRun === true && !applyFixes;
+          const sink = { log: (s: string) => console.log(s), error: (s: string) => console.error(s) };
+
+          console.log("🩺 Hybrid Memory Doctor");
+          console.log("Step 1/3: install defaults");
+          const installResult = await runInstall({ dryRun: dryRunInstall });
+          if (!installResult.ok) {
+            console.error(`Install check failed: ${installResult.error}`);
+            process.exitCode = 1;
+            return;
+          }
+          if (installResult.dryRun) {
+            console.log(`(dry-run) Would update config at ${installResult.configPath}`);
+          } else {
+            console.log(`Applied/verified defaults at ${installResult.configPath}`);
+          }
+
+          console.log("Step 2/3: verify runtime + storage health");
+          await runVerify(
+            {
+              fix: applyFixes,
+              testLlm: opts.testLlm === true,
+              reconcile: opts.reconcile === true,
+              reconcilePolicy,
+              reconcileMaxFixes,
+            },
+            sink,
+          );
+
+          console.log("Step 3/3: doctor summary");
+          if (dryRunInstall) {
+            console.log(
+              "Doctor completed in preview mode. Re-run with --fix to apply install + verify repairs, then restart the gateway.",
+            );
+          } else if (applyFixes) {
+            console.log("Doctor applied fixes. Restart the gateway to ensure all changes are active.");
+          } else {
+            console.log("Doctor checks completed. Re-run with --fix if you want auto-remediation.");
+          }
+        },
+      ),
     );
 }
