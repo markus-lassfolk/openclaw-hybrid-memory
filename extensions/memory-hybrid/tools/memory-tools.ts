@@ -85,6 +85,22 @@ export type BoundWalWriteFn = (
 
 export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
 
+/**
+ * Maximum number of characters accepted for any scope parameter (userId/agentId/sessionId).
+ * Enforced in every tool that accepts these caller-controlled values to prevent memory
+ * exhaustion from excessively long strings being forwarded to SQL queries or logged.
+ */
+const SCOPE_PARAM_MAX_LENGTH = 256;
+
+/**
+ * Trim a caller-supplied scope parameter to at most SCOPE_PARAM_MAX_LENGTH characters.
+ * Returns `undefined` unchanged so optional parameters remain optional.
+ */
+function sanitizeScopeParam(v: string | undefined): string | undefined {
+  if (v === undefined) return undefined;
+  return v.length > SCOPE_PARAM_MAX_LENGTH ? v.slice(0, SCOPE_PARAM_MAX_LENGTH) : v;
+}
+
 export interface MemoryToolsContext {
   factsDb: FactsDB;
   edictStore: EdictStore;
@@ -792,22 +808,13 @@ export function registerMemoryTools(
     // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
     // Accepting arbitrary scope filters allows users to access other users' private memories.
     // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-    //
-    // Enforce a length cap on each scope parameter to prevent memory exhaustion from
-    // excessively long values being forwarded to SQL queries or logged.
-    const SCOPE_PARAM_MAX_LENGTH = 256;
-    const sanitizeScopeParam = (v: string | undefined): string | undefined => {
-      if (v === undefined) return undefined;
-      if (v.length > SCOPE_PARAM_MAX_LENGTH) {
-        return v.slice(0, SCOPE_PARAM_MAX_LENGTH);
-      }
-      return v;
-    };
-    const sanitizedUserId = sanitizeScopeParam(userId);
-    const sanitizedAgentId = sanitizeScopeParam(agentId);
-    const sanitizedSessionId = sanitizeScopeParam(sessionId);
     const scopeFilter = buildToolScopeFilter(
-      { userId: sanitizedUserId, agentId: sanitizedAgentId, sessionId: sanitizedSessionId, confirmCrossTenantScope },
+      {
+        userId: sanitizeScopeParam(userId),
+        agentId: sanitizeScopeParam(agentId),
+        sessionId: sanitizeScopeParam(sessionId),
+        confirmCrossTenantScope,
+      },
       currentAgentIdRef.value,
       cfg,
     );
@@ -1353,15 +1360,11 @@ export function registerMemoryTools(
             }
 
             // Build scope filter (same logic as memory_recall)
-            // Apply the same length cap as memory_recall to prevent memory exhaustion.
-            const SCOPE_PARAM_MAX_LENGTH_PROC = 256;
-            const sanitize = (v: string | undefined) =>
-              v && v.length > SCOPE_PARAM_MAX_LENGTH_PROC ? v.slice(0, SCOPE_PARAM_MAX_LENGTH_PROC) : v;
             const scopeFilter = buildToolScopeFilter(
               {
-                userId: sanitize(userId),
-                agentId: sanitize(agentId),
-                sessionId: sanitize(sessionId),
+                userId: sanitizeScopeParam(userId),
+                agentId: sanitizeScopeParam(agentId),
+                sessionId: sanitizeScopeParam(sessionId),
                 confirmCrossTenantScope,
               },
               currentAgentIdRef.value,

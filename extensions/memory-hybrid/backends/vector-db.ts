@@ -994,7 +994,10 @@ export class VectorDB {
       }
     }
 
-    // Remove old table directory (best effort, non-fatal)
+    // Remove old table directory (best effort, non-fatal).
+    // `swapSucceeded` tracks the rename outcome separately from the error-path throw so that
+    // we only attempt to remove the old-table backup when we know the new main is in place.
+    // (The finally block above re-throws on swap failure, so control reaches here only on success.)
     if (swapSucceeded && existsSync(oldTableDir)) {
       try {
         rmSync(oldTableDir, { recursive: true, force: true });

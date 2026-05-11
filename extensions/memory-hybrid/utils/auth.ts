@@ -15,15 +15,15 @@
 export function hasOAuthProfiles(
   order: string[] | undefined,
   provider: string,
-  opts?: { onUnknownProfile?: (profile: string) => void },
+  opts?: { onOAuthProfile?: (profile: string) => void },
 ): boolean {
   if (!order || order.length === 0) return false;
   const apiOnlyPatternsLower = [`${provider}:api`, `${provider}:default`];
   return order.some((p) => {
     const pLower = p.toLowerCase();
     const isApiOnly = apiOnlyPatternsLower.includes(pLower);
-    if (!isApiOnly && opts?.onUnknownProfile) {
-      opts.onUnknownProfile(p);
+    if (!isApiOnly && opts?.onOAuthProfile) {
+      opts.onOAuthProfile(p);
     }
     return !isApiOnly;
   });
