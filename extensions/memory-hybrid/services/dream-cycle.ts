@@ -81,6 +81,12 @@ export interface DreamCycleConfig {
     /** Extra types to treat as noise (merged with built-in deny list). */
     deny?: string[];
   };
+  /**
+   * When true, enable reflection rules generation during the dream cycle.
+   * Cost optimization: Set to false to save 30-40% of dream cycle LLM cost.
+   * Default: true (enabled for backward compatibility).
+   */
+  enableReflectionRules?: boolean;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -817,7 +823,9 @@ export async function runDreamCycle(
 
   // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
   let rulesGenerated = 0;
-  if (patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
+  // Cost optimization: Make reflection rules generation optional (saves 30-40% of dream cycle LLM cost)
+  const enableReflectionRules = config.enableReflectionRules !== false; // default: true
+  if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
     step("reflect-rules");
     try {
       const rulesResult = await runReflectionRules(
@@ -838,6 +846,10 @@ export async function runDreamCycle(
         subsystem: "reflection",
       });
     }
+  } else if (!enableReflectionRules && v) {
+    logger.info(
+      `memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)`,
+    );
   } else if (v) {
     logger.info(
       `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,

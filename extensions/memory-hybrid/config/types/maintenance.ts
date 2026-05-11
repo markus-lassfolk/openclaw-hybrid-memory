@@ -79,6 +79,13 @@ export type NightlyCycleConfig = {
    * heartbeat/transport deny list). Default: none.
    */
   consolidationEventTypeDeny?: string[];
+  /**
+   * When true, enable reflection rules generation during the dream cycle.
+   * Rules are only generated when enough patterns exist (>= MIN_PATTERNS_FOR_RULES).
+   * Cost optimization: Set to false to save 30-40% of dream cycle LLM cost.
+   * Default: true (enabled for backward compatibility).
+   */
+  enableReflectionRules?: boolean;
 };
 
 /** Memory health dashboard configuration (Issue #148). */
