@@ -47,6 +47,7 @@ export function resolveActiveTaskReadPath(filePath: string): string | null {
  * deleted to prevent unbounded accumulation (issue #812). Exported for tests.
  */
 export const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
+const MAX_TASK_SIGNAL_BYTES = 256 * 1024;
 
 async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
   try {
@@ -191,6 +192,9 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
         break;
       case "updated":
         entry.updated = value || UNKNOWN_ACTIVE_TASK_TIME;
+        break;
+      case "related goal":
+        entry.relatedGoal = value || undefined;
         break;
       case "handoff":
         entry.handoff = parseHandoffRef(value) ?? undefined;
@@ -470,7 +474,14 @@ export async function writeActiveTaskFile(
   }
 
   const content = serializeActiveTaskFile(active, completed, goalsMirror);
-  await writeFile(filePath, content, "utf-8");
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  try {
+    await writeFile(tmpPath, content, "utf-8");
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -916,6 +927,16 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
       continue;
     }
     try {
+      let signalStat: Awaited<ReturnType<typeof stat>>;
+      try {
+        signalStat = await stat(resolvedFilePath);
+      } catch {
+        continue;
+      }
+      if (signalStat.size > MAX_TASK_SIGNAL_BYTES) {
+        await deleteSignal(resolvedFilePath).catch(() => {});
+        continue;
+      }
       const raw = await readFile(resolvedFilePath, "utf-8");
       let parsed: unknown;
       try {
@@ -934,15 +955,7 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
         });
         continue;
       }
-      // Backward compatibility: legacy signal format without OCTAVE envelope.
-      if (!isTaskSignal(parsed)) {
-        await tryDeleteStaleCorruptSignalFile(resolvedFilePath);
-        continue;
-      }
-      signals.push({
-        ...parsed,
-        _filePath: resolvedFilePath,
-      });
+      await deleteSignal(resolvedFilePath).catch(() => {});
     } catch {
       // Ignore transient read errors (race with delete, etc.)
     }

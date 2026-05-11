@@ -47,6 +47,7 @@ function nowIso(): string {
 const GOAL_LOCK_RETRY_MS = 25;
 const GOAL_LOCK_MAX_RETRIES = 200;
 const GOAL_LOCK_STALE_MS = 2 * 60 * 1000;
+const GOAL_LOCK_OWNER_FILE = "owner.json";
 
 function lockKey(raw: string): string {
   return (
@@ -65,6 +66,11 @@ async function acquireGoalLock(goalsDir: string, key: string): Promise<string> {
   for (let attempt = 0; attempt < GOAL_LOCK_MAX_RETRIES; attempt++) {
     try {
       await mkdir(lockPath);
+      await writeFile(
+        join(lockPath, GOAL_LOCK_OWNER_FILE),
+        JSON.stringify({ pid: process.pid, acquiredAt: nowIso() }, null, 2),
+        "utf-8",
+      ).catch(() => {});
       return lockPath;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
@@ -72,8 +78,19 @@ async function acquireGoalLock(goalsDir: string, key: string): Promise<string> {
       try {
         const lockStat = await stat(lockPath);
         if (Date.now() - lockStat.mtimeMs > GOAL_LOCK_STALE_MS) {
-          await rm(lockPath, { recursive: true, force: true }).catch(() => {});
-          continue;
+          let ownerPid: number | null = null;
+          try {
+            const raw = await readFile(join(lockPath, GOAL_LOCK_OWNER_FILE), "utf-8");
+            const parsed = JSON.parse(raw) as { pid?: unknown };
+            ownerPid = typeof parsed.pid === "number" && Number.isFinite(parsed.pid) ? parsed.pid : null;
+          } catch {
+            ownerPid = null;
+          }
+          const ownerAlive = ownerPid != null ? isProcessAlive(ownerPid) : false;
+          if (!ownerAlive) {
+            await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+            continue;
+          }
         }
       } catch {
         // Lock may disappear between stat/remove attempts; continue retrying.
@@ -82,6 +99,17 @@ async function acquireGoalLock(goalsDir: string, key: string): Promise<string> {
     }
   }
   throw new Error(`Timed out waiting for goal lock: ${key}`);
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    return e.code !== "ESRCH";
+  }
 }
 
 async function withGoalLock<T>(goalsDir: string, key: string, fn: () => Promise<T>): Promise<T> {
@@ -147,8 +175,9 @@ export async function readGoal(goalsDir: string, id: string): Promise<Goal | nul
   try {
     const raw = await readFile(path, "utf-8");
     return normalizeGoalJson(JSON.parse(raw) as Goal);
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(`Goal file is corrupt or unreadable (${path}): ${String(err)}`);
   }
 }
 
