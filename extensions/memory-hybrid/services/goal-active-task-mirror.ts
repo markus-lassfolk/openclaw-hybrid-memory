@@ -2,7 +2,8 @@
  * Regenerate ACTIVE-TASKS.md with an ## Active Goals mirror section (read-only view of goal registry).
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
 import { readActiveTaskFile, serializeActiveTaskFile } from "./active-task.js";
@@ -79,7 +80,21 @@ export async function refreshActiveTaskMirrorWithGoals(opts: {
       const completed = parsed?.completed ?? [];
       content = serializeActiveTaskFile(active, completed, goalsMd);
     }
-    await writeFile(opts.activeTaskPath, content, "utf-8");
+    const tmpPath = `${opts.activeTaskPath}.tmp-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    let existingMode: number | null = null;
+    try {
+      existingMode = (await stat(opts.activeTaskPath)).mode & 0o777;
+    } catch {
+      existingMode = null;
+    }
+    try {
+      await writeFile(tmpPath, content, "utf-8");
+      if (existingMode !== null) await chmod(tmpPath, existingMode);
+      await rename(tmpPath, opts.activeTaskPath);
+    } catch (err) {
+      await unlink(tmpPath).catch(() => {});
+      throw err;
+    }
     opts.logger?.info?.(
       `memory-hybrid: ACTIVE-TASKS.md mirror refreshed (${opts.goals.length} active goal(s) in Goals section)`,
     );

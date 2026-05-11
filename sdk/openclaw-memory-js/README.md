@@ -61,7 +61,6 @@ new MemoryClient(config?: MemoryClientConfig)
 |--------|------|---------|-------------|
 | `baseUrl` | `string` | `http://localhost:7777` | Base URL of memory API |
 | `graphqlPath` | `string` | `/plugins/memory/graphql` | GraphQL endpoint path |
-| `restPath` | `string` | `/plugins/memory-public` | REST API endpoint path |
 | `apiKey` | `string` | `undefined` | API key for authentication |
 | `timeout` | `number` | `30000` | Request timeout in ms |
 
@@ -87,8 +86,7 @@ const facts = await client.getFacts({
   category: 'preference',
   limit: 20,
   offset: 0,
-  tags: ['development'],
-  minImportance: 0.5
+  tags: ['development']
 });
 \`\`\`
 

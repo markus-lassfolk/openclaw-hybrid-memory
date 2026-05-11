@@ -3,7 +3,17 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
@@ -86,6 +96,94 @@ function parseBoundedFloatOption(raw: unknown, fallback: number, min: number, ma
   const parsed = Number.parseFloat(String(raw ?? fallback));
   const value = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, value));
+}
+
+type SyncBundleFile = {
+  path: string;
+  contentBase64: string;
+};
+
+const SYNC_BUNDLE_MIN_ITERATIONS = 100_000;
+const SYNC_BUNDLE_MAX_ITERATIONS = 2_000_000;
+const SYNC_BUNDLE_SALT_BYTES = 16;
+const SYNC_BUNDLE_IV_BYTES = 12;
+const SYNC_BUNDLE_TAG_BYTES = 16;
+
+function collectExportBundleFiles(root: string, dir = root): SyncBundleFile[] {
+  const files: SyncBundleFile[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    const fullPath = join(dir, name);
+    const st = statSync(fullPath);
+    if (st.isDirectory()) {
+      files.push(...collectExportBundleFiles(root, fullPath));
+      continue;
+    }
+    if (!st.isFile()) continue;
+    const rel = fullPath.slice(root.length + 1).replace(/\\/g, "/");
+    files.push({ path: rel, contentBase64: readFileSync(fullPath).toString("base64") });
+  }
+  return files;
+}
+
+function decodeRequiredBase64Field(envelope: Record<string, unknown>, field: string, expectedBytes?: number): Buffer {
+  const raw = envelope[field];
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new Error(`sync bundle field ${field} must be a non-empty base64 string`);
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(raw) || raw.length % 4 !== 0) {
+    throw new Error(`sync bundle field ${field} is not valid base64`);
+  }
+  const decoded = Buffer.from(raw, "base64");
+  if (expectedBytes !== undefined && decoded.length !== expectedBytes) {
+    throw new Error(`sync bundle field ${field} must decode to ${expectedBytes} bytes`);
+  }
+  if (expectedBytes === undefined && decoded.length === 0) {
+    throw new Error(`sync bundle field ${field} must not be empty`);
+  }
+  return decoded;
+}
+
+function validateSyncEnvelope(raw: unknown): {
+  schemaVersion: 1;
+  type: "hybrid-memory-sync-bundle";
+  alg: "aes-256-gcm";
+  kdf: "pbkdf2-sha256";
+  iterations: number;
+  salt: Buffer;
+  iv: Buffer;
+  tag: Buffer;
+  ciphertext: Buffer;
+} {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("sync bundle must be a JSON object");
+  }
+  const envelope = raw as Record<string, unknown>;
+  if (envelope.schemaVersion !== 1) throw new Error("unsupported sync bundle schemaVersion");
+  if (envelope.type !== "hybrid-memory-sync-bundle") throw new Error("unsupported sync bundle type");
+  if (envelope.alg !== "aes-256-gcm") throw new Error("unsupported sync bundle algorithm");
+  if (envelope.kdf !== "pbkdf2-sha256") throw new Error("unsupported sync bundle KDF");
+  const iterations = envelope.iterations;
+  if (
+    typeof iterations !== "number" ||
+    !Number.isInteger(iterations) ||
+    iterations < SYNC_BUNDLE_MIN_ITERATIONS ||
+    iterations > SYNC_BUNDLE_MAX_ITERATIONS
+  ) {
+    throw new Error(
+      `sync bundle iterations must be an integer between ${SYNC_BUNDLE_MIN_ITERATIONS} and ${SYNC_BUNDLE_MAX_ITERATIONS}`,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    type: "hybrid-memory-sync-bundle",
+    alg: "aes-256-gcm",
+    kdf: "pbkdf2-sha256",
+    iterations,
+    salt: decodeRequiredBase64Field(envelope, "salt", SYNC_BUNDLE_SALT_BYTES),
+    iv: decodeRequiredBase64Field(envelope, "iv", SYNC_BUNDLE_IV_BYTES),
+    tag: decodeRequiredBase64Field(envelope, "tag", SYNC_BUNDLE_TAG_BYTES),
+    ciphertext: decodeRequiredBase64Field(envelope, "ciphertext"),
+  };
 }
 
 /**
@@ -862,6 +960,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     ctx,
     listCommands,
     auditStore,
+    runExport,
   } = b;
 
   const tierCompactCmd = mem
@@ -2514,7 +2613,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   audit
     .command("session")
-    .description("Unified session observability: timeline of capture, recall, injection, suppressions, and why-recalled")
+    .description(
+      "Unified session observability: timeline of capture, recall, injection, suppressions, and why-recalled",
+    )
     .option("--session-id <id>", "Session id to inspect")
     .option("--agent <id>", "Optional agent id filter")
     .option("--limit <n>", "Max timeline entries per section (default 50, max 200)", "50")
@@ -2550,7 +2651,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             return;
           }
           if (format === "timeline") {
-            console.log(`Session observability timeline (${report.sessionId ?? "current"}, entries=${report.timeline.length})`);
+            console.log(
+              `Session observability timeline (${report.sessionId ?? "current"}, entries=${report.timeline.length})`,
+            );
             for (const entry of report.timeline) {
               const outcome = entry.outcome ? ` [${entry.outcome}]` : "";
               const score = entry.score != null ? ` score=${entry.score.toFixed(3)}` : "";
@@ -2688,15 +2791,28 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           return;
         }
         const tmpDir = mkdtempSync(join(tmpdir(), "hybrid-mem-sync-"));
-        const tmpJson = join(tmpDir, "export.json");
+        const tmpExportDir = join(tmpDir, "export");
         const sources = opts?.sources
           ?.split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
         try {
-          const exportResult = await runExport({ outputPath: tmpJson, excludeCredentials: true, sources });
-          const plaintext = readFileSync(exportResult.outputPath, "utf-8");
-          unlinkSync(exportResult.outputPath);
+          const exportResult = await runExport({ outputPath: tmpExportDir, excludeCredentials: true, sources });
+          const plaintext = JSON.stringify(
+            {
+              schemaVersion: 1,
+              type: "hybrid-memory-sync-export",
+              exportedAt: new Date().toISOString(),
+              metadata: {
+                factsExported: exportResult.factsExported,
+                proceduresExported: exportResult.proceduresExported,
+                filesWritten: exportResult.filesWritten,
+              },
+              files: collectExportBundleFiles(exportResult.outputPath),
+            },
+            null,
+            2,
+          );
 
           const salt = randomBytes(16);
           const iv = randomBytes(12);
@@ -2753,47 +2869,24 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         const passphraseEnv = String(opts?.passphraseEnv ?? "HYBRID_MEM_SYNC_PASSPHRASE").trim();
         const passphrase = getEnv(passphraseEnv);
         if (!passphrase) {
-          console.error("error: set the sync passphrase in the configured environment variable before running sync-import");
+          console.error(
+            "error: set the sync passphrase in the configured environment variable before running sync-import",
+          );
           process.exitCode = 1;
           return;
         }
-        let envelope: {
-          schemaVersion: number;
-          alg: string;
-          iterations: number;
-          salt: string;
-          iv: string;
-          tag: string;
-          ciphertext: string;
-        };
+        let envelope;
         try {
-          envelope = JSON.parse(readFileSync(inPath, "utf-8")) as {
-            schemaVersion: number;
-            alg: string;
-            iterations: number;
-            salt: string;
-            iv: string;
-            tag: string;
-            ciphertext: string;
-          };
+          envelope = validateSyncEnvelope(JSON.parse(readFileSync(inPath, "utf-8")));
         } catch (err) {
-          console.error(`error: failed to read or parse sync bundle from ${inPath}: ${String(err)}`);
+          console.error(`error: invalid sync bundle ${inPath}: ${String(err)}`);
           process.exitCode = 1;
           return;
         }
-        if (envelope.schemaVersion !== 1 || envelope.alg !== "aes-256-gcm") {
-          console.error("error: unsupported sync bundle format");
-          process.exitCode = 1;
-          return;
-        }
-        const salt = Buffer.from(envelope.salt, "base64");
-        const iv = Buffer.from(envelope.iv, "base64");
-        const tag = Buffer.from(envelope.tag, "base64");
-        const ciphertext = Buffer.from(envelope.ciphertext, "base64");
-        const key = pbkdf2Sync(passphrase, salt, envelope.iterations, 32, "sha256");
-        const decipher = createDecipheriv("aes-256-gcm", key, iv);
-        decipher.setAuthTag(tag);
-        const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf-8");
+        const key = pbkdf2Sync(passphrase, envelope.salt, envelope.iterations, 32, "sha256");
+        const decipher = createDecipheriv("aes-256-gcm", key, envelope.iv);
+        decipher.setAuthTag(envelope.tag);
+        const plaintext = Buffer.concat([decipher.update(envelope.ciphertext), decipher.final()]).toString("utf-8");
         mkdirSync(dirname(outPath), { recursive: true });
         writeFileSync(outPath, plaintext, "utf-8");
         console.log(`Decrypted sync payload written to ${outPath}`);

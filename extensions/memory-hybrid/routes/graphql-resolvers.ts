@@ -1,451 +1,425 @@
-/**
- * GraphQL Resolvers for OpenClaw Hybrid Memory
- * Implements all query, mutation, and subscription resolvers
- */
+// GraphQL resolver map for the dashboard API.
+// Keep this module conservative: it must compile against the real FactsDB API and
+// return safe placeholders for schema areas that are not implemented yet.
 
-import type { FactsDB } from "../backends/facts-db/facts-db-layer1.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryPluginContext } from "../api/memory-plugin-api.js";
-import { searchHybrid } from "../services/search-hybrid.js";
+import { DECAY_CLASSES, type DecayClass } from "../config.js";
+import type { MemoryLinkType } from "../backends/facts-db/types.js";
+import type { MemoryEntry } from "../types/memory.js";
 
-export interface GraphQLContext {
-	factsDb: FactsDB;
-	vectorDb?: VectorDB;
-	pluginContext: MemoryPluginContext;
+export type GraphQLContext = {
+  factsDb: FactsDB;
+  vectorDb?: VectorDB;
+  pluginContext: Record<string, unknown>;
+};
+
+type ResolverFn = (parent: unknown, args: unknown, context: GraphQLContext) => unknown;
+type ResolverGroup = Record<string, ResolverFn>;
+
+type GraphQLResolvers = {
+  Query: ResolverGroup;
+  Mutation: ResolverGroup;
+  Fact: ResolverGroup;
+  Link: ResolverGroup;
+  Episode: ResolverGroup;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-interface GraphQLResolvers {
-	Query: Record<string, (parent: unknown, args: unknown, context: GraphQLContext) => unknown>;
-	Mutation: Record<string, (parent: unknown, args: unknown, context: GraphQLContext) => unknown>;
-	Fact: Record<string, (parent: unknown, args: unknown, context: GraphQLContext) => unknown>;
-	Link: Record<string, (parent: unknown, args: unknown, context: GraphQLContext) => unknown>;
-	Episode: Record<string, (parent: unknown, args: unknown, context: GraphQLContext) => unknown>;
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+}
+
+function allFacts(factsDb: FactsDB, includeSuperseded = false): MemoryEntry[] {
+  return factsDb.getAll({ includeSuperseded });
+}
+
+function isActiveFact(fact: MemoryEntry, nowSec = Math.floor(Date.now() / 1000)): boolean {
+  const notSuperseded = (fact.supersededAt == null || fact.supersededAt <= 0) && fact.supersededBy == null;
+  const notExpired = fact.expiresAt == null || fact.expiresAt <= 0 || fact.expiresAt > nowSec;
+  return notSuperseded && notExpired;
+}
+
+function scoreFact(fact: MemoryEntry, query: string): number {
+  const q = query.toLowerCase();
+  const haystack = [fact.text, fact.entity, fact.key, fact.value, fact.category, ...(fact.tags ?? [])]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  if (!q) return 0;
+  if (haystack.includes(q)) return 1;
+  const terms = q.split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return 0;
+  return terms.filter((term) => haystack.includes(term)).length / terms.length;
+}
+
+function searchFacts(
+  context: GraphQLContext,
+  input: Record<string, unknown>,
+): Array<{
+  fact: MemoryEntry;
+  score: number;
+  matchType: string;
+  snippet: string;
+}> {
+  const query = asString(input.query) ?? "";
+  const limit = Math.max(1, Math.min(100, asNumber(input.limit) ?? 20));
+  const offset = Math.max(0, asNumber(input.offset) ?? 0);
+  const categories = asStringArray(input.categories);
+  const tags = asStringArray(input.tags);
+  const minImportance = asNumber(input.minImportance);
+  const minConfidence = asNumber(input.minConfidence);
+  const includeSuperseded = input.includeSuperseded === true;
+  const includeExpired = input.includeExpired === true;
+  const now = Date.now();
+
+  let facts = allFacts(context.factsDb, includeSuperseded);
+  if (!includeExpired) facts = facts.filter((fact) => fact.expiresAt == null || fact.expiresAt > now);
+  if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
+  if (tags?.length) facts = facts.filter((fact) => tags.some((tag) => fact.tags?.includes(tag)));
+  if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
+  if (minConfidence !== undefined) facts = facts.filter((fact) => fact.confidence >= minConfidence);
+
+  return facts
+    .map((fact) => ({ fact, score: scoreFact(fact, query) }))
+    .filter((result) => query.length === 0 || result.score > 0)
+    .sort((a, b) => b.score - a.score || b.fact.createdAt - a.fact.createdAt)
+    .slice(offset, offset + limit)
+    .map(({ fact, score }) => ({
+      fact,
+      score,
+      matchType: "fts",
+      snippet: fact.text.slice(0, 200),
+    }));
+}
+
+type GraphQLLink = {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  linkType: string;
+  weight: number;
+  createdAt: number;
+};
+
+function normalizeLink(row: Record<string, unknown>): GraphQLLink {
+  return {
+    id: String(row.id ?? ""),
+    sourceId: String(row.source_fact_id ?? row.sourceFactId ?? ""),
+    targetId: String(row.target_fact_id ?? row.targetFactId ?? ""),
+    linkType: String(row.link_type ?? row.linkType ?? "RELATED_TO"),
+    weight: Number(row.strength ?? row.weight ?? 1),
+    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+  };
+}
+
+function getAllLinks(factsDb: FactsDB): GraphQLLink[] {
+  const rows = factsDb
+    .getRawDb()
+    .prepare(
+      "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links ORDER BY created_at DESC",
+    )
+    .all() as Array<Record<string, unknown>>;
+  return rows.map(normalizeLink);
+}
+
+function isMemoryLinkType(value: string): value is MemoryLinkType {
+  return ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF"].includes(
+    value,
+  );
+}
+
+function asDecayClass(value: unknown): DecayClass {
+  return typeof value === "string" && (DECAY_CLASSES as readonly string[]).includes(value)
+    ? (value as DecayClass)
+    : "normal";
+}
+
+function createStoreInput(input: Record<string, unknown>) {
+  return {
+    text: asString(input.text) ?? "",
+    category: asString(input.category) ?? "other",
+    importance: asNumber(input.importance) ?? 0.5,
+    confidence: asNumber(input.confidence) ?? 1,
+    decayClass: asDecayClass(input.decayClass),
+    source: asString(input.source) ?? "graphql",
+    tags: asStringArray(input.tags) ?? [],
+    entity: asString(input.entity) ?? null,
+    key: asString(input.key) ?? null,
+    value: asString(input.value) ?? null,
+    scope: asString(input.scope) as MemoryEntry["scope"] | undefined,
+    scopeTarget: asString(input.scopeTarget) ?? null,
+    expiresAt: asNumber(input.expiresAt) ?? null,
+  };
 }
 
 export const resolvers: GraphQLResolvers = {
-	Query: {
-		// Get a single fact by ID
-		fact: async (_parent, args: { id: string }, context) => {
-			const fact = context.factsDb.getFactById(args.id);
-			return fact || null;
-		},
+  Query: {
+    fact: (_parent, args, context) => {
+      const id = asString(asRecord(args).id);
+      return id ? context.factsDb.getById(id) : null;
+    },
 
-		// Get multiple facts with filtering
-		facts: async (_parent, args: {
-			limit?: number;
-			offset?: number;
-			category?: string;
-			decayClass?: string;
-			tags?: string[];
-			scope?: string;
-			includeSuperseded?: boolean;
-			includeExpired?: boolean;
-		}, context) => {
-			const { limit = 100, offset = 0, category, decayClass, tags, scope, includeSuperseded = false, includeExpired = false } = args;
+    facts: (_parent, args, context) => {
+      const input = asRecord(args);
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 100));
+      const offset = Math.max(0, asNumber(input.offset) ?? 0);
+      const category = asString(input.category);
+      const decayClass = asString(input.decayClass);
+      const tags = asStringArray(input.tags);
+      const scope = asString(input.scope);
+      const includeSuperseded = input.includeSuperseded === true;
+      const includeExpired = input.includeExpired === true;
+      const now = Date.now();
 
-			let facts = context.factsDb.getAllFacts();
+      let facts = allFacts(context.factsDb, includeSuperseded);
+      if (category) facts = facts.filter((fact) => fact.category === category);
+      if (decayClass) facts = facts.filter((fact) => fact.decayClass === decayClass);
+      if (tags?.length) facts = facts.filter((fact) => tags.some((tag) => fact.tags?.includes(tag)));
+      if (scope) facts = facts.filter((fact) => fact.scope === scope);
+      if (!includeExpired) facts = facts.filter((fact) => fact.expiresAt == null || fact.expiresAt > now);
+      return facts.sort((a, b) => b.createdAt - a.createdAt).slice(offset, offset + limit);
+    },
 
-			// Apply filters
-			if (category) {
-				facts = facts.filter(f => f.category === category);
-			}
-			if (decayClass) {
-				facts = facts.filter(f => f.decayClass === decayClass);
-			}
-			if (tags && tags.length > 0) {
-				facts = facts.filter(f => tags.some(tag => f.tags?.includes(tag)));
-			}
-			if (scope) {
-				facts = facts.filter(f => f.scope === scope);
-			}
-			if (!includeSuperseded) {
-				facts = facts.filter(f => !f.supersededBy);
-			}
-			if (!includeExpired) {
-				const now = Date.now();
-				facts = facts.filter(f => !f.expiresAt || f.expiresAt > now);
-			}
+    search: (_parent, args, context) => searchFacts(context, asRecord(asRecord(args).input)),
 
-			// Sort by createdAt descending
-			facts.sort((a, b) => b.createdAt - a.createdAt);
+    semanticSearch: (_parent, args, context) => {
+      const input = asRecord(args);
+      return searchFacts(context, { query: input.query, limit: input.limit, scope: input.scope });
+    },
 
-			// Pagination
-			return facts.slice(offset, offset + limit);
-		},
+    episode: () => null,
+    episodes: () => [],
+    link: (_parent, args, context) => {
+      const id = asString(asRecord(args).id);
+      if (!id) return null;
+      return getAllLinks(context.factsDb).find((link) => link.id === id) ?? null;
+    },
+    links: (_parent, args, context) => {
+      const input = asRecord(args);
+      const sourceId = asString(input.sourceId);
+      const targetId = asString(input.targetId);
+      const linkType = asString(input.linkType);
+      return getAllLinks(context.factsDb).filter(
+        (link) =>
+          (!sourceId || link.sourceId === sourceId) &&
+          (!targetId || link.targetId === targetId) &&
+          (!linkType || link.linkType === linkType),
+      );
+    },
+    relatedFacts: (_parent, args, context) => {
+      const input = asRecord(args);
+      const factId = asString(input.factId);
+      if (!factId) return [];
+      const maxDepth = Math.max(1, Math.min(5, asNumber(input.maxDepth) ?? 1));
+      return context.factsDb
+        .getConnectedFactIds([factId], maxDepth)
+        .filter((id) => id !== factId)
+        .map((id) => context.factsDb.getById(id))
+        .filter((fact): fact is MemoryEntry => fact !== null);
+    },
 
-		// Hybrid search
-		search: async (_parent, args: { input: {
-			query: string;
-			categories?: string[];
-			decayClasses?: string[];
-			tags?: string[];
-			minImportance?: number;
-			minConfidence?: number;
-			limit?: number;
-			offset?: number;
-			includeSuperseded?: boolean;
-			includeExpired?: boolean;
-			scope?: string;
-			scopeTarget?: string;
-		}}, context) => {
-			const { input } = args;
-			const { query, limit = 20, offset = 0 } = input;
+    entityFacts: (_parent, args, context) => {
+      const input = asRecord(args);
+      const entity = asString(input.entity);
+      const key = asString(input.key);
+      if (!entity) return [];
+      return allFacts(context.factsDb).filter((fact) => fact.entity === entity && (!key || fact.key === key));
+    },
 
-			// Use the hybrid search service
-			const results = await searchHybrid({
-				query,
-				factsDb: context.factsDb,
-				vectorDb: context.vectorDb,
-				limit: limit + offset, // Get more for offset
-				config: context.pluginContext.config,
-			});
+    graph: (_parent, args, context) => {
+      const filter = asRecord(asRecord(args).filter);
+      const categories = asStringArray(filter.categories);
+      const decayClasses = asStringArray(filter.decayClasses);
+      const minImportance = asNumber(filter.minImportance);
+      const scope = asString(filter.scope);
+      let facts = allFacts(context.factsDb).filter((fact) => isActiveFact(fact));
+      if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
+      if (decayClasses?.length) facts = facts.filter((fact) => decayClasses.includes(fact.decayClass));
+      if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
+      if (scope) facts = facts.filter((fact) => fact.scope === scope);
+      return {
+        nodes: facts.map((fact) => ({
+          id: fact.id,
+          label: fact.text.slice(0, 50) + (fact.text.length > 50 ? "..." : ""),
+          category: fact.category,
+          importance: fact.importance,
+          confidence: fact.confidence,
+          decayClass: fact.decayClass,
+          factCount: 1,
+        })),
+        edges: facts
+          .filter((fact) => fact.supersededBy)
+          .map((fact) => ({
+            source: fact.id,
+            target: fact.supersededBy as string,
+            linkType: "superseded_by",
+            weight: 1,
+          })),
+      };
+    },
 
-			// Apply filters and offset
-			let filtered = results;
-			if (input.categories) {
-				filtered = filtered.filter(r => input.categories?.includes(r.fact.category));
-			}
-			if (input.minImportance !== undefined) {
-				filtered = filtered.filter(r => r.fact.importance >= input.minImportance!);
-			}
-			if (input.minConfidence !== undefined) {
-				filtered = filtered.filter(r => r.fact.confidence >= input.minConfidence!);
-			}
+    stats: (_parent, _args, context) => {
+      const facts = allFacts(context.factsDb, true);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const active = facts.filter((fact) => isActiveFact(fact, nowSec));
+      const expired = facts.filter((fact) => fact.expiresAt != null && fact.expiresAt > 0 && fact.expiresAt <= nowSec);
+      const superseded = facts.filter(
+        (fact) => (fact.supersededAt != null && fact.supersededAt > 0) || fact.supersededBy != null,
+      );
+      const byCategory = new Map<string, number>();
+      const byDecay = new Map<string, number>();
+      for (const fact of active) {
+        byCategory.set(fact.category, (byCategory.get(fact.category) ?? 0) + 1);
+        byDecay.set(fact.decayClass, (byDecay.get(fact.decayClass) ?? 0) + 1);
+      }
+      return {
+        totalFacts: facts.length,
+        activeFactsCount: active.length,
+        expiredFactsCount: expired.length,
+        supersededFactsCount: superseded.length,
+        factsByCategory: [...byCategory].map(([category, count]) => ({ category, count })),
+        factsByDecayClass: [...byDecay].map(([decayClass, count]) => ({ decayClass, count })),
+        totalEpisodes: 0,
+        totalLinks: 0,
+        databaseSizeBytes: 0,
+        oldestFactDate: facts.length ? Math.min(...facts.map((fact) => fact.createdAt)) : null,
+        newestFactDate: facts.length ? Math.max(...facts.map((fact) => fact.createdAt)) : null,
+      };
+    },
+  },
 
-			return filtered.slice(offset, offset + limit).map(r => ({
-				fact: r.fact,
-				score: r.score,
-				matchType: r.backend || "hybrid",
-				snippet: r.fact.text.substring(0, 200),
-			}));
-		},
+  Mutation: {
+    createFact: (_parent, args, context) => {
+      const input = asRecord(asRecord(args).input);
+      const fact = context.factsDb.store(createStoreInput(input));
+      return fact;
+    },
 
-		// Semantic search only
-		semanticSearch: async (_parent, args: { query: string; limit?: number; scope?: string }, context) => {
-			if (!context.vectorDb) {
-				return [];
-			}
+    updateFact: (_parent, args, context) => {
+      const input = asRecord(asRecord(args).input);
+      const id = asString(input.id);
+      if (!id) throw new Error("Missing fact id");
+      const existing = context.factsDb.getById(id);
+      if (!existing) throw new Error(`Fact not found: ${id}`);
+      const updated = context.factsDb.store({
+        text: asString(input.text) ?? existing.text,
+        category: asString(input.category) ?? existing.category,
+        importance: asNumber(input.importance) ?? existing.importance,
+        confidence: asNumber(input.confidence) ?? existing.confidence,
+        decayClass: existing.decayClass,
+        source: existing.source,
+        tags: asStringArray(input.tags) ?? existing.tags ?? [],
+        entity: existing.entity,
+        key: existing.key,
+        value: existing.value,
+        scope: existing.scope,
+        scopeTarget: existing.scopeTarget ?? null,
+        expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
+      });
+      context.factsDb.supersede(existing.id, updated.id);
+      return updated;
+    },
 
-			const { query, limit = 20, scope } = args;
+    deleteFact: (_parent, args, context) => {
+      const id = asString(asRecord(args).id);
+      return id ? context.factsDb.delete(id) : false;
+    },
 
-			// This would call the vector search service
-			// For now, delegate to hybrid search
-			const results = await searchHybrid({
-				query,
-				factsDb: context.factsDb,
-				vectorDb: context.vectorDb,
-				limit,
-				config: context.pluginContext.config,
-			});
+    supersedeFact: (_parent, args, context) => {
+      const input = asRecord(args);
+      const oldFactId = asString(input.oldFactId);
+      const newFactId = asString(input.newFactId);
+      if (!oldFactId || !newFactId) throw new Error("Missing fact id");
+      const newFact = context.factsDb.getById(newFactId);
+      if (!newFact) throw new Error("Fact not found");
+      context.factsDb.supersede(oldFactId, newFactId);
+      return newFact;
+    },
 
-			return results.map(r => ({
-				fact: r.fact,
-				score: r.score,
-				matchType: "semantic",
-				snippet: r.fact.text.substring(0, 200),
-			}));
-		},
+    createLink: (_parent, args, context) => {
+      const input = asRecord(args);
+      const sourceId = asString(input.sourceId);
+      const targetId = asString(input.targetId);
+      const linkType = asString(input.linkType) ?? "RELATED_TO";
+      const weight = asNumber(input.weight) ?? 1;
+      if (!sourceId || !targetId) throw new Error("Missing link endpoint");
+      if (!isMemoryLinkType(linkType)) throw new Error(`Unsupported link type: ${linkType}`);
+      const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
+      return getAllLinks(context.factsDb).find((link) => link.id === id);
+    },
+    deleteLink: (_parent, args, context) => {
+      const id = asString(asRecord(args).id);
+      if (!id) return false;
+      const result = context.factsDb.getRawDb().prepare("DELETE FROM memory_links WHERE id = ?").run(id);
+      return result.changes > 0;
+    },
 
-		// Entity lookup
-		entityFacts: async (_parent, args: { entity: string; key?: string }, context) => {
-			let facts = context.factsDb.getAllFacts();
-			facts = facts.filter(f => f.entity === args.entity);
-			if (args.key) {
-				facts = facts.filter(f => f.key === args.key);
-			}
-			return facts;
-		},
+    importFacts: (_parent, args, context) => {
+      const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
+      return facts.map((raw) => context.factsDb.store(createStoreInput(asRecord(raw))));
+    },
 
-		// Statistics
-		stats: async (_parent, _args, context) => {
-			const allFacts = context.factsDb.getAllFacts();
-			const now = Date.now();
+    pruneFacts: (_parent, args, context) => {
+      const input = asRecord(args);
+      const olderThan = asNumber(input.olderThan);
+      const category = asString(input.category);
+      const toDelete = allFacts(context.factsDb).filter(
+        (fact) => (olderThan === undefined || fact.createdAt < olderThan) && (!category || fact.category === category),
+      );
+      let deleted = 0;
+      for (const fact of toDelete) {
+        if (context.factsDb.delete(fact.id)) deleted++;
+      }
+      return deleted;
+    },
 
-			const activeFacts = allFacts.filter(f => !f.supersededBy && (!f.expiresAt || f.expiresAt > now));
-			const expiredFacts = allFacts.filter(f => f.expiresAt && f.expiresAt <= now);
-			const supersededFacts = allFacts.filter(f => f.supersededBy);
+    consolidateFacts: () => null,
+    recomputeEmbeddings: () => null,
+  },
 
-			// Count by category
-			const categoryMap = new Map<string, number>();
-			for (const fact of activeFacts) {
-				categoryMap.set(fact.category, (categoryMap.get(fact.category) || 0) + 1);
-			}
+  Fact: {
+    links: (parent, _args, context) => {
+      const fact = asRecord(parent) as Partial<MemoryEntry>;
+      return fact.id ? getAllLinks(context.factsDb).filter((link) => link.sourceId === fact.id) : [];
+    },
+    linkedFrom: (parent, _args, context) => {
+      const fact = asRecord(parent) as Partial<MemoryEntry>;
+      return fact.id ? getAllLinks(context.factsDb).filter((link) => link.targetId === fact.id) : [];
+    },
+    supersedes: (parent, _args, context) => {
+      const fact = asRecord(parent) as Partial<MemoryEntry>;
+      return fact.supersedesId ? context.factsDb.getById(fact.supersedesId) : null;
+    },
+    supersededByFact: (parent, _args, context) => {
+      const fact = asRecord(parent) as Partial<MemoryEntry>;
+      return fact.supersededBy ? context.factsDb.getById(fact.supersededBy) : null;
+    },
+  },
 
-			// Count by decay class
-			const decayMap = new Map<string, number>();
-			for (const fact of activeFacts) {
-				decayMap.set(fact.decayClass, (decayMap.get(fact.decayClass) || 0) + 1);
-			}
+  Link: {
+    source: (parent, _args, context) => {
+      const sourceId = asString(asRecord(parent).sourceId);
+      return sourceId ? context.factsDb.getById(sourceId) : null;
+    },
+    target: (parent, _args, context) => {
+      const targetId = asString(asRecord(parent).targetId);
+      return targetId ? context.factsDb.getById(targetId) : null;
+    },
+  },
 
-			return {
-				totalFacts: allFacts.length,
-				activeFactsCount: activeFacts.length,
-				expiredFactsCount: expiredFacts.length,
-				supersededFactsCount: supersededFacts.length,
-				factsByCategory: Array.from(categoryMap.entries()).map(([category, count]) => ({
-					category,
-					count,
-				})),
-				factsByDecayClass: Array.from(decayMap.entries()).map(([decayClass, count]) => ({
-					decayClass,
-					count,
-				})),
-				totalEpisodes: 0, // TODO: Add episode tracking
-				totalLinks: 0, // TODO: Add link counting
-				databaseSizeBytes: 0, // TODO: Get actual DB size
-				oldestFactDate: allFacts.length > 0 ? Math.min(...allFacts.map(f => f.createdAt)) : null,
-				newestFactDate: allFacts.length > 0 ? Math.max(...allFacts.map(f => f.createdAt)) : null,
-			};
-		},
-
-		// Graph visualization
-		graph: async (_parent, args: { filter?: {
-			categories?: string[];
-			decayClasses?: string[];
-			minImportance?: number;
-			linkTypes?: string[];
-			maxDepth?: number;
-			startNodeIds?: string[];
-			scope?: string;
-		}}, context) => {
-			const { filter = {} } = args;
-			let facts = context.factsDb.getAllFacts();
-
-			// Apply filters
-			if (filter.categories) {
-				facts = facts.filter(f => filter.categories?.includes(f.category));
-			}
-			if (filter.decayClasses) {
-				facts = facts.filter(f => filter.decayClasses?.includes(f.decayClass));
-			}
-			if (filter.minImportance !== undefined) {
-				facts = facts.filter(f => f.importance >= filter.minImportance!);
-			}
-			if (filter.scope) {
-				facts = facts.filter(f => f.scope === filter.scope);
-			}
-
-			// Build nodes
-			const nodes = facts.map(f => ({
-				id: f.id,
-				label: f.text.substring(0, 50) + (f.text.length > 50 ? "..." : ""),
-				category: f.category,
-				importance: f.importance,
-				confidence: f.confidence,
-				decayClass: f.decayClass,
-				factCount: 1,
-			}));
-
-			// Build edges from supersession relationships
-			const edges = facts
-				.filter(f => f.supersededBy)
-				.map(f => ({
-					source: f.id,
-					target: f.supersededBy!,
-					linkType: "supersedes",
-					weight: 1.0,
-				}));
-
-			return { nodes, edges };
-		},
-
-		// Links
-		links: async (_parent, args: { sourceId?: string; targetId?: string; linkType?: string }, _context) => {
-			// TODO: Implement link storage and retrieval
-			return [];
-		},
-
-		relatedFacts: async (_parent, args: { factId: string; maxDepth?: number; linkTypes?: string[] }, _context) => {
-			// TODO: Implement graph traversal
-			return [];
-		},
-	},
-
-	Mutation: {
-		// Create a new fact
-		createFact: async (_parent, args: { input: {
-			text: string;
-			category?: string;
-			importance?: number;
-			confidence?: number;
-			decayClass?: string;
-			source?: string;
-			tags?: string[];
-			entity?: string;
-			key?: string;
-			value?: string;
-			scope?: string;
-			scopeTarget?: string;
-			expiresAt?: number;
-		}}, context) => {
-			const { input } = args;
-
-			const fact = {
-				id: crypto.randomUUID(),
-				text: input.text,
-				category: input.category || "other",
-				importance: input.importance ?? 0.5,
-				confidence: input.confidence ?? 1.0,
-				decayClass: input.decayClass || "episodic",
-				source: input.source,
-				tags: input.tags || [],
-				entity: input.entity,
-				key: input.key,
-				value: input.value,
-				scope: input.scope,
-				scopeTarget: input.scopeTarget,
-				createdAt: Date.now(),
-				expiresAt: input.expiresAt,
-			};
-
-			await context.factsDb.store(fact);
-			return fact;
-		},
-
-		// Update an existing fact
-		updateFact: async (_parent, args: { input: {
-			id: string;
-			text?: string;
-			category?: string;
-			importance?: number;
-			confidence?: number;
-			tags?: string[];
-			expiresAt?: number;
-		}}, context) => {
-			const { input } = args;
-			const existing = context.factsDb.getFactById(input.id);
-
-			if (!existing) {
-				throw new Error(`Fact not found: ${input.id}`);
-			}
-
-			const updated = {
-				...existing,
-				...(input.text !== undefined && { text: input.text }),
-				...(input.category !== undefined && { category: input.category }),
-				...(input.importance !== undefined && { importance: input.importance }),
-				...(input.confidence !== undefined && { confidence: input.confidence }),
-				...(input.tags !== undefined && { tags: input.tags }),
-				...(input.expiresAt !== undefined && { expiresAt: input.expiresAt }),
-				updatedAt: Date.now(),
-			};
-
-			await context.factsDb.store(updated);
-			return updated;
-		},
-
-		// Delete a fact
-		deleteFact: async (_parent, args: { id: string }, context) => {
-			const fact = context.factsDb.getFactById(args.id);
-			if (!fact) {
-				return false;
-			}
-			context.factsDb.deleteFact(args.id);
-			return true;
-		},
-
-		// Supersede an old fact with a new one
-		supersedeFact: async (_parent, args: { oldFactId: string; newFactId: string }, context) => {
-			const oldFact = context.factsDb.getFactById(args.oldFactId);
-			const newFact = context.factsDb.getFactById(args.newFactId);
-
-			if (!oldFact || !newFact) {
-				throw new Error("Fact not found");
-			}
-
-			const updated = {
-				...oldFact,
-				supersededBy: args.newFactId,
-				updatedAt: Date.now(),
-			};
-
-			await context.factsDb.store(updated);
-			return newFact;
-		},
-
-		// Import multiple facts
-		importFacts: async (_parent, args: { facts: Array<{
-			text: string;
-			category?: string;
-			importance?: number;
-			[key: string]: unknown;
-		}>}, context) => {
-			const created = [];
-
-			for (const input of args.facts) {
-				const fact = {
-					id: crypto.randomUUID(),
-					text: input.text,
-					category: input.category || "other",
-					importance: input.importance ?? 0.5,
-					confidence: 1.0,
-					decayClass: "episodic",
-					tags: [],
-					createdAt: Date.now(),
-				};
-
-				await context.factsDb.store(fact);
-				created.push(fact);
-			}
-
-			return created;
-		},
-
-		// Prune old facts
-		pruneFacts: async (_parent, args: { olderThan?: number; category?: string }, context) => {
-			const facts = context.factsDb.getAllFacts();
-			let toDelete = facts;
-
-			if (args.olderThan) {
-				toDelete = toDelete.filter(f => f.createdAt < args.olderThan!);
-			}
-			if (args.category) {
-				toDelete = toDelete.filter(f => f.category === args.category);
-			}
-
-			for (const fact of toDelete) {
-				context.factsDb.deleteFact(fact.id);
-			}
-
-			return toDelete.length;
-		},
-	},
-
-	// Field resolvers for Fact type
-	Fact: {
-		links: async (parent: { id: string }, _args, _context) => {
-			// TODO: Get outgoing links
-			return [];
-		},
-		linkedFrom: async (parent: { id: string }, _args, _context) => {
-			// TODO: Get incoming links
-			return [];
-		},
-		supersedes: async (parent: { supersededBy?: string }, _args, context) => {
-			if (!parent.supersededBy) return null;
-			return context.factsDb.getFactById(parent.supersededBy) || null;
-		},
-		supersededByFact: async (parent: { id: string }, _args, context) => {
-			const facts = context.factsDb.getAllFacts();
-			return facts.find(f => f.supersededBy === parent.id) || null;
-		},
-	},
-
-	// Field resolvers for Link type
-	Link: {
-		source: async (parent: { sourceId: string }, _args, context) => {
-			return context.factsDb.getFactById(parent.sourceId);
-		},
-		target: async (parent: { targetId: string }, _args, context) => {
-			return context.factsDb.getFactById(parent.targetId);
-		},
-	},
-
-	// Field resolvers for Episode type
-	Episode: {
-		facts: async (parent: { id: string }, _args, _context) => {
-			// TODO: Implement episode-fact relationships
-			return [];
-		},
-	},
+  Episode: {
+    facts: () => [],
+  },
 };

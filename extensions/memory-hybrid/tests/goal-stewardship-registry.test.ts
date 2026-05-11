@@ -222,6 +222,14 @@ describe("goal registry", () => {
     await expect(readGoal(dir, "broken")).rejects.toThrow(/corrupt or unreadable/i);
   });
 
+  it("listGoals skips corrupt goal JSON and continues processing healthy goals", async () => {
+    dir = await makeTempDir();
+    const healthy = await createGoal(dir, { label: "healthy", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+    const listed = await listGoals(dir);
+    expect(listed.map((g) => g.id)).toEqual([healthy.id]);
+  });
+
   it("readGoalByLabel prefers active over terminal when labels collide", async () => {
     dir = await makeTempDir();
     const g1 = await createGoal(dir, { label: "pref", description: "d", acceptanceCriteria: ["c"] }, defaults);

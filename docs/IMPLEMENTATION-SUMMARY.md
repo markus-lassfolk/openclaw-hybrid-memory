@@ -521,10 +521,10 @@ console.log(`Loaded ${plugins.length} plugins`);
 
 ## Conclusion
 
-All three features (#3, #5, #6) are now fully implemented and operational:
+The first enterprise-growth foundations for features (#3, #5, #6) are implemented, with some advanced APIs intentionally conservative until their backing services mature:
 
-- **#3 Graph Explorer:** Accessible at `/graph` with full GraphQL backend
-- **#5 Collaboration:** Complete service ready for API integration
-- **#6 Plugin System:** Fully functional with loader, CLI, and documentation
+- **#3 Graph Explorer:** Accessible at `/graph`, with GraphQL coverage for facts, search, stats, graph data, and link CRUD.
+- **#5 Collaboration:** Service scaffold and persistence layer are present; external API integration remains incremental.
+- **#6 Plugin System:** Loader, CLI, and documentation are present, with dynamic plugin discovery supported for direct and npm-installed plugins.
 
-The implementations follow existing code patterns, are TypeScript-strict compliant, and integrate cleanly with the current architecture. All features can be deployed incrementally without breaking changes.
+The implementations follow existing code patterns, are TypeScript-strict compliant, and integrate cleanly with the current architecture. Remaining advanced GraphQL and compression capabilities should be described as roadmap work rather than complete production features.

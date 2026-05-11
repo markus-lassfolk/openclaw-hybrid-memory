@@ -148,6 +148,12 @@ interface DashboardContext {
   resolvedLancePath: string;
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory") */
   gitRepo?: string;
+  /** Optional plugin config exposed to GraphQL context. */
+  cfg?: unknown;
+  /** Optional embedding service exposed to GraphQL context. */
+  embeddings?: unknown;
+  /** Optional embedding registry exposed to GraphQL context. */
+  embeddingRegistry?: unknown;
   /** Optional CostTracker instance — delegates cost stats to the established abstraction. */
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   /** Optional logger for structured logging of server errors */
@@ -1514,8 +1520,16 @@ export interface DashboardServer {
 
 export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
   const html = getDashboardHtml();
+  const { createGraphQLServer } = await import("./graphql-server.js");
+  const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
+    config: ctx.cfg,
+    factsDb: ctx.factsDb,
+    vectorDb: ctx.vectorDb,
+    embeddings: ctx.embeddings,
+    embeddingRegistry: ctx.embeddingRegistry,
+  });
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     const url = req.url ?? "/";
     let pathname: string;
     let searchParams: URLSearchParams;
@@ -2036,33 +2050,31 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       });
       res.end(graphExplorerHTML);
     } else if (pathname === "/graphql" && req.method === "POST") {
-      // Handle GraphQL API requests
-      const { createGraphQLServer } = await import("./graphql-server.js");
-      const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
-        config: ctx.cfg,
-        factsDb: ctx.factsDb,
-        vectorDb: ctx.vectorDb,
-        embeddings: ctx.embeddings,
-        embeddingRegistry: ctx.embeddingRegistry,
-      } as any);
+      // Handle GraphQL API requests using the shared Yoga server created at dashboard startup.
+      try {
+        const graphQlBody = await readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES);
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(req.headers)) {
+          if (typeof value === "string") headers.set(name, value);
+          else if (Array.isArray(value)) headers.set(name, value.join(", "));
+        }
+        const response = await yoga.fetch(req.url || "", {
+          method: req.method || "POST",
+          headers,
+          body: JSON.stringify(graphQlBody),
+        });
 
-      // Handle GraphQL request
-      const response = await yoga.fetch(req.url || "", {
-        method: req.method || "POST",
-        headers: req.headers as any,
-        body: await new Promise<string>((resolve) => {
-          let body = "";
-          req.on("data", (chunk) => {
-            body += chunk;
-          });
-          req.on("end", () => {
-            resolve(body);
-          });
-        }),
-      });
-
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.end(await response.text());
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(await response.text());
+      } catch (err) {
+        if (err instanceof Error && err.message === "Request body too large") {
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+          return;
+        }
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "InvalidGraphQLRequest" }));
+      }
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");

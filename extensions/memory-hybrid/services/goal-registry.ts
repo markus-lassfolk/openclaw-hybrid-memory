@@ -187,8 +187,12 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
   const out: Goal[] = [];
   for (const f of files) {
     if (!f.endsWith(".json") || f === INDEX_FILENAME || f === "_stewardship_rr.json") continue;
-    const g = await readGoal(goalsDir, f.replace(/\.json$/, ""));
-    if (g) out.push(g);
+    try {
+      const g = await readGoal(goalsDir, f.replace(/\.json$/, ""));
+      if (g) out.push(g);
+    } catch {
+      // Keep registry scans isolated: one corrupt goal file must not abort all goal processing.
+    }
   }
   return out;
 }

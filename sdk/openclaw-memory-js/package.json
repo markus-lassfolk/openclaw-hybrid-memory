@@ -49,8 +49,7 @@
   },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory/tree/main/sdk/openclaw-memory-js#readme",
   "dependencies": {
-    "graphql": "^16.9.0",
-    "graphql-request": "^7.1.2"
+    "graphql": "^16.9.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

@@ -8,8 +8,6 @@ export interface MemoryClientConfig {
 	baseUrl?: string;
 	/** GraphQL endpoint path (default: /plugins/memory/graphql) */
 	graphqlPath?: string;
-	/** REST API endpoint path (default: /plugins/memory-public) */
-	restPath?: string;
 	/** API key for authentication (if required) */
 	apiKey?: string;
 	/** Request timeout in milliseconds */
@@ -127,14 +125,12 @@ export interface GraphFilterInput {
 export class MemoryClient {
 	private baseUrl: string;
 	private graphqlPath: string;
-	private restPath: string;
 	private apiKey?: string;
 	private timeout: number;
 
 	constructor(config: MemoryClientConfig = {}) {
 		this.baseUrl = config.baseUrl || "http://localhost:7777";
 		this.graphqlPath = config.graphqlPath || "/plugins/memory/graphql";
-		this.restPath = config.restPath || "/plugins/memory-public";
 		this.apiKey = config.apiKey;
 		this.timeout = config.timeout || 30000;
 	}
