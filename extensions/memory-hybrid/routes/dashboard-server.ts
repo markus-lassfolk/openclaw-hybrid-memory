@@ -1515,6 +1515,15 @@ export interface DashboardServer {
 export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
   const html = getDashboardHtml();
 
+  const { createGraphQLServer } = await import("./graphql-server.js");
+  const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
+    config: ctx.cfg,
+    factsDb: ctx.factsDb,
+    vectorDb: ctx.vectorDb,
+    embeddings: ctx.embeddings,
+    embeddingRegistry: ctx.embeddingRegistry,
+  } as any);
+
   const server = createServer(async (req, res) => {
     const url = req.url ?? "/";
     let pathname: string;
@@ -2036,16 +2045,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       });
       res.end(graphExplorerHTML);
     } else if (pathname === "/graphql" && req.method === "POST") {
-      // Handle GraphQL API requests
-      const { createGraphQLServer } = await import("./graphql-server.js");
-      const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
-        config: ctx.cfg,
-        factsDb: ctx.factsDb,
-        vectorDb: ctx.vectorDb,
-        embeddings: ctx.embeddings,
-        embeddingRegistry: ctx.embeddingRegistry,
-      } as any);
-
       try {
         const graphQlBody = await readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES);
         const response = await yoga.fetch(req.url || "", {

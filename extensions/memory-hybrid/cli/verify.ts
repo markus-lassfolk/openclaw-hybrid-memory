@@ -210,8 +210,8 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
             0,
             Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
           );
-          const applyFixes = opts.fix === true;
-          const dryRunInstall = !applyFixes;
+          const applyFixes = opts.fix === true && opts.dryRun !== true;
+          const dryRunInstall = opts.dryRun === true || !applyFixes;
           const sink = { log: (s: string) => console.log(s), error: (s: string) => console.error(s) };
 
           console.log("🩺 Hybrid Memory Doctor");
