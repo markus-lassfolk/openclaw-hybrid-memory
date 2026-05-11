@@ -1,7 +1,7 @@
 import type { VectorDB } from "../backends/vector-db.js";
 
 export async function deleteVectorsForFactIds(
-  vectorDb: Pick<VectorDB, "delete"> & Partial<Pick<VectorDB, "deleteMany">>,
+  vectorDb: Pick<VectorDB, "delete"> & Partial<Pick<VectorDB, "deleteMany" | "isLanceDbAvailable">>,
   factIds: readonly string[],
   options: {
     operation: string;
@@ -10,10 +10,16 @@ export async function deleteVectorsForFactIds(
 ): Promise<{ attempted: number; deleted: number; failed: number }> {
   const uniqueIds = [...new Set(factIds.filter((id) => typeof id === "string" && id.length > 0))];
   if (uniqueIds.length === 0) return { attempted: 0, deleted: 0, failed: 0 };
+  if (typeof vectorDb.isLanceDbAvailable === "function" && !vectorDb.isLanceDbAvailable()) {
+    return { attempted: 0, deleted: 0, failed: 0 };
+  }
 
   if (typeof vectorDb.deleteMany === "function") {
     try {
       const deleted = await vectorDb.deleteMany(uniqueIds);
+      if (deleted === 0 && typeof vectorDb.isLanceDbAvailable === "function" && !vectorDb.isLanceDbAvailable()) {
+        return { attempted: 0, deleted: 0, failed: 0 };
+      }
       return {
         attempted: uniqueIds.length,
         deleted,

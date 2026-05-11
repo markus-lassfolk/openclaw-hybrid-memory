@@ -17,6 +17,9 @@ function extractFactIds(rows: Array<{ id: string }>): string[] {
   return rows.map((row) => row.id);
 }
 
+const SQLITE_MAX_BIND_VARS = 999;
+const LINK_DELETE_BATCH_SIZE = Math.max(1, Math.floor(SQLITE_MAX_BIND_VARS / 2));
+
 function batchedInClauseBinds(ids: readonly string[], batchSize = 500): string[][] {
   const batches: string[][] = [];
   for (let i = 0; i < ids.length; i += batchSize) {
@@ -27,7 +30,7 @@ function batchedInClauseBinds(ids: readonly string[], batchSize = 500): string[]
 
 function deleteLinksForFactIds(db: DatabaseSync, factIds: readonly string[]): void {
   if (factIds.length === 0) return;
-  for (const batch of batchedInClauseBinds(factIds)) {
+  for (const batch of batchedInClauseBinds(factIds, LINK_DELETE_BATCH_SIZE)) {
     const placeholders = batch.map(() => "?").join(",");
     db.prepare(
       `DELETE FROM memory_links
@@ -320,12 +323,11 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
     }
   }
 
-  hotDesired
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      if (b.importance !== a.importance) return b.importance - a.importance;
-      return b.lastAccess - a.lastAccess;
-    });
+  hotDesired.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (b.importance !== a.importance) return b.importance - a.importance;
+    return b.lastAccess - a.lastAccess;
+  });
   const keepHot = new Set<string>();
   let hotTokens = 0;
   for (const candidate of hotDesired) {

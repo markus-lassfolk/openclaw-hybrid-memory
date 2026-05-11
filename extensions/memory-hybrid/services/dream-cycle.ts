@@ -138,6 +138,12 @@ export type EpisodicConsolidationEventTypeFilter = {
   deny?: string[];
 };
 
+function isVectorBackendAvailable(vectorDb: Pick<VectorDB, "isLanceDbAvailable"> | unknown): boolean {
+  const candidate = vectorDb as { isLanceDbAvailable?: () => boolean };
+  if (typeof candidate.isLanceDbAvailable !== "function") return true;
+  return candidate.isLanceDbAvailable();
+}
+
 function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): Set<string> {
   const s = new Set<string>(DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY);
   for (const x of filter?.deny ?? []) {
@@ -703,11 +709,13 @@ export async function runDreamCycle(
         );
       }
     }
-    const vectorlessAfterReconcile = factsDb.countVectorlessActiveFacts();
-    if (vectorlessAfterReconcile > 0) {
-      logger.warn(
-        `memory-hybrid: dream-cycle — detected ${vectorlessAfterReconcile} active SQLite fact(s) without vectors after reconciliation; run 'hybrid-mem reembed-vectorless --apply' to restore semantic recall coverage`,
-      );
+    if (isVectorBackendAvailable(vectorDb)) {
+      const vectorlessAfterReconcile = factsDb.countVectorlessActiveFacts();
+      if (vectorlessAfterReconcile > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — detected ${vectorlessAfterReconcile} active SQLite fact(s) without vectors after reconciliation; run 'hybrid-mem reembed-vectorless --apply' to restore semantic recall coverage`,
+        );
+      }
     }
   } catch (err) {
     logger.warn(`memory-hybrid: dream-cycle — vector reconciliation failed: ${err}`);

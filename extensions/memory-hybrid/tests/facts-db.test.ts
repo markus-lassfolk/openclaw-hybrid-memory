@@ -1586,13 +1586,21 @@ describe("FactsDB.pruneExpired", () => {
       decayClass: "permanent",
     });
 
-    (db as unknown as { liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } } })
-      .liveDb.prepare(
+    (
+      db as unknown as {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } };
+      }
+    ).liveDb
+      .prepare(
         "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES ('l1', ?, ?, 'RELATED_TO', 1.0, strftime('%s','now'))",
       )
       .run(expired.id, survivor.id);
-    (db as unknown as { liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } } })
-      .liveDb.prepare(
+    (
+      db as unknown as {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } };
+      }
+    ).liveDb
+      .prepare(
         "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES ('l2', ?, ?, 'DERIVED_FROM', 1.0, strftime('%s','now'))",
       )
       .run(survivor.id, expired.id);
@@ -1601,9 +1609,9 @@ describe("FactsDB.pruneExpired", () => {
     expect(details.factsPruned).toBe(1);
     expect(details.deletedFactIds).toEqual([expired.id]);
 
-    const linksLeft = (
-      db as unknown as { liveDb: { prepare: (sql: string) => { get: () => { c: number } } } }
-    ).liveDb.prepare("SELECT COUNT(*) AS c FROM memory_links").get().c;
+    const linksLeft = (db as unknown as { liveDb: { prepare: (sql: string) => { get: () => { c: number } } } }).liveDb
+      .prepare("SELECT COUNT(*) AS c FROM memory_links")
+      .get().c;
     expect(linksLeft).toBe(0);
   });
 });
@@ -1744,8 +1752,12 @@ describe("FactsDB.decayConfidence", () => {
       source: "test",
       decayClass: "permanent",
     });
-    (db as unknown as { liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } } })
-      .liveDb.prepare(
+    (
+      db as unknown as {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } };
+      }
+    ).liveDb
+      .prepare(
         "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES ('l3', ?, ?, 'RELATED_TO', 1.0, ?)",
       )
       .run(survivor.id, low.id, nowSec);
@@ -1753,9 +1765,9 @@ describe("FactsDB.decayConfidence", () => {
     const details = db.decayConfidenceWithDetails(nowSec);
     expect(details.factsDecayed).toBe(0);
     expect(details.deletedFactIds).toContain(low.id);
-    const linksLeft = (
-      db as unknown as { liveDb: { prepare: (sql: string) => { get: () => { c: number } } } }
-    ).liveDb.prepare("SELECT COUNT(*) AS c FROM memory_links").get().c;
+    const linksLeft = (db as unknown as { liveDb: { prepare: (sql: string) => { get: () => { c: number } } } }).liveDb
+      .prepare("SELECT COUNT(*) AS c FROM memory_links")
+      .get().c;
     expect(linksLeft).toBe(0);
   });
 });
