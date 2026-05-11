@@ -61,6 +61,7 @@ const _optimizeFailuresByPath = new Map<string, number>();
 /** Module-level guard for temporary auto-optimize suppression during bulk writes keyed by dbPath. */
 const _autoOptimizePauseByPath = new Map<string, number>();
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
+const VECTOR_BULK_DELETE_IN_CHUNK = 200;
 
 type VectorDBLogger = { warn: (msg: string) => void };
 
@@ -1666,13 +1667,14 @@ export class VectorDB {
           );
         }
       }
+      const literals = normalized.map((id) => this.toSafeUuidLiteral(id));
       let deleted = 0;
-      for (const id of normalized) {
-        const idLiteral = this.toSafeUuidLiteral(id);
+      for (let i = 0; i < literals.length; i += VECTOR_BULK_DELETE_IN_CHUNK) {
+        const chunk = literals.slice(i, i + VECTOR_BULK_DELETE_IN_CHUNK);
         await this.withRetryableWriteConflictRetry("LanceDB bulk delete", async () => {
-          await this.getTable().delete(`id = ${idLiteral}`);
+          await this.getTable().delete(`id IN (${chunk.join(", ")})`);
         });
-        deleted++;
+        deleted += chunk.length;
       }
       return deleted;
     } catch (err) {

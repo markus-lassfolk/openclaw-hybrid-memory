@@ -822,17 +822,42 @@ describe("runDreamCycle", () => {
     };
     const warn = vi.fn();
 
-    await runDreamCycle(
-      factsDb,
-      vectorDb as never,
-      embeddingsStub,
-      openaiStub,
-      null,
-      baseConfig,
-      { info: () => undefined, warn },
-    );
+    await runDreamCycle(factsDb, vectorDb as never, embeddingsStub, openaiStub, null, baseConfig, {
+      info: () => undefined,
+      warn,
+    });
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("active SQLite fact(s) without vectors"));
+  });
+
+  it("skips vectorless warning in FTS-only fallback mode", async () => {
+    factsDb.store({
+      text: "Vectorless fallback fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const vectorDb = {
+      getAllIds: vi.fn().mockResolvedValue([]),
+      delete: vi.fn().mockResolvedValue(true),
+      isLanceDbAvailable: vi.fn().mockReturnValue(false),
+    };
+    const warn = vi.fn();
+
+    await runDreamCycle(factsDb, vectorDb as never, embeddingsStub, openaiStub, null, baseConfig, {
+      info: () => undefined,
+      warn,
+    });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("active SQLite fact(s) without vectors"));
   });
 });
 
