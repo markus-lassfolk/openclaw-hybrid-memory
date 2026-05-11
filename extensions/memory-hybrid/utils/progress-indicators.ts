@@ -82,7 +82,7 @@ export class ProgressBar {
       if (milestone > this.lastLoggedPercent) {
         this.lastLoggedPercent = milestone;
         const statusStr = status ? ` - ${status}` : "";
-        console.log(`${this.message}: ${milestone}% (${current}/${this.total})${statusStr}`);
+        process.stdout.write(`${this.message}: ${milestone}% (${current}/${this.total})${statusStr}\n`);
       }
       return;
     }

@@ -25,12 +25,27 @@ export interface UserFriendlyContext {
   ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
+function hasCommand(mem: Chainable, name: string): boolean {
+  const maybeCommands = (mem as { commands?: Array<{ name?: string | (() => string); _name?: string }> }).commands;
+  return Array.isArray(maybeCommands)
+    ? maybeCommands.some(
+        (command) =>
+          command._name === name ||
+          (typeof command.name === "function" ? command.name() === name : command.name === name),
+      )
+    : false;
+}
+
+function registerIfMissing(mem: Chainable, name: string, register: () => void): void {
+  if (hasCommand(mem, name)) return;
+  register();
+}
+
 export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyContext): void {
-  // Register each user-friendly command
-  registerSetupCommand(mem, ctx.cfg, ctx.runConfigSet);
-  registerProvidersCommand(mem, ctx.cfg);
-  registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
-  registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb);
-  registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
-  registerExamplesCommand(mem);
+  registerIfMissing(mem, "setup", () => registerSetupCommand(mem, ctx.cfg, ctx.runConfigSet));
+  registerIfMissing(mem, "providers", () => registerProvidersCommand(mem, ctx.cfg));
+  registerIfMissing(mem, "doctor", () => registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb));
+  registerIfMissing(mem, "health", () => registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb));
+  registerIfMissing(mem, "demo", () => registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
+  registerIfMissing(mem, "examples", () => registerExamplesCommand(mem));
 }

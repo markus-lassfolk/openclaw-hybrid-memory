@@ -9,6 +9,7 @@ import { detectAvailableProviders, formatProviderStatus } from "../utils/provide
 
 class FakeCommand {
   children: FakeCommand[] = [];
+  commands: FakeCommand[] = this.children;
   name: string;
   handler: ((...args: unknown[]) => unknown) | null = null;
   options: Array<{ flags: string; defaultValue?: unknown }> = [];
@@ -117,8 +118,10 @@ describe("provider detection helpers", () => {
   it("includes google as configured when a google key is present", async () => {
     const providers = await detectAvailableProviders(undefined, "google-key");
     const google = providers.find((provider) => provider.provider === "google");
-    expect(google?.available).toBe(true);
-    expect(formatProviderStatus(google!)).toContain("GOOGLE");
+    expect(google).toBeDefined();
+    if (!google) throw new Error("google provider missing");
+    expect(google.available).toBe(true);
+    expect(formatProviderStatus(google)).toContain("GOOGLE");
   });
 });
 
@@ -135,13 +138,13 @@ describe("progress and error helpers", () => {
   });
 
   it("non-TTY progress logs each 10% milestone once", () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const bar = new ProgressBar("work", 100);
     bar.update(10);
     bar.update(10);
     bar.update(15);
     bar.update(20);
-    expect(log.mock.calls.map((call) => String(call[0]))).toEqual(["work: 10% (10/100)", "work: 20% (20/100)"]);
+    expect(write.mock.calls.map((call) => String(call[0]))).toEqual(["work: 10% (10/100)\n", "work: 20% (20/100)\n"]);
   });
 
   it("maps timeout errors to HM_E008", () => {
