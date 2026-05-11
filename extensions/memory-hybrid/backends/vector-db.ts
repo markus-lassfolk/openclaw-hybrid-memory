@@ -3,10 +3,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { rename } from "node:fs/promises";
-import { isAbsolute, resolve as pathResolve } from "node:path";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve as pathResolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -30,6 +30,23 @@ import { withTimeout } from "../utils/timeout.js";
 
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
+
+function resolvedPathOrFallback(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return pathResolve(path);
+  }
+}
+
+function isPathInsideDir(rootDirAbs: string, candidatePath: string): boolean {
+  const rootResolved = resolvedPathOrFallback(rootDirAbs);
+  const candidateAbs = isAbsolute(candidatePath) ? candidatePath : pathResolve(candidatePath);
+  const candidateResolved = resolvedPathOrFallback(candidateAbs);
+  const rel = relative(rootResolved, candidateResolved);
+  if (rel === "") return true;
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
 
 /**
  * Module-level optimization guard keyed by dbPath.
@@ -401,7 +418,7 @@ export class VectorDB {
     // absolute path. If dbPath somehow ends up relative (e.g. due to a config serialization
     // edge case or WSL path mapping), resolve it relative to process.cwd() so the binding
     // can still locate the data directory.
-    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const resolvedPath = resolvedPathOrFallback(this.dbPath);
 
     try {
       this.db = await lancedb.connect(resolvedPath);
@@ -766,6 +783,13 @@ export class VectorDB {
     // Use the same path resolution as doInitialize() to ensure filesystem operations
     // target the same directory where LanceDB stored the data (issue #768).
     const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
+    const dangerousPathsEnabled = process.env.OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS === "1";
+    const openclawMemoryDir = join(homedir(), ".openclaw", "memory");
+    if (!dangerousPathsEnabled && !isPathInsideDir(openclawMemoryDir, resolvedPath)) {
+      throw new Error(
+        `Refusing to remove LanceDB table directories outside ${openclawMemoryDir}. Set OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS=1 to override.`,
+      );
+    }
 
     const memoriesDir = join(resolvedPath, `${LANCE_TABLE}.lance`);
     const cacheDir = join(resolvedPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);

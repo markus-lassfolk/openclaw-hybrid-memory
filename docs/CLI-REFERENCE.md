@@ -135,7 +135,7 @@ Export all memory (facts + procedures) to a vanilla OpenClaw–compatible layout
 | `--output <path>` | Output directory (created if missing). **Required.** |
 | `--include-credentials` | Include credential pointer facts (default: exclude). Never exports actual secrets. |
 | `--sources <sources>` | Filter by fact source: comma-separated (e.g. `conversation,cli,distillation,ingest,reflection`). Omit for all. |
-| `--mode replace` | Clear output directory first, then write (default). |
+| `--mode replace` | Replace the output directory (atomic). For safety, refuses when `--output` contains unexpected files; use an empty directory or a prior export directory. |
 | `--mode additive` | Add/overwrite; do not clear. Existing files overwritten on conflict. |
 
 **Layout:** `MEMORY.md`, `manifest.json`, `memory/<category>/<tag>/<slug>-<id>.md` (one file per fact). Re-import via `openclaw hybrid-mem backfill --workspace <path>` or copy into a vanilla workspace.
@@ -266,6 +266,8 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 ## Uninstall
 
 `openclaw hybrid-mem uninstall` reverts to the default OpenClaw memory manager (memory-core). Safe: your data is kept unless you pass `--clean-all` (removes SQLite and LanceDB; irreversible). Use `--leave-config` to skip modifying `openclaw.json`. Full guide: [UNINSTALL.md](UNINSTALL.md).
+
+Safety note: `--clean-all` only deletes storage under `~/.openclaw/memory/` by default. To allow deleting custom-configured paths, set `OPENCLAW_HYBRID_MEM_UNINSTALL_DANGEROUS=1`.
 
 ---
 

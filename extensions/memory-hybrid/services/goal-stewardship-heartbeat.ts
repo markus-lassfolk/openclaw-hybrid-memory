@@ -171,7 +171,14 @@ Use goal_assess after reviewing. Use goal_complete only when criteria are verifi
 export function buildStewardshipBlockCompact(goal: Goal, maxChars: number, allActive: number): string {
   const full = buildStewardshipBlockFull(goal, allActive);
   if (full.length <= maxChars) return full;
-  return `${full.slice(0, Math.max(200, maxChars - 80))}\n…(truncated)\n</goal-stewardship>`;
+  const minSafe = 64;
+  if (maxChars <= minSafe) return "";
+  const closingTag = "\n</goal-stewardship>";
+  const body = full.endsWith(closingTag) ? full.slice(0, -closingTag.length) : full;
+  const suffix = "\n…(truncated)\n</goal-stewardship>";
+  const available = maxChars - suffix.length;
+  if (available <= 0) return "";
+  return `${body.slice(0, available)}${suffix}`;
 }
 
 export interface BuildMultiGoalStewardshipResult {
@@ -202,26 +209,35 @@ export async function buildMultiGoalStewardshipPrepend(
 
   const weights = selected.map((g) => priorityWeight(g.priority, cfg.attentionWeights));
   const sumW = weights.reduce((a, b) => a + b, 0) || 1;
-  const cap = cfg.multiGoalMaxChars;
-  const budgets = weights.map((w) => Math.max(400, Math.floor((w / sumW) * cap)));
+  const cap = Math.max(0, cfg.multiGoalMaxChars);
+  const budgets = weights.map((w) => Math.max(1, Math.floor((w / sumW) * cap)));
 
   const blocks: string[] = [];
+  const includedGoals: Goal[] = [];
   let suggestHeavy = opts.triageHeavy;
   const totalActive = allGoals.length;
+  let remaining = cap;
   for (let i = 0; i < selected.length; i++) {
+    if (remaining <= 0) break;
     const g = selected[i];
     if (!g) continue;
-    const budget = budgets[i] ?? 2000;
+    const budget = Math.max(1, Math.min(remaining, budgets[i] ?? remaining));
     const block = buildStewardshipBlockCompact(g, budget, totalActive);
+    if (!block) continue;
+    if (block.length > remaining) break;
     blocks.push(block);
+    includedGoals.push(g);
+    remaining -= block.length;
     if (heuristicNeedsHeavyAttention([g])) suggestHeavy = true;
   }
 
+  if (blocks.length === 0) return null;
+
   let header = "<goal-stewardship-bundle>\n";
-  header += `<!-- goals: ${selected.length} | cap: ${cap} chars | rr: ${rr.offset}->${nextOff} -->\n`;
+  header += `<!-- goals: ${includedGoals.length} | cap: ${cap} chars | rr: ${rr.offset}->${nextOff} -->\n`;
   if (opts.suggestHeavyDirective && suggestHeavy) {
     header += "<!-- triage: prefer heavy-tier model or deliberate tool use for substantive dispatch this turn -->\n";
   }
   const prepend = `${header}${blocks.join("\n\n")}\n</goal-stewardship-bundle>\n\n`;
-  return { prepend, goalsIncluded: selected, suggestHeavy };
+  return { prepend, goalsIncluded: includedGoals, suggestHeavy };
 }
