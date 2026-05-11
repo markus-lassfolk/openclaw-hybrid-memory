@@ -59,8 +59,8 @@ export async function promptHiddenWithInterface(
     rl.question(question, (answer) => {
       restore();
       process.stdout.write("\n");
-      rl.close();
       resolve(answer.trim());
+      rl.close();
     });
     mutableOutput.muted = true;
   });

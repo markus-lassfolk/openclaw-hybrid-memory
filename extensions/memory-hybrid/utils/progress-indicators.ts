@@ -106,11 +106,12 @@ export class ProgressBar {
     process.stdout.write(`\r${this.message}: [${bar}] ${percent}% (${current}/${this.total})${etaStr}${statusStr}`);
   }
 
-  complete(_message?: string): void {
+  complete(message?: string): void {
     if (process.stdout.isTTY) {
       process.stdout.write("\r\x1b[K"); // Clear line
     }
-    const _elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    process.stdout.write(`✓ ${message || this.message} - ${this.total} items in ${elapsed}s\n`);
   }
 }
 
