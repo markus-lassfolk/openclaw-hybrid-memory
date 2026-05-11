@@ -948,11 +948,19 @@ export class VectorDB {
       movedMainToOld = true;
     }
 
-    // Rename shadow → main (with explicit rollback on failure)
+    // Rename shadow → main (with explicit rollback on failure).
+    // Always reconnect in finally so this.db is never left permanently null,
+    // even when the rename or rollback throws.
+    let swapSucceeded = false;
     try {
       await this.renamePath(shadowTableDir, mainTableDir);
+      swapSucceeded = true;
     } catch (swapErr) {
-      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
+      // Attempt rollback: restore main from old backup when available.
+      // Only require that oldTableDir exists — do NOT gate on shadowTableDir
+      // being present, because a partial cross-device copy may have consumed
+      // the shadow before the error was raised.
+      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
         try {
           await this.renamePath(oldTableDir, mainTableDir);
           this.logWarn(
@@ -971,17 +979,23 @@ export class VectorDB {
         this.logWarn(`memory-hybrid: shadow swap failed; shadow table preserved for inspection: ${shadowTableName}`);
       }
       throw swapErr;
+    } finally {
+      // Always attempt to reconnect so this.db is never left permanently null.
+      // On a failed swap the reconnect will attach to whichever directory is
+      // currently in place (old main after rollback, or an empty main dir).
+      this.lanceInitFailed = false;
+      this.lanceDbAvailable = true;
+      this.closed = false;
+      this.initPromise = null;
+      try {
+        await this.ensureInitialized();
+      } catch (initErr) {
+        this.logWarn(`memory-hybrid: shadow swap reconnect failed (DB may be degraded): ${initErr}`);
+      }
     }
 
-    // Reconnect to new main table
-    this.lanceInitFailed = false;
-    this.lanceDbAvailable = true;
-    this.closed = false;
-    this.initPromise = null;
-    await this.ensureInitialized();
-
     // Remove old table directory (best effort, non-fatal)
-    if (existsSync(oldTableDir)) {
+    if (swapSucceeded && existsSync(oldTableDir)) {
       try {
         rmSync(oldTableDir, { recursive: true, force: true });
         this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);

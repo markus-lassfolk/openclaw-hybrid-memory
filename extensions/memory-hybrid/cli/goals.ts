@@ -63,6 +63,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
             2,
           ),
         );
+        process.exit(0);
         return;
       }
       for (const line of formatGoalStewardshipConfigLines(gs)) {
@@ -80,6 +81,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       const rows = opts.all ? goals : goals.filter((x) => !["completed", "failed", "abandoned"].includes(x.status));
       if (opts.json) {
         console.log(JSON.stringify(rows, null, 2));
+        process.exit(0);
         return;
       }
       if (rows.length === 0) {
@@ -118,6 +120,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
               2,
             ),
           );
+          process.exit(0);
           return;
         }
         console.log(`Goal stewardship: ${gs.enabled ? "enabled" : "disabled"}`);
@@ -147,6 +150,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       }
       if (opts.json) {
         console.log(JSON.stringify(goal, null, 2));
+        process.exit(0);
         return;
       }
       const ago = (iso: string | null) => {
@@ -249,6 +253,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       } else {
         console.log(JSON.stringify({ ...base, goals }, null, 2));
       }
+      process.exit(0);
       return;
     });
 

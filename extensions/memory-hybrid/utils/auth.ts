@@ -8,9 +8,23 @@
  * Returns true when the auth order for a provider includes at least one OAuth/token profile
  * (i.e. not just the plain API-key profile). Used to decide whether to route through the gateway.
  * API-key-only profiles end with ':api' or ':default' (e.g. 'anthropic:api', 'google:default').
+ *
+ * Comparison is case-insensitive to tolerate common capitalisation typos in operator config
+ * (e.g. 'openai:Api' or 'openai:DEFAULT') without silently routing through the gateway.
  */
-export function hasOAuthProfiles(order: string[] | undefined, provider: string): boolean {
+export function hasOAuthProfiles(
+  order: string[] | undefined,
+  provider: string,
+  opts?: { onUnknownProfile?: (profile: string) => void },
+): boolean {
   if (!order || order.length === 0) return false;
-  const apiOnlyPatterns = [`${provider}:api`, `${provider}:default`];
-  return order.some((p) => !apiOnlyPatterns.includes(p));
+  const apiOnlyPatternsLower = [`${provider}:api`, `${provider}:default`];
+  return order.some((p) => {
+    const pLower = p.toLowerCase();
+    const isApiOnly = apiOnlyPatternsLower.includes(pLower);
+    if (!isApiOnly && opts?.onUnknownProfile) {
+      opts.onUnknownProfile(p);
+    }
+    return !isApiOnly;
+  });
 }

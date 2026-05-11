@@ -179,9 +179,17 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       }
       const mergedText = rawMergedText.slice(0, 4000);
       const mergedHash = normalizedHash(mergedText);
-      ctx.db
-        .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
-        .run(mergedText, mergedHash, existing.id);
+      // Wrap the merge UPDATE in a transaction so it is atomic and can be
+      // rolled back on failure.  Without this, an interrupted write leaves
+      // SQLite with new merged text while LanceDB still encodes the pre-merge
+      // content (split-brain).  createTransaction() uses a SAVEPOINT when a
+      // transaction is already active, so nesting is safe.
+      const mergeTx = createTransaction(ctx.db, () => {
+        ctx.db
+          .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
+          .run(mergedText, mergedHash, existing.id);
+      });
+      mergeTx();
       // Signal callers to re-embed only when the persisted text changed. This handles edge
       // cases where append text is truncated and the final merged text remains unchanged.
       const embeddingStale = mergedText !== existing.text;

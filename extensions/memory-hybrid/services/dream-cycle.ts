@@ -589,6 +589,37 @@ export async function runDreamCycle(
       });
     }
   }
+
+  // ── Step 1a-pre: Reclassify decay classes BEFORE taking the decay snapshot ────
+  // Running reclassification first ensures that listFactIdsToBeDeletedByDecayRun()
+  // reflects up-to-date decay_class values.  Previously, reclassification ran in
+  // Step 1c (after the decay snapshot), which caused newly re-tiered facts to be
+  // missed by the per-batch vector cleanup, leaving orphaned LanceDB vectors until
+  // the full Step 1e reconciliation caught them on a later cycle.
+  let decayReclassified = 0;
+  if (config.reclassifyDecayOnCycle !== false) {
+    step("decay reclassify (source/importance/recall)");
+    try {
+      const report = factsDb.reclassifyDecayClasses({
+        apply: true,
+        inactiveDays: config.reclassifyInactiveDays ?? 90,
+        promoteRecallCount: config.reclassifyPromoteRecallCount ?? 3,
+      });
+      decayReclassified = report.changed;
+      if (decayReclassified > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — decay reclassify: ${decayReclassified} facts re-tiered (scanned ${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-reclassify-decay",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
     try {
       const decayNowSec = Math.floor(Date.now() / 1000);
@@ -626,34 +657,6 @@ export async function runDreamCycle(
       operation: "dream-cycle-prune-orphaned-links",
       subsystem: "facts-db",
     });
-  }
-
-  // ── Step 1c: Decay reclassify (#1189) ────────────────────────────────────
-  // Source-/importance-aware reclassifier. Without this nightly hook, the
-  // reclassifier only ran when an operator manually invoked the CLI, which
-  // meant `decay_class=stable` accumulated and prune found nothing.
-  let decayReclassified = 0;
-  if (config.reclassifyDecayOnCycle !== false) {
-    step("decay reclassify (source/importance/recall)");
-    try {
-      const report = factsDb.reclassifyDecayClasses({
-        apply: true,
-        inactiveDays: config.reclassifyInactiveDays ?? 90,
-        promoteRecallCount: config.reclassifyPromoteRecallCount ?? 3,
-      });
-      decayReclassified = report.changed;
-      if (decayReclassified > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle — decay reclassify: ${decayReclassified} facts re-tiered (scanned ${report.scanned}, stable+permanent ${(report.stablePermanentRatioBefore * 100).toFixed(1)}% → ${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
-        );
-      }
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-reclassify-decay",
-        subsystem: "facts-db",
-      });
-    }
   }
 
   // ── Step 1d: Refresh denormalized graph degrees (#1192) ──────────────────
