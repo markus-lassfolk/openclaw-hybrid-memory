@@ -107,7 +107,7 @@ jobs:
                   head_sha: pr.head.sha,
                   per_page: 100,
                 },
-                (response) => response.data.workflow_runs,
+                (response) => response.data,
               );
 
               const completedPullRequestCiRuns = ciRuns
