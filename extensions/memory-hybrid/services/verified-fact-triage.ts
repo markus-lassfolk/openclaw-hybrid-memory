@@ -292,11 +292,11 @@ export function listVerifiedFactTriageItems(
          AND (
            ? IS NULL
            OR COALESCE(vf.next_verification, vf.verified_at) > ?
-           OR (COALESCE(vf.next_verification, vf.verified_at) = ? AND vf.id > ?)
+           OR (COALESCE(vf.next_verification, vf.verified_at) = ? AND (? IS NULL OR vf.id > ?))
          )
        ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.id ASC`,
     )
-    .all(nowIso, cutoffIso, cursor, cursor, cursor, cursorItemId) as unknown as VerifiedFactRow[];
+    .all(nowIso, cutoffIso, cursor, cursor, cursor, cursorItemId, cursorItemId) as unknown as VerifiedFactRow[];
 
   return latestRows
     .filter(isVerifiedRowChecksumValid)
@@ -1209,7 +1209,7 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
   const scopeParams: SQLInputValue[] = fact.scopeTarget != null ? [fact.scope, fact.scopeTarget] : [fact.scope];
   const rows = db
     .prepare(
-      `SELECT f.*, vf.id AS verified_fact_id
+      `SELECT f.*, vf.id AS verified_fact_id, vf.verified_at AS verified_at, vf.version AS verified_version
        FROM facts f
        JOIN verified_facts vf ON vf.fact_id = f.id
        JOIN (
