@@ -26,9 +26,11 @@ export type VerifyContext = {
 export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void {
   const { runVerify, runInstall, runResetAuthBackoff } = ctx;
 
-  mem
+  const verifyCommand = mem
     .command("verify")
-    .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)")
+    .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)");
+  if (verifyCommand.alias) verifyCommand.alias("preflight");
+  verifyCommand
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
     .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
@@ -105,71 +107,83 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       }),
     );
 
-  mem
+  const installCommand = mem
     .command("install")
     .description(
       "Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.",
-    )
-    .option("--dry-run", "Print what would be merged without writing")
-    .action(
-      withExit(async (opts: { dryRun?: boolean }) => {
-        let result: InstallCliResult;
-        try {
-          result = await runInstall({ dryRun: !!opts.dryRun });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "install",
-          });
-          throw err;
-        }
-        if (!result.ok) {
-          console.error(result.error);
-          process.exitCode = 1;
-          return;
-        }
-        if (result.dryRun) {
-          console.log(`Would merge into ${result.configPath}:`);
-          console.log(result.configJson ?? "");
-          if (result.workspaceSkillPath) {
-            console.log(
-              `Would write workspace skill (highest precedence): ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (${result.workspaceSkillError})` : ""}`,
-            );
-          }
-          if (result.workspaceToolsMdPath) {
-            console.log(
-              `Would update TOOLS.md managed block: ${result.workspaceToolsMdPath}${result.workspaceToolsMdError ? ` (${result.workspaceToolsMdError})` : ""}`,
-            );
-          }
-          return;
-        }
-        console.log(`Config written: ${result.configPath}`);
+    );
+  if (installCommand.alias) installCommand.alias("setup");
+  installCommand.option("--dry-run", "Print what would be merged without writing").action(
+    withExit(async (opts: { dryRun?: boolean }) => {
+      let result: InstallCliResult;
+      try {
+        result = await runInstall({ dryRun: !!opts.dryRun });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "install",
+        });
+        throw err;
+      }
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      if (result.dryRun) {
+        console.log(`Dry run for ${result.configPath}`);
+        console.log(`Recommended embedding: ${result.detectedEmbedding.provider}/${result.detectedEmbedding.model}`);
+        console.log(`Reason: ${result.detectedEmbedding.reason}`);
+        console.log("");
+        console.log("Planned");
+        for (const item of result.completed) console.log(`  - ${item}`);
         if (result.workspaceSkillPath) {
           console.log(
-            `Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (warning: ${result.workspaceSkillError})` : ""}`,
+            `  - Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (${result.workspaceSkillError})` : ""}`,
           );
         }
         if (result.workspaceToolsMdPath) {
-          const toolsSuffix = result.workspaceToolsMdError
-            ? ` (warning: ${result.workspaceToolsMdError})`
-            : result.workspaceToolsMdUpdated === true
-              ? " (updated)"
-              : result.workspaceToolsMdUpdated === false
-                ? " (unchanged)"
-                : "";
-          console.log(`TOOLS.md: ${result.workspaceToolsMdPath}${toolsSuffix}`);
+          console.log(
+            `  - TOOLS.md managed block: ${result.workspaceToolsMdPath}${result.workspaceToolsMdError ? ` (${result.workspaceToolsMdError})` : ""}`,
+          );
         }
+        console.log("");
+        console.log("Still manual");
+        for (const item of result.remaining) console.log(`  - ${item}`);
+        console.log("");
+        console.log(result.configJson ?? "");
+        return;
+      }
+      console.log(`Setup complete for ${result.pluginId}`);
+      console.log(`Config: ${result.configPath}`);
+      console.log(`Workspace: ${result.workspaceRoot}`);
+      console.log(`Mission Control: ${result.dashboardUrl}`);
+      console.log(
+        `Embedding: ${result.detectedEmbedding.provider}/${result.detectedEmbedding.model} (${result.detectedEmbedding.source})`,
+      );
+      console.log("");
+      console.log("Done");
+      for (const item of result.completed) console.log(`  - ${item}`);
+      if (result.workspaceSkillPath) {
         console.log(
-          `Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`,
+          `  - Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (warning: ${result.workspaceSkillError})` : ""}`,
         );
-        console.log("\nNext steps:");
-        console.log(
-          `  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`,
-        );
-        console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
-        console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
-      }),
-    );
+      }
+      if (result.workspaceToolsMdPath) {
+        const toolsSuffix = result.workspaceToolsMdError
+          ? ` (warning: ${result.workspaceToolsMdError})`
+          : result.workspaceToolsMdUpdated === true
+            ? " (updated)"
+            : result.workspaceToolsMdUpdated === false
+              ? " (unchanged)"
+              : "";
+        console.log(`  - TOOLS.md: ${result.workspaceToolsMdPath}${toolsSuffix}`);
+      }
+      console.log("");
+      console.log("Left");
+      for (const item of result.remaining) console.log(`  - ${item}`);
+    }),
+  );
 
   mem
     .command("doctor")

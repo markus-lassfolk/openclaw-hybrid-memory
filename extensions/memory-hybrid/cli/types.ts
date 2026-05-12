@@ -44,6 +44,19 @@ export type InstallCliResult =
       written: boolean;
       configJson?: string;
       pluginId: string;
+      workspaceRoot: string;
+      dashboardUrl: string;
+      detectedEmbedding: {
+        provider: "onnx" | "ollama" | "openai" | "google";
+        model: string;
+        source: string;
+        reason: string;
+        envKey?: string;
+      };
+      bootstrapDirectoriesCreated: number;
+      bootstrapFilesCreated: number;
+      completed: string[];
+      remaining: string[];
       /** Highest-precedence OpenClaw workspace skill path ({workspace}/skills/hybrid-memory/SKILL.md). */
       workspaceSkillPath?: string;
       workspaceSkillError?: string;

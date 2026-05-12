@@ -66,7 +66,7 @@ The fastest way to configure everything:
 openclaw hybrid-mem install
 ```
 
-This merges recommended defaults into `~/.openclaw/openclaw.json` - plugin config, memorySearch, compaction prompts, bootstrap limits, and a nightly distillation job. It preserves any existing API key.
+This merges recommended defaults into `~/.openclaw/openclaw.json`, pre-fills the safest detected embedding setup, creates the recommended workspace starter files/directories, refreshes the bundled skill + TOOLS.md block, and prints a done/left checklist. It preserves any existing API key.
 
 Then set your **embedding** config (required) and optionally **LLM** preferences:
 
@@ -84,15 +84,14 @@ For manual configuration and all options (including `llm` and legacy `distill`),
 
 ---
 
-## 3. Create workspace layout
+## 3. Confirm workspace layout
 
-Create the directory structure under your workspace (e.g. `~/.openclaw/workspace/`):
+`openclaw hybrid-mem install` now creates the recommended starter layout in your workspace when files/directories are missing:
 
-```bash
-mkdir -p memory/{people,projects,technical,companies,decisions,archive}
-```
+- `memory/{people,projects,technical,companies,decisions,archive}`
+- `AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `MEMORY.md`, `HEARTBEAT.md`, `IDENTITY.md`
 
-Create bootstrap files: `AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `MEMORY.md`, `HEARTBEAT.md`, `IDENTITY.md`. See [ARCHITECTURE.md](ARCHITECTURE.md) for what goes in each file and [MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md) for the Memory Protocol block to paste into `AGENTS.md`.
+If you prefer to create or replace them manually, see [ARCHITECTURE.md](ARCHITECTURE.md) for what goes in each file and [MEMORY-PROTOCOL.md](MEMORY-PROTOCOL.md) for the Memory Protocol block to paste into `AGENTS.md`.
 
 ---
 
@@ -107,6 +106,8 @@ Then verify everything is working:
 
 ```bash
 openclaw hybrid-mem verify
+openclaw hybrid-mem status
+openclaw hybrid-mem dashboard
 ```
 
 Verify now also reports effective compaction routing (`provider`, `model`, `reason`) and warns if compaction appears to use a stronger-than-mini model. `minimax/MiniMax-M2.7` is treated as safe and is not flagged.
@@ -163,6 +164,8 @@ Restart the gateway after backfill so memorySearch re-indexes.
 - [HOW-IT-WORKS.md](HOW-IT-WORKS.md) - What happens each turn (auto-recall, auto-capture, costs)
 - [EXAMPLES.md](EXAMPLES.md) - Real-world recipes and patterns
 - [FAQ.md](FAQ.md) - Common questions and quick answers
+- [TASKS.md](TASKS.md) - Task-based navigation (“I want to…”)
+- [COMMON-TASKS-CHEATSHEET.md](COMMON-TASKS-CHEATSHEET.md) - Copy/paste commands for the most common workflows
 - [CONFIGURATION.md](CONFIGURATION.md) - Full config reference
 - [FEATURES.md](FEATURES.md) - Categories, decay, tags, auto-classify
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands (including `enrich-entities` for contact/org NER backfill)

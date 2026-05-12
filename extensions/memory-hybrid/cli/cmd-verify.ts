@@ -71,8 +71,10 @@ import {
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
 import {
+  detectRecommendedEmbeddingSetup,
   ensureGoalStewardshipHeartbeatCronJob,
   ensureMaintenanceCronJobs,
+  getDashboardUrl,
   getPluginConfigFromFile,
   resolveOpenclawJsonPathForWorkspace,
 } from "./cmd-install.js";
@@ -188,9 +190,33 @@ export async function runVerifyForCli(
   /** False when probe vector length ≠ Lance expected dim or Lance schema invalid for vectors. */
   let embeddingAlignmentOk = true;
   const loadBlocking: string[] = [];
+  const extDir = findPluginRoot(import.meta.url);
   const defaultConfigPath = resolveOpenclawJsonPathForWorkspace();
   const openclawDir = dirname(defaultConfigPath);
   const openclawConfigRead = readOpenclawConfigRoot(defaultConfigPath);
+  const recommendedEmbedding = detectRecommendedEmbeddingSetup(
+    openclawConfigRead.root ?? {
+      plugins: {
+        entries: {
+          [PLUGIN_ID]: {
+            config: cfg,
+          },
+        },
+      },
+    },
+    extDir,
+  );
+  const dashboardUrl = getDashboardUrl(
+    openclawConfigRead.root ?? {
+      plugins: {
+        entries: {
+          [PLUGIN_ID]: {
+            config: cfg,
+          },
+        },
+      },
+    },
+  );
 
   if (openclawConfigRead.error) {
     warnings.push(
@@ -230,6 +256,9 @@ export async function runVerifyForCli(
       log(
         `${WARN} Embedding: missing or invalid — retrieval and indexing will not work. Set embedding.apiKey and embedding.model in plugin config.`,
       );
+      log(
+        `  Suggested first setup: openclaw hybrid-mem install (recommended embedding: ${recommendedEmbedding.provider}/${recommendedEmbedding.model} from ${recommendedEmbedding.source}).`,
+      );
     }
   }
 
@@ -258,7 +287,6 @@ export async function runVerifyForCli(
     }
   }
 
-  const extDir = findPluginRoot(import.meta.url);
   const isBindingsError = (msg: string) =>
     /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(
       msg,
@@ -2036,6 +2064,7 @@ export async function runVerifyForCli(
         "Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.",
       );
     }
+    log(`Mission Control: ${dashboardUrl} (run \`openclaw hybrid-mem status\` for a one-screen summary).`);
   } else {
     log("\n--- Issues ---");
     if (loadBlocking.length > 0) {
@@ -2052,6 +2081,10 @@ export async function runVerifyForCli(
     log(
       `\nEdit config: ${defaultConfigPath} (resolved via OPENCLAW_CONFIG/OPENCLAW_CONFIG_PATH/OPENCLAW_HOME). Restart gateway after changing plugin config.`,
     );
+    log(
+      `Suggested embedding path right now: ${recommendedEmbedding.provider}/${recommendedEmbedding.model} (${recommendedEmbedding.reason})`,
+    );
+    log(`Mission Control: ${dashboardUrl}`);
   }
 
   if (opts.fix) {

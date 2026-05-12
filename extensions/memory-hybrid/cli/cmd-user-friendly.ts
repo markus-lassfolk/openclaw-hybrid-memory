@@ -26,13 +26,22 @@ export interface UserFriendlyContext {
 }
 
 function hasCommand(mem: Chainable, name: string): boolean {
-  const maybeCommands = (mem as { commands?: Array<{ name?: string | (() => string); _name?: string }> }).commands;
+  const maybeCommands = (
+    mem as {
+      commands?: Array<{
+        name?: string | (() => string);
+        _name?: string;
+        aliases?: () => string[];
+        _aliases?: string[];
+      }>;
+    }
+  ).commands;
   return Array.isArray(maybeCommands)
-    ? maybeCommands.some(
-        (command) =>
-          command._name === name ||
-          (typeof command.name === "function" ? command.name() === name : command.name === name),
-      )
+    ? maybeCommands.some((command) => {
+        const commandName = typeof command.name === "function" ? command.name() : command.name;
+        const aliases = typeof command.aliases === "function" ? command.aliases() : (command._aliases ?? []);
+        return command._name === name || commandName === name || aliases.includes(name);
+      })
     : false;
 }
 
