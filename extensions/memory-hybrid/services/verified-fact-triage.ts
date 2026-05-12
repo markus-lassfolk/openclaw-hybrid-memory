@@ -383,59 +383,62 @@ export async function runVerifiedFactTriageWithAdapter(
           ttlSeconds: opts.lockTtlSeconds ?? 60,
           mode,
         }) ?? false;
-      if (locked) {
-        const liveItem =
-          loadLiveVerifiedFactTriageItem(db, item.id, {
-            nowMs: opts.nowMs,
-            reverificationDays: opts.reverificationDays,
-            policy,
-          }) ?? null;
-        const actualInputHash = liveItem?.inputHash ?? "missing";
-        if (liveItem && actualInputHash === item.inputHash) {
-          const liveContext: PendingDecisionContext = {
-            ...context,
-            inputHash: liveItem.inputHash,
-          };
-          decision = await adapter.decide(liveItem, liveContext);
-          const { inserted } = durableStore?.recordDecision(decision) ?? {
-            inserted: false,
-          };
-          if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
-            durableStore?.advanceCursorIfSafe(decision, liveItem.visibleAfterCursor ?? liveItem.id);
+      try {
+        if (locked) {
+          const liveItem =
+            loadLiveVerifiedFactTriageItem(db, item.id, {
+              nowMs: opts.nowMs,
+              reverificationDays: opts.reverificationDays,
+              policy,
+            }) ?? null;
+          const actualInputHash = liveItem?.inputHash ?? "missing";
+          if (liveItem && actualInputHash === item.inputHash) {
+            const liveContext: PendingDecisionContext = {
+              ...context,
+              inputHash: liveItem.inputHash,
+            };
+            decision = await adapter.decide(liveItem, liveContext);
+            const { inserted } = durableStore?.recordDecision(decision) ?? {
+              inserted: false,
+            };
+            if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
+              durableStore?.advanceCursorIfSafe(decision, liveItem.visibleAfterCursor ?? liveItem.id);
+            }
+            applied = inserted && (decision.action === "classified" || decision.action === "reported");
+          } else {
+            const staleDecision = validationFailureDecision(
+              item,
+              context,
+              "input-hash-mismatch",
+              liveItem
+                ? "Verified fact/fact row changed between classification and apply."
+                : "Verified fact no longer matches due queue before apply.",
+            );
+            durableStore?.recordDecision(staleDecision);
+            decision = staleDecision;
           }
-          applied = inserted && (decision.action === "classified" || decision.action === "reported");
-        } else {
+        } else if (durableStore) {
           const staleDecision = validationFailureDecision(
             item,
             context,
-            "input-hash-mismatch",
-            liveItem
-              ? "Verified fact/fact row changed between classification and apply."
-              : "Verified fact no longer matches due queue before apply.",
+            "lock-conflict",
+            "Verified fact no longer matches due queue before apply.",
           );
-          durableStore?.recordDecision(staleDecision);
+          durableStore.recordDecision(staleDecision);
           decision = staleDecision;
+        } else {
+          decision = await adapter.decide(item, context);
         }
-      } else if (durableStore) {
-        const staleDecision = validationFailureDecision(
-          item,
-          context,
-          "lock-conflict",
-          "Verified fact no longer matches due queue before apply.",
-        );
-        durableStore.recordDecision(staleDecision);
-        decision = staleDecision;
-      } else {
-        decision = await adapter.decide(item, context);
-      }
-      if (locked) {
-        durableStore?.releaseLock({
-          queue: "verified",
-          itemId: item.id,
-          inputHash: item.inputHash,
-          owner: actor.id,
-          mode,
-        });
+      } finally {
+        if (locked) {
+          durableStore?.releaseLock({
+            queue: "verified",
+            itemId: item.id,
+            inputHash: item.inputHash,
+            owner: actor.id,
+            mode,
+          });
+        }
       }
     } else {
       decision = await adapter.decide(item, context);
