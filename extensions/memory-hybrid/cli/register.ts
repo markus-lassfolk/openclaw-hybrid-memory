@@ -470,7 +470,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       factsDb: ctx.factsDb,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       resolvePath: ctx.resolvePath,
-      reverificationDays: ctx.cfg.verification.reverificationDays,
+      reverificationDays: ctx.cfg.verification?.reverificationDays,
     });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

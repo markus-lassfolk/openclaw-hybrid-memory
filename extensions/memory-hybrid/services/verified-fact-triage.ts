@@ -1122,6 +1122,11 @@ function findConcreteContradictingEvidence(db: DatabaseSync, fact: TriageFactSna
       `SELECT f.*, vf.id AS verified_fact_id
        FROM facts f
        JOIN verified_facts vf ON vf.fact_id = f.id
+       JOIN (
+         SELECT fact_id, MAX(version) AS max_version
+         FROM verified_facts
+         GROUP BY fact_id
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.id != ?
          AND lower(f.entity) = lower(?)
          AND lower(f.key) = lower(?)
@@ -1162,6 +1167,11 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
       `SELECT f.*, vf.id AS verified_fact_id
        FROM facts f
        JOIN verified_facts vf ON vf.fact_id = f.id
+       JOIN (
+         SELECT fact_id, MAX(version) AS max_version
+         FROM verified_facts
+         GROUP BY fact_id
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.id != ? AND f.superseded_at IS NULL ${scopeClause}
        ORDER BY f.created_at DESC
        LIMIT 50`,
