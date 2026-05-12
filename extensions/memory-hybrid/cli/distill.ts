@@ -288,7 +288,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--max <n>", "Maximum procedures to inspect", "10")
     .option(
       "--policy <policy>",
-      "Promotion policy: draft-only, manual, auto-safe (default: draft-only; with --apply and no --policy, defaults to auto-safe)",
+      "Promotion policy: draft-only, manual, auto-safe (default: dry-run draft-only; non-dry-run/apply defaults to auto-safe for legacy maintenance callers)",
     )
     .option("--json", "Emit structured JSON summary")
     .option("-v, --verbose", "Log each decision and generated skill path")
@@ -312,12 +312,11 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             return;
           }
           const apply = opts.apply === true;
-          const policy = opts.policy ?? (apply ? "auto-safe" : undefined);
           const result = await runGenerateAutoSkills({
             dryRun: !apply || opts.dryRun === true,
             apply,
             max,
-            policy,
+            policy: opts.policy,
             json: opts.json,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
           });

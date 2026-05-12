@@ -102,7 +102,7 @@ export function generateAutoSkills(
 ): GenerateAutoSkillsResult {
   const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
   const dryRun = options.dryRun ?? options.apply !== true;
-  const policy = parseProcedurePromotionPolicy(options.policy);
+  const policy = parseProcedurePromotionPolicy(resolveBatchPromotionPolicy(options.policy, dryRun));
   const basePath = resolveSkillsPath(options.skillsAutoPath);
   const runId = `procedure-promotion-${Date.now()}`;
   const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
@@ -260,7 +260,9 @@ export function generateAutoSkillForProcedure(
   logger: { info: (s: string) => void; warn: (s: string) => void },
 ): GenerateAutoSkillResult {
   const dryRun = options.dryRun ?? options.apply !== true;
-  const policy: ProcedurePromotionPolicy = parseProcedurePromotionPolicy(options.policy);
+  const policy: ProcedurePromotionPolicy = parseProcedurePromotionPolicy(
+    resolveBatchPromotionPolicy(options.policy, dryRun),
+  );
   const proc = factsDb.getProcedureById(options.procedureId);
   if (!proc) return { ok: false, reason: "not-found" };
 
@@ -341,6 +343,13 @@ export function generateAutoSkillForProcedure(
     dryRun: false,
     enabled: false,
   };
+}
+
+function resolveBatchPromotionPolicy(policy: string | undefined, dryRun: boolean): string | undefined {
+  // Backward compatibility: older maintenance callers selected mutation with dryRun=false
+  // before the explicit --policy flag existed. Keep those non-dry-run calls drafting under
+  // auto-safe gates, while read-only/default invocations remain draft-only for review.
+  return policy ?? (dryRun ? undefined : "auto-safe");
 }
 
 function resolveSkillsPath(skillsAutoPath: string): string {

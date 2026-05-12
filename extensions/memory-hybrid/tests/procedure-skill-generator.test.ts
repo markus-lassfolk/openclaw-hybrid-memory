@@ -285,7 +285,7 @@ describe("generateAutoSkills", () => {
     expect(runIds.size).toBe(1);
   });
 
-  it("defaults --apply to draft-only instead of silently escalating to auto-safe", () => {
+  it("legacy non-dry-run apply defaults to auto-safe and writes draft artifacts", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate release health report",
       recipeJson: JSON.stringify([
@@ -318,6 +318,50 @@ describe("generateAutoSkills", () => {
     expect(result.summary).toMatchObject({
       candidates: 1,
       eligible: 1,
+      drafted: 1,
+      deferred: 0,
+    });
+    expect(result.decisions?.[0]).toMatchObject({
+      action: "promoted-to-draft",
+      humanReviewRequired: false,
+    });
+    expect(existsSync(join(skillsDir, "validate-release-health-report", "SKILL.md"))).toBe(true);
+  });
+
+  it("explicit draft-only policy blocks non-dry-run batch writes", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate explicit draft policy report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "explicit-draft-policy-1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "draft-only",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.summary).toMatchObject({
+      candidates: 1,
+      eligible: 1,
       drafted: 0,
       deferred: 1,
     });
@@ -325,7 +369,7 @@ describe("generateAutoSkills", () => {
       action: "deferred-for-human",
       humanReviewRequired: true,
     });
-    expect(existsSync(join(skillsDir, "validate-release-health-report", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-explicit-draft-policy-report", "SKILL.md"))).toBe(false);
   });
 
   it("single procedure dry-run under default draft-only policy requires human approval and writes nothing", () => {
@@ -366,7 +410,7 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
   });
 
-  it("single procedure apply still requires auto-safe policy before writing under default draft-only policy", () => {
+  it("single procedure legacy non-dry-run apply defaults to auto-safe and writes draft artifacts", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single apply report",
       recipeJson: JSON.stringify([
@@ -398,10 +442,12 @@ describe("generateAutoSkills", () => {
     );
 
     expect(result).toMatchObject({
-      ok: false,
-      reason: "policy-blocked",
+      ok: true,
+      alreadyPromoted: false,
+      dryRun: false,
+      enabled: false,
     });
-    expect(existsSync(join(skillsDir, "validate-single-apply-report", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-single-apply-report", "SKILL.md"))).toBe(true);
   });
 
   it("does not count deferred procedures as generated dry-run paths", () => {

@@ -245,7 +245,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--apply", "Write draft/quarantined skill artifacts")
     .option(
       "--policy <policy>",
-      "Promotion policy: draft-only, manual, auto-safe (default: draft-only; with --apply and no --policy, defaults to auto-safe)",
+      "Promotion policy: draft-only, manual, auto-safe (default: dry-run draft-only; non-dry-run/apply defaults to auto-safe for legacy maintenance callers)",
     )
     .option("--json", "Emit JSON")
     .action(
@@ -261,7 +261,6 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           },
         ) => {
           const apply = opts?.apply === true;
-          const policy = opts?.policy ?? (apply ? "auto-safe" : undefined);
           const result = generateAutoSkillForProcedure(
             factsDb,
             {
@@ -271,7 +270,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               procedureId: id,
               dryRun: opts?.dryRun === true || !apply,
               apply,
-              policy,
+              policy: opts?.policy,
               requireValidation: opts?.force !== true,
             },
             { info: (s) => console.log(s), warn: (s) => console.warn(s) },
