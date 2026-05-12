@@ -275,6 +275,7 @@ export function listVerifiedFactTriageItems(
   ).toISOString();
   const policy = opts.policy ?? "classify";
   const cursor = opts.cursor?.cursor ?? null;
+  const cursorItemId = opts.cursor ? findVerifiedCursorItemId(db, opts.cursor.inputHash, policy) : null;
   const latestRows = db
     .prepare(
       `SELECT vf.*
@@ -286,15 +287,42 @@ export function listVerifiedFactTriageItems(
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
           OR vf.verified_at <= ?)
-         AND (? IS NULL OR COALESCE(vf.next_verification, vf.verified_at) > ?)
+         AND (
+           ? IS NULL
+           OR COALESCE(vf.next_verification, vf.verified_at) > ?
+           OR (COALESCE(vf.next_verification, vf.verified_at) = ? AND vf.id > ?)
+         )
        ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC, vf.id ASC`,
     )
-    .all(nowIso, cutoffIso, cursor, cursor) as unknown as VerifiedFactRow[];
+    .all(nowIso, cutoffIso, cursor, cursor, cursor, cursorItemId) as unknown as VerifiedFactRow[];
 
   return latestRows
     .filter(isVerifiedRowChecksumValid)
     .slice(0, opts.max ?? 100)
     .map((row) => triageItemFromRow(db, row, { nowIso, policy }));
+}
+
+function findVerifiedCursorItemId(db: DatabaseSync, inputHash: string, policy: VerifiedTriagePolicy): string | null {
+  const rows = db
+    .prepare(
+      `SELECT vf.*
+       FROM verified_facts vf
+       JOIN (
+         SELECT vf2.fact_id, MAX(vf2.version) AS max_version
+         FROM verified_facts vf2
+         GROUP BY vf2.fact_id
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version`,
+    )
+    .all() as unknown as VerifiedFactRow[];
+  for (const row of rows) {
+    if (!isVerifiedRowChecksumValid(row)) continue;
+    const item = triageItemFromRow(db, row, {
+      nowIso: row.next_verification ?? row.verified_at,
+      policy,
+    });
+    if (item.inputHash === inputHash) return row.id;
+  }
+  return null;
 }
 
 function isVerifiedRowChecksumValid(row: VerifiedFactRow): boolean {
@@ -405,7 +433,7 @@ export async function runVerifiedFactTriageWithAdapter(
             const { inserted } = durableStore?.recordDecision(decision) ?? {
               inserted: false,
             };
-            if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
+            if (decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
               durableStore?.advanceCursorIfSafe(decision, liveItem.visibleAfterCursor ?? liveItem.id);
             }
             applied = inserted && (decision.action === "classified" || decision.action === "reported");
