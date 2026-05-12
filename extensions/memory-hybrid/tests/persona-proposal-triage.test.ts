@@ -387,6 +387,58 @@ describe("persona proposal triage", () => {
     expect(second.decisions.map((d) => d.proposalId)).toEqual([late.id]);
   });
 
+  it("apply-mode cursor does not advance past a newer deferred proposal to an older rejected one", async () => {
+    const olderRejected = proposal({
+      title: "Older noisy proposal",
+      suggestedChange: "be better",
+      confidence: 0.9,
+    });
+    const newerDeferred = proposal({
+      targetFile: "SOUL.md",
+      title: "Newer identity change",
+      suggestedChange: "Change identity: become a playful fox assistant.",
+      confidence: 0.99,
+    });
+    const raw = new DatabaseSync(join(tmpDir, "proposals.db"));
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, olderRejected.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newerDeferred.id);
+    raw.close();
+    const stateDbPath = join(tmpDir, "pending-deferred-cursor.db");
+
+    const first = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath,
+      max: 2,
+    });
+
+    expect(first.decisions.map((d) => d.proposalId)).toEqual([newerDeferred.id, olderRejected.id]);
+    expect(first.decisions.find((d) => d.proposalId === newerDeferred.id)?.action).toBe("deferred-for-human");
+    expect(first.decisions.find((d) => d.proposalId === olderRejected.id)?.action).toBe("rejected");
+    expect(proposalsDb.get(newerDeferred.id)?.status).toBe("pending");
+    expect(proposalsDb.get(olderRejected.id)?.status).toBe("rejected");
+    const store = new PendingAutopilotStore(stateDbPath);
+    const cursor = store.getCursor("persona", "cautious");
+    store.close();
+    expect(cursor).toBeNull();
+
+    const second = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath,
+      max: 1,
+    });
+
+    expect(second.decisions.map((d) => d.proposalId)).toEqual([newerDeferred.id]);
+    expect(second.decisions[0]?.action).toBe("deferred-for-human");
+  });
+
   it("hash mismatch before apply aborts/revalidates", async () => {
     const stale = proposal({
       targetFile: "USER.md",

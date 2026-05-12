@@ -29,6 +29,7 @@ import {
   createPendingAutopilotRunId,
   createStableRunSummary,
   redactAutopilotValue,
+  shouldAdvancePendingCursor,
 } from "./pending-autopilot/index.js";
 
 export const PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION = "persona-proposal-triage-v1";
@@ -183,7 +184,8 @@ export async function runPersonaProposalTriage(
   const views: PersonaProposalDecisionView[] = [];
   const startedAt = Math.floor((opts.now ?? new Date()).getTime() / 1000);
   const runInputHash = computePendingInputHash({ command: "proposals triage", mode, policy, max, startedAt: 0 });
-  let maxCursorSeen: string | null = null;
+  let cursorAdvanceCandidate: { decision: PendingDecision; cursor: string } | null = null;
+  let cursorAdvanceBlocked = false;
 
   try {
     store?.createRun({
@@ -239,17 +241,16 @@ export async function runPersonaProposalTriage(
         store?.recordDecision(decision);
       }
       const itemCursor = item.visibleAfterCursor ?? item.id;
-      if (maxCursorSeen === null || comparePersonaCursor(itemCursor, maxCursorSeen) > 0) {
-        maxCursorSeen = itemCursor;
+      if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
+        cursorAdvanceCandidate = { decision, cursor: itemCursor };
+      } else {
+        cursorAdvanceBlocked = true;
       }
       decisions.push(decision);
       views.push(decisionToView(item, decision));
     }
-    if (policy !== "report-only" && maxCursorSeen !== null && pending.length > 0) {
-      const lastDecision = decisions[decisions.length - 1];
-      if (lastDecision) {
-        store?.advanceCursorIfSafe(lastDecision, maxCursorSeen);
-      }
+    if (policy !== "report-only" && cursorAdvanceCandidate !== null && pending.length > 0) {
+      store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);
     }
 
     const summary = createStableRunSummary({
