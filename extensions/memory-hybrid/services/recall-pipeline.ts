@@ -431,7 +431,6 @@ export async function runRecallPipelineQuery(
           directiveAbort.abort();
           reject(new Error(`${policy.mode} timed out after ${policy.vectorStepTimeoutMs}ms`));
         }, policy.vectorStepTimeoutMs);
-        timeoutId.unref?.();
       });
 
       const vectorRacePromise = Promise.race([vectorStepPromise, timeoutPromise])
