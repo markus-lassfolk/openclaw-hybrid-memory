@@ -154,6 +154,7 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     owner: string;
     mode: AutopilotMode;
   }): boolean {
+    assertKnownEnum("queue", input.queue);
     assertKnownEnum("mode", input.mode);
     if (input.mode === "dry-run") return false;
     const result = this.liveDb
@@ -170,6 +171,7 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     mode: AutopilotMode;
     mutate: () => void;
   }): boolean {
+    assertKnownEnum("queue", input.queue);
     assertKnownEnum("mode", input.mode);
     if (input.mode === "dry-run") return false;
     if (input.expectedInputHash !== input.actualInputHash) return false;

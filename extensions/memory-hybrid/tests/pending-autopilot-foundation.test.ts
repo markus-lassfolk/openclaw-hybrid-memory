@@ -155,9 +155,18 @@ describe("pending-autopilot durable state invariants", () => {
     expect(JSON.stringify(persisted)).not.toContain("ghp_123");
     expect(JSON.stringify(persisted)).not.toContain("Bearer abc");
     expect(JSON.stringify(persisted)).toContain("[REDACTED]");
-    expect(redactAutopilotValue({ password: "abc", url: "postgres://u:p@example/db" })).toEqual({
+    expect(
+      redactAutopilotValue({
+        password: "abc",
+        token: "github_pat_123456789abcdef",
+        url: "postgres://u:p@example/db",
+        key: "-----BEGIN RSA PRIVATE KEY-----\nabc123\n-----END RSA PRIVATE KEY-----",
+      }),
+    ).toEqual({
       password: "[REDACTED]",
+      token: "[REDACTED]",
       url: "[REDACTED]",
+      key: "[REDACTED]",
     });
   });
 
@@ -272,13 +281,19 @@ describe("pending-autopilot summaries and harness", () => {
           reasonCode: item.requiresHumanReview ? "human-review-required" : "policy-threshold-not-met",
         }),
     };
+    const payload = { title: "hello" };
     const item: PendingItem = {
       queue: "persona",
       id: "fixture-1",
-      inputHash: computePendingInputHash({ id: "fixture-1" }),
+      inputHash: computePendingInputHash({
+        queue: "persona",
+        id: "fixture-1",
+        payload,
+        policyVersion: "policy-v1",
+      }),
       policyVersion: "policy-v1",
       capabilityClasses: ["classify"],
-      payload: { title: "hello" },
+      payload,
       requiresHumanReview: true,
     };
     await expectStandaloneAndParentDecisionsEquivalent(adapter, [{ item, policyVersion: "policy-v1" }]);

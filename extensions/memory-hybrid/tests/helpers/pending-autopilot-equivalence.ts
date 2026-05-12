@@ -30,6 +30,7 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
       payload: fixture.item.payload,
       policyVersion: fixture.policyVersion,
     });
+    expect(fixture.item.inputHash).toBe(inputHash);
     const baseContext: PendingDecisionContext = {
       runId: "standalone",
       mode: "dry-run",

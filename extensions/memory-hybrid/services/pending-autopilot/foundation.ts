@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { redactAutopilotValue } from "./redaction.js";
-import type { PendingAutopilotRunSummary, PendingDecision, PendingQueue } from "./types.js";
-import { AUTOPILOT_ACTIONS, type AUTOPILOT_MODES, PENDING_QUEUES, assertKnownEnum } from "./types.js";
+import type { AutopilotMode, PendingAutopilotRunSummary, PendingDecision, PendingQueue } from "./types.js";
+import { AUTOPILOT_ACTIONS, PENDING_QUEUES, assertKnownEnum } from "./types.js";
 
 export const PENDING_AUTOPILOT_SCHEMA_VERSION = 1;
 
@@ -35,7 +35,7 @@ export function sanitizePendingDecision(decision: PendingDecision): PendingDecis
 
 export function createStableRunSummary(input: {
   runId: string;
-  mode: (typeof AUTOPILOT_MODES)[number];
+  mode: AutopilotMode;
   policyVersion: string;
   queues: PendingQueue[];
   startedAt: number;
