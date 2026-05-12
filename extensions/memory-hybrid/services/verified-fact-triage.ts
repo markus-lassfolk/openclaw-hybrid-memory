@@ -7,6 +7,7 @@ import {
   createPendingAutopilotRunId,
   createStableRunSummary,
   type PendingAutopilotStore,
+  type PendingAutopilotCursor,
   type AutopilotAction,
   type AutopilotReasonCode,
   type PendingDecision,
@@ -237,14 +238,16 @@ export function createVerifiedFactTriageAdapter(input: {
   policy?: VerifiedTriagePolicy;
 }): PendingQueueAdapter<VerifiedFactTriageItem> {
   const db = input.factsDb.getRawDb();
+  registerVerifiedChecksumFunction(db);
   return {
     queue: "verified",
-    listPending: () =>
+    listPending: (cursor) =>
       listVerifiedFactTriageItems(db, {
         max: input.max,
         nowMs: input.nowMs,
         reverificationDays: input.reverificationDays,
         policy: input.policy,
+        cursor,
       }),
     decide: (item, context) => decideVerifiedFactTriage(item, context, { db, nowMs: input.nowMs }),
     apply: (_decision, _item) => {
@@ -261,14 +264,17 @@ export function listVerifiedFactTriageItems(
     nowMs?: number;
     reverificationDays?: number;
     policy?: VerifiedTriagePolicy;
+    cursor?: PendingAutopilotCursor | null;
   } = {},
 ): VerifiedFactTriageItem[] {
+  registerVerifiedChecksumFunction(db);
   const nowMs = opts.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const cutoffIso = new Date(
     nowMs - (opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS) * 24 * 60 * 60 * 1000,
   ).toISOString();
   const policy = opts.policy ?? "classify";
+  const cursor = opts.cursor?.cursor ?? null;
   const latestRows = db
     .prepare(
       `SELECT vf.*
@@ -278,11 +284,12 @@ export function listVerifiedFactTriageItems(
          FROM verified_facts vf2
          GROUP BY vf2.fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
-       WHERE (vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
-          OR vf.verified_at <= ?
+       WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+          OR vf.verified_at <= ?)
+         AND (? IS NULL OR COALESCE(vf.next_verification, vf.verified_at) > ?)
        ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC`,
     )
-    .all(nowIso, cutoffIso) as unknown as VerifiedFactRow[];
+    .all(nowIso, cutoffIso, cursor, cursor) as unknown as VerifiedFactRow[];
 
   return latestRows
     .filter(isVerifiedRowChecksumValid)
@@ -332,7 +339,9 @@ export async function runVerifiedFactTriageWithAdapter(
   const store = opts.store ?? null;
   const runId = opts.runId ?? createPendingAutopilotRunId();
   const actor = opts.actor ?? { type: "agent", id: "verified-triage-cli" };
-  const items = await adapter.listPending(null);
+  const storedCursor =
+    mode === "apply" && policy !== "report-only" ? (store?.getCursor("verified", policy) ?? null) : null;
+  const items = await adapter.listPending(storedCursor);
   const runInputHash = computePendingInputHash({
     queue: "verified",
     itemIds: items.map((i) => i.id),
@@ -960,6 +969,7 @@ function loadLiveVerifiedFactTriageItem(
   itemId: string,
   opts: { nowMs?: number; reverificationDays?: number; policy: VerifiedTriagePolicy },
 ): VerifiedFactTriageItem | null {
+  registerVerifiedChecksumFunction(db);
   const nowMs = opts.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const cutoffIso = new Date(
@@ -982,6 +992,16 @@ function loadLiveVerifiedFactTriageItem(
     .get(itemId, nowIso, cutoffIso) as VerifiedFactRow | undefined;
   if (!row || !isVerifiedRowChecksumValid(row)) return null;
   return triageItemFromRow(db, row, { nowIso, policy: opts.policy });
+}
+
+const registeredChecksumDbs = new WeakSet<DatabaseSync>();
+
+function registerVerifiedChecksumFunction(db: DatabaseSync): void {
+  if (registeredChecksumDbs.has(db)) return;
+  db.function("compute_verified_checksum", { deterministic: true }, (text: unknown) =>
+    typeof text === "string" ? computeChecksum(text) : "",
+  );
+  registeredChecksumDbs.add(db);
 }
 
 interface VerifiedFactRow {
@@ -1074,7 +1094,9 @@ function findExplicitNewerVerifiedFact(db: DatabaseSync, fact: TriageFactSnapsho
          FROM verified_facts
          GROUP BY fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
-       WHERE f.supersedes_id = ? AND f.created_at >= ?
+       WHERE f.supersedes_id = ?
+         AND f.created_at >= ?
+         AND compute_verified_checksum(vf.canonical_text) = vf.checksum
        ORDER BY f.created_at DESC
        LIMIT 5`,
     )
@@ -1095,12 +1117,16 @@ function loadVerifiedRelatedFact(db: DatabaseSync, factId: string): RelatedFact 
       `SELECT f.*, vf.id AS verified_fact_id, vf.verified_at AS verified_at, vf.version AS verified_version
        FROM facts f
        JOIN verified_facts vf ON vf.fact_id = f.id
+       JOIN (
+         SELECT fact_id, MAX(version) AS max_version
+         FROM verified_facts
+         GROUP BY fact_id
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.id = ?
-       ORDER BY vf.version DESC
        LIMIT 1`,
     )
     .get(factId) as Record<string, unknown> | undefined;
-  if (!row) return null;
+  if (!row || !isVerifiedRelatedFactRowChecksumValid(row)) return null;
   return {
     ...snapshotFromRow(row),
     verifiedFactId: row.verified_fact_id as string,
@@ -1123,6 +1149,7 @@ function findConcreteContradictingEvidence(db: DatabaseSync, fact: TriageFactSna
          GROUP BY fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.id != ?
+         AND compute_verified_checksum(vf.canonical_text) = vf.checksum
          AND lower(f.entity) = lower(?)
          AND lower(f.key) = lower(?)
          AND f.value IS NOT NULL
@@ -1167,7 +1194,10 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
          FROM verified_facts
          GROUP BY fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
-       WHERE f.id != ? AND f.superseded_at IS NULL ${scopeClause}
+       WHERE f.id != ?
+         AND f.superseded_at IS NULL
+         AND compute_verified_checksum(vf.canonical_text) = vf.checksum
+         ${scopeClause}
        ORDER BY f.created_at DESC
        LIMIT 50`,
     )
@@ -1180,6 +1210,10 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
     if (normalizeFactText(candidate.text) === normalized) return candidate;
   }
   return null;
+}
+
+function isVerifiedRelatedFactRowChecksumValid(row: Record<string, unknown>): boolean {
+  return typeof row.canonical_text === "string" && computeChecksum(row.canonical_text) === row.checksum;
 }
 
 function normalizeFactText(text: string): string {

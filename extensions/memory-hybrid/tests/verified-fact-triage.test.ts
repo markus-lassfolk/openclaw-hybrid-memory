@@ -388,6 +388,38 @@ describe("verified fact triage classification buckets and evidence", () => {
     expect(bucket("dup-a").bucket).not.toBe("duplicate-candidate");
   });
 
+  it("ignores stale verified versions when finding duplicate candidates", () => {
+    addFact("versioned", "Original shared text", { provenanceJson: "{}" });
+    const originalVerified = verificationStore.getVerified("versioned");
+    expect(originalVerified).not.toBeNull();
+    verificationStore.update(originalVerified?.id ?? "", "Changed shared text", "user");
+    factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run("Changed shared text", "versioned");
+    addFact("candidate", "Original shared text", { provenanceJson: "{}" });
+
+    expect(bucket("candidate").bucket).not.toBe("duplicate-candidate");
+  });
+
+  it("excludes checksum-invalid rows from contradiction evidence", () => {
+    addFact("valid-claim", "Endpoint is A", {
+      entity: "checksum-service",
+      key: "endpoint",
+      value: "A",
+      provenanceJson: "{}",
+    });
+    addFact("invalid-evidence", "Endpoint is B", {
+      entity: "checksum-service",
+      key: "endpoint",
+      value: "B",
+      provenanceJson: "{}",
+    });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET canonical_text = ? WHERE fact_id = ?")
+      .run("tampered", "invalid-evidence");
+
+    expect(bucket("valid-claim").bucket).not.toBe("contradicted-candidate");
+  });
+
   it("classifies weak provenance, duplicate candidates, sensitive facts, and failed review", () => {
     addFact("weak", "No provenance here", { source: "unknown" });
     addFact("dup-1", "Duplicate durable truth", { provenanceJson: "{}" });
@@ -445,6 +477,36 @@ describe("verified fact triage classification buckets and evidence", () => {
 });
 
 describe("verified fact triage idempotency and parent integration", () => {
+  it("uses the stored cursor when listing apply candidates", async () => {
+    addFact("first-cursor", "First cursor fact", { provenanceJson: "{}" });
+    addFact("second-cursor", "Second cursor fact", { provenanceJson: "{}" });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
+      .run("2000-01-01T00:00:00.000Z", "first-cursor");
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
+      .run("2000-01-02T00:00:00.000Z", "second-cursor");
+
+    await runVerifiedFactTriage(factsDb, {
+      mode: "apply",
+      policy: "classify",
+      max: 1,
+      store: pendingStore,
+    });
+    expect(pendingStore.getCursor("verified", "classify")?.cursor).toBe("2000-01-01T00:00:00.000Z");
+
+    const secondRun = await runVerifiedFactTriage(factsDb, {
+      mode: "apply",
+      policy: "classify",
+      max: 10,
+      store: pendingStore,
+    });
+
+    expect(secondRun.items.map((item) => item.factId)).toEqual(["second-cursor"]);
+  });
+
   it("re-running apply is idempotent and changed content/hash creates a new decision", async () => {
     addFact("idem", "Idempotent sourced fact", { provenanceJson: "{}" });
     await runVerifiedFactTriage(factsDb, {
@@ -470,7 +532,7 @@ describe("verified fact triage idempotency and parent integration", () => {
       policy: "classify",
       store: pendingStore,
     });
-    expect(pendingStore.listDecisions({ queue: "verified" })).toHaveLength(2);
+    expect(pendingStore.listDecisions({ queue: "verified", itemId: vf?.id ?? "" })).toHaveLength(1);
   });
 
   it("has cursor/hash stale-decision guard before apply", async () => {
