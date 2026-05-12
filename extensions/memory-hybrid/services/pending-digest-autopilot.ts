@@ -31,7 +31,12 @@ import {
   createStableRunSummary,
   shouldAdvancePendingCursor,
 } from "./pending-autopilot/index.js";
-import { createPersonaProposalTriageAdapter, type PersonaProposalPendingItem } from "./persona-proposal-triage.js";
+import {
+  createPersonaProposalTriageAdapter,
+  runPersonaProposalTriage,
+  type PersonaProposalDecisionView,
+  type PersonaProposalPendingItem,
+} from "./persona-proposal-triage.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
 
 export const PENDING_DIGEST_AUTOPILOT_POLICY_VERSION = "parent-skeleton-v1";
@@ -97,7 +102,7 @@ export interface PendingDigestAutopilotResult {
   runId: string;
   mode: AutopilotMode;
   policyVersion: string;
-  applyBehavior: "record-decisions-only" | "non-mutating-dry-run";
+  applyBehavior: "child-guarded-persona-apply" | "record-decisions-only" | "non-mutating-dry-run";
   policies: PendingDigestAutopilotPolicies;
   max: PendingDigestAutopilotMaxima;
   counts: {
@@ -284,10 +289,32 @@ export async function runPendingDigestAutopilot(
             inputHash: item.inputHash,
             actor,
           };
-          const decision = await adapter.decide(item, context);
+          let decision = await adapter.decide(item, context);
+          if (queue === "persona" && normalized.mode === "apply" && policy !== "report-only") {
+            const applied = await runPersonaProposalTriage({
+              proposalsDb: (adapter as PersonaParentAdapter).proposalsDb,
+              cfg: opts.cfg,
+              workspace: opts.workspace,
+              stateDbPath: opts.stateDbPath,
+              mode: "apply",
+              policy: policy as "cautious" | "apply-safe",
+              max: 1,
+              runId,
+              jobId: opts.jobId,
+              actor,
+              now: opts.now,
+            });
+            const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
+            const latestDecision = childDecision
+              ? ((store?.listDecisions({ queue: "persona", itemId: item.id }).at(-1) as PendingDecision | undefined) ??
+                decisionFromPersonaView(decision, childDecision))
+              : undefined;
+            decision = latestDecision ?? decision;
+          } else {
+            store?.recordDecision(decision);
+          }
           decisions.push(decision);
           queueResult.decisions.push(decision);
-          store?.recordDecision(decision);
           const itemCursor = item.visibleAfterCursor ?? item.id;
           if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
             cursorAdvanceCandidate = { decision, cursor: itemCursor };
@@ -321,6 +348,10 @@ export async function runPendingDigestAutopilot(
       }
     }
 
+    for (const adapter of Object.values(adapters)) {
+      (adapter as { close?: () => void }).close?.();
+    }
+
     const foundationSummary = createStableRunSummary({
       runId,
       mode: normalized.mode,
@@ -338,7 +369,7 @@ export async function runPendingDigestAutopilot(
       runId,
       mode: normalized.mode,
       policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
-      applyBehavior: normalized.mode === "apply" ? "record-decisions-only" : "non-mutating-dry-run",
+      applyBehavior: normalized.mode === "apply" ? "child-guarded-persona-apply" : "non-mutating-dry-run",
       policies: normalized.policies,
       max: normalized.max,
       counts: summarizeCounts(decisions),
@@ -357,7 +388,7 @@ export async function runPendingDigestAutopilot(
 export function renderPendingDigestAutopilotHumanSummary(result: PendingDigestAutopilotResult): string {
   const lines = [
     `Pending digest autopilot ${result.runId} (${result.mode})`,
-    `Apply behavior: ${result.applyBehavior}. Queue stores are not mutated by the #1326 parent skeleton.`,
+    `Apply behavior: ${result.applyBehavior}. Persona apply-mode decisions route through the guarded child adapter; other queues remain read-only parent classifications.`,
     `Inspected ${result.counts.inspected}; classified ${result.counts.classified}; deferred ${result.counts.deferred}; skipped ${result.counts.skipped}; failed validation ${result.counts.failedValidation}.`,
     "Queues:",
   ];
@@ -373,7 +404,7 @@ export function renderPendingDigestAutopilotHumanSummary(result: PendingDigestAu
     );
   } else {
     lines.push(
-      "Next: no parent-applied queue mutations. Use child adapters for queue-specific review/apply when implemented.",
+      "Next: no parent-applied non-persona queue mutations. Use child adapters for queue-specific review/apply when implemented.",
     );
   }
   return lines.join("\n");
@@ -392,40 +423,44 @@ export function createDefaultPendingDigestAdapters(
   };
 }
 
+type PersonaParentAdapter = PendingQueueAdapter<QueueItem> & { proposalsDb: ProposalsDB; close: () => void };
+
 function createPersonaProposalTriageAdapterWithCloseable(
   dbPath: string,
   cfg: HybridMemoryConfig,
   workspace?: string,
-): PendingQueueAdapter<QueueItem> {
+): PersonaParentAdapter {
+  const proposalsDb = new ProposalsDB(dbPath);
   return {
     queue: "persona",
+    proposalsDb,
     listPending: (cursor) => {
       if (!cfg.personaProposals.enabled) return [];
-      return withCloseable(
-        () => new ProposalsDB(dbPath),
-        (db) => {
-          const adapter = createPersonaProposalTriageAdapter({
-            proposalsDb: db,
-            cfg,
-            workspace,
-          });
-          return adapter.listPending(cursor);
-        },
-      );
+      const adapter = createPersonaProposalTriageAdapter({ proposalsDb, cfg, workspace });
+      return adapter.listPending(cursor);
     },
-    decide: (item, context) =>
-      withCloseable(
-        () => new ProposalsDB(dbPath),
-        (db) => {
-          const adapter = createPersonaProposalTriageAdapter({
-            proposalsDb: db,
-            cfg,
-            workspace,
-            allProposals: db.list(),
-          });
-          return adapter.decide(item as PersonaProposalPendingItem, context);
-        },
-      ),
+    decide: (item, context) => {
+      const adapter = createPersonaProposalTriageAdapter({
+        proposalsDb,
+        cfg,
+        workspace,
+        allProposals: proposalsDb.list(),
+      });
+      return adapter.decide(item as PersonaProposalPendingItem, context);
+    },
+    close: () => proposalsDb.close(),
+  };
+}
+
+function decisionFromPersonaView(base: PendingDecision, view: PersonaProposalDecisionView): PendingDecision {
+  return {
+    ...base,
+    action: view.action,
+    reasonCode: view.reason,
+    capabilityClass: view.capability,
+    confidence: view.confidence,
+    humanReviewRequired: view.humanReviewRequired,
+    summary: { ...(base.summary ?? {}), body: view.diffSummary },
   };
 }
 

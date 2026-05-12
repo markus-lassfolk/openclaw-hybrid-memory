@@ -217,27 +217,29 @@ describe("persona proposal triage", () => {
     expect(result.decisions.find((d) => d.proposalId === material.id)?.action).toBe("deferred-for-human");
   });
 
-  it("apply-safe only applies low-risk localized changes and keeps sensitive semantic targets pending", async () => {
-    const low = proposal({
-      targetFile: "USER.md",
-      targetHash: fileHash(join(tmpDir, "USER.md")),
-      suggestedChange: "Formatting: ensure markdown list spacing is consistent.",
-      confidence: 0.99,
-    });
-    const criticalFormatting = proposal({
+  it("apply-safe only auto-applies mechanically verified formatting on sensitive persona files", async () => {
+    const allowedCfg = {
+      personaProposals: {
+        ...cfg.personaProposals,
+        allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
+      },
+    };
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nBe precise.\n", "utf-8");
+
+    const mechanical = proposal({
       targetFile: "IDENTITY.md",
       targetHash: fileHash(join(tmpDir, "IDENTITY.md")),
-      title: "Identity document formatting cleanup",
-      observation: "IDENTITY.md has a formatting-only markdown spacing nit.",
-      suggestedChange: "Formatting: ensure markdown list spacing is consistent.",
+      title: "Identity document punctuation cleanup",
+      observation: "IDENTITY.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# IDENTITY\nName - Forge\n",
       confidence: 0.99,
     });
-    const semanticFormatting = proposal({
+    const disguised = proposal({
       targetFile: "SOUL.md",
       targetHash: fileHash(join(tmpDir, "SOUL.md")),
       title: "Behavior instructions formatting",
       observation: "SOUL.md proposal uses a formatting prefix but changes behavior.",
-      suggestedChange: "Formatting: add new instructions for greeting users.",
+      suggestedChange: "Formatting: be friendlier",
       confidence: 0.99,
     });
     const high = proposal({
@@ -249,6 +251,36 @@ describe("persona proposal triage", () => {
 
     const result = await runPersonaProposalTriage({
       proposalsDb,
+      cfg: allowedCfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(proposalsDb.get(mechanical.id)?.status).toBe("applied");
+    expect(readFileSync(join(tmpDir, "IDENTITY.md"), "utf-8")).toContain("Name - Forge");
+    expect(proposalsDb.get(disguised.id)?.status).toBe("pending");
+    expect(result.decisions.find((d) => d.proposalId === disguised.id)?.reason).toBe("identity-boundary-change");
+    expect(proposalsDb.get(high.id)?.status).toBe("pending");
+    expect(result.decisions.find((d) => d.proposalId === high.id)?.reason).toBe("identity-boundary-change");
+  });
+
+  it("apply-safe defers disguised formatting semantic appends for every sensitive persona file", async () => {
+    const files = ["SOUL.md", "USER.md", "IDENTITY.md"] as const;
+    for (const targetFile of files) {
+      proposal({
+        targetFile,
+        targetHash: fileHash(join(tmpDir, targetFile)),
+        title: `${targetFile} formatting disguise`,
+        observation: "Looks like formatting but changes semantics.",
+        suggestedChange: "Formatting: be friendlier",
+        confidence: 0.99,
+      });
+    }
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
       cfg,
       workspace: tmpDir,
       mode: "apply",
@@ -256,16 +288,12 @@ describe("persona proposal triage", () => {
       stateDbPath: join(tmpDir, "pending.db"),
     });
 
-    expect(proposalsDb.get(low.id)?.status).toBe("applied");
-    expect(proposalsDb.get(criticalFormatting.id)?.status).toBe("applied");
-    expect(readFileSync(join(tmpDir, "USER.md"), "utf-8")).toContain("Formatting: ensure markdown list spacing");
-    expect(readFileSync(join(tmpDir, "IDENTITY.md"), "utf-8")).toContain("Formatting: ensure markdown list spacing");
-    expect(proposalsDb.get(semanticFormatting.id)?.status).toBe("pending");
-    expect(result.decisions.find((d) => d.proposalId === semanticFormatting.id)?.reason).toBe(
-      "identity-boundary-change",
-    );
-    expect(proposalsDb.get(high.id)?.status).toBe("pending");
-    expect(result.decisions.find((d) => d.proposalId === high.id)?.reason).toBe("identity-boundary-change");
+    expect(result.decisions).toHaveLength(files.length);
+    for (const decision of result.decisions) {
+      expect(decision.action).toBe("deferred-for-human");
+      expect(decision.reason).toBe("identity-boundary-change");
+      expect(proposalsDb.get(decision.proposalId)?.status).toBe("pending");
+    }
   });
 
   it("blocks and redacts credential/private-data proposals everywhere", async () => {
@@ -479,14 +507,129 @@ describe("persona proposal triage", () => {
 
     expect(proposalsDb.get(unsafe.id)?.status).toBe("pending");
     expect(result.decisions[0]?.action).toBe("deferred-for-human");
-    expect(result.decisions[0]?.reason).toBe("stale-target-context");
+    expect(result.decisions[0]?.reason).toBe("identity-boundary-change");
+  });
+
+  it("persists redacted before/after audit diff and target pre/post hashes for applied persona changes", async () => {
+    const targetPath = join(tmpDir, "IDENTITY.md");
+    const preHash = fileHash(targetPath);
+    const p = proposal({
+      targetFile: "IDENTITY.md",
+      targetHash: preHash,
+      suggestedChange: "Replace entire file:\n# IDENTITY\nName - Forge\n",
+      confidence: 0.99,
+    });
+    const stateDbPath = join(tmpDir, "pending.db");
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath,
+    });
+
+    expect(result.decisions[0]?.proposalId).toBe(p.id);
+    expect(result.decisions[0]?.action).toBe("applied");
+    const store = new PendingAutopilotStore(stateDbPath);
+    const decision = store.listDecisions({ queue: "persona", itemId: p.id })[0];
+    store.close();
+    expect(decision?.summary?.metadata?.targetPreHash).toBe(preHash);
+    expect(decision?.summary?.metadata?.targetPostHash).toBe(fileHash(targetPath));
+    expect(String(decision?.summary?.metadata?.redactedBeforeAfterDiff)).toContain("Name - Forge");
+    expect(decision?.audit?.summary?.metadata?.targetPreHash).toBe(preHash);
+    expect(decision?.audit?.summary?.metadata?.targetPostHash).toBe(fileHash(targetPath));
+  });
+
+  it("defers once cumulative low-risk persona drift threshold is crossed", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nBe precise.\n", "utf-8");
+    const allowedCfg = {
+      personaProposals: {
+        ...cfg.personaProposals,
+        allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
+      },
+    };
+    const first = proposal({
+      targetFile: "AGENTS.md" as never,
+      targetHash: fileHash(join(tmpDir, "AGENTS.md")),
+      title: "Formatting general one",
+      suggestedChange: "Formatting: first small low risk note.",
+      confidence: 0.99,
+    });
+    const second = proposal({
+      targetFile: "AGENTS.md" as never,
+      targetHash: fileHash(join(tmpDir, "AGENTS.md")),
+      title: "Formatting general two",
+      suggestedChange: "Formatting: second small low risk note.",
+      confidence: 0.99,
+    });
+    proposalsDb.updateStatus(second.id, "rejected", "test", "avoid duplicate-pending setup item");
+
+    const stateDbPath = join(tmpDir, "pending.db");
+    const firstRun = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg: allowedCfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath,
+      max: 1,
+    });
+    expect(firstRun.decisions.map((d) => d.action)).toEqual(["applied"]);
+    const firstAppliedId = firstRun.decisions[0]?.proposalId;
+    expect(proposalsDb.get(firstAppliedId ?? "")?.status).toBe("applied");
+    if (proposalsDb.get(first.id)?.status === "pending") {
+      proposalsDb.updateStatus(first.id, "rejected", "test", "reset stale snapshot");
+    }
+    const secondFresh = proposal({
+      targetFile: "AGENTS.md" as never,
+      targetHash: fileHash(join(tmpDir, "AGENTS.md")),
+      title: "Formatting general two fresh",
+      suggestedChange: "Formatting: second small low risk note.",
+      confidence: 0.99,
+    });
+    const secondApplied = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg: allowedCfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath,
+      max: 1,
+    });
+    expect(secondApplied.decisions.map((d) => d.action)).toEqual(["applied"]);
+    expect(proposalsDb.get(secondFresh.id)?.status).toBe("applied");
+
+    const third = proposal({
+      targetFile: "AGENTS.md" as never,
+      targetHash: fileHash(join(tmpDir, "AGENTS.md")),
+      title: "Formatting general three",
+      suggestedChange: "Formatting: third small low risk note.",
+      confidence: 0.99,
+    });
+    const secondRun = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg: allowedCfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath,
+    });
+
+    const decision = secondRun.decisions.find((d) => d.proposalId === third.id);
+    expect(decision?.action).toBe("deferred-for-human");
+    expect(decision?.reason).toBe("policy-requires-human");
+    expect(decision?.diffSummary).toContain("cumulative low-risk drift guard");
+    expect(proposalsDb.get(third.id)?.status).toBe("pending");
   });
 
   it("rolls back persona file writes when proposal status update fails during apply", async () => {
-    const targetPath = join(tmpDir, "USER.md");
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nBe precise.\n", "utf-8");
+    const targetPath = join(tmpDir, "AGENTS.md");
     const original = readFileSync(targetPath, "utf-8");
     const p = proposal({
-      targetFile: "USER.md",
+      targetFile: "AGENTS.md" as never,
       targetHash: fileHash(targetPath),
       suggestedChange: "Formatting: transactional rollback marker.",
       confidence: 0.99,
@@ -508,7 +651,12 @@ describe("persona proposal triage", () => {
     await expect(
       runPersonaProposalTriage({
         proposalsDb,
-        cfg,
+        cfg: {
+          personaProposals: {
+            ...cfg.personaProposals,
+            allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
+          },
+        },
         workspace: tmpDir,
         mode: "apply",
         policy: "apply-safe",
@@ -517,7 +665,7 @@ describe("persona proposal triage", () => {
     ).rejects.toThrow(/simulated markApplied failure/);
 
     expect(readFileSync(targetPath, "utf-8")).toBe(original);
-    expect(readdirSync(tmpDir).some((name) => name.startsWith("USER.md.backup-"))).toBe(false);
+    expect(readdirSync(tmpDir).some((name) => name.startsWith("AGENTS.md.backup-"))).toBe(false);
     expect(proposalsDb.get(p.id)?.status).toBe("pending");
   });
 

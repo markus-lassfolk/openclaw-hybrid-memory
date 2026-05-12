@@ -207,7 +207,7 @@ describe("pending digest autopilot parent (#1326)", () => {
       runId: "run-apply-2",
     });
 
-    expect(first.applyBehavior).toBe("record-decisions-only");
+    expect(first.applyBehavior).toBe("child-guarded-persona-apply");
     expect(first.queues.tools.decisions[0]).toMatchObject({
       action: "classified",
       humanReviewRequired: false,
@@ -226,7 +226,7 @@ describe("pending digest autopilot parent (#1326)", () => {
     store.close();
   });
 
-  it("apply mode persona cursor pagination advances beyond the newest slice", async () => {
+  it("apply mode persona cursor pagination advances only after guarded child state mutations", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
     const paths = pendingStorePaths(cfg.sqlitePath);
@@ -291,9 +291,9 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(second.queues.persona.decisions.map((d) => d.itemId)).toEqual([expectedNewestFirst[1]]);
     expect(third.queues.persona.decisions.map((d) => d.itemId)).toEqual([expectedNewestFirst[2]]);
     const reopened = new ProposalsDB(paths.proposals);
-    expect(reopened.get(oldest.id)?.status).toBe("pending");
-    expect(reopened.get(middle.id)?.status).toBe("pending");
-    expect(reopened.get(newest.id)?.status).toBe("pending");
+    expect(
+      [reopened.get(oldest.id)?.status, reopened.get(middle.id)?.status, reopened.get(newest.id)?.status].sort(),
+    ).toEqual(["rejected", "rejected", "rejected"]);
     reopened.close();
   });
 
@@ -485,7 +485,7 @@ describe("pending digest autopilot parent (#1326)", () => {
       max: { procedures: 0, verified: 0, tools: 0, crystallization: 0 },
     });
 
-    expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
   it("parent persona adapter refreshes proposals before each decision", async () => {
@@ -547,21 +547,27 @@ describe("pending digest autopilot parent (#1326)", () => {
     const defaultWorkspace = join(dir, "default-workspace");
     mkdirSync(callerWorkspace, { recursive: true });
     mkdirSync(defaultWorkspace, { recursive: true });
-    writeFileSync(join(callerWorkspace, "USER.md"), "# USER\nCaller workspace.\n", "utf-8");
-    writeFileSync(join(defaultWorkspace, "USER.md"), "# USER\nDefault workspace.\n", "utf-8");
+    writeFileSync(join(callerWorkspace, "AGENTS.md"), "# AGENTS\nCaller workspace.\n", "utf-8");
+    writeFileSync(join(defaultWorkspace, "AGENTS.md"), "# AGENTS\nDefault workspace.\n", "utf-8");
     const previousWorkspace = process.env.OPENCLAW_WORKSPACE;
     process.env.OPENCLAW_WORKSPACE = defaultWorkspace;
     try {
       const paths = pendingStorePaths(cfg.sqlitePath);
       const persona = new ProposalsDB(paths.proposals);
+      cfg.personaProposals.allowedFiles = [
+        ...cfg.personaProposals.allowedFiles,
+        "AGENTS.md",
+      ] as typeof cfg.personaProposals.allowedFiles;
+      const callerPreHash = fileHash(join(callerWorkspace, "AGENTS.md"));
+      const defaultPreHash = fileHash(join(defaultWorkspace, "AGENTS.md"));
       const p = persona.create({
-        targetFile: "USER.md",
+        targetFile: "AGENTS.md",
         title: "Caller workspace formatting",
         observation: "Formatting-only proposal for the caller workspace.",
         suggestedChange: "Formatting: parent adapter workspace marker.",
         confidence: 0.99,
         evidenceSessions: ["session-workspace"],
-        targetHash: fileHash(join(callerWorkspace, "USER.md")),
+        targetHash: callerPreHash,
         targetMtimeMs: null,
       });
       persona.close();
@@ -584,10 +590,10 @@ describe("pending digest autopilot parent (#1326)", () => {
         reasonCode: "safe-low-risk-localized-change",
       });
       expect(decision?.summary?.metadata).toMatchObject({
-        targetHash: fileHash(join(callerWorkspace, "USER.md")),
+        targetHash: callerPreHash,
       });
       expect(decision?.summary?.metadata).not.toMatchObject({
-        targetHash: fileHash(join(defaultWorkspace, "USER.md")),
+        targetHash: defaultPreHash,
       });
     } finally {
       if (previousWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;

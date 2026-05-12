@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
-import { buildAppliedContent } from "../cli/proposals.js";
+import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
@@ -135,6 +135,8 @@ type Analysis = {
 };
 
 const CRITICAL_TARGETS = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
+const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md"]);
+const LOW_RISK_DRIFT_THRESHOLD = 2;
 const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
 
 function normalizePersonaProposalTriageMax(max: number | undefined): number {
@@ -594,6 +596,10 @@ function analyzePersonaProposal(
   if (p.confidence < PERSONA_APPLY_CONFIDENCE_THRESHOLD) {
     return defer("low", "low-confidence", diffSummary, evidence, p.confidence);
   }
+  const drift = lowRiskDriftGuard(p, allProposals);
+  if (drift.blocked) {
+    return defer("low", "policy-requires-human", `${diffSummary}; ${drift.summary}`, evidence, p.confidence);
+  }
   return {
     risk: "low",
     action: "applied",
@@ -645,6 +651,9 @@ function applyPersonaDecisionWithLock(input: {
           backupPath: string;
           original: string;
           appliedContent: string;
+          preHash: string;
+          postHash: string;
+          auditDiff: string;
         }
       | undefined;
     if (input.decision.action === "applied") {
@@ -690,29 +699,41 @@ function applyPersonaDecisionWithLock(input: {
           `Proposal ${input.item.id} does not contain replacement content to apply.`,
         );
       }
+      if (!isAllowedSensitivePersonaApply(current.targetFile, original, applied.content, current.suggestedChange)) {
+        return validationFailure(
+          input.decision,
+          "identity-boundary-change",
+          "Sensitive persona files require mechanically verified formatting-only diffs for apply-safe auto-apply.",
+        );
+      }
+      const auditDiff = redactedAuditDiff(original, applied.content, current.targetFile);
       preparedApply = {
         targetPath: currentTarget.path,
         backupPath: `${currentTarget.path}.backup-${Date.now()}`,
         original,
         appliedContent: applied.content,
+        preHash: currentSnapshot.hash,
+        postHash: hashText(applied.content),
+        auditDiff,
       };
     }
 
+    const decisionForMutation = preparedApply ? withPersonaApplyAudit(input.decision, preparedApply) : input.decision;
     const ok = input.store.mutateWithLockAndAudit({
-      decision: input.decision,
+      decision: decisionForMutation,
       owner,
       actualInputHash: actualHash,
       audit: () => {},
       mutate: () => {
-        if (input.decision.action === "rejected") {
-          input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", input.decision.reasonCode);
-        } else if (input.decision.action === "applied" && preparedApply) {
+        if (decisionForMutation.action === "rejected") {
+          input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", decisionForMutation.reasonCode);
+        } else if (decisionForMutation.action === "applied" && preparedApply) {
           applyPreparedPersonaChange(preparedApply, () => input.proposalsDb.markApplied(input.item.id));
         }
       },
     });
     if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
-    return input.decision;
+    return decisionForMutation;
   } finally {
     input.store.releaseLock({
       queue: "persona",
@@ -907,11 +928,17 @@ function failed(
 }
 
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
-  const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
+  const text = `${p.title}
+${p.observation}
+${p.suggestedChange}`.toLowerCase();
   if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
+    if (SENSITIVE_PERSONA_FILES.has(p.targetFile) && parseSuggestedChange(p.suggestedChange).changeType !== "replace") {
+      return "high";
+    }
     if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
+    if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
   } else if (
     /\b(identit(?:y|ies)|personalit(?:y|ies)|voice|tone|privacy|security|external|group chat|user preferences?|profile|personal facts?|memory rules?)\b/.test(
       text,
@@ -926,12 +953,106 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
 }
 
 function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
+  const parsed = parseSuggestedChange(suggestedChange);
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
+  if (!hasFormattingPrefix && parsed.changeType !== "replace") return false;
   const containsSemanticKeywords =
-    /\b(identity|personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate)\b/i.test(
+    /\b(personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate|friendlier|friendly|warmer|casual|greeting)\b/i.test(
       suggestedChange,
     );
-  return hasFormattingPrefix && !containsSemanticKeywords;
+  return !containsSemanticKeywords;
+}
+
+function lowRiskDriftGuard(
+  proposal: ProposalEntry,
+  allProposals: ProposalEntry[],
+): { blocked: boolean; summary: string } {
+  const target = proposal.targetFile;
+  const topic = topicKey(`${proposal.title}\n${proposal.observation}\n${proposal.suggestedChange}`);
+  const previous = allProposals.filter(
+    (candidate) =>
+      candidate.id !== proposal.id &&
+      candidate.status === "applied" &&
+      candidate.targetFile === target &&
+      normalizeText(candidate.suggestedChange).length < 240 &&
+      topicKey(`${candidate.title}\n${candidate.observation}\n${candidate.suggestedChange}`) === topic,
+  );
+  if (previous.length >= LOW_RISK_DRIFT_THRESHOLD) {
+    return {
+      blocked: true,
+      summary: `cumulative low-risk drift guard: ${previous.length} previous auto-applied edit(s) for ${target}/${topic}`,
+    };
+  }
+  return { blocked: false, summary: "" };
+}
+
+function isAllowedSensitivePersonaApply(
+  targetFile: string,
+  original: string,
+  applied: string,
+  suggestedChange: string,
+): boolean {
+  if (!SENSITIVE_PERSONA_FILES.has(targetFile)) return true;
+  if (parseSuggestedChange(suggestedChange).changeType !== "replace") return false;
+  return stripWhitespaceAndPunctuation(original) === stripWhitespaceAndPunctuation(applied);
+}
+
+function stripWhitespaceAndPunctuation(input: string): string {
+  return input.replace(/[\s\p{P}]+/gu, "").toLowerCase();
+}
+
+function withPersonaApplyAudit(
+  decision: PendingDecision,
+  preparedApply: { preHash: string; postHash: string; auditDiff: string },
+): PendingDecision {
+  const metadata = {
+    ...(decision.summary?.metadata ?? {}),
+    targetPreHash: preparedApply.preHash,
+    targetPostHash: preparedApply.postHash,
+  };
+  const summary = {
+    ...(decision.summary ?? {}),
+    metadata: {
+      ...metadata,
+      redactedBeforeAfterDiff: preparedApply.auditDiff,
+    },
+  };
+  return {
+    ...decision,
+    summary,
+    audit: decision.audit
+      ? {
+          ...decision.audit,
+          summary: {
+            ...(decision.audit.summary ?? {}),
+            metadata: {
+              ...(decision.audit.summary?.metadata ?? {}),
+              ...metadata,
+              redactedBeforeAfterDiff: preparedApply.auditDiff,
+            },
+          },
+        }
+      : undefined,
+  };
+}
+
+function redactedAuditDiff(original: string, applied: string, targetFile: string): string {
+  let diff: string;
+  try {
+    diff = buildUnifiedDiff(original, applied, targetFile);
+  } catch {
+    diff = `--- ${targetFile} (before)
++++ ${targetFile} (after)
+@@ before
+${original}
+@@ after
+${applied}`;
+  }
+  const redacted = String(redactAutopilotValue(diff));
+  return redacted.length > 8000
+    ? `${redacted.slice(0, 8000)}
+... [diff truncated]`
+    : redacted;
 }
 
 function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {
@@ -1164,6 +1285,10 @@ function writeFileAtomic(path: string, content: string): void {
 
 function fileHash(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function hashText(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
 }
 
 function shortHash(input: string): string {
