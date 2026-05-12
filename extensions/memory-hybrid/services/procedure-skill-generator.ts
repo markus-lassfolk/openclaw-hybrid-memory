@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { resolveWorkspacePath } from "../utils/path.js";
-import { slugifyForSkill, titleCase } from "../utils/text.js";
+import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
