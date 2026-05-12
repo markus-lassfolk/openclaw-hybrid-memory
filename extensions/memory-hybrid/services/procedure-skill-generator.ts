@@ -77,9 +77,7 @@ export function generateAutoSkills(
 ): GenerateAutoSkillsResult {
 	const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
 	const dryRun = options.dryRun ?? options.apply !== true;
-	const policy = parseProcedurePromotionPolicy(
-		options.policy ?? (options.apply ? "auto-safe" : "draft-only"),
-	);
+	const policy = parseProcedurePromotionPolicy(options.policy);
 	const basePath = resolveSkillsPath(options.skillsAutoPath);
 	const procedures = factsDb.getProceduresReadyForSkill(1, maxPerRun);
 	const paths: string[] = [];
@@ -204,7 +202,7 @@ export function generateAutoSkillForProcedure(
 ): GenerateAutoSkillResult {
 	const dryRun = options.dryRun ?? options.apply !== true;
 	const policy: ProcedurePromotionPolicy = parseProcedurePromotionPolicy(
-		options.policy ?? (options.apply ? "auto-safe" : "draft-only"),
+		options.policy,
 	);
 	const proc = factsDb.getProcedureById(options.procedureId);
 	if (!proc) return { ok: false, reason: "not-found" };

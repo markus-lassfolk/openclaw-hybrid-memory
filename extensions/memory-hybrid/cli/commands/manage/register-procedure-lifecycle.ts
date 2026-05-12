@@ -315,7 +315,7 @@ export function registerManageProcedureAndLifecycle(
 		.option(
 			"--policy <policy>",
 			"Promotion policy: draft-only, manual, auto-safe",
-			"auto-safe",
+			"draft-only",
 		)
 		.option("--json", "Emit JSON")
 		.action(

@@ -353,7 +353,7 @@ export function registerDistillCommands(
 		.option("--max <n>", "Maximum procedures to inspect", "10")
 		.option(
 			"--policy <policy>",
-			"Promotion policy: draft-only, manual, auto-safe (default: auto-safe when --apply is passed, draft-only otherwise)",
+			"Promotion policy: draft-only, manual, auto-safe (default: draft-only)",
 		)
 		.option("--json", "Emit structured JSON summary")
 		.option("-v, --verbose", "Log each decision and generated skill path")

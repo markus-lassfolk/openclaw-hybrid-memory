@@ -380,6 +380,47 @@ describe("procedure promotion policy and adapter", () => {
 		}
 	});
 
+
+	it("flags generic context-specific wording without hard-coded personal names", () => {
+		const localProcedure = addProcedure({
+			taskPattern: "Validate household dashboard report",
+			sourceSessionId: "context-specific-a",
+		});
+		db.recordProcedureSuccess(localProcedure.id, undefined, "context-specific-b");
+		db.recordProcedureSuccess(localProcedure.id, undefined, "context-specific-c");
+		const localEval = evaluateProcedureForPromotion(
+			createProcedurePromotionItem(
+				localProcedure,
+				parseProcedurePromotionPolicy("auto-safe"),
+			),
+			parseProcedurePromotionPolicy("auto-safe"),
+			{ skillsAutoPath: skillsDir, validationThreshold: 3 },
+		);
+
+		expect(localEval.metadata.rejectionReasons).toContain(
+			"too_context_specific",
+		);
+
+		const reusableProcedure = addProcedure({
+			taskPattern: "Validate named customer release report",
+			sourceSessionId: "named-customer-a",
+		});
+		db.recordProcedureSuccess(reusableProcedure.id, undefined, "named-customer-b");
+		db.recordProcedureSuccess(reusableProcedure.id, undefined, "named-customer-c");
+		const reusableEval = evaluateProcedureForPromotion(
+			createProcedurePromotionItem(
+				reusableProcedure,
+				parseProcedurePromotionPolicy("auto-safe"),
+			),
+			parseProcedurePromotionPolicy("auto-safe"),
+			{ skillsAutoPath: skillsDir, validationThreshold: 3 },
+		);
+
+		expect(reusableEval.metadata.rejectionReasons).not.toContain(
+			"too_context_specific",
+		);
+	});
+
 	it("blocks private/high-entropy data and redacts generated artifacts", () => {
 		const proc = addProcedure({
 			taskPattern: "Validate private report workflow",

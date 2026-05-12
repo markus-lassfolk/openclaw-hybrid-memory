@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import {
+	generateAutoSkillForProcedure,
+	generateAutoSkills,
+} from "../services/procedure-skill-generator.js";
 
 let tmpDir: string;
 let db: FactsDB;
@@ -19,6 +22,11 @@ afterEach(() => {
 	db.close();
 	rmSync(tmpDir, { recursive: true, force: true });
 });
+
+function recordDistinctSuccesses(procId: string): void {
+	db.recordProcedureSuccess(procId, undefined, `${procId}-session-2`);
+	db.recordProcedureSuccess(procId, undefined, `${procId}-session-3`);
+}
 
 describe("generateAutoSkills", () => {
 	it("generates SKILL.md and recipe.json for validated procedure", () => {
@@ -132,6 +140,100 @@ describe("generateAutoSkills", () => {
 		expect(existsSync(join(skillsDir, "dry-run-procedure", "SKILL.md"))).toBe(
 			false,
 		);
+	});
+
+
+	it("defaults --apply to draft-only instead of silently escalating to auto-safe", () => {
+		const proc = db.upsertProcedure({
+			taskPattern: "Validate release health report",
+			recipeJson: JSON.stringify([
+				{ tool: "read", args: { path: "status.json" }, summary: "Check status" },
+				{
+					tool: "exec",
+					args: { command: "npm test" },
+					summary: "Run validation test",
+				},
+			]),
+			procedureType: "positive",
+			successCount: 3,
+			confidence: 0.9,
+			sourceSessionId: "default-policy-1",
+		});
+		recordDistinctSuccesses(proc.id);
+
+		const result = generateAutoSkills(
+			db,
+			{
+				skillsAutoPath: skillsDir,
+				validationThreshold: 3,
+				skillTTLDays: 30,
+				apply: true,
+			},
+			{ info: () => {}, warn: () => {} },
+		);
+
+		expect(result.summary).toMatchObject({
+			candidates: 1,
+			eligible: 1,
+			drafted: 1,
+		});
+		expect(result.decisions?.[0]).toMatchObject({
+			action: "promoted-to-draft",
+			humanReviewRequired: true,
+		});
+		const verification = JSON.parse(
+			readFileSync(
+				join(skillsDir, "validate-release-health-report", "verification.json"),
+				"utf-8",
+			),
+		) as { policy: string; requiresHumanApproval: boolean };
+		expect(verification).toMatchObject({
+			policy: "draft-only",
+			requiresHumanApproval: true,
+		});
+	});
+
+	it("single procedure apply also defaults to draft-only", () => {
+		const proc = db.upsertProcedure({
+			taskPattern: "Validate single procedure report",
+			recipeJson: JSON.stringify([
+				{ tool: "read", args: { path: "status.json" }, summary: "Check status" },
+				{
+					tool: "exec",
+					args: { command: "npm test" },
+					summary: "Run validation test",
+				},
+			]),
+			procedureType: "positive",
+			successCount: 3,
+			confidence: 0.9,
+			sourceSessionId: "single-default-policy-1",
+		});
+		recordDistinctSuccesses(proc.id);
+
+		const result = generateAutoSkillForProcedure(
+			db,
+			{
+				skillsAutoPath: skillsDir,
+				validationThreshold: 3,
+				skillTTLDays: 30,
+				procedureId: proc.id,
+				apply: true,
+			},
+			{ info: () => {}, warn: () => {} },
+		);
+
+		expect(result.ok).toBe(true);
+		const verification = JSON.parse(
+			readFileSync(
+				join(skillsDir, "validate-single-procedure-report", "verification.json"),
+				"utf-8",
+			),
+		) as { policy: string; requiresHumanApproval: boolean };
+		expect(verification).toMatchObject({
+			policy: "draft-only",
+			requiresHumanApproval: true,
+		});
 	});
 
 	it("skips procedures below validation threshold", () => {

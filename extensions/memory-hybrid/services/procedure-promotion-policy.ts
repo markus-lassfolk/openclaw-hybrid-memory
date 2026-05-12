@@ -686,7 +686,7 @@ Leave this generated skill disabled until verification or human approval. To dis
 				"with-skill scaffold preserves validated steps, safety gates, and validation criteria absent from the raw procedure",
 		},
 		enabled: false,
-		requiresHumanApproval: false,
+		requiresHumanApproval: policy !== "auto-safe",
 		lastVerifiedAt: new Date(
 			(options.now ?? Math.floor(Date.now() / 1000)) * 1000,
 		).toISOString(),
@@ -777,11 +777,11 @@ function hasEnoughTaskBoundary(task: string): boolean {
 	);
 }
 
+const CONTEXT_SPECIFIC_PATTERN =
+	/\b(?:my|home|household|local|private|personal)\b/i;
+
 function looksTooContextSpecific(text: string): boolean {
-	return (
-		/\b(my|home|household|local|private|personal)\b/i.test(text) ||
-		PRIVATE_DATA_PATTERNS.some((p) => p.test(text))
-	);
+	return CONTEXT_SPECIFIC_PATTERN.test(text);
 }
 
 function looksNoisy(recipe: unknown): boolean {
