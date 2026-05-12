@@ -548,7 +548,7 @@ export async function runVerifiedFactTriageWithAdapter(
             "lock-conflict",
             "Could not acquire lock for verified fact triage (another process may hold it).",
           );
-          durableStore.recordDecision(staleDecision);
+          durableStore?.recordDecision(staleDecision);
           decision = staleDecision;
         }
       } finally {
