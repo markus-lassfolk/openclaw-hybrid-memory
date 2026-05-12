@@ -74,6 +74,29 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     return this.insertDecision(safe);
   }
 
+  recordLatestDecision(decision: PendingDecision): { inserted: boolean } {
+    const safe = sanitizePendingDecision(decision);
+    if (safe.mode === "dry-run") return { inserted: false };
+    const tx = createTransaction(
+      this.liveDb,
+      () => {
+        this.liveDb
+          .prepare(
+            `DELETE FROM pending_autopilot_decisions
+             WHERE queue = ?
+               AND item_id = ?
+               AND policy = ?
+               AND policy_version = ?
+               AND (input_hash <> ? OR action <> ?)`,
+          )
+          .run(safe.queue, safe.itemId, safe.policy, safe.policyVersion, safe.inputHash, safe.action);
+        return this.insertDecision(safe);
+      },
+      "IMMEDIATE",
+    );
+    return tx();
+  }
+
   advanceCursorIfSafe(decision: PendingDecision, cursor: string): boolean {
     const safe = sanitizePendingDecision(decision);
     if (safe.mode === "dry-run" || !shouldAdvancePendingCursor(safe)) return false;

@@ -21,6 +21,7 @@ import { type DistillContext, registerDistillCommands } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
+import { registerVerifiedCommands } from "./verified.js";
 import { registerStatusCommands } from "./cmd-status.js";
 import { type UserFriendlyContext, registerUserFriendlyCommands } from "./cmd-user-friendly.js";
 import type {
@@ -458,9 +459,9 @@ type Chainable = {
   command(name: string): Chainable;
   description(desc: string): Chainable;
   action(fn: (...args: any[]) => void | Promise<void>): Chainable;
-  option(flags: string, desc?: string, defaultValue?: string): Chainable;
-  requiredOption(flags: string, desc?: string, defaultValue?: string): Chainable;
-  argument(name: string, desc?: string): Chainable;
+  option(flags: string, desc?: string, defaultValue?: unknown): Chainable;
+  requiredOption(flags: string, desc?: string, defaultValue?: unknown): Chainable;
+  argument?(name: string, desc?: string): Chainable;
   alias?(name: string): Chainable;
 };
 
@@ -558,6 +559,21 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "register-cli:goals",
+    });
+    throw err;
+  }
+
+  try {
+    registerVerifiedCommands(mem, {
+      factsDb: ctx.factsDb,
+      resolvedSqlitePath: ctx.resolvedSqlitePath,
+      resolvePath: ctx.resolvePath,
+      reverificationDays: ctx.cfg.verification?.reverificationDays,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:verified",
     });
     throw err;
   }

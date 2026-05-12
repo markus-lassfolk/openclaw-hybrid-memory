@@ -49,7 +49,7 @@ export class VerificationError extends Error {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function computeChecksum(text: string): string {
+export function computeChecksum(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
@@ -96,7 +96,7 @@ function addDays(date: Date, days: number): Date {
 // Raw row type returned from SQLite queries
 // ---------------------------------------------------------------------------
 
-interface VerifiedFactRow {
+export interface VerifiedFactRow {
   id: string;
   fact_id: string;
   canonical_text: string;
@@ -109,7 +109,7 @@ interface VerifiedFactRow {
   created_at: string;
 }
 
-function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
+export function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
   return {
     id: row.id,
     factId: row.fact_id,

@@ -44,7 +44,10 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
       inputHash: fixture.item.inputHash,
       actor: { type: "test", id: "equivalence-harness" },
     };
-    const parentContext: PendingDecisionContext = { ...baseContext, runId: "parent-run" };
+    const parentContext: PendingDecisionContext = {
+      ...baseContext,
+      runId: "parent-run",
+    };
     standalone.push(sanitizePendingDecision(await input.standalone(fixture.item, baseContext)));
     parentRun.push(sanitizePendingDecision(await input.parent(fixture.item, parentContext)));
   }
