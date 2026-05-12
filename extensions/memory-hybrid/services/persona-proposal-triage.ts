@@ -370,6 +370,7 @@ function listPersonaProposalItems(
   const pending = input.proposalsDb.list({ status: "pending" });
   const workspace = input.workspace ?? defaultWorkspace();
   return pending
+    .sort(comparePersonaProposalNewestFirst)
     .filter((proposal) => isVisibleAfterPersonaCursor(proposal, cursor))
     .map((proposal) => proposalToPendingItem(proposal, workspace, input.cfg));
 }
@@ -388,6 +389,10 @@ function proposalCursor(proposal: Pick<ProposalEntry, "createdAt" | "id">): stri
 
 function comparePersonaCursor(a: string, b: string): number {
   return a.localeCompare(b);
+}
+
+function comparePersonaProposalNewestFirst(a: ProposalEntry, b: ProposalEntry): number {
+  return comparePersonaCursor(proposalCursor(b), proposalCursor(a));
 }
 
 function proposalToPendingItem(
