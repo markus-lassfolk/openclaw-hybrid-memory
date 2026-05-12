@@ -469,7 +469,6 @@ export async function runRecallPipelineQuery(
           });
         }
       });
-
     }
 
     await yieldEventLoop();
