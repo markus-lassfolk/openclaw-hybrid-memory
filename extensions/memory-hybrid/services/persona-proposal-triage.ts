@@ -172,10 +172,12 @@ export async function runPersonaProposalTriage(
   const workspace = opts.workspace ?? defaultWorkspace();
   const stateDbPath = opts.stateDbPath ?? join(workspace, "memory", "pending-autopilot.db");
   const store = mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null;
+  const allProposals = opts.proposalsDb.list();
   const adapter = createPersonaProposalTriageAdapter({
     proposalsDb: opts.proposalsDb,
     cfg: opts.cfg,
     workspace,
+    allProposals,
   });
   const decisions: PendingDecision[] = [];
   const views: PersonaProposalDecisionView[] = [];
