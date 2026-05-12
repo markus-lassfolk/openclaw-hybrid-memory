@@ -46,6 +46,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Provenance tracing** | [CONFIGURATION.md](CONFIGURATION.md#provenance-tracing-163) | Full origin chain from any fact back to its source events via `memory_provenance`. (#163) |
 | **Document ingestion** | [CONFIGURATION.md](CONFIGURATION.md#document-ingestion-206) | Ingest PDF, DOCX, HTML, images, and more as searchable fact chunks (`memory_ingest_document`, `memory_ingest_folder`). (#206) |
 | **Mission Control dashboard** | [CONFIGURATION.md](CONFIGURATION.md#mission-control-dashboard-dashboard) | Real-time web dashboard (port 7700) — memory stats, cron jobs, task queue, agent status, git activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. (#309) |
+| **Cost optimization playbook** | [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md) | Concrete low-cost rollout plan: mode-by-use-case, cheap-first model tiers, distill guardrails, token budgets, local embeddings, weekly auditing. |
 
 ---
 
