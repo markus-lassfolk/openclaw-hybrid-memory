@@ -389,6 +389,8 @@ function migrateDecisionPolicyVersionUnique(db: DatabaseSync): void {
   if (!row?.sql?.includes("UNIQUE(queue, item_id, input_hash, policy, action)")) return;
 
   db.exec(`
+    BEGIN;
+
     ALTER TABLE pending_autopilot_decisions RENAME TO pending_autopilot_decisions_old_policy_unique;
 
     CREATE TABLE pending_autopilot_decisions (
@@ -422,6 +424,8 @@ function migrateDecisionPolicyVersionUnique(db: DatabaseSync): void {
     FROM pending_autopilot_decisions_old_policy_unique;
 
     DROP TABLE pending_autopilot_decisions_old_policy_unique;
+
+    COMMIT;
   `);
 }
 
