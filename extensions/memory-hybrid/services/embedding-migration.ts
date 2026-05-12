@@ -168,7 +168,17 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     checkpointState.offset < total
   ) {
     offset = Math.floor(checkpointState.offset);
-    log.info(`memory-hybrid: embedding-migration: resuming from checkpoint offset ${offset}/${total}`);
+    if (!targetTableName) {
+      log.warn(
+        `memory-hybrid: embedding-migration: ⚠ resuming direct-mode migration from checkpoint offset ${offset}/${total}. ` +
+          `Facts before offset ${offset} already have new model vectors; facts from offset ${offset} onward still have old model vectors. ` +
+          `The vector table is in a MIXED-MODEL state until migration completes. ` +
+          `Semantic search quality is degraded during this window. ` +
+          `Re-running with --shadow-table is recommended for large migrations to avoid this split.`,
+      );
+    } else {
+      log.info(`memory-hybrid: embedding-migration: resuming from checkpoint offset ${offset}/${total}`);
+    }
   }
   const facts = useBatched ? null : factsDb.getAll({ includeSuperseded: false });
 
