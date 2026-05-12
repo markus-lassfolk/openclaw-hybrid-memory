@@ -484,8 +484,9 @@ export function classifyVerifiedFact(
   | "applied"
 > {
   const fact = item.payload.fact;
-  const nowSec = Math.floor((opts.nowMs ?? Date.now()) / 1000);
-  const nowIso = new Date(opts.nowMs ?? Date.now()).toISOString();
+  const nowMs = opts.nowMs ?? Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
+  const nowIso = new Date(nowMs).toISOString();
 
   if (!fact) {
     return {
@@ -1070,6 +1071,11 @@ function findExplicitNewerVerifiedFact(db: DatabaseSync, fact: TriageFactSnapsho
       `SELECT f.*, vf.id AS verified_fact_id, vf.verified_at AS verified_at, vf.version AS verified_version
        FROM facts f
        JOIN verified_facts vf ON vf.fact_id = f.id
+       JOIN (
+         SELECT fact_id, MAX(version) AS max_version
+         FROM verified_facts
+         GROUP BY fact_id
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.supersedes_id = ? AND f.created_at >= ?
        ORDER BY f.created_at DESC
        LIMIT 5`,
