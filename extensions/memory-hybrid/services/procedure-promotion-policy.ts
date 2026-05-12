@@ -397,13 +397,14 @@ export function createProcedurePromotionDecision(
         : mostSevereGate?.severity === "reject"
           ? "rejected"
           : "deferred-for-human";
+  const schemaValidationReasons: ProcedurePromotionReason[] = ["malformed_recipe", "skill_static_validation_failed"];
   const reasonCode: AutopilotReasonCode = eligibleForMutation
     ? context.mode === "dry-run"
       ? "dry-run"
       : "approved"
     : evaluation.eligible
       ? "human-review-required"
-      : mostSevereGate?.reason === "malformed_recipe" || mostSevereGate?.reason?.includes("validation")
+      : mostSevereGate && schemaValidationReasons.includes(mostSevereGate.reason)
         ? "schema-validation-failed"
         : mostSevereGate?.reason === "duplicate_existing_skill"
           ? "duplicate-input"

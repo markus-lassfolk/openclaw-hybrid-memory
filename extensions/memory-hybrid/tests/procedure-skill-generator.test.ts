@@ -408,7 +408,7 @@ describe("generateAutoSkills", () => {
   });
 
   it("does not inflate failedEval for deferred/rejected procedures", () => {
-    const proc = db.upsertProcedure({
+    db.upsertProcedure({
       taskPattern: "Validate low confidence report",
       recipeJson: JSON.stringify([
         { tool: "read", args: { path: "status.json" }, summary: "Check status" },
@@ -486,6 +486,11 @@ describe("generateAutoSkills", () => {
 
     expect(result.generated).toBe(0);
     expect(result.skipped).toBe(1);
+    expect(result.summary?.failedValidation).toBe(1);
+    expect(result.decisions?.[0]).toMatchObject({
+      action: "failed-validation",
+      reasons: ["write_failed"],
+    });
     expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
   });

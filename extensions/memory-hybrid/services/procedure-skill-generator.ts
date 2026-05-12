@@ -221,6 +221,7 @@ export function generateAutoSkills(
         humanReviewRequired: decision.humanReviewRequired,
       });
       logger.warn(`procedure-skill-generator: write ${skillPath}: ${err}`);
+      failedValidation++;
       skipped++;
     }
   }

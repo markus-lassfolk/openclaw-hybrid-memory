@@ -590,6 +590,42 @@ describe("procedure promotion policy and adapter", () => {
     expect(decision.reasonCode).toBe("policy-denied");
   });
 
+  it("maps non-schema validation gates to policy threshold instead of schema validation failure", () => {
+    const proc = addProcedure({
+      taskPattern: "Validate workflow that still lacks explicit checks",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
+        { tool: "read", args: { path: "report.json" }, summary: "Review report output" },
+      ]),
+      sourceSessionId: "no-validation-reason-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "no-validation-reason-b");
+    db.recordProcedureSuccess(proc.id, undefined, "no-validation-reason-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+    const decision = createProcedurePromotionDecision(
+      item,
+      {
+        runId: "run-decision-non-schema-validation",
+        mode: "apply",
+        policy,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        inputHash: item.inputHash,
+        actor: { type: "test", id: "procedure-policy-test" },
+      },
+      evaluation,
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("no_validation_possible");
+    expect(decision.action).toBe("deferred-for-human");
+    expect(decision.reasonCode).toBe("policy-threshold-not-met");
+  });
+
   it("records collision-resolved slug in evaluation metadata", () => {
     const proc = addProcedure({ sourceSessionId: "resolved-slug-a" });
     db.recordProcedureSuccess(proc.id, undefined, "resolved-slug-b");
