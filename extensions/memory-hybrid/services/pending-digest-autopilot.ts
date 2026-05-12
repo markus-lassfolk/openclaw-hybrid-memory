@@ -410,11 +410,18 @@ function createPersonaProposalTriageAdapterWithCloseable(
       if (cachedAllProposals === null) {
         throw new Error("listPending must be called before decide in parent adapter");
       }
+      const freshProposals =
+        context.mode === "apply"
+          ? withCloseable(
+              () => new ProposalsDB(dbPath),
+              (db) => db.list(),
+            )
+          : cachedAllProposals;
       const adapter = createPersonaProposalTriageAdapter({
         proposalsDb: null as never,
         cfg,
         workspace,
-        allProposals: cachedAllProposals,
+        allProposals: freshProposals,
       });
       return adapter.decide(item as PersonaProposalPendingItem, context);
     },

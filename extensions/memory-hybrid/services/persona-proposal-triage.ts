@@ -183,6 +183,7 @@ export async function runPersonaProposalTriage(
   const views: PersonaProposalDecisionView[] = [];
   const startedAt = Math.floor((opts.now ?? new Date()).getTime() / 1000);
   const runInputHash = computePendingInputHash({ command: "proposals triage", mode, policy, max, startedAt: 0 });
+  let maxCursorSeen: string | null = null;
 
   try {
     store?.createRun({
@@ -237,9 +238,18 @@ export async function runPersonaProposalTriage(
       } else if (policy !== "report-only") {
         store?.recordDecision(decision);
       }
-      if (policy !== "report-only") store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+      const itemCursor = item.visibleAfterCursor ?? item.id;
+      if (maxCursorSeen === null || comparePersonaCursor(itemCursor, maxCursorSeen) > 0) {
+        maxCursorSeen = itemCursor;
+      }
       decisions.push(decision);
       views.push(decisionToView(item, decision));
+    }
+    if (policy !== "report-only" && maxCursorSeen !== null && pending.length > 0) {
+      const lastDecision = decisions[decisions.length - 1];
+      if (lastDecision) {
+        store?.advanceCursorIfSafe(lastDecision, maxCursorSeen);
+      }
     }
 
     const summary = createStableRunSummary({
