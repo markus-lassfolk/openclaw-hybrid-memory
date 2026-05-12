@@ -464,6 +464,86 @@ describe("memory tools embedding registry wiring", () => {
     expect(call[5]?.factsDbForEmbeddings).toBe(factsDb);
   });
 
+  it("rejects oversized memory_recall scope IDs instead of truncating", async () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg();
+    const vectorDb = makeMockVectorDb();
+    const scopeFilterSpy = vi.fn(() => undefined);
+
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      scopeFilterSpy as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const recallTool = api.getTool("memory_recall");
+    expect(recallTool).toBeTruthy();
+    await expect(
+      recallTool?.execute("tool-call", { query: "test", userId: "u".repeat(257), confirmCrossTenantScope: true }),
+    ).rejects.toThrow("userId must be <= 256 characters");
+    expect(scopeFilterSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized memory_recall_procedures scope IDs instead of truncating", async () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg({ procedures: { enabled: true } });
+    const vectorDb = makeMockVectorDb();
+    const scopeFilterSpy = vi.fn(() => undefined);
+
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      scopeFilterSpy as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const proceduresTool = api.getTool("memory_recall_procedures");
+    expect(proceduresTool).toBeTruthy();
+    await expect(
+      proceduresTool?.execute("tool-call", {
+        taskDescription: "check service health",
+        agentId: "a".repeat(257),
+        confirmCrossTenantScope: true,
+      }),
+    ).rejects.toThrow("agentId must be <= 256 characters");
+    expect(scopeFilterSpy).not.toHaveBeenCalled();
+  });
+
   it("stores embeddings for all registered models", async () => {
     const api = makeMockApi();
     const embeddings = makeMockEmbeddings();

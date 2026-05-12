@@ -4,7 +4,7 @@
 
 import { existsSync, statfsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -136,7 +136,7 @@ export function registerDoctorCommand(
 
       // Check 6: Disk space for the memory directory/filesystem
       try {
-        const memoryDir = join(homedir(), ".openclaw/plugins/memory-hybrid");
+        const memoryDir = cfg.sqlitePath ? dirname(cfg.sqlitePath) : join(homedir(), ".openclaw/plugins/memory-hybrid");
         if (!existsSync(memoryDir)) {
           checks.push({
             name: "Disk Space",

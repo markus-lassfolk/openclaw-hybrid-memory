@@ -36,14 +36,16 @@ export class ProgressSpinner {
     this.message = message;
   }
 
-  success(_message?: string): void {
+  success(message?: string): void {
     this.stop();
     const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-    const _elapsedStr = elapsed > 0 ? ` in ${elapsed}s` : "";
+    const elapsedStr = elapsed > 0 ? ` in ${elapsed}s` : "";
+    process.stdout.write(`✓ ${message ?? this.message}${elapsedStr}\n`);
   }
 
-  fail(_message?: string): void {
+  fail(message?: string): void {
     this.stop();
+    process.stdout.write(`✗ ${message ?? this.message}\n`);
   }
 
   stop(): void {
@@ -102,11 +104,12 @@ export class ProgressBar {
     process.stdout.write(`\r${this.message}: [${bar}] ${percent}% (${current}/${this.total})${etaStr}${statusStr}`);
   }
 
-  complete(_message?: string): void {
+  complete(message?: string): void {
     if (process.stdout.isTTY) {
       process.stdout.write("\r\x1b[K"); // Clear line
     }
-    const _elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    process.stdout.write(`✓ ${message || this.message} - ${this.total} items in ${elapsed}s\n`);
   }
 }
 
@@ -122,25 +125,28 @@ function formatDuration(seconds: number): string {
 /**
  * Simple status message with icon
  */
-export function statusMessage(_type: "info" | "success" | "warning" | "error", _message: string): void {
-  const _icons = {
+export function statusMessage(type: "info" | "success" | "warning" | "error", message: string): void {
+  const icons = {
     info: "ℹ️",
     success: "✓",
     warning: "⚠️",
     error: "✗",
   };
+  process.stdout.write(`${icons[type]} ${message}\n`);
 }
 
 /**
  * Show a completion summary with stats
  */
 export function showCompletionSummary(
-  _operation: string,
+  operation: string,
   stats: Record<string, number | string>,
   durationMs: number,
 ): void {
-  const _durationStr = formatDuration(durationMs / 1000);
+  const durationStr = formatDuration(durationMs / 1000);
+  process.stdout.write(`✓ ${operation} complete in ${durationStr}\n`);
 
-  for (const [_key, _value] of Object.entries(stats)) {
+  for (const [key, value] of Object.entries(stats)) {
+    process.stdout.write(`  ${key}: ${value}\n`);
   }
 }
