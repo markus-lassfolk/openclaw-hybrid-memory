@@ -182,7 +182,11 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     return tx();
   }
 
-  /** @deprecated Use mutateWithLockAndAudit so lock ownership and audit atomicity are enforced. */
+  /**
+   * @deprecated Use mutateWithLockAndAudit so lock ownership and audit atomicity are enforced.
+   * This legacy CAS-only helper intentionally no-ops: #1334 requires every mutating path
+   * to revalidate an active lock and write audit state transactionally before mutation.
+   */
   mutateWithInputHash(input: {
     queue: PendingQueue;
     itemId: string;
@@ -193,10 +197,11 @@ export class PendingAutopilotStore extends BaseSqliteStore {
   }): boolean {
     assertKnownEnum("queue", input.queue);
     assertKnownEnum("mode", input.mode);
-    if (input.mode === "dry-run") return false;
-    if (input.expectedInputHash !== input.actualInputHash) return false;
-    input.mutate();
-    return true;
+    void input.itemId;
+    void input.expectedInputHash;
+    void input.actualInputHash;
+    void input.mutate;
+    return false;
   }
 
   listDecisions(filter: { queue?: PendingQueue; itemId?: string } = {}): PendingDecision[] {

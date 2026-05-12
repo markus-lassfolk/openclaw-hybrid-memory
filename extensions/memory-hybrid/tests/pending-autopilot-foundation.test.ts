@@ -175,6 +175,18 @@ describe("pending-autopilot durable state invariants", () => {
         },
       }),
     ).toBe(false);
+    expect(
+      store.mutateWithInputHash({
+        queue: "persona",
+        itemId: "item-1",
+        expectedInputHash: "hash-1",
+        actualInputHash: "hash-1",
+        mode: "dry-run",
+        mutate: () => {
+          throw new Error("must not mutate");
+        },
+      }),
+    ).toBe(false);
     expect(store.tableCounts()).toEqual(before);
   });
 
@@ -246,6 +258,19 @@ describe("pending-autopilot durable state invariants", () => {
   it("requires active lock ownership and transactional audit before mutation", () => {
     let mutated = false;
     const fresh = decision({ inputHash: "hash-fresh" });
+    expect(
+      store.mutateWithInputHash({
+        queue: "persona",
+        itemId: "item-1",
+        expectedInputHash: "hash-fresh",
+        actualInputHash: "hash-fresh",
+        mode: "apply",
+        mutate: () => {
+          mutated = true;
+        },
+      }),
+    ).toBe(false);
+    expect(mutated).toBe(false);
     expect(
       store.mutateWithLockAndAudit({
         decision: fresh,
