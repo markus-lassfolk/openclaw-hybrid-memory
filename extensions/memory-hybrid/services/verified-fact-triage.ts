@@ -20,6 +20,10 @@ import { computeChecksum, rowToVerifiedFact, type VerifiedFact, type VerifiedFac
 
 export const VERIFIED_TRIAGE_POLICY_VERSION = "verified-fact-triage-v1";
 const DEFAULT_REVERIFICATION_DAYS = 30;
+const DEFAULT_TRIAGE_MAX = 100;
+const MIN_VERIFIED_TRIAGE_SQL_LIMIT = 25;
+const MAX_VERIFIED_TRIAGE_SQL_LIMIT = 1000;
+const VERIFIED_TRIAGE_SQL_OVERFETCH_FACTOR = 4;
 export const VERIFIED_REVIEW_QUEUE_SOURCE =
   "Latest verified_facts rows whose next_verification timestamp is due (or whose verified_at is older than the verification window), as returned by VerificationStore.listDueForReverification semantics. This is intentionally not all verified facts.";
 
@@ -278,30 +282,94 @@ export function listVerifiedFactTriageItems(
   const cursorItemId = opts.cursor
     ? findVerifiedCursorItemId(db, opts.cursor.inputHash, policy, nowIso, cursor, cutoffIso)
     : null;
-  const latestRows = db
-    .prepare(
-      `SELECT vf.*
-       FROM verified_facts vf
-       JOIN (
-         SELECT vf2.fact_id, MAX(vf2.version) AS max_version
-         FROM verified_facts vf2
-         GROUP BY vf2.fact_id
-       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
-       WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
-          OR vf.verified_at <= ?)
-         AND (
-           ? IS NULL
-           OR COALESCE(vf.next_verification, vf.verified_at) > ?
-           OR (COALESCE(vf.next_verification, vf.verified_at) = ? AND (? IS NULL OR vf.id > ?))
-         )
-       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.id ASC`,
-    )
-    .all(nowIso, cutoffIso, cursor, cursor, cursor, cursorItemId, cursorItemId) as unknown as VerifiedFactRow[];
+  const max = normalizeVerifiedTriageMax(opts.max);
+  const latestRows = listChecksumValidDueVerifiedRows(db, {
+    nowIso,
+    cutoffIso,
+    cursor,
+    cursorItemId,
+    max,
+  });
 
-  return latestRows
-    .filter(isVerifiedRowChecksumValid)
-    .slice(0, opts.max ?? 100)
-    .map((row) => triageItemFromRow(db, row, { nowIso, policy }));
+  return latestRows.map((row) => triageItemFromRow(db, row, { nowIso, policy }));
+}
+
+function normalizeVerifiedTriageMax(max: number | undefined): number {
+  if (max == null) return DEFAULT_TRIAGE_MAX;
+  if (!Number.isFinite(max) || max <= 0) return 0;
+  return Math.floor(max);
+}
+
+function verifiedTriageSqlLimit(max: number): number {
+  if (max <= 0) return MIN_VERIFIED_TRIAGE_SQL_LIMIT;
+  return Math.min(
+    MAX_VERIFIED_TRIAGE_SQL_LIMIT,
+    Math.max(MIN_VERIFIED_TRIAGE_SQL_LIMIT, max * VERIFIED_TRIAGE_SQL_OVERFETCH_FACTOR),
+  );
+}
+
+function listChecksumValidDueVerifiedRows(
+  db: DatabaseSync,
+  opts: {
+    nowIso: string;
+    cutoffIso: string;
+    cursor: string | null;
+    cursorItemId: string | null;
+    max: number;
+  },
+): VerifiedFactRow[] {
+  if (opts.max <= 0) return [];
+
+  const rows: VerifiedFactRow[] = [];
+  const sqlLimit = verifiedTriageSqlLimit(opts.max);
+  let pageCursor = opts.cursor;
+  let pageCursorItemId = opts.cursorItemId;
+
+  while (rows.length < opts.max) {
+    const page = db
+      .prepare(
+        `SELECT vf.*
+         FROM verified_facts vf
+         JOIN (
+           SELECT vf2.fact_id, MAX(vf2.version) AS max_version
+           FROM verified_facts vf2
+           GROUP BY vf2.fact_id
+         ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+         WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+            OR vf.verified_at <= ?)
+           AND (
+             ? IS NULL
+             OR COALESCE(vf.next_verification, vf.verified_at) > ?
+             OR (COALESCE(vf.next_verification, vf.verified_at) = ? AND (? IS NULL OR vf.id > ?))
+           )
+         ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.id ASC
+         LIMIT ?`,
+      )
+      .all(
+        opts.nowIso,
+        opts.cutoffIso,
+        pageCursor,
+        pageCursor,
+        pageCursor,
+        pageCursorItemId,
+        pageCursorItemId,
+        sqlLimit,
+      ) as unknown as VerifiedFactRow[];
+
+    if (page.length === 0) break;
+
+    for (const row of page) {
+      if (isVerifiedRowChecksumValid(row)) rows.push(row);
+      if (rows.length >= opts.max) break;
+    }
+
+    const last = page[page.length - 1];
+    pageCursor = last?.next_verification ?? last?.verified_at ?? pageCursor;
+    pageCursorItemId = last?.id ?? pageCursorItemId;
+    if (page.length < sqlLimit) break;
+  }
+
+  return rows;
 }
 
 function findVerifiedCursorItemId(
@@ -384,6 +452,11 @@ export async function runVerifiedFactTriageWithAdapter(
   const policy = assertVerifiedTriagePolicy(opts.policy);
   const mode = opts.mode;
   const store = opts.store ?? null;
+  if (mode === "apply" && policy !== "report-only" && !store) {
+    throw new Error(
+      `Verified fact triage apply mode with policy '${policy}' requires a PendingAutopilotStore to persist durable review metadata`,
+    );
+  }
   const runId = opts.runId ?? createPendingAutopilotRunId();
   const actor = opts.actor ?? { type: "agent", id: "verified-triage-cli" };
   const storedCursor =

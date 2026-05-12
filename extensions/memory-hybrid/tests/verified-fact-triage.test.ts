@@ -194,7 +194,7 @@ describe("verified fact triage queue source and policy", () => {
     expect(items.map((i) => i.payload.verified.factId)).toEqual(["good"]);
   });
 
-  it("applies max after checksum validation", () => {
+  it("applies max after bounded checksum-filtered SQL overfetch", () => {
     addFact("corrupt-first", "Corrupt earliest fact", { provenanceJson: "{}" });
     addFact("valid-second", "Valid later fact", { provenanceJson: "{}" });
     factsDb
@@ -210,9 +210,38 @@ describe("verified fact triage queue source and policy", () => {
       .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
       .run("2000-01-01T00:00:00.000Z", "valid-second");
 
-    const items = listVerifiedFactTriageItems(factsDb.getRawDb(), { max: 1 });
+    const preparedSql: string[] = [];
+    const db = factsDb.getRawDb();
+    const originalPrepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      preparedSql.push(sql);
+      return originalPrepare(sql);
+    }) as typeof db.prepare;
+
+    const items = listVerifiedFactTriageItems(db, { max: 1 });
 
     expect(items.map((i) => i.payload.verified.factId)).toEqual(["valid-second"]);
+    expect(preparedSql.some((sql) => /LIMIT \?/i.test(sql))).toBe(true);
+  });
+
+  it("paginates bounded overfetch until enough checksum-valid rows are found", () => {
+    for (let i = 0; i < 25; i += 1) {
+      const id = `corrupt-${i.toString().padStart(2, "0")}`;
+      addFact(id, `Corrupt fact ${i}`, { provenanceJson: "{}" });
+      factsDb
+        .getRawDb()
+        .prepare("UPDATE verified_facts SET canonical_text = ?, next_verification = ? WHERE fact_id = ?")
+        .run("tampered", `1999-01-${(i + 1).toString().padStart(2, "0")}T00:00:00.000Z`, id);
+    }
+    addFact("valid-after-page", "Valid after first bounded page", { provenanceJson: "{}" });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
+      .run("2000-01-01T00:00:00.000Z", "valid-after-page");
+
+    const items = listVerifiedFactTriageItems(factsDb.getRawDb(), { max: 1 });
+
+    expect(items.map((i) => i.payload.verified.factId)).toEqual(["valid-after-page"]);
   });
 
   it("report-only and dry-run never mutate foundation state", async () => {
@@ -254,6 +283,19 @@ describe("verified fact triage queue source and policy", () => {
     expect(result.items[0].action).toBe("classified");
     expect(pendingStore.listDecisions({ queue: "verified" })).toHaveLength(1);
     expect(factsDb.getById("classify-me")?.text).toBe("A sourced fact due for review");
+  });
+
+  it("requires a durable store for non-report apply runs", async () => {
+    addFact("needs-store", "A sourced fact that must persist apply metadata", {
+      provenanceJson: "{}",
+    });
+
+    await expect(
+      runVerifiedFactTriage(factsDb, {
+        mode: "apply",
+        policy: "classify",
+      }),
+    ).rejects.toThrow(/requires a PendingAutopilotStore/);
   });
 
   it("apply-obvious cannot delete, demote, rewrite, or change critical verified facts", async () => {
