@@ -288,7 +288,7 @@ export function decidePersonaProposal(
     policyVersion: context.policyVersion,
     mode: context.mode,
     action: context.policy === "report-only" ? "reported" : analysis.action,
-    reasonCode: context.policy === "report-only" ? "policy-report-only" : analysis.reasonCode,
+    reasonCode: analysis.reasonCode,
     actionClass: context.policy === "report-only" ? "observe" : analysis.actionClass,
     capabilityClass: context.mode === "dry-run" ? "dry-run" : analysis.capabilityClass,
     confidence: analysis.confidence,
@@ -314,7 +314,7 @@ export function decidePersonaProposal(
       policy: context.policy,
       policyVersion: context.policyVersion,
       action: context.policy === "report-only" ? "reported" : analysis.action,
-      reasonCode: context.policy === "report-only" ? "policy-report-only" : analysis.reasonCode,
+      reasonCode: analysis.reasonCode,
       capabilityClass: context.mode === "dry-run" ? "dry-run" : analysis.capabilityClass,
       humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
       evidence: analysis.evidence,
@@ -508,14 +508,21 @@ function analyzePersonaProposal(
   if (p.confidence < PERSONA_APPLY_CONFIDENCE_THRESHOLD) {
     return defer("low", "low-confidence", diffSummary, evidence, p.confidence);
   }
-  if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange)) {
-    return defer(
-      "medium",
-      "policy-requires-human",
-      "Sensitive persona target requires exact human approval for semantic writes.",
-      evidence,
-      p.confidence,
-    );
+  if (isCriticalTarget(p.targetFile)) {
+    const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange);
+    const containsSemanticKeywords =
+      /\b(identity|personality|voice|tone|behavior|instruction|response|reply|always|never|must|should)\b/i.test(
+        p.suggestedChange,
+      );
+    if (!hasFormattingPrefix || containsSemanticKeywords) {
+      return defer(
+        "medium",
+        "policy-requires-human",
+        "Sensitive persona target requires exact human approval for semantic writes.",
+        evidence,
+        p.confidence,
+      );
+    }
   }
   return {
     risk: "low",
@@ -811,8 +818,14 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
     )
   )
     return "high";
-  if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange))
-    return "high";
+  if (isCriticalTarget(p.targetFile)) {
+    const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange);
+    const containsSemanticKeywords =
+      /\b(identity|personality|voice|tone|behavior|instruction|response|reply|always|never|must|should)\b/i.test(
+        p.suggestedChange,
+      );
+    if (!hasFormattingPrefix || containsSemanticKeywords) return "high";
+  }
   if (/preference|workflow|routing|project context|communication/.test(text)) return "medium";
   if (isLargeOrBroadDiff(p)) return "medium";
   if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
