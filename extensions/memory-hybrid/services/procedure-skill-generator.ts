@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { resolveWorkspacePath } from "../utils/path.js";
-import { slugifyForSkill } from "../utils/text.js";
+import { slugifyForSkill, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
@@ -79,13 +79,6 @@ function rebaseDraftSlug(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function titleCase(slug: string): string {
-  return slug
-    .split("-")
-    .map((p) => (p ? p[0]?.toUpperCase() + p.slice(1) : p))
-    .join(" ");
 }
 
 type GenerateAutoSkillsOptions = {

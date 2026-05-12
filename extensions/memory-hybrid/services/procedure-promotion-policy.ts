@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
-import { slugifyForSkill } from "../utils/text.js";
+import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   computePendingInputHash,
   type AutopilotReasonCode,
@@ -384,16 +384,16 @@ export function createProcedurePromotionDecision(
   context: PendingDecisionContext,
   evaluation: ProcedurePromotionEvaluation,
 ): PendingDecision {
-  const firstGate = evaluation.gates[0];
+  const mostSevereGate = findMostSevereGate(evaluation.gates);
   const policyAllowsDraftWrite = context.policy === "auto-safe";
   const eligibleForMutation = evaluation.eligible && policyAllowsDraftWrite;
   const action = eligibleForMutation
     ? "promoted-to-draft"
     : evaluation.eligible
       ? "deferred-for-human"
-      : firstGate?.severity === "fail-validation"
+      : mostSevereGate?.severity === "fail-validation"
         ? "failed-validation"
-        : firstGate?.severity === "reject"
+        : mostSevereGate?.severity === "reject"
           ? "rejected"
           : "deferred-for-human";
   const reasonCode: AutopilotReasonCode = eligibleForMutation
@@ -402,11 +402,11 @@ export function createProcedurePromotionDecision(
       : "approved"
     : evaluation.eligible
       ? "human-review-required"
-      : firstGate?.reason === "malformed_recipe" || firstGate?.reason?.includes("validation")
+      : mostSevereGate?.reason === "malformed_recipe" || mostSevereGate?.reason?.includes("validation")
         ? "schema-validation-failed"
-        : firstGate?.reason === "duplicate_existing_skill"
+        : mostSevereGate?.reason === "duplicate_existing_skill"
           ? "duplicate-input"
-          : firstGate?.severity === "reject"
+          : mostSevereGate?.severity === "reject"
             ? "policy-denied"
             : "policy-threshold-not-met";
   const capabilityClass = eligibleForMutation ? "write-draft-artifact" : "record-review-metadata";
@@ -772,9 +772,14 @@ function firstKeyword(text: string): string {
   return [...significantWords(text)][0] ?? "task";
 }
 
-function titleCase(slug: string): string {
-  return basename(slug)
-    .split("-")
-    .map((p) => (p ? p[0]?.toUpperCase() + p.slice(1) : p))
-    .join(" ");
+function findMostSevereGate(gates: ProcedurePromotionGateResult[]): ProcedurePromotionGateResult | undefined {
+  if (gates.length === 0) return undefined;
+  const severityOrder: Record<ProcedurePromotionGateResult["severity"], number> = {
+    reject: 3,
+    "fail-validation": 2,
+    defer: 1,
+  };
+  return gates.reduce((mostSevere, gate) =>
+    severityOrder[gate.severity] > severityOrder[mostSevere.severity] ? gate : mostSevere,
+  );
 }
