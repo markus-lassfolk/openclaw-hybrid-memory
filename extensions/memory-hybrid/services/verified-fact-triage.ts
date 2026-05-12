@@ -1162,7 +1162,7 @@ function detectSensitivity(
     .join("\n");
   const flags: string[] = [];
   let reason: VerifiedTriageReason = "sensitive_personal_fact";
-  const priorityMap: Record<VerifiedTriageReason, number> = {
+  const priorityMap: Partial<Record<VerifiedTriageReason, number>> = {
     sensitive_security_fact: 4,
     sensitive_privacy_fact: 3,
     sensitive_operational_runbook: 2,
