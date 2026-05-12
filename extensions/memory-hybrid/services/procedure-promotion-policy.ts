@@ -766,7 +766,8 @@ function isDuplicateSkill(
       if (entry === slug) return true;
       const content = safeReadFile(skillPath).toLowerCase();
       if (content.includes(`name: ${slug}`)) return true;
-      const contentWords = significantWords(content);
+      const taskContent = extractTaskContentFromSkill(content);
+      const contentWords = significantWords(taskContent);
       const overlap = [...taskWords].filter((w) => contentWords.has(w)).length;
       if (taskWords.size >= 2 && overlap >= Math.min(2, taskWords.size)) return true;
     }
@@ -825,6 +826,14 @@ function safeReadFile(path: string): string {
   } catch {
     return "";
   }
+}
+
+function extractTaskContentFromSkill(content: string): string {
+  const descMatch = content.match(/description:\s*([^\n]+)/);
+  const desc = descMatch ? descMatch[1] : "";
+  const triggerMatch = content.match(/##\s*trigger\s*([\s\S]*?)(?=##|$)/i);
+  const trigger = triggerMatch ? triggerMatch[1] : "";
+  return `${desc}\n${trigger}`;
 }
 
 function significantWords(text: string): Set<string> {
