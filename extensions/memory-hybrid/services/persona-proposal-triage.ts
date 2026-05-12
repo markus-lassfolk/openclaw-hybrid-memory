@@ -945,10 +945,12 @@ function isNonActionable(change: string): boolean {
   ]);
   if (nonActionablePhrases.has(normalized)) return true;
 
-  const directiveVerbs = /\b(add|append|record|capture|document|replace|remove|delete|update|clarify|format|fix|rewrite|rename|prefer|avoid|use|mention|store|include)\b/i;
-  const hasTargetOrLocation = /\b(soul\.md|user\.md|identity\.md|agents\.md|tools\.md|section|heading|paragraph|line|bullet|preference|guidance|instruction|file|document)\b/i.test(
-    change,
-  );
+  const directiveVerbs =
+    /\b(add|append|record|capture|document|replace|remove|delete|update|clarify|format|fix|rewrite|rename|prefer|avoid|use|mention|store|include)\b/i;
+  const hasTargetOrLocation =
+    /\b(soul\.md|user\.md|identity\.md|agents\.md|tools\.md|section|heading|paragraph|line|bullet|preference|guidance|instruction|file|document)\b/i.test(
+      change,
+    );
 
   return normalized.length < 12 && !directiveVerbs.test(change) && !hasTargetOrLocation;
 }
