@@ -616,7 +616,7 @@ function applyPersonaDecisionWithLock(input: {
     const ok = input.store.mutateWithLockAndAudit({
       decision: input.decision,
       owner,
-      actualInputHash: input.decision.inputHash,
+      actualInputHash: actualHash,
       audit: () => {},
       mutate: () => {
         if (input.decision.action === "rejected") {
@@ -872,15 +872,16 @@ function hasReliableTargetSnapshot(proposal: Pick<ProposalEntry, "targetHash" | 
 function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalEntry | null {
   const normalized = normalizeText(proposal.suggestedChange);
   if (!normalized) return null;
-  return (
-    all.find(
-      (candidate) =>
-        candidate.id !== proposal.id &&
-        candidate.targetFile === proposal.targetFile &&
-        (candidate.status === "applied" || candidate.status === "pending") &&
-        normalizeText(candidate.suggestedChange) === normalized,
-    ) ?? null
+  const candidate = all.find(
+    (c) =>
+      c.id !== proposal.id &&
+      c.targetFile === proposal.targetFile &&
+      (c.status === "applied" || c.status === "pending") &&
+      normalizeText(c.suggestedChange) === normalized,
   );
+  if (!candidate) return null;
+  if (candidate.status === "applied") return candidate;
+  return candidate.createdAt < proposal.createdAt ? null : candidate;
 }
 
 function isNonActionable(change: string): boolean {
