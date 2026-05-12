@@ -166,6 +166,48 @@ describe("procedure promotion policy and adapter", () => {
     expect(verification.sourceProcedureIds).toEqual([proc.id]);
   });
 
+  it("dry-run includes earlier same-run drafts when detecting duplicate skills", () => {
+    const first = addProcedure({
+      taskPattern: "Validate duplicate report workflow",
+      sourceSessionId: "same-run-duplicate-a",
+    });
+    const second = addProcedure({
+      taskPattern: "Validate duplicate report workflow",
+      sourceSessionId: "same-run-duplicate-d",
+    });
+    for (const [proc, prefix] of [
+      [first, "same-run-duplicate-a"],
+      [second, "same-run-duplicate-d"],
+    ] as const) {
+      db.recordProcedureSuccess(proc.id, undefined, `${prefix}-b`);
+      db.recordProcedureSuccess(proc.id, undefined, `${prefix}-c`);
+    }
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        dryRun: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+        skillTTLDays: 30,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.dryRun).toBe(true);
+    expect(result.summary).toMatchObject({
+      candidates: 2,
+      eligible: 1,
+      drafted: 1,
+      deferred: 1,
+    });
+    expect(result.decisions?.find((d) => d.procedureId === first.id)?.action).toBe("promoted-to-draft");
+    expect(result.decisions?.find((d) => d.procedureId === second.id)?.reasons).toContain("duplicate_existing_skill");
+    expect(existsSync(skillsDir)).toBe(false);
+  });
+
   it("does not report generated skill paths for deferred procedures", () => {
     const proc = addProcedure({
       taskPattern: "Validate deferred low confidence report",

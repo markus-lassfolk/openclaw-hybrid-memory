@@ -116,10 +116,16 @@ export interface ProcedurePromotionVerification {
   lastVerifiedAt: string;
 }
 
+export interface ProcedurePromotionDuplicateCandidate {
+  slug: string;
+  taskPattern: string;
+}
+
 export interface ProcedurePromotionPolicyOptions {
   validationThreshold: number;
   skillsAutoPath: string;
   existingSkillDirs?: string[];
+  inRunSkillCandidates?: readonly ProcedurePromotionDuplicateCandidate[];
   minDistinctContexts?: number;
   minConfidence?: number;
   minSuccessRate?: number;
@@ -281,8 +287,16 @@ export function evaluateProcedureForPromotion(
     gates.push(defer("non_deterministic_steps", "recipe relies on non-deterministic timing or vague judgment"));
   if (!hasValidationCheck(recipe, proc.taskPattern))
     gates.push(defer("no_validation_possible", "no objective validation check is present or inferable"));
-  if (isDuplicateSkill(item.payload.skillSlug, proc.taskPattern, options.skillsAutoPath, options.existingSkillDirs))
-    gates.push(defer("duplicate_existing_skill", "existing skill appears to cover this trigger"));
+  if (
+    isDuplicateSkill(
+      item.payload.skillSlug,
+      proc.taskPattern,
+      options.skillsAutoPath,
+      options.existingSkillDirs,
+      options.inRunSkillCandidates,
+    )
+  )
+    gates.push(defer("duplicate_existing_skill", "existing or earlier same-run skill appears to cover this trigger"));
 
   gates.push(...scanSafety(combinedText));
 
@@ -469,7 +483,7 @@ export function createProcedurePromotionDecision(
               ? `Procedure ${item.id} deferred-for-human: policy=${context.policy} requires manual approval before draft writes.`
               : `Procedure ${item.id} ${action}: ${evaluation.gates.map((g) => g.reason).join(", ")}`,
         ).redacted,
-        metadata: redactAutopilotValue(evaluation.metadata),
+        metadata: redactAutopilotValue(evaluation.metadata) as Record<string, unknown>,
       },
     },
   };
@@ -732,9 +746,21 @@ function hasValidationCheck(recipe: unknown, _task: string): boolean {
     return explicitValidationPattern.test(`${fields}\n${argFields}`);
   });
 }
-function isDuplicateSkill(slug: string, task: string, skillsAutoPath: string, extraDirs: string[] = []): boolean {
+function isDuplicateSkill(
+  slug: string,
+  task: string,
+  skillsAutoPath: string,
+  extraDirs: string[] = [],
+  inRunCandidates: readonly ProcedurePromotionDuplicateCandidate[] = [],
+): boolean {
   const dirs = [skillsAutoPath, ...extraDirs];
   const taskWords = significantWords(task);
+  for (const candidate of inRunCandidates) {
+    if (candidate.slug === slug) return true;
+    const candidateWords = significantWords(candidate.taskPattern);
+    const overlap = [...taskWords].filter((w) => candidateWords.has(w)).length;
+    if (taskWords.size >= 3 && overlap >= Math.min(3, taskWords.size)) return true;
+  }
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const entry of safeReadDir(dir)) {

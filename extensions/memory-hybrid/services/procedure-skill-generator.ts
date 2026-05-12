@@ -116,6 +116,7 @@ export function generateAutoSkills(
   let failedValidation = 0;
   let failedEval = 0;
   const reservedSlugs = new Set<string>();
+  const inRunSkillCandidates: Array<{ slug: string; taskPattern: string }> = [];
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
@@ -132,9 +133,13 @@ export function generateAutoSkills(
       skillsAutoPath: basePath,
       validationThreshold: options.validationThreshold,
       resolvedSlug,
+      inRunSkillCandidates,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
-    if (evaluation.eligible && evaluation.draft) reservedSlugs.add(resolvedSlug);
+    if (evaluation.eligible && evaluation.draft) {
+      reservedSlugs.add(resolvedSlug);
+      inRunSkillCandidates.push({ slug: resolvedSlug, taskPattern: proc.taskPattern });
+    }
     if (evaluation.eligible) eligible++;
     if (decision.action === "rejected") rejected++;
     if (decision.action === "deferred-for-human") deferred++;

@@ -26,10 +26,15 @@ export function sanitizePendingDecision(decision: PendingDecision): PendingDecis
   assertKnownEnum("reasonCode", decision.reasonCode);
   assertKnownEnum("actionClass", decision.actionClass);
   assertKnownEnum("capabilityClass", decision.capabilityClass);
+  const audit = decision.audit ? (redactAutopilotValue(decision.audit) as PendingDecision["audit"]) : undefined;
+  if (audit) {
+    audit.runId = decision.runId;
+    if (decision.jobId !== undefined) audit.jobId = decision.jobId;
+  }
   return {
     ...decision,
     summary: decision.summary ? (redactAutopilotValue(decision.summary) as PendingDecision["summary"]) : undefined,
-    audit: decision.audit ? (redactAutopilotValue(decision.audit) as PendingDecision["audit"]) : undefined,
+    audit,
     evidence: redactAutopilotValue(decision.evidence) as PendingDecision["evidence"],
     actor: redactAutopilotValue(decision.actor) as PendingDecision["actor"],
   };
