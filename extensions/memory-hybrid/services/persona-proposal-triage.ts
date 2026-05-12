@@ -7,9 +7,9 @@
  * as instructions and raw proposal bodies are not persisted in output/audit.
  */
 
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getEnv } from "../utils/env-manager.js";
@@ -112,6 +112,7 @@ export type PersonaProposalPendingItem = PendingItem<PersonaProposalPayload> & {
   proposal: ProposalEntry;
   targetPath: string;
   targetHash: string | null;
+  workspace: string;
 };
 
 type Analysis = {
@@ -158,7 +159,7 @@ export async function runPersonaProposalTriage(
   const actor = opts.actor ?? ({ type: "agent", id: "persona-proposal-triage" } as const);
   const workspace = opts.workspace ?? defaultWorkspace();
   const stateDbPath = opts.stateDbPath ?? join(workspace, "memory", "pending-autopilot.db");
-  const store = mode === "apply" ? new PendingAutopilotStore(stateDbPath) : null;
+  const store = mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null;
   const adapter = createPersonaProposalTriageAdapter({
     proposalsDb: opts.proposalsDb,
     cfg: opts.cfg,
@@ -193,13 +194,13 @@ export async function runPersonaProposalTriage(
         actor,
       };
       let decision = await adapter.decide(item, context);
-      if (mode === "apply" && isMutationDecision(decision)) {
+      if (mode === "apply" && policy !== "report-only" && isMutationDecision(decision)) {
         if (!store) throw new Error("apply mode requires pending-autopilot store");
         decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace });
-      } else {
+      } else if (policy !== "report-only") {
         store?.recordDecision(decision);
       }
-      store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+      if (policy !== "report-only") store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
       decisions.push(decision);
       views.push(decisionToView(item, decision));
     }
@@ -272,7 +273,13 @@ export function decidePersonaProposal(
 ): PendingDecision {
   const all = input.allProposals ?? input.proposalsDb.list();
   const workspace = input.workspace ?? defaultWorkspace();
-  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all, input.cfg, workspace);
+  const analysis = analyzePersonaProposal(
+    item,
+    context.policy as PersonaProposalTriagePolicy,
+    all,
+    input.cfg,
+    workspace,
+  );
   return {
     queue: "persona",
     itemId: item.id,
@@ -387,8 +394,9 @@ function proposalToPendingItem(
     visibleAfterCursor: proposal.id,
     requiresHumanReview: true,
     proposal,
-    targetPath: target.ok ? target.path : proposal.targetFile,
+    targetPath: target.path,
     targetHash,
+    workspace,
   };
 }
 
@@ -488,6 +496,15 @@ function analyzePersonaProposal(
   if (!hasEvidence(p)) return defer("low", "missing-evidence", diffSummary, evidence, p.confidence);
   if (isLargeOrBroadDiff(p)) return defer("medium", "large-or-broad-diff", diffSummary, evidence, p.confidence);
   if (policy !== "apply-safe") return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
+  if (!hasReliableTargetSnapshot(p)) {
+    return defer(
+      "low",
+      "stale-target-context",
+      "Auto-apply requires target hash or mtime snapshot.",
+      evidence,
+      p.confidence,
+    );
+  }
   if (p.confidence < PERSONA_APPLY_CONFIDENCE_THRESHOLD) {
     return defer("low", "low-confidence", diffSummary, evidence, p.confidence);
   }
@@ -559,8 +576,21 @@ function applyPersonaDecisionWithLock(input: {
       );
     }
     const currentTargetHash = fileHash(currentTarget.path);
+    if (input.decision.action === "applied" && !hasReliableTargetSnapshot(current)) {
+      return validationFailure(
+        input.decision,
+        "stale-target-context",
+        "Auto-apply requires target hash or mtime snapshot.",
+      );
+    }
     if (input.decision.action === "applied" && current.targetHash && current.targetHash !== currentTargetHash) {
       return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
+    }
+    if (input.decision.action === "applied" && !current.targetHash && current.targetMtimeMs != null) {
+      const currentMtimeMs = lstatSync(currentTarget.path).mtimeMs;
+      if (Math.trunc(current.targetMtimeMs) !== Math.trunc(currentMtimeMs)) {
+        return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
+      }
     }
 
     const ok = input.store.mutateWithLockAndAudit({
@@ -809,6 +839,10 @@ function isStaleTarget(item: PersonaProposalPendingItem): boolean {
   return Boolean(item.proposal.targetHash && item.targetHash && item.proposal.targetHash !== item.targetHash);
 }
 
+function hasReliableTargetSnapshot(proposal: Pick<ProposalEntry, "targetHash" | "targetMtimeMs">): boolean {
+  return Boolean(proposal.targetHash || proposal.targetMtimeMs != null);
+}
+
 function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalEntry | null {
   const normalized = normalizeText(proposal.suggestedChange);
   if (!normalized) return null;
@@ -938,7 +972,7 @@ function maxRisk(risks: PersonaProposalRisk[]): PersonaProposalRisk {
   return risks.sort((a, b) => order.indexOf(b) - order.indexOf(a))[0] ?? "medium";
 }
 
-function validatePersonaPolicy(policy: string): asserts policy is PersonaProposalTriagePolicy {
+export function validatePersonaPolicy(policy: string): asserts policy is PersonaProposalTriagePolicy {
   if (policy !== "report-only" && policy !== "cautious" && policy !== "apply-safe") {
     throw new Error(`Unsupported persona proposal triage policy: ${policy}`);
   }

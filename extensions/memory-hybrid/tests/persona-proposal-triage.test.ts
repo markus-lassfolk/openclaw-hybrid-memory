@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,6 +106,7 @@ describe("persona proposal triage", () => {
   it("apply-safe only applies low-risk localized changes and keeps sensitive semantic targets pending", async () => {
     const low = proposal({
       targetFile: "USER.md",
+      targetHash: fileHash(join(tmpDir, "USER.md")),
       suggestedChange: "Formatting: ensure markdown list spacing is consistent.",
       confidence: 0.99,
     });
@@ -216,6 +218,46 @@ describe("persona proposal triage", () => {
     expect(result.decisions[0]?.reason).toBe("stale-target-context");
   });
 
+  it("apply-safe defers low-risk writes without a reliable target snapshot", async () => {
+    const unsafe = proposal({
+      targetFile: "USER.md",
+      targetHash: null,
+      suggestedChange: "Formatting: tiny safe change.",
+      confidence: 0.99,
+    });
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(proposalsDb.get(unsafe.id)?.status).toBe("pending");
+    expect(result.decisions[0]?.action).toBe("deferred-for-human");
+    expect(result.decisions[0]?.reason).toBe("stale-target-context");
+  });
+
+  it("report-only apply intent does not write durable autopilot state or mutate proposals", async () => {
+    const p = proposal({ suggestedChange: "be better", confidence: 0.4 });
+    const stateDb = join(tmpDir, "pending-report-only.db");
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "report-only",
+      stateDbPath: stateDb,
+    });
+
+    expect(result.decisions[0]?.action).toBe("reported");
+    expect(proposalsDb.get(p.id)?.status).toBe("pending");
+    expect(existsSync(stateDb)).toBe(false);
+  });
+
   it("groups related proposals and does not merge unrelated topics incorrectly", async () => {
     proposal({
       title: "Preference A",
@@ -274,3 +316,7 @@ describe("persona proposal triage", () => {
     });
   });
 });
+
+function fileHash(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}

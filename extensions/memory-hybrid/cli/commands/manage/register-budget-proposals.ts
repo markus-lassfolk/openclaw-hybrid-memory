@@ -284,6 +284,11 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
             console.log("Proposals triage not available (personaProposals disabled or no proposals DB).");
             return;
           }
+          if (opts?.dryRun && opts?.apply) {
+            console.error("error: use only one of --dry-run or --apply");
+            process.exitCode = 1;
+            return;
+          }
           const max = opts?.max != null ? Number.parseInt(opts.max, 10) : undefined;
           if (opts?.max != null && (!Number.isFinite(max) || (max ?? 0) < 0)) {
             console.error(`error: --max must be a non-negative integer. Got: ${opts.max}`);
