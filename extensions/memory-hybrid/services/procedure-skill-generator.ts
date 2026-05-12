@@ -133,9 +133,9 @@ export function generateAutoSkills(
     const slug = ensureUniqueSlug(basePath, evaluation.draft.slug);
     const skillDir = join(basePath, slug);
     const skillPath = join(skillDir, "SKILL.md");
-    paths.push(skillPath);
 
     if (dryRun) {
+      paths.push(skillPath);
       logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);
       drafted++;
       continue;
@@ -147,6 +147,7 @@ export function generateAutoSkills(
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, relativePath);
+      paths.push(skillPath);
       drafted++;
       logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
     } catch (err) {

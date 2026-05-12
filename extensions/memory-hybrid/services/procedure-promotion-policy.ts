@@ -392,7 +392,7 @@ export function createProcedurePromotionDecision(
   const reasonCode = eligibleForMutation
     ? context.mode === "dry-run"
       ? "dry-run"
-      : "policy-threshold-not-met"
+      : "already-processed"
     : evaluation.eligible
       ? "human-review-required"
       : firstGate?.reason === "malformed_recipe" || firstGate?.reason?.includes("validation")
