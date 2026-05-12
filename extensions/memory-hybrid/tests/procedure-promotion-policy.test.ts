@@ -810,9 +810,11 @@ Source procedure id: proc-weather
     db.recordProcedureSuccess(proc.id, undefined, "eq-c");
     const policy = parseProcedurePromotionPolicy("auto-safe");
     const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const fixedNow = 1_800_000_000;
     const adapter = new ProcedurePromotionAdapter([requireProcedure(proc.id)], policy, {
       skillsAutoPath: skillsDir,
       validationThreshold: 3,
+      now: fixedNow,
     });
     const [listed] = adapter.listPending();
 
