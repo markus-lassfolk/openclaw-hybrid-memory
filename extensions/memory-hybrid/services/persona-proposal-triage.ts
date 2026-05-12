@@ -47,6 +47,7 @@ export interface PersonaProposalTriageOptions {
   mode?: AutopilotMode;
   policy?: PersonaProposalTriagePolicy;
   max?: number;
+  proposalId?: string;
   runId?: string;
   jobId?: string;
   actor?: PendingDecisionActorContext;
@@ -152,6 +153,7 @@ export function createPersonaProposalTriageAdapter(input: {
   cfg: Pick<HybridMemoryConfig, "personaProposals">;
   workspace?: string;
   allProposals?: ProposalEntry[];
+  proposalId?: string;
 }): PendingQueueAdapter<PersonaProposalPendingItem> {
   return {
     queue: "persona",
@@ -182,6 +184,7 @@ export async function runPersonaProposalTriage(
     cfg: opts.cfg,
     workspace,
     allProposals,
+    proposalId: opts.proposalId,
   });
   const decisions: PendingDecision[] = [];
   const views: PersonaProposalDecisionView[] = [];
@@ -222,6 +225,7 @@ export async function runPersonaProposalTriage(
               cfg: opts.cfg,
               workspace,
               allProposals: freshProposals,
+              proposalId: opts.proposalId,
             })
           : adapter;
       let decision = await freshAdapter.decide(item, context);
@@ -252,7 +256,12 @@ export async function runPersonaProposalTriage(
       decisions.push(decision);
       views.push(decisionToView(item, decision));
     }
-    if (policy !== "report-only" && cursorAdvanceCandidate !== null && pending.length > 0) {
+    if (
+      policy !== "report-only" &&
+      opts.proposalId === undefined &&
+      cursorAdvanceCandidate !== null &&
+      pending.length > 0
+    ) {
       store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);
     }
 
@@ -398,6 +407,7 @@ function listPersonaProposalItems(
     proposalsDb: ProposalsDB;
     cfg: Pick<HybridMemoryConfig, "personaProposals">;
     workspace?: string;
+    proposalId?: string;
   },
   cursor?: PendingAutopilotCursor | null,
 ): PersonaProposalPendingItem[] {
@@ -406,6 +416,7 @@ function listPersonaProposalItems(
   const workspace = input.workspace ?? defaultWorkspace();
   return pending
     .sort(comparePersonaProposalNewestFirst)
+    .filter((proposal) => input.proposalId === undefined || proposal.id === input.proposalId)
     .filter((proposal) => isVisibleAfterPersonaCursor(proposal, cursor))
     .map((proposal) => proposalToPendingItem(proposal, workspace, input.cfg));
 }

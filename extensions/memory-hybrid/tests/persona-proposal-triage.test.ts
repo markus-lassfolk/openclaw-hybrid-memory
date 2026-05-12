@@ -137,6 +137,38 @@ describe("persona proposal triage", () => {
     }
   });
 
+  it("can target one proposal by id without processing newer visible proposals", async () => {
+    const target = proposal({ title: "Older targeted noise", suggestedChange: "be better", confidence: 0.9 });
+    const newerDeferred = proposal({
+      title: "Newer deferred preference",
+      suggestedChange: "Always use a more casual tone when replying to the user.",
+      confidence: 0.95,
+    });
+    const raw = new DatabaseSync(join(tmpDir, "proposals.db"));
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, target.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newerDeferred.id);
+    raw.close();
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      stateDbPath: join(tmpDir, "pending.db"),
+      mode: "apply",
+      policy: "cautious",
+      max: 1,
+      proposalId: target.id,
+    });
+
+    expect(result.decisions.map((d) => d.proposalId)).toEqual([target.id]);
+    expect(proposalsDb.get(target.id)?.status).toBe("rejected");
+    expect(proposalsDb.get(newerDeferred.id)?.status).toBe("pending");
+    const store = new PendingAutopilotStore(join(tmpDir, "pending.db"));
+    expect(store.listDecisions({ queue: "persona", itemId: target.id })).toHaveLength(1);
+    expect(store.listDecisions({ queue: "persona", itemId: newerDeferred.id })).toHaveLength(0);
+    store.close();
+  });
+
   it("uses default max and accepts zero and positive integer max values", async () => {
     proposal({ title: "one", suggestedChange: "Formatting: one", confidence: 0.99 });
     proposal({ title: "two", suggestedChange: "Formatting: two", confidence: 0.99 });

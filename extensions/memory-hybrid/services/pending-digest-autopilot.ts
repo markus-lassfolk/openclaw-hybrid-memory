@@ -299,6 +299,7 @@ export async function runPendingDigestAutopilot(
               mode: "apply",
               policy: policy as "cautious" | "apply-safe",
               max: 1,
+              proposalId: item.id,
               runId,
               jobId: opts.jobId,
               actor,
@@ -308,8 +309,8 @@ export async function runPendingDigestAutopilot(
             const latestDecision = childDecision
               ? ((store?.listDecisions({ queue: "persona", itemId: item.id }).at(-1) as PendingDecision | undefined) ??
                 decisionFromPersonaView(decision, childDecision))
-              : undefined;
-            decision = latestDecision ?? decision;
+              : makeUnprocessedPersonaDecision(decision);
+            decision = latestDecision;
             if (!childDecision) {
               store?.recordDecision(decision);
             }
@@ -452,6 +453,42 @@ function createPersonaProposalTriageAdapterWithCloseable(
       return adapter.decide(item as PersonaProposalPendingItem, context);
     },
     close: () => proposalsDb.close(),
+  };
+}
+
+function makeUnprocessedPersonaDecision(base: PendingDecision): PendingDecision {
+  return {
+    ...base,
+    action: "failed-validation",
+    reasonCode: "invalid-item",
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    humanReviewRequired: true,
+    summary: {
+      ...(base.summary ?? {}),
+      body: "Targeted persona child triage did not process this proposal; parent will not advance cursor or record fallback mutation.",
+    },
+    audit: {
+      ...(base.audit ?? {
+        queue: base.queue,
+        itemId: base.itemId,
+        inputHash: base.inputHash,
+        policy: base.policy,
+        policyVersion: base.policyVersion,
+        action: base.action,
+        reasonCode: base.reasonCode,
+        capabilityClass: base.capabilityClass,
+        humanReviewRequired: base.humanReviewRequired,
+        evidence: base.evidence,
+        actor: base.actor,
+        runId: base.runId,
+        jobId: base.jobId,
+      }),
+      action: "failed-validation",
+      reasonCode: "invalid-item",
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+    },
   };
 }
 
