@@ -84,6 +84,7 @@ export interface VerifiedFactTriagePayload extends Record<string, unknown> {
   fact: TriageFactSnapshot | null;
   verificationTier: string | null;
   reviewCursor: string | null;
+  dueReason: "next_verification" | "verified_at_stale";
 }
 
 export interface TriageFactSnapshot {
@@ -208,7 +209,7 @@ const SENSITIVE_RULES: Array<{ flag: string; reason: VerifiedTriageReason; patte
   {
     flag: "persona-preference",
     reason: "sensitive_personal_fact",
-    pattern: /\b(preference|user identity|persona|edict|hard rule|markus|lotta)\b/i,
+    pattern: /\b(preference|user identity|persona|edict|hard rule|user profile|personal fact)\b/i,
   },
   {
     flag: "operational-runbook",
@@ -226,11 +227,19 @@ export function createVerifiedFactTriageAdapter(input: {
   factsDb: Pick<FactsDB, "getRawDb">;
   max?: number;
   nowMs?: number;
+  reverificationDays?: number;
+  policy?: VerifiedTriagePolicy;
 }): PendingQueueAdapter<VerifiedFactTriageItem> {
   const db = input.factsDb.getRawDb();
   return {
     queue: "verified",
-    listPending: () => listVerifiedFactTriageItems(db, { max: input.max, nowMs: input.nowMs }),
+    listPending: () =>
+      listVerifiedFactTriageItems(db, {
+        max: input.max,
+        nowMs: input.nowMs,
+        reverificationDays: input.reverificationDays,
+        policy: input.policy,
+      }),
     decide: (item, context) => decideVerifiedFactTriage(item, context, { db, nowMs: input.nowMs }),
     apply: (_decision, _item) => {
       // Verified fact triage intentionally does not mutate core truth fields. Durable
@@ -241,9 +250,12 @@ export function createVerifiedFactTriageAdapter(input: {
 
 export function listVerifiedFactTriageItems(
   db: DatabaseSync,
-  opts: { max?: number; nowMs?: number } = {},
+  opts: { max?: number; nowMs?: number; reverificationDays?: number; policy?: VerifiedTriagePolicy } = {},
 ): VerifiedFactTriageItem[] {
-  const nowIso = new Date(opts.nowMs ?? Date.now()).toISOString();
+  const nowMs = opts.nowMs ?? Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const cutoffIso = new Date(nowMs - (opts.reverificationDays ?? 30) * 24 * 60 * 60 * 1000).toISOString();
+  const policy = opts.policy ?? "classify";
   const latestRows = db
     .prepare(
       `SELECT vf.*
@@ -255,11 +267,12 @@ export function listVerifiedFactTriageItems(
          GROUP BY vf2.fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        LEFT JOIN facts f ON f.id = vf.fact_id
-       WHERE vf.next_verification IS NOT NULL AND vf.next_verification <= ?
-       ORDER BY vf.next_verification ASC, vf.verified_at ASC
+       WHERE (vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+          OR vf.verified_at <= ?
+       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC
        LIMIT ?`,
     )
-    .all(nowIso, opts.max ?? 100) as unknown as VerifiedFactRow[];
+    .all(nowIso, cutoffIso, opts.max ?? 100) as unknown as VerifiedFactRow[];
 
   return latestRows.map((row) => {
     const verified = rowToVerifiedFact(row);
@@ -269,13 +282,15 @@ export function listVerifiedFactTriageItems(
       verified,
       fact,
       verificationTier: fact?.tier ?? null,
-      reviewCursor: verified.nextVerification,
+      reviewCursor: verified.nextVerification ?? verified.verifiedAt,
+      dueReason:
+        verified.nextVerification && verified.nextVerification <= nowIso ? "next_verification" : "verified_at_stale",
     };
     const inputHash = computePendingInputHash({
       queue: "verified",
       id: verified.id,
       payload,
-      policy: "classify",
+      policy,
       policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
     });
     return {
@@ -285,7 +300,7 @@ export function listVerifiedFactTriageItems(
       policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
       capabilityClasses: ["read-only", "record-review-metadata"],
       payload,
-      visibleAfterCursor: verified.nextVerification,
+      visibleAfterCursor: verified.nextVerification ?? verified.verifiedAt,
       requiresHumanReview: false,
       validationFailed: !fact,
     } satisfies VerifiedFactTriageItem;
@@ -310,12 +325,32 @@ export async function runVerifiedFactTriage(
   const store = opts.store ?? null;
   const runId = opts.runId ?? createPendingAutopilotRunId();
   const actor = opts.actor ?? { type: "agent", id: "verified-triage-cli" };
-  const adapter = createVerifiedFactTriageAdapter({ factsDb, max: opts.max, nowMs: opts.nowMs });
+  const adapter = createVerifiedFactTriageAdapter({
+    factsDb,
+    max: opts.max,
+    nowMs: opts.nowMs,
+    policy,
+  });
+  return runVerifiedFactTriageWithAdapter(factsDb, adapter, opts);
+}
+
+export async function runVerifiedFactTriageWithAdapter(
+  factsDb: Pick<FactsDB, "getRawDb">,
+  adapter: PendingQueueAdapter<VerifiedFactTriageItem>,
+  opts: VerifiedFactTriageOptions,
+): Promise<VerifiedTriageRunResult> {
+  const policy = assertVerifiedTriagePolicy(opts.policy);
+  const mode = opts.mode;
+  const store = opts.store ?? null;
+  const runId = opts.runId ?? createPendingAutopilotRunId();
+  const actor = opts.actor ?? { type: "agent", id: "verified-triage-cli" };
   const items = await adapter.listPending(null);
   const runInputHash = computePendingInputHash({ queue: "verified", itemIds: items.map((i) => i.id), policy, mode });
   const startedAt = Math.floor((opts.nowMs ?? Date.now()) / 1000);
 
-  store?.createRun({
+  const durableStore = policy === "report-only" ? null : store;
+
+  durableStore?.createRun({
     runId,
     mode,
     policy,
@@ -342,7 +377,7 @@ export async function runVerifiedFactTriage(
     let applied = false;
     if (mode === "apply" && policy !== "report-only") {
       const locked =
-        store?.acquireLock({
+        durableStore?.acquireLock({
           queue: "verified",
           itemId: item.id,
           inputHash: item.inputHash,
@@ -350,27 +385,35 @@ export async function runVerifiedFactTriage(
           ttlSeconds: opts.lockTtlSeconds ?? 60,
           mode,
         }) ?? false;
-      const actualInputHash = recomputeItemHash(item, factsDb.getRawDb());
-      if (locked && actualInputHash === item.inputHash) {
-        store?.recordDecision(decision);
-        if (decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
-          store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+      const liveItem = locked
+        ? reloadVerifiedFactTriageItem(factsDb.getRawDb(), item, { policy, nowMs: opts.nowMs })
+        : null;
+      const actualInputHash = liveItem?.inputHash ?? "missing";
+      if (locked && liveItem && actualInputHash === item.inputHash) {
+        const { inserted } = durableStore?.recordDecision(decision) ?? { inserted: false };
+        if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
+          durableStore?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
         }
-        applied = decision.action === "classified" || decision.action === "reported";
-      } else if (store) {
-        const staleDecision = triageToPendingDecision(item, context, {
-          bucket: "failed-review",
-          recommendedAction: "failed-validation",
-          reason: locked ? "requires_human_approval" : "backend_error",
-          confidence: 1,
-          evidence: [{ type: "input-hash", id: item.id, summary: "Lock missing or input hash changed before apply" }],
-          sensitivityFlags: [],
-          humanReviewRequired: true,
-        });
-        store.recordDecision(staleDecision);
+        applied = inserted && (decision.action === "classified" || decision.action === "reported");
+      } else if (durableStore) {
+        const staleDecision = validationFailureDecision(
+          item,
+          context,
+          locked ? "input-hash-mismatch" : "lock-conflict",
+          liveItem
+            ? "Verified fact/fact row changed between classification and apply."
+            : "Verified fact no longer matches due queue before apply.",
+        );
+        durableStore.recordDecision(staleDecision);
         decisions[decisions.length - 1] = staleDecision;
       }
-      store?.releaseLock({ queue: "verified", itemId: item.id, inputHash: item.inputHash, owner: actor.id, mode });
+      durableStore?.releaseLock({
+        queue: "verified",
+        itemId: item.id,
+        inputHash: item.inputHash,
+        owner: actor.id,
+        mode,
+      });
     }
     resultItems.push(decisionToResultItem(decisions[decisions.length - 1], item, applied));
   }
@@ -385,7 +428,7 @@ export async function runVerifiedFactTriage(
     finishedAt: Math.floor((opts.nowMs ?? Date.now()) / 1000),
     decisions,
   });
-  store?.finishRun(runId, summary, summary.finishedAt);
+  durableStore?.finishRun(runId, summary, summary.finishedAt);
 
   return buildRunResult({ runId, mode, policy, items: resultItems });
 }
@@ -564,7 +607,10 @@ export function classifyVerifiedFact(
     };
   }
 
-  if (item.payload.verified.nextVerification && item.payload.verified.nextVerification <= nowIso) {
+  if (
+    (item.payload.verified.nextVerification && item.payload.verified.nextVerification <= nowIso) ||
+    item.payload.dueReason === "verified_at_stale"
+  ) {
     return {
       bucket: "stale-candidate",
       recommendedAction: "classified",
@@ -574,8 +620,16 @@ export function classifyVerifiedFact(
         {
           type: "verification",
           id: item.payload.verified.id,
-          summary: "Fact is due for scheduled reverification",
-          fields: { nextVerification: item.payload.verified.nextVerification, now: nowIso },
+          summary:
+            item.payload.dueReason === "verified_at_stale"
+              ? "Fact verified_at is older than the reverification window"
+              : "Fact is due for scheduled reverification",
+          fields: {
+            nextVerification: item.payload.verified.nextVerification,
+            verifiedAt: item.payload.verified.verifiedAt,
+            dueReason: item.payload.dueReason,
+            now: nowIso,
+          },
         },
       ],
       sensitivityFlags: [],
@@ -607,7 +661,12 @@ function triageToPendingDecision(
   triage: ReturnType<typeof classifyVerifiedFact>,
 ): PendingDecision {
   const mapped = mapTriageAction(context.policy, triage);
-  const evidence = triage.evidence.map((ev) => ({ type: ev.type, id: ev.id, summary: ev.summary }));
+  const evidence = triage.evidence.map((ev) => ({
+    type: ev.type,
+    id: ev.id,
+    summary: ev.summary,
+    ...(ev.fields ? { fields: ev.fields } : {}),
+  }));
   return {
     queue: "verified",
     itemId: item.id,
@@ -632,6 +691,7 @@ function triageToPendingDecision(
         bucket: triage.bucket,
         recommendedAction: triage.recommendedAction,
         sensitivityFlags: triage.sensitivityFlags,
+        evidenceFields: triage.evidence.map((ev) => ev.fields).filter(Boolean),
       },
     },
     audit: {
@@ -646,7 +706,7 @@ function triageToPendingDecision(
       humanReviewRequired: triage.humanReviewRequired,
       evidence,
       actor: context.actor,
-      runId: "verified-triage-decision",
+      runId: context.runId,
       summary: {
         title: "verified-fact-triage",
         metadata: {
@@ -761,7 +821,12 @@ function extractVerifiedReason(decision: PendingDecision, item: VerifiedFactTria
   const after = decision.audit?.summary?.metadata as { after?: { reason?: string } } | undefined;
   const reason = after?.after?.reason;
   if (reason) return reason as VerifiedTriageReason;
-  return item.validationFailed ? "malformed_fact" : "requires_human_approval";
+  const reasonCodeMap: Partial<Record<AutopilotReasonCode, VerifiedTriageReason>> = {
+    "input-hash-mismatch": "backend_error",
+    "lock-conflict": "backend_error",
+    "lock-missing": "backend_error",
+  };
+  return reasonCodeMap[decision.reasonCode] ?? (item.validationFailed ? "malformed_fact" : "requires_human_approval");
 }
 
 function buildRunResult(input: {
@@ -1005,21 +1070,72 @@ function summarizeProvenance(fact: TriageFactSnapshot | null): string {
   return parts.join(", ");
 }
 
-function recomputeItemHash(item: VerifiedFactTriageItem, db: DatabaseSync): string {
-  const verified = item.payload.verified;
-  const fact = loadFactSnapshot(db, verified.factId);
-  const payload: VerifiedFactTriagePayload = {
-    reviewQueueSource: item.payload.reviewQueueSource,
-    verified,
-    fact,
-    verificationTier: fact?.tier ?? null,
-    reviewCursor: verified.nextVerification,
+function reloadVerifiedFactTriageItem(
+  db: DatabaseSync,
+  item: VerifiedFactTriageItem,
+  opts: { policy: VerifiedTriagePolicy; nowMs?: number; reverificationDays?: number },
+): VerifiedFactTriageItem | null {
+  return (
+    listVerifiedFactTriageItems(db, {
+      max: 10_000,
+      nowMs: opts.nowMs,
+      reverificationDays: opts.reverificationDays,
+      policy: opts.policy,
+    }).find((candidate) => candidate.id === item.id) ?? null
+  );
+}
+
+function validationFailureDecision(
+  item: VerifiedFactTriageItem,
+  context: PendingDecisionContext,
+  reasonCode: AutopilotReasonCode,
+  body: string,
+): PendingDecision {
+  const evidence = [{ type: "input-hash", id: item.id, summary: body }];
+  return {
+    queue: "verified",
+    itemId: item.id,
+    inputHash: context.inputHash,
+    policy: context.policy,
+    policyVersion: context.policyVersion,
+    mode: context.mode,
+    action: "failed-validation",
+    reasonCode,
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    confidence: 0,
+    humanReviewRequired: true,
+    evidence,
+    actor: context.actor,
+    runId: context.runId,
+    jobId: context.jobId,
+    summary: {
+      title: "verified fact failed-review",
+      body,
+      metadata: { bucket: "failed-review", recommendedAction: "failed-validation", sensitivityFlags: [] },
+    },
+    audit: {
+      queue: "verified",
+      itemId: item.id,
+      inputHash: context.inputHash,
+      policy: context.policy,
+      policyVersion: context.policyVersion,
+      action: "failed-validation",
+      reasonCode,
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+      evidence,
+      actor: context.actor,
+      runId: context.runId,
+      summary: {
+        title: "verified-fact-triage",
+        body,
+        metadata: {
+          previous: { verifiedFactId: item.payload.verified.id },
+          after: { bucket: "failed-review", recommendedAction: "failed-validation", reason: "backend_error" },
+          mutation: "none-core-truth-fields-preserved",
+        },
+      },
+    },
   };
-  return computePendingInputHash({
-    queue: item.queue,
-    id: item.id,
-    payload,
-    policy: "classify",
-    policyVersion: item.policyVersion,
-  });
 }

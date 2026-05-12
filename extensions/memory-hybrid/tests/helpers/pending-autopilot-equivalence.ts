@@ -53,7 +53,10 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
 
 function normalize(decisions: PendingDecision[]): Array<Omit<PendingDecision, "runId" | "createdAt">> {
   return decisions
-    .map(({ runId: _runId, createdAt: _createdAt, ...decision }) => decision)
+    .map(({ runId: _runId, createdAt: _createdAt, ...decision }) => ({
+      ...decision,
+      audit: decision.audit ? { ...decision.audit, runId: "normalized-run" } : decision.audit,
+    }))
     .sort((a, b) => {
       const ak = `${a.queue}:${a.itemId}:${a.policy}:${a.inputHash}`;
       const bk = `${b.queue}:${b.itemId}:${b.policy}:${b.inputHash}`;

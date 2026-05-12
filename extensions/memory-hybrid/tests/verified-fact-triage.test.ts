@@ -13,6 +13,8 @@ import {
   createVerifiedFactTriageAdapter,
   listVerifiedFactTriageItems,
   runVerifiedFactTriage,
+  runVerifiedFactTriageWithAdapter,
+  decideVerifiedFactTriage,
   type VerifiedFactTriageItem,
 } from "../services/verified-fact-triage.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
@@ -131,10 +133,21 @@ function bucket(id: string) {
 describe("verified fact triage queue source and policy", () => {
   it("uses due-for-reverification latest verified facts, not all verified facts", () => {
     addFact("due", "Due verified fact", { provenanceJson: "{}" });
+    addFact("stale-verified-at", "Stale verified_at fact", { provenanceJson: "{}", due: false });
     addFact("not-due", "Not due verified fact", { provenanceJson: "{}", due: false });
-    const items = listVerifiedFactTriageItems(factsDb.getRawDb(), { max: 10 });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET verified_at = ? WHERE fact_id = ?")
+      .run("2026-03-01T00:00:00.000Z", "stale-verified-at");
+    const items = listVerifiedFactTriageItems(factsDb.getRawDb(), {
+      max: 10,
+      nowMs: Date.parse("2026-05-12T00:00:00Z"),
+    });
     expect(VERIFIED_REVIEW_QUEUE_SOURCE).toContain("due");
-    expect(items.map((i) => i.payload.verified.factId)).toEqual(["due"]);
+    expect(items.map((i) => i.payload.verified.factId)).toEqual(["due", "stale-verified-at"]);
+    expect(items.find((i) => i.payload.verified.factId === "stale-verified-at")?.payload.dueReason).toBe(
+      "verified_at_stale",
+    );
   });
 
   it("report-only and dry-run never mutate foundation state", async () => {
@@ -317,25 +330,57 @@ describe("verified fact triage idempotency and parent integration", () => {
   it("has cursor/hash stale-decision guard before apply", async () => {
     addFact("stale-hash", "Before", { provenanceJson: "{}" });
     const item = oneItem("stale-hash");
-    factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run("After", "stale-hash");
-    const actual = computePendingInputHash({
+    const adapter = createVerifiedFactTriageAdapter({ factsDb, max: 10, policy: "classify" });
+    const originalListPending = adapter.listPending;
+    let mutated = false;
+    adapter.listPending = async (cursor) => {
+      const items = await originalListPending(cursor);
+      if (!mutated) {
+        mutated = true;
+        factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run("After", "stale-hash");
+        const vf = verificationStore.getVerified("stale-hash");
+        factsDb
+          .getRawDb()
+          .prepare("UPDATE verified_facts SET canonical_text = ?, checksum = ? WHERE id = ?")
+          .run("After", checksum("After"), vf?.id ?? "");
+      }
+      return items;
+    };
+    const snapshotHash = computePendingInputHash({
       queue: item.queue,
       id: item.id,
       payload: item.payload,
       policy: "classify",
       policyVersion: item.policyVersion,
     });
-    expect(actual).toBe(item.inputHash); // payload snapshot guards standalone decision; live runner re-lists before apply
+    expect(snapshotHash).toBe(item.inputHash);
+
+    const result = await runVerifiedFactTriageWithAdapter(factsDb, adapter, {
+      mode: "apply",
+      policy: "classify",
+      store: pendingStore,
+    });
+
+    expect(result.items[0]?.action).toBe("failed-validation");
+    expect(result.items[0]?.reasonCode).toBe("input-hash-mismatch");
+    expect(pendingStore.listDecisions({ queue: "verified" })[0]?.reasonCode).toBe("input-hash-mismatch");
   });
 
   it("standalone verified triage and parent adapter route produce equivalent decisions", async () => {
     addFact("equiv", "Equivalence sourced fact", { provenanceJson: "{}" });
-    const adapter = createVerifiedFactTriageAdapter({ factsDb, max: 10 });
+    const nowMs = Date.parse("2026-05-12T00:00:00Z");
+    const adapter = createVerifiedFactTriageAdapter({ factsDb, max: 10, policy: "classify", nowMs });
     const item = oneItem("equiv");
     await expectStandaloneAndParentDecisionsEquivalent({
-      standalone: (fixture, context) => adapter.decide(fixture as VerifiedFactTriageItem, context),
-      parent: (fixture, context) => adapter.decide(fixture as VerifiedFactTriageItem, context),
-      fixtures: [{ item: item as never, policy: "classify", policyVersion: VERIFIED_TRIAGE_POLICY_VERSION }],
+      standalone: (fixture, context) =>
+        adapter.decide(fixture as VerifiedFactTriageItem, { ...context, inputHash: fixture.inputHash }),
+      parent: (fixture, context) =>
+        decideVerifiedFactTriage(
+          fixture as VerifiedFactTriageItem,
+          { ...context, inputHash: fixture.inputHash },
+          { db: factsDb.getRawDb(), nowMs },
+        ),
+      fixtures: [{ item, policy: "classify", policyVersion: VERIFIED_TRIAGE_POLICY_VERSION }],
     });
   });
 });

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import { PendingAutopilotStore } from "../services/pending-autopilot/index.js";
 import {
@@ -66,7 +66,10 @@ export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext
         const mode = opts?.apply ? "apply" : "dry-run";
         const policy: VerifiedTriagePolicy = assertVerifiedTriagePolicy(String(opts?.policy ?? "report-only"));
         const max = parsePositiveInt(opts?.max, 100);
-        const store = mode === "apply" ? new PendingAutopilotStore(resolvePendingAutopilotPath(ctx)) : null;
+        const store =
+          mode === "apply" && policy !== "report-only"
+            ? new PendingAutopilotStore(resolvePendingAutopilotPath(ctx))
+            : null;
         try {
           const result = await runVerifiedFactTriage(ctx.factsDb, { mode, policy, max, store });
           if (opts?.json) console.log(JSON.stringify(result, null, 2));
@@ -86,7 +89,7 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 
 function resolvePendingAutopilotPath(ctx: VerifiedCliContext): string {
   if (ctx.resolvePath) return ctx.resolvePath("pending-autopilot.db");
-  if (ctx.resolvedSqlitePath) return join(ctx.resolvedSqlitePath, "..", "pending-autopilot.db");
+  if (ctx.resolvedSqlitePath) return join(dirname(ctx.resolvedSqlitePath), "pending-autopilot.db");
   return "./pending-autopilot.db";
 }
 
