@@ -252,14 +252,22 @@ Source procedure id: proc-weather
     db.recordProcedureSuccess(duplicateWeatherProc.id, undefined, "task-overlap-c");
 
     const policy = parseProcedurePromotionPolicy("auto-safe");
-    const distinctEval = evaluateProcedureForPromotion(createProcedurePromotionItem(distinctReportProc, policy), policy, {
-      skillsAutoPath: skillsDir,
-      validationThreshold: 3,
-    });
-    const duplicateEval = evaluateProcedureForPromotion(createProcedurePromotionItem(duplicateWeatherProc, policy), policy, {
-      skillsAutoPath: skillsDir,
-      validationThreshold: 3,
-    });
+    const distinctEval = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(distinctReportProc, policy),
+      policy,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+      },
+    );
+    const duplicateEval = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(duplicateWeatherProc, policy),
+      policy,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+      },
+    );
 
     expect(distinctEval.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
     expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
