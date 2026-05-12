@@ -173,6 +173,7 @@ describe("pending-autopilot durable state invariants", () => {
         decision: dry,
         owner: "test",
         actualInputHash: "hash-1",
+        audit: () => {},
         mutate: () => {
           throw new Error("must not mutate");
         },
@@ -328,6 +329,7 @@ describe("pending-autopilot durable state invariants", () => {
         decision: fresh,
         owner: "runner",
         actualInputHash: "hash-fresh",
+        audit: () => {},
         mutate: () => {
           mutated = true;
         },
@@ -349,6 +351,7 @@ describe("pending-autopilot durable state invariants", () => {
         decision: fresh,
         owner: "wrong-runner",
         actualInputHash: "hash-fresh",
+        audit: () => {},
         mutate: () => {
           mutated = true;
         },
@@ -360,6 +363,7 @@ describe("pending-autopilot durable state invariants", () => {
         decision: fresh,
         owner: "runner",
         actualInputHash: "hash-old",
+        audit: () => {},
         mutate: () => {
           mutated = true;
         },
@@ -386,6 +390,7 @@ describe("pending-autopilot durable state invariants", () => {
         decision: fresh,
         owner: "runner",
         actualInputHash: "hash-fresh",
+        audit: () => {},
         mutate: () => {
           mutated = true;
         },

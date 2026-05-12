@@ -167,7 +167,7 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     owner: string;
     actualInputHash: string;
     mutate: () => void;
-    audit?: () => void;
+    audit: () => void;
   }): boolean {
     const safe = sanitizePendingDecision(input.decision);
     if (safe.mode === "dry-run") return false;
@@ -180,7 +180,7 @@ export class PendingAutopilotStore extends BaseSqliteStore {
         if (!lock || lock.inputHash !== safe.inputHash) return false;
         const inserted = this.insertDecision(safe).inserted;
         if (!inserted) return false;
-        if (input.audit) input.audit();
+        input.audit();
         input.mutate();
         return true;
       },
