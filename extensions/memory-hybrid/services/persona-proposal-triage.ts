@@ -826,26 +826,32 @@ function failed(
 
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
+  const suggestedChange = p.suggestedChange.toLowerCase();
   if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text))
     return "critical";
-  if (
+  if (isCriticalTarget(p.targetFile)) {
+    if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
+    if (/privacy|security|approval|credential|destructive|safeguard/.test(suggestedChange)) return "high";
+  } else if (
     /identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(
       text,
     )
-  )
+  ) {
     return "high";
-  if (isCriticalTarget(p.targetFile)) {
-    const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange);
-    const containsSemanticKeywords =
-      /\b(identity|personality|voice|tone|behavior|instruction|response|reply|always|never|must|should)\b/i.test(
-        p.suggestedChange,
-      );
-    if (!hasFormattingPrefix || containsSemanticKeywords) return "high";
   }
   if (/preference|workflow|routing|project context|communication/.test(text)) return "medium";
   if (isLargeOrBroadDiff(p)) return "medium";
   if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
   return "medium";
+}
+
+function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
+  const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
+  const containsSemanticKeywords =
+    /\b(identity|personality|voice|tone|behavior|instruction|response|reply|always|never|must|should)\b/i.test(
+      suggestedChange,
+    );
+  return hasFormattingPrefix && !containsSemanticKeywords;
 }
 
 function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {

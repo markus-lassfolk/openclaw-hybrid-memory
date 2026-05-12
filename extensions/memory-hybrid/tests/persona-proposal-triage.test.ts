@@ -113,6 +113,14 @@ describe("persona proposal triage", () => {
       suggestedChange: "Formatting: ensure markdown list spacing is consistent.",
       confidence: 0.99,
     });
+    const criticalFormatting = proposal({
+      targetFile: "IDENTITY.md",
+      targetHash: fileHash(join(tmpDir, "IDENTITY.md")),
+      title: "Identity document formatting cleanup",
+      observation: "IDENTITY.md has a formatting-only markdown spacing nit.",
+      suggestedChange: "Formatting: ensure markdown list spacing is consistent.",
+      confidence: 0.99,
+    });
     const high = proposal({
       targetFile: "SOUL.md",
       title: "Identity update",
@@ -130,7 +138,9 @@ describe("persona proposal triage", () => {
     });
 
     expect(proposalsDb.get(low.id)?.status).toBe("applied");
+    expect(proposalsDb.get(criticalFormatting.id)?.status).toBe("applied");
     expect(readFileSync(join(tmpDir, "USER.md"), "utf-8")).toContain("Formatting: ensure markdown list spacing");
+    expect(readFileSync(join(tmpDir, "IDENTITY.md"), "utf-8")).toContain("Formatting: ensure markdown list spacing");
     expect(proposalsDb.get(high.id)?.status).toBe("pending");
     expect(result.decisions.find((d) => d.proposalId === high.id)?.reason).toBe("identity-boundary-change");
   });
