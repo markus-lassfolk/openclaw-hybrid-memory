@@ -48,7 +48,7 @@ export function createStableRunSummary(input: {
   const decisions = input.decisions.map(sanitizePendingDecision).sort((a, b) => {
     const ak = `${a.queue}:${a.itemId}:${a.inputHash}:${a.policyVersion}`;
     const bk = `${b.queue}:${b.itemId}:${b.inputHash}:${b.policyVersion}`;
-    return ak.localeCompare(bk);
+    return ak < bk ? -1 : ak > bk ? 1 : 0;
   });
   for (const decision of decisions) totals[decision.action] += 1;
   return {
@@ -83,7 +83,7 @@ function sortJson(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([k, v]) => [k, sortJson(v)]),
     );
   }
