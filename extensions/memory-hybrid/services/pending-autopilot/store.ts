@@ -129,14 +129,21 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     assertKnownEnum("mode", input.mode);
     if (input.mode === "dry-run") return false;
     const now = nowSeconds();
-    this.liveDb.prepare("DELETE FROM pending_autopilot_locks WHERE expires_at <= ?").run(now);
-    const result = this.liveDb
-      .prepare(
-        `INSERT OR IGNORE INTO pending_autopilot_locks (queue, item_id, input_hash, owner, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(input.queue, input.itemId, input.inputHash, input.owner, now + input.ttlSeconds, now);
-    return result.changes > 0;
+    const tx = createTransaction(
+      this.liveDb,
+      () => {
+        this.liveDb.prepare("DELETE FROM pending_autopilot_locks WHERE expires_at <= ?").run(now);
+        const result = this.liveDb
+          .prepare(
+            `INSERT OR IGNORE INTO pending_autopilot_locks (queue, item_id, input_hash, owner, expires_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(input.queue, input.itemId, input.inputHash, input.owner, now + input.ttlSeconds, now);
+        return result.changes > 0;
+      },
+      "IMMEDIATE",
+    );
+    return tx();
   }
 
   releaseLock(input: {

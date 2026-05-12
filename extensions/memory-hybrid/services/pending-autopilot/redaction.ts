@@ -99,7 +99,10 @@ export function redactAutopilotValue(value: unknown): unknown {
   if (value instanceof URL) return redactAutopilotText(value.toString()).redacted;
   if (value instanceof Map) {
     return new Map(
-      [...value.entries()].map(([key, child]) => [redactAutopilotValue(key), redactAutopilotValue(child)]),
+      [...value.entries()].map(([key, child]) => [
+        redactAutopilotValue(key),
+        typeof key === "string" && isCredentialKey(key) ? "[REDACTED]" : redactAutopilotValue(child),
+      ]),
     );
   }
   if (value instanceof Set) return new Set([...value.values()].map((v) => redactAutopilotValue(v)));
