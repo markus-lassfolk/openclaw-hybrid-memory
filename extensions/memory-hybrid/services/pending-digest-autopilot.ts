@@ -394,7 +394,11 @@ function createPersonaProposalTriageAdapterWithCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
           cachedAllProposals = db.list();
-          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg, allProposals: cachedAllProposals });
+          const adapter = createPersonaProposalTriageAdapter({
+            proposalsDb: db,
+            cfg,
+            allProposals: cachedAllProposals,
+          });
           return adapter.listPending(null);
         },
       );
@@ -403,7 +407,11 @@ function createPersonaProposalTriageAdapterWithCloseable(
       withCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
-          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg, allProposals: cachedAllProposals ?? undefined });
+          const adapter = createPersonaProposalTriageAdapter({
+            proposalsDb: db,
+            cfg,
+            allProposals: cachedAllProposals ?? undefined,
+          });
           return adapter.decide(item as PersonaProposalPendingItem, context);
         },
       ),
@@ -586,6 +594,7 @@ function makeItem(queue: PendingQueue, id: string, payload: QueuePayload, requir
       queue,
       id,
       payload,
+      policy: "default",
       policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
     }),
     policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
