@@ -48,7 +48,7 @@ export function createStableRunSummary(input: {
   const decisions = input.decisions.map(sanitizePendingDecision).sort((a, b) => {
     const ak = `${a.queue}:${a.itemId}:${a.inputHash}:${a.policyVersion}`;
     const bk = `${b.queue}:${b.itemId}:${b.inputHash}:${b.policyVersion}`;
-    return ak < bk ? -1 : ak > bk ? 1 : 0;
+    return ak.localeCompare(bk);
   });
   for (const decision of decisions) totals[decision.action] += 1;
   return {
@@ -78,12 +78,16 @@ export function shouldAdvancePendingCursor(decision: PendingDecision): boolean {
   return !["deferred-for-human", "failed-validation"].includes(decision.action);
 }
 
+function compareCodePointOrder(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson);
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .sort(([a], [b]) => compareCodePointOrder(a, b))
         .map(([k, v]) => [k, sortJson(v)]),
     );
   }
