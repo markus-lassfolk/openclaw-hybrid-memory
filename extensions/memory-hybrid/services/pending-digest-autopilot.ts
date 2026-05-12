@@ -493,15 +493,39 @@ function makeUnprocessedPersonaDecision(base: PendingDecision): PendingDecision 
 }
 
 function decisionFromPersonaView(base: PendingDecision, view: PersonaProposalDecisionView): PendingDecision {
+  const actionClass = deriveActionClass(view.action, view.capability);
   return {
     ...base,
     action: view.action,
     reasonCode: view.reason,
+    actionClass,
     capabilityClass: view.capability,
     confidence: view.confidence,
     humanReviewRequired: view.humanReviewRequired,
     summary: { ...(base.summary ?? {}), body: view.diffSummary },
+    audit: base.audit
+      ? {
+          ...base.audit,
+          action: view.action,
+          reasonCode: view.reason,
+          capabilityClass: view.capability,
+          humanReviewRequired: view.humanReviewRequired,
+        }
+      : undefined,
   };
+}
+
+function deriveActionClass(
+  action: PendingDecision["action"],
+  capability: PendingDecision["capabilityClass"],
+): PendingDecision["actionClass"] {
+  if (action === "applied") return "low-risk-apply";
+  if (action === "rejected") return "state-transition";
+  if (action === "deferred-for-human") return "record-review";
+  if (action === "failed-validation") return "observe";
+  if (action === "reported") return "observe";
+  if (action === "classified") return "preview";
+  return "observe";
 }
 
 export function createProcedureReadOnlyAdapter(factsDb: PendingDigestFactsDb): PendingQueueAdapter<QueueItem> {

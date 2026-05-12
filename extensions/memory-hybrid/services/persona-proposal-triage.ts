@@ -761,17 +761,24 @@ function validationFailure(
   reasonCode: PendingDecision["reasonCode"],
   body: string,
 ): PendingDecision {
+  const capabilityClass = decision.mode === "dry-run" ? "dry-run" : "read-only";
   return {
     ...decision,
     action: "failed-validation",
     reasonCode,
     actionClass: "observe",
-    capabilityClass: decision.mode === "dry-run" ? "dry-run" : "read-only",
+    capabilityClass,
     confidence: 0,
     humanReviewRequired: true,
     summary: { ...(decision.summary ?? {}), body },
     audit: decision.audit
-      ? { ...decision.audit, action: "failed-validation", reasonCode, humanReviewRequired: true }
+      ? {
+          ...decision.audit,
+          action: "failed-validation",
+          reasonCode,
+          capabilityClass,
+          humanReviewRequired: true,
+        }
       : undefined,
   };
 }
@@ -966,12 +973,15 @@ ${p.suggestedChange}`.toLowerCase();
 function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
   const parsed = parseSuggestedChange(suggestedChange);
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
-  if (!hasFormattingPrefix && parsed.changeType !== "replace") return false;
-  const containsSemanticKeywords =
-    /\b(personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate|friendlier|friendly|warmer|casual|greeting)\b/i.test(
-      suggestedChange,
-    );
-  return !containsSemanticKeywords;
+  if (!hasFormattingPrefix) return false;
+  if (parsed.changeType === "replace") {
+    const containsSemanticKeywords =
+      /\b(personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate|friendlier|friendly|warmer|casual|greeting)\b/i.test(
+        suggestedChange,
+      );
+    return !containsSemanticKeywords;
+  }
+  return true;
 }
 
 function lowRiskDriftGuard(
