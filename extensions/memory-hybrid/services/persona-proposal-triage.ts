@@ -875,16 +875,18 @@ function hasReliableTargetSnapshot(proposal: Pick<ProposalEntry, "targetHash" | 
 function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalEntry | null {
   const normalized = normalizeText(proposal.suggestedChange);
   if (!normalized) return null;
-  const candidate = all.find(
+  const candidates = all.filter(
     (c) =>
       c.id !== proposal.id &&
       c.targetFile === proposal.targetFile &&
       (c.status === "applied" || c.status === "pending") &&
       normalizeText(c.suggestedChange) === normalized,
   );
-  if (!candidate) return null;
-  if (candidate.status === "applied") return candidate;
-  return candidate.createdAt < proposal.createdAt ? candidate : null;
+  if (candidates.length === 0) return null;
+  const appliedDuplicate = candidates.find((c) => c.status === "applied");
+  if (appliedDuplicate) return appliedDuplicate;
+  const olderPending = candidates.find((c) => c.status === "pending" && c.createdAt < proposal.createdAt);
+  return olderPending ?? null;
 }
 
 function isNonActionable(change: string): boolean {
@@ -1044,6 +1046,7 @@ export function createPersonaStandaloneExecutionPath(_adapter: PendingQueueAdapt
           HybridMemoryConfig,
           "personaProposals"
         >,
+        workspace: item.workspace,
         allProposals: [item.proposal],
       },
     );
