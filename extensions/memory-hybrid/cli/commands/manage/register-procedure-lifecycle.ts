@@ -10,6 +10,13 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
+import {
+  PROCEDURE_PROMOTION_POLICY_VERSION,
+  createProcedurePromotionItem,
+  evaluateProcedureForPromotion,
+  parseProcedurePromotionPolicy,
+} from "../../../services/procedure-promotion-policy.js";
+import { resolveWorkspacePath } from "../../../utils/path.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -62,10 +69,16 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         console.log(`  Type:       ${proc.procedureType}`);
         console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
         console.log(
-          `  Success:    ${proc.successCount} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
+          `  Success:    ${proc.successCount} (procedure table) + ${versions.reduce(
+            (s, v) => s + v.successCount,
+            0,
+          )} (versions) = ${totalSuccess}`,
         );
         console.log(
-          `  Failure:   ${proc.failureCount} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
+          `  Failure:   ${proc.failureCount} (procedure table) + ${versions.reduce(
+            (s, v) => s + v.failureCount,
+            0,
+          )} (versions) = ${totalFailure}`,
         );
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
@@ -116,44 +129,85 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--status <status>", "Filter by status: validated or all", "validated")
     .option("--not-promoted", "Only include procedures not promoted to skills")
     .option("--limit <n>", "Maximum number to show", "50")
+    .option("--policy <policy>", "Procedure promotion policy: draft-only, manual, auto-safe", "draft-only")
     .option("--json", "Emit JSON")
     .action(
-      withExit(async (opts?: { status?: string; notPromoted?: boolean; limit?: string; json?: boolean }) => {
-        const status = opts?.status === "all" ? "all" : "validated";
-        const limit = Number.parseInt(opts?.limit ?? "50", 10);
-        if (!Number.isFinite(limit) || limit < 1) {
-          console.error("error: --limit must be a positive integer");
-          process.exitCode = 1;
-          return;
-        }
-        const report = factsDb.triageProcedures({
-          status,
-          notPromoted: opts?.notPromoted !== false,
-          limit,
-          validationThreshold: cfg.procedures.validationThreshold,
-        });
-        if (opts?.json) {
-          console.log(JSON.stringify(report, null, 2));
-          return;
-        }
-        console.log(
-          `Procedures triage: ${report.summary.total} blocked${report.summary.topReason ? ` by ${report.summary.topReason}` : ""}`,
-        );
-        const reasonSummary = Object.entries(report.summary.byReason)
-          .filter(([, count]) => count > 0)
-          .map(([reason, count]) => `${reason}=${count}`)
-          .join(", ");
-        if (reasonSummary) console.log(`Reasons: ${reasonSummary}`);
-        if (report.rows.length === 0) return;
-        console.log("id | title | validated_at | promotion_block_reason | last_recall");
-        for (const row of report.rows) {
-          const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
-          const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
+      withExit(
+        async (opts?: {
+          status?: string;
+          notPromoted?: boolean;
+          limit?: string;
+          policy?: string;
+          json?: boolean;
+        }) => {
+          const status = opts?.status === "all" ? "all" : "validated";
+          const limit = Number.parseInt(opts?.limit ?? "50", 10);
+          if (!Number.isFinite(limit) || limit < 1) {
+            console.error("error: --limit must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          const report = factsDb.triageProcedures({
+            status,
+            notPromoted: opts?.notPromoted !== false,
+            limit,
+            validationThreshold: cfg.procedures.validationThreshold,
+          });
+          const policy = parseProcedurePromotionPolicy(opts?.policy);
+          const resolvedSkillsAutoPath = resolveWorkspacePath(cfg.procedures.skillsAutoPath);
+          const enrichedRows = report.rows.map((row) => {
+            const proc = factsDb.getProcedureById(row.id);
+            if (!proc) return row;
+            const item = createProcedurePromotionItem(proc, policy);
+            const evaluation = evaluateProcedureForPromotion(item, policy, {
+              skillsAutoPath: resolvedSkillsAutoPath,
+              validationThreshold: cfg.procedures.validationThreshold,
+            });
+            return {
+              ...row,
+              inputHash: item.inputHash,
+              policy,
+              policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+              eligible: evaluation.eligible,
+              promotionDecision: evaluation.metadata.promotionDecision,
+              reasons: evaluation.metadata.rejectionReasons,
+              enabled: false,
+              requiresHumanApproval: evaluation.metadata.requiresHumanApproval,
+            };
+          });
+          const enrichedReport = { ...report, rows: enrichedRows };
+          if (opts?.json) {
+            console.log(JSON.stringify(enrichedReport, null, 2));
+            return;
+          }
           console.log(
-            `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${row.promotionBlockReason} | ${lastRecall}`,
+            `Procedures triage: ${report.summary.total} blocked${
+              report.summary.topReason ? ` by ${report.summary.topReason}` : ""
+            }`,
           );
-        }
-      }),
+          const reasonSummary = Object.entries(report.summary.byReason)
+            .filter(([, count]) => count > 0)
+            .map(([reason, count]) => `${reason}=${count}`)
+            .join(", ");
+          if (reasonSummary) console.log(`Reasons: ${reasonSummary}`);
+          if (enrichedRows.length === 0) return;
+          console.log("id | title | validated_at | promotion_decision | reasons | last_recall");
+          for (const row of enrichedRows as Array<
+            (typeof enrichedRows)[number] & {
+              promotionDecision?: string;
+              reasons?: string[];
+            }
+          >) {
+            const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
+            const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
+            console.log(
+              `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${
+                row.promotionDecision ?? row.promotionBlockReason
+              } | ${(row.reasons ?? [row.promotionBlockReason]).join(",")} | ${lastRecall}`,
+            );
+          }
+        },
+      ),
     );
 
   procedureCmd
@@ -173,7 +227,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           const rate = p.successRate !== undefined ? ` ${(p.successRate * 100).toFixed(0)}%` : "";
           const ver = p.version !== undefined ? ` v${p.version}` : "";
           console.log(
-            `  [${p.id.slice(0, 8)}] ${p.procedureType.padEnd(8)} ${rate.padEnd(6)} ${ver} "${p.taskPattern.slice(0, 60)}"`,
+            `  [${p.id.slice(0, 8)}] ${p.procedureType.padEnd(8)} ${rate.padEnd(
+              6,
+            )} ${ver} "${p.taskPattern.slice(0, 60)}"`,
           );
         }
       }),
@@ -185,56 +241,81 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .command("promote <id>")
     .description("Promote a single procedure to skills/auto/<slug> (idempotent)")
     .option("--dry-run", "Print what would happen without writing files")
-    .option("--force", "Skip the validationThreshold safeguard")
+    .option("--force", "Skip the validationThreshold safeguard (safety gates still apply)")
+    .option("--apply", "Write draft/quarantined skill artifacts")
+    .option(
+      "--policy <policy>",
+      "Promotion policy: draft-only, manual, auto-safe (default: dry-run draft-only; non-dry-run/apply defaults to auto-safe for legacy maintenance callers)",
+    )
     .option("--json", "Emit JSON")
     .action(
-      withExit(async (id: string, opts?: { dryRun?: boolean; force?: boolean; json?: boolean }) => {
-        const result = generateAutoSkillForProcedure(
-          factsDb,
-          {
-            skillsAutoPath: cfg.procedures.skillsAutoPath,
-            validationThreshold: cfg.procedures.validationThreshold,
-            skillTTLDays: cfg.procedures.skillTTLDays,
-            procedureId: id,
-            dryRun: opts?.dryRun === true,
-            requireValidation: opts?.force !== true,
+      withExit(
+        async (
+          id: string,
+          opts?: {
+            dryRun?: boolean;
+            force?: boolean;
+            apply?: boolean;
+            policy?: string;
+            json?: boolean;
           },
-          { info: (s) => console.log(s), warn: (s) => console.warn(s) },
-        );
+        ) => {
+          const apply = opts?.apply === true;
+          const result = generateAutoSkillForProcedure(
+            factsDb,
+            {
+              skillsAutoPath: cfg.procedures.skillsAutoPath,
+              validationThreshold: cfg.procedures.validationThreshold,
+              skillTTLDays: cfg.procedures.skillTTLDays,
+              procedureId: id,
+              dryRun: opts?.dryRun === true || !apply,
+              apply,
+              policy: opts?.policy,
+              requireValidation: opts?.force !== true,
+            },
+            { info: (s) => console.log(s), warn: (s) => console.warn(s) },
+          );
 
-        if (opts?.json) {
-          console.log(JSON.stringify({ id, ...result }, null, 2));
-          if (!result.ok) process.exitCode = 1;
-          return;
-        }
-
-        if (!result.ok) {
-          if (result.reason === "not-found") {
-            console.error(`error: procedure not found: ${id}`);
-          } else if (result.reason === "validation-pending") {
-            console.error(
-              `error: procedure ${id} has not reached validationThreshold=${cfg.procedures.validationThreshold}; pass --force to override`,
-            );
-          } else {
-            console.error(`error: failed to promote ${id}: ${result.error ?? "unknown error"}`);
+          if (opts?.json) {
+            console.log(JSON.stringify({ id, ...result }, null, 2));
+            if (!result.ok) process.exitCode = 1;
+            return;
           }
-          process.exitCode = 1;
-          return;
-        }
 
-        if (result.alreadyPromoted) {
-          console.log(`Procedure ${id} already promoted (no-op).`);
-          console.log(`  Skill: ${result.skillPath}`);
-          return;
-        }
+          if (!result.ok) {
+            if (result.reason === "not-found") {
+              console.error(`error: procedure not found: ${id}`);
+            } else if (result.reason === "validation-pending") {
+              console.error(
+                `error: procedure ${id} has not reached validationThreshold=${cfg.procedures.validationThreshold}; pass --force to override`,
+              );
+            } else if (result.reason === "policy-blocked") {
+              console.error(
+                `error: procedure ${id} blocked by promotion policy: ${
+                  result.reasons?.join(", ") ?? "no reasons provided"
+                }`,
+              );
+            } else {
+              console.error(`error: failed to promote ${id}: ${result.error ?? "unknown error"}`);
+            }
+            process.exitCode = 1;
+            return;
+          }
 
-        if (result.dryRun) {
-          console.log(`[dry-run] would promote ${id} → ${result.skillPath}`);
-          return;
-        }
+          if (result.alreadyPromoted) {
+            console.log(`Procedure ${id} already promoted (no-op).`);
+            console.log(`  Skill: ${result.skillPath}`);
+            return;
+          }
 
-        console.log(`Promoted ${id} → ${result.skillPath}`);
-      }),
+          if (result.dryRun) {
+            console.log(`[dry-run] would promote ${id} → ${result.skillPath}`);
+            return;
+          }
+
+          console.log(`Promoted ${id} → ${result.skillPath}`);
+        },
+      ),
     );
 
   mem
@@ -330,10 +411,16 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         console.log("openclaw-hybrid-memory");
         console.log(`  Installed:  ${installed}`);
         console.log(
-          `  GitHub:     ${githubVersion ?? "unavailable"}${githubVersion != null && compare(installed, githubVersion) > 0 ? " (installed is newer)" : updateHint(githubVersion)}`,
+          `  GitHub:     ${githubVersion ?? "unavailable"}${
+            githubVersion != null && compare(installed, githubVersion) > 0
+              ? " (installed is newer)"
+              : updateHint(githubVersion)
+          }`,
         );
         console.log(
-          `  npm:        ${npmVersion ?? "unavailable"}${npmVersion != null && compare(installed, npmVersion) > 0 ? " (installed is newer)" : updateHint(npmVersion)}`,
+          `  npm:        ${npmVersion ?? "unavailable"}${
+            npmVersion != null && compare(installed, npmVersion) > 0 ? " (installed is newer)" : updateHint(npmVersion)
+          }`,
         );
       }),
     );
@@ -348,7 +435,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           console.log(`Upgraded to version ${res.version}. Plugin installed at: ${res.pluginDir}`);
           if (res.workspaceSkillPath) {
             console.log(
-              `Workspace skill: ${res.workspaceSkillPath}${res.workspaceSkillError ? ` (warning: ${res.workspaceSkillError})` : ""}`,
+              `Workspace skill: ${res.workspaceSkillPath}${
+                res.workspaceSkillError ? ` (warning: ${res.workspaceSkillError})` : ""
+              }`,
             );
           }
           if (res.workspaceToolsMdPath) {
@@ -406,7 +495,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
   const backup = mem
     .command("backup")
     .description(
-      `Create a snapshot backup of memory state (SQLite + LanceDB). Default destination: ~/.openclaw/backups/memory/TIMESTAMP/\n\nNOTE: To include memory in scheduled openclaw backups, add these paths to your openclaw.yaml backup config:\n  - ${resolvedSqlitePath ?? "<memoryDir>/memory.db"}\n  - ${resolvedLancePath ?? "<memoryDir>/lance/"}`,
+      `Create a snapshot backup of memory state (SQLite + LanceDB). Default destination: ~/.openclaw/backups/memory/TIMESTAMP/\n\nNOTE: To include memory in scheduled openclaw backups, add these paths to your openclaw.yaml backup config:\n  - ${
+        resolvedSqlitePath ?? "<memoryDir>/memory.db"
+      }\n  - ${resolvedLancePath ?? "<memoryDir>/lance/"}`,
     )
     .option("--dest <dir>", "Override backup destination directory")
     .action(
@@ -540,7 +631,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
 
         let currentCrontab = "";
         try {
-          currentCrontab = execSync("crontab -l 2>/dev/null", { encoding: "utf-8" });
+          currentCrontab = execSync("crontab -l 2>/dev/null", {
+            encoding: "utf-8",
+          });
         } catch {
           // No existing crontab — that's fine
         }
@@ -608,7 +701,12 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           issue?: string;
         };
 
-        const jobsOfInterest: Array<{ id: string; label: string; scheduleExpr: string; staleMs: number }> = [
+        const jobsOfInterest: Array<{
+          id: string;
+          label: string;
+          scheduleExpr: string;
+          staleMs: number;
+        }> = [
           {
             id: "hybrid-mem:nightly-distill",
             label: "nightly-memory-sweep",
@@ -652,7 +750,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         let cronStore: { jobs?: unknown[] } = { jobs: [] };
         if (existsSync(cronStorePath)) {
           try {
-            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as {
+              jobs?: unknown[];
+            };
           } catch {
             // corrupt store — treat all as missing
           }
@@ -681,7 +781,12 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
 
           const enabled = found.enabled !== false;
           const state = found.state as
-            | { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string }
+            | {
+                nextRunAtMs?: number;
+                lastRunAtMs?: number;
+                lastStatus?: string;
+                lastError?: string;
+              }
             | undefined;
           const lastRunAtMs = state?.lastRunAtMs;
           const nextRunAtMs = state?.nextRunAtMs;
@@ -697,7 +802,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             issue = "Job has never run — check cron daemon is running.";
           } else if (isStale) {
             const hoursSince = Math.floor((Date.now() - (lastRunAtMs ?? 0)) / 3600000);
-            issue = `Job is stale — last run was ${hoursSince}h ago (threshold: ${Math.floor(wanted.staleMs / 3600000)}h).`;
+            issue = `Job is stale — last run was ${hoursSince}h ago (threshold: ${Math.floor(
+              wanted.staleMs / 3600000,
+            )}h).`;
           } else if (lastStatus === "error") {
             issue = `Last run failed: ${state?.lastError ?? "unknown error"}`;
           }
@@ -719,7 +826,17 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         const issues = results.filter((r) => r.issue);
 
         if (opts?.json) {
-          console.log(JSON.stringify({ ok: issues.length === 0, jobs: results, issueCount: issues.length }, null, 2));
+          console.log(
+            JSON.stringify(
+              {
+                ok: issues.length === 0,
+                jobs: results,
+                issueCount: issues.length,
+              },
+              null,
+              2,
+            ),
+          );
           return;
         }
 
@@ -776,7 +893,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         let cronStore: { jobs?: unknown[] } = { jobs: [] };
         if (existsSync(cronStorePath)) {
           try {
-            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as {
+              jobs?: unknown[];
+            };
           } catch {
             console.warn("⚠ Could not read cron store — skipping health check.");
             return;

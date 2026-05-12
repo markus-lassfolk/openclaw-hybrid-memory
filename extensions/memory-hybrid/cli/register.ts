@@ -88,7 +88,11 @@ export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   aliasDb?: AliasDB | null;
-  versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
+  versionInfo: {
+    pluginVersion: string;
+    memoryManagerVersion: string;
+    schemaVersion: number;
+  };
   embeddings: EmbeddingProvider;
   mergeResults: typeof mergeResults;
   parseSourceDate: (v: string | number | null | undefined) => number | null;
@@ -120,10 +124,20 @@ export type HybridMemCliContext = {
     verbose?: boolean;
     full?: boolean;
   }) => Promise<ExtractProceduresResult>;
-  runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
-  runSkillsSuggest: (opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean }) => Promise<
-    import("../services/memory-to-skills.js").SkillsSuggestResult
-  >;
+  runGenerateAutoSkills: (opts: {
+    dryRun: boolean;
+    apply?: boolean;
+    verbose?: boolean;
+    max?: number;
+    policy?: string;
+    json?: boolean;
+  }) => Promise<GenerateAutoSkillsResult>;
+  runSkillsSuggest: (opts: {
+    dryRun?: boolean;
+    apply?: boolean;
+    days?: number;
+    verbose?: boolean;
+  }) => Promise<import("../services/memory-to-skills.js").SkillsSuggestResult>;
   runBackfill: (
     opts: { dryRun: boolean; workspace?: string; limit?: number },
     sink: BackfillCliSink,
@@ -147,7 +161,11 @@ export type HybridMemCliContext = {
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
-  runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
+  runCredentialsList: () => Array<{
+    service: string;
+    type: string;
+    url: string | null;
+  }>;
   runCredentialsGet: (opts: { service: string; type?: string }) => {
     service: string;
     type: string;
@@ -156,8 +174,15 @@ export type HybridMemCliContext = {
     notes: string | null;
   } | null;
   runCredentialsAudit: () => CredentialsAuditResult;
-  runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
-  runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
+  runCredentialsPrune: (opts: {
+    dryRun: boolean;
+    yes?: boolean;
+    onlyFlags?: string[];
+  }) => CredentialsPruneResult;
+  runUninstall: (opts: {
+    cleanAll: boolean;
+    leaveConfig: boolean;
+  }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -174,35 +199,69 @@ export type HybridMemCliContext = {
     limit: number;
     model: string;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflection: (opts: {
+    window: number;
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+  }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflectionRules: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+  }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
   }>;
-  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflectionMeta: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+  }) => Promise<{
     metaExtracted: number;
     metaStored: number;
   }>;
-  reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
+  reflectionConfig: {
+    enabled: boolean;
+    defaultWindow: number;
+    minObservations: number;
+    model: string;
+  };
   runDreamCycle: (opts?: { verbose?: boolean }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
   runContinuousVerification: (opts?: {
     verbose?: boolean;
   }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
   runResolveContradictions: () => Promise<{
-    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
-    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    autoResolved: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
+    ambiguous: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
   }>;
-  runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
+  runClassify: (opts: {
+    dryRun: boolean;
+    limit: number;
+    model?: string;
+  }) => Promise<{
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
   }>;
-  autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
+  autoClassifyConfig: {
+    model: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+  };
   runCompaction: (opts?: { apply?: boolean }) => Promise<{
     hot: number;
     warm: number;
@@ -212,7 +271,10 @@ export type HybridMemCliContext = {
     examined?: number;
     apply?: boolean;
   }>;
-  runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
+  runBuildLanguageKeywords: (opts: {
+    model?: string;
+    dryRun?: boolean;
+  }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
   runEntityEnrichment: (opts: {
@@ -256,7 +318,12 @@ export type HybridMemCliContext = {
     outputPath?: string;
     learn?: boolean;
   }) => Promise<AnalyzeFeedbackPhrasesResult>;
-  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
+  runExtractDirectives: (opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    full?: boolean;
+  }) => Promise<{
     incidents: Array<{
       userMessage: string;
       categories: string[];
@@ -269,7 +336,12 @@ export type HybridMemCliContext = {
     sessionsScanned: number;
     skipped?: boolean;
   }>;
-  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
+  runExtractReinforcement: (opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    full?: boolean;
+  }) => Promise<{
     incidents: Array<{
       userMessage: string;
       agentBehavior: string;
@@ -297,20 +369,33 @@ export type HybridMemCliContext = {
     sessionsScanned: number;
     closedLoopReport?: string;
   }>;
-  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
+  runGenerateProposals?: (opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+  }) => Promise<{ created: number }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
     includeCredentials?: boolean;
     sources?: string[];
     mode?: "replace" | "additive";
-  }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
+  }) => Promise<{
+    factsExported: number;
+    proceduresExported: number;
+    filesWritten: number;
+    outputPath: string;
+  }>;
   richStatsExtras?: {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
     getProposalsAvailable: () => boolean;
     getWalPending: () => Promise<number> | number;
-    getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string; vectordbOptimize?: string };
+    getLastRunTimestamps: () => {
+      distill?: string;
+      reflect?: string;
+      compact?: string;
+      vectordbOptimize?: string;
+    };
     getStorageSizes: () => Promise<{
       sqliteBytes?: number;
       lanceBytes?: number;
@@ -326,12 +411,25 @@ export type HybridMemCliContext = {
   };
   listCommands?: {
     listProposals: (opts: { status?: string }) => Promise<
-      Array<{ id: string; title: string; targetFile: string; status: string; confidence: number; createdAt: number }>
+      Array<{
+        id: string;
+        title: string;
+        targetFile: string;
+        status: string;
+        confidence: number;
+        createdAt: number;
+      }>
     >;
     proposalApprove: (id: string) => Promise<{ ok: boolean; error?: string }>;
     proposalReject: (id: string, reason?: string) => Promise<{ ok: boolean; error?: string }>;
-    listCorrections: (opts: { workspace?: string }) => Promise<{ reportPath: string | null; items: string[] }>;
-    correctionsApproveAll: (opts: { workspace?: string }) => Promise<{ applied: number; error?: string }>;
+    listCorrections: (opts: { workspace?: string }) => Promise<{
+      reportPath: string | null;
+      items: string[];
+    }>;
+    correctionsApproveAll: (opts: { workspace?: string }) => Promise<{
+      applied: number;
+      error?: string;
+    }>;
     showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
   };
   tieringEnabled: boolean;

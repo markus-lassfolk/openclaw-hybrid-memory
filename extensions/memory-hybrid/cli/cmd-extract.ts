@@ -88,7 +88,10 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
         }
       });
   } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "getSessionFilePathsSince" });
+    capturePluginError(err as Error, {
+      subsystem: "cli",
+      operation: "getSessionFilePathsSince",
+    });
     return [];
   }
 }
@@ -117,12 +120,24 @@ export function getMaxMtime(filePaths: string[]): number | undefined {
  */
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,
-  opts: { sessionDir?: string; days?: number; dryRun: boolean; verbose?: boolean; full?: boolean },
+  opts: {
+    sessionDir?: string;
+    days?: number;
+    dryRun: boolean;
+    verbose?: boolean;
+    full?: boolean;
+  },
 ): Promise<ExtractProceduresResult> {
   const { factsDb, vectorDb, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-procedures";
   if (cfg.procedures?.enabled === false) {
-    return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: opts.dryRun };
+    return {
+      sessionsScanned: 0,
+      proceduresStored: 0,
+      positiveCount: 0,
+      negativeCount: 0,
+      dryRun: opts.dryRun,
+    };
   }
   const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
@@ -160,7 +175,10 @@ export async function runExtractProceduresForCli(
         dryRun: opts.dryRun,
         verbose: opts.verbose,
       },
-      { info: (s) => logger.info?.(s) ?? console.log(s), warn: (s) => logger.warn?.(s) ?? console.warn(s) },
+      {
+        info: (s) => logger.info?.(s) ?? console.log(s),
+        warn: (s) => logger.warn?.(s) ?? console.warn(s),
+      },
     );
     if (!opts.dryRun) {
       let lastSessionTs: number | undefined;
@@ -174,7 +192,10 @@ export async function runExtractProceduresForCli(
     }
     return result;
   } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractProceduresForCli" });
+    capturePluginError(err as Error, {
+      subsystem: "cli",
+      operation: "runExtractProceduresForCli",
+    });
     throw err;
   } finally {
     if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
@@ -186,7 +207,14 @@ export async function runExtractProceduresForCli(
  */
 export async function runGenerateAutoSkillsForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean; verbose?: boolean },
+  opts: {
+    dryRun: boolean;
+    apply?: boolean;
+    verbose?: boolean;
+    max?: number;
+    policy?: string;
+    json?: boolean;
+  },
 ): Promise<GenerateAutoSkillsResult> {
   const { factsDb, cfg, logger } = ctx;
   const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
@@ -199,11 +227,17 @@ export async function runGenerateAutoSkillsForCli(
         validationThreshold: cfg.procedures.validationThreshold,
         skillTTLDays: cfg.procedures.skillTTLDays,
         dryRun: opts.dryRun,
+        apply: opts.apply,
+        maxPerRun: opts.max,
+        policy: opts.policy,
       },
       { info, warn },
     );
   } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "runGenerateAutoSkillsForCli" });
+    capturePluginError(err as Error, {
+      subsystem: "cli",
+      operation: "runGenerateAutoSkillsForCli",
+    });
     throw err;
   }
 }
@@ -226,7 +260,12 @@ export async function runExtractDirectivesForCli(
   if (!opts.full && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
-      return { incidents: [], sessionsScanned: 0, stored: 0, skipped: true } as DirectiveExtractResult & {
+      return {
+        incidents: [],
+        sessionsScanned: 0,
+        stored: 0,
+        skipped: true,
+      } as DirectiveExtractResult & {
         stored?: number;
         skipped?: boolean;
       };
@@ -259,7 +298,10 @@ export async function runExtractDirectivesForCli(
     }
 
     const directiveRegex = getDirectiveSignalRegex();
-    const result = runDirectiveExtract({ filePaths: extractionPaths, directiveRegex });
+    const result = runDirectiveExtract({
+      filePaths: extractionPaths,
+      directiveRegex,
+    });
 
     if (opts.verbose) {
       for (const incident of result.incidents) {
@@ -325,7 +367,10 @@ export async function runExtractDirectivesForCli(
           if (shouldCountVectorFallback) storeDedupeVectorFallbackSuppressed++;
           stored++;
         } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDirectivesForCli:store" });
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runExtractDirectivesForCli:store",
+          });
         }
       }
     }
@@ -351,7 +396,13 @@ export async function runExtractDirectivesForCli(
  */
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean; workspace?: string; full?: boolean },
+  opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    workspace?: string;
+    full?: boolean;
+  },
 ): Promise<ReinforcementExtractResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
   const SCAN_TYPE = "extract-reinforcement";
@@ -363,7 +414,11 @@ export async function runExtractReinforcementForCli(
   if (!opts.full && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
-      return { incidents: [], sessionsScanned: 0, skipped: true } as ReinforcementExtractResult & { skipped?: boolean };
+      return {
+        incidents: [],
+        sessionsScanned: 0,
+        skipped: true,
+      } as ReinforcementExtractResult & { skipped?: boolean };
   }
 
   try {
@@ -394,12 +449,17 @@ export async function runExtractReinforcementForCli(
     }
 
     const reinforcementRegex = getReinforcementSignalRegex();
-    const result = await runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
+    const result = await runReinforcementExtract({
+      filePaths: extractionPaths,
+      reinforcementRegex,
+    });
 
     if (opts.verbose) {
       for (const incident of result.incidents) {
         console.log(
-          `[${incident.sessionFile}] Confidence ${incident.confidence.toFixed(2)}: ${incident.userMessage.slice(0, 80)}`,
+          `[${incident.sessionFile}] Confidence ${incident.confidence.toFixed(
+            2,
+          )}: ${incident.userMessage.slice(0, 80)}`,
         );
       }
     }
@@ -447,7 +507,9 @@ export async function runExtractReinforcementForCli(
           `memory-hybrid: extract-reinforcement analysis starting with model ${model} (source=${modelSource})`,
         );
         logger.info?.(
-          `memory-hybrid: extract-reinforcement analysis fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+          `memory-hybrid: extract-reinforcement analysis fallback chain = [${
+            fallbackModels.length > 0 ? fallbackModels.join(", ") : ""
+          }]`,
         );
         const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
         const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
@@ -478,7 +540,10 @@ export async function runExtractReinforcementForCli(
           analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
         }
       } catch (e) {
-        capturePluginError(e as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:llm-analysis" });
+        capturePluginError(e as Error, {
+          subsystem: "cli",
+          operation: "runExtractReinforcementForCli:llm-analysis",
+        });
       }
 
       const toolsPath = join(workspaceRoot, "TOOLS.md");
@@ -515,7 +580,10 @@ export async function runExtractReinforcementForCli(
                   continue;
                 }
               } catch (err) {
-                capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-dedup" });
+                capturePluginError(err as Error, {
+                  subsystem: "cli",
+                  operation: "reinforcement:positive-rule-dedup",
+                });
                 // Fail open: still insert the rule if dedup check fails
               }
             }
@@ -545,7 +613,12 @@ export async function runExtractReinforcementForCli(
             const isPattern = a.remediationType === "PATTERN_FACT";
             const obj =
               typeof c === "object" && c && "text" in c
-                ? (c as { text?: string; entity?: string; key?: string; tags?: string[] })
+                ? (c as {
+                    text?: string;
+                    entity?: string;
+                    key?: string;
+                    tags?: string[];
+                  })
                 : { text: String(c) };
             const text = (obj.text ?? "").trim();
             if (!text || factsDb.hasDuplicate(text, "reinforcement-analysis")) continue;
@@ -673,7 +746,10 @@ export async function runExtractReinforcementForCli(
             }
           }
         } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli" });
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runExtractReinforcementForCli",
+          });
         }
       }
     }
@@ -850,7 +926,9 @@ export async function runGenerateProposalsForCli(
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(
-      `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(fallbackModels)}): ${errMsg}`,
+      `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(
+        fallbackModels,
+      )}): ${errMsg}`,
     );
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",
@@ -903,7 +981,11 @@ export async function runGenerateProposalsForCli(
     confidence = capProposalConfidence(confidence, targetFile, String(item.suggestedChange ?? ""));
     if (confidence < minConf) {
       ctx.logger.info?.(
-        `memory-hybrid: proposal dropped — confidence ${confidence < Number(item.confidence) ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})` : `below minConf ${minConf}`}: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`,
+        `memory-hybrid: proposal dropped — confidence ${
+          confidence < Number(item.confidence)
+            ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})`
+            : `below minConf ${minConf}`
+        }: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`,
       );
       continue;
     }
@@ -1093,7 +1175,10 @@ export async function runExtractDailyForCli(
           }
         } catch (err) {
           sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-final" });
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runExtractDailyForCli:vector-store-final",
+          });
         }
         totalStored++;
       }
@@ -1199,9 +1284,9 @@ export async function runExtractDailyForCli(
       totalExtracted++;
       if (opts.dryRun) {
         sink.log(
-          `  [${category}] ${extracted.entity || "?"} / ${extracted.key || "?"} = ${
-            extracted.value || trimmed.slice(0, 60)
-          }`,
+          `  [${category}] ${extracted.entity || "?"} / ${
+            extracted.key || "?"
+          } = ${extracted.value || trimmed.slice(0, 60)}`,
         );
         continue;
       }
@@ -1224,7 +1309,10 @@ export async function runExtractDailyForCli(
           vecForStore = await embeddings.embed(trimmed);
         } catch (err) {
           sink.warn(`memory-hybrid: extract-daily embedding failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:embed" });
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runExtractDailyForCli:embed",
+          });
         }
         if (vecForStore) {
           let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vecForStore, 3, 0.3, {
@@ -1262,11 +1350,20 @@ export async function runExtractDailyForCli(
         const vector = vecForStore ?? (await embeddings.embed(trimmed));
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
-          await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
+          await vectorDb.store({
+            text: trimmed,
+            vector,
+            importance: BATCH_STORE_IMPORTANCE,
+            category,
+            id: entry.id,
+          });
         }
       } catch (err) {
         sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-final" });
+        capturePluginError(err as Error, {
+          subsystem: "cli",
+          operation: "runExtractDailyForCli:vector-store-final",
+        });
       }
       totalStored++;
     }

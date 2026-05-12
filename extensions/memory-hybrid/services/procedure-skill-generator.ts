@@ -1,21 +1,33 @@
-import { getEnv } from "../utils/env-manager.js";
 /**
- * Procedural memory: generate SKILL.md + recipe.json from validated procedures.
+ * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
-import type { ProcedureEntry } from "../types/memory.js";
-import { slugifyForSkill } from "../utils/text.js";
+import { resolveWorkspacePath } from "../utils/path.js";
+import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  PROCEDURE_PROMOTION_POLICY_VERSION,
+  createProcedurePromotionDecision,
+  createProcedurePromotionItem,
+  evaluateProcedureForPromotion,
+  parseProcedurePromotionPolicy,
+  type ProcedurePromotionPolicy,
+} from "./procedure-promotion-policy.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 
 /** Per-procedure result returned by {@link generateAutoSkillForProcedure}. */
 export type GenerateAutoSkillResult =
-  | { ok: false; reason: "not-found" | "validation-pending" | "write-failed"; error?: string }
+  | {
+      ok: false;
+      reason: "not-found" | "validation-pending" | "write-failed" | "policy-blocked";
+      error?: string;
+      reasons?: string[];
+    }
   | {
       ok: true;
       /** True when the procedure was already promoted before this call (no-op). */
@@ -26,16 +38,47 @@ export type GenerateAutoSkillResult =
       relativePath: string;
       /** Whether the writes were skipped because dryRun=true. */
       dryRun: boolean;
+      /** Generated skills are draft/quarantined and not enabled by default. */
+      enabled: false;
     };
 
-function ensureUniqueSlug(basePath: string, slug: string): string {
+function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-  while (existsSync(join(basePath, candidate))) {
+  while (existsSync(join(basePath, candidate)) || reservedSlugs?.has(candidate)) {
     n++;
     candidate = `${slug}-${n}`;
   }
   return candidate;
+}
+
+function rebaseDraftSlug(
+  draft: { skillMd: string; recipeJson: string; verificationJson: string; evalsJson: string },
+  resolvedSlug: string,
+  generatedSkillPath: string,
+): { skillMd: string; recipeJson: string; verificationJson: string; evalsJson: string } {
+  const verification = JSON.parse(draft.verificationJson) as {
+    skill?: unknown;
+    generatedSkillPath?: unknown;
+  };
+  const originalSlug =
+    typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
+  verification.skill = resolvedSlug;
+  verification.generatedSkillPath = generatedSkillPath;
+
+  const skillMd = draft.skillMd
+    .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
+    .replace(new RegExp(`^# ${escapeRegExp(titleCase(originalSlug))}$`, "m"), `# ${titleCase(resolvedSlug)}`);
+
+  return {
+    ...draft,
+    skillMd,
+    verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 type GenerateAutoSkillsOptions = {
@@ -44,11 +87,13 @@ type GenerateAutoSkillsOptions = {
   skillTTLDays: number;
   maxPerRun?: number;
   dryRun?: boolean;
+  apply?: boolean;
+  policy?: string;
 };
 
 /**
- * Generate workspace/skills/auto/{slug}/SKILL.md and recipe.json for procedures
- * that have been validated at least validationThreshold times.
+ * Generate quarantined draft skills for procedures that pass #1328 promotion gates.
+ * Dry-run is non-mutating: it does not write skills and does not mark procedures promoted.
  */
 export function generateAutoSkills(
   factsDb: FactsDB,
@@ -56,102 +101,138 @@ export function generateAutoSkills(
   logger: { info: (s: string) => void; warn: (s: string) => void },
 ): GenerateAutoSkillsResult {
   const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
-  const dryRun = options.dryRun ?? false;
-  const basePath = options.skillsAutoPath.startsWith("/")
-    ? options.skillsAutoPath
-    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), options.skillsAutoPath);
-
+  const dryRun = options.dryRun ?? options.apply !== true;
+  const policy = parseProcedurePromotionPolicy(resolveBatchPromotionPolicy(options.policy, options.apply));
+  const basePath = resolveSkillsPath(options.skillsAutoPath);
+  const runId = `procedure-promotion-${Date.now()}`;
   const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
   const paths: string[] = [];
+  const decisions: NonNullable<GenerateAutoSkillsResult["decisions"]> = [];
   let skipped = 0;
+  let eligible = 0;
+  let drafted = 0;
+  let rejected = 0;
+  let deferred = 0;
+  let failedValidation = 0;
+  let failedEval = 0;
+  const reservedSlugs = new Set<string>();
+  const inRunSkillCandidates: Array<{ slug: string; taskPattern: string }> = [];
 
   for (const proc of procedures) {
-    const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
-    const skillDir = join(basePath, slug);
+    const item = createProcedurePromotionItem(proc, policy);
+    const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
+    const context = {
+      runId,
+      mode: dryRun ? ("dry-run" as const) : ("apply" as const),
+      policy,
+      policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+      inputHash: item.inputHash,
+      actor: { type: "system" as const, id: "generate-auto-skills" },
+    };
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: basePath,
+      validationThreshold: options.validationThreshold,
+      resolvedSlug,
+      inRunSkillCandidates,
+    });
+    const decision = createProcedurePromotionDecision(item, context, evaluation);
+    const reservedCandidate = { slug: resolvedSlug, taskPattern: proc.taskPattern };
+    if (evaluation.eligible && evaluation.draft) {
+      reservedSlugs.add(resolvedSlug);
+      inRunSkillCandidates.push(reservedCandidate);
+    }
+    if (evaluation.eligible) eligible++;
+    if (decision.action === "rejected") rejected++;
+    if (decision.action === "deferred-for-human") deferred++;
+    if (decision.action === "failed-validation") failedValidation++;
+    if (evaluation.metadata.rejectionReasons.includes("functional_eval_failed")) failedEval++;
+
+    if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
+      decisions.push({
+        procedureId: proc.id,
+        action: decision.action,
+        reasons: evaluation.metadata.rejectionReasons,
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
+      });
+      if (!evaluation.eligible || !evaluation.draft) {
+        skipped++;
+      }
+      logger.info(
+        `procedure-skill-generator: ${proc.id} ${decision.action}: ${
+          evaluation.metadata.rejectionReasons.join(",") || "not eligible"
+        } (${evaluation.gates.map((g) => `${g.reason}:${g.detail}`).join(" | ")})`,
+      );
+      continue;
+    }
+
+    const skillDir = join(basePath, resolvedSlug);
     const skillPath = join(skillDir, "SKILL.md");
-    const recipePath = join(skillDir, "recipe.json");
 
     if (dryRun) {
-      logger.info(`[dry-run] Would generate skill: ${skillPath}`);
+      decisions.push({
+        procedureId: proc.id,
+        action: decision.action,
+        reasons: evaluation.metadata.rejectionReasons,
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
+      });
       paths.push(skillPath);
+      logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);
+      drafted++;
       continue;
     }
 
     try {
-      mkdirSync(skillDir, { recursive: true });
+      const relativePath = join(options.skillsAutoPath, resolvedSlug);
+      writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
+      // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
+      // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
+      factsDb.markProcedurePromoted(proc.id, relativePath);
+      decisions.push({
+        procedureId: proc.id,
+        action: decision.action,
+        reasons: evaluation.metadata.rejectionReasons,
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
+      });
+      paths.push(skillPath);
+      drafted++;
+      logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
     } catch (err) {
+      rollbackDraftSkill(skillDir);
+      releaseInRunReservation(reservedSlugs, inRunSkillCandidates, reservedCandidate);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-skill-generator",
-        operation: "mkdir-skill-dir",
+        operation: "write-draft-skill",
       });
-      logger.warn(`procedure-skill-generator: mkdir ${skillDir}: ${err}`);
-      skipped++;
-      continue;
-    }
-
-    let recipe: unknown;
-    try {
-      recipe = JSON.parse(proc.recipeJson);
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "parse-recipe",
-        severity: "info",
-        subsystem: "procedures",
-      });
-      recipe = [];
-    }
-    const steps = Array.isArray(recipe) ? recipe : [];
-
-    const lastValidatedStr = proc.lastValidated
-      ? new Date(proc.lastValidated * 1000).toISOString().slice(0, 10)
-      : "never";
-    const stepsMd = Array.isArray(steps)
-      ? (steps as Array<{ tool?: string; args?: Record<string, unknown>; summary?: string }>)
-          .map((s, i) => {
-            const args = s.args && Object.keys(s.args).length > 0 ? ` ${JSON.stringify(s.args)}` : "";
-            return `${i + 1}. **${s.tool || "step"}**${args}${s.summary ? ` — ${s.summary}` : ""}`;
-          })
-          .join("\n")
-      : "See recipe.json";
-
-    const skillMd = `# ${slug.replace(/-/g, " ")}
-
-Auto-generated procedure (procedural memory). Last validated: ${lastValidatedStr}. Confidence: ${(proc.confidence * 100).toFixed(0)}%.
-
-## Task
-${proc.taskPattern}
-
-## Steps (last time this worked)
-${stepsMd}
-
-## Metadata
-- Source procedure id: \`${proc.id}\`
-- Success count: ${proc.successCount}
-- Do not store secrets in procedures; use credential references only.
-`;
-
-    try {
-      writeFileSync(skillPath, skillMd, "utf-8");
-      writeFileSync(recipePath, JSON.stringify(steps, null, 2), "utf-8");
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "procedure-skill-generator",
-        operation: "write-skill-files",
+      decisions.push({
+        procedureId: proc.id,
+        action: "failed-validation",
+        reasons: ["write_failed"],
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
       });
       logger.warn(`procedure-skill-generator: write ${skillPath}: ${err}`);
+      failedValidation++;
       skipped++;
-      continue;
     }
-
-    const relativePath = join(options.skillsAutoPath, slug);
-    const promoted = factsDb.markProcedurePromoted(proc.id, relativePath);
-    const promotedProcedure = promoted ? factsDb.getProcedureById(proc.id) : null;
-    paths.push(
-      promotedProcedure?.skillPath && promotedProcedure.skillPath === relativePath
-        ? skillPath
-        : (promotedProcedure?.skillPath ?? skillPath),
-    );
-    logger.info(`procedure-skill-generator: generated ${skillPath}`);
   }
 
   return {
@@ -159,123 +240,167 @@ ${stepsMd}
     skipped,
     dryRun,
     paths,
+    summary: {
+      candidates: procedures.length,
+      eligible,
+      drafted,
+      promoted: 0,
+      rejected,
+      deferred,
+      failedValidation,
+      failedEval,
+    },
+    decisions,
   };
 }
 
 /**
- * Promote a single procedure by id (#1191). The output is idempotent:
- *   - If the procedure has already been promoted, return `alreadyPromoted: true` with
- *     the existing skill path and do not rewrite SKILL.md / recipe.json.
- *   - If not yet promoted, generate the skill files and call `markProcedurePromoted`.
- *
- * `validationThreshold` is honored when `requireValidation` is true (default), matching
- * the safeguard used by the batch path. Call sites can pass `requireValidation: false`
- * for operator-driven promotions.
+ * Promote/draft a single procedure by id (#1191/#1328). Operator-driven --force still
+ * cannot bypass safety gates; it only skips the legacy success-count threshold.
  */
 export function generateAutoSkillForProcedure(
   factsDb: FactsDB,
-  options: GenerateAutoSkillsOptions & { procedureId: string; requireValidation?: boolean },
+  options: GenerateAutoSkillsOptions & {
+    procedureId: string;
+    requireValidation?: boolean;
+  },
   logger: { info: (s: string) => void; warn: (s: string) => void },
 ): GenerateAutoSkillResult {
-  const dryRun = options.dryRun ?? false;
-  const requireValidation = options.requireValidation !== false;
+  const dryRun = options.dryRun ?? options.apply !== true;
+  const policy: ProcedurePromotionPolicy = parseProcedurePromotionPolicy(
+    resolveBatchPromotionPolicy(options.policy, options.apply),
+  );
   const proc = factsDb.getProcedureById(options.procedureId);
   if (!proc) return { ok: false, reason: "not-found" };
 
-  const basePath = options.skillsAutoPath.startsWith("/")
-    ? options.skillsAutoPath
-    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), options.skillsAutoPath);
+  const basePath = resolveSkillsPath(options.skillsAutoPath);
 
   if (proc.skillPath && proc.promotedToSkill) {
-    const absoluteExisting = proc.skillPath.startsWith("/")
-      ? proc.skillPath
-      : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), proc.skillPath);
+    const absoluteExisting = resolveWorkspacePath(proc.skillPath);
     return {
       ok: true,
       alreadyPromoted: true,
       skillPath: join(absoluteExisting, "SKILL.md"),
       relativePath: proc.skillPath,
       dryRun,
+      enabled: false,
     };
   }
 
-  if (requireValidation && proc.successCount < options.validationThreshold) {
+  if (options.requireValidation !== false && proc.successCount < options.validationThreshold) {
     return { ok: false, reason: "validation-pending" };
   }
 
-  const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
-  const skillDir = join(basePath, slug);
+  const item = createProcedurePromotionItem(proc, policy);
+  const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
+  const evaluation = evaluateProcedureForPromotion(item, policy, {
+    skillsAutoPath: basePath,
+    validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
+    resolvedSlug,
+  });
+  if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
+    const reasons =
+      evaluation.eligible &&
+      evaluation.draft &&
+      evaluation.metadata.requiresHumanApproval &&
+      evaluation.metadata.rejectionReasons.length === 0
+        ? ["policy_requires_human_approval"]
+        : evaluation.metadata.rejectionReasons;
+    return {
+      ok: false,
+      reason: "policy-blocked",
+      reasons,
+    };
+  }
+
+  const skillDir = join(basePath, resolvedSlug);
   const skillPath = join(skillDir, "SKILL.md");
-  const recipePath = join(skillDir, "recipe.json");
-  const relativePath = join(options.skillsAutoPath, slug);
+  const relativePath = join(options.skillsAutoPath, resolvedSlug);
 
   if (dryRun) {
-    logger.info(`[dry-run] Would generate skill: ${skillPath}`);
-    return { ok: true, alreadyPromoted: false, skillPath, relativePath, dryRun: true };
+    logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);
+    return {
+      ok: true,
+      alreadyPromoted: false,
+      skillPath,
+      relativePath,
+      dryRun: true,
+      enabled: false,
+    };
   }
 
   try {
-    mkdirSync(skillDir, { recursive: true });
+    writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
+    factsDb.markProcedurePromoted(proc.id, relativePath);
   } catch (err) {
+    rollbackDraftSkill(skillDir);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "procedure-skill-generator",
-      operation: "promote-mkdir",
+      operation: "promote-write-draft",
     });
     return { ok: false, reason: "write-failed", error: String(err) };
   }
 
-  let recipe: unknown;
+  logger.info(`procedure-skill-generator: drafted ${proc.id} → ${skillPath} (enabled=false)`);
+  return {
+    ok: true,
+    alreadyPromoted: false,
+    skillPath,
+    relativePath,
+    dryRun: false,
+    enabled: false,
+  };
+}
+
+function resolveBatchPromotionPolicy(policy: string | undefined, apply: boolean | undefined): string | undefined {
+  // Backward compatibility: older maintenance callers selected mutation with apply=true
+  // before the explicit --policy flag existed. Keep those apply=true calls drafting under
+  // auto-safe gates, while read-only/default invocations remain draft-only for review.
+  // When --apply --dry-run is passed together (to preview what apply would do), the policy
+  // should still default to "auto-safe" to accurately reflect what --apply alone would do.
+  return policy ?? (apply === true ? "auto-safe" : undefined);
+}
+
+function resolveSkillsPath(skillsAutoPath: string): string {
+  return resolveWorkspacePath(skillsAutoPath);
+}
+
+function writeDraftSkill(
+  skillDir: string,
+  draft: {
+    skillMd: string;
+    recipeJson: string;
+    verificationJson: string;
+    evalsJson: string;
+  },
+): void {
+  mkdirSync(join(skillDir, "evals"), { recursive: true });
+  writeFileSync(join(skillDir, "SKILL.md"), draft.skillMd, "utf-8");
+  writeFileSync(join(skillDir, "recipe.json"), draft.recipeJson, "utf-8");
+  writeFileSync(join(skillDir, "verification.json"), draft.verificationJson, "utf-8");
+  writeFileSync(join(skillDir, "evals", "evals.json"), draft.evalsJson, "utf-8");
+}
+
+function releaseInRunReservation(
+  reservedSlugs: Set<string>,
+  inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  candidate: { slug: string; taskPattern: string },
+): void {
+  reservedSlugs.delete(candidate.slug);
+  const index = inRunSkillCandidates.findIndex(
+    (entry) => entry.slug === candidate.slug && entry.taskPattern === candidate.taskPattern,
+  );
+  if (index >= 0) inRunSkillCandidates.splice(index, 1);
+}
+
+function rollbackDraftSkill(skillDir: string): void {
+  if (!existsSync(skillDir)) return;
   try {
-    recipe = JSON.parse(proc.recipeJson);
-  } catch (err) {
-    capturePluginError(err as Error, {
-      operation: "promote-parse-recipe",
-      severity: "info",
-      subsystem: "procedures",
-    });
-    recipe = [];
-  }
-  const steps = Array.isArray(recipe) ? recipe : [];
-  const lastValidatedStr = proc.lastValidated
-    ? new Date(proc.lastValidated * 1000).toISOString().slice(0, 10)
-    : "never";
-  const stepsMd = Array.isArray(steps)
-    ? (steps as Array<{ tool?: string; args?: Record<string, unknown>; summary?: string }>)
-        .map((s, i) => {
-          const args = s.args && Object.keys(s.args).length > 0 ? ` ${JSON.stringify(s.args)}` : "";
-          return `${i + 1}. **${s.tool || "step"}**${args}${s.summary ? ` — ${s.summary}` : ""}`;
-        })
-        .join("\n")
-    : "See recipe.json";
-
-  const skillMd = `# ${slug.replace(/-/g, " ")}
-
-Auto-generated procedure (procedural memory). Last validated: ${lastValidatedStr}. Confidence: ${(proc.confidence * 100).toFixed(0)}%.
-
-## Task
-${proc.taskPattern}
-
-## Steps (last time this worked)
-${stepsMd}
-
-## Metadata
-- Source procedure id: \`${proc.id}\`
-- Success count: ${proc.successCount}
-- Do not store secrets in procedures; use credential references only.
-`;
-
-  try {
-    writeFileSync(skillPath, skillMd, "utf-8");
-    writeFileSync(recipePath, JSON.stringify(steps, null, 2), "utf-8");
+    rmSync(skillDir, { recursive: true, force: true });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "procedure-skill-generator",
-      operation: "promote-write",
+      operation: "rollback-draft-skill",
     });
-    return { ok: false, reason: "write-failed", error: String(err) };
   }
-
-  factsDb.markProcedurePromoted(proc.id, relativePath);
-  logger.info(`procedure-skill-generator: promoted ${proc.id} → ${skillPath}`);
-  return { ok: true, alreadyPromoted: false, skillPath, relativePath, dryRun: false };
 }

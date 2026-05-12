@@ -3,7 +3,13 @@
  */
 
 export type FindDuplicatesResult = {
-  pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }>;
+  pairs: Array<{
+    idA: string;
+    idB: string;
+    score: number;
+    textA: string;
+    textB: string;
+  }>;
   candidatesCount: number;
   skippedStructured: number;
 };
@@ -34,7 +40,12 @@ export type StoreCliResult =
   | { outcome: "noop"; reason: string }
   | { outcome: "retracted"; targetId: string; reason: string }
   | { outcome: "updated"; id: string; supersededId: string; reason: string }
-  | { outcome: "stored"; id: string; textPreview: string; supersededId?: string };
+  | {
+      outcome: "stored";
+      id: string;
+      textPreview: string;
+      supersededId?: string;
+    };
 
 export type InstallCliResult =
   | {
@@ -67,10 +78,18 @@ export type InstallCliResult =
     }
   | { ok: false; error: string };
 
-export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
+export type VerifyCliSink = {
+  log: (s: string) => void;
+  error?: (s: string) => void;
+};
 
 export type EncryptVaultResult =
-  | { ok: true; dryRun: true; vaultPath: string; status: { kdfVersion: number; encryptedAtRest: boolean } }
+  | {
+      ok: true;
+      dryRun: true;
+      vaultPath: string;
+      status: { kdfVersion: number; encryptedAtRest: boolean };
+    }
   | {
       ok: true;
       dryRun: false;
@@ -89,8 +108,16 @@ export type DistillWindowResult = {
 
 export type RecordDistillResult = { path: string; timestamp: string };
 
-export type ExtractDailyResult = { totalExtracted: number; totalStored: number; daysBack: number; dryRun: boolean };
-export type ExtractDailySink = { log: (s: string) => void; warn: (s: string) => void };
+export type ExtractDailyResult = {
+  totalExtracted: number;
+  totalStored: number;
+  daysBack: number;
+  dryRun: boolean;
+};
+export type ExtractDailySink = {
+  log: (s: string) => void;
+  warn: (s: string) => void;
+};
 
 export type ExtractProceduresResult = {
   sessionsScanned: number;
@@ -106,13 +133,52 @@ export type GenerateAutoSkillsResult = {
   skipped: number;
   dryRun: boolean;
   paths: string[];
+  summary?: {
+    candidates: number;
+    eligible: number;
+    drafted: number;
+    promoted: number;
+    rejected: number;
+    deferred: number;
+    failedValidation: number;
+    failedEval: number;
+  };
+  decisions?: Array<{
+    procedureId: string;
+    action: string;
+    reasons: string[];
+    skillPath?: string | null;
+    inputHash?: string;
+    policyVersion?: string;
+    runId?: string;
+    enabled?: boolean;
+    humanReviewRequired?: boolean;
+  }>;
 };
 
-export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
-export type BackfillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+export type BackfillCliResult = {
+  stored: number;
+  skipped: number;
+  candidates: number;
+  files: number;
+  dryRun: boolean;
+};
+export type BackfillCliSink = {
+  log: (s: string) => void;
+  warn: (s: string) => void;
+};
 
-export type IngestFilesResult = { stored: number; skipped: number; extracted: number; files: number; dryRun: boolean };
-export type IngestFilesSink = { log: (s: string) => void; warn: (s: string) => void };
+export type IngestFilesResult = {
+  stored: number;
+  skipped: number;
+  extracted: number;
+  files: number;
+  dryRun: boolean;
+};
+export type IngestFilesSink = {
+  log: (s: string) => void;
+  warn: (s: string) => void;
+};
 
 export type DistillCliResult = {
   sessionsScanned: number;
@@ -122,7 +188,10 @@ export type DistillCliResult = {
   dryRun: boolean;
   skipped?: boolean;
 };
-export type DistillCliSink = { log: (s: string) => void; warn: (s: string) => void };
+export type DistillCliSink = {
+  log: (s: string) => void;
+  warn: (s: string) => void;
+};
 
 export type SelfCorrectionExtractResult = {
   incidents: Array<{
@@ -154,7 +223,11 @@ export type AnalyzeFeedbackPhrasesResult = {
   error?: string;
 };
 
-export type MigrateToVaultResult = { migrated: number; skipped: number; errors: string[] };
+export type MigrateToVaultResult = {
+  migrated: number;
+  skipped: number;
+  errors: string[];
+};
 
 export type CredentialsAuditEntry = {
   service: string;
@@ -163,7 +236,10 @@ export type CredentialsAuditEntry = {
   flags: string[];
 };
 
-export type CredentialsAuditResult = { entries: CredentialsAuditEntry[]; total: number };
+export type CredentialsAuditResult = {
+  entries: CredentialsAuditEntry[];
+  total: number;
+};
 
 export type CredentialsPruneResult = {
   removed: number;
@@ -187,7 +263,12 @@ export type UpgradeCliResult =
 export type UninstallCliResult =
   | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
   | { outcome: "config_not_found"; pluginId: string; cleaned: string[] }
-  | { outcome: "config_error"; error: string; pluginId: string; cleaned: string[] }
+  | {
+      outcome: "config_error";
+      error: string;
+      pluginId: string;
+      cleaned: string[];
+    }
   | { outcome: "leave_config"; pluginId: string; cleaned: string[] };
 
 export type ConfigCliResult = { ok: true; configPath: string; message: string } | { ok: false; error: string };
