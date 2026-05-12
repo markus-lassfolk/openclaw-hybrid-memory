@@ -139,19 +139,18 @@ export function generateAutoSkills(
     if (decision.action === "failed-validation") failedValidation++;
     if (evaluation.metadata.rejectionReasons.includes("functional_eval_failed")) failedEval++;
 
-    decisions.push({
-      procedureId: proc.id,
-      action: decision.action,
-      reasons: evaluation.metadata.rejectionReasons,
-      skillPath: evaluation.metadata.generatedSkillPath,
-      inputHash: item.inputHash,
-      policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
-      runId: decision.runId,
-      enabled: false,
-      humanReviewRequired: decision.humanReviewRequired,
-    });
-
     if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
+      decisions.push({
+        procedureId: proc.id,
+        action: decision.action,
+        reasons: evaluation.metadata.rejectionReasons,
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
+      });
       skipped++;
       logger.info(
         `procedure-skill-generator: ${proc.id} ${decision.action}: ${
@@ -165,6 +164,17 @@ export function generateAutoSkills(
     const skillPath = join(skillDir, "SKILL.md");
 
     if (dryRun) {
+      decisions.push({
+        procedureId: proc.id,
+        action: decision.action,
+        reasons: evaluation.metadata.rejectionReasons,
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
+      });
       paths.push(skillPath);
       logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);
       drafted++;
@@ -177,6 +187,17 @@ export function generateAutoSkills(
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, relativePath);
+      decisions.push({
+        procedureId: proc.id,
+        action: decision.action,
+        reasons: evaluation.metadata.rejectionReasons,
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
+      });
       paths.push(skillPath);
       drafted++;
       logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
@@ -185,6 +206,17 @@ export function generateAutoSkills(
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-skill-generator",
         operation: "write-draft-skill",
+      });
+      decisions.push({
+        procedureId: proc.id,
+        action: "failed-validation",
+        reasons: ["write_failed"],
+        skillPath: evaluation.metadata.generatedSkillPath,
+        inputHash: item.inputHash,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        runId: decision.runId,
+        enabled: false,
+        humanReviewRequired: decision.humanReviewRequired,
       });
       logger.warn(`procedure-skill-generator: write ${skillPath}: ${err}`);
       skipped++;
