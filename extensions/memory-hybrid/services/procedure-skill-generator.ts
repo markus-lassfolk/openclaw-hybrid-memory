@@ -212,7 +212,7 @@ export function generateAutoSkills(
       decisions.push({
         procedureId: proc.id,
         action: "failed-validation",
-        reasons: ["skill_static_validation_failed"],
+        reasons: ["write_failed"],
         skillPath: evaluation.metadata.generatedSkillPath,
         inputHash: item.inputHash,
         policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
