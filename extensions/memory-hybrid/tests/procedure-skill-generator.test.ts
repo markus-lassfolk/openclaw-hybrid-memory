@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
 
@@ -306,6 +306,135 @@ describe("generateAutoSkills", () => {
       reason: "policy-blocked",
     });
     expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
+  });
+
+  it("does not inflate failedEval for deferred/rejected procedures", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate low confidence report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      failureCount: 5,
+      confidence: 0.1,
+      sourceSessionId: "failed-eval-a",
+    });
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        dryRun: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.summary).toMatchObject({
+      candidates: 1,
+      deferred: 1,
+      failedEval: 0,
+    });
+  });
+
+  it("rolls back written draft artifacts when markProcedurePromoted fails during batch generation", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate rollback batch behavior",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "rollback-batch-a",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementation(() => {
+      throw new Error("mark failed");
+    });
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 1,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    markSpy.mockRestore();
+
+    expect(result.generated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior"))).toBe(false);
+    expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
+  });
+
+  it("rolls back written draft artifacts when markProcedurePromoted fails for single-procedure generation", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate rollback single behavior",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "rollback-single-a",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementation(() => {
+      throw new Error("mark failed");
+    });
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        apply: true,
+        policy: "auto-safe",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    markSpy.mockRestore();
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "write-failed",
+    });
+    expect(existsSync(join(skillsDir, "validate-rollback-single-behavior"))).toBe(false);
+    expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
   });
 
   it("skips procedures below validation threshold", () => {

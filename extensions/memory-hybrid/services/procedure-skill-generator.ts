@@ -114,6 +114,7 @@ export function generateAutoSkills(
   let rejected = 0;
   let deferred = 0;
   let failedValidation = 0;
+  let failedEval = 0;
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
@@ -136,6 +137,7 @@ export function generateAutoSkills(
     if (decision.action === "rejected") rejected++;
     if (decision.action === "deferred-for-human") deferred++;
     if (decision.action === "failed-validation") failedValidation++;
+    if (evaluation.metadata.rejectionReasons.includes("functional_eval_failed")) failedEval++;
 
     decisions.push({
       procedureId: proc.id,
@@ -174,21 +176,12 @@ export function generateAutoSkills(
       writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
-      try {
-        factsDb.markProcedurePromoted(proc.id, relativePath);
-      } catch (markErr) {
-        // Rollback: remove orphaned files
-        try {
-          rmSync(skillDir, { recursive: true, force: true });
-        } catch {
-          // Best effort cleanup
-        }
-        throw markErr;
-      }
+      factsDb.markProcedurePromoted(proc.id, relativePath);
       paths.push(skillPath);
       drafted++;
       logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
     } catch (err) {
+      rollbackDraftSkill(skillDir);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-skill-generator",
         operation: "write-draft-skill",
@@ -211,6 +204,7 @@ export function generateAutoSkills(
       rejected,
       deferred,
       failedValidation,
+      failedEval,
     },
     decisions,
   };
@@ -284,7 +278,9 @@ export function generateAutoSkillForProcedure(
 
   try {
     writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
+    factsDb.markProcedurePromoted(proc.id, relativePath);
   } catch (err) {
+    rollbackDraftSkill(skillDir);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "procedure-skill-generator",
       operation: "promote-write-draft",
@@ -292,7 +288,6 @@ export function generateAutoSkillForProcedure(
     return { ok: false, reason: "write-failed", error: String(err) };
   }
 
-  factsDb.markProcedurePromoted(proc.id, relativePath);
   logger.info(`procedure-skill-generator: drafted ${proc.id} → ${skillPath} (enabled=false)`);
   return {
     ok: true,
@@ -322,4 +317,16 @@ function writeDraftSkill(
   writeFileSync(join(skillDir, "recipe.json"), draft.recipeJson, "utf-8");
   writeFileSync(join(skillDir, "verification.json"), draft.verificationJson, "utf-8");
   writeFileSync(join(skillDir, "evals", "evals.json"), draft.evalsJson, "utf-8");
+}
+
+function rollbackDraftSkill(skillDir: string): void {
+  if (!existsSync(skillDir)) return;
+  try {
+    rmSync(skillDir, { recursive: true, force: true });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "procedure-skill-generator",
+      operation: "rollback-draft-skill",
+    });
+  }
 }

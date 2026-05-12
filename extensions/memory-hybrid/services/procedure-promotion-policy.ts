@@ -323,8 +323,9 @@ export function evaluateProcedureForPromotion(
 
   const eligible = gates.length === 0;
   const generatedPath = finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
+  const resolvedSkillSlug = options.resolvedSlug ?? finalDraft?.slug ?? item.payload.skillSlug;
   const metadata: ProcedurePromotionVerification = {
-    skill: item.payload.skillSlug,
+    skill: resolvedSkillSlug,
     sourceProcedureIds: [proc.id],
     sourceSuccessCount: proc.successCount,
     sourceFailureCount: proc.failureCount,
@@ -364,7 +365,7 @@ export function evaluateProcedureForPromotion(
       ? "failed"
       : "passed",
     triggerEval: eligible ? "passed" : "failed",
-    functionalEval: "passed",
+    functionalEval: gates.some((g) => g.reason === "functional_eval_failed") ? "failed" : "passed",
     baselineComparison: {
       withSkillPassed: eligible,
       withoutSkillPassed: false,
@@ -650,10 +651,16 @@ function computeSuccessRate(proc: ProcedureEntry): number | null {
 function hasEnoughTaskBoundary(task: string): boolean {
   const words = task
     .toLowerCase()
-    .split(/\s+/)
+    .split(/[^a-z0-9]+/)
     .filter((w) => w.length > 2);
-  const hasVagueWord = words.some((w) => /^(fix|handle|do|run|process|misc|stuff|thing)s?$/i.test(w));
-  return words.length >= 3 && !hasVagueWord;
+  if (words.length < 3) return false;
+
+  const vagueWords = new Set(["fix", "handle", "do", "run", "process", "misc", "stuff", "thing"]);
+  const meaningfulWords = words.filter((word) => {
+    const normalized = word.endsWith("s") ? word.slice(0, -1) : word;
+    return !vagueWords.has(normalized);
+  });
+  return meaningfulWords.length >= 2;
 }
 
 const CONTEXT_SPECIFIC_PATTERN = /\b(?:my|household|personal)\b/i;

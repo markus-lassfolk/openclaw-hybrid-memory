@@ -542,6 +542,103 @@ describe("procedure promotion policy and adapter", () => {
     expect(decision.humanReviewRequired).toBe(false);
   });
 
+  it("classifies non-eligible actions from the highest-severity gate, not gate order", () => {
+    const proc = addProcedure({
+      taskPattern: "Validate low confidence credential workflow",
+      confidence: 0.2,
+      recipeJson: JSON.stringify([
+        {
+          tool: "exec",
+          args: { command: "echo token=ghp_123456789abcdef" },
+          summary: "echo credential-like token",
+        },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Verify report output",
+        },
+      ]),
+      sourceSessionId: "severity-a",
+    });
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+    const decision = createProcedurePromotionDecision(
+      item,
+      {
+        runId: "run-decision-severity",
+        mode: "apply",
+        policy,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        inputHash: item.inputHash,
+        actor: { type: "test", id: "procedure-policy-test" },
+      },
+      evaluation,
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("low_confidence");
+    expect(evaluation.metadata.rejectionReasons).toContain("credential_risk");
+    expect(decision.action).toBe("rejected");
+    expect(decision.reasonCode).toBe("policy-denied");
+  });
+
+  it("records collision-resolved slug in evaluation metadata", () => {
+    const proc = addProcedure({ sourceSessionId: "resolved-slug-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "resolved-slug-b");
+    db.recordProcedureSuccess(proc.id, undefined, "resolved-slug-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+      resolvedSlug: "validate-release-health-report-with-objective-checks-1",
+    });
+    const decision = createProcedurePromotionDecision(
+      item,
+      {
+        runId: "run-decision-resolved-slug",
+        mode: "apply",
+        policy,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        inputHash: item.inputHash,
+        actor: { type: "test", id: "procedure-policy-test" },
+      },
+      evaluation,
+    );
+
+    expect(evaluation.metadata).toMatchObject({
+      skill: "validate-release-health-report-with-objective-checks-1",
+      generatedSkillPath: join(skillsDir, "validate-release-health-report-with-objective-checks-1"),
+    });
+    expect(decision.summary?.body).toContain("validate-release-health-report-with-objective-checks-1");
+  });
+
+  it("defers tasks with only vague filler wording even when word count is high", () => {
+    const proc = addProcedure({
+      taskPattern: "Do stuff things quickly",
+      sourceSessionId: "vague-task-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "vague-task-b");
+    db.recordProcedureSuccess(proc.id, undefined, "vague-task-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("vague_trigger");
+  });
+
   it("standalone and parent adapter route produce equivalent decisions", async () => {
     const proc = addProcedure({ sourceSessionId: "eq-a" });
     db.recordProcedureSuccess(proc.id, undefined, "eq-b");
