@@ -29,7 +29,7 @@ export type DistillContext = {
     verbose?: boolean;
     full?: boolean;
   }) => Promise<ExtractProceduresResult>;
-  runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
+  runGenerateAutoSkills: (opts: { dryRun: boolean; apply?: boolean; verbose?: boolean; max?: number; policy?: string; json?: boolean }) => Promise<GenerateAutoSkillsResult>;
   runDistill: (
     opts: {
       dryRun: boolean;
@@ -249,21 +249,42 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
 
   mem
     .command("generate-auto-skills")
-    .description("Generate SKILL.md + recipe.json in skills/auto/ for procedures validated enough times")
-    .option("--dry-run", "Show what would be generated without writing")
-    .option("-v, --verbose", "Log each generated skill path")
+    .description("Generate verified draft SKILL.md + recipe/eval metadata for safe validated procedures")
+    .option("--dry-run", "Show what would be generated without writing (default unless --apply is passed)")
+    .option("--apply", "Write draft/quarantined skill artifacts for procedures that pass all auto-safe gates")
+    .option("--max <n>", "Maximum procedures to inspect", "10")
+    .option("--policy <policy>", "Promotion policy: draft-only, manual, auto-safe", "draft-only")
+    .option("--json", "Emit structured JSON summary")
+    .option("-v, --verbose", "Log each decision and generated skill path")
     .action(
-      withExit(async (opts: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      withExit(async (opts: { dryRun?: boolean; apply?: boolean; verbose?: boolean; max?: string; policy?: string; json?: boolean }, cmd?: CommanderOptsParent) => {
+        const max = Number.parseInt(opts.max ?? "10", 10);
+        if (!Number.isFinite(max) || max < 1) {
+          console.error("error: --max must be a positive integer");
+          process.exitCode = 1;
+          return;
+        }
+        const apply = opts.apply === true;
         const result = await runGenerateAutoSkills({
-          dryRun: !!opts.dryRun,
+          dryRun: !apply || opts.dryRun === true,
+          apply,
+          max,
+          policy: opts.policy,
+          json: opts.json,
           verbose: !!opts.verbose || readHybridMemVerbose(cmd),
         });
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        const s = result.summary;
+        const counts = s
+          ? `candidates=${s.candidates}, eligible=${s.eligible}, drafted=${s.drafted}, rejected=${s.rejected}, deferred=${s.deferred}, failedValidation=${s.failedValidation}, failedEval=${s.failedEval}`
+          : `generated=${result.generated}, skipped=${result.skipped}`;
         if (result.dryRun) {
-          console.log(`\n[dry-run] Would generate ${result.generated} auto-skills`);
+          console.log(`\n[dry-run] Procedure skill promotion summary: ${counts}`);
         } else {
-          console.log(
-            `\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`,
-          );
+          console.log(`\nProcedure skill promotion summary: ${counts}`);
           for (const p of result.paths) console.log(`  ${p}`);
         }
       }),

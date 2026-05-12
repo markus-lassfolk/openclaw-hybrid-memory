@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
+import { PROCEDURE_PROMOTION_POLICY_VERSION, createProcedurePromotionItem, evaluateProcedureForPromotion, parseProcedurePromotionPolicy } from "../../../services/procedure-promotion-policy.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -116,9 +117,10 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--status <status>", "Filter by status: validated or all", "validated")
     .option("--not-promoted", "Only include procedures not promoted to skills")
     .option("--limit <n>", "Maximum number to show", "50")
+    .option("--policy <policy>", "Procedure promotion policy: draft-only, manual, auto-safe", "draft-only")
     .option("--json", "Emit JSON")
     .action(
-      withExit(async (opts?: { status?: string; notPromoted?: boolean; limit?: string; json?: boolean }) => {
+      withExit(async (opts?: { status?: string; notPromoted?: boolean; limit?: string; policy?: string; json?: boolean }) => {
         const status = opts?.status === "all" ? "all" : "validated";
         const limit = Number.parseInt(opts?.limit ?? "50", 10);
         if (!Number.isFinite(limit) || limit < 1) {
@@ -132,8 +134,30 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           limit,
           validationThreshold: cfg.procedures.validationThreshold,
         });
+        const policy = parseProcedurePromotionPolicy(opts?.policy);
+        const enrichedRows = report.rows.map((row) => {
+          const proc = factsDb.getProcedureById(row.id);
+          if (!proc) return row;
+          const item = createProcedurePromotionItem(proc, policy);
+          const evaluation = evaluateProcedureForPromotion(item, policy, {
+            skillsAutoPath: cfg.procedures.skillsAutoPath,
+            validationThreshold: cfg.procedures.validationThreshold,
+          });
+          return {
+            ...row,
+            inputHash: item.inputHash,
+            policy,
+            policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+            eligible: evaluation.eligible,
+            promotionDecision: evaluation.metadata.promotionDecision,
+            reasons: evaluation.metadata.rejectionReasons,
+            enabled: false,
+            requiresHumanApproval: evaluation.metadata.requiresHumanApproval,
+          };
+        });
+        const enrichedReport = { ...report, rows: enrichedRows };
         if (opts?.json) {
-          console.log(JSON.stringify(report, null, 2));
+          console.log(JSON.stringify(enrichedReport, null, 2));
           return;
         }
         console.log(
@@ -145,12 +169,12 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           .join(", ");
         if (reasonSummary) console.log(`Reasons: ${reasonSummary}`);
         if (report.rows.length === 0) return;
-        console.log("id | title | validated_at | promotion_block_reason | last_recall");
-        for (const row of report.rows) {
+        console.log("id | title | validated_at | promotion_decision | reasons | last_recall");
+        for (const row of enrichedRows as Array<(typeof enrichedRows)[number] & { promotionDecision?: string; reasons?: string[] }>) {
           const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
           const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
           console.log(
-            `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${row.promotionBlockReason} | ${lastRecall}`,
+            `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${row.promotionDecision ?? row.promotionBlockReason} | ${(row.reasons ?? [row.promotionBlockReason]).join(",")} | ${lastRecall}`,
           );
         }
       }),
@@ -185,10 +209,12 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .command("promote <id>")
     .description("Promote a single procedure to skills/auto/<slug> (idempotent)")
     .option("--dry-run", "Print what would happen without writing files")
-    .option("--force", "Skip the validationThreshold safeguard")
+    .option("--force", "Skip the validationThreshold safeguard (safety gates still apply)")
+    .option("--apply", "Write draft/quarantined skill artifacts")
+    .option("--policy <policy>", "Promotion policy: draft-only, manual, auto-safe", "auto-safe")
     .option("--json", "Emit JSON")
     .action(
-      withExit(async (id: string, opts?: { dryRun?: boolean; force?: boolean; json?: boolean }) => {
+      withExit(async (id: string, opts?: { dryRun?: boolean; force?: boolean; apply?: boolean; policy?: string; json?: boolean }) => {
         const result = generateAutoSkillForProcedure(
           factsDb,
           {
@@ -196,7 +222,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             validationThreshold: cfg.procedures.validationThreshold,
             skillTTLDays: cfg.procedures.skillTTLDays,
             procedureId: id,
-            dryRun: opts?.dryRun === true,
+            dryRun: opts?.dryRun === true || opts?.apply !== true,
+            apply: opts?.apply === true,
+            policy: opts?.policy,
             requireValidation: opts?.force !== true,
           },
           { info: (s) => console.log(s), warn: (s) => console.warn(s) },

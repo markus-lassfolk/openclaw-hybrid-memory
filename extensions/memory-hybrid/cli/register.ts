@@ -119,7 +119,7 @@ export type HybridMemCliContext = {
     verbose?: boolean;
     full?: boolean;
   }) => Promise<ExtractProceduresResult>;
-  runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
+  runGenerateAutoSkills: (opts: { dryRun: boolean; apply?: boolean; verbose?: boolean; max?: number; policy?: string; json?: boolean }) => Promise<GenerateAutoSkillsResult>;
   runSkillsSuggest: (opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean }) => Promise<
     import("../services/memory-to-skills.js").SkillsSuggestResult
   >;

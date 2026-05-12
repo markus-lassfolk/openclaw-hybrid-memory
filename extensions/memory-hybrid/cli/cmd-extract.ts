@@ -186,7 +186,7 @@ export async function runExtractProceduresForCli(
  */
 export async function runGenerateAutoSkillsForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean; verbose?: boolean },
+  opts: { dryRun: boolean; apply?: boolean; verbose?: boolean; max?: number; policy?: string; json?: boolean },
 ): Promise<GenerateAutoSkillsResult> {
   const { factsDb, cfg, logger } = ctx;
   const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
@@ -199,6 +199,9 @@ export async function runGenerateAutoSkillsForCli(
         validationThreshold: cfg.procedures.validationThreshold,
         skillTTLDays: cfg.procedures.skillTTLDays,
         dryRun: opts.dryRun,
+        apply: opts.apply,
+        maxPerRun: opts.max,
+        policy: opts.policy,
       },
       { info, warn },
     );

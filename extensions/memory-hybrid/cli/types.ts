@@ -106,6 +106,26 @@ export type GenerateAutoSkillsResult = {
   skipped: number;
   dryRun: boolean;
   paths: string[];
+  summary?: {
+    candidates: number;
+    eligible: number;
+    drafted: number;
+    promoted: number;
+    rejected: number;
+    deferred: number;
+    failedValidation: number;
+    failedEval: number;
+  };
+  decisions?: Array<{
+    procedureId: string;
+    action: string;
+    reasons: string[];
+    skillPath?: string | null;
+    inputHash?: string;
+    policyVersion?: string;
+    enabled?: boolean;
+    humanReviewRequired?: boolean;
+  }>;
 };
 
 export type BackfillCliResult = { stored: number; skipped: number; candidates: number; files: number; dryRun: boolean };
