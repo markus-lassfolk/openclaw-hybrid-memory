@@ -25,17 +25,20 @@ export function sanitizePendingDecision(decision: PendingDecision): PendingDecis
   assertKnownEnum("action", decision.action);
   assertKnownEnum("reasonCode", decision.reasonCode);
   assertKnownEnum("actionClass", decision.actionClass);
-  if (decision.capabilityClass) assertKnownEnum("capabilityClass", decision.capabilityClass);
+  assertKnownEnum("capabilityClass", decision.capabilityClass);
   return {
     ...decision,
     summary: decision.summary ? (redactAutopilotValue(decision.summary) as PendingDecision["summary"]) : undefined,
     audit: decision.audit ? (redactAutopilotValue(decision.audit) as PendingDecision["audit"]) : undefined,
+    evidence: redactAutopilotValue(decision.evidence) as PendingDecision["evidence"],
+    actor: redactAutopilotValue(decision.actor) as PendingDecision["actor"],
   };
 }
 
 export function createStableRunSummary(input: {
   runId: string;
   mode: AutopilotMode;
+  policy: string;
   policyVersion: string;
   queues: PendingQueue[];
   startedAt: number;
@@ -46,14 +49,15 @@ export function createStableRunSummary(input: {
     AUTOPILOT_ACTIONS.map((action) => [action, 0]),
   ) as PendingAutopilotRunSummary["totals"];
   const decisions = input.decisions.map(sanitizePendingDecision).sort((a, b) => {
-    const ak = `${a.queue}:${a.itemId}:${a.inputHash}:${a.policyVersion}`;
-    const bk = `${b.queue}:${b.itemId}:${b.inputHash}:${b.policyVersion}`;
-    return ak.localeCompare(bk);
+    const ak = `${a.queue}:${a.itemId}:${a.inputHash}:${a.policy}:${a.policyVersion}`;
+    const bk = `${b.queue}:${b.itemId}:${b.inputHash}:${b.policy}:${b.policyVersion}`;
+    return compareCodePointOrder(ak, bk);
   });
   for (const decision of decisions) totals[decision.action] += 1;
   return {
     runId: input.runId,
     mode: input.mode,
+    policy: input.policy,
     policyVersion: input.policyVersion,
     queues: [...input.queues].sort((a, b) => PENDING_QUEUES.indexOf(a) - PENDING_QUEUES.indexOf(b)),
     startedAt: input.startedAt,
@@ -63,9 +67,13 @@ export function createStableRunSummary(input: {
       queue: d.queue,
       itemId: d.itemId,
       inputHash: d.inputHash,
+      policy: d.policy,
       policyVersion: d.policyVersion,
       action: d.action,
       reasonCode: d.reasonCode,
+      capabilityClass: d.capabilityClass,
+      confidence: d.confidence,
+      humanReviewRequired: d.humanReviewRequired,
     })),
   };
 }
@@ -75,7 +83,13 @@ export function stableRunSummaryJson(summary: PendingAutopilotRunSummary): strin
 }
 
 export function shouldAdvancePendingCursor(decision: PendingDecision): boolean {
-  return !["deferred-for-human", "failed-validation"].includes(decision.action);
+  if (decision.humanReviewRequired) return false;
+  return ![
+    "deferred-for-human",
+    "failed-validation",
+    "failed-audit",
+    "unknown-decision",
+  ].includes(decision.action);
 }
 
 function compareCodePointOrder(a: string, b: string): number {
@@ -84,7 +98,23 @@ function compareCodePointOrder(a: string, b: string): number {
 
 function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson);
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof URL) return value.toString();
+  if (value instanceof Map) {
+    return [...value.entries()]
+      .map(([k, v]) => [sortJson(k), sortJson(v)] as const)
+      .sort(([a], [b]) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
+  }
+  if (value instanceof Set) {
+    return [...value.values()]
+      .map(sortJson)
+      .sort((a, b) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
+  }
   if (value && typeof value === "object") {
+    const maybeToJson = (value as { toJSON?: unknown }).toJSON;
+    if (typeof maybeToJson === "function" && Object.getPrototypeOf(value) !== Object.prototype) {
+      return sortJson(maybeToJson.call(value));
+    }
     return Object.fromEntries(
       Object.entries(value)
         .sort(([a], [b]) => compareCodePointOrder(a, b))

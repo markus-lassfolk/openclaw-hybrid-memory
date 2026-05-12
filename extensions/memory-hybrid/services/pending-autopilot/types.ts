@@ -21,12 +21,15 @@ export const AUTOPILOT_ACTIONS = [
   "promoted-to-draft",
   "deferred-for-human",
   "failed-validation",
+  "failed-audit",
+  "unknown-decision",
   "skipped-by-policy",
 ] as const;
 export type AutopilotAction = (typeof AUTOPILOT_ACTIONS)[number];
 
 export const AUTOPILOT_REASON_CODES = [
   "already-processed",
+  "audit-write-failed",
   "capability-not-allowed",
   "dry-run",
   "duplicate-input",
@@ -34,22 +37,46 @@ export const AUTOPILOT_REASON_CODES = [
   "input-hash-mismatch",
   "invalid-item",
   "lock-conflict",
+  "lock-expired",
+  "lock-missing",
+  "lock-owner-mismatch",
   "policy-denied",
   "policy-threshold-not-met",
   "schema-validation-failed",
+  "unknown-decision",
   "unknown-queue",
 ] as const;
 export type AutopilotReasonCode = (typeof AUTOPILOT_REASON_CODES)[number];
 
-export const AUTOPILOT_CAPABILITY_CLASSES = ["read", "classify", "write-queue", "write-repo", "write-memory"] as const;
+/**
+ * Ordered from least to most authority. `apply` is only intent; queue adapters
+ * must map every planned action to one of these explicit approval boundaries.
+ */
+export const AUTOPILOT_CAPABILITY_CLASSES = [
+  "read-only",
+  "dry-run",
+  "record-review-metadata",
+  "safe-state-transition",
+  "write-draft-artifact",
+  "apply-low-risk-change",
+  "enable-behaviour",
+  "trust-changing-action",
+  "external-side-effect",
+  "destructive-action",
+] as const;
 export type AutopilotCapabilityClass = (typeof AUTOPILOT_CAPABILITY_CLASSES)[number];
 
 export const AUTOPILOT_ACTION_CLASSES = [
   "observe",
-  "classify",
-  "mutate-queue",
-  "mutate-repo",
-  "mutate-memory",
+  "preview",
+  "record-review",
+  "state-transition",
+  "draft-artifact",
+  "low-risk-apply",
+  "enable-behaviour",
+  "trust-change",
+  "external-side-effect",
+  "destructive",
 ] as const;
 export type AutopilotActionClass = (typeof AUTOPILOT_ACTION_CLASSES)[number];
 
@@ -118,17 +145,35 @@ export interface PendingItem<TPayload extends Record<string, unknown> = Record<s
   validationFailed?: boolean;
 }
 
+export interface PendingDecisionEvidence {
+  type: string;
+  id?: string;
+  summary?: string;
+}
+
+export interface PendingDecisionActorContext {
+  type: "system" | "agent" | "human" | "cron" | "test";
+  id: string;
+}
+
 export interface PendingDecision {
   queue: PendingQueue;
   itemId: string;
   inputHash: string;
+  /** Stable policy identifier/name; policyVersion identifies the exact revision. */
+  policy: string;
   policyVersion: string;
   mode: AutopilotMode;
   action: AutopilotAction;
   reasonCode: AutopilotReasonCode;
   actionClass: AutopilotActionClass;
-  capabilityClass?: AutopilotCapabilityClass;
-  runId?: string;
+  capabilityClass: AutopilotCapabilityClass;
+  confidence: number;
+  humanReviewRequired: boolean;
+  evidence: PendingDecisionEvidence[];
+  actor: PendingDecisionActorContext;
+  runId: string;
+  jobId?: string;
   summary?: RedactedAutopilotSummary;
   audit?: RedactedAutopilotAudit;
   createdAt?: number;
@@ -143,20 +188,38 @@ export interface PendingQueueAdapter<TItem extends PendingItem = PendingItem> {
 
 export interface PendingDecisionContext {
   runId: string;
+  jobId?: string;
   mode: AutopilotMode;
+  policy: string;
   policyVersion: string;
   inputHash: string;
+  actor: PendingDecisionActorContext;
 }
 
 export interface PendingAutopilotRunSummary {
   runId: string;
   mode: AutopilotMode;
+  policy: string;
   policyVersion: string;
   queues: PendingQueue[];
   startedAt: number;
   finishedAt?: number;
   totals: Record<AutopilotAction, number>;
-  decisions: Array<Pick<PendingDecision, "queue" | "itemId" | "inputHash" | "policyVersion" | "action" | "reasonCode">>;
+  decisions: Array<
+    Pick<
+      PendingDecision,
+      | "queue"
+      | "itemId"
+      | "inputHash"
+      | "policy"
+      | "policyVersion"
+      | "action"
+      | "reasonCode"
+      | "capabilityClass"
+      | "confidence"
+      | "humanReviewRequired"
+    >
+  >;
 }
 
 export interface RedactedAutopilotSummary {
@@ -169,14 +232,22 @@ export interface RedactedAutopilotAudit {
   queue: PendingQueue;
   itemId: string;
   inputHash: string;
+  policy: string;
   policyVersion: string;
   action: AutopilotAction;
   reasonCode: AutopilotReasonCode;
+  capabilityClass: AutopilotCapabilityClass;
+  humanReviewRequired: boolean;
+  evidence: PendingDecisionEvidence[];
+  actor: PendingDecisionActorContext;
+  runId: string;
+  jobId?: string;
   summary?: RedactedAutopilotSummary;
 }
 
 export interface PendingAutopilotCursor {
   queue: PendingQueue;
+  policy: string;
   cursor: string;
   inputHash: string;
   policyVersion: string;

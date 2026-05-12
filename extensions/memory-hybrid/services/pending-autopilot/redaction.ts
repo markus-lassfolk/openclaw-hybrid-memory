@@ -14,6 +14,24 @@ const PRIVATE_KEY_FOOTER = " PRIVATE KEY-----";
 const PRIVATE_KEY_BARE_FOOTER = "PRIVATE KEY-----";
 const MAX_PRIVATE_KEY_BLOCK_LENGTH = 64_000;
 
+const CREDENTIAL_KEY_NORMALIZED = new Set([
+  "password",
+  "passwd",
+  "pwd",
+  "secret",
+  "token",
+  "apikey",
+  "apiSecret",
+  "authorization",
+  "authtoken",
+  "accesstoken",
+  "refreshtoken",
+  "bearertoken",
+  "clientsecret",
+  "privatekey",
+  "secretkey",
+].map((key) => key.toLowerCase()));
+
 export function redactAutopilotText(input: unknown): { redacted: string; redactionCount: number } {
   let { text, redactionCount } = redactPrivateKeyBlocks(
     typeof input === "string" ? input : JSON.stringify(input ?? ""),
@@ -75,10 +93,20 @@ function redactPrivateKeyBlocks(text: string): { text: string; redactionCount: n
 export function redactAutopilotValue(value: unknown): unknown {
   if (typeof value === "string") return redactAutopilotText(value).redacted;
   if (Array.isArray(value)) return value.map((v) => redactAutopilotValue(v));
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof URL) return redactAutopilotText(value.toString()).redacted;
+  if (value instanceof Map) {
+    return [...value.entries()].map(([key, child]) => [redactAutopilotValue(key), redactAutopilotValue(child)]);
+  }
+  if (value instanceof Set) return [...value.values()].map((v) => redactAutopilotValue(v));
   if (value && typeof value === "object") {
+    const maybeToJson = (value as { toJSON?: unknown }).toJSON;
+    if (typeof maybeToJson === "function" && Object.getPrototypeOf(value) !== Object.prototype) {
+      return redactAutopilotValue(maybeToJson.call(value));
+    }
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      if (/password|passwd|pwd|secret|token|api[_-]?key|authorization/i.test(key)) {
+      if (isCredentialKey(key)) {
         out[key] = "[REDACTED]";
       } else {
         out[key] = redactAutopilotValue(child);
@@ -87,4 +115,9 @@ export function redactAutopilotValue(value: unknown): unknown {
     return out;
   }
   return value;
+}
+
+function isCredentialKey(key: string): boolean {
+  const normalized = key.replace(/[\s_-]/g, "").toLowerCase();
+  return CREDENTIAL_KEY_NORMALIZED.has(normalized);
 }
