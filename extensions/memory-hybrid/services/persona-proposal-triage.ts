@@ -198,7 +198,14 @@ export async function runPersonaProposalTriage(
       let decision = await adapter.decide(item, context);
       if (mode === "apply" && policy !== "report-only" && isMutationDecision(decision)) {
         if (!store) throw new Error("apply mode requires pending-autopilot store");
-        decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace, cfg: opts.cfg });
+        decision = applyPersonaDecisionWithLock({
+          store,
+          proposalsDb: opts.proposalsDb,
+          item,
+          decision,
+          workspace,
+          cfg: opts.cfg,
+        });
         if (decision.action === "failed-validation") {
           store.recordDecision(decision);
         } else {
@@ -569,7 +576,11 @@ function applyPersonaDecisionWithLock(input: {
         }
       | undefined;
     if (input.decision.action === "applied") {
-      const currentTarget = resolveAllowedPersonaTarget(input.workspace, current.targetFile, input.cfg.personaProposals.allowedFiles);
+      const currentTarget = resolveAllowedPersonaTarget(
+        input.workspace,
+        current.targetFile,
+        input.cfg.personaProposals.allowedFiles,
+      );
       if (!currentTarget.ok || !existsSync(currentTarget.path)) {
         return validationFailure(
           input.decision,
@@ -826,8 +837,7 @@ function failed(
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
   const suggestedChange = p.suggestedChange.toLowerCase();
-  if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text))
-    return "critical";
+  if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
     if (/privacy|security|approval|credential|destructive|safeguard/.test(suggestedChange)) return "high";
