@@ -192,29 +192,30 @@ export async function runPendingDigestAutopilot(
   if (normalized.mode === "apply" && !opts.stateDbPath) {
     throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
   }
-  const store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : null;
-  const decisions: PendingDecision[] = [];
-  const queues = Object.fromEntries(
-    PENDING_QUEUES.map((queue) => [
-      queue,
-      {
-        policy: normalized.policies[queue],
-        inspected: 0,
-        skipped: false,
-        decisions: [] as PendingDecision[],
-      },
-    ]),
-  ) as Record<PendingQueue, PendingDigestQueueResult>;
 
-  const inputHash = computePendingInputHash({
-    command: "digest-autopilot",
-    policies: normalized.policies,
-    max: normalized.max,
-    digest: digest.pendingReview,
-    policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
-  });
-
+  let store: PendingAutopilotStore | null = null;
   try {
+    store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : null;
+    const decisions: PendingDecision[] = [];
+    const queues = Object.fromEntries(
+      PENDING_QUEUES.map((queue) => [
+        queue,
+        {
+          policy: normalized.policies[queue],
+          inspected: 0,
+          skipped: false,
+          decisions: [] as PendingDecision[],
+        },
+      ]),
+    ) as Record<PendingQueue, PendingDigestQueueResult>;
+
+    const inputHash = computePendingInputHash({
+      command: "digest-autopilot",
+      policies: normalized.policies,
+      max: normalized.max,
+      digest: digest.pendingReview,
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+    });
     store?.createRun({
       runId,
       mode: normalized.mode,
@@ -419,22 +420,7 @@ export function createVerifiedReadOnlyAdapter(factsDb: PendingDigestFactsDb): Pe
     queue: "verified",
     listPending: () => {
       const count = Math.max(0, factsDb.countVerifiedFacts());
-      return {
-        length: count,
-        *[Symbol.iterator]() {
-          for (let index = 1; index <= count; index++) {
-            yield verifiedPlaceholderToItem(index);
-          }
-        },
-        slice(start: number, end?: number) {
-          const sliceEnd = end ?? count;
-          const result: QueueItem[] = [];
-          for (let index = start + 1; index <= Math.min(sliceEnd, count); index++) {
-            result.push(verifiedPlaceholderToItem(index));
-          }
-          return result;
-        },
-      } as QueueItem[];
+      return Array.from({ length: count }, (_, i) => verifiedPlaceholderToItem(i + 1));
     },
     decide: decideReadOnlyItem,
   };
