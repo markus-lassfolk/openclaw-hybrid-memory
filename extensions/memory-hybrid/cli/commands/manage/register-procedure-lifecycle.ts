@@ -190,7 +190,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             .map(([reason, count]) => `${reason}=${count}`)
             .join(", ");
           if (reasonSummary) console.log(`Reasons: ${reasonSummary}`);
-          if (report.rows.length === 0) return;
+          if (enrichedRows.length === 0) return;
           console.log("id | title | validated_at | promotion_decision | reasons | last_recall");
           for (const row of enrichedRows as Array<
             (typeof enrichedRows)[number] & {

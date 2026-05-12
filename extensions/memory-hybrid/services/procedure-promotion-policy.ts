@@ -315,8 +315,13 @@ export function evaluateProcedureForPromotion(
     }
   }
 
+  let finalDraft = draft;
+  if (draft && gates.some((g) => g.severity === "fail-validation")) {
+    finalDraft = null;
+  }
+
   const eligible = gates.length === 0;
-  const generatedPath = draft ? join(options.skillsAutoPath, draft.slug) : null;
+  const generatedPath = finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
   const metadata: ProcedurePromotionVerification = {
     skill: item.payload.skillSlug,
     sourceProcedureIds: [proc.id],
@@ -370,7 +375,7 @@ export function evaluateProcedureForPromotion(
     requiresHumanApproval: policy !== "auto-safe" || !eligible,
     lastVerifiedAt: new Date(now * 1000).toISOString(),
   };
-  return { eligible, gates, draft, metadata };
+  return { eligible, gates, draft: finalDraft, metadata };
 }
 
 export function createProcedurePromotionDecision(
