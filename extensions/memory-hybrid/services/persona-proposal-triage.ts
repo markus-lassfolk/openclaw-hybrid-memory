@@ -955,14 +955,21 @@ function resolveAllowedPersonaTarget(
   if (rel.startsWith("..") || isAbsolute(rel))
     return { ok: false, path: targetPath, error: "target escapes workspace" };
   try {
-    if (existsSync(targetPath) && lstatSync(targetPath).isSymbolicLink()) {
-      const real = realpathSync(targetPath);
-      const realRel = relative(workspaceReal, real);
-      if (realRel.startsWith("..") || isAbsolute(realRel))
-        return { ok: false, path: targetPath, error: "symlink escapes workspace" };
+    const stat = lstatSync(targetPath);
+    if (stat.isSymbolicLink()) {
+      try {
+        const real = realpathSync(targetPath);
+        const realRel = relative(workspaceReal, real);
+        if (realRel.startsWith("..") || isAbsolute(realRel))
+          return { ok: false, path: targetPath, error: "symlink escapes workspace" };
+      } catch {
+        return { ok: false, path: targetPath, error: "dangling symlink" };
+      }
     }
-  } catch {
-    return { ok: false, path: targetPath, error: "target stat failed" };
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code !== "ENOENT") {
+      return { ok: false, path: targetPath, error: "target stat failed" };
+    }
   }
   return { ok: true, path: targetPath };
 }
