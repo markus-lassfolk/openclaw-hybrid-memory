@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: write
   pull-requests: write
   issues: write
@@ -109,17 +110,19 @@ jobs:
                 (response) => response.data.workflow_runs,
               );
 
-              const completedCiRuns = ciRuns.filter(r => r.status === 'completed');
-              if (completedCiRuns.length === 0) {
-                console.log('  No completed CI workflow run found for head SHA, skipping.');
+              const completedPullRequestCiRuns = ciRuns
+                .filter(r => r.status === 'completed' && r.event === 'pull_request')
+                .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
+              if (completedPullRequestCiRuns.length === 0) {
+                console.log('  No completed pull_request CI workflow run found for head SHA, skipping.');
                 continue;
               }
 
-              const successfulCiRun = completedCiRuns.find(r => r.conclusion === 'success');
-              if (!successfulCiRun) {
-                const latestCompleted = completedCiRuns[0];
+              const latestCompleted = completedPullRequestCiRuns[0];
+              console.log(`  Latest completed pull_request CI run #${latestCompleted.id} concluded ${latestCompleted.conclusion}.`);
+              if (latestCompleted.conclusion !== 'success') {
                 console.log(`  Latest completed CI run is ${latestCompleted.conclusion}, skipping merge.`);
-                const body = `❌ Auto-merge skipped — CI workflow for this head SHA has not succeeded yet (latest conclusion: **${latestCompleted.conclusion}**).`;
+                const body = `❌ Auto-merge skipped — CI workflow for this head SHA has not succeeded yet (latest pull_request conclusion: **${latestCompleted.conclusion}**).`;
 
                 const comments = await github.paginate(github.rest.issues.listComments, {
                   owner, repo, issue_number: prNumber,
