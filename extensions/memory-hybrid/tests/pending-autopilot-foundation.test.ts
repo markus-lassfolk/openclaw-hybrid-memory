@@ -124,7 +124,12 @@ describe("pending-autopilot shared contracts", () => {
 describe("pending-autopilot durable state invariants", () => {
   it("dry-run contract writes no durable foundation tables, including run rows", () => {
     const before = store.tableCounts();
-    const dry = decision({ mode: "dry-run", reasonCode: "dry-run", capabilityClass: "dry-run", actionClass: "preview" });
+    const dry = decision({
+      mode: "dry-run",
+      reasonCode: "dry-run",
+      capabilityClass: "dry-run",
+      actionClass: "preview",
+    });
     store.createRun({
       runId: dry.runId,
       mode: "dry-run",
@@ -133,15 +138,18 @@ describe("pending-autopilot durable state invariants", () => {
       inputHash: dry.inputHash,
       queues: ["persona"],
     });
-    store.finishRun(dry.runId, createStableRunSummary({
-      runId: dry.runId,
-      mode: "dry-run",
-      policy: dry.policy,
-      policyVersion: dry.policyVersion,
-      queues: ["persona"],
-      startedAt: 1,
-      decisions: [dry],
-    }));
+    store.finishRun(
+      dry.runId,
+      createStableRunSummary({
+        runId: dry.runId,
+        mode: "dry-run",
+        policy: dry.policy,
+        policyVersion: dry.policyVersion,
+        queues: ["persona"],
+        startedAt: 1,
+        decisions: [dry],
+      }),
+    );
     expect(store.recordDecision(dry).inserted).toBe(false);
     expect(
       store.acquireLock({
@@ -313,7 +321,11 @@ describe("pending-autopilot durable state invariants", () => {
   it("idempotently records the same queue/item/hash/policy/action only once", () => {
     expect(store.recordDecision(decision()).inserted).toBe(true);
     expect(store.recordDecision(decision()).inserted).toBe(false);
-    expect(store.recordDecision(decision({ action: "applied", capabilityClass: "apply-low-risk-change", actionClass: "low-risk-apply" })).inserted).toBe(true);
+    expect(
+      store.recordDecision(
+        decision({ action: "applied", capabilityClass: "apply-low-risk-change", actionClass: "low-risk-apply" }),
+      ).inserted,
+    ).toBe(true);
     expect(store.listDecisions()).toHaveLength(2);
   });
 
@@ -335,10 +347,18 @@ describe("pending-autopilot durable state invariants", () => {
       store.advanceCursorIfSafe(decision({ action: "failed-audit", reasonCode: "audit-write-failed" }), "cursor-audit"),
     ).toBe(false);
     expect(
-      store.advanceCursorIfSafe(decision({ action: "unknown-decision", reasonCode: "unknown-decision" }), "cursor-unknown"),
+      store.advanceCursorIfSafe(
+        decision({ action: "unknown-decision", reasonCode: "unknown-decision" }),
+        "cursor-unknown",
+      ),
     ).toBe(false);
     expect(store.getCursor("persona")).toBeNull();
-    expect(store.advanceCursorIfSafe(decision({ action: "applied", capabilityClass: "apply-low-risk-change", actionClass: "low-risk-apply" }), "cursor-applied")).toBe(true);
+    expect(
+      store.advanceCursorIfSafe(
+        decision({ action: "applied", capabilityClass: "apply-low-risk-change", actionClass: "low-risk-apply" }),
+        "cursor-applied",
+      ),
+    ).toBe(true);
     expect(store.getCursor("persona")?.cursor).toBe("cursor-applied");
   });
 });
@@ -354,8 +374,20 @@ describe("pending-autopilot summaries and harness", () => {
       startedAt: 100,
       finishedAt: 110,
       decisions: [
-        decision({ queue: "tools", itemId: "b", action: "reported", reasonCode: "already-processed", capabilityClass: "read-only", actionClass: "observe" }),
-        decision({ itemId: "a", action: "applied", capabilityClass: "apply-low-risk-change", actionClass: "low-risk-apply" }),
+        decision({
+          queue: "tools",
+          itemId: "b",
+          action: "reported",
+          reasonCode: "already-processed",
+          capabilityClass: "read-only",
+          actionClass: "observe",
+        }),
+        decision({
+          itemId: "a",
+          action: "applied",
+          capabilityClass: "apply-low-risk-change",
+          actionClass: "low-risk-apply",
+        }),
       ],
     });
     expect(stableRunSummaryJson(summary)).toMatchInlineSnapshot(

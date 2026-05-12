@@ -94,11 +94,18 @@ export class PendingAutopilotStore extends BaseSqliteStore {
   getCursor(
     queue: PendingQueue,
     policy = "default",
-  ): { queue: PendingQueue; policy: string; cursor: string; inputHash: string; policyVersion: string; updatedAt: number } | null {
+  ): {
+    queue: PendingQueue;
+    policy: string;
+    cursor: string;
+    inputHash: string;
+    policyVersion: string;
+    updatedAt: number;
+  } | null {
     assertKnownEnum("queue", queue);
-    const row = this.liveDb.prepare("SELECT * FROM pending_autopilot_cursors WHERE queue = ? AND policy = ?").get(queue, policy) as
-      | Record<string, unknown>
-      | undefined;
+    const row = this.liveDb
+      .prepare("SELECT * FROM pending_autopilot_cursors WHERE queue = ? AND policy = ?")
+      .get(queue, policy) as Record<string, unknown> | undefined;
     if (!row) return null;
     return {
       queue,
@@ -270,7 +277,12 @@ export class PendingAutopilotStore extends BaseSqliteStore {
     return { inserted: result.changes > 0 };
   }
 
-  private getActiveLockInternal(queue: PendingQueue, itemId: string, owner: string, now: number): PendingAutopilotLock | null {
+  private getActiveLockInternal(
+    queue: PendingQueue,
+    itemId: string,
+    owner: string,
+    now: number,
+  ): PendingAutopilotLock | null {
     const row = this.liveDb
       .prepare(
         `SELECT * FROM pending_autopilot_locks

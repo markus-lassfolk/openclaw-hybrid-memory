@@ -14,23 +14,25 @@ const PRIVATE_KEY_FOOTER = " PRIVATE KEY-----";
 const PRIVATE_KEY_BARE_FOOTER = "PRIVATE KEY-----";
 const MAX_PRIVATE_KEY_BLOCK_LENGTH = 64_000;
 
-const CREDENTIAL_KEY_NORMALIZED = new Set([
-  "password",
-  "passwd",
-  "pwd",
-  "secret",
-  "token",
-  "apikey",
-  "apiSecret",
-  "authorization",
-  "authtoken",
-  "accesstoken",
-  "refreshtoken",
-  "bearertoken",
-  "clientsecret",
-  "privatekey",
-  "secretkey",
-].map((key) => key.toLowerCase()));
+const CREDENTIAL_KEY_NORMALIZED = new Set(
+  [
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "apikey",
+    "apiSecret",
+    "authorization",
+    "authtoken",
+    "accesstoken",
+    "refreshtoken",
+    "bearertoken",
+    "clientsecret",
+    "privatekey",
+    "secretkey",
+  ].map((key) => key.toLowerCase()),
+);
 
 export function redactAutopilotText(input: unknown): { redacted: string; redactionCount: number } {
   let { text, redactionCount } = redactPrivateKeyBlocks(

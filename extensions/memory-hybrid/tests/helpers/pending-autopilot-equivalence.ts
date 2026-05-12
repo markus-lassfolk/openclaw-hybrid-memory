@@ -1,9 +1,5 @@
 import { expect } from "vitest";
-import type {
-  PendingDecision,
-  PendingDecisionContext,
-  PendingItem,
-} from "../../services/pending-autopilot/index.js";
+import type { PendingDecision, PendingDecisionContext, PendingItem } from "../../services/pending-autopilot/index.js";
 import { computePendingInputHash, sanitizePendingDecision } from "../../services/pending-autopilot/index.js";
 
 export interface PendingAutopilotEquivalenceFixture<TItem extends PendingItem = PendingItem> {

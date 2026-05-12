@@ -84,12 +84,7 @@ export function stableRunSummaryJson(summary: PendingAutopilotRunSummary): strin
 
 export function shouldAdvancePendingCursor(decision: PendingDecision): boolean {
   if (decision.humanReviewRequired) return false;
-  return ![
-    "deferred-for-human",
-    "failed-validation",
-    "failed-audit",
-    "unknown-decision",
-  ].includes(decision.action);
+  return !["deferred-for-human", "failed-validation", "failed-audit", "unknown-decision"].includes(decision.action);
 }
 
 function compareCodePointOrder(a: string, b: string): number {
@@ -106,9 +101,7 @@ function sortJson(value: unknown): unknown {
       .sort(([a], [b]) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
   }
   if (value instanceof Set) {
-    return [...value.values()]
-      .map(sortJson)
-      .sort((a, b) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
+    return [...value.values()].map(sortJson).sort((a, b) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
   }
   if (value && typeof value === "object") {
     const maybeToJson = (value as { toJSON?: unknown }).toJSON;
