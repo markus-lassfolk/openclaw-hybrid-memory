@@ -144,3 +144,15 @@ export function slugifyForSkill(text: string, fallback = "skill"): string {
 export function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
+
+/**
+ * Convert a hyphenated slug to title case (e.g., "my-skill-name" → "My Skill Name").
+ * Uses the basename of the slug to handle paths correctly.
+ */
+export function titleCase(slug: string): string {
+  const base = slug.includes("/") ? (slug.split("/").pop() ?? slug) : slug;
+  return base
+    .split("-")
+    .map((p) => (p ? p[0]?.toUpperCase() + p.slice(1) : p))
+    .join(" ");
+}

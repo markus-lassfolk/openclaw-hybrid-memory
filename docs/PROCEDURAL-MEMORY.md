@@ -136,3 +136,26 @@ Full-text search: `procedures_fts` on `task_pattern` for `searchProcedures` and 
 - [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — Fact extraction from session logs (same JSONL source).
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All `hybrid-mem` commands.
 - [CONFIGURATION.md](CONFIGURATION.md) — Full plugin config reference.
+
+## Procedure-to-skill promotion autopilot (#1328)
+
+Procedure promotion uses the shared pending-autopilot foundation from #1334. The procedure adapter emits shared `PendingDecision` envelopes with queue `procedures`, input hash, policy version, reason/capability classes, redacted evidence, and parent/child equivalence tests. The parent digest-autopilot route (#1326) must consume these same adapter decisions; cron (#1330) only invokes/observes the parent.
+
+Commands:
+
+```bash
+openclaw hybrid-mem procedures triage --not-promoted --policy draft-only --json
+openclaw hybrid-mem generate-auto-skills --dry-run --max 50 --policy auto-safe --json
+openclaw hybrid-mem generate-auto-skills --apply --max 50 --policy auto-safe --json
+```
+
+Policies are conservative:
+
+- `draft-only` / `manual`: classify and report; mutation paths require human review.
+- `auto-safe`: writes only draft/quarantined generated skill artifacts when all eligibility, safety, quality, duplicate, trigger, and usefulness gates pass.
+
+Dry-run is non-mutating: it writes no skill files, does not mark procedures promoted, and does not update durable pending-autopilot state. Apply writes `SKILL.md`, `recipe.json`, `verification.json`, and `evals/evals.json` only for candidates that pass every gate. Generated skills are marked `enabled: false`; static validation alone never enables a skill.
+
+Promotion gates reject or defer procedures with insufficient success evidence, insufficient distinct sessions/contexts, recent failures, low confidence/success rate, malformed/noisy/non-deterministic recipes, vague or context-specific triggers, missing validation checks, duplicate/overlapping existing skills, destructive/service/package/SSH/remote operations, credential/private-data/high-entropy leakage, external sends/posts/writes, or approval-bypass/prompt-injection content. Recipe JSON and generated `SKILL.md` are both scanned and redacted before durable output.
+
+Generated skill drafts follow the skill-creator quality contract: trigger and near-miss examples, scope/non-scope, prerequisites, ordered workflow, safe tool usage, validation, failure handling, rollback/disable guidance, realistic examples, and provenance metadata. Verification metadata records source procedure ids, success/failure/session counts, input hash, policy version, static/safety/trigger/functional eval status, baseline comparison, rejection/defer reasons, and `enabled: false`.

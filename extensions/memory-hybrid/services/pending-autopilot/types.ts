@@ -29,6 +29,7 @@ export type AutopilotAction = (typeof AUTOPILOT_ACTIONS)[number];
 
 export const AUTOPILOT_REASON_CODES = [
   "already-processed",
+  "approved",
   "audit-write-failed",
   "capability-not-allowed",
   "dry-run",

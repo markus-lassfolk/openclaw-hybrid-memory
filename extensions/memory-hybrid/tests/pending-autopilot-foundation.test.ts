@@ -99,6 +99,7 @@ describe("pending-autopilot shared contracts", () => {
         ],
         "reasons": [
           "already-processed",
+          "approved",
           "audit-write-failed",
           "capability-not-allowed",
           "dry-run",
