@@ -87,9 +87,9 @@ export class PendingAutopilotStore extends BaseSqliteStore {
                AND item_id = ?
                AND policy = ?
                AND policy_version = ?
-               AND input_hash <> ?`,
+               AND (input_hash <> ? OR action <> ?)`,
           )
-          .run(safe.queue, safe.itemId, safe.policy, safe.policyVersion, safe.inputHash);
+          .run(safe.queue, safe.itemId, safe.policy, safe.policyVersion, safe.inputHash, safe.action);
         return this.insertDecision(safe);
       },
       "IMMEDIATE",
