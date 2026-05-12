@@ -208,7 +208,17 @@ export async function runPersonaProposalTriage(
         inputHash: item.inputHash,
         actor,
       };
-      let decision = await adapter.decide(item, context);
+      const freshProposals = mode === "apply" ? opts.proposalsDb.list() : allProposals;
+      const freshAdapter =
+        mode === "apply"
+          ? createPersonaProposalTriageAdapter({
+              proposalsDb: opts.proposalsDb,
+              cfg: opts.cfg,
+              workspace,
+              allProposals: freshProposals,
+            })
+          : adapter;
+      let decision = await freshAdapter.decide(item, context);
       if (mode === "apply" && policy !== "report-only" && isMutationDecision(decision)) {
         if (!store) throw new Error("apply mode requires pending-autopilot store");
         decision = applyPersonaDecisionWithLock({
