@@ -362,7 +362,7 @@ export function evaluateProcedureForPromotion(
     )
       ? "failed"
       : initialGates > 0
-        ? "passed"
+        ? "failed"
         : draft
           ? "passed"
           : "failed",
