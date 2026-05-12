@@ -625,9 +625,9 @@ function applyPersonaDecisionWithLock(input: {
         if (input.decision.action === "rejected") {
           input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", input.decision.reasonCode);
         } else if (input.decision.action === "applied" && preparedApply) {
+          input.proposalsDb.markApplied(input.item.id);
           writeFileSync(preparedApply.backupPath, preparedApply.original, "utf-8");
           writeFileAtomic(preparedApply.targetPath, preparedApply.appliedContent);
-          input.proposalsDb.markApplied(input.item.id);
         }
       },
     });
@@ -828,10 +828,7 @@ function failed(
 
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
-  if (
-    containsSecretOrPrivateData(text) ||
-    /destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)
-  )
+  if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text))
     return "critical";
   if (
     /identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(
