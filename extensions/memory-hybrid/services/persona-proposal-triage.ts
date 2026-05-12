@@ -305,7 +305,7 @@ export function decidePersonaProposal(
     action: context.policy === "report-only" ? "reported" : analysis.action,
     reasonCode: analysis.reasonCode,
     actionClass: context.policy === "report-only" ? "observe" : analysis.actionClass,
-    capabilityClass: context.mode === "dry-run" ? "dry-run" : analysis.capabilityClass,
+    capabilityClass: context.mode === "dry-run" || context.policy === "report-only" ? (context.mode === "dry-run" ? "dry-run" : "read-only") : analysis.capabilityClass,
     confidence: analysis.confidence,
     humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
     evidence: analysis.evidence,
@@ -330,7 +330,7 @@ export function decidePersonaProposal(
       policyVersion: context.policyVersion,
       action: context.policy === "report-only" ? "reported" : analysis.action,
       reasonCode: analysis.reasonCode,
-      capabilityClass: context.mode === "dry-run" ? "dry-run" : analysis.capabilityClass,
+      capabilityClass: context.mode === "dry-run" || context.policy === "report-only" ? (context.mode === "dry-run" ? "dry-run" : "read-only") : analysis.capabilityClass,
       humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
       evidence: analysis.evidence,
       actor: context.actor,
@@ -924,7 +924,7 @@ function compareProposalCreationOrder(
 
 function isNonActionable(change: string): boolean {
   const normalized = normalizeText(change);
-  return normalized.length < 12 || /^(be better|improve|help more|do better|misc|n\/a|none)$/i.test(normalized);
+  return normalized.length < 12;
 }
 
 function isLargeOrBroadDiff(p: ProposalEntry): boolean {
