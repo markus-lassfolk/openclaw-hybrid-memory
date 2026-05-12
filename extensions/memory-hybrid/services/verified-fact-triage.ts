@@ -1072,7 +1072,12 @@ function memoryEntryToSnapshot(entry: MemoryEntry): TriageFactSnapshot {
 }
 
 function snapshotFromRow(row: Record<string, unknown>): RelatedFact {
-  return memoryEntryToSnapshot(rowToMemoryEntry(row));
+  return {
+    ...memoryEntryToSnapshot(rowToMemoryEntry(row)),
+    verifiedFactId: (row.verified_fact_id as string | null) ?? null,
+    verifiedAt: (row.verified_at as string | null) ?? null,
+    verifiedVersion: (row.verified_version as number | null) ?? null,
+  };
 }
 
 function detectSensitivity(
@@ -1125,10 +1130,7 @@ function findExplicitNewerVerifiedFact(db: DatabaseSync, fact: TriageFactSnapsho
     )
     .all(fact.id, fact.createdAt) as Array<Record<string, unknown>>;
   for (const row of rows) {
-    const newer = {
-      ...snapshotFromRow(row),
-      verifiedFactId: row.verified_fact_id as string,
-    };
+    const newer = snapshotFromRow(row);
     if (sameScope(fact, newer)) return newer;
   }
   return null;
@@ -1151,10 +1153,7 @@ function loadVerifiedRelatedFact(db: DatabaseSync, factId: string): RelatedFact 
     )
     .get(factId) as Record<string, unknown> | undefined;
   if (!row) return null;
-  return {
-    ...snapshotFromRow(row),
-    verifiedFactId: row.verified_fact_id as string,
-  };
+  return snapshotFromRow(row);
 }
 
 function findConcreteContradictingEvidence(db: DatabaseSync, fact: TriageFactSnapshot): VerifiedTriageEvidence | null {
@@ -1227,10 +1226,7 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
     )
     .all(fact.id, ...scopeParams) as Array<Record<string, unknown>>;
   for (const row of rows) {
-    const candidate = {
-      ...snapshotFromRow(row),
-      verifiedFactId: row.verified_fact_id as string,
-    };
+    const candidate = snapshotFromRow(row);
     if (normalizeFactText(candidate.text) === normalized) return candidate;
   }
   return null;
