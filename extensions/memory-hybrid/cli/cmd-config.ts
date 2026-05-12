@@ -32,6 +32,16 @@ import type { HandlerContext } from "./handlers.js";
 import type { ConfigCliResult, VerifyCliSink } from "./types.js";
 
 const MAX_DESC_LEN = 280;
+const MODE_SUMMARIES: Record<ConfigMode, string> = {
+  local: "Fully local starter mode: FTS-only recall, no external LLM spend, quiet output.",
+  minimal: "Low-cost smart mode: basic LLM features on, reflection off, nano/flash-tier defaults.",
+  enhanced: "Balanced everyday mode: graph, reflection, and self-correction enabled without every advanced feature.",
+  complete: "Same feature preset as enhanced, but with verbose output and a more operator-heavy default experience.",
+};
+
+export function describeConfigMode(mode: ConfigMode): string {
+  return MODE_SUMMARIES[mode];
+}
 
 // ---------------------------------------------------------------------------
 // Private helpers
@@ -224,6 +234,9 @@ export function runConfigViewForCli(
 
   const modeLabel = cfg.mode && cfg.mode !== "custom" ? cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1) : "Custom";
   log(`Memory mode: ${modeLabel}`);
+  if (cfg.mode && cfg.mode !== "custom") {
+    log(`Mode summary: ${describeConfigMode(cfg.mode)}`);
+  }
   log(`Verbosity: ${cfg.verbosity ?? "normal"}`);
   log("");
 
@@ -427,6 +440,11 @@ export function runConfigSetHelpForCli(_ctx: HandlerContext, key: string): Confi
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runConfigSetHelpForCli:read-hints" });
   }
+  if (!desc && k === "mode") {
+    desc = `Choose one of: ${(Object.entries(MODE_SUMMARIES) as Array<[ConfigMode, string]>)
+      .map(([mode, summary]) => `${mode} = ${summary}`)
+      .join(" | ")}`;
+  }
   if (!desc) desc = "No description for this key.";
   const lines = [`${k} = ${currentStr}`, "", desc];
   return { ok: true, configPath, message: lines.join("\n") };
@@ -458,7 +476,7 @@ export function runConfigModeForCli(_ctx: HandlerContext, mode: string): ConfigC
   return {
     ok: true,
     configPath,
-    message: `Set mode to "${mode}" and wrote full preset to config. Restart the gateway, then run 'openclaw hybrid-mem config' — you should see "Memory mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}".`,
+    message: `Set mode to "${mode}" (${describeConfigMode(mode as ConfigMode)}). Restart the gateway, then run 'openclaw hybrid-mem config' — you should see "Memory mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}".`,
   };
 }
 
