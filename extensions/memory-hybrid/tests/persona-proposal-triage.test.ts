@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProposalsDB, type ProposalEntry } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
@@ -38,6 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   proposalsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -400,6 +401,30 @@ describe("persona proposal triage", () => {
     expect(proposalsDb.get(older.id)?.status).toBe("pending");
     expect(proposalsDb.get(newer.id)?.status).toBe("rejected");
     expect(result.decisions.find((d) => d.proposalId === newer.id)?.reason).toBe("duplicate-pending-proposal");
+  });
+
+  it("treats same-second pending duplicate proposals as duplicates without rejecting both", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-12T12:00:00Z"));
+    const first = proposal({ suggestedChange: "Same second duplicate text", confidence: 0.99 });
+    const second = proposal({ suggestedChange: "Same second duplicate text", confidence: 0.99 });
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(first.createdAt).toBe(second.createdAt);
+    const statuses = [proposalsDb.get(first.id)?.status, proposalsDb.get(second.id)?.status];
+    expect(statuses.filter((status) => status === "pending")).toHaveLength(1);
+    expect(statuses.filter((status) => status === "rejected")).toHaveLength(1);
+    const duplicateDecisions = result.decisions.filter((d) => d.reason === "duplicate-pending-proposal");
+    expect(duplicateDecisions).toHaveLength(1);
+    expect([first.id, second.id]).toContain(duplicateDecisions[0]?.proposalId);
   });
 
   it("prefers applied duplicates even when newer pending duplicates are listed first", async () => {

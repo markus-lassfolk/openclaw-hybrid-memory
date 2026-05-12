@@ -892,10 +892,19 @@ function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalE
     .sort((a, b) => a.createdAt - b.createdAt)[0];
   if (appliedDuplicate) return appliedDuplicate;
 
-  const olderPending = candidates
-    .filter((c) => c.status === "pending" && c.createdAt < proposal.createdAt)
-    .sort((a, b) => a.createdAt - b.createdAt)[0];
-  return olderPending ?? null;
+  const earlierPending = candidates
+    .filter((c) => c.status === "pending" && compareProposalCreationOrder(c, proposal) < 0)
+    .sort(compareProposalCreationOrder)[0];
+  return earlierPending ?? null;
+}
+
+function compareProposalCreationOrder(
+  a: Pick<ProposalEntry, "createdAt" | "id">,
+  b: Pick<ProposalEntry, "createdAt" | "id">,
+): number {
+  const createdAtDelta = a.createdAt - b.createdAt;
+  if (createdAtDelta !== 0) return createdAtDelta;
+  return a.id.localeCompare(b.id);
 }
 
 function isNonActionable(change: string): boolean {
