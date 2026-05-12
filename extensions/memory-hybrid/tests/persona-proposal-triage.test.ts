@@ -360,6 +360,69 @@ describe("persona proposal triage", () => {
     expect(persisted.some((d) => d.action === "failed-validation" && d.reasonCode === "lock-conflict")).toBe(true);
   });
 
+  it("cautious rejection CAS is not blocked by concurrent target file edits", async () => {
+    const p = proposal({
+      targetFile: "USER.md",
+      suggestedChange: "be better",
+      confidence: 0.4,
+      targetHash: fileHash(join(tmpDir, "USER.md")),
+    });
+    writeFileSync(join(tmpDir, "USER.md"), "# USER\nConcurrent persona edit.\n", "utf-8");
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(proposalsDb.get(p.id)?.status).toBe("rejected");
+    expect(result.decisions[0]?.action).toBe("rejected");
+    expect(result.decisions[0]?.reason).toBe("low-confidence");
+  });
+
+  it("rejects newer pending duplicates while preserving the older pending original", async () => {
+    const older = proposal({ suggestedChange: "Duplicate pending text", confidence: 0.99 });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const newer = proposal({ suggestedChange: "Duplicate pending text", confidence: 0.99 });
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(proposalsDb.get(older.id)?.status).toBe("pending");
+    expect(proposalsDb.get(newer.id)?.status).toBe("rejected");
+    expect(result.decisions.find((d) => d.proposalId === newer.id)?.reason).toBe("duplicate-pending-proposal");
+  });
+
+  it("prefers applied duplicates even when newer pending duplicates are listed first", async () => {
+    const applied = proposal({ suggestedChange: "Already applied duplicate", confidence: 0.99 });
+    proposalsDb.updateStatus(applied.id, "applied");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const pendingNewer = proposal({ suggestedChange: "Already applied duplicate", confidence: 0.99 });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const current = proposal({ suggestedChange: "Already applied duplicate", confidence: 0.99 });
+    void pendingNewer;
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "dry-run",
+      policy: "cautious",
+    });
+
+    expect(result.decisions.find((d) => d.proposalId === current.id)?.reason).toBe("duplicate-applied-proposal");
+    expect(result.decisions.find((d) => d.proposalId === pendingNewer.id)?.reason).toBe("duplicate-applied-proposal");
+  });
+
   it("every decision has action, reason, capability, and evidence using shared contract", async () => {
     proposal({ suggestedChange: "be better", confidence: 0.4 });
     const result = await runPersonaProposalTriage({

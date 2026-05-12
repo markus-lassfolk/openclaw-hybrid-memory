@@ -373,6 +373,7 @@ function proposalToPendingItem(
     confidence: proposal.confidence,
     evidenceSessions: proposal.evidenceSessions,
     targetHash: proposal.targetHash ?? null,
+    targetMtimeMs: proposal.targetMtimeMs ?? null,
   });
   const payload: PersonaProposalPayload = {
     proposalId: proposal.id,
@@ -381,7 +382,7 @@ function proposalToPendingItem(
     confidence: proposal.confidence,
     evidenceSessions: proposal.evidenceSessions,
     createdAt: proposal.createdAt,
-    targetHash,
+    targetHash: proposal.targetHash ?? null,
     proposalHash,
   };
   return {
@@ -616,7 +617,7 @@ function applyPersonaDecisionWithLock(input: {
     const ok = input.store.mutateWithLockAndAudit({
       decision: input.decision,
       owner,
-      actualInputHash: actualHash,
+      actualInputHash: input.decision.action === "rejected" ? input.decision.inputHash : actualHash,
       audit: () => {},
       mutate: () => {
         if (input.decision.action === "rejected") {
@@ -883,9 +884,15 @@ function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalE
       normalizeText(c.suggestedChange) === normalized,
   );
   if (candidates.length === 0) return null;
-  const appliedDuplicate = candidates.find((c) => c.status === "applied");
+
+  const appliedDuplicate = candidates
+    .filter((c) => c.status === "applied")
+    .sort((a, b) => a.createdAt - b.createdAt)[0];
   if (appliedDuplicate) return appliedDuplicate;
-  const olderPending = candidates.find((c) => c.status === "pending" && c.createdAt < proposal.createdAt);
+
+  const olderPending = candidates
+    .filter((c) => c.status === "pending" && c.createdAt < proposal.createdAt)
+    .sort((a, b) => a.createdAt - b.createdAt)[0];
   return olderPending ?? null;
 }
 
