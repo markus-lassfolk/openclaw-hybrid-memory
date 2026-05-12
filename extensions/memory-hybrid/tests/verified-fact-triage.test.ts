@@ -516,6 +516,34 @@ describe("verified fact triage idempotency and parent integration", () => {
     expect(pendingStore.listDecisions({ queue: "verified" })[0]?.reasonCode).toBe("input-hash-mismatch");
   });
 
+  it("releases the apply lock when locked decisioning throws", async () => {
+    addFact("throws-under-lock", "Throwing sourced fact", { provenanceJson: "{}" });
+    const adapter = createVerifiedFactTriageAdapter({
+      factsDb,
+      max: 10,
+      policy: "classify",
+    });
+    adapter.decide = async () => {
+      throw new Error("synthetic decide failure");
+    };
+    const originalReleaseLock = pendingStore.releaseLock.bind(pendingStore);
+    let releaseCalls = 0;
+    pendingStore.releaseLock = (input) => {
+      releaseCalls += 1;
+      return originalReleaseLock(input);
+    };
+
+    await expect(
+      runVerifiedFactTriageWithAdapter(factsDb, adapter, {
+        mode: "apply",
+        policy: "classify",
+        store: pendingStore,
+      }),
+    ).rejects.toThrow("synthetic decide failure");
+
+    expect(releaseCalls).toBe(1);
+  });
+
   it("re-evaluates triage decision under lock before persisting", async () => {
     addFact("target", "Endpoint A", {
       entity: "svc",
