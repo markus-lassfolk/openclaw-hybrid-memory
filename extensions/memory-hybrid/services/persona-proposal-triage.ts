@@ -135,6 +135,14 @@ type Analysis = {
 const CRITICAL_TARGETS = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
 const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
 
+function normalizePersonaProposalTriageMax(max: number | undefined): number {
+  if (max === undefined) return 20;
+  if (!Number.isFinite(max) || !Number.isInteger(max) || max < 0) {
+    throw new Error(`persona proposal triage max must be a non-negative finite integer. Got: ${max}`);
+  }
+  return max;
+}
+
 export function createPersonaProposalTriageAdapter(input: {
   proposalsDb: ProposalsDB;
   cfg: Pick<HybridMemoryConfig, "personaProposals">;
@@ -158,7 +166,7 @@ export async function runPersonaProposalTriage(
   const policy = opts.policy ?? "report-only";
   validatePersonaPolicy(policy);
   if (mode !== "dry-run" && mode !== "apply") throw new Error(`Unsupported mode: ${mode}`);
-  const max = Math.max(0, Math.floor(opts.max ?? 20));
+  const max = normalizePersonaProposalTriageMax(opts.max);
   const runId = opts.runId ?? createPendingAutopilotRunId();
   const actor = opts.actor ?? ({ type: "agent", id: "persona-proposal-triage" } as const);
   const workspace = opts.workspace ?? defaultWorkspace();

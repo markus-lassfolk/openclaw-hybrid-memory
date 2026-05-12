@@ -69,6 +69,54 @@ function proposal(input: Partial<Parameters<ProposalsDB["create"]>[0]> = {}): Pr
 }
 
 describe("persona proposal triage", () => {
+  it("rejects invalid max values before listing proposals", async () => {
+    for (const max of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+      await expect(
+        runPersonaProposalTriage({
+          proposalsDb,
+          cfg,
+          workspace: tmpDir,
+          mode: "dry-run",
+          policy: "report-only",
+          max,
+        }),
+      ).rejects.toThrow(/max must be a non-negative finite integer/i);
+    }
+  });
+
+  it("uses default max and accepts zero and positive integer max values", async () => {
+    proposal({ title: "one", suggestedChange: "Formatting: one", confidence: 0.99 });
+    proposal({ title: "two", suggestedChange: "Formatting: two", confidence: 0.99 });
+
+    const defaultResult = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "dry-run",
+      policy: "report-only",
+    });
+    const zeroResult = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "dry-run",
+      policy: "report-only",
+      max: 0,
+    });
+    const oneResult = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "dry-run",
+      policy: "report-only",
+      max: 1,
+    });
+
+    expect(defaultResult.counts.inspected).toBe(2);
+    expect(zeroResult.counts.inspected).toBe(0);
+    expect(oneResult.counts.inspected).toBe(1);
+  });
+
   it("report-only and dry-run never mutate proposal or foundation state", async () => {
     const p = proposal({ suggestedChange: "be better" });
     const before = proposalsDb.get(p.id);
