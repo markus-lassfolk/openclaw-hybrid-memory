@@ -175,22 +175,16 @@ describe("generateAutoSkills", () => {
 		expect(result.summary).toMatchObject({
 			candidates: 1,
 			eligible: 1,
-			drafted: 1,
+			drafted: 0,
+			deferred: 1,
 		});
 		expect(result.decisions?.[0]).toMatchObject({
-			action: "promoted-to-draft",
+			action: "deferred-for-human",
 			humanReviewRequired: true,
 		});
-		const verification = JSON.parse(
-			readFileSync(
-				join(skillsDir, "validate-release-health-report", "verification.json"),
-				"utf-8",
-			),
-		) as { policy: string; requiresHumanApproval: boolean };
-		expect(verification).toMatchObject({
-			policy: "draft-only",
-			requiresHumanApproval: true,
-		});
+		expect(
+			existsSync(join(skillsDir, "validate-release-health-report", "SKILL.md")),
+		).toBe(false);
 	});
 
 	it("single procedure apply also defaults to draft-only", () => {
@@ -223,17 +217,13 @@ describe("generateAutoSkills", () => {
 			{ info: () => {}, warn: () => {} },
 		);
 
-		expect(result.ok).toBe(true);
-		const verification = JSON.parse(
-			readFileSync(
-				join(skillsDir, "validate-single-procedure-report", "verification.json"),
-				"utf-8",
-			),
-		) as { policy: string; requiresHumanApproval: boolean };
-		expect(verification).toMatchObject({
-			policy: "draft-only",
-			requiresHumanApproval: true,
+		expect(result).toMatchObject({
+			ok: false,
+			reason: "policy-blocked",
 		});
+		expect(
+			existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md")),
+		).toBe(false);
 	});
 
 	it("skips procedures below validation threshold", () => {

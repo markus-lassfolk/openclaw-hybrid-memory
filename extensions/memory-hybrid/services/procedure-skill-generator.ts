@@ -79,7 +79,11 @@ export function generateAutoSkills(
 	const dryRun = options.dryRun ?? options.apply !== true;
 	const policy = parseProcedurePromotionPolicy(options.policy);
 	const basePath = resolveSkillsPath(options.skillsAutoPath);
-	const procedures = factsDb.getProceduresReadyForSkill(1, maxPerRun);
+	const runId = `procedure-promotion-${Date.now()}`;
+	const procedures = factsDb.getProceduresReadyForSkill(
+		options.validationThreshold,
+		maxPerRun,
+	);
 	const paths: string[] = [];
 	const decisions: NonNullable<GenerateAutoSkillsResult["decisions"]> = [];
 	let skipped = 0;
@@ -93,7 +97,7 @@ export function generateAutoSkills(
 	for (const proc of procedures) {
 		const item = createProcedurePromotionItem(proc, policy);
 		const context = {
-			runId: `procedure-promotion-${Date.now()}`,
+			runId,
 			mode: dryRun ? ("dry-run" as const) : ("apply" as const),
 			policy,
 			policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
@@ -126,7 +130,7 @@ export function generateAutoSkills(
 			humanReviewRequired: decision.humanReviewRequired,
 		});
 
-		if (!evaluation.eligible || !evaluation.draft) {
+		if (!evaluation.eligible || !evaluation.draft || policy !== "auto-safe") {
 			skipped++;
 			logger.info(
 				`procedure-skill-generator: ${proc.id} ${decision.action}: ${
@@ -236,7 +240,7 @@ export function generateAutoSkillForProcedure(
 		validationThreshold:
 			options.requireValidation === false ? 1 : options.validationThreshold,
 	});
-	if (!evaluation.eligible || !evaluation.draft) {
+	if (!evaluation.eligible || !evaluation.draft || policy !== "auto-safe") {
 		return {
 			ok: false,
 			reason: "policy-blocked",

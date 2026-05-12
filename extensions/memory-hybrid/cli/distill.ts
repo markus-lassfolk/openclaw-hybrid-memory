@@ -348,7 +348,7 @@ export function registerDistillCommands(
 		)
 		.option(
 			"--apply",
-			"Write draft/quarantined skill artifacts for procedures that pass all auto-safe gates",
+			"Apply policy result. With the default draft-only policy this reports/defer only; pass --policy auto-safe to write draft/quarantined artifacts",
 		)
 		.option("--max <n>", "Maximum procedures to inspect", "10")
 		.option(

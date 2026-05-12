@@ -461,24 +461,30 @@ export function createProcedurePromotionDecision(
 	evaluation: ProcedurePromotionEvaluation,
 ): PendingDecision {
 	const firstGate = evaluation.gates[0];
+	const policyAllowsDraftWrite = context.policy === "auto-safe";
 	const action = evaluation.eligible
-		? "promoted-to-draft"
+		? policyAllowsDraftWrite
+			? "promoted-to-draft"
+			: "deferred-for-human"
 		: firstGate?.severity === "fail-validation"
-		  ? "failed-validation"
-		  : firstGate?.severity === "reject"
-			  ? "rejected"
-			  : "deferred-for-human";
+			? "failed-validation"
+			: firstGate?.severity === "reject"
+				? "rejected"
+				: "deferred-for-human";
 	const reasonCode = evaluation.eligible
-		? "human-review-required"
+		? policyAllowsDraftWrite
+			? "policy-threshold-not-met"
+			: "human-review-required"
 		: firstGate?.reason === "malformed_recipe" ||
-			  firstGate?.reason?.includes("validation")
-		  ? "schema-validation-failed"
-		  : firstGate?.reason === "duplicate_existing_skill"
-			  ? "duplicate-input"
-			  : "policy-threshold-not-met";
-	const capabilityClass = evaluation.eligible
-		? "write-draft-artifact"
-		: "record-review-metadata";
+				firstGate?.reason?.includes("validation")
+			? "schema-validation-failed"
+			: firstGate?.reason === "duplicate_existing_skill"
+				? "duplicate-input"
+				: "policy-threshold-not-met";
+	const capabilityClass =
+		evaluation.eligible && policyAllowsDraftWrite
+			? "write-draft-artifact"
+			: "record-review-metadata";
 	const evidence: PendingDecisionEvidence[] = [
 		{ type: "procedure", id: item.id, summary: item.payload.taskPattern },
 		...evaluation.gates.map((g) => ({
@@ -496,7 +502,10 @@ export function createProcedurePromotionDecision(
 		mode: context.mode,
 		action,
 		reasonCode,
-		actionClass: evaluation.eligible ? "draft-artifact" : "record-review",
+		actionClass:
+			evaluation.eligible && policyAllowsDraftWrite
+				? "draft-artifact"
+				: "record-review",
 		capabilityClass,
 		confidence: evaluation.eligible
 			? 0.95
