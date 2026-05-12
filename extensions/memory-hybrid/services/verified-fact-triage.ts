@@ -541,7 +541,7 @@ export async function runVerifiedFactTriageWithAdapter(
             durableStore?.recordDecision(staleDecision);
             decision = staleDecision;
           }
-        } else if (durableStore) {
+        } else {
           const staleDecision = validationFailureDecision(
             item,
             context,
@@ -550,8 +550,6 @@ export async function runVerifiedFactTriageWithAdapter(
           );
           durableStore.recordDecision(staleDecision);
           decision = staleDecision;
-        } else {
-          decision = await adapter.decide(item, context);
         }
       } finally {
         if (locked) {
@@ -610,6 +608,9 @@ export function classifyVerifiedFact(
   | "inputHash"
   | "applied"
 > {
+  if (opts.db) {
+    registerVerifiedChecksumFunction(opts.db);
+  }
   const fact = item.payload.fact;
   const nowMs = opts.nowMs ?? Date.now();
   const nowSec = Math.floor(nowMs / 1000);
