@@ -92,6 +92,7 @@ export type {
 } from "./services/graph-retrieval.js";
 export { DEFAULT_GRAPH_HUB_DEGREE_CAP, resolveGraphHubDegreeCap } from "./services/graph-retrieval.js";
 export * from "./services/pending-autopilot/index.js";
+export * from "./services/persona-proposal-triage.js";
 import { findShortestPath, formatPath, resolveInput } from "./services/shortest-path.js";
 export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
 import {

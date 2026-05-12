@@ -1,0 +1,825 @@
+/**
+ * Cautious persona-proposal triage adapter (#1327).
+ *
+ * This module owns persona-specific policy while preserving the shared
+ * pending-autopilot #1334 decision, reason, redaction, dry-run, lock/CAS, and
+ * audit envelope. Proposal text is treated as untrusted input: it is never used
+ * as instructions and raw proposal bodies are not persisted in output/audit.
+ */
+
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
+import type { HybridMemoryConfig } from "../config.js";
+import { getEnv } from "../utils/env-manager.js";
+import {
+  type AutopilotMode,
+  type PendingDecision,
+  type PendingDecisionActorContext,
+  type PendingDecisionContext,
+  type PendingItem,
+  type PendingQueueAdapter,
+  PendingAutopilotStore,
+  computePendingInputHash,
+  createPendingAutopilotRunId,
+  createStableRunSummary,
+  redactAutopilotValue,
+} from "./pending-autopilot/index.js";
+
+export const PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION = "persona-proposal-triage-v1";
+export const PERSONA_APPLY_CONFIDENCE_THRESHOLD = 0.95;
+export const PERSONA_REJECT_CONFIDENCE_THRESHOLD = 0.7;
+
+export type PersonaProposalTriagePolicy = "report-only" | "cautious" | "apply-safe";
+export type PersonaProposalRisk = "low" | "medium" | "high" | "critical";
+
+export interface PersonaProposalTriageOptions {
+  proposalsDb: ProposalsDB;
+  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  stateDbPath?: string;
+  workspace?: string;
+  mode?: AutopilotMode;
+  policy?: PersonaProposalTriagePolicy;
+  max?: number;
+  runId?: string;
+  jobId?: string;
+  actor?: PendingDecisionActorContext;
+  now?: Date;
+}
+
+export interface PersonaProposalTriageResult {
+  schemaVersion: 1;
+  runId: string;
+  mode: AutopilotMode;
+  policy: PersonaProposalTriagePolicy;
+  policyVersion: string;
+  counts: {
+    inspected: number;
+    classified: number;
+    grouped: number;
+    autoRejected: number;
+    autoApplied: number;
+    deferredForHuman: number;
+    failedValidation: number;
+    skippedByPolicy: number;
+  };
+  decisions: PersonaProposalDecisionView[];
+  bundles: PersonaProposalReviewBundle[];
+  humanSummary: string;
+}
+
+export interface PersonaProposalDecisionView {
+  proposalId: string;
+  targetFile: string;
+  risk: PersonaProposalRisk;
+  action: PendingDecision["action"];
+  reason: PendingDecision["reasonCode"];
+  capability: PendingDecision["capabilityClass"];
+  confidence: number;
+  humanReviewRequired: boolean;
+  evidence: PendingDecision["evidence"];
+  diffSummary: string;
+  inputHash: string;
+  targetHash: string | null;
+}
+
+export interface PersonaProposalReviewBundle {
+  id: string;
+  targetFile: string;
+  risk: PersonaProposalRisk;
+  recommendation: "reject" | "defer" | "review";
+  proposalIds: string[];
+  reasons: string[];
+  rationale: string;
+  commands: string[];
+  evidence: PendingDecision["evidence"];
+  diffPreview: string;
+}
+
+type PersonaProposalPayload = {
+  proposalId: string;
+  targetFile: string;
+  title: string;
+  confidence: number;
+  evidenceSessions: string[];
+  createdAt: number;
+  targetHash: string | null;
+  proposalHash: string;
+};
+
+export type PersonaProposalPendingItem = PendingItem<PersonaProposalPayload> & {
+  proposal: ProposalEntry;
+  targetPath: string;
+  targetHash: string | null;
+};
+
+type Analysis = {
+  risk: PersonaProposalRisk;
+  action: PendingDecision["action"];
+  reasonCode: PendingDecision["reasonCode"];
+  actionClass: PendingDecision["actionClass"];
+  capabilityClass: PendingDecision["capabilityClass"];
+  confidence: number;
+  humanReviewRequired: boolean;
+  diffSummary: string;
+  evidence: PendingDecision["evidence"];
+  applyAllowed: boolean;
+};
+
+const CRITICAL_TARGETS = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
+const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
+
+export function createPersonaProposalTriageAdapter(input: {
+  proposalsDb: ProposalsDB;
+  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  workspace?: string;
+  allProposals?: ProposalEntry[];
+}): PendingQueueAdapter<PersonaProposalPendingItem> {
+  return {
+    queue: "persona",
+    listPending: () => listPersonaProposalItems(input),
+    decide: (item, context) => decidePersonaProposal(item, context, input),
+    apply: () => {
+      throw new Error("Use runPersonaProposalTriage for lock/CAS guarded apply semantics.");
+    },
+  };
+}
+
+export async function runPersonaProposalTriage(
+  opts: PersonaProposalTriageOptions,
+): Promise<PersonaProposalTriageResult> {
+  const mode = opts.mode ?? "dry-run";
+  const policy = opts.policy ?? "report-only";
+  validatePersonaPolicy(policy);
+  if (mode !== "dry-run" && mode !== "apply") throw new Error(`Unsupported mode: ${mode}`);
+  const max = Math.max(0, Math.floor(opts.max ?? 20));
+  const runId = opts.runId ?? createPendingAutopilotRunId();
+  const actor = opts.actor ?? ({ type: "agent", id: "persona-proposal-triage" } as const);
+  const workspace = opts.workspace ?? defaultWorkspace();
+  const stateDbPath = opts.stateDbPath ?? join(workspace, "memory", "pending-autopilot.db");
+  const store = mode === "apply" ? new PendingAutopilotStore(stateDbPath) : null;
+  const adapter = createPersonaProposalTriageAdapter({
+    proposalsDb: opts.proposalsDb,
+    cfg: opts.cfg,
+    workspace,
+  });
+  const decisions: PendingDecision[] = [];
+  const views: PersonaProposalDecisionView[] = [];
+  const startedAt = Math.floor((opts.now ?? new Date()).getTime() / 1000);
+  const runInputHash = computePendingInputHash({ command: "proposals triage", mode, policy, max, startedAt: 0 });
+
+  try {
+    store?.createRun({
+      runId,
+      mode,
+      policy,
+      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+      inputHash: runInputHash,
+      queues: ["persona"],
+      startedAt,
+    });
+
+    const listed = await adapter.listPending(null);
+    const pending = listed.slice(0, max);
+    for (const item of pending) {
+      const context: PendingDecisionContext = {
+        runId,
+        jobId: opts.jobId,
+        mode,
+        policy,
+        policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+        inputHash: item.inputHash,
+        actor,
+      };
+      let decision = await adapter.decide(item, context);
+      if (mode === "apply" && isMutationDecision(decision)) {
+        if (!store) throw new Error("apply mode requires pending-autopilot store");
+        decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace });
+      } else {
+        store?.recordDecision(decision);
+      }
+      store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+      decisions.push(decision);
+      views.push(decisionToView(item, decision));
+    }
+
+    const summary = createStableRunSummary({
+      runId,
+      mode,
+      policy,
+      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+      queues: ["persona"],
+      startedAt,
+      finishedAt: Math.floor((opts.now ?? new Date()).getTime() / 1000),
+      decisions,
+    });
+    store?.finishRun(runId, summary);
+    const result: PersonaProposalTriageResult = {
+      schemaVersion: 1,
+      runId,
+      mode,
+      policy,
+      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+      counts: countPersonaDecisions(decisions),
+      decisions: views,
+      bundles: buildPersonaReviewBundles(views),
+      humanSummary: "",
+    };
+    result.humanSummary = renderPersonaProposalTriageHumanSummary(result);
+    return result;
+  } finally {
+    store?.close();
+  }
+}
+
+export function stablePersonaProposalTriageJson(result: PersonaProposalTriageResult): string {
+  return `${JSON.stringify(redactAutopilotValue(result), null, 2)}\n`;
+}
+
+export function renderPersonaProposalTriageHumanSummary(result: PersonaProposalTriageResult): string {
+  const lines = [
+    `Persona proposal triage ${result.runId} (${result.mode}, policy=${result.policy})`,
+    `Inspected ${result.counts.inspected}; auto-rejected ${result.counts.autoRejected}; auto-applied ${result.counts.autoApplied}; deferred ${result.counts.deferredForHuman}; failed ${result.counts.failedValidation}.`,
+  ];
+  if (result.bundles.length > 0) {
+    lines.push("Review bundles:");
+    for (const bundle of result.bundles) {
+      lines.push(
+        `- ${bundle.id}: ${bundle.proposalIds.length} proposal(s), target=${bundle.targetFile}, risk=${bundle.risk}, recommendation=${bundle.recommendation}, reasons=${bundle.reasons.join(",")}`,
+      );
+    }
+  } else {
+    lines.push("Review bundles: none.");
+  }
+  lines.push(
+    result.mode === "dry-run"
+      ? "Dry-run wrote no proposal state, target files, or durable pending-autopilot state."
+      : "Apply mode used shared pending-autopilot lock/CAS decision recording before any proposal/file mutation.",
+  );
+  return lines.join("\n");
+}
+
+export function decidePersonaProposal(
+  item: PersonaProposalPendingItem,
+  context: PendingDecisionContext,
+  input: {
+    proposalsDb: ProposalsDB;
+    cfg: Pick<HybridMemoryConfig, "personaProposals">;
+    workspace?: string;
+    allProposals?: ProposalEntry[];
+  },
+): PendingDecision {
+  const all = input.allProposals ?? input.proposalsDb.list();
+  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all, input.cfg);
+  return {
+    queue: "persona",
+    itemId: item.id,
+    inputHash: item.inputHash,
+    policy: context.policy,
+    policyVersion: context.policyVersion,
+    mode: context.mode,
+    action: context.policy === "report-only" ? "reported" : analysis.action,
+    reasonCode: context.policy === "report-only" ? "policy-report-only" : analysis.reasonCode,
+    actionClass: context.policy === "report-only" ? "observe" : analysis.actionClass,
+    capabilityClass: context.mode === "dry-run" ? "dry-run" : analysis.capabilityClass,
+    confidence: analysis.confidence,
+    humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
+    evidence: analysis.evidence,
+    actor: context.actor,
+    runId: context.runId,
+    jobId: context.jobId,
+    summary: {
+      title: item.proposal.title,
+      body: analysis.diffSummary,
+      metadata: {
+        targetFile: item.proposal.targetFile,
+        risk: analysis.risk,
+        targetHash: item.targetHash,
+        proposalHash: item.payload.proposalHash,
+      },
+    },
+    audit: {
+      queue: "persona",
+      itemId: item.id,
+      inputHash: item.inputHash,
+      policy: context.policy,
+      policyVersion: context.policyVersion,
+      action: context.policy === "report-only" ? "reported" : analysis.action,
+      reasonCode: context.policy === "report-only" ? "policy-report-only" : analysis.reasonCode,
+      capabilityClass: context.mode === "dry-run" ? "dry-run" : analysis.capabilityClass,
+      humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
+      evidence: analysis.evidence,
+      actor: context.actor,
+      runId: context.runId,
+      jobId: context.jobId,
+      summary: {
+        title: item.proposal.title,
+        body: analysis.diffSummary,
+        metadata: {
+          targetFile: item.proposal.targetFile,
+          proposalHash: item.payload.proposalHash,
+          targetHash: item.targetHash,
+          risk: analysis.risk,
+        },
+      },
+    },
+  };
+}
+
+function listPersonaProposalItems(input: {
+  proposalsDb: ProposalsDB;
+  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  workspace?: string;
+}): PersonaProposalPendingItem[] {
+  const pending = input.proposalsDb.list({ status: "pending" });
+  const workspace = input.workspace ?? defaultWorkspace();
+  return pending.map((proposal) => proposalToPendingItem(proposal, workspace, input.cfg));
+}
+
+function proposalToPendingItem(
+  proposal: ProposalEntry,
+  workspace: string,
+  cfg: Pick<HybridMemoryConfig, "personaProposals">,
+): PersonaProposalPendingItem {
+  const target = resolveAllowedPersonaTarget(workspace, proposal.targetFile, cfg.personaProposals.allowedFiles);
+  let targetHash: string | null = null;
+  if (target.ok) {
+    try {
+      targetHash = existsSync(target.path) ? fileHash(target.path) : null;
+    } catch {
+      targetHash = null;
+    }
+  }
+  const proposalHash = computePendingInputHash({
+    id: proposal.id,
+    targetFile: proposal.targetFile,
+    title: proposal.title,
+    observation: proposal.observation,
+    suggestedChange: proposal.suggestedChange,
+    confidence: proposal.confidence,
+    evidenceSessions: proposal.evidenceSessions,
+    targetHash: proposal.targetHash ?? null,
+  });
+  const payload: PersonaProposalPayload = {
+    proposalId: proposal.id,
+    targetFile: proposal.targetFile,
+    title: proposal.title,
+    confidence: proposal.confidence,
+    evidenceSessions: proposal.evidenceSessions,
+    createdAt: proposal.createdAt,
+    targetHash,
+    proposalHash,
+  };
+  return {
+    queue: "persona",
+    id: proposal.id,
+    inputHash: computePendingInputHash({ queue: "persona", id: proposal.id, payload, policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION }),
+    policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+    capabilityClasses: ["read-only", "safe-state-transition", "apply-low-risk-change"],
+    payload,
+    visibleAfterCursor: proposal.id,
+    requiresHumanReview: true,
+    proposal,
+    targetPath: target.ok ? target.path : target.path,
+    targetHash,
+  };
+}
+
+function analyzePersonaProposal(
+  item: PersonaProposalPendingItem,
+  policy: PersonaProposalTriagePolicy,
+  allProposals: ProposalEntry[],
+  cfg: Pick<HybridMemoryConfig, "personaProposals">,
+): Analysis {
+  const p = item.proposal;
+  const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`;
+  const evidence = buildEvidence(p);
+  const target = resolveAllowedPersonaTarget(dirname(item.targetPath), p.targetFile, cfg.personaProposals.allowedFiles);
+  if (!target.ok) {
+    return failed("critical", "validation-failed", `Target path rejected for ${p.targetFile}`, evidence, 0.1);
+  }
+  if (containsSecretOrPrivateData(text)) {
+    return rejectOrDefer(policy, "critical", "secret-or-private-data-risk", "Secret/private-data risk detected; [REDACTED] raw content.", evidence, 1);
+  }
+  if (containsPromptInjection(text)) {
+    return defer("critical", "security-boundary-change", "Prompt-injection language is untrusted and cannot affect policy gates.", evidence, 1);
+  }
+  if (p.confidence < PERSONA_REJECT_CONFIDENCE_THRESHOLD) {
+    return rejectOrDefer(policy, "low", "low-confidence", `Confidence ${p.confidence.toFixed(2)} below ${PERSONA_REJECT_CONFIDENCE_THRESHOLD}.`, evidence, 1);
+  }
+  if (isNonActionable(p.suggestedChange)) {
+    return rejectOrDefer(policy, "low", "non-actionable", "Proposal lacks an actionable localized change.", evidence, 0.95);
+  }
+  const duplicate = findDuplicate(p, allProposals);
+  if (duplicate?.status === "applied") {
+    return rejectOrDefer(policy, "low", "duplicate-applied-proposal", `Duplicates already-applied proposal ${duplicate.id}.`, evidence, 1);
+  }
+  if (duplicate?.status === "pending") {
+    return rejectOrDefer(policy, "low", "duplicate-pending-proposal", `Duplicates pending proposal ${duplicate.id}.`, evidence, 1);
+  }
+  if (isStaleTarget(item)) {
+    return rejectOrDefer(policy, "low", "stale-target-context", "Target snapshot changed since proposal creation; safe rebase unavailable.", evidence, 1);
+  }
+  const risk = classifyRisk(p, item);
+  const diffSummary = summarizeDiff(p, item);
+  if (policy === "report-only") return report(risk, "policy-report-only", diffSummary, evidence, p.confidence);
+  if (risk === "high" || risk === "critical") {
+    return defer(risk, highRiskReason(p), diffSummary, evidence, p.confidence);
+  }
+  if (risk === "medium") {
+    return defer("medium", "policy-requires-human", diffSummary, evidence, p.confidence);
+  }
+  if (!hasEvidence(p)) return defer("low", "missing-evidence", diffSummary, evidence, p.confidence);
+  if (isLargeOrBroadDiff(p)) return defer("medium", "large-or-broad-diff", diffSummary, evidence, p.confidence);
+  if (policy !== "apply-safe") return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
+  if (p.confidence < PERSONA_APPLY_CONFIDENCE_THRESHOLD) {
+    return defer("low", "low-confidence", diffSummary, evidence, p.confidence);
+  }
+  if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange)) {
+    return defer("medium", "policy-requires-human", "Sensitive persona target requires exact human approval for semantic writes.", evidence, p.confidence);
+  }
+  return {
+    risk: "low",
+    action: "applied",
+    reasonCode: "safe-low-risk-localized-change",
+    actionClass: "low-risk-apply",
+    capabilityClass: "apply-low-risk-change",
+    confidence: p.confidence,
+    humanReviewRequired: false,
+    diffSummary,
+    evidence,
+    applyAllowed: true,
+  };
+}
+
+function applyPersonaDecisionWithLock(input: {
+  store: PendingAutopilotStore;
+  proposalsDb: ProposalsDB;
+  item: PersonaProposalPendingItem;
+  decision: PendingDecision;
+  workspace: string;
+}): PendingDecision {
+  const owner = `${input.decision.runId}:persona-triage`;
+  const locked = input.store.acquireLock({
+    queue: "persona",
+    itemId: input.item.id,
+    inputHash: input.item.inputHash,
+    owner,
+    ttlSeconds: 120,
+    mode: input.decision.mode,
+  });
+  if (!locked) return validationFailure(input.decision, "lock-conflict", "Could not acquire persona proposal lock.");
+  try {
+    const current = input.proposalsDb.get(input.item.id);
+    const currentTarget = resolveAllowedPersonaTarget(input.workspace, input.item.proposal.targetFile, [input.item.proposal.targetFile]);
+    const actualHash = current ? proposalToPendingItem(current, input.workspace, { personaProposals: { allowedFiles: [current.targetFile] } } as Pick<HybridMemoryConfig, "personaProposals">).inputHash : "missing";
+    if (!current || current.status !== "pending") {
+      return validationFailure(input.decision, "already-processed", "Proposal was already processed before apply.");
+    }
+    if (actualHash !== input.decision.inputHash) {
+      return validationFailure(input.decision, "input-hash-mismatch", "Proposal changed between classification and apply.");
+    }
+    if (!currentTarget.ok || !existsSync(currentTarget.path)) {
+      return validationFailure(input.decision, "stale-target-context", "Target file unavailable during apply revalidation.");
+    }
+    const currentTargetHash = fileHash(currentTarget.path);
+    if (input.decision.action === "applied" && current.targetHash && current.targetHash !== currentTargetHash) {
+      return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
+    }
+
+    const ok = input.store.mutateWithLockAndAudit({
+      decision: input.decision,
+      owner,
+      actualInputHash: input.decision.inputHash,
+      audit: () => {},
+      mutate: () => {
+        if (input.decision.action === "rejected") {
+          input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", input.decision.reasonCode);
+        } else if (input.decision.action === "applied") {
+          const original = readFileSync(currentTarget.path, "utf-8");
+          const next = applyTinyAppend(original, current.suggestedChange);
+          const backupPath = `${currentTarget.path}.backup-${Date.now()}`;
+          writeFileSync(backupPath, original, "utf-8");
+          writeFileSync(currentTarget.path, next, "utf-8");
+          input.proposalsDb.markApplied(input.item.id);
+        }
+      },
+    });
+    if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
+    return input.decision;
+  } finally {
+    input.store.releaseLock({ queue: "persona", itemId: input.item.id, inputHash: input.item.inputHash, owner, mode: input.decision.mode });
+  }
+}
+
+function validationFailure(decision: PendingDecision, reasonCode: PendingDecision["reasonCode"], body: string): PendingDecision {
+  return {
+    ...decision,
+    action: "failed-validation",
+    reasonCode,
+    actionClass: "observe",
+    capabilityClass: decision.mode === "dry-run" ? "dry-run" : "read-only",
+    confidence: 0,
+    humanReviewRequired: true,
+    summary: { ...(decision.summary ?? {}), body },
+    audit: decision.audit ? { ...decision.audit, action: "failed-validation", reasonCode, humanReviewRequired: true } : undefined,
+  };
+}
+
+function decisionToView(item: PersonaProposalPendingItem, decision: PendingDecision): PersonaProposalDecisionView {
+  const metadata = decision.summary?.metadata ?? {};
+  return {
+    proposalId: item.id,
+    targetFile: item.proposal.targetFile,
+    risk: (metadata.risk as PersonaProposalRisk | undefined) ?? "medium",
+    action: decision.action,
+    reason: decision.reasonCode,
+    capability: decision.capabilityClass,
+    confidence: decision.confidence,
+    humanReviewRequired: decision.humanReviewRequired,
+    evidence: decision.evidence,
+    diffSummary: String(decision.summary?.body ?? ""),
+    inputHash: decision.inputHash,
+    targetHash: item.targetHash,
+  };
+}
+
+function buildPersonaReviewBundles(views: PersonaProposalDecisionView[]): PersonaProposalReviewBundle[] {
+  const reviewable = views.filter((v) => v.humanReviewRequired || v.action === "reported" || v.action === "deferred-for-human");
+  const groups = new Map<string, PersonaProposalDecisionView[]>();
+  for (const view of reviewable) {
+    const key = `${view.targetFile}:${view.risk}:${view.reason}:${topicKey(view.diffSummary)}`;
+    groups.set(key, [...(groups.get(key) ?? []), view]);
+  }
+  return [...groups.values()].map((items, idx) => {
+    const risk = maxRisk(items.map((i) => i.risk));
+    const targetFile = items[0]?.targetFile ?? "unknown";
+    const reasons = [...new Set(items.map((i) => i.reason))];
+    const proposalIds = items.map((i) => i.proposalId);
+    return {
+      id: `persona-bundle-${idx + 1}`,
+      targetFile,
+      risk,
+      recommendation: risk === "low" && reasons.every((r) => r.startsWith("duplicate") || r === "non-actionable") ? "reject" : "defer",
+      proposalIds,
+      reasons,
+      rationale: `Grouped by target=${targetFile}, risk=${risk}, and shared topic. Review each proposal independently before approval.`,
+      commands: proposalIds.flatMap((id) => [
+        `openclaw hybrid-mem proposals show ${id} --diff`,
+        `openclaw hybrid-mem proposals reject ${id} --reason <reason>`,
+      ]),
+      evidence: items.flatMap((i) => i.evidence),
+      diffPreview: items.map((i) => `[${i.proposalId}] ${i.diffSummary}`).join("\n"),
+    };
+  });
+}
+
+function countPersonaDecisions(decisions: PendingDecision[]): PersonaProposalTriageResult["counts"] {
+  return {
+    inspected: decisions.length,
+    classified: decisions.filter((d) => d.action === "classified" || d.action === "reported").length,
+    grouped: decisions.filter((d) => d.humanReviewRequired || d.action === "reported").length,
+    autoRejected: decisions.filter((d) => d.action === "rejected").length,
+    autoApplied: decisions.filter((d) => d.action === "applied").length,
+    deferredForHuman: decisions.filter((d) => d.action === "deferred-for-human").length,
+    failedValidation: decisions.filter((d) => d.action === "failed-validation").length,
+    skippedByPolicy: decisions.filter((d) => d.action === "skipped-by-policy").length,
+  };
+}
+
+function rejectOrDefer(
+  policy: PersonaProposalTriagePolicy,
+  risk: PersonaProposalRisk,
+  reasonCode: PendingDecision["reasonCode"],
+  diffSummary: string,
+  evidence: PendingDecision["evidence"],
+  confidence: number,
+): Analysis {
+  if (policy === "cautious" || policy === "apply-safe") {
+    return { risk, action: "rejected", reasonCode, actionClass: "state-transition", capabilityClass: "safe-state-transition", confidence, humanReviewRequired: false, diffSummary, evidence, applyAllowed: false };
+  }
+  return report(risk, reasonCode, diffSummary, evidence, confidence);
+}
+
+function defer(
+  risk: PersonaProposalRisk,
+  reasonCode: PendingDecision["reasonCode"],
+  diffSummary: string,
+  evidence: PendingDecision["evidence"],
+  confidence: number,
+): Analysis {
+  return { risk, action: "deferred-for-human", reasonCode, actionClass: "record-review", capabilityClass: "record-review-metadata", confidence, humanReviewRequired: true, diffSummary, evidence, applyAllowed: false };
+}
+
+function report(
+  risk: PersonaProposalRisk,
+  reasonCode: PendingDecision["reasonCode"],
+  diffSummary: string,
+  evidence: PendingDecision["evidence"],
+  confidence: number,
+): Analysis {
+  return { risk, action: "reported", reasonCode, actionClass: "observe", capabilityClass: "read-only", confidence, humanReviewRequired: false, diffSummary, evidence, applyAllowed: false };
+}
+
+function failed(
+  risk: PersonaProposalRisk,
+  reasonCode: PendingDecision["reasonCode"],
+  diffSummary: string,
+  evidence: PendingDecision["evidence"],
+  confidence: number,
+): Analysis {
+  return { risk, action: "failed-validation", reasonCode, actionClass: "observe", capabilityClass: "read-only", confidence, humanReviewRequired: true, diffSummary, evidence, applyAllowed: false };
+}
+
+function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
+  const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
+  if (containsSecretOrPrivateData(text) || /destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)) return "critical";
+  if (/identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(text)) return "high";
+  if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange)) return "high";
+  if (/preference|workflow|routing|project context|communication/.test(text)) return "medium";
+  if (isLargeOrBroadDiff(p)) return "medium";
+  if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
+  return "medium";
+}
+
+function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {
+  const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
+  if (/privacy/.test(text)) return "privacy-boundary-change";
+  if (/security|credential|approval|destructive|safeguard/.test(text)) return "security-boundary-change";
+  if (/preference|profile|personal fact|markus|user/.test(text)) return "user-preference-change-requires-approval";
+  return "identity-boundary-change";
+}
+
+function isCriticalTarget(targetFile: string): boolean {
+  return CRITICAL_TARGETS.has(targetFile) || SENSITIVE_TOOLS_RE.test(targetFile);
+}
+
+function isMutationDecision(decision: PendingDecision): boolean {
+  return decision.mode === "apply" && (decision.action === "rejected" || decision.action === "applied");
+}
+
+function isStaleTarget(item: PersonaProposalPendingItem): boolean {
+  return Boolean(item.proposal.targetHash && item.targetHash && item.proposal.targetHash !== item.targetHash);
+}
+
+function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalEntry | null {
+  const normalized = normalizeText(proposal.suggestedChange);
+  if (!normalized) return null;
+  return (
+    all.find(
+      (candidate) =>
+        candidate.id !== proposal.id &&
+        candidate.targetFile === proposal.targetFile &&
+        (candidate.status === "applied" || candidate.status === "pending") &&
+        normalizeText(candidate.suggestedChange) === normalized,
+    ) ?? null
+  );
+}
+
+function isNonActionable(change: string): boolean {
+  const normalized = normalizeText(change);
+  return normalized.length < 12 || /^(be better|improve|help more|do better|misc|n\/a|none)$/i.test(normalized);
+}
+
+function isLargeOrBroadDiff(p: ProposalEntry): boolean {
+  const lines = p.suggestedChange.split(/\r?\n/).filter((line) => line.trim());
+  return lines.length > 12 || p.suggestedChange.length > 1200 || /^\s*replace\b/i.test(p.suggestedChange);
+}
+
+function hasEvidence(p: ProposalEntry): boolean {
+  return Array.isArray(p.evidenceSessions) && p.evidenceSessions.length > 0;
+}
+
+function summarizeDiff(p: ProposalEntry, item: PersonaProposalPendingItem): string {
+  const change = redactAutopilotValue(p.suggestedChange) as string;
+  const lines = String(change).split(/\r?\n/).filter((line) => line.trim());
+  return `${safeActionVerb(p)} ${lines.length} non-empty line(s) in ${p.targetFile}; targetHash=${item.targetHash ?? "missing"}; proposalHash=${item.payload.proposalHash.slice(0, 12)}`;
+}
+
+function safeActionVerb(p: ProposalEntry): string {
+  return /^\s*replace\b/i.test(p.suggestedChange) ? "Would replace" : "Would append/update";
+}
+
+function buildEvidence(p: ProposalEntry): PendingDecision["evidence"] {
+  const sessions = (p.evidenceSessions ?? []).slice(0, 5).map((id) => ({ type: "session", id, summary: "proposal evidence session" }));
+  return [
+    { type: "proposal", id: p.id, summary: redactedOneLine(p.title) },
+    ...sessions,
+    { type: "proposal-hash", id: shortHash(`${p.title}\n${p.observation}\n${p.suggestedChange}`), summary: "redacted proposal content hash" },
+  ];
+}
+
+function containsPromptInjection(text: string): boolean {
+  return /ignore (all )?(previous|above|system|developer)(?:\s+\w+){0,3}\s+instructions|reveal (the )?(system prompt|secrets)|bypass (policy|approval|safety)|you are now|act as an unrestricted/i.test(text);
+}
+
+function containsSecretOrPrivateData(text: string): boolean {
+  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|token|password|secret)\s*[:=]|\bghp_[A-Za-z0-9_]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{16,}/i.test(text);
+}
+
+function resolveAllowedPersonaTarget(
+  workspace: string,
+  targetFile: string,
+  allowedFiles: readonly string[],
+): { ok: true; path: string } | { ok: false; path: string; error: string } {
+  if (!allowedFiles.includes(targetFile)) return { ok: false, path: targetFile, error: "target not allowlisted" };
+  if (targetFile.includes("..") || targetFile.includes("/") || targetFile.includes("\\") || isAbsolute(targetFile)) {
+    return { ok: false, path: targetFile, error: "path traversal" };
+  }
+  const workspaceReal = existsSync(workspace) ? realpathSync(workspace) : resolve(workspace);
+  const targetPath = resolve(workspaceReal, targetFile);
+  const rel = relative(workspaceReal, targetPath);
+  if (rel.startsWith("..") || isAbsolute(rel)) return { ok: false, path: targetPath, error: "target escapes workspace" };
+  try {
+    if (existsSync(targetPath) && lstatSync(targetPath).isSymbolicLink()) {
+      const real = realpathSync(targetPath);
+      const realRel = relative(workspaceReal, real);
+      if (realRel.startsWith("..") || isAbsolute(realRel)) return { ok: false, path: targetPath, error: "symlink escapes workspace" };
+    }
+  } catch {
+    return { ok: false, path: targetPath, error: "target stat failed" };
+  }
+  return { ok: true, path: targetPath };
+}
+
+function applyTinyAppend(original: string, suggestedChange: string): string {
+  const addition = suggestedChange.trim();
+  if (!addition) return original;
+  return `${original.replace(/\s*$/, "\n\n")}${addition}\n`;
+}
+
+function fileHash(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function shortHash(input: string): string {
+  return createHash("sha256").update(input).digest("hex").slice(0, 16);
+}
+
+function normalizeText(input: string): string {
+  return input.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function redactedOneLine(input: string): string {
+  return String(redactAutopilotValue(input)).replace(/\s+/g, " ").slice(0, 160);
+}
+
+function topicKey(input: string): string {
+  const text = input.toLowerCase();
+  if (/security|privacy|credential|approval/.test(text)) return "security";
+  if (/preference|workflow|profile|user|pr review|branch naming/.test(text)) return "preference";
+  if (/identity|voice|tone/.test(text)) return "identity";
+  return "general";
+}
+
+function maxRisk(risks: PersonaProposalRisk[]): PersonaProposalRisk {
+  const order: PersonaProposalRisk[] = ["low", "medium", "high", "critical"];
+  return risks.sort((a, b) => order.indexOf(b) - order.indexOf(a))[0] ?? "medium";
+}
+
+function validatePersonaPolicy(policy: string): asserts policy is PersonaProposalTriagePolicy {
+  if (policy !== "report-only" && policy !== "cautious" && policy !== "apply-safe") {
+    throw new Error(`Unsupported persona proposal triage policy: ${policy}`);
+  }
+}
+
+function defaultWorkspace(): string {
+  return getEnv("OPENCLAW_WORKSPACE") ?? join(process.env.HOME ?? ".", ".openclaw", "workspace");
+}
+
+export function createPersonaParentExecutionPath(adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
+  return (item: PersonaProposalPendingItem, context: PendingDecisionContext): Promise<PendingDecision> | PendingDecision =>
+    adapter.decide(item, { ...context, runId: "equivalence-run" });
+}
+
+export function createPersonaStandaloneExecutionPath(_adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
+  return (item: PersonaProposalPendingItem, context: PendingDecisionContext): Promise<PendingDecision> | PendingDecision =>
+    decidePersonaProposal(item, { ...context, runId: "equivalence-run" }, {
+      proposalsDb: null as never,
+      cfg: { personaProposals: { allowedFiles: [item.proposal.targetFile] } } as unknown as Pick<HybridMemoryConfig, "personaProposals">,
+      allProposals: [item.proposal],
+    });
+}
+
+export function createPersonaProposalFixtureItem(input: {
+  proposal: ProposalEntry;
+  workspace: string;
+  allowedFiles: Array<"SOUL.md" | "IDENTITY.md" | "USER.md">;
+}): PersonaProposalPendingItem {
+  const item = proposalToPendingItem(input.proposal, input.workspace, { personaProposals: { allowedFiles: input.allowedFiles } } as Pick<HybridMemoryConfig, "personaProposals">);
+  return {
+    ...item,
+    inputHash: computePendingInputHash({
+      queue: item.queue,
+      id: item.id,
+      payload: item.payload,
+      policy: "cautious",
+      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+    }),
+  };
+}
+
+export function ensurePersonaTriageStateDir(stateDbPath: string): void {
+  mkdirSync(dirname(stateDbPath), { recursive: true });
+}

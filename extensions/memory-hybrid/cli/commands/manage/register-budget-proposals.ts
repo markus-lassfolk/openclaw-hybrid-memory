@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { stablePersonaProposalTriageJson } from "../../../services/persona-proposal-triage.js";
 import { buildAppliedContent, buildUnifiedDiff } from "../../proposals.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -255,6 +256,50 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
           console.error(`Error rejecting proposal ${id}: ${res.error}`);
           process.exitCode = 1;
         }
+      }),
+    );
+
+  proposals
+    .command("triage")
+    .description("Triage pending persona proposals with #1334 pending-autopilot safety gates")
+    .option("--dry-run", "Preview only; default and non-mutating")
+    .option("--apply", "Apply safe proposal state transitions; requires explicit policy gates")
+    .option("--policy <policy>", "report-only|cautious|apply-safe (default: report-only)")
+    .option("--max <n>", "Maximum pending proposals to inspect (default: 20)")
+    .option("--json", "Emit structured JSON")
+    .option("--state-db <path>", "Optional pending-autopilot state DB for apply-mode decision records")
+    .option("--workspace <path>", "Workspace containing allowed persona target files")
+    .action(
+      withExit(async (opts?: {
+        dryRun?: boolean;
+        apply?: boolean;
+        policy?: string;
+        max?: string;
+        json?: boolean;
+        stateDb?: string;
+        workspace?: string;
+      }) => {
+        if (!listCommands?.triageProposals) {
+          console.log("Proposals triage not available (personaProposals disabled or no proposals DB).");
+          return;
+        }
+        const max = opts?.max != null ? Number.parseInt(opts.max, 10) : undefined;
+        if (opts?.max != null && (!Number.isFinite(max) || (max ?? 0) < 0)) {
+          console.error(`error: --max must be a non-negative integer. Got: ${opts.max}`);
+          process.exitCode = 1;
+          return;
+        }
+        const result = await listCommands.triageProposals({
+          apply: opts?.apply,
+          dryRun: opts?.dryRun,
+          policy: opts?.policy,
+          max,
+          json: opts?.json,
+          stateDb: opts?.stateDb,
+          workspace: opts?.workspace,
+        });
+        if (opts?.json) console.log(stablePersonaProposalTriageJson(result));
+        else console.log(result.humanSummary);
       }),
     );
 

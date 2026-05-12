@@ -67,6 +67,24 @@ Proposes a change to one of the allowed identity files.
 
 On success, the proposal is stored with status `pending` and an expiry (if `proposalTTLDays` &gt; 0). If **`autoApply`** is enabled, the proposal is then approved and applied immediately; otherwise the agent is told the proposal ID and that it awaits human review.
 
+### Triage pending proposals
+
+`openclaw hybrid-mem proposals triage` classifies pending persona proposals through the shared pending-autopilot safety contract.
+
+```bash
+openclaw hybrid-mem proposals triage --dry-run --policy report-only --json
+openclaw hybrid-mem proposals triage --apply --policy cautious --max 20
+openclaw hybrid-mem proposals triage --apply --policy apply-safe --max 20
+```
+
+Policies:
+
+- `report-only` (default): classify and bundle only; no proposal state, target file, or durable autopilot state mutation.
+- `cautious`: may auto-reject high-confidence duplicates, stale/noisy/non-actionable, or low-confidence proposals; semantic persona/user/security/privacy changes are deferred.
+- `apply-safe`: may apply only tiny, low-risk, localized, evidence-backed changes after lock/CAS revalidation. Sensitive persona files (`SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, and sensitive `TOOLS.md`) require human review for semantic writes.
+
+Proposal text is untrusted input. Prompt-injection content is classified as security risk, target paths are canonicalized under the workspace allowlist, and JSON/audit/bundle output is redacted so secrets/private data are not persisted.
+
 ### persona_proposals_list
 
 Lists proposals with optional filters:
