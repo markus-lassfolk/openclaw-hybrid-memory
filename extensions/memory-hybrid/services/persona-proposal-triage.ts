@@ -846,7 +846,6 @@ function failed(
 
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
-  const suggestedChange = p.suggestedChange.toLowerCase();
   if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
