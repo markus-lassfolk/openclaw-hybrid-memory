@@ -858,7 +858,7 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
 function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
   const containsSemanticKeywords =
-    /(identit|personalit|voice|tone|behavio|instruction|response|repl|always|never|must|should)/i.test(
+    /\b(identity|personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should)\b/i.test(
       suggestedChange,
     );
   return hasFormattingPrefix && !containsSemanticKeywords;
