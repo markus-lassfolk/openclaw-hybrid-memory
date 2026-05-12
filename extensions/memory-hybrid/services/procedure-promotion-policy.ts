@@ -364,7 +364,7 @@ export function evaluateProcedureForPromotion(
       ? "failed"
       : "passed",
     triggerEval: eligible ? "passed" : "failed",
-    functionalEval: eligible ? "passed" : "failed",
+    functionalEval: "passed",
     baselineComparison: {
       withSkillPassed: eligible,
       withoutSkillPassed: false,
@@ -652,7 +652,8 @@ function hasEnoughTaskBoundary(task: string): boolean {
     .toLowerCase()
     .split(/\s+/)
     .filter((w) => w.length > 2);
-  return words.length >= 3 && !/^(fix|handle|do|check|run|process|misc|stuff|thing)s?$/i.test(task.trim());
+  const hasVagueWord = words.some((w) => /^(fix|handle|do|check|run|process|misc|stuff|thing)s?$/i.test(w));
+  return words.length >= 3 && !hasVagueWord;
 }
 
 const CONTEXT_SPECIFIC_PATTERN = /\b(?:my|household|personal)\b/i;

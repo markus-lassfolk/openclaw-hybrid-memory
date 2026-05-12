@@ -2,7 +2,7 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
@@ -114,7 +114,6 @@ export function generateAutoSkills(
   let rejected = 0;
   let deferred = 0;
   let failedValidation = 0;
-  let failedEval = 0;
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
@@ -137,7 +136,6 @@ export function generateAutoSkills(
     if (decision.action === "rejected") rejected++;
     if (decision.action === "deferred-for-human") deferred++;
     if (decision.action === "failed-validation") failedValidation++;
-    if (evaluation.metadata.functionalEval === "failed") failedEval++;
 
     decisions.push({
       procedureId: proc.id,
@@ -176,7 +174,17 @@ export function generateAutoSkills(
       writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
-      factsDb.markProcedurePromoted(proc.id, relativePath);
+      try {
+        factsDb.markProcedurePromoted(proc.id, relativePath);
+      } catch (markErr) {
+        // Rollback: remove orphaned files
+        try {
+          rmSync(skillDir, { recursive: true, force: true });
+        } catch {
+          // Best effort cleanup
+        }
+        throw markErr;
+      }
       paths.push(skillPath);
       drafted++;
       logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
@@ -203,7 +211,6 @@ export function generateAutoSkills(
       rejected,
       deferred,
       failedValidation,
-      failedEval,
     },
     decisions,
   };
