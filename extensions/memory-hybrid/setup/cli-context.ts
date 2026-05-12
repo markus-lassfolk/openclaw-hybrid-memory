@@ -520,6 +520,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           reclassifyDecayOnCycle: cfg.nightlyCycle.reclassifyDecayOnCycle,
           reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
           reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
+          enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
           verbose,
           episodicConsolidationEventTypes: {
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,

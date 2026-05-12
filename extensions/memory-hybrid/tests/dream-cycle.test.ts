@@ -708,6 +708,26 @@ describe("runDreamCycle", () => {
     expect(result.digestSummary.length).toBeGreaterThan(0);
   });
 
+  it("logs when reflection rules are disabled by config", async () => {
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const info = vi.fn();
+
+    await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      { ...baseConfig, enableReflectionRules: false, verbose: true },
+      { info, warn: () => undefined },
+    );
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("reflection rules disabled"));
+  });
+
   it("writes MEMORY_INDEX.md during the nightly cycle", async () => {
     const originalWorkspace = getEnv("OPENCLAW_WORKSPACE");
     setEnv("OPENCLAW_WORKSPACE", tmpDir);
@@ -885,6 +905,7 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.consolidateAfterDays).toBe(7);
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
     expect(cfg.nightlyCycle.maxEventsPerConsolidation).toBe(200);
+    expect(cfg.nightlyCycle.enableReflectionRules).toBe(true);
   });
 
   it("honors nightlyCycle.enabled when set to true", () => {
@@ -965,6 +986,14 @@ describe("NightlyCycleConfig parsing", () => {
       nightlyCycle: { logRetentionDays: 0 },
     });
     expect(cfg.nightlyCycle.logRetentionDays).toBe(0);
+  });
+
+  it("accepts nightlyCycle.enableReflectionRules=false", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...minimalConfig,
+      nightlyCycle: { enableReflectionRules: false },
+    });
+    expect(cfg.nightlyCycle.enableReflectionRules).toBe(false);
   });
 });
 
@@ -1094,11 +1123,13 @@ describe("runDreamCycle maintenance (Issue #573)", () => {
     expect(result.digestSummary).toContain("log rows pruned");
   });
 
-  it("vacuumRan=true when vacuumOnCycle=true", async () => {
+  it("runs WAL checkpoint even when VACUUM is skipped below reclaim threshold", async () => {
     const openaiStub = {
       chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
     } as never;
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const checkpointSpy = vi.spyOn(factsDb, "checkpointWalTruncate");
+    const vacuumSpy = vi.spyOn(factsDb, "vacuumAndCheckpoint");
 
     const result = await runDreamCycle(
       factsDb,
@@ -1109,8 +1140,10 @@ describe("runDreamCycle maintenance (Issue #573)", () => {
       { ...baseConfig, vacuumOnCycle: true },
       silentLogger,
     );
-    expect(result.vacuumRan).toBe(true);
-    expect(result.digestSummary).toContain("VACUUM ran");
+    expect(checkpointSpy).toHaveBeenCalledTimes(1);
+    expect(vacuumSpy).not.toHaveBeenCalled();
+    expect(result.vacuumRan).toBe(false);
+    expect(result.digestSummary).not.toContain("VACUUM ran");
   });
 
   it("vacuumRan=false when vacuumOnCycle=false", async () => {

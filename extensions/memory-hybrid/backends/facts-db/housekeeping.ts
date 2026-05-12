@@ -49,13 +49,37 @@ export function pruneLogTables(db: DatabaseSync, retentionDays: number): number 
   return tx();
 }
 
+/** Run standard FTS5 optimize maintenance on `facts_fts`. */
 export function optimizeFts(db: DatabaseSync): void {
   db.exec(`INSERT INTO facts_fts(facts_fts) VALUES('optimize')`);
 }
 
+export function freelistSpaceStats(db: DatabaseSync): {
+  freelistCount: number;
+  pageSize: number;
+  freedBytes: number;
+  freedMB: number;
+} {
+  const freelistCountResult = db.prepare("PRAGMA freelist_count").get() as { freelist_count: number } | undefined;
+  const pageSizeResult = db.prepare("PRAGMA page_size").get() as { page_size: number } | undefined;
+  const freelistCount = freelistCountResult?.freelist_count ?? 0;
+  const pageSize = pageSizeResult?.page_size ?? 4096;
+  const freedBytes = freelistCount * pageSize;
+  return {
+    freelistCount,
+    pageSize,
+    freedBytes,
+    freedMB: freedBytes / (1024 * 1024),
+  };
+}
+
+export function checkpointWalTruncate(db: DatabaseSync): void {
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+}
+
 export function vacuumAndCheckpoint(db: DatabaseSync): void {
   db.exec("VACUUM");
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  checkpointWalTruncate(db);
 }
 
 export function statsReflection(db: DatabaseSync): {

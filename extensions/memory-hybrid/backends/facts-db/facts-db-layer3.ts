@@ -58,8 +58,10 @@ import {
   countSupersededFacts as countSupersededFactsImpl,
   countVerifiedFacts as countVerifiedFactsImpl,
   findSessionFactsForPromotion as findSessionFactsForPromotionImpl,
+  freelistSpaceStats as freelistSpaceStatsImpl,
   languageKeywordsCount as languageKeywordsCountImpl,
   optimizeFts as optimizeFtsImpl,
+  checkpointWalTruncate as checkpointWalTruncateImpl,
   pruneLogTables as pruneLogTablesImpl,
   pruneOrphanedLinks as pruneOrphanedLinksImpl,
   pruneScopedFacts as pruneScopedFactsImpl,
@@ -108,6 +110,14 @@ export class FactsDB extends FactsDBLayer2 {
 
   optimizeFts(): void {
     optimizeFtsImpl(this.liveDb);
+  }
+
+  freelistSpaceStats(): ReturnType<typeof freelistSpaceStatsImpl> {
+    return freelistSpaceStatsImpl(this.liveDb);
+  }
+
+  checkpointWalTruncate(): void {
+    checkpointWalTruncateImpl(this.liveDb);
   }
 
   vacuumAndCheckpoint(): void {

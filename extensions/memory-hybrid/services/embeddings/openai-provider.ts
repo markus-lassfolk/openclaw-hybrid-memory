@@ -76,7 +76,8 @@ export class Embeddings implements EmbeddingProvider {
     this.logicalModelForEmbedding = logicalModelForEmbedding;
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
-    this.batchSize = batchSize || 2048;
+    // Number of input strings per embeddings request (not a token budget).
+    this.batchSize = batchSize || 40;
     this.omitDimensionsInRequest = omitDimensionsInRequest;
 
     // Validate dimensions against known model limits and capabilities

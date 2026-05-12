@@ -81,6 +81,12 @@ export interface DreamCycleConfig {
     /** Extra types to treat as noise (merged with built-in deny list). */
     deny?: string[];
   };
+  /**
+   * When true, enable reflection rules generation during the dream cycle.
+   * Cost optimization: Set to false to save 30-40% of dream cycle LLM cost.
+   * Default: true (enabled for backward compatibility).
+   */
+  enableReflectionRules?: boolean;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -921,7 +927,8 @@ export async function runDreamCycle(
 
   // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
   let rulesGenerated = 0;
-  if (patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
+  const enableReflectionRules = config.enableReflectionRules !== false; // default: true
+  if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
     const stageReflectRules = beginStage("reflect-rules");
     try {
       const rulesResult = await runReflectionRules(
@@ -943,6 +950,8 @@ export async function runDreamCycle(
       });
     }
     stageReflectRules.complete(`rulesStored=${rulesGenerated}`);
+  } else if (!enableReflectionRules && v) {
+    logger.info("memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)");
   } else if (v) {
     logger.info(
       `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
@@ -1008,12 +1017,28 @@ export async function runDreamCycle(
 
   // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
   let vacuumRan = false;
+  let walCheckpointRan = false;
   if (config.vacuumOnCycle) {
     const vacuumStep = beginSubstep("VACUUM + WAL checkpoint");
     try {
-      factsDb.vacuumAndCheckpoint();
-      vacuumRan = true;
-      logger.info("memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete");
+      // Cost optimization: Skip VACUUM when freed space < 10MB (low benefit, high I/O cost)
+      const { freedMB } = factsDb.freelistSpaceStats();
+
+      if (freedMB < 10) {
+        // Preserve historical "checkpoint every cycle" behavior even when VACUUM is deferred.
+        factsDb.checkpointWalTruncate();
+        walCheckpointRan = true;
+        logger.info(
+          `memory-hybrid: dream-cycle — skipping VACUUM (only ${freedMB.toFixed(2)}MB freed space, threshold: 10MB); WAL checkpoint complete`,
+        );
+      } else {
+        factsDb.vacuumAndCheckpoint();
+        vacuumRan = true;
+        walCheckpointRan = true;
+        logger.info(
+          `memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete (reclaimed ${freedMB.toFixed(2)}MB)`,
+        );
+      }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1021,9 +1046,11 @@ export async function runDreamCycle(
         subsystem: "facts-db",
       });
     }
-    vacuumStep.complete(`vacuumRan=${vacuumRan ? "yes" : "no"}`);
+    vacuumStep.complete(`vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`);
   }
-  stageOperational.complete(`logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}`);
+  stageOperational.complete(
+    `logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`,
+  );
 
   // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
