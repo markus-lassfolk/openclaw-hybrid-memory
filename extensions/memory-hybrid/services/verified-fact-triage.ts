@@ -185,12 +185,36 @@ interface RelatedFact extends TriageFactSnapshot {
 }
 
 const SENSITIVE_RULES: Array<{ flag: string; reason: VerifiedTriageReason; pattern: RegExp }> = [
-  { flag: "credentials", reason: "sensitive_security_fact", pattern: /\b(password|passwd|credential|secret|api[-_ ]?key|token|bearer|ssh key|private key|vault|oauth|pat_)\b/i },
-  { flag: "security", reason: "sensitive_security_fact", pattern: /\b(security|firewall|ssh|vpn|runbook|incident|breach|auth|mfa|2fa|permission|admin)\b/i },
-  { flag: "privacy", reason: "sensitive_privacy_fact", pattern: /\b(privacy|private|personal data|pii|gdpr|address|phone|email|medical|health|passport|identity)\b/i },
-  { flag: "external-comms", reason: "sensitive_personal_fact", pattern: /\b(external comms|external communication|email rule|reply rule|send to|contact\b|customer|client)\b/i },
-  { flag: "persona-preference", reason: "sensitive_personal_fact", pattern: /\b(preference|user identity|persona|edict|hard rule|markus|lotta)\b/i },
-  { flag: "operational-runbook", reason: "sensitive_operational_runbook", pattern: /\b(cron|runbook|operational|ops|production|deploy|restart|backup|restore)\b/i },
+  {
+    flag: "credentials",
+    reason: "sensitive_security_fact",
+    pattern: /\b(password|passwd|credential|secret|api[-_ ]?key|token|bearer|ssh key|private key|vault|oauth|pat_)\b/i,
+  },
+  {
+    flag: "security",
+    reason: "sensitive_security_fact",
+    pattern: /\b(security|firewall|ssh|vpn|runbook|incident|breach|auth|mfa|2fa|permission|admin)\b/i,
+  },
+  {
+    flag: "privacy",
+    reason: "sensitive_privacy_fact",
+    pattern: /\b(privacy|private|personal data|pii|gdpr|address|phone|email|medical|health|passport|identity)\b/i,
+  },
+  {
+    flag: "external-comms",
+    reason: "sensitive_personal_fact",
+    pattern: /\b(external comms|external communication|email rule|reply rule|send to|contact\b|customer|client)\b/i,
+  },
+  {
+    flag: "persona-preference",
+    reason: "sensitive_personal_fact",
+    pattern: /\b(preference|user identity|persona|edict|hard rule|markus|lotta)\b/i,
+  },
+  {
+    flag: "operational-runbook",
+    reason: "sensitive_operational_runbook",
+    pattern: /\b(cron|runbook|operational|ops|production|deploy|restart|backup|restore)\b/i,
+  },
 ];
 
 export function assertVerifiedTriagePolicy(value: string): VerifiedTriagePolicy {
@@ -369,7 +393,27 @@ export async function runVerifiedFactTriage(
 export function classifyVerifiedFact(
   item: VerifiedFactTriageItem,
   opts: { db?: DatabaseSync; nowMs?: number; policy?: string } = {},
-): Omit<VerifiedTriageResultItem, "factId" | "verifiedFactId" | "text" | "verificationTier" | "scope" | "scopeTarget" | "entity" | "key" | "validFrom" | "validUntil" | "expiresAt" | "provenanceSummary" | "action" | "reasonCode" | "capabilityClass" | "actionClass" | "inputHash" | "applied"> {
+): Omit<
+  VerifiedTriageResultItem,
+  | "factId"
+  | "verifiedFactId"
+  | "text"
+  | "verificationTier"
+  | "scope"
+  | "scopeTarget"
+  | "entity"
+  | "key"
+  | "validFrom"
+  | "validUntil"
+  | "expiresAt"
+  | "provenanceSummary"
+  | "action"
+  | "reasonCode"
+  | "capabilityClass"
+  | "actionClass"
+  | "inputHash"
+  | "applied"
+> {
   const fact = item.payload.fact;
   const nowSec = Math.floor((opts.nowMs ?? Date.now()) / 1000);
   const nowIso = new Date(opts.nowMs ?? Date.now()).toISOString();
@@ -380,7 +424,9 @@ export function classifyVerifiedFact(
       recommendedAction: "failed-validation",
       reason: "malformed_fact",
       confidence: 1,
-      evidence: [{ type: "verified-fact", id: item.payload.verified.id, summary: "Verified row references a missing fact row" }],
+      evidence: [
+        { type: "verified-fact", id: item.payload.verified.id, summary: "Verified row references a missing fact row" },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: true,
     };
@@ -393,7 +439,9 @@ export function classifyVerifiedFact(
       recommendedAction: "flagged-sensitive",
       reason: sensitivity.reason,
       confidence: 0.95,
-      evidence: [{ type: "sensitivity", id: fact.id, summary: `Matched sensitive categories: ${sensitivity.flags.join(", ")}` }],
+      evidence: [
+        { type: "sensitivity", id: fact.id, summary: `Matched sensitive categories: ${sensitivity.flags.join(", ")}` },
+      ],
       sensitivityFlags: sensitivity.flags,
       humanReviewRequired: true,
     };
@@ -405,7 +453,9 @@ export function classifyVerifiedFact(
       recommendedAction: "deferred-for-human",
       reason: "scope_unclear",
       confidence: 0.9,
-      evidence: [{ type: "scope", id: fact.id, summary: "Fact has session/agent/user scope requiring explicit ownership proof" }],
+      evidence: [
+        { type: "scope", id: fact.id, summary: "Fact has session/agent/user scope requiring explicit ownership proof" },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: true,
     };
@@ -417,7 +467,14 @@ export function classifyVerifiedFact(
       recommendedAction: "deferred-for-human",
       reason: "ttl_expired",
       confidence: 0.95,
-      evidence: [{ type: "validity", id: fact.id, summary: "Fact valid_until has expired", fields: { validUntil: fact.validUntil, now: nowSec } }],
+      evidence: [
+        {
+          type: "validity",
+          id: fact.id,
+          summary: "Fact valid_until has expired",
+          fields: { validUntil: fact.validUntil, now: nowSec },
+        },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: true,
     };
@@ -428,7 +485,14 @@ export function classifyVerifiedFact(
       recommendedAction: "deferred-for-human",
       reason: "ttl_expired",
       confidence: 0.95,
-      evidence: [{ type: "ttl", id: fact.id, summary: "Fact expires_at has expired", fields: { expiresAt: fact.expiresAt, now: nowSec } }],
+      evidence: [
+        {
+          type: "ttl",
+          id: fact.id,
+          summary: "Fact expires_at has expired",
+          fields: { expiresAt: fact.expiresAt, now: nowSec },
+        },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: true,
     };
@@ -441,7 +505,14 @@ export function classifyVerifiedFact(
       recommendedAction: "flagged-superseded",
       reason: "newer_verified_fact_exists",
       confidence: 0.9,
-      evidence: [{ type: "fact", id: newer.id, summary: "Explicit newer verified fact supersedes this fact", fields: { newerFactId: newer.id, verifiedFactId: newer.verifiedFactId } }],
+      evidence: [
+        {
+          type: "fact",
+          id: newer.id,
+          summary: "Explicit newer verified fact supersedes this fact",
+          fields: { newerFactId: newer.id, verifiedFactId: newer.verifiedFactId },
+        },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: true,
     };
@@ -467,7 +538,14 @@ export function classifyVerifiedFact(
       recommendedAction: "deferred-for-human",
       reason: "duplicate_verified_fact_candidate",
       confidence: 0.82,
-      evidence: [{ type: "fact", id: duplicate.id, summary: "Same-scope verified fact has identical normalized text", fields: { duplicateFactId: duplicate.id } }],
+      evidence: [
+        {
+          type: "fact",
+          id: duplicate.id,
+          summary: "Same-scope verified fact has identical normalized text",
+          fields: { duplicateFactId: duplicate.id },
+        },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: true,
     };
@@ -492,7 +570,14 @@ export function classifyVerifiedFact(
       recommendedAction: "classified",
       reason: "stale_due_for_reverification",
       confidence: 0.72,
-      evidence: [{ type: "verification", id: item.payload.verified.id, summary: "Fact is due for scheduled reverification", fields: { nextVerification: item.payload.verified.nextVerification, now: nowIso } }],
+      evidence: [
+        {
+          type: "verification",
+          id: item.payload.verified.id,
+          summary: "Fact is due for scheduled reverification",
+          fields: { nextVerification: item.payload.verified.nextVerification, now: nowIso },
+        },
+      ],
       sensitivityFlags: [],
       humanReviewRequired: false,
     };
@@ -503,7 +588,14 @@ export function classifyVerifiedFact(
     recommendedAction: opts.policy === "apply-obvious" ? "marked-reviewed" : "classified",
     reason: "still_current_no_action_needed",
     confidence: 0.74,
-    evidence: [{ type: "review", id: fact.id, summary: "No concrete TTL, supersession, contradiction, sensitivity, scope, or provenance blocker found", fields: { reviewedAt: nowIso, method: "deterministic-triage" } }],
+    evidence: [
+      {
+        type: "review",
+        id: fact.id,
+        summary: "No concrete TTL, supersession, contradiction, sensitivity, scope, or provenance blocker found",
+        fields: { reviewedAt: nowIso, method: "deterministic-triage" },
+      },
+    ],
     sensitivityFlags: [],
     humanReviewRequired: false,
   };
@@ -536,7 +628,11 @@ function triageToPendingDecision(
     summary: {
       title: `verified fact ${triage.bucket}`,
       body: `${item.payload.fact?.id ?? item.payload.verified.factId}: ${triage.reason}`,
-      metadata: { bucket: triage.bucket, recommendedAction: triage.recommendedAction, sensitivityFlags: triage.sensitivityFlags },
+      metadata: {
+        bucket: triage.bucket,
+        recommendedAction: triage.recommendedAction,
+        sensitivityFlags: triage.sensitivityFlags,
+      },
     },
     audit: {
       queue: "verified",
@@ -579,12 +675,27 @@ function mapTriageAction(
     return { action: "reported", reasonCode: "dry-run", actionClass: "preview", capabilityClass: "read-only" };
   }
   if (triage.recommendedAction === "failed-validation") {
-    return { action: "failed-validation", reasonCode: toAutopilotReason(triage.reason), actionClass: "observe", capabilityClass: "read-only" };
+    return {
+      action: "failed-validation",
+      reasonCode: toAutopilotReason(triage.reason),
+      actionClass: "observe",
+      capabilityClass: "read-only",
+    };
   }
   if (triage.humanReviewRequired) {
-    return { action: "deferred-for-human", reasonCode: "human-review-required", actionClass: "record-review", capabilityClass: "record-review-metadata" };
+    return {
+      action: "deferred-for-human",
+      reasonCode: "human-review-required",
+      actionClass: "record-review",
+      capabilityClass: "record-review-metadata",
+    };
   }
-  return { action: "classified", reasonCode: toAutopilotReason(triage.reason), actionClass: "record-review", capabilityClass: "record-review-metadata" };
+  return {
+    action: "classified",
+    reasonCode: toAutopilotReason(triage.reason),
+    actionClass: "record-review",
+    capabilityClass: "record-review-metadata",
+  };
 }
 
 function toAutopilotReason(reason: VerifiedTriageReason): AutopilotReasonCode {
@@ -608,7 +719,11 @@ function toAutopilotReason(reason: VerifiedTriageReason): AutopilotReasonCode {
   }
 }
 
-function decisionToResultItem(decision: PendingDecision, item: VerifiedFactTriageItem, applied: boolean): VerifiedTriageResultItem {
+function decisionToResultItem(
+  decision: PendingDecision,
+  item: VerifiedFactTriageItem,
+  applied: boolean,
+): VerifiedTriageResultItem {
   const meta = decision.summary?.metadata ?? {};
   const fact = item.payload.fact;
   const bucket = String(meta.bucket ?? "failed-review") as VerifiedTriageBucket;
@@ -743,7 +858,10 @@ function snapshotFromRow(row: Record<string, unknown>): RelatedFact {
   return memoryEntryToSnapshot(rowToMemoryEntry(row));
 }
 
-function detectSensitivity(fact: TriageFactSnapshot, canonicalText: string): { flags: string[]; reason: VerifiedTriageReason } {
+function detectSensitivity(
+  fact: TriageFactSnapshot,
+  canonicalText: string,
+): { flags: string[]; reason: VerifiedTriageReason } {
   const haystack = [canonicalText, fact.text, fact.category, fact.entity, fact.key, fact.value, fact.tags?.join(" ")]
     .filter(Boolean)
     .join("\n");
@@ -805,7 +923,8 @@ function loadVerifiedRelatedFact(db: DatabaseSync, factId: string): RelatedFact 
 
 function findConcreteContradictingEvidence(db: DatabaseSync, fact: TriageFactSnapshot): VerifiedTriageEvidence | null {
   if (!fact.entity?.trim() || !fact.key?.trim() || fact.value == null || fact.value.trim() === "") return null;
-  const scopeClause = fact.scopeTarget != null ? "AND f.scope = ? AND f.scope_target = ?" : "AND f.scope = ? AND f.scope_target IS NULL";
+  const scopeClause =
+    fact.scopeTarget != null ? "AND f.scope = ? AND f.scope_target = ?" : "AND f.scope = ? AND f.scope_target IS NULL";
   const scopeParams: SQLInputValue[] = fact.scopeTarget != null ? [fact.scope, fact.scopeTarget] : [fact.scope];
   const row = db
     .prepare(
@@ -843,7 +962,8 @@ function findConcreteContradictingEvidence(db: DatabaseSync, fact: TriageFactSna
 function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSnapshot): RelatedFact | null {
   const normalized = normalizeFactText(fact.text);
   if (!normalized) return null;
-  const scopeClause = fact.scopeTarget != null ? "AND f.scope = ? AND f.scope_target = ?" : "AND f.scope = ? AND f.scope_target IS NULL";
+  const scopeClause =
+    fact.scopeTarget != null ? "AND f.scope = ? AND f.scope_target = ?" : "AND f.scope = ? AND f.scope_target IS NULL";
   const scopeParams: SQLInputValue[] = fact.scopeTarget != null ? [fact.scope, fact.scopeTarget] : [fact.scope];
   const rows = db
     .prepare(

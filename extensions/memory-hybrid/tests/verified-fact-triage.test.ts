@@ -25,7 +25,10 @@ let pendingStore: PendingAutopilotStore;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "verified-triage-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
-  verificationStore = new VerificationStore(factsDb.getRawDb(), { backupPath: join(tmpDir, "verified.json"), reverificationDays: 30 });
+  verificationStore = new VerificationStore(factsDb.getRawDb(), {
+    backupPath: join(tmpDir, "verified.json"),
+    reverificationDays: 30,
+  });
   pendingStore = new PendingAutopilotStore(join(tmpDir, "pending.db"));
 });
 
@@ -39,33 +42,42 @@ afterEach(() => {
 function addFact(
   id: string,
   text: string,
-  opts: Partial<Parameters<FactsDB["store"]>[0]> & { verified?: boolean; due?: boolean; verificationTier?: string } = {},
+  opts: Partial<Parameters<FactsDB["store"]>[0]> & {
+    verified?: boolean;
+    due?: boolean;
+    verificationTier?: string;
+  } = {},
 ): string {
-  factsDb.getRawDb().prepare("INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, source_sessions, provenance_session, provenance_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-    id,
-    text,
-    opts.category ?? "fact",
-    opts.importance ?? 0.8,
-    opts.entity ?? null,
-    opts.key ?? null,
-    opts.value ?? null,
-    opts.source ?? "test",
-    Math.floor(Date.now() / 1000),
-    opts.decayClass ?? "durable",
-    opts.expiresAt ?? null,
-    Math.floor(Date.now() / 1000),
-    opts.confidence ?? 0.95,
-    opts.tags?.join(",") ?? null,
-    opts.validFrom ?? null,
-    opts.validUntil ?? null,
-    opts.supersedesId ?? null,
-    opts.verificationTier ?? "warm",
-    opts.scope ?? "global",
-    opts.scope === "global" || !opts.scope ? null : opts.scopeTarget ?? null,
-    opts.sourceSessions ?? null,
-    opts.provenanceSession ?? null,
-    opts.provenanceJson ?? null,
-  );
+  factsDb
+    .getRawDb()
+    .prepare(
+      "INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, source_sessions, provenance_session, provenance_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      id,
+      text,
+      opts.category ?? "fact",
+      opts.importance ?? 0.8,
+      opts.entity ?? null,
+      opts.key ?? null,
+      opts.value ?? null,
+      opts.source ?? "test",
+      Math.floor(Date.now() / 1000),
+      opts.decayClass ?? "durable",
+      opts.expiresAt ?? null,
+      Math.floor(Date.now() / 1000),
+      opts.confidence ?? 0.95,
+      opts.tags?.join(",") ?? null,
+      opts.validFrom ?? null,
+      opts.validUntil ?? null,
+      opts.supersedesId ?? null,
+      opts.verificationTier ?? "warm",
+      opts.scope ?? "global",
+      opts.scope === "global" || !opts.scope ? null : (opts.scopeTarget ?? null),
+      opts.sourceSessions ?? null,
+      opts.provenanceSession ?? null,
+      opts.provenanceJson ?? null,
+    );
   /* factsDb.store({
     text,
     category: opts.category ?? "fact",
@@ -91,20 +103,29 @@ function addFact(
   if (opts.verified !== false) {
     verificationStore.verify(id, text, "user");
     if (opts.due !== false) {
-      factsDb.getRawDb().prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?").run("2000-01-01T00:00:00.000Z", id);
+      factsDb
+        .getRawDb()
+        .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
+        .run("2000-01-01T00:00:00.000Z", id);
     }
   }
   return id;
 }
 
 function oneItem(id: string): VerifiedFactTriageItem {
-  const item = listVerifiedFactTriageItems(factsDb.getRawDb(), { max: 100 }).find((candidate) => candidate.payload.verified.factId === id);
+  const item = listVerifiedFactTriageItems(factsDb.getRawDb(), { max: 100 }).find(
+    (candidate) => candidate.payload.verified.factId === id,
+  );
   if (!item) throw new Error(`missing triage item ${id}`);
   return item;
 }
 
 function bucket(id: string) {
-  return classifyVerifiedFact(oneItem(id), { db: factsDb.getRawDb(), nowMs: Date.parse("2026-05-12T00:00:00Z"), policy: "classify" });
+  return classifyVerifiedFact(oneItem(id), {
+    db: factsDb.getRawDb(),
+    nowMs: Date.parse("2026-05-12T00:00:00Z"),
+    policy: "classify",
+  });
 }
 
 describe("verified fact triage queue source and policy", () => {
@@ -119,7 +140,11 @@ describe("verified fact triage queue source and policy", () => {
   it("report-only and dry-run never mutate foundation state", async () => {
     addFact("current", "A sourced current fact", { provenanceJson: "{}" });
     const before = pendingStore.tableCounts();
-    const result = await runVerifiedFactTriage(factsDb, { mode: "dry-run", policy: "report-only", store: pendingStore });
+    const result = await runVerifiedFactTriage(factsDb, {
+      mode: "dry-run",
+      policy: "report-only",
+      store: pendingStore,
+    });
     expect(result.counts.inspected).toBe(1);
     expect(pendingStore.tableCounts()).toEqual(before);
   });
@@ -133,7 +158,10 @@ describe("verified fact triage queue source and policy", () => {
   });
 
   it("apply-obvious cannot delete, demote, rewrite, or change critical verified facts", async () => {
-    addFact("critical", "Critical but non-sensitive sourced fact", { provenanceJson: "{}", verificationTier: "critical" });
+    addFact("critical", "Critical but non-sensitive sourced fact", {
+      provenanceJson: "{}",
+      verificationTier: "critical",
+    });
     const before = factsDb.getById("critical");
     expect(before).not.toBeNull();
     await runVerifiedFactTriage(factsDb, { mode: "apply", policy: "apply-obvious", store: pendingStore });
@@ -167,7 +195,12 @@ describe("verified fact triage classification buckets and evidence", () => {
     expect(bucket("old")).toMatchObject({ bucket: "superseded-candidate", reason: "newer_verified_fact_exists" });
 
     addFact("other-old", "Mode is A", { provenanceJson: "{}", scope: "user", scopeTarget: "u1" });
-    addFact("other-new", "Mode is B", { supersedesId: "other-old", provenanceJson: "{}", scope: "user", scopeTarget: "u2" });
+    addFact("other-new", "Mode is B", {
+      supersedesId: "other-old",
+      provenanceJson: "{}",
+      scope: "user",
+      scopeTarget: "u2",
+    });
     expect(bucket("other-old").bucket).not.toBe("superseded-candidate");
   });
 
@@ -176,16 +209,45 @@ describe("verified fact triage classification buckets and evidence", () => {
     addFact("endpoint-b", "Endpoint is B", { entity: "service", key: "endpoint", value: "B", provenanceJson: "{}" });
     const contradicted = bucket("endpoint-a");
     expect(contradicted.bucket).toBe("contradicted-candidate");
-    expect(contradicted.evidence[0].fields).toMatchObject({ subject: "service", claimType: "endpoint", conflictingValue: "B", sourceId: "endpoint-b" });
+    expect(contradicted.evidence[0].fields).toMatchObject({
+      subject: "service",
+      claimType: "endpoint",
+      conflictingValue: "B",
+      sourceId: "endpoint-b",
+    });
 
-    addFact("related-a", "Service has an endpoint", { entity: "related-service", key: "endpoint", value: "A", provenanceJson: "{}" });
-    addFact("related-b", "Service has a dashboard", { entity: "related-service", key: "dashboard", value: "B", provenanceJson: "{}" });
+    addFact("related-a", "Service has an endpoint", {
+      entity: "related-service",
+      key: "endpoint",
+      value: "A",
+      provenanceJson: "{}",
+    });
+    addFact("related-b", "Service has a dashboard", {
+      entity: "related-service",
+      key: "dashboard",
+      value: "B",
+      provenanceJson: "{}",
+    });
     expect(bucket("related-a").bucket).not.toBe("contradicted-candidate");
   });
 
   it("scope isolation prevents cross-scope contradiction and duplicate classification", () => {
-    addFact("scoped-a", "Theme is dark", { entity: "prefs", key: "theme", value: "dark", scope: "user", scopeTarget: "u1", provenanceJson: "{}" });
-    addFact("scoped-b", "Theme is light", { entity: "prefs", key: "theme", value: "light", scope: "user", scopeTarget: "u2", provenanceJson: "{}" });
+    addFact("scoped-a", "Theme is dark", {
+      entity: "prefs",
+      key: "theme",
+      value: "dark",
+      scope: "user",
+      scopeTarget: "u1",
+      provenanceJson: "{}",
+    });
+    addFact("scoped-b", "Theme is light", {
+      entity: "prefs",
+      key: "theme",
+      value: "light",
+      scope: "user",
+      scopeTarget: "u2",
+      provenanceJson: "{}",
+    });
     addFact("dup-a", "Same harmless fact", { scope: "user", scopeTarget: "u1", provenanceJson: "{}" });
     addFact("dup-b", "Same harmless fact", { scope: "user", scopeTarget: "u2", provenanceJson: "{}" });
     expect(bucket("scoped-a").bucket).not.toBe("contradicted-candidate");
@@ -210,8 +272,16 @@ describe("verified fact triage classification buckets and evidence", () => {
 
   it("sensitive credentials/security/privacy/persona facts require human review and no mutation", async () => {
     addFact("security", "SSH runbook uses password vault procedure", { provenanceJson: "{}" });
-    const result = await runVerifiedFactTriage(factsDb, { mode: "apply", policy: "apply-obvious", store: pendingStore });
-    expect(result.items[0]).toMatchObject({ bucket: "sensitive-needs-human", humanReviewRequired: true, applied: false });
+    const result = await runVerifiedFactTriage(factsDb, {
+      mode: "apply",
+      policy: "apply-obvious",
+      store: pendingStore,
+    });
+    expect(result.items[0]).toMatchObject({
+      bucket: "sensitive-needs-human",
+      humanReviewRequired: true,
+      applied: false,
+    });
     expect(factsDb.getById("security")?.text).toBe("SSH runbook uses password vault procedure");
   });
 
@@ -236,11 +306,10 @@ describe("verified fact triage idempotency and parent integration", () => {
     factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run("Idempotent sourced fact changed", "idem");
     const vf = verificationStore.getVerified("idem");
     expect(vf).not.toBeNull();
-    factsDb.getRawDb().prepare("UPDATE verified_facts SET canonical_text = ?, checksum = ? WHERE id = ?").run(
-      "Idempotent sourced fact changed",
-      checksum("Idempotent sourced fact changed"),
-      vf?.id ?? "",
-    );
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET canonical_text = ?, checksum = ? WHERE id = ?")
+      .run("Idempotent sourced fact changed", checksum("Idempotent sourced fact changed"), vf?.id ?? "");
     await runVerifiedFactTriage(factsDb, { mode: "apply", policy: "classify", store: pendingStore });
     expect(pendingStore.listDecisions({ queue: "verified" })).toHaveLength(2);
   });
@@ -249,7 +318,13 @@ describe("verified fact triage idempotency and parent integration", () => {
     addFact("stale-hash", "Before", { provenanceJson: "{}" });
     const item = oneItem("stale-hash");
     factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run("After", "stale-hash");
-    const actual = computePendingInputHash({ queue: item.queue, id: item.id, payload: item.payload, policy: "classify", policyVersion: item.policyVersion });
+    const actual = computePendingInputHash({
+      queue: item.queue,
+      id: item.id,
+      payload: item.payload,
+      policy: "classify",
+      policyVersion: item.policyVersion,
+    });
     expect(actual).toBe(item.inputHash); // payload snapshot guards standalone decision; live runner re-lists before apply
   });
 
