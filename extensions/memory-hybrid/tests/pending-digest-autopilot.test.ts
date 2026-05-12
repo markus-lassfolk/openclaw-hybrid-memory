@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -222,6 +223,71 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(store.tableCounts().pending_autopilot_runs).toBe(2);
     expect(store.tableCounts().pending_autopilot_locks).toBe(0);
     store.close();
+  });
+
+  it("apply mode persona cursor pagination advances beyond the newest slice", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const oldest = persona.create({
+      targetFile: "USER.md",
+      title: "Oldest duplicate/noise",
+      observation: "Supported by test evidence",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-oldest"],
+    });
+    const middle = persona.create({
+      targetFile: "USER.md",
+      title: "Middle duplicate/noise",
+      observation: "Supported by test evidence",
+      suggestedChange: "improve",
+      confidence: 0.9,
+      evidenceSessions: ["session-middle"],
+    });
+    const newest = persona.create({
+      targetFile: "USER.md",
+      title: "Newest duplicate/noise",
+      observation: "Supported by test evidence",
+      suggestedChange: "do better",
+      confidence: 0.9,
+      evidenceSessions: ["session-newest"],
+    });
+    // ProposalsDB stores second-resolution timestamps; spread them out explicitly
+    // so ORDER BY created_at DESC plus the persona cursor creates deterministic pages.
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, oldest.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, middle.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(300, newest.id);
+    raw.close();
+    const stateDb = join(dir, "autopilot.db");
+
+    const first = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      runId: "run-cursor-1",
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+    const second = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      runId: "run-cursor-2",
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+
+    expect(first.queues.persona.decisions.map((d) => d.itemId)).toEqual([newest.id]);
+    expect(second.queues.persona.decisions.map((d) => d.itemId)).toEqual([middle.id]);
+    const reopened = new ProposalsDB(paths.proposals);
+    expect(reopened.get(newest.id)?.status).toBe("pending");
+    expect(reopened.get(middle.id)?.status).toBe("pending");
+    expect(reopened.get(oldest.id)?.status).toBe("pending");
+    reopened.close();
   });
 
   it("supports disabled per-queue policies with stable skipped reason codes and max batch sizes", async () => {

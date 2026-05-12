@@ -17,6 +17,7 @@ import { getEnv } from "../utils/env-manager.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import {
   type AutopilotMode,
+  type PendingAutopilotCursor,
   type PendingDecision,
   type PendingDecisionActorContext,
   type PendingDecisionContext,
@@ -142,7 +143,7 @@ export function createPersonaProposalTriageAdapter(input: {
 }): PendingQueueAdapter<PersonaProposalPendingItem> {
   return {
     queue: "persona",
-    listPending: () => listPersonaProposalItems(input),
+    listPending: (cursor) => listPersonaProposalItems(input, cursor),
     decide: (item, context) => decidePersonaProposal(item, context, input),
     apply: () => {
       throw new Error("Use runPersonaProposalTriage for lock/CAS guarded apply semantics.");
@@ -357,15 +358,36 @@ export function decidePersonaProposal(
   };
 }
 
-function listPersonaProposalItems(input: {
-  proposalsDb: ProposalsDB;
-  cfg: Pick<HybridMemoryConfig, "personaProposals">;
-  workspace?: string;
-}): PersonaProposalPendingItem[] {
+function listPersonaProposalItems(
+  input: {
+    proposalsDb: ProposalsDB;
+    cfg: Pick<HybridMemoryConfig, "personaProposals">;
+    workspace?: string;
+  },
+  cursor?: PendingAutopilotCursor | null,
+): PersonaProposalPendingItem[] {
   if (!input.cfg.personaProposals.enabled) return [];
   const pending = input.proposalsDb.list({ status: "pending" });
   const workspace = input.workspace ?? defaultWorkspace();
-  return pending.map((proposal) => proposalToPendingItem(proposal, workspace, input.cfg));
+  return pending
+    .filter((proposal) => isVisibleAfterPersonaCursor(proposal, cursor))
+    .map((proposal) => proposalToPendingItem(proposal, workspace, input.cfg));
+}
+
+function isVisibleAfterPersonaCursor(proposal: ProposalEntry, cursor?: PendingAutopilotCursor | null): boolean {
+  if (!cursor?.cursor) return true;
+  // Persona proposals are listed newest-first by ProposalsDB. A durable cursor
+  // therefore means "the newest processed boundary" and subsequent pages must
+  // move toward older proposals, not restart from the newest pending rows.
+  return comparePersonaCursor(proposalCursor(proposal), cursor.cursor) < 0;
+}
+
+function proposalCursor(proposal: Pick<ProposalEntry, "createdAt" | "id">): string {
+  return `${proposal.createdAt.toString().padStart(12, "0")}:${proposal.id}`;
+}
+
+function comparePersonaCursor(a: string, b: string): number {
+  return a.localeCompare(b);
 }
 
 function proposalToPendingItem(
@@ -416,7 +438,7 @@ function proposalToPendingItem(
     policyVersion,
     capabilityClasses: ["read-only", "safe-state-transition", "apply-low-risk-change"],
     payload,
-    visibleAfterCursor: proposal.id,
+    visibleAfterCursor: proposalCursor(proposal),
     requiresHumanReview: true,
     proposal,
     targetPath: target.path,

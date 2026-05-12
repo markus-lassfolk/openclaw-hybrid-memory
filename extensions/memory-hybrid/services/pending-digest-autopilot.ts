@@ -388,7 +388,7 @@ function createPersonaProposalTriageAdapterWithCloseable(
 
   return {
     queue: "persona",
-    listPending: () => {
+    listPending: (cursor) => {
       if (!cfg.personaProposals.enabled) return [];
       return withCloseable(
         () => new ProposalsDB(dbPath),
@@ -399,7 +399,7 @@ function createPersonaProposalTriageAdapterWithCloseable(
             cfg,
             allProposals: cachedAllProposals,
           });
-          return adapter.listPending(null);
+          return adapter.listPending(cursor);
         },
       );
     },
