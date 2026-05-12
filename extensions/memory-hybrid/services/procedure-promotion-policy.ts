@@ -379,26 +379,30 @@ export function createProcedurePromotionDecision(
 ): PendingDecision {
   const firstGate = evaluation.gates[0];
   const policyAllowsDraftWrite = context.policy === "auto-safe";
-  const action = evaluation.eligible
-    ? policyAllowsDraftWrite
-      ? "promoted-to-draft"
-      : "deferred-for-human"
-    : firstGate?.severity === "fail-validation"
-      ? "failed-validation"
-      : firstGate?.severity === "reject"
-        ? "rejected"
-        : "deferred-for-human";
-  const reasonCode = evaluation.eligible
-    ? policyAllowsDraftWrite
-      ? "policy-threshold-not-met"
-      : "human-review-required"
-    : firstGate?.reason === "malformed_recipe" || firstGate?.reason?.includes("validation")
-      ? "schema-validation-failed"
-      : firstGate?.reason === "duplicate_existing_skill"
-        ? "duplicate-input"
-        : "policy-threshold-not-met";
-  const capabilityClass =
-    evaluation.eligible && policyAllowsDraftWrite ? "write-draft-artifact" : "record-review-metadata";
+  const eligibleForMutation = evaluation.eligible && policyAllowsDraftWrite;
+  const action = eligibleForMutation
+    ? "promoted-to-draft"
+    : evaluation.eligible
+      ? "deferred-for-human"
+      : firstGate?.severity === "fail-validation"
+        ? "failed-validation"
+        : firstGate?.severity === "reject"
+          ? "rejected"
+          : "deferred-for-human";
+  const reasonCode = eligibleForMutation
+    ? context.mode === "dry-run"
+      ? "dry-run"
+      : "policy-threshold-not-met"
+    : evaluation.eligible
+      ? "human-review-required"
+      : firstGate?.reason === "malformed_recipe" || firstGate?.reason?.includes("validation")
+        ? "schema-validation-failed"
+        : firstGate?.reason === "duplicate_existing_skill"
+          ? "duplicate-input"
+          : firstGate?.severity === "reject"
+            ? "policy-denied"
+            : "policy-threshold-not-met";
+  const capabilityClass = eligibleForMutation ? "write-draft-artifact" : "record-review-metadata";
   const evidence: PendingDecisionEvidence[] = [
     { type: "procedure", id: item.id, summary: item.payload.taskPattern },
     ...evaluation.gates.map((g) => ({
@@ -416,10 +420,10 @@ export function createProcedurePromotionDecision(
     mode: context.mode,
     action,
     reasonCode,
-    actionClass: evaluation.eligible && policyAllowsDraftWrite ? "draft-artifact" : "record-review",
+    actionClass: eligibleForMutation ? "draft-artifact" : "record-review",
     capabilityClass,
-    confidence: evaluation.eligible ? 0.95 : Math.min(0.9, item.payload.confidence),
-    humanReviewRequired: !evaluation.eligible || context.policy !== "auto-safe",
+    confidence: eligibleForMutation ? 0.95 : Math.min(0.9, Math.max(0.6, item.payload.confidence)),
+    humanReviewRequired: action === "deferred-for-human",
     evidence,
     actor: context.actor,
     runId: context.runId,
@@ -427,9 +431,11 @@ export function createProcedurePromotionDecision(
     summary: {
       title: "procedure-promotion",
       body: redactAutopilotText(
-        evaluation.eligible
+        eligibleForMutation
           ? `Drafted verified skill candidate ${evaluation.metadata.skill} from procedure ${item.id}; enabled=false.`
-          : `Procedure ${item.id} ${action}: ${evaluation.gates.map((g) => g.reason).join(", ")}`,
+          : evaluation.eligible
+            ? `Procedure ${item.id} deferred-for-human: policy=${context.policy} requires manual approval before draft writes.`
+            : `Procedure ${item.id} ${action}: ${evaluation.gates.map((g) => g.reason).join(", ")}`,
       ).redacted,
     },
     audit: redactAutopilotValue({

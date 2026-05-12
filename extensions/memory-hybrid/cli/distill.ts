@@ -284,10 +284,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .command("generate-auto-skills")
     .description("Generate verified draft SKILL.md + recipe/eval metadata for safe validated procedures")
     .option("--dry-run", "Show what would be generated without writing (default unless --apply is passed)")
-    .option(
-      "--apply",
-      "Apply policy result. Draft writes only occur when the effective policy is auto-safe.",
-    )
+    .option("--apply", "Apply policy result. Draft writes only occur when the effective policy is auto-safe.")
     .option("--max <n>", "Maximum procedures to inspect", "10")
     .option(
       "--policy <policy>",

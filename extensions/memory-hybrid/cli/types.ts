@@ -150,6 +150,7 @@ export type GenerateAutoSkillsResult = {
     skillPath?: string | null;
     inputHash?: string;
     policyVersion?: string;
+    runId?: string;
     enabled?: boolean;
     humanReviewRequired?: boolean;
   }>;

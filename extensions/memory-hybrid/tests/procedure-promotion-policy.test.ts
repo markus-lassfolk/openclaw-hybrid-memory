@@ -7,6 +7,7 @@ import type { ProcedureEntry } from "../types/memory.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   ProcedurePromotionAdapter,
+  createProcedurePromotionDecision,
   createProcedurePromotionItem,
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
@@ -65,6 +66,12 @@ function addProcedure(overrides: Partial<ProcedureInput> = {}) {
     sourceSessionId: "s1",
     ...(overrides as Partial<ProcedureInput>),
   } as ProcedureInput);
+}
+
+function requireProcedure(id: string): ProcedureEntry {
+  const proc = db.getProcedureById(id);
+  if (!proc) throw new Error(`Procedure not found in test fixture: ${id}`);
+  return proc;
 }
 
 describe("procedure promotion policy and adapter", () => {
@@ -421,13 +428,71 @@ describe("procedure promotion policy and adapter", () => {
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(1);
   });
 
+  it("decision semantics defer eligible draft-only/manual candidates for human review", () => {
+    const proc = addProcedure({ sourceSessionId: "decision-policy-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "decision-policy-b");
+    db.recordProcedureSuccess(proc.id, undefined, "decision-policy-c");
+    const policy = parseProcedurePromotionPolicy("draft-only");
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+    const decision = createProcedurePromotionDecision(
+      item,
+      {
+        runId: "run-decision-1",
+        mode: "apply",
+        policy,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        inputHash: item.inputHash,
+        actor: { type: "test", id: "procedure-policy-test" },
+      },
+      evaluation,
+    );
+
+    expect(decision.action).toBe("deferred-for-human");
+    expect(decision.reasonCode).toBe("human-review-required");
+    expect(decision.capabilityClass).toBe("record-review-metadata");
+    expect(decision.humanReviewRequired).toBe(true);
+  });
+
+  it("decision semantics allow auto-safe promotion without human-review reason", () => {
+    const proc = addProcedure({ sourceSessionId: "decision-auto-safe-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "decision-auto-safe-b");
+    db.recordProcedureSuccess(proc.id, undefined, "decision-auto-safe-c");
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+    const decision = createProcedurePromotionDecision(
+      item,
+      {
+        runId: "run-decision-2",
+        mode: "apply",
+        policy,
+        policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+        inputHash: item.inputHash,
+        actor: { type: "test", id: "procedure-policy-test" },
+      },
+      evaluation,
+    );
+
+    expect(decision.action).toBe("promoted-to-draft");
+    expect(decision.capabilityClass).toBe("write-draft-artifact");
+    expect(decision.reasonCode).not.toBe("human-review-required");
+    expect(decision.humanReviewRequired).toBe(false);
+  });
+
   it("standalone and parent adapter route produce equivalent decisions", async () => {
     const proc = addProcedure({ sourceSessionId: "eq-a" });
     db.recordProcedureSuccess(proc.id, undefined, "eq-b");
     db.recordProcedureSuccess(proc.id, undefined, "eq-c");
     const policy = parseProcedurePromotionPolicy("auto-safe");
-    const item = createProcedurePromotionItem(db.getProcedureById(proc.id)!, policy);
-    const adapter = new ProcedurePromotionAdapter([db.getProcedureById(proc.id)!], policy, {
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const adapter = new ProcedurePromotionAdapter([requireProcedure(proc.id)], policy, {
       skillsAutoPath: skillsDir,
       validationThreshold: 3,
     });

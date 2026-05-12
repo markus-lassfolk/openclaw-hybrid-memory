@@ -1,4 +1,3 @@
-import { getEnv } from "../utils/env-manager.js";
 /**
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
@@ -7,6 +6,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
+import { resolveWorkspacePath } from "../utils/path.js";
 import { slugifyForSkill } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
@@ -115,11 +115,12 @@ export function generateAutoSkills(
       skillPath: evaluation.metadata.generatedSkillPath,
       inputHash: item.inputHash,
       policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+      runId: decision.runId,
       enabled: false,
       humanReviewRequired: decision.humanReviewRequired,
     });
 
-    if (!evaluation.eligible || !evaluation.draft || policy !== "auto-safe") {
+    if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
       skipped++;
       logger.info(
         `procedure-skill-generator: ${proc.id} ${decision.action}: ${
@@ -197,9 +198,7 @@ export function generateAutoSkillForProcedure(
   const basePath = resolveSkillsPath(options.skillsAutoPath);
 
   if (proc.skillPath && proc.promotedToSkill) {
-    const absoluteExisting = proc.skillPath.startsWith("/")
-      ? proc.skillPath
-      : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), proc.skillPath);
+    const absoluteExisting = resolveWorkspacePath(proc.skillPath);
     return {
       ok: true,
       alreadyPromoted: true,
@@ -219,7 +218,7 @@ export function generateAutoSkillForProcedure(
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
   });
-  if (!evaluation.eligible || !evaluation.draft || policy !== "auto-safe") {
+  if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     return {
       ok: false,
       reason: "policy-blocked",
@@ -267,9 +266,7 @@ export function generateAutoSkillForProcedure(
 }
 
 function resolveSkillsPath(skillsAutoPath: string): string {
-  return skillsAutoPath.startsWith("/")
-    ? skillsAutoPath
-    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), skillsAutoPath);
+  return resolveWorkspacePath(skillsAutoPath);
 }
 
 function writeDraftSkill(

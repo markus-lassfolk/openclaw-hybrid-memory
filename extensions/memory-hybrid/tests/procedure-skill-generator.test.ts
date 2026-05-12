@@ -129,6 +129,62 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "dry-run-procedure", "SKILL.md"))).toBe(false);
   });
 
+  it("uses one stable runId for every decision in a batch", () => {
+    const procA = db.upsertProcedure({
+      taskPattern: "Validate release report A",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "a.json" }, summary: "Read report A" },
+        {
+          tool: "exec",
+          args: { command: "npm test -- report-a" },
+          summary: "Validate report A",
+        },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "runid-a1",
+    });
+    recordDistinctSuccesses(procA.id);
+    const procB = db.upsertProcedure({
+      taskPattern: "Validate release report B",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "b.json" }, summary: "Read report B" },
+        {
+          tool: "exec",
+          args: { command: "npm test -- report-b" },
+          summary: "Validate report B",
+        },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "runid-b1",
+    });
+    recordDistinctSuccesses(procB.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        dryRun: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    const runIds = new Set(
+      (result.decisions ?? [])
+        .map((decision) => decision.runId)
+        .filter((runId): runId is string => typeof runId === "string"),
+    );
+    expect(result.decisions).toHaveLength(2);
+    expect(runIds.size).toBe(1);
+  });
+
   it("defaults --apply to draft-only instead of silently escalating to auto-safe", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate release health report",
@@ -228,5 +284,6 @@ describe("generateAutoSkills", () => {
 
     expect(result.generated).toBe(0);
     expect(result.paths).toHaveLength(0);
+    expect(result.summary?.candidates).toBe(0);
   });
 });

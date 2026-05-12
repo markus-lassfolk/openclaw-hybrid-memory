@@ -16,7 +16,7 @@ import {
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
 } from "../../../services/procedure-promotion-policy.js";
-import { getEnv } from "../../../utils/env-manager.js";
+import { resolveWorkspacePath } from "../../../utils/path.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -154,9 +154,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             validationThreshold: cfg.procedures.validationThreshold,
           });
           const policy = parseProcedurePromotionPolicy(opts?.policy);
-          const resolvedSkillsAutoPath = cfg.procedures.skillsAutoPath.startsWith("/")
-            ? cfg.procedures.skillsAutoPath
-            : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), cfg.procedures.skillsAutoPath);
+          const resolvedSkillsAutoPath = resolveWorkspacePath(cfg.procedures.skillsAutoPath);
           const enrichedRows = report.rows.map((row) => {
             const proc = factsDb.getProcedureById(row.id);
             if (!proc) return row;
@@ -245,7 +243,10 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--dry-run", "Print what would happen without writing files")
     .option("--force", "Skip the validationThreshold safeguard (safety gates still apply)")
     .option("--apply", "Write draft/quarantined skill artifacts")
-    .option("--policy <policy>", "Promotion policy: draft-only, manual, auto-safe", "draft-only")
+    .option(
+      "--policy <policy>",
+      "Promotion policy: draft-only, manual, auto-safe (default: draft-only; with --apply and no --policy, defaults to auto-safe)",
+    )
     .option("--json", "Emit JSON")
     .action(
       withExit(
@@ -259,6 +260,8 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             json?: boolean;
           },
         ) => {
+          const apply = opts?.apply === true;
+          const policy = opts?.policy ?? (apply ? "auto-safe" : undefined);
           const result = generateAutoSkillForProcedure(
             factsDb,
             {
@@ -266,9 +269,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               validationThreshold: cfg.procedures.validationThreshold,
               skillTTLDays: cfg.procedures.skillTTLDays,
               procedureId: id,
-              dryRun: opts?.dryRun === true || opts?.apply !== true,
-              apply: opts?.apply === true,
-              policy: opts?.policy,
+              dryRun: opts?.dryRun === true || !apply,
+              apply,
+              policy,
               requireValidation: opts?.force !== true,
             },
             { info: (s) => console.log(s), warn: (s) => console.warn(s) },
