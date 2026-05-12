@@ -141,7 +141,7 @@ export function generateAutoSkills(
     if (decision.action === "failed-validation") failedValidation++;
     if (evaluation.metadata.rejectionReasons.includes("functional_eval_failed")) failedEval++;
 
-    if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
+    if (!evaluation.eligible || !evaluation.draft || (!dryRun && evaluation.metadata.requiresHumanApproval)) {
       decisions.push({
         procedureId: proc.id,
         action: decision.action,
@@ -212,7 +212,7 @@ export function generateAutoSkills(
       decisions.push({
         procedureId: proc.id,
         action: "failed-validation",
-        reasons: ["write_failed"],
+        reasons: ["skill_static_validation_failed"],
         skillPath: evaluation.metadata.generatedSkillPath,
         inputHash: item.inputHash,
         policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
