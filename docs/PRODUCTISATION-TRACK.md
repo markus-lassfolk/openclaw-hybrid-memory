@@ -47,6 +47,11 @@ Still needed for the product story:
 - skipped/suppressed write explanations
 - a human-readable “why this was recalled” surface
 
+Status update (this implementation pass):
+- unified observability service + tool surface is in place
+- CLI now exposes `openclaw hybrid-mem audit session` with summary/timeline/json formats
+- remaining polish is primarily UI visualization depth
+
 ### [#1028](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1028) — Messaging, visuals, and demo story
 
 Still needed for the presentation layer:
@@ -61,6 +66,10 @@ Still needed for the explicit retrieval model:
 - named constrained-search mode in code and docs
 - structured filters before semantic ranking
 - clearer explanation of why results matched and how they were ranked
+
+Status update (this implementation pass):
+- constrained-recall mode is documented and exposed as user-facing retrieval mode
+- filter → rank → hydrate explanation is returned in tool output
 
 ## Recommended execution order
 

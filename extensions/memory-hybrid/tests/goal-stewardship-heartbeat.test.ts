@@ -253,6 +253,44 @@ describe("buildMultiGoalStewardshipPrepend", () => {
     const totalBlockChars = blocks.reduce((sum, block) => sum + block.length, 0);
     expect(totalBlockChars).toBeLessThanOrEqual(cap);
   });
+
+  it("serializes round-robin cursor updates under concurrent prepend builds", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "hb-rr-"));
+    const old = new Date(Date.now() - 60 * 60_000).toISOString();
+    const g1 = await createGoal(
+      goalsDir,
+      { label: "rr-1", description: "d", acceptanceCriteria: ["a"], cooldownMinutes: 1 },
+      { ...defaults, cooldownMinutes: 1 },
+    );
+    const g2 = await createGoal(
+      goalsDir,
+      { label: "rr-2", description: "d", acceptanceCriteria: ["a"], cooldownMinutes: 1 },
+      { ...defaults, cooldownMinutes: 1 },
+    );
+    await updateGoal(
+      goalsDir,
+      g1.id,
+      { lastAssessedAt: old },
+      { timestamp: new Date().toISOString(), action: "t", detail: "d", actor: "user" },
+    );
+    await updateGoal(
+      goalsDir,
+      g2.id,
+      { lastAssessedAt: old },
+      { timestamp: new Date().toISOString(), action: "t", detail: "d", actor: "user" },
+    );
+
+    const goals = await listActiveGoals(goalsDir);
+    const cfg = gs({ multiGoalMaxGoals: 1, multiGoalMaxChars: 4000 });
+    const [r1, r2] = await Promise.all([
+      buildMultiGoalStewardshipPrepend(goalsDir, cfg, goals, { suggestHeavyDirective: false, triageHeavy: false }),
+      buildMultiGoalStewardshipPrepend(goalsDir, cfg, goals, { suggestHeavyDirective: false, triageHeavy: false }),
+    ]);
+    expect(r1).not.toBeNull();
+    expect(r2).not.toBeNull();
+    const labels = [r1?.goalsIncluded[0]?.label, r2?.goalsIncluded[0]?.label];
+    expect(new Set(labels).size).toBe(2);
+  });
 });
 
 describe("heuristicNeedsHeavyAttention", () => {

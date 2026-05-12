@@ -107,14 +107,18 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 |----------|-------------|
 | [Model-Agnostic Analysis](MODEL-AGNOSTIC-ANALYSIS) | Compatibility across LLM providers |
 | [Presentation strategy](PRESENTATION-STRATEGY) | Canonical product message, demo story, visuals, and terminology |
+| [Demo package](DEMO-PACKAGE) | Repeatable 60s and 5-minute product demos with proof checklist |
 | [Feedback Roadmap](FEEDBACK-ROADMAP) | Planned improvements and feature requests |
 | [Productisation Track](PRODUCTISATION-TRACK) | Coordinating view of shipped product work, open lanes, and phase order |
+| [Add-on ecosystem](ADDON-ECOSYSTEM) | Modular packaging direction for optional capability domains |
+| [Encrypted sync replication](SYNC-REPLICATION) | Optional encrypted export/import flow for multi-device continuity |
 
 ### Project
 
 | Document | Description |
 |----------|-------------|
 | [Credits & attribution](CREDITS-AND-ATTRIBUTION) | Sources, lineage, and what this repository adds |
+| [Contributor onboarding](CONTRIBUTOR-ONBOARDING) | First-contribution path, quality bar, and high-impact starter areas |
 
 ---
 

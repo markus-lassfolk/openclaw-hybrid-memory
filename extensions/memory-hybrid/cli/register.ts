@@ -22,6 +22,7 @@ import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
 import { registerStatusCommands } from "./cmd-status.js";
+import { type UserFriendlyContext, registerUserFriendlyCommands } from "./cmd-user-friendly.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
   BackfillCliResult,
@@ -469,6 +470,24 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "register-cli:benchmark",
+    });
+    throw err;
+  }
+
+  // Register user-friendly commands (setup, demo, providers, health, doctor, examples)
+  try {
+    const userFriendlyContext: UserFriendlyContext = {
+      cfg: ctx.cfg,
+      factsDb: ctx.factsDb,
+      vectorDb: ctx.vectorDb,
+      embeddings: ctx.embeddings,
+      runConfigSet: ctx.runConfigSet,
+    };
+    registerUserFriendlyCommands(mem, userFriendlyContext);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:user-friendly",
     });
     throw err;
   }

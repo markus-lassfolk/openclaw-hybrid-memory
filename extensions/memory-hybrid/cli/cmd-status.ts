@@ -42,7 +42,9 @@ export async function runStatusForCli(ctx: StatusContext, opts?: { format?: "tex
     return;
   }
 
-  const needsAttention = status.cronJobs.filter((job) => job.enabled && (job.consecutiveErrors > 0 || job.lastRunAt == null));
+  const needsAttention = status.cronJobs.filter(
+    (job) => job.enabled && (job.consecutiveErrors > 0 || job.lastRunAt == null),
+  );
   const auditFailureCount = status.audit.recentFailures.length;
   const agentAlerts = status.agentHealth.alerts.length;
   const activeTask = status.taskQueue.current;

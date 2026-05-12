@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 
 export function pruneOrphanedLinks(db: DatabaseSync): number {
@@ -39,10 +40,13 @@ export function countActiveFactsByCategory(db: DatabaseSync, category: string): 
 export function pruneLogTables(db: DatabaseSync, retentionDays: number): number {
   if (retentionDays <= 0) return 0;
   const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
-  const recall = db.prepare("DELETE FROM recall_log WHERE occurred_at < ?").run(cutoff);
-  const reinforcement = db.prepare("DELETE FROM reinforcement_log WHERE occurred_at < ?").run(cutoff);
-  const feedback = db.prepare("DELETE FROM feedback_trajectories WHERE created_at < ?").run(cutoff);
-  return Number(recall.changes ?? 0) + Number(reinforcement.changes ?? 0) + Number(feedback.changes ?? 0);
+  const tx = createTransaction(db, () => {
+    const recall = db.prepare("DELETE FROM recall_log WHERE occurred_at < ?").run(cutoff);
+    const reinforcement = db.prepare("DELETE FROM reinforcement_log WHERE occurred_at < ?").run(cutoff);
+    const feedback = db.prepare("DELETE FROM feedback_trajectories WHERE created_at < ?").run(cutoff);
+    return Number(recall.changes ?? 0) + Number(reinforcement.changes ?? 0) + Number(feedback.changes ?? 0);
+  });
+  return tx();
 }
 
 export function optimizeFts(db: DatabaseSync): void {

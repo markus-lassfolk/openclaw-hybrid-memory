@@ -26,8 +26,7 @@ const WORKSPACE_DIRECTORIES = [
 const WORKSPACE_FILE_TEMPLATES: ReadonlyArray<{ relativePath: string; body: string }> = [
   {
     relativePath: "AGENTS.md",
-    body:
-      "# AGENTS\n\n## How to use hybrid memory in this workspace\n\n- Store durable facts, preferences, and decisions with hybrid-memory tools.\n- Keep project-specific instructions in this workspace when they should survive across sessions.\n- Review MEMORY.md and TOOLS.md before adding new long-lived conventions.\n",
+    body: "# AGENTS\n\n## How to use hybrid memory in this workspace\n\n- Store durable facts, preferences, and decisions with hybrid-memory tools.\n- Keep project-specific instructions in this workspace when they should survive across sessions.\n- Review MEMORY.md and TOOLS.md before adding new long-lived conventions.\n",
   },
   {
     relativePath: "SOUL.md",
@@ -39,8 +38,7 @@ const WORKSPACE_FILE_TEMPLATES: ReadonlyArray<{ relativePath: string; body: stri
   },
   {
     relativePath: "MEMORY.md",
-    body:
-      "# MEMORY\n\nUse this file as the human-readable landing page for your workspace memory.\n\n- Put high-signal summaries here.\n- Store detailed durable facts under memory/.\n- Use openclaw hybrid-mem status for a quick operational summary.\n",
+    body: "# MEMORY\n\nUse this file as the human-readable landing page for your workspace memory.\n\n- Put high-signal summaries here.\n- Store detailed durable facts under memory/.\n- Use openclaw hybrid-mem status for a quick operational summary.\n",
   },
   {
     relativePath: "HEARTBEAT.md",

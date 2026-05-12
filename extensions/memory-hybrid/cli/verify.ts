@@ -43,7 +43,11 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
       "balanced",
     )
-    .option("--reconcile-max-fixes <n>", "Max SQLite-orphan vectors to rebuild when --fix is set (default: 200)", "200")
+    .option(
+      "--reconcile-max-fixes <n>",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
+      "200",
+    )
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
       withExit(
@@ -109,75 +113,158 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
       "Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.",
     );
   if (installCommand.alias) installCommand.alias("setup");
-  installCommand
-    .option("--dry-run", "Print what would be merged without writing")
-    .action(
-      withExit(async (opts: { dryRun?: boolean }) => {
-        let result: InstallCliResult;
-        try {
-          result = await runInstall({ dryRun: !!opts.dryRun });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "install",
-          });
-          throw err;
-        }
-        if (!result.ok) {
-          console.error(result.error);
-          process.exitCode = 1;
-          return;
-        }
-        if (result.dryRun) {
-          console.log(`Dry run for ${result.configPath}`);
-          console.log(`Recommended embedding: ${result.detectedEmbedding.provider}/${result.detectedEmbedding.model}`);
-          console.log(`Reason: ${result.detectedEmbedding.reason}`);
-          console.log("");
-          console.log("Planned");
-          for (const item of result.completed) console.log(`  - ${item}`);
-          if (result.workspaceSkillPath) {
-            console.log(
-              `  - Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (${result.workspaceSkillError})` : ""}`,
-            );
-          }
-          if (result.workspaceToolsMdPath) {
-            console.log(
-              `  - TOOLS.md managed block: ${result.workspaceToolsMdPath}${result.workspaceToolsMdError ? ` (${result.workspaceToolsMdError})` : ""}`,
-            );
-          }
-          console.log("");
-          console.log("Still manual");
-          for (const item of result.remaining) console.log(`  - ${item}`);
-          console.log("");
-          console.log(result.configJson ?? "");
-          return;
-        }
-        console.log(`Setup complete for ${result.pluginId}`);
-        console.log(`Config: ${result.configPath}`);
-        console.log(`Workspace: ${result.workspaceRoot}`);
-        console.log(`Mission Control: ${result.dashboardUrl}`);
-        console.log(`Embedding: ${result.detectedEmbedding.provider}/${result.detectedEmbedding.model} (${result.detectedEmbedding.source})`);
+  installCommand.option("--dry-run", "Print what would be merged without writing").action(
+    withExit(async (opts: { dryRun?: boolean }) => {
+      let result: InstallCliResult;
+      try {
+        result = await runInstall({ dryRun: !!opts.dryRun });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "install",
+        });
+        throw err;
+      }
+      if (!result.ok) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      if (result.dryRun) {
+        console.log(`Dry run for ${result.configPath}`);
+        console.log(`Recommended embedding: ${result.detectedEmbedding.provider}/${result.detectedEmbedding.model}`);
+        console.log(`Reason: ${result.detectedEmbedding.reason}`);
         console.log("");
-        console.log("Done");
+        console.log("Planned");
         for (const item of result.completed) console.log(`  - ${item}`);
         if (result.workspaceSkillPath) {
           console.log(
-            `  - Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (warning: ${result.workspaceSkillError})` : ""}`,
+            `  - Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (${result.workspaceSkillError})` : ""}`,
           );
         }
         if (result.workspaceToolsMdPath) {
-          const toolsSuffix = result.workspaceToolsMdError
-            ? ` (warning: ${result.workspaceToolsMdError})`
-            : result.workspaceToolsMdUpdated === true
-              ? " (updated)"
-              : result.workspaceToolsMdUpdated === false
-                ? " (unchanged)"
-                : "";
-          console.log(`  - TOOLS.md: ${result.workspaceToolsMdPath}${toolsSuffix}`);
+          console.log(
+            `  - TOOLS.md managed block: ${result.workspaceToolsMdPath}${result.workspaceToolsMdError ? ` (${result.workspaceToolsMdError})` : ""}`,
+          );
         }
         console.log("");
-        console.log("Left");
+        console.log("Still manual");
         for (const item of result.remaining) console.log(`  - ${item}`);
-      }),
+        console.log("");
+        console.log(result.configJson ?? "");
+        return;
+      }
+      console.log(`Setup complete for ${result.pluginId}`);
+      console.log(`Config: ${result.configPath}`);
+      console.log(`Workspace: ${result.workspaceRoot}`);
+      console.log(`Mission Control: ${result.dashboardUrl}`);
+      console.log(
+        `Embedding: ${result.detectedEmbedding.provider}/${result.detectedEmbedding.model} (${result.detectedEmbedding.source})`,
+      );
+      console.log("");
+      console.log("Done");
+      for (const item of result.completed) console.log(`  - ${item}`);
+      if (result.workspaceSkillPath) {
+        console.log(
+          `  - Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (warning: ${result.workspaceSkillError})` : ""}`,
+        );
+      }
+      if (result.workspaceToolsMdPath) {
+        const toolsSuffix = result.workspaceToolsMdError
+          ? ` (warning: ${result.workspaceToolsMdError})`
+          : result.workspaceToolsMdUpdated === true
+            ? " (updated)"
+            : result.workspaceToolsMdUpdated === false
+              ? " (unchanged)"
+              : "";
+        console.log(`  - TOOLS.md: ${result.workspaceToolsMdPath}${toolsSuffix}`);
+      }
+      console.log("");
+      console.log("Left");
+      for (const item of result.remaining) console.log(`  - ${item}`);
+    }),
+  );
+
+  mem
+    .command("doctor")
+    .description("Guided onboarding checks: runs install/verify in a safe sequence and optionally applies fixes.")
+    .option("--fix", "Apply recommended install defaults + verify fixes before final verification")
+    .option("--dry-run", "Preview install defaults without writing files")
+    .option("--test-llm", "Test configured LLM models as part of verification")
+    .option("--reconcile", "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use with --fix to auto-heal.")
+    .option(
+      "--reconcile-policy <policy>",
+      "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
+      "balanced",
+    )
+    .option(
+      "--reconcile-max-fixes <n>",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
+      "200",
+    )
+    .action(
+      withExit(
+        async (opts: {
+          fix?: boolean;
+          dryRun?: boolean;
+          testLlm?: boolean;
+          reconcile?: boolean;
+          reconcilePolicy?: string;
+          reconcileMaxFixes?: string;
+        }) => {
+          const reconcilePolicyRaw = String(opts.reconcilePolicy ?? "balanced")
+            .trim()
+            .toLowerCase();
+          const reconcilePolicy =
+            reconcilePolicyRaw === "conservative" || reconcilePolicyRaw === "aggressive"
+              ? reconcilePolicyRaw
+              : "balanced";
+          const parsedReconcileMaxFixes = Number.parseInt(String(opts.reconcileMaxFixes ?? "200"), 10);
+          const reconcileMaxFixes = Math.max(
+            0,
+            Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
+          );
+          const applyFixes = opts.fix === true && opts.dryRun !== true;
+          const dryRunInstall = opts.dryRun === true || !applyFixes;
+          const sink = { log: (s: string) => console.log(s), error: (s: string) => console.error(s) };
+
+          console.log("🩺 Hybrid Memory Doctor");
+          console.log("Step 1/3: install defaults");
+          const installResult = await runInstall({ dryRun: dryRunInstall });
+          if (!installResult.ok) {
+            console.error(`Install check failed: ${installResult.error}`);
+            process.exitCode = 1;
+            return;
+          }
+          if (installResult.dryRun) {
+            console.log(`(dry-run) Would update config at ${installResult.configPath}`);
+          } else {
+            console.log(`Applied/verified defaults at ${installResult.configPath}`);
+          }
+
+          console.log("Step 2/3: verify runtime + storage health");
+          await runVerify(
+            {
+              fix: applyFixes,
+              testLlm: opts.testLlm === true,
+              reconcile: opts.reconcile === true,
+              reconcilePolicy,
+              reconcileMaxFixes,
+            },
+            sink,
+          );
+
+          console.log("Step 3/3: doctor summary");
+          if (dryRunInstall) {
+            console.log(
+              "Doctor completed in preview mode. Re-run with --fix to apply install + verify repairs, then restart the gateway.",
+            );
+          } else if (applyFixes) {
+            console.log("Doctor applied fixes. Restart the gateway to ensure all changes are active.");
+          } else {
+            console.log("Doctor checks completed. Re-run with --fix if you want auto-remediation.");
+          }
+        },
+      ),
     );
 }

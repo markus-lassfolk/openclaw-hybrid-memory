@@ -1,4 +1,4 @@
-import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -130,6 +130,26 @@ describe("goal registry", () => {
     expect(created.label).toBe("stale-lock");
   });
 
+  it("does not evict stale lock when owner pid is alive", async () => {
+    dir = await makeTempDir();
+    const lockPath = join(dir, ".lock-label-held-lock");
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({ pid: process.pid, acquiredAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() }),
+      "utf-8",
+    );
+    const stale = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(lockPath, stale, stale);
+
+    const pending = createGoal(dir, { label: "held-lock", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await rm(lockPath, { recursive: true, force: true });
+
+    const created = await pending;
+    expect(created.label).toBe("held-lock");
+  });
+
   it("createGoal allows reuse of label after terminal goal", async () => {
     dir = await makeTempDir();
     const g = await createGoal(dir, { label: "reuse", description: "d", acceptanceCriteria: ["a"] }, defaults);
@@ -194,6 +214,20 @@ describe("goal registry", () => {
     const raw = JSON.parse(await readFile(join(dir, "_index.json"), "utf-8"));
     expect(raw.goals.length).toBe(1);
     expect(raw.goals[0].label).toBe("ok");
+  });
+
+  it("readGoal throws for corrupt goal JSON instead of returning null", async () => {
+    dir = await makeTempDir();
+    await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+    await expect(readGoal(dir, "broken")).rejects.toThrow(/corrupt or unreadable/i);
+  });
+
+  it("listGoals skips corrupt goal JSON and continues processing healthy goals", async () => {
+    dir = await makeTempDir();
+    const healthy = await createGoal(dir, { label: "healthy", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+    const listed = await listGoals(dir);
+    expect(listed.map((g) => g.id)).toEqual([healthy.id]);
   });
 
   it("readGoalByLabel prefers active over terminal when labels collide", async () => {

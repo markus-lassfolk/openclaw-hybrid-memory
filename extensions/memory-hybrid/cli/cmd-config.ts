@@ -441,9 +441,7 @@ export function runConfigSetHelpForCli(_ctx: HandlerContext, key: string): Confi
     capturePluginError(err as Error, { subsystem: "cli", operation: "runConfigSetHelpForCli:read-hints" });
   }
   if (!desc && k === "mode") {
-    desc = `Choose one of: ${(
-      Object.entries(MODE_SUMMARIES) as Array<[ConfigMode, string]>
-    )
+    desc = `Choose one of: ${(Object.entries(MODE_SUMMARIES) as Array<[ConfigMode, string]>)
       .map(([mode, summary]) => `${mode} = ${summary}`)
       .join(" | ")}`;
   }

@@ -45,4 +45,19 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     resolveWork?.();
     await run;
   });
+
+  it("prefixes follow-up stage counters in verbose logs", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    await runVerboseFollowUp("extract implicit feedback", true, async () => undefined, {
+      stageIndex: 2,
+      stageTotal: 6,
+    });
+
+    expect(logs.some((l) => l.includes("stage 2/6 extract implicit feedback — start"))).toBe(true);
+    expect(logs.some((l) => l.includes("stage 2/6 extract implicit feedback — complete in"))).toBe(true);
+  });
 });

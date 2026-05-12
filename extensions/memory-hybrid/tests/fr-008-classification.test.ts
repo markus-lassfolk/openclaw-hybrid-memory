@@ -225,5 +225,9 @@ describe("findSimilarByEmbedding", () => {
     });
     expect(agentOnly.some((f) => f.id === globalEntry.id)).toBe(false);
     expect(agentOnly.some((f) => f.id === agentEntry.id)).toBe(true);
+
+    const unscoped = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3);
+    expect(unscoped.some((f) => f.id === globalEntry.id)).toBe(true);
+    expect(unscoped.some((f) => f.id === agentEntry.id)).toBe(true);
   });
 });

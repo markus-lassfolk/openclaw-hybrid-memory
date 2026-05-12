@@ -3,13 +3,17 @@
  * @see docs/GOAL-STEWARDSHIP-DESIGN.md §10.1
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { GoalStewardshipAttentionWeights, GoalStewardshipConfig } from "../config/types/index.js";
 import type { Goal } from "./goal-stewardship-types.js";
 
 const RR_FILE = "_stewardship_rr.json";
+const RR_LOCK_DIR = ".stewardship-rr.lock";
+const RR_LOCK_RETRY_MS = 25;
+const RR_LOCK_MAX_RETRIES = 200;
+const RR_LOCK_STALE_MS = 2 * 60 * 1000;
 
 /** Built-in pattern sources when `heartbeatPatterns` is empty (case-insensitive). */
 export const DEFAULT_HEARTBEAT_PATTERN_SOURCES = ["heartbeat", "scheduled ping", "cron heartbeat"];
@@ -95,11 +99,41 @@ async function readRoundRobin(goalsDir: string): Promise<StewardshipRoundRobinSt
 }
 
 async function writeRoundRobin(goalsDir: string, state: StewardshipRoundRobinState): Promise<void> {
+  await mkdir(goalsDir, { recursive: true });
   await writeFile(
     join(goalsDir, RR_FILE),
     JSON.stringify({ offset: state.offset, updatedAt: new Date().toISOString() }, null, 2),
     "utf-8",
   );
+}
+
+async function withRoundRobinLock<T>(goalsDir: string, fn: () => Promise<T>): Promise<T> {
+  await mkdir(goalsDir, { recursive: true });
+  const lockPath = join(goalsDir, RR_LOCK_DIR);
+  for (let attempt = 0; attempt < RR_LOCK_MAX_RETRIES; attempt++) {
+    try {
+      await mkdir(lockPath);
+      try {
+        return await fn();
+      } finally {
+        await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+      }
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "EEXIST") throw err;
+      try {
+        const lockStat = await stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > RR_LOCK_STALE_MS) {
+          await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+          continue;
+        }
+      } catch {
+        // Lock may be removed/rotated between checks; keep retrying.
+      }
+      await new Promise((resolve) => setTimeout(resolve, RR_LOCK_RETRY_MS));
+    }
+  }
+  throw new Error("Timed out waiting for stewardship round-robin lock");
 }
 
 function candidateGoals(goals: Goal[], now: number): Goal[] {
@@ -197,15 +231,16 @@ export async function buildMultiGoalStewardshipPrepend(
   const candidates = sortGoalsForRoundRobin(candidateGoals(allGoals, now), cfg.attentionWeights);
   if (candidates.length === 0) return null;
 
-  const rr = await readRoundRobin(goalsDir);
-  const rot = rr.offset % candidates.length;
-  const rotated = [...candidates.slice(rot), ...candidates.slice(0, rot)];
-
-  const maxGoals = Math.min(cfg.multiGoalMaxGoals, rotated.length);
-  const selected = rotated.slice(0, maxGoals);
-
-  const nextOff = (rot + selected.length) % Math.max(1, candidates.length);
-  await writeRoundRobin(goalsDir, { offset: nextOff });
+  const { rrOffset, nextOff, selected } = await withRoundRobinLock(goalsDir, async () => {
+    const rr = await readRoundRobin(goalsDir);
+    const rot = rr.offset % candidates.length;
+    const rotated = [...candidates.slice(rot), ...candidates.slice(0, rot)];
+    const maxGoals = Math.min(cfg.multiGoalMaxGoals, rotated.length);
+    const selectedGoals = rotated.slice(0, maxGoals);
+    const next = (rot + selectedGoals.length) % Math.max(1, candidates.length);
+    await writeRoundRobin(goalsDir, { offset: next });
+    return { rrOffset: rr.offset, nextOff: next, selected: selectedGoals };
+  });
 
   const weights = selected.map((g) => priorityWeight(g.priority, cfg.attentionWeights));
   const sumW = weights.reduce((a, b) => a + b, 0) || 1;
@@ -234,7 +269,7 @@ export async function buildMultiGoalStewardshipPrepend(
   if (blocks.length === 0) return null;
 
   let header = "<goal-stewardship-bundle>\n";
-  header += `<!-- goals: ${includedGoals.length} | cap: ${cap} chars | rr: ${rr.offset}->${nextOff} -->\n`;
+  header += `<!-- goals: ${includedGoals.length} | cap: ${cap} chars | rr: ${rrOffset}->${nextOff} -->\n`;
   if (opts.suggestHeavyDirective && suggestHeavy) {
     header += "<!-- triage: prefer heavy-tier model or deliberate tool use for substantive dispatch this turn -->\n";
   }
