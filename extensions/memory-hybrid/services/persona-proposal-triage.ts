@@ -496,7 +496,6 @@ function analyzePersonaProposal(
     return defer("medium", "policy-requires-human", diffSummary, evidence, p.confidence);
   }
   if (!hasEvidence(p)) return defer("low", "missing-evidence", diffSummary, evidence, p.confidence);
-  if (isLargeOrBroadDiff(p)) return defer("medium", "large-or-broad-diff", diffSummary, evidence, p.confidence);
   if (policy !== "apply-safe") return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
   if (!hasReliableTargetSnapshot(p)) {
     return defer(
@@ -509,22 +508,6 @@ function analyzePersonaProposal(
   }
   if (p.confidence < PERSONA_APPLY_CONFIDENCE_THRESHOLD) {
     return defer("low", "low-confidence", diffSummary, evidence, p.confidence);
-  }
-  if (isCriticalTarget(p.targetFile)) {
-    const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange);
-    const containsSemanticKeywords =
-      /\b(identity|personality|voice|tone|behavior|instruction|response|reply|always|never|must|should)\b/i.test(
-        p.suggestedChange,
-      );
-    if (!hasFormattingPrefix || containsSemanticKeywords) {
-      return defer(
-        "medium",
-        "policy-requires-human",
-        "Sensitive persona target requires exact human approval for semantic writes.",
-        evidence,
-        p.confidence,
-      );
-    }
   }
   return {
     risk: "low",
