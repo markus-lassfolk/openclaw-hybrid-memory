@@ -67,7 +67,10 @@ export function extractCredentialMatch(text: string): { type: string; secretValu
   for (const { regex, type } of CREDENTIAL_PATTERNS) {
     const match = regex.exec(text);
     if (match) {
-      const secretValue = match[0].replace(/^Bearer\s+/i, "").trim().slice(0, MAX_SECRET_VALUE_LENGTH);
+      const secretValue = match[0]
+        .replace(/^Bearer\s+/i, "")
+        .trim()
+        .slice(0, MAX_SECRET_VALUE_LENGTH);
       if (secretValue.length >= 8) return { type, secretValue };
     }
   }
