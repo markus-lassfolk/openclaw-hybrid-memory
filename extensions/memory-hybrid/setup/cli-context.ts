@@ -1013,7 +1013,7 @@ function buildListCommands(
       return runPersonaProposalTriage({
         proposalsDb,
         cfg,
-        mode: opts.apply ? "apply" : "dry-run",
+        mode: opts.dryRun ? "dry-run" : opts.apply ? "apply" : "dry-run",
         policy: (opts.policy ?? "report-only") as never,
         max: opts.max,
         stateDbPath: opts.stateDb,

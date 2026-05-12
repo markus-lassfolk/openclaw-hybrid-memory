@@ -271,7 +271,8 @@ export function decidePersonaProposal(
   },
 ): PendingDecision {
   const all = input.allProposals ?? input.proposalsDb.list();
-  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all, input.cfg);
+  const workspace = input.workspace ?? defaultWorkspace();
+  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all, input.cfg, workspace);
   return {
     queue: "persona",
     itemId: item.id,
@@ -386,7 +387,7 @@ function proposalToPendingItem(
     visibleAfterCursor: proposal.id,
     requiresHumanReview: true,
     proposal,
-    targetPath: target.ok ? target.path : target.path,
+    targetPath: target.ok ? target.path : proposal.targetFile,
     targetHash,
   };
 }
@@ -396,11 +397,12 @@ function analyzePersonaProposal(
   policy: PersonaProposalTriagePolicy,
   allProposals: ProposalEntry[],
   cfg: Pick<HybridMemoryConfig, "personaProposals">,
+  workspace: string,
 ): Analysis {
   const p = item.proposal;
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`;
   const evidence = buildEvidence(p);
-  const target = resolveAllowedPersonaTarget(dirname(item.targetPath), p.targetFile, cfg.personaProposals.allowedFiles);
+  const target = resolveAllowedPersonaTarget(workspace, p.targetFile, cfg.personaProposals.allowedFiles);
   if (!target.ok) {
     return failed("critical", "validation-failed", `Target path rejected for ${p.targetFile}`, evidence, 0.1);
   }
@@ -990,8 +992,4 @@ export function createPersonaProposalFixtureItem(input: {
       policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
     }),
   };
-}
-
-export function ensurePersonaTriageStateDir(stateDbPath: string): void {
-  mkdirSync(dirname(stateDbPath), { recursive: true });
 }
