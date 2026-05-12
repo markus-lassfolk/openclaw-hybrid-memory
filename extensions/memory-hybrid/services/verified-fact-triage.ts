@@ -286,8 +286,8 @@ export function listVerifiedFactTriageItems(
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
           OR vf.verified_at <= ?)
-         AND (? IS NULL OR COALESCE(vf.next_verification, vf.verified_at) > ?)
-       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC`,
+         AND (? IS NULL OR COALESCE(vf.next_verification, vf.verified_at) >= ?)
+       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC, vf.id ASC`,
     )
     .all(nowIso, cutoffIso, cursor, cursor) as unknown as VerifiedFactRow[];
 
@@ -1096,6 +1096,7 @@ function findExplicitNewerVerifiedFact(db: DatabaseSync, fact: TriageFactSnapsho
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.supersedes_id = ?
          AND f.created_at >= ?
+         AND f.superseded_at IS NULL
          AND compute_verified_checksum(vf.canonical_text) = vf.checksum
        ORDER BY f.created_at DESC
        LIMIT 5`,
