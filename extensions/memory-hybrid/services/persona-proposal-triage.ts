@@ -1029,7 +1029,7 @@ export function applyPreparedPersonaChange(
     targetWritten = true;
     markApplied();
     appliedMarked = true;
-    rmSync(preparedApply.backupPath, { force: true });
+    (io.removeBackup ?? ((path) => rmSync(path, { force: true })))(preparedApply.backupPath);
   } catch (err) {
     if (targetWritten && !appliedMarked) {
       try {
