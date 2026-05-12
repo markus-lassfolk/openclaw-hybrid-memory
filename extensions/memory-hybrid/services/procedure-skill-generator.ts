@@ -141,7 +141,7 @@ export function generateAutoSkills(
     if (decision.action === "failed-validation") failedValidation++;
     if (evaluation.metadata.rejectionReasons.includes("functional_eval_failed")) failedEval++;
 
-    if (!evaluation.eligible || !evaluation.draft || (!dryRun && evaluation.metadata.requiresHumanApproval)) {
+    if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
       decisions.push({
         procedureId: proc.id,
         action: decision.action,
@@ -289,11 +289,10 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
   });
-  if (!evaluation.eligible || !evaluation.draft || (!dryRun && evaluation.metadata.requiresHumanApproval)) {
+  if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
       evaluation.eligible &&
       evaluation.draft &&
-      !dryRun &&
       evaluation.metadata.requiresHumanApproval &&
       evaluation.metadata.rejectionReasons.length === 0
         ? ["policy_requires_human_approval"]

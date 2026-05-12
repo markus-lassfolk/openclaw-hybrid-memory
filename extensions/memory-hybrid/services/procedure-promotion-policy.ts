@@ -286,8 +286,9 @@ export function evaluateProcedureForPromotion(
 
   gates.push(...scanSafety(combinedText));
 
+  const initialGates = gates.length;
   const draft =
-    gates.length > 0
+    initialGates > 0
       ? null
       : buildProcedureSkillDraft(item, policy, options, gates, options.resolvedSlug ?? item.payload.skillSlug);
   if (draft) {
@@ -316,13 +317,9 @@ export function evaluateProcedureForPromotion(
     }
   }
 
-  let finalDraft = draft;
-  if (draft && gates.some((g) => g.severity === "fail-validation")) {
-    finalDraft = null;
-  }
-
   const eligible = gates.length === 0;
-  const generatedPath = finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
+  const finalDraft = eligible ? draft : null;
+  const generatedPath = eligible && finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
   const resolvedSkillSlug = options.resolvedSlug ?? finalDraft?.slug ?? item.payload.skillSlug;
   const metadata: ProcedurePromotionVerification = {
     skill: resolvedSkillSlug,

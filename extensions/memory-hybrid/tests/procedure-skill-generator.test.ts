@@ -328,7 +328,7 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "validate-release-health-report", "SKILL.md"))).toBe(false);
   });
 
-  it("single procedure dry-run returns a preview under default draft-only policy", () => {
+  it("single procedure dry-run under default draft-only policy requires human approval and writes nothing", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single procedure report",
       recipeJson: JSON.stringify([
@@ -359,12 +359,9 @@ describe("generateAutoSkills", () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      alreadyPromoted: false,
-      skillPath: join(skillsDir, "validate-single-procedure-report", "SKILL.md"),
-      relativePath: join(skillsDir, "validate-single-procedure-report"),
-      dryRun: true,
-      enabled: false,
+      ok: false,
+      reason: "policy-blocked",
+      reasons: ["policy_requires_human_approval"],
     });
     expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
   });
@@ -405,6 +402,52 @@ describe("generateAutoSkills", () => {
       reason: "policy-blocked",
     });
     expect(existsSync(join(skillsDir, "validate-single-apply-report", "SKILL.md"))).toBe(false);
+  });
+
+  it("does not count deferred procedures as generated dry-run paths", () => {
+    db.upsertProcedure({
+      taskPattern: "Validate low confidence dry-run report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      failureCount: 0,
+      confidence: 0.1,
+      sourceSessionId: "deferred-dry-run-a",
+    });
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        dryRun: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.summary).toMatchObject({
+      candidates: 1,
+      eligible: 0,
+      deferred: 1,
+      drafted: 0,
+    });
+    expect(result.generated).toBe(0);
+    expect(result.paths).toEqual([]);
+    expect(result.decisions?.[0]).toMatchObject({
+      action: "deferred-for-human",
+      skillPath: null,
+    });
   });
 
   it("does not inflate failedEval for deferred/rejected procedures", () => {

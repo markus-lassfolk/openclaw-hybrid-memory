@@ -166,6 +166,28 @@ describe("procedure promotion policy and adapter", () => {
     expect(verification.sourceProcedureIds).toEqual([proc.id]);
   });
 
+  it("does not report generated skill paths for deferred procedures", () => {
+    const proc = addProcedure({
+      taskPattern: "Validate deferred low confidence report",
+      recipeJson: goodRecipe(),
+      confidence: 0.1,
+      sourceSessionId: "generated-path-deferred-a",
+    });
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), "auto-safe");
+
+    const evaluation = evaluateProcedureForPromotion(item, "auto-safe", {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+      minDistinctContexts: 1,
+    });
+
+    expect(evaluation.eligible).toBe(false);
+    expect(evaluation.metadata.rejectionReasons).toContain("low_confidence");
+    expect(evaluation.metadata.promotionDecision).toBe("deferred");
+    expect(evaluation.draft).toBeNull();
+    expect(evaluation.metadata.generatedSkillPath).toBeNull();
+  });
+
   it("rejects or defers low-value noisy, recent-failure, low-confidence, destructive, external, duplicate, and malformed recipes", () => {
     const cases = [
       {
