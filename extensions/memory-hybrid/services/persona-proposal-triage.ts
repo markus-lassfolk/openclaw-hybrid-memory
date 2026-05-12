@@ -90,7 +90,7 @@ export interface PersonaProposalReviewBundle {
   id: string;
   targetFile: string;
   risk: PersonaProposalRisk;
-  recommendation: "reject" | "defer" | "review";
+  recommendation: "reject" | "defer";
   proposalIds: string[];
   reasons: string[];
   rationale: string;
