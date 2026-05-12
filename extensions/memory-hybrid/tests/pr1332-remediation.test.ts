@@ -164,6 +164,27 @@ describe("PR #1332 unresolved feedback remediation", () => {
         question: (_question: string, cb: (answer: string) => void) => cb("secret-key"),
         close: () => {
           close();
+          setTimeout(() => callbacks.get("close")?.(), 0);
+        },
+        on: vi.fn((event: string, cb: () => void) => {
+          callbacks.set(event, cb);
+          return undefined;
+        }),
+      })),
+    ).resolves.toBe("secret-key");
+    expect(close).toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith("\n");
+  });
+
+  it("promptHidden preserves typed answer when close emits synchronously", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const close = vi.fn();
+    const callbacks = new Map<string, () => void>();
+    await expect(
+      promptHiddenWithInterface("key: ", () => ({
+        question: (_question: string, cb: (answer: string) => void) => cb("secret-key"),
+        close: () => {
+          close();
           callbacks.get("close")?.();
         },
         on: vi.fn((event: string, cb: () => void) => {
