@@ -294,7 +294,7 @@ export function listVerifiedFactTriageItems(
            OR COALESCE(vf.next_verification, vf.verified_at) > ?
            OR (COALESCE(vf.next_verification, vf.verified_at) = ? AND vf.id > ?)
          )
-       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC, vf.id ASC`,
+       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.id ASC`,
     )
     .all(nowIso, cutoffIso, cursor, cursor, cursor, cursorItemId) as unknown as VerifiedFactRow[];
 
@@ -325,7 +325,7 @@ function findVerifiedCursorItemId(
        WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
           OR vf.verified_at <= ?)
          AND COALESCE(vf.next_verification, vf.verified_at) = ?
-       ORDER BY vf.verified_at ASC, vf.id ASC`,
+       ORDER BY vf.id ASC`,
     )
     .all(nowIso, cutoffIso, cursor) as unknown as VerifiedFactRow[];
   for (const row of rows) {
