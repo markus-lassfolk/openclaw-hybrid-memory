@@ -629,10 +629,7 @@ function validatePolicies(policies: PendingDigestAutopilotPolicies): void {
   }
 }
 
-function withCloseable<TStore extends { close?: () => void }, T>(
-  factory: () => TStore,
-  fn: (store: TStore) => T,
-): T {
+function withCloseable<TStore extends { close?: () => void }, T>(factory: () => TStore, fn: (store: TStore) => T): T {
   let store: TStore | null = null;
   try {
     store = factory();
