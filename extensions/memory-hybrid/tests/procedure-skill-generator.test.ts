@@ -172,6 +172,63 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "dry-run-procedure", "SKILL.md"))).toBe(false);
   });
 
+  it("reserves candidate slugs during dry-run batch generation", () => {
+    const recipeJson = JSON.stringify([
+      { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+      {
+        tool: "exec",
+        args: { command: "npm test" },
+        summary: "Run validation test",
+      },
+      { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+    ]);
+    const procA = db.upsertProcedure({
+      id: "duplicate-procedure-a",
+      taskPattern: "Validate duplicate procedure",
+      recipeJson,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "duplicate-dry-a1",
+    });
+    recordDistinctSuccesses(procA.id);
+    const procB = db.upsertProcedure({
+      id: "duplicate-procedure-b",
+      taskPattern: "Validate duplicate procedure",
+      recipeJson,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "duplicate-dry-b1",
+    });
+    recordDistinctSuccesses(procB.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        dryRun: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(2);
+    expect(result.paths).toEqual([
+      join(skillsDir, "validate-duplicate-procedure", "SKILL.md"),
+      join(skillsDir, "validate-duplicate-procedure-1", "SKILL.md"),
+    ]);
+    expect((result.decisions ?? []).map((decision) => decision.skillPath)).toEqual([
+      join(skillsDir, "validate-duplicate-procedure"),
+      join(skillsDir, "validate-duplicate-procedure-1"),
+    ]);
+    expect(existsSync(join(skillsDir, "validate-duplicate-procedure", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-duplicate-procedure-1", "SKILL.md"))).toBe(false);
+  });
+
   it("uses one stable runId for every decision in a batch", () => {
     const procA = db.upsertProcedure({
       taskPattern: "Validate release report A",
@@ -271,7 +328,7 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "validate-release-health-report", "SKILL.md"))).toBe(false);
   });
 
-  it("single procedure apply also defaults to draft-only", () => {
+  it("single procedure dry-run returns a preview under default draft-only policy", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single procedure report",
       recipeJson: JSON.stringify([
@@ -281,11 +338,53 @@ describe("generateAutoSkills", () => {
           args: { command: "npm test" },
           summary: "Run validation test",
         },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
       ]),
       procedureType: "positive",
       successCount: 3,
       confidence: 0.9,
       sourceSessionId: "single-default-policy-1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      alreadyPromoted: false,
+      skillPath: join(skillsDir, "validate-single-procedure-report", "SKILL.md"),
+      relativePath: join(skillsDir, "validate-single-procedure-report"),
+      dryRun: true,
+      enabled: false,
+    });
+    expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
+  });
+
+  it("single procedure apply still requires auto-safe policy before writing under default draft-only policy", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate single apply report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "single-apply-default-policy-1",
     });
     recordDistinctSuccesses(proc.id);
 
@@ -305,7 +404,7 @@ describe("generateAutoSkills", () => {
       ok: false,
       reason: "policy-blocked",
     });
-    expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-single-apply-report", "SKILL.md"))).toBe(false);
   });
 
   it("does not inflate failedEval for deferred/rejected procedures", () => {

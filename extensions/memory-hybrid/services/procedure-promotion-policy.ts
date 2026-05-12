@@ -287,9 +287,10 @@ export function evaluateProcedureForPromotion(
 
   gates.push(...scanSafety(combinedText));
 
-  const draft = gates.length > 0
-    ? null
-    : buildProcedureSkillDraft(item, policy, options, gates, options.resolvedSlug ?? item.payload.skillSlug);
+  const draft =
+    gates.length > 0
+      ? null
+      : buildProcedureSkillDraft(item, policy, options, gates, options.resolvedSlug ?? item.payload.skillSlug);
   if (draft) {
     const validator = new SkillValidator();
     const staticResult = validator.validate(draft.skillMd);

@@ -42,10 +42,10 @@ export type GenerateAutoSkillResult =
       enabled: false;
     };
 
-function ensureUniqueSlug(basePath: string, slug: string): string {
+function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-  while (existsSync(join(basePath, candidate))) {
+  while (existsSync(join(basePath, candidate)) || reservedSlugs?.has(candidate)) {
     n++;
     candidate = `${slug}-${n}`;
   }
@@ -115,10 +115,11 @@ export function generateAutoSkills(
   let deferred = 0;
   let failedValidation = 0;
   let failedEval = 0;
+  const reservedSlugs = new Set<string>();
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
-    const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
+    const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
     const context = {
       runId,
       mode: dryRun ? ("dry-run" as const) : ("apply" as const),
@@ -133,6 +134,7 @@ export function generateAutoSkills(
       resolvedSlug,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
+    if (evaluation.eligible && evaluation.draft) reservedSlugs.add(resolvedSlug);
     if (evaluation.eligible) eligible++;
     if (decision.action === "rejected") rejected++;
     if (decision.action === "deferred-for-human") deferred++;
@@ -284,7 +286,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
   });
-  if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
+  if (!evaluation.eligible || !evaluation.draft || (!dryRun && evaluation.metadata.requiresHumanApproval)) {
     return {
       ok: false,
       reason: "policy-blocked",
