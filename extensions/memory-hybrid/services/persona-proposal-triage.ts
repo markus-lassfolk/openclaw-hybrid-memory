@@ -374,7 +374,12 @@ function proposalToPendingItem(
   return {
     queue: "persona",
     id: proposal.id,
-    inputHash: computePendingInputHash({ queue: "persona", id: proposal.id, payload, policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION }),
+    inputHash: computePendingInputHash({
+      queue: "persona",
+      id: proposal.id,
+      payload,
+      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+    }),
     policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
     capabilityClasses: ["read-only", "safe-state-transition", "apply-low-risk-change"],
     payload,
@@ -400,26 +405,74 @@ function analyzePersonaProposal(
     return failed("critical", "validation-failed", `Target path rejected for ${p.targetFile}`, evidence, 0.1);
   }
   if (containsSecretOrPrivateData(text)) {
-    return rejectOrDefer(policy, "critical", "secret-or-private-data-risk", "Secret/private-data risk detected; [REDACTED] raw content.", evidence, 1);
+    return rejectOrDefer(
+      policy,
+      "critical",
+      "secret-or-private-data-risk",
+      "Secret/private-data risk detected; [REDACTED] raw content.",
+      evidence,
+      1,
+    );
   }
   if (containsPromptInjection(text)) {
-    return defer("critical", "security-boundary-change", "Prompt-injection language is untrusted and cannot affect policy gates.", evidence, 1);
+    return defer(
+      "critical",
+      "security-boundary-change",
+      "Prompt-injection language is untrusted and cannot affect policy gates.",
+      evidence,
+      1,
+    );
   }
   if (p.confidence < PERSONA_REJECT_CONFIDENCE_THRESHOLD) {
-    return rejectOrDefer(policy, "low", "low-confidence", `Confidence ${p.confidence.toFixed(2)} below ${PERSONA_REJECT_CONFIDENCE_THRESHOLD}.`, evidence, 1);
+    return rejectOrDefer(
+      policy,
+      "low",
+      "low-confidence",
+      `Confidence ${p.confidence.toFixed(2)} below ${PERSONA_REJECT_CONFIDENCE_THRESHOLD}.`,
+      evidence,
+      1,
+    );
   }
   if (isNonActionable(p.suggestedChange)) {
-    return rejectOrDefer(policy, "low", "non-actionable", "Proposal lacks an actionable localized change.", evidence, 0.95);
+    return rejectOrDefer(
+      policy,
+      "low",
+      "non-actionable",
+      "Proposal lacks an actionable localized change.",
+      evidence,
+      0.95,
+    );
   }
   const duplicate = findDuplicate(p, allProposals);
   if (duplicate?.status === "applied") {
-    return rejectOrDefer(policy, "low", "duplicate-applied-proposal", `Duplicates already-applied proposal ${duplicate.id}.`, evidence, 1);
+    return rejectOrDefer(
+      policy,
+      "low",
+      "duplicate-applied-proposal",
+      `Duplicates already-applied proposal ${duplicate.id}.`,
+      evidence,
+      1,
+    );
   }
   if (duplicate?.status === "pending") {
-    return rejectOrDefer(policy, "low", "duplicate-pending-proposal", `Duplicates pending proposal ${duplicate.id}.`, evidence, 1);
+    return rejectOrDefer(
+      policy,
+      "low",
+      "duplicate-pending-proposal",
+      `Duplicates pending proposal ${duplicate.id}.`,
+      evidence,
+      1,
+    );
   }
   if (isStaleTarget(item)) {
-    return rejectOrDefer(policy, "low", "stale-target-context", "Target snapshot changed since proposal creation; safe rebase unavailable.", evidence, 1);
+    return rejectOrDefer(
+      policy,
+      "low",
+      "stale-target-context",
+      "Target snapshot changed since proposal creation; safe rebase unavailable.",
+      evidence,
+      1,
+    );
   }
   const risk = classifyRisk(p, item);
   const diffSummary = summarizeDiff(p, item);
@@ -437,7 +490,13 @@ function analyzePersonaProposal(
     return defer("low", "low-confidence", diffSummary, evidence, p.confidence);
   }
   if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange)) {
-    return defer("medium", "policy-requires-human", "Sensitive persona target requires exact human approval for semantic writes.", evidence, p.confidence);
+    return defer(
+      "medium",
+      "policy-requires-human",
+      "Sensitive persona target requires exact human approval for semantic writes.",
+      evidence,
+      p.confidence,
+    );
   }
   return {
     risk: "low",
@@ -472,16 +531,30 @@ function applyPersonaDecisionWithLock(input: {
   if (!locked) return validationFailure(input.decision, "lock-conflict", "Could not acquire persona proposal lock.");
   try {
     const current = input.proposalsDb.get(input.item.id);
-    const currentTarget = resolveAllowedPersonaTarget(input.workspace, input.item.proposal.targetFile, [input.item.proposal.targetFile]);
-    const actualHash = current ? proposalToPendingItem(current, input.workspace, { personaProposals: { allowedFiles: [current.targetFile] } } as Pick<HybridMemoryConfig, "personaProposals">).inputHash : "missing";
+    const currentTarget = resolveAllowedPersonaTarget(input.workspace, input.item.proposal.targetFile, [
+      input.item.proposal.targetFile,
+    ]);
+    const actualHash = current
+      ? proposalToPendingItem(current, input.workspace, {
+          personaProposals: { allowedFiles: [current.targetFile] },
+        } as Pick<HybridMemoryConfig, "personaProposals">).inputHash
+      : "missing";
     if (!current || current.status !== "pending") {
       return validationFailure(input.decision, "already-processed", "Proposal was already processed before apply.");
     }
     if (actualHash !== input.decision.inputHash) {
-      return validationFailure(input.decision, "input-hash-mismatch", "Proposal changed between classification and apply.");
+      return validationFailure(
+        input.decision,
+        "input-hash-mismatch",
+        "Proposal changed between classification and apply.",
+      );
     }
     if (!currentTarget.ok || !existsSync(currentTarget.path)) {
-      return validationFailure(input.decision, "stale-target-context", "Target file unavailable during apply revalidation.");
+      return validationFailure(
+        input.decision,
+        "stale-target-context",
+        "Target file unavailable during apply revalidation.",
+      );
     }
     const currentTargetHash = fileHash(currentTarget.path);
     if (input.decision.action === "applied" && current.targetHash && current.targetHash !== currentTargetHash) {
@@ -509,11 +582,21 @@ function applyPersonaDecisionWithLock(input: {
     if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
     return input.decision;
   } finally {
-    input.store.releaseLock({ queue: "persona", itemId: input.item.id, inputHash: input.item.inputHash, owner, mode: input.decision.mode });
+    input.store.releaseLock({
+      queue: "persona",
+      itemId: input.item.id,
+      inputHash: input.item.inputHash,
+      owner,
+      mode: input.decision.mode,
+    });
   }
 }
 
-function validationFailure(decision: PendingDecision, reasonCode: PendingDecision["reasonCode"], body: string): PendingDecision {
+function validationFailure(
+  decision: PendingDecision,
+  reasonCode: PendingDecision["reasonCode"],
+  body: string,
+): PendingDecision {
   return {
     ...decision,
     action: "failed-validation",
@@ -523,7 +606,9 @@ function validationFailure(decision: PendingDecision, reasonCode: PendingDecisio
     confidence: 0,
     humanReviewRequired: true,
     summary: { ...(decision.summary ?? {}), body },
-    audit: decision.audit ? { ...decision.audit, action: "failed-validation", reasonCode, humanReviewRequired: true } : undefined,
+    audit: decision.audit
+      ? { ...decision.audit, action: "failed-validation", reasonCode, humanReviewRequired: true }
+      : undefined,
   };
 }
 
@@ -546,7 +631,9 @@ function decisionToView(item: PersonaProposalPendingItem, decision: PendingDecis
 }
 
 function buildPersonaReviewBundles(views: PersonaProposalDecisionView[]): PersonaProposalReviewBundle[] {
-  const reviewable = views.filter((v) => v.humanReviewRequired || v.action === "reported" || v.action === "deferred-for-human");
+  const reviewable = views.filter(
+    (v) => v.humanReviewRequired || v.action === "reported" || v.action === "deferred-for-human",
+  );
   const groups = new Map<string, PersonaProposalDecisionView[]>();
   for (const view of reviewable) {
     const key = `${view.targetFile}:${view.risk}:${view.reason}:${topicKey(view.diffSummary)}`;
@@ -561,7 +648,10 @@ function buildPersonaReviewBundles(views: PersonaProposalDecisionView[]): Person
       id: `persona-bundle-${idx + 1}`,
       targetFile,
       risk,
-      recommendation: risk === "low" && reasons.every((r) => r.startsWith("duplicate") || r === "non-actionable") ? "reject" : "defer",
+      recommendation:
+        risk === "low" && reasons.every((r) => r.startsWith("duplicate") || r === "non-actionable")
+          ? "reject"
+          : "defer",
       proposalIds,
       reasons,
       rationale: `Grouped by target=${targetFile}, risk=${risk}, and shared topic. Review each proposal independently before approval.`,
@@ -597,7 +687,18 @@ function rejectOrDefer(
   confidence: number,
 ): Analysis {
   if (policy === "cautious" || policy === "apply-safe") {
-    return { risk, action: "rejected", reasonCode, actionClass: "state-transition", capabilityClass: "safe-state-transition", confidence, humanReviewRequired: false, diffSummary, evidence, applyAllowed: false };
+    return {
+      risk,
+      action: "rejected",
+      reasonCode,
+      actionClass: "state-transition",
+      capabilityClass: "safe-state-transition",
+      confidence,
+      humanReviewRequired: false,
+      diffSummary,
+      evidence,
+      applyAllowed: false,
+    };
   }
   return report(risk, reasonCode, diffSummary, evidence, confidence);
 }
@@ -609,7 +710,18 @@ function defer(
   evidence: PendingDecision["evidence"],
   confidence: number,
 ): Analysis {
-  return { risk, action: "deferred-for-human", reasonCode, actionClass: "record-review", capabilityClass: "record-review-metadata", confidence, humanReviewRequired: true, diffSummary, evidence, applyAllowed: false };
+  return {
+    risk,
+    action: "deferred-for-human",
+    reasonCode,
+    actionClass: "record-review",
+    capabilityClass: "record-review-metadata",
+    confidence,
+    humanReviewRequired: true,
+    diffSummary,
+    evidence,
+    applyAllowed: false,
+  };
 }
 
 function report(
@@ -619,7 +731,18 @@ function report(
   evidence: PendingDecision["evidence"],
   confidence: number,
 ): Analysis {
-  return { risk, action: "reported", reasonCode, actionClass: "observe", capabilityClass: "read-only", confidence, humanReviewRequired: false, diffSummary, evidence, applyAllowed: false };
+  return {
+    risk,
+    action: "reported",
+    reasonCode,
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    confidence,
+    humanReviewRequired: false,
+    diffSummary,
+    evidence,
+    applyAllowed: false,
+  };
 }
 
 function failed(
@@ -629,14 +752,35 @@ function failed(
   evidence: PendingDecision["evidence"],
   confidence: number,
 ): Analysis {
-  return { risk, action: "failed-validation", reasonCode, actionClass: "observe", capabilityClass: "read-only", confidence, humanReviewRequired: true, diffSummary, evidence, applyAllowed: false };
+  return {
+    risk,
+    action: "failed-validation",
+    reasonCode,
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    confidence,
+    humanReviewRequired: true,
+    diffSummary,
+    evidence,
+    applyAllowed: false,
+  };
 }
 
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
-  if (containsSecretOrPrivateData(text) || /destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)) return "critical";
-  if (/identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(text)) return "high";
-  if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange)) return "high";
+  if (
+    containsSecretOrPrivateData(text) ||
+    /destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)
+  )
+    return "critical";
+  if (
+    /identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(
+      text,
+    )
+  )
+    return "high";
+  if (isCriticalTarget(p.targetFile) && !/^\s*(formatting|typo|whitespace|punctuation)\b/i.test(p.suggestedChange))
+    return "high";
   if (/preference|workflow|routing|project context|communication/.test(text)) return "medium";
   if (isLargeOrBroadDiff(p)) return "medium";
   if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
@@ -693,7 +837,9 @@ function hasEvidence(p: ProposalEntry): boolean {
 
 function summarizeDiff(p: ProposalEntry, item: PersonaProposalPendingItem): string {
   const change = redactAutopilotValue(p.suggestedChange) as string;
-  const lines = String(change).split(/\r?\n/).filter((line) => line.trim());
+  const lines = String(change)
+    .split(/\r?\n/)
+    .filter((line) => line.trim());
   return `${safeActionVerb(p)} ${lines.length} non-empty line(s) in ${p.targetFile}; targetHash=${item.targetHash ?? "missing"}; proposalHash=${item.payload.proposalHash.slice(0, 12)}`;
 }
 
@@ -702,20 +848,30 @@ function safeActionVerb(p: ProposalEntry): string {
 }
 
 function buildEvidence(p: ProposalEntry): PendingDecision["evidence"] {
-  const sessions = (p.evidenceSessions ?? []).slice(0, 5).map((id) => ({ type: "session", id, summary: "proposal evidence session" }));
+  const sessions = (p.evidenceSessions ?? [])
+    .slice(0, 5)
+    .map((id) => ({ type: "session", id, summary: "proposal evidence session" }));
   return [
     { type: "proposal", id: p.id, summary: redactedOneLine(p.title) },
     ...sessions,
-    { type: "proposal-hash", id: shortHash(`${p.title}\n${p.observation}\n${p.suggestedChange}`), summary: "redacted proposal content hash" },
+    {
+      type: "proposal-hash",
+      id: shortHash(`${p.title}\n${p.observation}\n${p.suggestedChange}`),
+      summary: "redacted proposal content hash",
+    },
   ];
 }
 
 function containsPromptInjection(text: string): boolean {
-  return /ignore (all )?(previous|above|system|developer)(?:\s+\w+){0,3}\s+instructions|reveal (the )?(system prompt|secrets)|bypass (policy|approval|safety)|you are now|act as an unrestricted/i.test(text);
+  return /ignore (all )?(previous|above|system|developer)(?:\s+\w+){0,3}\s+instructions|reveal (the )?(system prompt|secrets)|bypass (policy|approval|safety)|you are now|act as an unrestricted/i.test(
+    text,
+  );
 }
 
 function containsSecretOrPrivateData(text: string): boolean {
-  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|token|password|secret)\s*[:=]|\bghp_[A-Za-z0-9_]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{16,}/i.test(text);
+  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|token|password|secret)\s*[:=]|\bghp_[A-Za-z0-9_]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{16,}/i.test(
+    text,
+  );
 }
 
 function resolveAllowedPersonaTarget(
@@ -730,12 +886,14 @@ function resolveAllowedPersonaTarget(
   const workspaceReal = existsSync(workspace) ? realpathSync(workspace) : resolve(workspace);
   const targetPath = resolve(workspaceReal, targetFile);
   const rel = relative(workspaceReal, targetPath);
-  if (rel.startsWith("..") || isAbsolute(rel)) return { ok: false, path: targetPath, error: "target escapes workspace" };
+  if (rel.startsWith("..") || isAbsolute(rel))
+    return { ok: false, path: targetPath, error: "target escapes workspace" };
   try {
     if (existsSync(targetPath) && lstatSync(targetPath).isSymbolicLink()) {
       const real = realpathSync(targetPath);
       const realRel = relative(workspaceReal, real);
-      if (realRel.startsWith("..") || isAbsolute(realRel)) return { ok: false, path: targetPath, error: "symlink escapes workspace" };
+      if (realRel.startsWith("..") || isAbsolute(realRel))
+        return { ok: false, path: targetPath, error: "symlink escapes workspace" };
     }
   } catch {
     return { ok: false, path: targetPath, error: "target stat failed" };
@@ -789,17 +947,29 @@ function defaultWorkspace(): string {
 }
 
 export function createPersonaParentExecutionPath(adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
-  return (item: PersonaProposalPendingItem, context: PendingDecisionContext): Promise<PendingDecision> | PendingDecision =>
-    adapter.decide(item, { ...context, runId: "equivalence-run" });
+  return (
+    item: PersonaProposalPendingItem,
+    context: PendingDecisionContext,
+  ): Promise<PendingDecision> | PendingDecision => adapter.decide(item, { ...context, runId: "equivalence-run" });
 }
 
 export function createPersonaStandaloneExecutionPath(_adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
-  return (item: PersonaProposalPendingItem, context: PendingDecisionContext): Promise<PendingDecision> | PendingDecision =>
-    decidePersonaProposal(item, { ...context, runId: "equivalence-run" }, {
-      proposalsDb: null as never,
-      cfg: { personaProposals: { allowedFiles: [item.proposal.targetFile] } } as unknown as Pick<HybridMemoryConfig, "personaProposals">,
-      allProposals: [item.proposal],
-    });
+  return (
+    item: PersonaProposalPendingItem,
+    context: PendingDecisionContext,
+  ): Promise<PendingDecision> | PendingDecision =>
+    decidePersonaProposal(
+      item,
+      { ...context, runId: "equivalence-run" },
+      {
+        proposalsDb: null as never,
+        cfg: { personaProposals: { allowedFiles: [item.proposal.targetFile] } } as unknown as Pick<
+          HybridMemoryConfig,
+          "personaProposals"
+        >,
+        allProposals: [item.proposal],
+      },
+    );
 }
 
 export function createPersonaProposalFixtureItem(input: {
@@ -807,7 +977,9 @@ export function createPersonaProposalFixtureItem(input: {
   workspace: string;
   allowedFiles: Array<"SOUL.md" | "IDENTITY.md" | "USER.md">;
 }): PersonaProposalPendingItem {
-  const item = proposalToPendingItem(input.proposal, input.workspace, { personaProposals: { allowedFiles: input.allowedFiles } } as Pick<HybridMemoryConfig, "personaProposals">);
+  const item = proposalToPendingItem(input.proposal, input.workspace, {
+    personaProposals: { allowedFiles: input.allowedFiles },
+  } as Pick<HybridMemoryConfig, "personaProposals">);
   return {
     ...item,
     inputHash: computePendingInputHash({

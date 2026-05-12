@@ -270,37 +270,39 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
     .option("--state-db <path>", "Optional pending-autopilot state DB for apply-mode decision records")
     .option("--workspace <path>", "Workspace containing allowed persona target files")
     .action(
-      withExit(async (opts?: {
-        dryRun?: boolean;
-        apply?: boolean;
-        policy?: string;
-        max?: string;
-        json?: boolean;
-        stateDb?: string;
-        workspace?: string;
-      }) => {
-        if (!listCommands?.triageProposals) {
-          console.log("Proposals triage not available (personaProposals disabled or no proposals DB).");
-          return;
-        }
-        const max = opts?.max != null ? Number.parseInt(opts.max, 10) : undefined;
-        if (opts?.max != null && (!Number.isFinite(max) || (max ?? 0) < 0)) {
-          console.error(`error: --max must be a non-negative integer. Got: ${opts.max}`);
-          process.exitCode = 1;
-          return;
-        }
-        const result = await listCommands.triageProposals({
-          apply: opts?.apply,
-          dryRun: opts?.dryRun,
-          policy: opts?.policy,
-          max,
-          json: opts?.json,
-          stateDb: opts?.stateDb,
-          workspace: opts?.workspace,
-        });
-        if (opts?.json) console.log(stablePersonaProposalTriageJson(result));
-        else console.log(result.humanSummary);
-      }),
+      withExit(
+        async (opts?: {
+          dryRun?: boolean;
+          apply?: boolean;
+          policy?: string;
+          max?: string;
+          json?: boolean;
+          stateDb?: string;
+          workspace?: string;
+        }) => {
+          if (!listCommands?.triageProposals) {
+            console.log("Proposals triage not available (personaProposals disabled or no proposals DB).");
+            return;
+          }
+          const max = opts?.max != null ? Number.parseInt(opts.max, 10) : undefined;
+          if (opts?.max != null && (!Number.isFinite(max) || (max ?? 0) < 0)) {
+            console.error(`error: --max must be a non-negative integer. Got: ${opts.max}`);
+            process.exitCode = 1;
+            return;
+          }
+          const result = await listCommands.triageProposals({
+            apply: opts?.apply,
+            dryRun: opts?.dryRun,
+            policy: opts?.policy,
+            max,
+            json: opts?.json,
+            stateDb: opts?.stateDb,
+            workspace: opts?.workspace,
+          });
+          if (opts?.json) console.log(stablePersonaProposalTriageJson(result));
+          else console.log(result.humanSummary);
+        },
+      ),
     );
 
   proposals
