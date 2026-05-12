@@ -779,7 +779,7 @@ function hasEnoughTaskBoundary(task: string): boolean {
 
 function looksTooContextSpecific(text: string): boolean {
 	return (
-		/\b(my|markus|lotta|home|household|local|private|personal)\b/i.test(text) ||
+		/\b(my|home|household|local|private|personal)\b/i.test(text) ||
 		PRIVATE_DATA_PATTERNS.some((p) => p.test(text))
 	);
 }
