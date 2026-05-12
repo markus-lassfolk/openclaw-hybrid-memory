@@ -275,7 +275,7 @@ export function listVerifiedFactTriageItems(
   ).toISOString();
   const policy = opts.policy ?? "classify";
   const cursor = opts.cursor?.cursor ?? null;
-  const cursorItemId = opts.cursor ? findVerifiedCursorItemId(db, opts.cursor.inputHash, policy) : null;
+  const cursorItemId = opts.cursor ? findVerifiedCursorItemId(db, opts.cursor.inputHash, policy, nowIso, cursor, cutoffIso) : null;
   const latestRows = db
     .prepare(
       `SELECT vf.*
@@ -302,7 +302,7 @@ export function listVerifiedFactTriageItems(
     .map((row) => triageItemFromRow(db, row, { nowIso, policy }));
 }
 
-function findVerifiedCursorItemId(db: DatabaseSync, inputHash: string, policy: VerifiedTriagePolicy): string | null {
+function findVerifiedCursorItemId(db: DatabaseSync, inputHash: string, policy: VerifiedTriagePolicy, nowIso: string, cursor: string, cutoffIso: string): string | null {
   const rows = db
     .prepare(
       `SELECT vf.*
@@ -311,13 +311,17 @@ function findVerifiedCursorItemId(db: DatabaseSync, inputHash: string, policy: V
          SELECT vf2.fact_id, MAX(vf2.version) AS max_version
          FROM verified_facts vf2
          GROUP BY vf2.fact_id
-       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version`,
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+       WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+          OR vf.verified_at <= ?)
+         AND COALESCE(vf.next_verification, vf.verified_at) = ?
+       ORDER BY vf.verified_at ASC, vf.id ASC`,
     )
-    .all() as unknown as VerifiedFactRow[];
+    .all(nowIso, cutoffIso, cursor) as unknown as VerifiedFactRow[];
   for (const row of rows) {
     if (!isVerifiedRowChecksumValid(row)) continue;
     const item = triageItemFromRow(db, row, {
-      nowIso: row.next_verification ?? row.verified_at,
+      nowIso,
       policy,
     });
     if (item.inputHash === inputHash) return row.id;
