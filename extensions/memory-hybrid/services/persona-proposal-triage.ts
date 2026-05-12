@@ -198,7 +198,7 @@ export async function runPersonaProposalTriage(
       let decision = await adapter.decide(item, context);
       if (mode === "apply" && policy !== "report-only" && isMutationDecision(decision)) {
         if (!store) throw new Error("apply mode requires pending-autopilot store");
-        decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace });
+        decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace, cfg: opts.cfg });
         if (decision.action === "failed-validation") {
           store.recordDecision(decision);
         } else {
@@ -535,6 +535,7 @@ function applyPersonaDecisionWithLock(input: {
   item: PersonaProposalPendingItem;
   decision: PendingDecision;
   workspace: string;
+  cfg: Pick<HybridMemoryConfig, "personaProposals">;
 }): PendingDecision {
   const owner = `${input.decision.runId}:persona-triage`;
   const locked = input.store.acquireLock({
@@ -551,9 +552,7 @@ function applyPersonaDecisionWithLock(input: {
     if (!current || current.status !== "pending") {
       return validationFailure(input.decision, "already-processed", "Proposal was already processed before apply.");
     }
-    const actualHash = proposalToPendingItem(current, input.workspace, {
-      personaProposals: { allowedFiles: [current.targetFile] },
-    } as Pick<HybridMemoryConfig, "personaProposals">).inputHash;
+    const actualHash = proposalToPendingItem(current, input.workspace, input.cfg).inputHash;
     if (actualHash !== input.decision.inputHash) {
       return validationFailure(
         input.decision,
@@ -570,7 +569,7 @@ function applyPersonaDecisionWithLock(input: {
         }
       | undefined;
     if (input.decision.action === "applied") {
-      const currentTarget = resolveAllowedPersonaTarget(input.workspace, current.targetFile, [current.targetFile]);
+      const currentTarget = resolveAllowedPersonaTarget(input.workspace, current.targetFile, input.cfg.personaProposals.allowedFiles);
       if (!currentTarget.ok || !existsSync(currentTarget.path)) {
         return validationFailure(
           input.decision,
@@ -1012,8 +1011,20 @@ function applyPreparedPersonaChange(
     markApplied();
     appliedMarked = true;
   } catch (err) {
-    if (targetWritten) writeFileAtomic(preparedApply.targetPath, preparedApply.original);
-    if (backupWritten && !appliedMarked) rmSync(preparedApply.backupPath, { force: true });
+    if (targetWritten) {
+      try {
+        writeFileAtomic(preparedApply.targetPath, preparedApply.original);
+      } catch {
+        // Preserve original error; restore failed but backup is safe.
+      }
+    }
+    if (backupWritten && !appliedMarked) {
+      try {
+        rmSync(preparedApply.backupPath, { force: true });
+      } catch {
+        // Preserve original error; backup cleanup failed but original error is more important.
+      }
+    }
     throw err;
   }
 }
