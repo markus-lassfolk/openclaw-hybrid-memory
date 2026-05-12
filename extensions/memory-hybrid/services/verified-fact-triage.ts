@@ -273,10 +273,8 @@ export function listVerifiedFactTriageItems(
        JOIN (
          SELECT vf2.fact_id, MAX(vf2.version) AS max_version
          FROM verified_facts vf2
-         LEFT JOIN facts f2 ON f2.id = vf2.fact_id
          GROUP BY vf2.fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
-       LEFT JOIN facts f ON f.id = vf.fact_id
        WHERE (vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
           OR vf.verified_at <= ?
        ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC`,
@@ -387,6 +385,7 @@ export async function runVerifiedFactTriageWithAdapter(
 
   const decisions: PendingDecision[] = [];
   const resultItems: VerifiedTriageResultItem[] = [];
+  const liveItemsMap = new Map(items.map((item) => [item.id, item]));
   for (const item of items) {
     const context: PendingDecisionContext = {
       runId,
@@ -410,26 +409,35 @@ export async function runVerifiedFactTriageWithAdapter(
           ttlSeconds: opts.lockTtlSeconds ?? 60,
           mode,
         }) ?? false;
-      const liveItem = locked
-        ? ((await adapter.listPending(null)).find((candidate) => candidate.id === item.id) ?? null)
-        : null;
-      const actualInputHash = liveItem?.inputHash ?? "missing";
-      if (locked && liveItem && actualInputHash === item.inputHash) {
-        const { inserted } = durableStore?.recordDecision(decision) ?? {
-          inserted: false,
-        };
-        if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
-          durableStore?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+      if (locked) {
+        const liveItem = liveItemsMap.get(item.id) ?? null;
+        const actualInputHash = liveItem?.inputHash ?? "missing";
+        if (liveItem && actualInputHash === item.inputHash) {
+          const { inserted } = durableStore?.recordDecision(decision) ?? {
+            inserted: false,
+          };
+          if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
+            durableStore?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+          }
+          applied = inserted && (decision.action === "classified" || decision.action === "reported");
+        } else {
+          const staleDecision = validationFailureDecision(
+            item,
+            context,
+            "input-hash-mismatch",
+            liveItem
+              ? "Verified fact/fact row changed between classification and apply."
+              : "Verified fact no longer matches due queue before apply.",
+          );
+          durableStore?.recordDecision(staleDecision);
+          decisions[decisions.length - 1] = staleDecision;
         }
-        applied = inserted && (decision.action === "classified" || decision.action === "reported");
       } else if (durableStore) {
         const staleDecision = validationFailureDecision(
           item,
           context,
-          locked ? "input-hash-mismatch" : "lock-conflict",
-          liveItem
-            ? "Verified fact/fact row changed between classification and apply."
-            : "Verified fact no longer matches due queue before apply.",
+          "lock-conflict",
+          "Verified fact no longer matches due queue before apply.",
         );
         durableStore.recordDecision(staleDecision);
         decisions[decisions.length - 1] = staleDecision;
@@ -1090,6 +1098,7 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
        FROM facts f
        JOIN verified_facts vf ON vf.fact_id = f.id
        WHERE f.id != ? AND f.superseded_at IS NULL ${scopeClause}
+       ORDER BY f.created_at DESC
        LIMIT 50`,
     )
     .all(fact.id, ...scopeParams) as Array<Record<string, unknown>>;
