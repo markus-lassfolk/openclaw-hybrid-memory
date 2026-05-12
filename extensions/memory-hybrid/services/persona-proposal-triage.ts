@@ -295,6 +295,13 @@ export function decidePersonaProposal(
     input.cfg,
     workspace,
   );
+  const reportOnly = context.policy === "report-only";
+  const readOnlyCapability = context.mode === "dry-run" ? "dry-run" : "read-only";
+  const action = reportOnly ? "reported" : analysis.action;
+  const actionClass = reportOnly ? "observe" : analysis.actionClass;
+  const capabilityClass = reportOnly ? readOnlyCapability : analysis.capabilityClass;
+  const humanReviewRequired = reportOnly ? false : analysis.humanReviewRequired;
+
   return {
     queue: "persona",
     itemId: item.id,
@@ -302,12 +309,12 @@ export function decidePersonaProposal(
     policy: context.policy,
     policyVersion: context.policyVersion,
     mode: context.mode,
-    action: context.policy === "report-only" ? "reported" : analysis.action,
+    action,
     reasonCode: analysis.reasonCode,
-    actionClass: context.policy === "report-only" ? "observe" : analysis.actionClass,
-    capabilityClass: context.mode === "dry-run" || context.policy === "report-only" ? (context.mode === "dry-run" ? "dry-run" : "read-only") : analysis.capabilityClass,
+    actionClass,
+    capabilityClass,
     confidence: analysis.confidence,
-    humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
+    humanReviewRequired,
     evidence: analysis.evidence,
     actor: context.actor,
     runId: context.runId,
@@ -328,10 +335,10 @@ export function decidePersonaProposal(
       inputHash: item.inputHash,
       policy: context.policy,
       policyVersion: context.policyVersion,
-      action: context.policy === "report-only" ? "reported" : analysis.action,
+      action,
       reasonCode: analysis.reasonCode,
-      capabilityClass: context.mode === "dry-run" || context.policy === "report-only" ? (context.mode === "dry-run" ? "dry-run" : "read-only") : analysis.capabilityClass,
-      humanReviewRequired: context.policy === "report-only" ? false : analysis.humanReviewRequired,
+      capabilityClass,
+      humanReviewRequired,
       evidence: analysis.evidence,
       actor: context.actor,
       runId: context.runId,
@@ -924,7 +931,26 @@ function compareProposalCreationOrder(
 
 function isNonActionable(change: string): boolean {
   const normalized = normalizeText(change);
-  return normalized.length < 12;
+  if (normalized.length === 0) return true;
+
+  const nonActionablePhrases = new Set([
+    "be better",
+    "improve",
+    "do better",
+    "fix this",
+    "update",
+    "change",
+    "misc",
+    "note",
+  ]);
+  if (nonActionablePhrases.has(normalized)) return true;
+
+  const directiveVerbs = /\b(add|append|record|capture|document|replace|remove|delete|update|clarify|format|fix|rewrite|rename|prefer|avoid|use|mention|store|include)\b/i;
+  const hasTargetOrLocation = /\b(soul\.md|user\.md|identity\.md|agents\.md|tools\.md|section|heading|paragraph|line|bullet|preference|guidance|instruction|file|document)\b/i.test(
+    change,
+  );
+
+  return normalized.length < 12 && !directiveVerbs.test(change) && !hasTargetOrLocation;
 }
 
 function isLargeOrBroadDiff(p: ProposalEntry): boolean {

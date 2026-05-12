@@ -385,6 +385,37 @@ describe("persona proposal triage", () => {
     expect(existsSync(stateDb)).toBe(false);
   });
 
+  it("report-only apply intent downgrades mutation analysis to observe/read-only capability", async () => {
+    const p = proposal({
+      targetFile: "USER.md",
+      targetHash: fileHash(join(tmpDir, "USER.md")),
+      suggestedChange: "Formatting: ensure markdown list spacing is consistent.",
+      confidence: 0.99,
+    });
+    const adapter = createPersonaProposalTriageAdapter({ proposalsDb, cfg, workspace: tmpDir, allProposals: [p] });
+    const item = createPersonaProposalFixtureItem({
+      proposal: p,
+      workspace: tmpDir,
+      allowedFiles: cfg.personaProposals.allowedFiles,
+    });
+
+    const decision = await adapter.decide(item, {
+      runId: "report-only-apply-run",
+      mode: "apply",
+      policy: "report-only",
+      policyVersion: "persona-proposal-triage-v1",
+      inputHash: item.inputHash,
+      actor: { type: "test", id: "persona-triage-test" },
+    });
+
+    expect(decision.action).toBe("reported");
+    expect(decision.actionClass).toBe("observe");
+    expect(decision.capabilityClass).toBe("read-only");
+    expect(decision.audit?.capabilityClass).toBe("read-only");
+    expect(decision.humanReviewRequired).toBe(false);
+    expect(proposalsDb.get(p.id)?.status).toBe("pending");
+  });
+
   it("groups related proposals and does not merge unrelated topics incorrectly", async () => {
     proposal({
       title: "Preference A",
