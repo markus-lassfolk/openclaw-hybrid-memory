@@ -727,7 +727,9 @@ function countPersonaDecisions(decisions: PendingDecision[]): PersonaProposalTri
   return {
     inspected: decisions.length,
     classified: decisions.filter((d) => d.action === "classified" || d.action === "reported").length,
-    grouped: decisions.filter((d) => d.humanReviewRequired || d.action === "reported").length,
+    grouped: decisions.filter(
+      (d) => d.humanReviewRequired || d.action === "reported" || d.action === "deferred-for-human",
+    ).length,
     autoRejected: decisions.filter((d) => d.action === "rejected").length,
     autoApplied: decisions.filter((d) => d.action === "applied").length,
     deferredForHuman: decisions.filter((d) => d.action === "deferred-for-human").length,
