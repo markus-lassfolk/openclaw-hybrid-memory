@@ -287,10 +287,18 @@ export function generateAutoSkillForProcedure(
     resolvedSlug,
   });
   if (!evaluation.eligible || !evaluation.draft || (!dryRun && evaluation.metadata.requiresHumanApproval)) {
+    const reasons =
+      evaluation.eligible &&
+      evaluation.draft &&
+      !dryRun &&
+      evaluation.metadata.requiresHumanApproval &&
+      evaluation.metadata.rejectionReasons.length === 0
+        ? ["policy_requires_human_approval"]
+        : evaluation.metadata.rejectionReasons;
     return {
       ok: false,
       reason: "policy-blocked",
-      reasons: evaluation.metadata.rejectionReasons,
+      reasons,
     };
   }
 
