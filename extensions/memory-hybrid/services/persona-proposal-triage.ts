@@ -1176,8 +1176,8 @@ function redactedOneLine(input: string): string {
 function topicKey(input: string): string {
   const text = input.toLowerCase();
   if (/security|privacy|credential|approval/.test(text)) return "security";
-  if (/preference|workflow|profile|user|pr review|branch naming/.test(text)) return "preference";
   if (/identity|voice|tone/.test(text)) return "identity";
+  if (/preference|workflow|profile|user.?prefer|pr review|branch naming/.test(text)) return "preference";
   return "general";
 }
 

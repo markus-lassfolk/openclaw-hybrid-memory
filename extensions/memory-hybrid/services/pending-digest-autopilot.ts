@@ -29,6 +29,7 @@ import {
   computePendingInputHash,
   createPendingAutopilotRunId,
   createStableRunSummary,
+  shouldAdvancePendingCursor,
 } from "./pending-autopilot/index.js";
 import { createPersonaProposalTriageAdapter, type PersonaProposalPendingItem } from "./persona-proposal-triage.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
@@ -270,6 +271,8 @@ export async function runPendingDigestAutopilot(
         const listed = await adapter.listPending(store?.getCursor(queue, policy) ?? null);
         const items = listed.slice(0, normalized.max[queue]);
         queueResult.inspected = items.length;
+        let cursorAdvanceCandidate: { decision: PendingDecision; cursor: string } | null = null;
+        let cursorAdvanceBlocked = false;
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
           const context: PendingDecisionContext = {
@@ -285,7 +288,15 @@ export async function runPendingDigestAutopilot(
           decisions.push(decision);
           queueResult.decisions.push(decision);
           const inserted = store?.recordDecision(decision).inserted ?? false;
-          if (inserted) store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+          const itemCursor = item.visibleAfterCursor ?? item.id;
+          if (inserted && !cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
+            cursorAdvanceCandidate = { decision, cursor: itemCursor };
+          } else if (inserted) {
+            cursorAdvanceBlocked = true;
+          }
+        }
+        if (cursorAdvanceCandidate !== null && items.length > 0) {
+          store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);
         }
       } catch (err) {
         queueResult.inspected = queueResult.decisions.length;
