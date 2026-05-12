@@ -286,7 +286,7 @@ export function listVerifiedFactTriageItems(
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
           OR vf.verified_at <= ?)
-         AND (? IS NULL OR COALESCE(vf.next_verification, vf.verified_at) >= ?)
+         AND (? IS NULL OR COALESCE(vf.next_verification, vf.verified_at) > ?)
        ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC, vf.id ASC`,
     )
     .all(nowIso, cutoffIso, cursor, cursor) as unknown as VerifiedFactRow[];
