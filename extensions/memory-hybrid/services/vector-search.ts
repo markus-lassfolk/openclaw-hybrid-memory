@@ -23,17 +23,17 @@ export async function findSimilarByEmbedding(
   minScore = 0.3,
   options?: ScopedClassificationOptions,
 ): Promise<MemoryEntry[]> {
-  const scope = options?.scope ?? "global";
-  const scopeTarget = scope === "global" ? null : (options?.scopeTarget ?? null);
+  const scope = options?.scope;
+  const scopeTarget = scope === undefined || scope === "global" ? null : (options?.scopeTarget ?? null);
   const searchLimit = Math.min(Math.max(limit * 4, limit), 200);
   const results = await vectorDb.search(vector, searchLimit, minScore);
   const entries: MemoryEntry[] = [];
   for (const r of results) {
     const entry = factsDb.getById(r.entry.id);
-    if (entry && entry.supersededAt == null && matchesExactScope(entry, scope, scopeTarget)) {
-      entries.push(entry);
-      if (entries.length >= limit) break;
-    }
+    if (!entry || entry.supersededAt != null) continue;
+    if (scope !== undefined && !matchesExactScope(entry, scope, scopeTarget)) continue;
+    entries.push(entry);
+    if (entries.length >= limit) break;
   }
   return entries;
 }

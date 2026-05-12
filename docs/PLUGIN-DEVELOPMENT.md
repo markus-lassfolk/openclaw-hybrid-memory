@@ -43,7 +43,7 @@ Reminds users to backup their memory data.
 
 ## Creating Your Own Plugin
 
-See the [Plugin Development Guide](../docs/PLUGIN-DEVELOPMENT.md) for details.
+This document is the plugin development guide; continue below for the basic structure and lifecycle details.
 
 ### Basic Structure
 

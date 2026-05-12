@@ -11,6 +11,8 @@ The hybrid-memory plugin uses **two kinds of model access**:
 1. **Embeddings** — turn text into vectors for semantic search (auto-recall, dedup, ingest).
 2. **Chat/completion** — distillation, reflection, classification, query expansion, self-correction, and other LLM-backed features.
 
+For cost-first rollout guidance (cheap-first tier lists, distill/recall guardrails, and weekly checks), see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md).
+
 For **chat/completion**, you can use either **API keys** (in plugin or gateway config) or **OAuth** (recommended for many users — no paid keys, sign in once via `openclaw configure`). When OAuth is configured for a provider, the plugin sends LLM requests through the OpenClaw gateway; the gateway resolves your OAuth token and forwards to the provider. Embeddings still go directly to whichever embedding provider you configure (OpenAI, Ollama, ONNX, or Google).
 
 **Azure / Microsoft Foundry:** Gateway model catalog vs hybrid-memory `llm` (two layers), `api-key` header, and links — see [Azure Foundry and OpenClaw](AZURE-FOUNDRY-AND-OPENCLAW.md).

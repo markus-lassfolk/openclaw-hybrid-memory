@@ -3,7 +3,7 @@
  * Tests for ACTIVE-TASKS.md working memory service and CLI commands.
  */
 
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -711,6 +711,14 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
     await writeActiveTaskFile(filePath, [makeEntry({ label: "atomic-check" })], []);
     const files = await readdir(tmpDir);
     expect(files.some((f) => f.includes("ACTIVE-TASKS.md.tmp-"))).toBe(false);
+  });
+
+  it("preserves existing file permissions during atomic writes", async () => {
+    const filePath = join(tmpDir, "ACTIVE-TASKS.md");
+    await writeFile(filePath, "seed", "utf-8");
+    await chmod(filePath, 0o600);
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "perm-check" })], []);
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 
   it("applies stale detection on read", async () => {

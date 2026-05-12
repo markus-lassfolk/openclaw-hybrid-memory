@@ -50,7 +50,7 @@ openclaw hybrid-mem config-set embedding.model nomic-embed-text
 
 ```bash
 # Option B: Use ONNX (lighter, no dependencies)
-npm install onnxruntime-node
+npm install --prefix ~/.openclaw/extensions/openclaw-hybrid-memory onnxruntime-node
 openclaw hybrid-mem config-set embedding.provider onnx
 openclaw hybrid-mem config-set embedding.model all-MiniLM-L6-v2
 ```
@@ -248,9 +248,9 @@ Once you're comfortable with the basics:
 ### Learn More
 
 - **Examples**: `openclaw hybrid-mem examples <category>`
-- **Full CLI Reference**: See `docs/CLI-REFERENCE.md`
-- **Configuration Guide**: See `docs/CONFIGURATION.md`
-- **Architecture**: See `docs/ARCHITECTURE.md`
+- **Full CLI Reference**: See `../../../docs/CLI-REFERENCE.md`
+- **Configuration Guide**: See `../../../docs/CONFIGURATION.md`
+- **Architecture**: See `../../../docs/ARCHITECTURE.md`
 
 ---
 
