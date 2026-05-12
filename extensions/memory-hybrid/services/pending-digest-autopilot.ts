@@ -234,7 +234,8 @@ export async function runPendingDigestAutopilot(
         const listed = await adapter.listPending(store?.getCursor(queue, policy) ?? null);
         const items = listed.slice(0, normalized.max[queue]);
         queueResult.inspected = items.length;
-        for (const item of items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
           const context: PendingDecisionContext = {
             runId,
             jobId: opts.jobId,
@@ -251,6 +252,7 @@ export async function runPendingDigestAutopilot(
           if (inserted) store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
         }
       } catch (err) {
+        queueResult.inspected = queueResult.decisions.length;
         const decision = makeFailureDecision({
           queue,
           policy,
@@ -602,8 +604,7 @@ function makeFailureDecision(input: {
 
 function summarizeCounts(decisions: PendingDecision[]): PendingDigestAutopilotResult["counts"] {
   return {
-    inspected: decisions.filter((d) => !d.itemId.endsWith(":skipped") && !d.itemId.endsWith(":inventory-failed"))
-      .length,
+    inspected: decisions.filter((d) => d.action !== "skipped-by-policy" && d.action !== "failed-validation").length,
     classified: decisions.filter((d) => d.action === "classified" || d.action === "reported").length,
     applied: decisions.filter((d) => d.action === "applied").length,
     deferred: decisions.filter((d) => d.action === "deferred-for-human").length,
