@@ -360,23 +360,29 @@ export function registerManageProcedureAndLifecycle(
 						return;
 					}
 
-					if (!result.ok) {
-						if (result.reason === "not-found") {
-							console.error(`error: procedure not found: ${id}`);
-						} else if (result.reason === "validation-pending") {
-							console.error(
-								`error: procedure ${id} has not reached validationThreshold=${cfg.procedures.validationThreshold}; pass --force to override`,
-							);
-						} else {
-							console.error(
-								`error: failed to promote ${id}: ${
-									result.error ?? "unknown error"
-								}`,
-							);
-						}
-						process.exitCode = 1;
-						return;
+				if (!result.ok) {
+					if (result.reason === "not-found") {
+						console.error(`error: procedure not found: ${id}`);
+					} else if (result.reason === "validation-pending") {
+						console.error(
+							`error: procedure ${id} has not reached validationThreshold=${cfg.procedures.validationThreshold}; pass --force to override`,
+						);
+					} else if (result.reason === "policy-blocked") {
+						console.error(
+							`error: procedure ${id} blocked by promotion policy: ${
+								result.reasons?.join(", ") ?? "no reasons provided"
+							}`,
+						);
+					} else {
+						console.error(
+							`error: failed to promote ${id}: ${
+								result.error ?? "unknown error"
+							}`,
+						);
 					}
+					process.exitCode = 1;
+					return;
+				}
 
 					if (result.alreadyPromoted) {
 						console.log(`Procedure ${id} already promoted (no-op).`);
