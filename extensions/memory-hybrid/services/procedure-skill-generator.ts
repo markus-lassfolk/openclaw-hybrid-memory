@@ -89,6 +89,7 @@ export function generateAutoSkills(
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
+    const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
     const context = {
       runId,
       mode: dryRun ? ("dry-run" as const) : ("apply" as const),
@@ -100,6 +101,7 @@ export function generateAutoSkills(
     const evaluation = evaluateProcedureForPromotion(item, policy, {
       skillsAutoPath: basePath,
       validationThreshold: options.validationThreshold,
+      resolvedSlug,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     if (evaluation.eligible) eligible++;
@@ -130,8 +132,7 @@ export function generateAutoSkills(
       continue;
     }
 
-    const slug = ensureUniqueSlug(basePath, evaluation.draft.slug);
-    const skillDir = join(basePath, slug);
+    const skillDir = join(basePath, resolvedSlug);
     const skillPath = join(skillDir, "SKILL.md");
 
     if (dryRun) {
@@ -143,7 +144,7 @@ export function generateAutoSkills(
 
     try {
       writeDraftSkill(skillDir, evaluation.draft);
-      const relativePath = join(options.skillsAutoPath, slug);
+      const relativePath = join(options.skillsAutoPath, resolvedSlug);
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, relativePath);
@@ -215,9 +216,11 @@ export function generateAutoSkillForProcedure(
   }
 
   const item = createProcedurePromotionItem(proc, policy);
+  const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
+    resolvedSlug,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     return {
@@ -227,10 +230,9 @@ export function generateAutoSkillForProcedure(
     };
   }
 
-  const slug = ensureUniqueSlug(basePath, slugifyForSkill(proc.taskPattern, "procedure"));
-  const skillDir = join(basePath, slug);
+  const skillDir = join(basePath, resolvedSlug);
   const skillPath = join(skillDir, "SKILL.md");
-  const relativePath = join(options.skillsAutoPath, slug);
+  const relativePath = join(options.skillsAutoPath, resolvedSlug);
 
   if (dryRun) {
     logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);

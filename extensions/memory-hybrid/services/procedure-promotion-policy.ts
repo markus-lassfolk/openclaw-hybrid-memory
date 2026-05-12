@@ -123,6 +123,7 @@ export interface ProcedurePromotionPolicyOptions {
   minConfidence?: number;
   minSuccessRate?: number;
   now?: number;
+  resolvedSlug?: string;
 }
 
 const DEFAULT_MIN_DISTINCT_CONTEXTS = 2;
@@ -287,7 +288,7 @@ export function evaluateProcedureForPromotion(
 
   const draft = gates.some((g) => g.severity === "reject" || g.severity === "fail-validation")
     ? null
-    : buildProcedureSkillDraft(item, policy, options, gates);
+    : buildProcedureSkillDraft(item, policy, options, gates, options.resolvedSlug ?? item.payload.skillSlug);
   if (draft) {
     const validator = new SkillValidator();
     const staticResult = validator.validate(draft.skillMd);
@@ -392,7 +393,7 @@ export function createProcedurePromotionDecision(
   const reasonCode = eligibleForMutation
     ? context.mode === "dry-run"
       ? "dry-run"
-      : "already-processed"
+      : "approved"
     : evaluation.eligible
       ? "human-review-required"
       : firstGate?.reason === "malformed_recipe" || firstGate?.reason?.includes("validation")
@@ -468,9 +469,9 @@ function buildProcedureSkillDraft(
   policy: ProcedurePromotionPolicy,
   options: ProcedurePromotionPolicyOptions,
   gates: ProcedurePromotionGateResult[],
+  slug: string,
 ): GeneratedProcedureSkillDraft {
   const proc = item.procedure;
-  const slug = item.payload.skillSlug;
   const recipe = redactAutopilotValue(item.payload.recipe);
   const recipeJson = `${JSON.stringify(recipe, null, 2)}\n`;
   const redactedTask = redactAutopilotText(proc.taskPattern);
@@ -648,7 +649,7 @@ function hasEnoughTaskBoundary(task: string): boolean {
   return words.length >= 3 && !/^(fix|handle|do|check|run|process|misc|stuff|thing)s?$/i.test(task.trim());
 }
 
-const CONTEXT_SPECIFIC_PATTERN = /\b(?:my|home|household|local|private|personal)\b/i;
+const CONTEXT_SPECIFIC_PATTERN = /\b(?:my|household|personal)\b/i;
 
 function looksTooContextSpecific(text: string): boolean {
   return CONTEXT_SPECIFIC_PATTERN.test(text);
@@ -666,7 +667,7 @@ function looksNonDeterministic(text: string): boolean {
 
 function hasValidationCheck(recipe: unknown, task: string): boolean {
   const text = `${task}\n${JSON.stringify(recipe)}`;
-  return /\b(test|verify|validate|check|status|assert|expect|exists|diff|lint|typecheck|build)\b/i.test(text);
+  return /\b(verify|validate|assert|expect|lint|typecheck)\b|test\s+(pass|fail|result)|exit\s+(code|status)|diff\s+(output|result)|file\s+exists/i.test(text);
 }
 
 function isDuplicateSkill(slug: string, task: string, skillsAutoPath: string, extraDirs: string[] = []): boolean {
