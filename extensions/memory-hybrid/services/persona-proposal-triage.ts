@@ -1031,7 +1031,7 @@ export function applyPreparedPersonaChange(
     appliedMarked = true;
     rmSync(preparedApply.backupPath, { force: true });
   } catch (err) {
-    if (targetWritten) {
+    if (targetWritten && !appliedMarked) {
       try {
         (io.writeTargetAtomic ?? writeFileAtomic)(preparedApply.targetPath, preparedApply.original);
         targetRestored = true;
