@@ -1,0 +1,54 @@
+# Pending Autopilot Foundation (#1334)
+
+This module is the shared safety substrate for the pending-digest autopilot work. Issue #1334 is a prerequisite for:
+
+- #1326 parent orchestration
+- #1327 persona queue adapter
+- #1328 procedure/skill queue adapter
+- #1329 verified-fact queue adapter
+- #1330 cron wrapper and observability
+
+Child, parent, and cron work must consume these contracts instead of defining bespoke action, capability, policy, cursor, lock, or audit models.
+
+## Global invariants
+
+- Deny by default.
+- `dry-run` is non-mutating for durable foundation state. No run, decision, cursor, lock, or mutation rows are written in dry-run.
+- Every persisted decision records queue, item id, input hash, policy, policy version, action, reason, capability, confidence, human-review flag, evidence, actor/run/job context, and timestamp.
+- Durable summaries and audit payloads are redacted before persistence.
+- Mutating paths must revalidate input hash and active lock ownership immediately before mutation.
+- Mutation and audit write are transactional: if audit persistence fails, the mutation fails and rolls back.
+- Cursors must not hide human-review-required, failed-validation, failed-audit, or unknown-decision items.
+- Parent/child equivalence is required for queue adapters.
+- Cron has no policy authority; it only invokes and observes the parent command.
+- Trust-changing, external, destructive, credential-affecting, policy-broadening, or behaviour-enabling work requires explicit human approval.
+
+## Capability boundaries
+
+`--apply` is intent, not authority. Each planned action must map to one explicit capability level:
+
+1. `read-only`
+2. `dry-run`
+3. `record-review-metadata`
+4. `safe-state-transition`
+5. `write-draft-artifact`
+6. `apply-low-risk-change`
+7. `enable-behaviour`
+8. `trust-changing-action`
+9. `external-side-effect`
+10. `destructive-action`
+
+Adapters may add queue-specific policy, but they must preserve these approval boundaries.
+
+## Parent/child equivalence
+
+Tests should compare two distinct execution paths:
+
+- standalone child adapter execution
+- parent orchestration execution that delegates to the adapter
+
+The shared test helper verifies both paths produce equivalent normalized decisions for the same fixture, policy, and input hash. Do not satisfy this by calling the same adapter path twice.
+
+## Dry-run semantics
+
+Dry-run may produce in-memory summaries or CLI output, but any artifact that could influence a later apply must be ephemeral/non-authoritative. The store intentionally skips durable `pending_autopilot_*` writes when mode is `dry-run`.
