@@ -403,18 +403,14 @@ function createPersonaProposalTriageAdapterWithCloseable(
         },
       );
     },
-    decide: (item, context) =>
-      withCloseable(
-        () => new ProposalsDB(dbPath),
-        (db) => {
-          const adapter = createPersonaProposalTriageAdapter({
-            proposalsDb: db,
-            cfg,
-            allProposals: cachedAllProposals ?? undefined,
-          });
-          return adapter.decide(item as PersonaProposalPendingItem, context);
-        },
-      ),
+    decide: (item, context) => {
+      const adapter = createPersonaProposalTriageAdapter({
+        proposalsDb: null as never,
+        cfg,
+        allProposals: cachedAllProposals ?? undefined,
+      });
+      return adapter.decide(item as PersonaProposalPendingItem, context);
+    },
   };
 }
 

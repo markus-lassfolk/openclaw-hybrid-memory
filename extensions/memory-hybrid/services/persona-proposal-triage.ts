@@ -888,7 +888,7 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
 function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
   const containsSemanticKeywords =
-    /\b(identity|personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should)\b/i.test(
+    /\b(identity|personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate)\b/i.test(
       suggestedChange,
     );
   return hasFormattingPrefix && !containsSemanticKeywords;
