@@ -1006,17 +1006,26 @@ function resolveAllowedPersonaTarget(
   return { ok: true, path: targetPath };
 }
 
-function applyPreparedPersonaChange(
+export function applyPreparedPersonaChange(
   preparedApply: { targetPath: string; backupPath: string; original: string; appliedContent: string },
   markApplied: () => void,
+  io: {
+    writeBackup?: (path: string, content: string) => void;
+    writeTargetAtomic?: (path: string, content: string) => void;
+    removeBackup?: (path: string) => void;
+  } = {},
 ): void {
   let backupWritten = false;
   let targetWritten = false;
+  let targetRestored = false;
   let appliedMarked = false;
   try {
-    writeFileSync(preparedApply.backupPath, preparedApply.original, "utf-8");
+    (io.writeBackup ?? ((path, content) => writeFileSync(path, content, "utf-8")))(
+      preparedApply.backupPath,
+      preparedApply.original,
+    );
     backupWritten = true;
-    writeFileAtomic(preparedApply.targetPath, preparedApply.appliedContent);
+    (io.writeTargetAtomic ?? writeFileAtomic)(preparedApply.targetPath, preparedApply.appliedContent);
     targetWritten = true;
     markApplied();
     appliedMarked = true;
@@ -1024,14 +1033,15 @@ function applyPreparedPersonaChange(
   } catch (err) {
     if (targetWritten) {
       try {
-        writeFileAtomic(preparedApply.targetPath, preparedApply.original);
+        (io.writeTargetAtomic ?? writeFileAtomic)(preparedApply.targetPath, preparedApply.original);
+        targetRestored = true;
       } catch {
-        // Preserve original error; restore failed but backup is safe.
+        // Preserve original error; restore failed and the backup remains the recovery artifact.
       }
     }
-    if (backupWritten && !appliedMarked) {
+    if (backupWritten && !appliedMarked && (!targetWritten || targetRestored)) {
       try {
-        rmSync(preparedApply.backupPath, { force: true });
+        (io.removeBackup ?? ((path) => rmSync(path, { force: true })))(preparedApply.backupPath);
       } catch {
         // Preserve original error; backup cleanup failed but original error is more important.
       }

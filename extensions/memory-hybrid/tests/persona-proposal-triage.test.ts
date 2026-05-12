@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProposalsDB, type ProposalEntry } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
+  applyPreparedPersonaChange,
   createPersonaParentExecutionPath,
   createPersonaProposalFixtureItem,
   createPersonaProposalTriageAdapter,
@@ -299,6 +300,33 @@ describe("persona proposal triage", () => {
     expect(readFileSync(targetPath, "utf-8")).toBe(original);
     expect(readdirSync(tmpDir).some((name) => name.startsWith("USER.md.backup-"))).toBe(false);
     expect(proposalsDb.get(p.id)?.status).toBe("pending");
+  });
+
+  it("preserves the rollback backup when target restore fails after proposal status update failure", () => {
+    const targetPath = join(tmpDir, "USER.md");
+    const backupPath = `${targetPath}.backup-restore-failed`;
+    const original = readFileSync(targetPath, "utf-8");
+    const appliedContent = `${original}\nFormatting: rollback backup preservation marker.\n`;
+    expect(() =>
+      applyPreparedPersonaChange(
+        { targetPath, backupPath, original, appliedContent },
+        () => {
+          throw new Error("simulated markApplied failure");
+        },
+        {
+          writeBackup: (path, content) => writeFileSync(path, content, "utf-8"),
+          writeTargetAtomic: (path, content) => {
+            if (path === targetPath && content === original) {
+              throw new Error("simulated restore failure");
+            }
+            writeFileSync(path, content, "utf-8");
+          },
+        },
+      ),
+    ).toThrow(/simulated markApplied failure/);
+
+    expect(readFileSync(targetPath, "utf-8")).toBe(appliedContent);
+    expect(readFileSync(backupPath, "utf-8")).toBe(original);
   });
 
   it("report-only apply intent does not write durable autopilot state or mutate proposals", async () => {
