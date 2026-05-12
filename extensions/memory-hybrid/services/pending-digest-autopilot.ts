@@ -372,14 +372,36 @@ export function createDefaultPendingDigestAdapters(
 ): Record<PendingQueue, PendingQueueAdapter> {
   const paths = pendingStorePaths(opts.cfg.sqlitePath);
   return {
-    persona: createPersonaProposalTriageAdapter({
-      proposalsDb: new ProposalsDB(paths.proposals),
-      cfg: opts.cfg,
-    }),
+    persona: createPersonaProposalTriageAdapterWithCloseable(paths.proposals, opts.cfg),
     procedures: createProcedureReadOnlyAdapter(opts.factsDb),
     verified: createVerifiedReadOnlyAdapter(opts.factsDb),
     tools: createToolProposalReadOnlyAdapter(paths.toolProposals),
     crystallization: createCrystallizationReadOnlyAdapter(paths.crystallization),
+  };
+}
+
+function createPersonaProposalTriageAdapterWithCloseable(
+  dbPath: string,
+  cfg: HybridMemoryConfig,
+): PendingQueueAdapter<QueueItem> {
+  return {
+    queue: "persona",
+    listPending: () =>
+      withCloseable(
+        () => new ProposalsDB(dbPath),
+        (db) => {
+          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg });
+          return adapter.listPending(null);
+        },
+      ),
+    decide: (item, context) =>
+      withCloseable(
+        () => new ProposalsDB(dbPath),
+        (db) => {
+          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg });
+          return adapter.decide(item as any, context);
+        },
+      ),
   };
 }
 
@@ -559,7 +581,6 @@ function makeItem(queue: PendingQueue, id: string, payload: QueuePayload, requir
       queue,
       id,
       payload,
-      policy: "default",
       policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
     }),
     policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
