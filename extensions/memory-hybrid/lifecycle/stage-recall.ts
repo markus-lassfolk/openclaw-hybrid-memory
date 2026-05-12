@@ -81,9 +81,31 @@ async function runRecall(
   if (!e.prompt || e.prompt.length < 5) {
     return { kind: "empty", prependContext: undefined };
   }
+  const promptText = e.prompt;
 
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
+  const recallProbeId = `recall-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  let recallProbePhase = "start";
+  let recallProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
+  const setRecallProbePhase = (phase: string): void => {
+    recallProbePhase = phase;
+    scheduleRecallProbeWatchdog();
+  };
+  const clearRecallProbeWatchdog = (): void => {
+    if (recallProbeWatchdog !== undefined) clearTimeout(recallProbeWatchdog);
+  };
+  const scheduleRecallProbeWatchdog = (): void => {
+    clearRecallProbeWatchdog();
+    recallProbeWatchdog = setTimeout(() => {
+      const elapsedMs = Date.now() - recallStartMs;
+      api.logger.warn?.(
+        `memory-hybrid: recall-probe id=${recallProbeId} still-running elapsedMs=${elapsedMs} phase=${recallProbePhase} inFlight=${ctx.recallInFlightRef.value} promptChars=${promptText.length}`,
+      );
+    }, 5_000);
+    recallProbeWatchdog.unref?.();
+  };
+  scheduleRecallProbeWatchdog();
   const recallTiming = createRecallTimingLogger({
     logger: api.logger,
     mode: ctx.cfg.autoRecall.recallTiming ?? "off",
@@ -94,6 +116,7 @@ async function runRecall(
   let recallStageCompleted = false;
   let recallStageFields: Record<string, string | number | boolean> | undefined;
   const completeStage = (result: RecallStageResult): RecallStageResult => {
+    setRecallProbePhase(`complete:${result.kind}`);
     recallStageFields = {
       result_kind: result.kind,
       candidate_count: result.kind === "full" ? result.result.candidates.length : 0,
@@ -112,6 +135,9 @@ async function runRecall(
       sessionState;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
+    api.logger.debug?.(
+      `memory-hybrid: recall-probe id=${recallProbeId} enter promptChars=${promptText.length} inFlight=${ctx.recallInFlightRef.value}`,
+    );
 
     if (e.prompt.length >= 5 && ctx.lastAutoRecallPromptRef) {
       ctx.lastAutoRecallPromptRef.value = e.prompt.trim().slice(0, 12_000);
@@ -162,6 +188,7 @@ async function runRecall(
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
 
     if (forceDegraded) {
+      setRecallProbePhase("degraded_fts_only");
       const recallOpts = {
         tierFilter: ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const),
         scopeFilter,
@@ -219,6 +246,7 @@ async function runRecall(
     }
 
     // Procedural memory (skip expensive FTS when injection budget is zero — issue #863)
+    setRecallProbePhase("procedures_block");
     const proceduresStartedAt = recallTiming.phaseStarted("procedures_block");
     let procedureBlock = "";
     const procMaxTokens = ctx.cfg.procedures.maxInjectionTokens ?? 0;
@@ -286,6 +314,7 @@ async function runRecall(
     const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
+    setRecallProbePhase("hot_facts_block");
     const hotFactsStartedAt = recallTiming.phaseStarted("hot_facts_block");
     let hotBlock = "";
     if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
@@ -350,6 +379,7 @@ async function runRecall(
     if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
     let promptEmbedding: number[] | null = null;
+    setRecallProbePhase("prompt_embedding");
     if (
       interactivePolicy.allowAmbientMultiQuery &&
       ambientCfg.enabled &&
@@ -365,8 +395,10 @@ async function runRecall(
 
     if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
+    setRecallProbePhase("main_pipeline");
     const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
     let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
+      probeId: `${recallProbeId}:main`,
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
@@ -379,6 +411,7 @@ async function runRecall(
     if (recallAborted(signal)) return completeStage(emptyRecallStage());
 
     if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
+      setRecallProbePhase("ambient_multi_query");
       const ambientStartedAt = recallTiming.phaseStarted("ambient_multi_query");
       let ambientQueriesRun = 0;
       try {
@@ -410,6 +443,7 @@ async function runRecall(
             await yieldEventLoop();
             try {
               const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
+                probeId: `${recallProbeId}:ambient:${q.type}:${ambientQueriesRun + 1}`,
                 entity: q.type === "entity" ? q.entity : undefined,
                 hydeLabel: "HyDE",
                 errorPrefix: `ambient-${q.type}-`,
@@ -451,6 +485,7 @@ async function runRecall(
 
     let issueBlock = "";
     let narrativeBlock = "";
+    setRecallProbePhase("issues_block");
     const issuesStartedAt = recallTiming.phaseStarted("issues_block");
     if (ambientCfg.enabled && ctx.issueStore) {
       try {
@@ -483,6 +518,7 @@ async function runRecall(
     }
     recallTiming.phaseCompleted("issues_block", issuesStartedAt, { injected: issueBlock.length > 0 });
 
+    setRecallProbePhase("narrative_block");
     const narrativeStartedAt = recallTiming.phaseStarted("narrative_block");
     if (ctx.narrativesDb || ctx.eventLog) {
       try {
@@ -512,6 +548,7 @@ async function runRecall(
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
+    setRecallProbePhase("entity_lookup");
     const entityLookupStartedAt = recallTiming.phaseStarted("entity_lookup");
     let entityLookupHits = 0;
     if (entityLookup.enabled) {
@@ -570,6 +607,7 @@ async function runRecall(
       return directiveCalls < maxDirectiveCalls && candidates.length < maxDirectiveCandidates;
     }
 
+    setRecallProbePhase("directives_loop");
     const directivesStartedAt = recallTiming.phaseStarted("directives_loop");
     const abortDirectives = () => {
       recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
@@ -596,6 +634,7 @@ async function runRecall(
               if (!promptLower.includes(entity.toLowerCase())) continue;
               if (!canRunDirective()) break;
               const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
+                probeId: `${recallProbeId}:directive:entity:${entity}`,
                 entity,
                 hydeLabel: "HyDE",
                 errorPrefix: "directive-",
@@ -617,6 +656,7 @@ async function runRecall(
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
             const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
+              probeId: `${recallProbeId}:directive:keyword:${keyword}`,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
@@ -635,6 +675,7 @@ async function runRecall(
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
           const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
+            probeId: `${recallProbeId}:directive:task:${taskType}`,
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
@@ -651,6 +692,7 @@ async function runRecall(
           }
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
+              probeId: `${recallProbeId}:directive:session-start`,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
@@ -748,6 +790,7 @@ async function runRecall(
         `memory-hybrid: fixed blocks (${fixedBlocksTokens} tokens) exhausted total budget (${totalBudget} tokens); recall suppressed`,
       );
     }
+    setRecallProbePhase("finalize");
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
@@ -784,8 +827,15 @@ async function runRecall(
       });
       recallStageCompleted = true;
     }
+    api.logger.warn?.(
+      `memory-hybrid: recall-probe id=${recallProbeId} error elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase} error=${err instanceof Error ? err.message : String(err)}`,
+    );
     throw err;
   } finally {
     ctx.recallInFlightRef.value--;
+    clearRecallProbeWatchdog();
+    api.logger.debug?.(
+      `memory-hybrid: recall-probe id=${recallProbeId} exit elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase} completed=${recallStageCompleted}`,
+    );
   }
 }
