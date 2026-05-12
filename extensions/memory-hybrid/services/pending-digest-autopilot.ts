@@ -299,7 +299,11 @@ export async function runPendingDigestAutopilot(
         queueResult.decisions.push(decision);
         queueResult.skipped = true;
         queueResult.skipReason = "inventory-failed";
-        store?.recordDecision(decision);
+        try {
+          store?.recordDecision(decision);
+        } catch {
+          // Best-effort record for inventory failure; do not cascade store errors.
+        }
       }
     }
 
@@ -415,7 +419,22 @@ export function createVerifiedReadOnlyAdapter(factsDb: PendingDigestFactsDb): Pe
     queue: "verified",
     listPending: () => {
       const count = Math.max(0, factsDb.countVerifiedFacts());
-      return Array.from({ length: count }, (_, index) => verifiedPlaceholderToItem(index + 1));
+      return {
+        length: count,
+        *[Symbol.iterator]() {
+          for (let index = 1; index <= count; index++) {
+            yield verifiedPlaceholderToItem(index);
+          }
+        },
+        slice(start: number, end?: number) {
+          const sliceEnd = end ?? count;
+          const result: QueueItem[] = [];
+          for (let index = start + 1; index <= Math.min(sliceEnd, count); index++) {
+            result.push(verifiedPlaceholderToItem(index));
+          }
+          return result;
+        },
+      } as QueueItem[];
     },
     decide: decideReadOnlyItem,
   };
