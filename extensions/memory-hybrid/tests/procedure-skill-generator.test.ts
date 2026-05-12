@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -90,6 +90,48 @@ describe("generateAutoSkills", () => {
     expect(updated?.skillPath).toContain("check-moltbook-notifications");
   });
 
+  it("keeps collision-adjusted draft metadata aligned with the output directory", () => {
+    mkdirSync(join(skillsDir, "validate-colliding-release-report"), { recursive: true });
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate colliding release report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "collision-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 1,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    const collidedDir = join(skillsDir, "validate-colliding-release-report-1");
+    const skillContent = readFileSync(join(collidedDir, "SKILL.md"), "utf-8");
+    const verification = JSON.parse(readFileSync(join(collidedDir, "verification.json"), "utf-8"));
+
+    expect(skillContent).toContain("name: validate-colliding-release-report-1");
+    expect(skillContent).toContain("# Validate Colliding Release Report 1");
+    expect(verification).toMatchObject({
+      skill: "validate-colliding-release-report-1",
+      generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
+    });
+  });
+
   it("dry-run does not write files", () => {
     db.upsertProcedure({
       taskPattern: "Dry run procedure",
@@ -100,6 +142,7 @@ describe("generateAutoSkills", () => {
           args: { command: "npm test" },
           summary: "Run validation test",
         },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
       ]),
       procedureType: "positive",
       successCount: 5,
@@ -195,6 +238,7 @@ describe("generateAutoSkills", () => {
           args: { command: "npm test" },
           summary: "Run validation test",
         },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
       ]),
       procedureType: "positive",
       successCount: 3,

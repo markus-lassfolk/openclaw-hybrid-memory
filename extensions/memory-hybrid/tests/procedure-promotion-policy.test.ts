@@ -361,6 +361,62 @@ describe("procedure promotion policy and adapter", () => {
     expect(reusableEval.metadata.rejectionReasons).not.toContain("too_context_specific");
   });
 
+  it("does not treat recipe paths or private boolean fields as context-specific wording", () => {
+    const proc = addProcedure({
+      taskPattern: "Validate reusable release report workflow",
+      recipeJson: JSON.stringify([
+        {
+          tool: "read",
+          args: { path: "/home/alice/status.json", private: true },
+          summary: "Check status input",
+        },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Verify report output",
+        },
+      ]),
+      sourceSessionId: "recipe-private-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "recipe-private-b");
+    db.recordProcedureSuccess(proc.id, undefined, "recipe-private-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("private_data_risk");
+    expect(evaluation.metadata.rejectionReasons).not.toContain("too_context_specific");
+  });
+
+  it("requires an explicit recipe validation step instead of task wording alone", () => {
+    const proc = addProcedure({
+      taskPattern: "Check release report status",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Read status input" },
+        { tool: "read", args: { path: "report.json" }, summary: "Open report output" },
+      ]),
+      sourceSessionId: "no-validation-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "no-validation-b");
+    db.recordProcedureSuccess(proc.id, undefined, "no-validation-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("no_validation_possible");
+  });
+
   it("blocks private/high-entropy data and redacts generated artifacts", () => {
     const proc = addProcedure({
       taskPattern: "Validate private report workflow",

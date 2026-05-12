@@ -52,6 +52,42 @@ function ensureUniqueSlug(basePath: string, slug: string): string {
   return candidate;
 }
 
+function rebaseDraftSlug(
+  draft: { skillMd: string; recipeJson: string; verificationJson: string; evalsJson: string },
+  resolvedSlug: string,
+  generatedSkillPath: string,
+): { skillMd: string; recipeJson: string; verificationJson: string; evalsJson: string } {
+  const verification = JSON.parse(draft.verificationJson) as {
+    skill?: unknown;
+    generatedSkillPath?: unknown;
+  };
+  const originalSlug =
+    typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
+  verification.skill = resolvedSlug;
+  verification.generatedSkillPath = generatedSkillPath;
+
+  const skillMd = draft.skillMd
+    .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
+    .replace(new RegExp(`^# ${escapeRegExp(titleCase(originalSlug))}$`, "m"), `# ${titleCase(resolvedSlug)}`);
+
+  return {
+    ...draft,
+    skillMd,
+    verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function titleCase(slug: string): string {
+  return slug
+    .split("-")
+    .map((p) => (p ? p[0]?.toUpperCase() + p.slice(1) : p))
+    .join(" ");
+}
+
 type GenerateAutoSkillsOptions = {
   skillsAutoPath: string;
   validationThreshold: number;
@@ -143,8 +179,8 @@ export function generateAutoSkills(
     }
 
     try {
-      writeDraftSkill(skillDir, evaluation.draft);
       const relativePath = join(options.skillsAutoPath, resolvedSlug);
+      writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, relativePath);
@@ -247,7 +283,7 @@ export function generateAutoSkillForProcedure(
   }
 
   try {
-    writeDraftSkill(skillDir, evaluation.draft);
+    writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "procedure-skill-generator",

@@ -4,6 +4,7 @@ import type { ProcedureEntry } from "../types/memory.js";
 import { slugifyForSkill } from "../utils/text.js";
 import {
   computePendingInputHash,
+  type AutopilotReasonCode,
   redactAutopilotText,
   redactAutopilotValue,
   type PendingDecision,
@@ -274,8 +275,8 @@ export function evaluateProcedureForPromotion(
     gates.push(defer("low_reuse_value", "recipe is too thin to justify a skill"));
   if (!hasEnoughTaskBoundary(proc.taskPattern))
     gates.push(defer("vague_trigger", "task pattern lacks a clear reusable boundary"));
-  if (looksTooContextSpecific(combinedText))
-    gates.push(defer("too_context_specific", "procedure appears bound to a private/local context"));
+  if (looksTooContextSpecific(proc.taskPattern))
+    gates.push(defer("too_context_specific", "procedure task pattern appears bound to a private/local context"));
   if (looksNoisy(recipe)) gates.push(defer("noisy_trace", "recipe contains noisy trace steps"));
   if (looksNonDeterministic(combinedText))
     gates.push(defer("non_deterministic_steps", "recipe relies on non-deterministic timing or vague judgment"));
@@ -395,7 +396,7 @@ export function createProcedurePromotionDecision(
         : firstGate?.severity === "reject"
           ? "rejected"
           : "deferred-for-human";
-  const reasonCode = eligibleForMutation
+  const reasonCode: AutopilotReasonCode = eligibleForMutation
     ? context.mode === "dry-run"
       ? "dry-run"
       : "approved"
@@ -670,20 +671,32 @@ function looksNonDeterministic(text: string): boolean {
   return /\b(maybe|guess|try until|random|wait a while|eventually|probably|if it feels)\b/i.test(text);
 }
 
-function hasValidationCheck(recipe: unknown, task: string): boolean {
-  const text = `${task}\n${JSON.stringify(recipe)}`;
-  return /\b(verify|validate|assert|expect|lint|typecheck)\b|test\s+(pass|fail|result)|exit\s+(code|status)|diff\s+(output|result)|file\s+exists/i.test(text);
+function hasValidationCheck(recipe: unknown, _task: string): boolean {
+  if (!Array.isArray(recipe)) return false;
+  const explicitValidationPattern =
+    /\b(?:verify|validate|assert|expect|lint|typecheck)\b|\b(?:test\s+(?:pass|fail|result)|exit\s+(?:code|status)|diff\s+(?:output|result)|file\s+exists)\b/i;
+  return recipe.some((step) => {
+    if (!step || typeof step !== "object") return false;
+    const s = step as Record<string, unknown>;
+    const fields = [s.summary, s.validation, s.expected, s.check, s.assertion, s.command]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n");
+    const args = s.args && typeof s.args === "object" ? (s.args as Record<string, unknown>) : {};
+    const argFields = [args.command, args.validation, args.expected, args.check, args.assertion]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n");
+    return explicitValidationPattern.test(`${fields}\n${argFields}`);
+  });
 }
-
 function isDuplicateSkill(slug: string, task: string, skillsAutoPath: string, extraDirs: string[] = []): boolean {
   const dirs = [skillsAutoPath, ...extraDirs];
   const taskWords = significantWords(task);
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const entry of safeReadDir(dir)) {
-      if (entry === slug) return true;
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
+      if (entry === slug) return true;
       const content = safeReadFile(skillPath).toLowerCase();
       if (content.includes(`name: ${slug}`)) return true;
       const overlap = [...taskWords].filter((w) => content.includes(w)).length;
