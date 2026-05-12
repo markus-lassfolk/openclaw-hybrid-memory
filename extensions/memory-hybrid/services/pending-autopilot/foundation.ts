@@ -49,8 +49,8 @@ export function createStableRunSummary(input: {
     AUTOPILOT_ACTIONS.map((action) => [action, 0]),
   ) as PendingAutopilotRunSummary["totals"];
   const decisions = input.decisions.map(sanitizePendingDecision).sort((a, b) => {
-    const ak = `${a.queue}:${a.itemId}:${a.inputHash}:${a.policy}:${a.policyVersion}`;
-    const bk = `${b.queue}:${b.itemId}:${b.inputHash}:${b.policy}:${b.policyVersion}`;
+    const ak = `${a.queue}:${a.itemId}:${a.inputHash}:${a.policy}:${a.policyVersion}:${a.action}`;
+    const bk = `${b.queue}:${b.itemId}:${b.inputHash}:${b.policy}:${b.policyVersion}:${b.action}`;
     return compareCodePointOrder(ak, bk);
   });
   for (const decision of decisions) totals[decision.action] += 1;
