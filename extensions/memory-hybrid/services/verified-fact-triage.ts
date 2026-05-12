@@ -361,7 +361,7 @@ export async function runVerifiedFactTriage(
         const staleDecision = triageToPendingDecision(item, context, {
           bucket: "failed-review",
           recommendedAction: "failed-validation",
-          reason: locked ? "backend_error" : "requires_human_approval",
+          reason: locked ? "requires_human_approval" : "backend_error",
           confidence: 1,
           evidence: [{ type: "input-hash", id: item.id, summary: "Lock missing or input hash changed before apply" }],
           sensitivityFlags: [],
