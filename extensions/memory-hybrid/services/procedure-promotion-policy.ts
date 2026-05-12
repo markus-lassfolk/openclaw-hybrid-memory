@@ -769,7 +769,7 @@ function isDuplicateSkill(
       if (entry === slug) return true;
       const content = safeReadFile(skillPath).toLowerCase();
       if (content.includes(`name: ${slug}`)) return true;
-      const overlap = [...taskWords].filter((w) => new RegExp(`\\b${w}\\b`).test(content)).length;
+      const overlap = [...taskWords].filter((w) => content.includes(w)).length;
       if (taskWords.size >= 3 && overlap >= Math.min(3, taskWords.size)) return true;
     }
   }
