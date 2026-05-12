@@ -52,3 +52,40 @@ The shared test helper verifies both paths produce equivalent normalized decisio
 ## Dry-run semantics
 
 Dry-run may produce in-memory summaries or CLI output, but any artifact that could influence a later apply must be ephemeral/non-authoritative. The store intentionally skips durable `pending_autopilot_*` writes when mode is `dry-run`.
+
+## Verified-fact triage child adapter (#1329)
+
+The verified-fact child adapter lives in `services/verified-fact-triage.ts` and reuses the shared
+`PendingQueueAdapter` / `PendingDecision` contract from this foundation. Its review queue source is
+explicit and intentionally narrow: **latest `verified_facts` rows due for reverification** according
+to the same `next_verification`/staleness semantics used by `VerificationStore.listDueForReverification`.
+It must not accidentally treat every verified fact as pending review.
+
+CLI surface:
+
+```bash
+openclaw hybrid-mem verified list --json
+openclaw hybrid-mem verified triage --dry-run --policy report-only --max 100 --json
+openclaw hybrid-mem verified triage --apply --policy classify --max 100 --json
+openclaw hybrid-mem verified triage --apply --policy apply-obvious --max 100 --json
+```
+
+Safety boundaries:
+
+- dry-run writes no durable pending-autopilot or verified-review state;
+- apply policies record only non-destructive review/classification decisions in the shared
+  pending-autopilot store;
+- verified fact text, verification tier, critical status, canonical text, and core truth fields are
+  never rewritten, deleted, or demoted by `apply-obvious`;
+- sensitive credentials/security/privacy/persona/external-comms/operational-runbook facts are always
+  deferred for human review;
+- supersession requires an explicit newer fact id (`supersedes_id` / `superseded_by`) and matching
+  scope;
+- contradiction requires concrete structured evidence: same entity, scope, claim key/type, conflicting
+  value, and source fact/verified ids. Semantic similarity or LLM judgment alone is not enough;
+- provenance is preserved by appending/linking review metadata through pending-autopilot decisions
+  rather than overwriting source or verification provenance.
+
+Parent #1326 should call this adapter/policy logic for `digest-autopilot --verified-policy ...` rather
+than implementing separate verified-fact semantics. Tests use the #1334 parent/child equivalence
+harness so parent routing and standalone `verified triage` decisions stay identical.
