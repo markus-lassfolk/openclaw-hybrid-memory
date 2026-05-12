@@ -651,7 +651,3 @@ function withCloseable<TStore extends { close?: () => void }, T>(
 export function stablePendingDigestAutopilotJson(result: PendingDigestAutopilotResult): string {
   return `${JSON.stringify(result, null, 2)}\n`;
 }
-
-export function foundationSummaryJson(result: PendingDigestAutopilotResult): string {
-  return stableRunSummaryJson(result.foundationSummary);
-}
