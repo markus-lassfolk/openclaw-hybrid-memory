@@ -1150,6 +1150,67 @@ function migrateDerivedFromLinksToProvenanceJson(db: DatabaseSync): void {
   tx();
 }
 
+/** Pending Autopilot control-plane tables (#1334).
+ *
+ * Child issues #1326-#1330 share these durable contracts; queue-specific policy
+ * logic must live in adapters, not in this migration.
+ */
+function migratePendingAutopilotTables(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_autopilot_runs (
+      id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      queues_json TEXT NOT NULL DEFAULT '[]',
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      summary_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_autopilot_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      queue TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason_code TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      capability_class TEXT,
+      run_id TEXT,
+      summary_json TEXT,
+      audit_json TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(queue, item_id, input_hash, policy_version)
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_autopilot_cursors (
+      queue TEXT PRIMARY KEY,
+      cursor TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_autopilot_locks (
+      queue TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY(queue, item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pending_autopilot_runs_started ON pending_autopilot_runs(started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pending_autopilot_decisions_run ON pending_autopilot_decisions(run_id);
+    CREATE INDEX IF NOT EXISTS idx_pending_autopilot_decisions_queue ON pending_autopilot_decisions(queue, item_id);
+    CREATE INDEX IF NOT EXISTS idx_pending_autopilot_locks_expiry ON pending_autopilot_locks(expires_at);
+  `);
+}
+
 export function runFactsMigrations(db: DatabaseSync): void {
   // Column migrations (depend on base facts table existing)
   migrateDecayColumns(db);
@@ -1249,6 +1310,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Audit-health storage growth samples (Issue #1193)
   migrateStorageGrowthHistoryTable(db);
+
+  // Pending Autopilot control-plane substrate (#1334)
+  migratePendingAutopilotTables(db);
 
   // Denormalized degree columns for hub guard (#1192)
   migrateFactDegreeColumns(db);
