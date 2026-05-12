@@ -260,9 +260,8 @@ export function evaluateProcedureForPromotion(
     );
   if (
     proc.lastFailed &&
-    (!proc.lastValidated ||
-      proc.lastFailed >= proc.lastValidated ||
-      now - proc.lastFailed <= RECENT_FAILURE_WINDOW_SECONDS)
+    (!proc.lastValidated || proc.lastFailed >= proc.lastValidated) &&
+    now - proc.lastFailed <= RECENT_FAILURE_WINDOW_SECONDS
   )
     gates.push(defer("recent_failure", "procedure has a recent or newer failure"));
   if ((item.payload.successRate ?? 1) < minSuccessRate)
@@ -644,7 +643,7 @@ function countDistinctSourceSessions(raw: string | undefined): number {
 
 function computeSuccessRate(proc: ProcedureEntry): number | null {
   const explicit = proc.successRate;
-  if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) return explicit;
+  if (typeof explicit === "number" && Number.isFinite(explicit) && explicit >= 0) return explicit;
   const total = proc.successCount + proc.failureCount;
   return total > 0 ? proc.successCount / total : null;
 }
