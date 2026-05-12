@@ -75,13 +75,13 @@
     "embedding.provider": {
       "label": "Embedding Provider",
       "placeholder": "openai",
-      "help": "Embedding provider: 'openai' (requires apiKey), 'ollama' (local, no apiKey needed), or 'onnx' (local ONNX runtime, no apiKey needed). Default: 'openai'."
+      "help": "Embedding provider. local-first options: 'onnx' or 'ollama'. Hosted options: 'openai' or 'google'. OpenAI/Google need a key; local providers do not."
     },
     "embedding.apiKey": {
       "label": "OpenAI / Google API Key",
       "sensitive": true,
       "placeholder": "sk-proj-...",
-      "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY}). Only required when provider='openai'. Omit for local providers (ollama, onnx)."
+      "help": "API key for hosted embeddings. Use env:OPENAI_API_KEY for OpenAI or llm.providers.google.apiKey / env:GOOGLE_API_KEY for Google. Omit for local providers."
     },
     "embedding.model": {
       "label": "Embedding Model",
@@ -120,7 +120,7 @@
     "mode": {
       "label": "Configuration preset",
       "placeholder": "local",
-      "help": "local | minimal | enhanced | complete (or legacy: essential | normal | expert | full, mapped to local). See CONFIGURATION-MODES.md."
+      "help": "Preset for how much memory automation you want: local=offline starter, minimal=cheap cloud help, enhanced=balanced defaults, complete=enhanced plus verbose operator output. Legacy names map to local."
     },
     "llm.nano": {
       "label": "LLM tier: nano (cheapest)",

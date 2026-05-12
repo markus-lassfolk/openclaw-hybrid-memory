@@ -13,6 +13,7 @@
  * - runUpgradeForCli
  */
 
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve as pathResolve } from "node:path";
@@ -24,6 +25,7 @@ import { findPluginRoot } from "../utils/plugin-root.js";
 import type { DigestWeeklyDeliveryConfig, HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
+import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
 import {
   HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
@@ -1462,6 +1464,301 @@ function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unk
     : undefined;
 }
 
+type EmbeddingSetupInspection = {
+  provider?: string;
+  model?: string;
+  hasUsableApiKey: boolean;
+};
+
+type DetectedEmbeddingSetup = {
+  provider: "onnx" | "ollama" | "openai" | "google";
+  model: string;
+  source: string;
+  reason: string;
+  envKey?: string;
+};
+
+type EmbeddingProviderName = DetectedEmbeddingSetup["provider"];
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeEmbeddingProvider(value: unknown): EmbeddingProviderName | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "onnx" || normalized === "ollama" || normalized === "openai" || normalized === "google") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function defaultModelForProvider(provider: EmbeddingProviderName): string {
+  if (provider === "google") return "gemini-embedding-001";
+  if (provider === "ollama") return "nomic-embed-text";
+  if (provider === "onnx") return "all-MiniLM-L6-v2";
+  return "text-embedding-3-small";
+}
+
+function isOpenClawSecretRefObject(
+  raw: unknown,
+): raw is { source: "env" | "file" | "exec"; provider: string; id: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
+  const record = raw as Record<string, unknown>;
+  const source = record.source;
+  return (
+    (source === "env" || source === "file" || source === "exec") &&
+    typeof record.provider === "string" &&
+    record.provider.trim().length > 0 &&
+    typeof record.id === "string" &&
+    record.id.trim().length > 0
+  );
+}
+
+function isPlaceholderSecret(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  const lower = trimmed.toLowerCase();
+  const compact = lower.replace(/\s+/g, "");
+  return (
+    lower === "your_openai_api_key" ||
+    lower === "<openai_api_key>" ||
+    lower === "your_api_key_here" ||
+    lower === "<your_key_here>" ||
+    lower === "<your_api_key_here>" ||
+    compact === "..." ||
+    /^sk-[a-z0-9_-]*\.\.\.$/.test(compact) ||
+    (/key/.test(lower) && /(your|placeholder|example|replace)/.test(lower))
+  );
+}
+
+function hasUsableSecret(value: unknown): boolean {
+  if (isOpenClawSecretRefObject(value)) return true;
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || isPlaceholderSecret(trimmed)) return false;
+  if (trimmed.startsWith("env:")) return trimmed.slice(4).trim().length > 0;
+  if (trimmed.startsWith("file:")) return trimmed.slice(5).trim().length > 0;
+  if (trimmed.includes("${")) return true;
+  return trimmed.length >= 10;
+}
+
+function inspectExistingEmbeddingSetup(root: Record<string, unknown>): EmbeddingSetupInspection {
+  const pluginConfig = getPluginEntryConfig(root) ?? {};
+  const embedding = (pluginConfig.embedding as Record<string, unknown> | undefined) ?? {};
+  const provider = readString(embedding.provider);
+  const model = readString(embedding.model);
+  const apiKey = embedding.apiKey;
+  const llm = pluginConfig.llm as Record<string, unknown> | undefined;
+  const llmProviders = llm?.providers as Record<string, unknown> | undefined;
+  const googleProvider = llmProviders?.google as Record<string, unknown> | undefined;
+  const openAiProvider = llmProviders?.openai as Record<string, unknown> | undefined;
+  const azureFoundryProvider = llmProviders?.["azure-foundry"] as Record<string, unknown> | undefined;
+  return {
+    provider,
+    model,
+    hasUsableApiKey:
+      hasUsableSecret(apiKey) ||
+      hasUsableSecret(googleProvider?.apiKey) ||
+      hasUsableSecret(openAiProvider?.apiKey) ||
+      hasUsableSecret(azureFoundryProvider?.apiKey),
+  };
+}
+
+export function detectRecommendedEmbeddingSetup(
+  root: Record<string, unknown>,
+  pluginRootDir: string,
+): DetectedEmbeddingSetup {
+  const existing = inspectExistingEmbeddingSetup(root);
+  const existingProvider = normalizeEmbeddingProvider(existing.provider);
+  if (existingProvider && existing.model) {
+    return {
+      provider: existingProvider,
+      model: existing.model,
+      source: "existing config",
+      reason: existing.hasUsableApiKey
+        ? "Embedding provider already configured."
+        : "Embedding provider/model already configured; a key may still be required.",
+    };
+  }
+
+  const openclawExtensionsDir = join(
+    expandTilde(getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw")),
+    "extensions",
+  );
+  const onnxInstalled =
+    existsSync(join(pluginRootDir, "node_modules", "onnxruntime-node")) ||
+    existsSync(join(openclawExtensionsDir, "node_modules", "onnxruntime-node"));
+  if (onnxInstalled) {
+    return {
+      provider: "onnx",
+      model: "all-MiniLM-L6-v2",
+      source: "local runtime",
+      reason: "Detected onnxruntime-node, so a fully local embedding path is available.",
+    };
+  }
+
+  const ollamaInstalled =
+    existsSync(join(homedir(), ".ollama")) ||
+    readString(process.env.OLLAMA_HOST) !== undefined ||
+    spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+  if (ollamaInstalled) {
+    return {
+      provider: "ollama",
+      model: "nomic-embed-text",
+      source: readString(process.env.OLLAMA_HOST)
+        ? "OLLAMA_HOST"
+        : existsSync(join(homedir(), ".ollama"))
+          ? "~/.ollama"
+          : "ollama --version",
+      reason: "Detected a local Ollama installation or endpoint hint.",
+    };
+  }
+
+  const openAiEnv = hasUsableSecret(process.env.OPENAI_API_KEY) ? "OPENAI_API_KEY" : undefined;
+  if (openAiEnv) {
+    return {
+      provider: "openai",
+      model: "text-embedding-3-small",
+      source: openAiEnv,
+      reason: `Detected ${openAiEnv} in the environment.`,
+      envKey: openAiEnv,
+    };
+  }
+
+  const googleEnv = hasUsableSecret(process.env.GOOGLE_API_KEY)
+    ? "GOOGLE_API_KEY"
+    : hasUsableSecret(process.env.GEMINI_API_KEY)
+      ? "GEMINI_API_KEY"
+      : undefined;
+  if (googleEnv) {
+    return {
+      provider: "google",
+      model: "gemini-embedding-001",
+      source: googleEnv,
+      reason: `Detected ${googleEnv} in the environment.`,
+      envKey: googleEnv,
+    };
+  }
+
+  return {
+    provider: "openai",
+    model: "text-embedding-3-small",
+    source: "fallback",
+    reason: "No local embedding runtime detected; defaulting to the simplest hosted setup.",
+  };
+}
+
+function ensureObject(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  const current = parent[key];
+  if (typeof current === "object" && current !== null && !Array.isArray(current)) {
+    return current as Record<string, unknown>;
+  }
+  const next: Record<string, unknown> = {};
+  parent[key] = next;
+  return next;
+}
+
+function applyDetectedEmbeddingSetup(
+  root: Record<string, unknown>,
+  detection: DetectedEmbeddingSetup,
+  existing: EmbeddingSetupInspection,
+): { changed: boolean; notes: string[] } {
+  const notes: string[] = [];
+  const pluginConfig = ensureObject(ensureObject(ensureObject(root, "plugins"), "entries"), PLUGIN_ID);
+  const config = ensureObject(pluginConfig, "config");
+  const embedding = ensureObject(config, "embedding");
+  let changed = false;
+
+  const existingProvider = normalizeEmbeddingProvider(existing.provider);
+  if (!existingProvider || isPlaceholderSecret(existing.provider)) {
+    embedding.provider = detection.provider;
+    changed = true;
+  }
+  const effectiveProvider = normalizeEmbeddingProvider(embedding.provider) ?? detection.provider;
+  if (!existing.model) {
+    embedding.model =
+      effectiveProvider === detection.provider ? detection.model : defaultModelForProvider(effectiveProvider);
+    changed = true;
+  }
+
+  const llm = config.llm as Record<string, unknown> | undefined;
+  const llmProviders = llm?.providers as Record<string, unknown> | undefined;
+  const openAiProvider = llmProviders?.openai as Record<string, unknown> | undefined;
+  const azureFoundryProvider = llmProviders?.["azure-foundry"] as Record<string, unknown> | undefined;
+
+  if (effectiveProvider === "openai" && !hasUsableSecret(embedding.apiKey)) {
+    const hasProviderFallbackKey =
+      hasUsableSecret(openAiProvider?.apiKey) || hasUsableSecret(azureFoundryProvider?.apiKey);
+    if (!hasProviderFallbackKey) {
+      embedding.apiKey = detection.envKey ? `env:${detection.envKey}` : "YOUR_OPENAI_API_KEY";
+      changed = true;
+      notes.push(
+        detection.envKey
+          ? `Will use ${detection.envKey} for hosted OpenAI-compatible embeddings.`
+          : "Still needs an OpenAI-compatible embedding key.",
+      );
+    } else {
+      if (isPlaceholderSecret(embedding.apiKey)) {
+        embedding.apiKey = "";
+        changed = true;
+      }
+      notes.push(
+        'Embedding auth will use llm.providers.openai.apiKey or llm.providers["azure-foundry"].apiKey fallback.',
+      );
+    }
+  }
+
+  if (effectiveProvider === "google") {
+    const llm = ensureObject(config, "llm");
+    const providers = ensureObject(llm, "providers");
+    const google = ensureObject(providers, "google");
+    if (isPlaceholderSecret(embedding.apiKey)) {
+      embedding.apiKey = "";
+      changed = true;
+    }
+    if (!hasUsableSecret(google.apiKey)) {
+      google.apiKey = `env:${detection.provider === "google" ? (detection.envKey ?? "GOOGLE_API_KEY") : "GOOGLE_API_KEY"}`;
+      changed = true;
+    }
+    notes.push("Google embeddings still require a working llm.providers.google.apiKey.");
+  }
+
+  if (effectiveProvider === "ollama") {
+    if (isPlaceholderSecret(embedding.apiKey)) {
+      embedding.apiKey = "";
+      changed = true;
+    }
+    notes.push("Ollama must be running locally before verify can pass.");
+  }
+  if (effectiveProvider === "onnx") {
+    if (isPlaceholderSecret(embedding.apiKey)) {
+      embedding.apiKey = "";
+      changed = true;
+    }
+    notes.push("ONNX is fully local; no remote API key is required.");
+  }
+
+  return { changed, notes };
+}
+
+function getConfiguredDashboardPort(root: Record<string, unknown>): number {
+  const pluginConfig = getPluginEntryConfig(root) ?? {};
+  const dashboard = pluginConfig.dashboard as Record<string, unknown> | undefined;
+  const raw = dashboard?.port;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 1024 && raw <= 65535) return Math.floor(raw);
+  if (typeof raw === "string") {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 1024 && parsed <= 65535) return parsed;
+  }
+  return 7700;
+}
+
+export function getDashboardUrl(root: Record<string, unknown>): string {
+  return `http://127.0.0.1:${getConfiguredDashboardPort(root)}/`;
+}
+
 /**
  * Install plugin configuration and cron jobs.
  * `buildInstallDefaults()` includes `mode: "local"`; `deepMerge` only fills missing keys,
@@ -1471,6 +1768,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");
   const configPath = join(openclawDir, "openclaw.json");
   const fullDefaults = buildInstallDefaults();
+  const pluginRootDir = findPluginRoot(import.meta.url);
 
   let config: Record<string, unknown> = {};
   if (existsSync(configPath)) {
@@ -1481,6 +1779,8 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       return { ok: false, error: `Could not read ${configPath}: ${e}` };
     }
   }
+  const existingEmbedding = inspectExistingEmbeddingSetup(config);
+  const detectedEmbedding = detectRecommendedEmbeddingSetup(config, pluginRootDir);
   const existingApiKey =
     (config?.plugins as Record<string, unknown>)?.entries &&
     ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] &&
@@ -1524,9 +1824,10 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     const emb = cfg?.embedding as Record<string, unknown>;
     if (emb) emb.apiKey = existingApiKey;
   }
+  const embeddingPatch = applyDetectedEmbeddingSetup(config, detectedEmbedding, existingEmbedding);
   const after = JSON.stringify(config, null, 2);
-
-  const pluginRootDir = findPluginRoot(import.meta.url);
+  const workspaceRoot = resolveAgentWorkspaceRoot(config);
+  const dashboardUrl = getDashboardUrl(config);
 
   if (opts.dryRun) {
     const skillPreview = installHybridMemoryWorkspaceSkill({
@@ -1539,6 +1840,42 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       pluginRootDir,
       dryRun: true,
     });
+    let bootstrapPreview = { workspaceRoot, directories: [], files: [] } as ReturnType<typeof ensureWorkspaceBootstrap>;
+    let bootstrapPreviewError: string | undefined;
+    try {
+      bootstrapPreview = ensureWorkspaceBootstrap({ workspaceRoot, dryRun: true });
+    } catch (err) {
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:workspace-bootstrap:dry-run" });
+      bootstrapPreview = { workspaceRoot, directories: [], files: [] };
+      bootstrapPreviewError = String(err);
+    }
+    const previewDone: string[] = [
+      "Would write or repair the hybrid-memory plugin config block.",
+      "Would refresh the workspace skill.",
+      "Would refresh the managed TOOLS.md section.",
+      `Would ensure workspace starter layout under ${workspaceRoot}.`,
+      `Would point you to Mission Control at ${dashboardUrl}.`,
+    ];
+    if (embeddingPatch.changed) {
+      previewDone.push(
+        `Would prefill embedding defaults with ${detectedEmbedding.provider}/${detectedEmbedding.model} (${detectedEmbedding.source}).`,
+      );
+    }
+    if (bootstrapPreviewError) {
+      previewDone.push(`Workspace bootstrap check would warn: ${bootstrapPreviewError}`);
+    }
+    const previewRemaining: string[] = [];
+    if (detectedEmbedding.provider === "openai" && !detectedEmbedding.envKey && !existingEmbedding.hasUsableApiKey) {
+      previewRemaining.push("Add an OpenAI-compatible embedding API key, then restart the gateway.");
+    } else if (detectedEmbedding.provider === "google" && !existingEmbedding.hasUsableApiKey) {
+      previewRemaining.push(
+        "Add llm.providers.google.apiKey (or export GOOGLE_API_KEY / GEMINI_API_KEY), then restart.",
+      );
+    } else if (detectedEmbedding.provider === "ollama") {
+      previewRemaining.push("Make sure Ollama is running locally before verify.");
+    }
+    previewRemaining.push("Restart the gateway after applying the config.");
+    previewRemaining.push("Run `openclaw hybrid-mem verify` to confirm the install.");
     return {
       ok: true,
       configPath,
@@ -1551,6 +1888,13 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       workspaceToolsMdPath: toolsPreview.path,
       workspaceToolsMdError: toolsPreview.error,
       workspaceToolsMdUpdated: toolsPreview.updated,
+      workspaceRoot,
+      dashboardUrl,
+      detectedEmbedding,
+      bootstrapDirectoriesCreated: bootstrapPreview.directories.filter((entry) => entry.created).length,
+      bootstrapFilesCreated: bootstrapPreview.files.filter((entry) => entry.created).length,
+      completed: previewDone,
+      remaining: previewRemaining,
     };
   }
 
@@ -1568,6 +1912,16 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       pluginRootDir,
       dryRun: false,
     });
+    let bootstrapInstall = { workspaceRoot, directories: [], files: [] } as ReturnType<typeof ensureWorkspaceBootstrap>;
+    let bootstrapInstallError: string | undefined;
+    try {
+      bootstrapInstall = ensureWorkspaceBootstrap({ workspaceRoot, dryRun: false });
+    } catch (err) {
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:workspace-bootstrap" });
+      bootstrapInstallError = String(err);
+      // non-fatal: workspace bootstrap should not fail a successful config install
+    }
+    let cronSummary: { added: string[]; normalized: string[] } | undefined;
     try {
       const pluginCfg = getPluginEntryConfig(config);
       const pluginConfig = pluginCfg as CronModelConfig | undefined;
@@ -1585,7 +1939,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       if (dreamCycleSchedule)
         installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = dreamCycleSchedule;
       if (sensorSweepSchedule) installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = sensorSweepSchedule;
-      ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
+      cronSummary = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
@@ -1599,6 +1953,42 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
       // non-fatal: cron jobs optional on install
     }
+    const completed: string[] = [
+      `Wrote hybrid-memory config to ${configPath}.`,
+      `Installed workspace skill at ${skillInstall.path}${skillInstall.error ? ` (warning: ${skillInstall.error})` : ""}.`,
+      `Checked TOOLS.md managed block at ${toolsMdInstall.path}${toolsMdInstall.updated ? " (updated)" : " (already current)"}.`,
+      bootstrapInstallError
+        ? `Workspace starter layout warning in ${workspaceRoot}: ${bootstrapInstallError}.`
+        : `Ensured workspace starter layout in ${workspaceRoot} (${bootstrapInstall.directories.filter((entry) => entry.created).length} dirs, ${bootstrapInstall.files.filter((entry) => entry.created).length} files created).`,
+      `Dashboard home: ${dashboardUrl}`,
+    ];
+    if (embeddingPatch.changed) {
+      completed.push(
+        `Prefilled embedding defaults with ${detectedEmbedding.provider}/${detectedEmbedding.model} (${detectedEmbedding.source}).`,
+      );
+    } else {
+      completed.push(`Kept existing embedding setup (${detectedEmbedding.provider}/${detectedEmbedding.model}).`);
+    }
+    if (cronSummary) {
+      completed.push(
+        cronSummary.added.length > 0
+          ? `Ensured maintenance cron jobs (${cronSummary.added.length} added).`
+          : "Checked maintenance cron jobs.",
+      );
+    }
+    for (const note of embeddingPatch.notes) completed.push(note);
+    const remaining: string[] = [];
+    if (detectedEmbedding.provider === "openai" && !existingEmbedding.hasUsableApiKey && !detectedEmbedding.envKey) {
+      remaining.push('Set plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey to a real key.');
+    }
+    if (detectedEmbedding.provider === "google" && !existingEmbedding.hasUsableApiKey) {
+      remaining.push("Set llm.providers.google.apiKey (or export GOOGLE_API_KEY / GEMINI_API_KEY).");
+    }
+    if (detectedEmbedding.provider === "ollama") {
+      remaining.push("Keep Ollama running locally before using semantic recall.");
+    }
+    remaining.push("Restart the gateway so the new config and workspace files are picked up.");
+    remaining.push("Run `openclaw hybrid-mem verify` for the beginner-friendly health check.");
     return {
       ok: true,
       configPath,
@@ -1610,6 +2000,13 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       workspaceToolsMdPath: toolsMdInstall.path,
       workspaceToolsMdError: toolsMdInstall.error,
       workspaceToolsMdUpdated: toolsMdInstall.updated,
+      workspaceRoot,
+      dashboardUrl,
+      detectedEmbedding,
+      bootstrapDirectoriesCreated: bootstrapInstall.directories.filter((entry) => entry.created).length,
+      bootstrapFilesCreated: bootstrapInstall.files.filter((entry) => entry.created).length,
+      completed,
+      remaining,
     };
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:write-config" });
