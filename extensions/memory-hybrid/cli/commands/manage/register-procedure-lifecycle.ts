@@ -22,6 +22,7 @@ import {
 	evaluateProcedureForPromotion,
 	parseProcedurePromotionPolicy,
 } from "../../../services/procedure-promotion-policy.js";
+import { getEnv } from "../../../utils/env-manager.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -197,15 +198,23 @@ export function registerManageProcedureAndLifecycle(
 						limit,
 						validationThreshold: cfg.procedures.validationThreshold,
 					});
-					const policy = parseProcedurePromotionPolicy(opts?.policy);
-					const enrichedRows = report.rows.map((row) => {
-						const proc = factsDb.getProcedureById(row.id);
-						if (!proc) return row;
-						const item = createProcedurePromotionItem(proc, policy);
-						const evaluation = evaluateProcedureForPromotion(item, policy, {
-							skillsAutoPath: cfg.procedures.skillsAutoPath,
-							validationThreshold: cfg.procedures.validationThreshold,
-						});
+				const policy = parseProcedurePromotionPolicy(opts?.policy);
+				const resolvedSkillsAutoPath = cfg.procedures.skillsAutoPath.startsWith(
+					"/",
+				)
+					? cfg.procedures.skillsAutoPath
+					: join(
+							getEnv("OPENCLAW_WORKSPACE") || process.cwd(),
+							cfg.procedures.skillsAutoPath,
+						);
+				const enrichedRows = report.rows.map((row) => {
+					const proc = factsDb.getProcedureById(row.id);
+					if (!proc) return row;
+					const item = createProcedurePromotionItem(proc, policy);
+					const evaluation = evaluateProcedureForPromotion(item, policy, {
+						skillsAutoPath: resolvedSkillsAutoPath,
+						validationThreshold: cfg.procedures.validationThreshold,
+					});
 						return {
 							...row,
 							inputHash: item.inputHash,
