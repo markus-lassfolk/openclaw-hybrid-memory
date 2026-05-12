@@ -562,7 +562,6 @@ function applyPersonaDecisionWithLock(input: {
     if (!current || current.status !== "pending") {
       return validationFailure(input.decision, "already-processed", "Proposal was already processed before apply.");
     }
-    const currentTarget = resolveAllowedPersonaTarget(input.workspace, current.targetFile, [current.targetFile]);
     const actualHash = proposalToPendingItem(current, input.workspace, {
       personaProposals: { allowedFiles: [current.targetFile] },
     } as Pick<HybridMemoryConfig, "personaProposals">).inputHash;
@@ -573,39 +572,6 @@ function applyPersonaDecisionWithLock(input: {
         "Proposal changed between classification and apply.",
       );
     }
-    if (!currentTarget.ok || !existsSync(currentTarget.path)) {
-      return validationFailure(
-        input.decision,
-        "stale-target-context",
-        "Target file unavailable during apply revalidation.",
-      );
-    }
-    const currentSnapshot = getFileSnapshot(currentTarget.path);
-    if (!currentSnapshot) {
-      return validationFailure(
-        input.decision,
-        "stale-target-context",
-        "Target file unreadable during apply revalidation.",
-      );
-    }
-    if (input.decision.action === "applied" && !hasReliableTargetSnapshot(current)) {
-      return validationFailure(
-        input.decision,
-        "stale-target-context",
-        "Auto-apply requires target hash or mtime snapshot.",
-      );
-    }
-    if (input.decision.action === "applied" && current.targetHash && current.targetHash !== currentSnapshot.hash) {
-      return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
-    }
-    if (
-      input.decision.action === "applied" &&
-      !current.targetHash &&
-      current.targetMtimeMs != null &&
-      current.targetMtimeMs !== currentSnapshot.mtimeMs
-    ) {
-      return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
-    }
     let preparedApply:
       | {
           targetPath: string;
@@ -615,6 +581,35 @@ function applyPersonaDecisionWithLock(input: {
         }
       | undefined;
     if (input.decision.action === "applied") {
+      const currentTarget = resolveAllowedPersonaTarget(input.workspace, current.targetFile, [current.targetFile]);
+      if (!currentTarget.ok || !existsSync(currentTarget.path)) {
+        return validationFailure(
+          input.decision,
+          "stale-target-context",
+          "Target file unavailable during apply revalidation.",
+        );
+      }
+      const currentSnapshot = getFileSnapshot(currentTarget.path);
+      if (!currentSnapshot) {
+        return validationFailure(
+          input.decision,
+          "stale-target-context",
+          "Target file unreadable during apply revalidation.",
+        );
+      }
+      if (!hasReliableTargetSnapshot(current)) {
+        return validationFailure(
+          input.decision,
+          "stale-target-context",
+          "Auto-apply requires target hash or mtime snapshot.",
+        );
+      }
+      if (current.targetHash && current.targetHash !== currentSnapshot.hash) {
+        return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
+      }
+      if (!current.targetHash && current.targetMtimeMs != null && current.targetMtimeMs !== currentSnapshot.mtimeMs) {
+        return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
+      }
       const original = readFileSync(currentTarget.path, "utf-8");
       const applied = buildAppliedContent(original, current, new Date().toISOString());
       if (!applied.content.trim()) {
@@ -704,7 +699,10 @@ function buildPersonaReviewBundles(views: PersonaProposalDecisionView[]): Person
   );
   const groups = new Map<string, PersonaProposalDecisionView[]>();
   for (const view of reviewable) {
-    const key = `${view.targetFile}:${view.risk}:${view.reason}:${topicKey(view.diffSummary)}`;
+    const semanticTopic = topicKey(
+      [view.diffSummary, ...view.evidence.map((entry) => entry.summary)].filter(Boolean).join("\n"),
+    );
+    const key = `${view.targetFile}:${view.risk}:${view.reason}:${semanticTopic}`;
     groups.set(key, [...(groups.get(key) ?? []), view]);
   }
   return [...groups.values()].map((items, idx) => {
