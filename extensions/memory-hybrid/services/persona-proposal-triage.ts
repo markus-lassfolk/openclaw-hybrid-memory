@@ -410,7 +410,7 @@ function listPersonaProposalItems(
 
 function isVisibleAfterPersonaCursor(proposal: ProposalEntry, cursor?: PendingAutopilotCursor | null): boolean {
   if (!cursor?.cursor) return true;
-  if (proposal.createdAt > cursor.updatedAt) return true;
+  if (proposal.createdAt >= cursor.updatedAt) return true;
   // Persona proposals are listed newest-first by ProposalsDB. A durable cursor
   // therefore means "the newest processed boundary" for the already-seen backlog,
   // and subsequent pages must move toward older proposals without hiding proposals
