@@ -287,9 +287,10 @@ export function evaluateProcedureForPromotion(
     gates.push(defer("non_deterministic_steps", "recipe relies on non-deterministic timing or vague judgment"));
   if (!hasValidationCheck(recipe, proc.taskPattern))
     gates.push(defer("no_validation_possible", "no objective validation check is present or inferable"));
+  const resolvedSkillSlug = options.resolvedSlug ?? item.payload.skillSlug;
   if (
     isDuplicateSkill(
-      item.payload.skillSlug,
+      resolvedSkillSlug,
       proc.taskPattern,
       options.skillsAutoPath,
       options.existingSkillDirs,
@@ -301,10 +302,7 @@ export function evaluateProcedureForPromotion(
   gates.push(...scanSafety(combinedText));
 
   const initialGates = gates.length;
-  const draft =
-    initialGates > 0
-      ? null
-      : buildProcedureSkillDraft(item, policy, options, gates, options.resolvedSlug ?? item.payload.skillSlug);
+  const draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   if (draft) {
     const validator = new SkillValidator();
     const staticResult = validator.validate(draft.skillMd);
@@ -334,7 +332,6 @@ export function evaluateProcedureForPromotion(
   const eligible = gates.length === 0;
   const finalDraft = eligible ? draft : null;
   const generatedPath = eligible && finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
-  const resolvedSkillSlug = options.resolvedSlug ?? finalDraft?.slug ?? item.payload.skillSlug;
   const metadata: ProcedurePromotionVerification = {
     skill: resolvedSkillSlug,
     sourceProcedureIds: [proc.id],
@@ -769,7 +766,8 @@ function isDuplicateSkill(
       if (entry === slug) return true;
       const content = safeReadFile(skillPath).toLowerCase();
       if (content.includes(`name: ${slug}`)) return true;
-      const overlap = [...taskWords].filter((w) => content.includes(w)).length;
+      const contentWords = significantWords(content);
+      const overlap = [...taskWords].filter((w) => contentWords.has(w)).length;
       if (taskWords.size >= 3 && overlap >= Math.min(3, taskWords.size)) return true;
     }
   }
