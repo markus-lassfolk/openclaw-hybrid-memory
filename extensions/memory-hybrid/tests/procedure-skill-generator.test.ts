@@ -172,7 +172,7 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "dry-run-procedure", "SKILL.md"))).toBe(false);
   });
 
-  it("reserves candidate slugs during dry-run batch generation", () => {
+  it("detects duplicate procedures and only generates one skill", () => {
     const recipeJson = JSON.stringify([
       { tool: "read", args: { path: "status.json" }, summary: "Check status" },
       {
@@ -216,17 +216,12 @@ describe("generateAutoSkills", () => {
       { info: () => {}, warn: () => {} },
     );
 
-    expect(result.generated).toBe(2);
-    expect(result.paths).toEqual([
-      join(skillsDir, "validate-duplicate-procedure", "SKILL.md"),
-      join(skillsDir, "validate-duplicate-procedure-1", "SKILL.md"),
-    ]);
-    expect((result.decisions ?? []).map((decision) => decision.skillPath)).toEqual([
-      join(skillsDir, "validate-duplicate-procedure"),
-      join(skillsDir, "validate-duplicate-procedure-1"),
-    ]);
+    expect(result.generated).toBe(1);
+    expect(result.paths).toEqual([join(skillsDir, "validate-duplicate-procedure", "SKILL.md")]);
+    expect(
+      (result.decisions ?? []).filter((d) => d.action !== "deferred-for-human").map((decision) => decision.skillPath),
+    ).toEqual([join(skillsDir, "validate-duplicate-procedure")]);
     expect(existsSync(join(skillsDir, "validate-duplicate-procedure", "SKILL.md"))).toBe(false);
-    expect(existsSync(join(skillsDir, "validate-duplicate-procedure-1", "SKILL.md"))).toBe(false);
   });
 
   it("uses one stable runId for every decision in a batch", () => {

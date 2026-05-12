@@ -158,7 +158,9 @@ export function generateAutoSkills(
         enabled: false,
         humanReviewRequired: decision.humanReviewRequired,
       });
-      skipped++;
+      if (!evaluation.eligible || !evaluation.draft) {
+        skipped++;
+      }
       logger.info(
         `procedure-skill-generator: ${proc.id} ${decision.action}: ${
           evaluation.metadata.rejectionReasons.join(",") || "not eligible"

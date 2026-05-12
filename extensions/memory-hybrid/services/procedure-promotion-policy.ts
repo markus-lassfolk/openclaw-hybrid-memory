@@ -186,7 +186,7 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
 const PRIVATE_DATA_PATTERNS: RegExp[] = [
   /\b(?:10\.|127\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
   /(?:^|[\s"'=:])(?:\/home\/[^\s"']+|\/Users\/[^\s"']+|~\/[^\s"']+)/,
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+  /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
 ];
 
 export function parseProcedurePromotionPolicy(policy: string | undefined): ProcedurePromotionPolicy {
@@ -756,7 +756,7 @@ function isDuplicateSkill(
     if (candidate.slug === slug) return true;
     const candidateWords = significantWords(candidate.taskPattern);
     const overlap = [...taskWords].filter((w) => candidateWords.has(w)).length;
-    if (taskWords.size >= 3 && overlap >= Math.min(3, taskWords.size)) return true;
+    if (taskWords.size >= 2 && overlap >= Math.min(2, taskWords.size)) return true;
   }
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
@@ -768,7 +768,7 @@ function isDuplicateSkill(
       if (content.includes(`name: ${slug}`)) return true;
       const contentWords = significantWords(content);
       const overlap = [...taskWords].filter((w) => contentWords.has(w)).length;
-      if (taskWords.size >= 3 && overlap >= Math.min(3, taskWords.size)) return true;
+      if (taskWords.size >= 2 && overlap >= Math.min(2, taskWords.size)) return true;
     }
   }
   return false;
