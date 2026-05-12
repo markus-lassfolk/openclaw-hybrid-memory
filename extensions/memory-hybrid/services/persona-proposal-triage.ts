@@ -116,6 +116,7 @@ type PersonaProposalPayload = {
 export type PersonaProposalPendingItem = PendingItem<PersonaProposalPayload> & {
   proposal: ProposalEntry;
   targetPath: string;
+  targetValid: boolean;
   targetHash: string | null;
   workspace: string;
 };
@@ -481,6 +482,7 @@ function proposalToPendingItem(
     requiresHumanReview: true,
     proposal,
     targetPath: target.path,
+    targetValid: target.ok,
     targetHash,
     workspace,
   };
@@ -496,8 +498,7 @@ function analyzePersonaProposal(
   const p = item.proposal;
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`;
   const evidence = buildEvidence(p);
-  const target = resolveAllowedPersonaTarget(workspace, p.targetFile, cfg.personaProposals.allowedFiles);
-  if (!target.ok) {
+  if (!item.targetValid) {
     return failed("critical", "validation-failed", `Target path rejected for ${p.targetFile}`, evidence, 0.1);
   }
   if (containsSecretOrPrivateData(text)) {
