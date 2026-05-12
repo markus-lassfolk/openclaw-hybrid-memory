@@ -23,6 +23,7 @@ import {
   type PendingItem,
   type PendingQueueAdapter,
   PendingAutopilotStore,
+  canonicalJson,
   computePendingInputHash,
   createPendingAutopilotRunId,
   createStableRunSummary,
@@ -249,7 +250,7 @@ export async function runPersonaProposalTriage(
 }
 
 export function stablePersonaProposalTriageJson(result: PersonaProposalTriageResult): string {
-  return `${JSON.stringify(redactAutopilotValue(result), null, 2)}\n`;
+  return `${canonicalJson(redactAutopilotValue(result))}\n`;
 }
 
 export function renderPersonaProposalTriageHumanSummary(result: PersonaProposalTriageResult): string {
