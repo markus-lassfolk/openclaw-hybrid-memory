@@ -310,6 +310,9 @@ export async function runPendingDigestAutopilot(
                 decisionFromPersonaView(decision, childDecision))
               : undefined;
             decision = latestDecision ?? decision;
+            if (!childDecision) {
+              store?.recordDecision(decision);
+            }
           } else {
             store?.recordDecision(decision);
           }
