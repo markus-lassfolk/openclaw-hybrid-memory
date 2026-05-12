@@ -287,7 +287,7 @@ export function evaluateProcedureForPromotion(
 
   gates.push(...scanSafety(combinedText));
 
-  const draft = gates.some((g) => g.severity === "reject" || g.severity === "fail-validation")
+  const draft = gates.length > 0
     ? null
     : buildProcedureSkillDraft(item, policy, options, gates, options.resolvedSlug ?? item.payload.skillSlug);
   if (draft) {
