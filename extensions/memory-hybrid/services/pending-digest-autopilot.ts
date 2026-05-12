@@ -386,14 +386,16 @@ function createPersonaProposalTriageAdapterWithCloseable(
 ): PendingQueueAdapter<QueueItem> {
   return {
     queue: "persona",
-    listPending: () =>
-      withCloseable(
+    listPending: () => {
+      if (!cfg.personaProposals.enabled) return [];
+      return withCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
           const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg });
           return adapter.listPending(null);
         },
-      ),
+      );
+    },
     decide: (item, context) =>
       withCloseable(
         () => new ProposalsDB(dbPath),

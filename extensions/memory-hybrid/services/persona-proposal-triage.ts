@@ -355,6 +355,7 @@ function listPersonaProposalItems(input: {
   cfg: Pick<HybridMemoryConfig, "personaProposals">;
   workspace?: string;
 }): PersonaProposalPendingItem[] {
+  if (!input.cfg.personaProposals.enabled) return [];
   const pending = input.proposalsDb.list({ status: "pending" });
   const workspace = input.workspace ?? defaultWorkspace();
   return pending.map((proposal) => proposalToPendingItem(proposal, workspace, input.cfg));

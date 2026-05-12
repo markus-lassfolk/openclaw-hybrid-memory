@@ -50,9 +50,11 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
   expect(normalize(standalone)).toEqual(normalize(parentRun));
 }
 
-function normalize(
-  decisions: PendingDecision[],
-): Array<Omit<PendingDecision, "runId" | "createdAt" | "audit"> & { audit?: Omit<NonNullable<PendingDecision["audit"]>, "runId"> }> {
+function normalize(decisions: PendingDecision[]): Array<
+  Omit<PendingDecision, "runId" | "createdAt" | "audit"> & {
+    audit?: Omit<NonNullable<PendingDecision["audit"]>, "runId">;
+  }
+> {
   return decisions
     .map(({ runId: _runId, createdAt: _createdAt, audit, ...decision }) => ({
       ...decision,
