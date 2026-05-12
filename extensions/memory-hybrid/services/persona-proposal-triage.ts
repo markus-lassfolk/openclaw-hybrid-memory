@@ -884,7 +884,7 @@ function findDuplicate(proposal: ProposalEntry, all: ProposalEntry[]): ProposalE
   );
   if (!candidate) return null;
   if (candidate.status === "applied") return candidate;
-  return candidate.createdAt < proposal.createdAt ? null : candidate;
+  return candidate.createdAt < proposal.createdAt ? candidate : null;
 }
 
 function isNonActionable(change: string): boolean {
