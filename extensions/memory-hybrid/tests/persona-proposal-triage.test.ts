@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -240,6 +241,45 @@ describe("persona proposal triage", () => {
     expect(proposalsDb.get(unsafe.id)?.status).toBe("pending");
     expect(result.decisions[0]?.action).toBe("deferred-for-human");
     expect(result.decisions[0]?.reason).toBe("stale-target-context");
+  });
+
+  it("rolls back persona file writes when proposal status update fails during apply", async () => {
+    const targetPath = join(tmpDir, "USER.md");
+    const original = readFileSync(targetPath, "utf-8");
+    const p = proposal({
+      targetFile: "USER.md",
+      targetHash: fileHash(targetPath),
+      suggestedChange: "Formatting: transactional rollback marker.",
+      confidence: 0.99,
+    });
+    const proposalsDbPath = join(tmpDir, "proposals.db");
+    proposalsDb.close();
+    const raw = new DatabaseSync(proposalsDbPath);
+    raw.exec(`
+      CREATE TRIGGER fail_persona_mark_applied
+      BEFORE UPDATE OF status ON proposals
+      WHEN NEW.status = 'applied'
+      BEGIN
+        SELECT RAISE(FAIL, 'simulated markApplied failure');
+      END;
+    `);
+    raw.close();
+    proposalsDb = new ProposalsDB(proposalsDbPath);
+
+    await expect(
+      runPersonaProposalTriage({
+        proposalsDb,
+        cfg,
+        workspace: tmpDir,
+        mode: "apply",
+        policy: "apply-safe",
+        stateDbPath: join(tmpDir, "pending.db"),
+      }),
+    ).rejects.toThrow(/simulated markApplied failure/);
+
+    expect(readFileSync(targetPath, "utf-8")).toBe(original);
+    expect(readdirSync(tmpDir).some((name) => name.startsWith("USER.md.backup-"))).toBe(false);
+    expect(proposalsDb.get(p.id)?.status).toBe("pending");
   });
 
   it("report-only apply intent does not write durable autopilot state or mutate proposals", async () => {

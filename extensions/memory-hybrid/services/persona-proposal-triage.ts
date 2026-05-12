@@ -625,9 +625,7 @@ function applyPersonaDecisionWithLock(input: {
         if (input.decision.action === "rejected") {
           input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", input.decision.reasonCode);
         } else if (input.decision.action === "applied" && preparedApply) {
-          input.proposalsDb.markApplied(input.item.id);
-          writeFileSync(preparedApply.backupPath, preparedApply.original, "utf-8");
-          writeFileAtomic(preparedApply.targetPath, preparedApply.appliedContent);
+          applyPreparedPersonaChange(preparedApply, () => input.proposalsDb.markApplied(input.item.id));
         }
       },
     });
@@ -991,6 +989,27 @@ function resolveAllowedPersonaTarget(
     }
   }
   return { ok: true, path: targetPath };
+}
+
+function applyPreparedPersonaChange(
+  preparedApply: { targetPath: string; backupPath: string; original: string; appliedContent: string },
+  markApplied: () => void,
+): void {
+  let backupWritten = false;
+  let targetWritten = false;
+  let appliedMarked = false;
+  try {
+    writeFileSync(preparedApply.backupPath, preparedApply.original, "utf-8");
+    backupWritten = true;
+    writeFileAtomic(preparedApply.targetPath, preparedApply.appliedContent);
+    targetWritten = true;
+    markApplied();
+    appliedMarked = true;
+  } catch (err) {
+    if (targetWritten) writeFileAtomic(preparedApply.targetPath, preparedApply.original);
+    if (backupWritten && !appliedMarked) rmSync(preparedApply.backupPath, { force: true });
+    throw err;
+  }
 }
 
 function writeFileAtomic(path: string, content: string): void {
