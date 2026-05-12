@@ -432,10 +432,9 @@ export async function runVerifiedFactTriageWithAdapter(
 					mode,
 				}) ?? false;
 			const liveItem = locked
-				? reloadVerifiedFactTriageItem(factsDb.getRawDb(), item, {
-						policy,
-						nowMs: opts.nowMs,
-					})
+				? ((await adapter.listPending(null)).find(
+						(candidate) => candidate.id === item.id,
+					) ?? null)
 				: null;
 			const actualInputHash = liveItem?.inputHash ?? "missing";
 			if (locked && liveItem && actualInputHash === item.inputHash) {
@@ -1252,25 +1251,6 @@ function summarizeProvenance(fact: TriageFactSnapshot | null): string {
 		`source:${fact.source}`,
 	].filter(Boolean);
 	return parts.join(", ");
-}
-
-function reloadVerifiedFactTriageItem(
-	db: DatabaseSync,
-	item: VerifiedFactTriageItem,
-	opts: {
-		policy: VerifiedTriagePolicy;
-		nowMs?: number;
-		reverificationDays?: number;
-	},
-): VerifiedFactTriageItem | null {
-	return (
-		listVerifiedFactTriageItems(db, {
-			max: 10_000,
-			nowMs: opts.nowMs,
-			reverificationDays: opts.reverificationDays,
-			policy: opts.policy,
-		}).find((candidate) => candidate.id === item.id) ?? null
-	);
 }
 
 function validationFailureDecision(
