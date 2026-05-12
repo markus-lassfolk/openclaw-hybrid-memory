@@ -102,7 +102,7 @@ export function generateAutoSkills(
 ): GenerateAutoSkillsResult {
   const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
   const dryRun = options.dryRun ?? options.apply !== true;
-  const policy = parseProcedurePromotionPolicy(resolveBatchPromotionPolicy(options.policy, dryRun));
+  const policy = parseProcedurePromotionPolicy(resolveBatchPromotionPolicy(options.policy, options.apply));
   const basePath = resolveSkillsPath(options.skillsAutoPath);
   const runId = `procedure-promotion-${Date.now()}`;
   const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
@@ -261,7 +261,7 @@ export function generateAutoSkillForProcedure(
 ): GenerateAutoSkillResult {
   const dryRun = options.dryRun ?? options.apply !== true;
   const policy: ProcedurePromotionPolicy = parseProcedurePromotionPolicy(
-    resolveBatchPromotionPolicy(options.policy, dryRun),
+    resolveBatchPromotionPolicy(options.policy, options.apply),
   );
   const proc = factsDb.getProcedureById(options.procedureId);
   if (!proc) return { ok: false, reason: "not-found" };
@@ -345,11 +345,13 @@ export function generateAutoSkillForProcedure(
   };
 }
 
-function resolveBatchPromotionPolicy(policy: string | undefined, dryRun: boolean): string | undefined {
-  // Backward compatibility: older maintenance callers selected mutation with dryRun=false
-  // before the explicit --policy flag existed. Keep those non-dry-run calls drafting under
+function resolveBatchPromotionPolicy(policy: string | undefined, apply: boolean | undefined): string | undefined {
+  // Backward compatibility: older maintenance callers selected mutation with apply=true
+  // before the explicit --policy flag existed. Keep those apply=true calls drafting under
   // auto-safe gates, while read-only/default invocations remain draft-only for review.
-  return policy ?? (dryRun ? undefined : "auto-safe");
+  // When --apply --dry-run is passed together (to preview what apply would do), the policy
+  // should still default to "auto-safe" to accurately reflect what --apply alone would do.
+  return policy ?? (apply === true ? "auto-safe" : undefined);
 }
 
 function resolveSkillsPath(skillsAutoPath: string): string {
