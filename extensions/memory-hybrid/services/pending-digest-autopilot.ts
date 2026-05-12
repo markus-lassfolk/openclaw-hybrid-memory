@@ -393,12 +393,10 @@ function createPersonaProposalTriageAdapterWithCloseable(
       return withCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
-          const allProposals = db.list();
           const adapter = createPersonaProposalTriageAdapter({
             proposalsDb: db,
             cfg,
             workspace,
-            allProposals,
           });
           return adapter.listPending(cursor);
         },

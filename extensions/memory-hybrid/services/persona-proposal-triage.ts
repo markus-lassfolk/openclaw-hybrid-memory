@@ -911,7 +911,7 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
     if (/privacy|security|approval|credential|destructive|safeguard/.test(text)) return "high";
   } else if (
-    /\b(identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule)\b/.test(
+    /\b(identit(?:y|ies)|personalit(?:y|ies)|voice|tone|privacy|security|external|group chat|user preferences?|profile|personal facts?|memory rules?)\b/.test(
       text,
     )
   ) {
