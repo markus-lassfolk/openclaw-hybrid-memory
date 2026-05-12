@@ -748,6 +748,12 @@ describe("VectorDB graceful degradation — FTS5-only fallback when lancedb.conn
     expect(result).toBe(false);
   });
 
+  it("deleteMany() returns 0 when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const result = await db.deleteMany(["aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"]);
+    expect(result).toBe(0);
+  });
+
   it("optimize() returns zero stats when LanceDB unavailable", async () => {
     const db = new VectorDB("/tmp/test-lance", DIM);
     const stats = await db.optimize();
@@ -766,6 +772,84 @@ describe("VectorDB graceful degradation — FTS5-only fallback when lancedb.conn
     expect(unavailableWarns).toHaveLength(1);
     // connect() is also only called once despite three operation calls
     expect(connectSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("VectorDB.deleteMany", () => {
+  const DIM = 3;
+
+  it("filters invalid UUIDs and de-duplicates IDs before issuing deletes", async () => {
+    const db = new VectorDB("/tmp/test-lance-delete-many-filter", DIM);
+    const id = randomUUID();
+    const tableDelete = vi.fn().mockResolvedValue(undefined);
+    const ensureInitializedSpy = vi.spyOn(
+      db as unknown as { ensureInitialized: () => Promise<void> },
+      "ensureInitialized",
+    );
+    const retrySpy = vi.spyOn(
+      db as unknown as {
+        withRetryableWriteConflictRetry: (label: string, fn: () => Promise<void>) => Promise<void>;
+      },
+      "withRetryableWriteConflictRetry",
+    );
+    const getTableSpy = vi.spyOn(
+      db as unknown as { getTable: () => { delete: (predicate: string) => Promise<void> } },
+      "getTable",
+    );
+    ensureInitializedSpy.mockResolvedValue(undefined);
+    retrySpy.mockImplementation(async (_label, fn) => {
+      await fn();
+    });
+    getTableSpy.mockReturnValue({ delete: tableDelete });
+    const internals = db as unknown as { lanceDbAvailable: boolean; lanceInitFailed: boolean; table: object | null };
+    internals.lanceDbAvailable = true;
+    internals.lanceInitFailed = false;
+    internals.table = {};
+
+    const deleted = await db.deleteMany([id, id.toUpperCase(), "invalid"]);
+
+    expect(deleted).toBe(1);
+    expect(tableDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to per-id delete when bulk delete throws", async () => {
+    const db = new VectorDB("/tmp/test-lance-delete-many-fallback", DIM);
+    const id1 = randomUUID();
+    const id2 = randomUUID();
+    const ensureInitializedSpy = vi.spyOn(
+      db as unknown as { ensureInitialized: () => Promise<void> },
+      "ensureInitialized",
+    );
+    const retrySpy = vi.spyOn(
+      db as unknown as {
+        withRetryableWriteConflictRetry: (label: string, fn: () => Promise<void>) => Promise<void>;
+      },
+      "withRetryableWriteConflictRetry",
+    );
+    const getTableSpy = vi.spyOn(
+      db as unknown as { getTable: () => { delete: (predicate: string) => Promise<void> } },
+      "getTable",
+    );
+    const fallbackDeleteSpy = vi.spyOn(db, "delete");
+    ensureInitializedSpy.mockResolvedValue(undefined);
+    retrySpy.mockImplementation(async (_label, fn) => {
+      await fn();
+    });
+    getTableSpy.mockReturnValue({
+      delete: vi.fn().mockRejectedValue(new Error("boom")),
+    });
+    fallbackDeleteSpy.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const internals = db as unknown as { lanceDbAvailable: boolean; lanceInitFailed: boolean; table: object | null };
+    internals.lanceDbAvailable = true;
+    internals.lanceInitFailed = false;
+    internals.table = {};
+
+    const deleted = await db.deleteMany([id1, id2]);
+
+    expect(deleted).toBe(1);
+    expect(fallbackDeleteSpy).toHaveBeenCalledTimes(2);
+    expect(fallbackDeleteSpy).toHaveBeenNthCalledWith(1, id1.toLowerCase());
+    expect(fallbackDeleteSpy).toHaveBeenNthCalledWith(2, id2.toLowerCase());
   });
 });
 

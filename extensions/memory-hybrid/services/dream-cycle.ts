@@ -122,6 +122,9 @@ export interface DreamCycleResult {
 // Minimum patterns stored in one cycle before we also run reflect-rules.
 const MIN_PATTERNS_FOR_RULES = 3;
 export const DEFAULT_MAX_EVENTS_PER_CONSOLIDATION = 200;
+const DREAM_STAGE_HEARTBEAT_MS = 60_000;
+const EPISODIC_PROGRESS_HEARTBEAT_MS = 60_000;
+const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
   "heartbeat",
   "session_end",
@@ -143,6 +146,12 @@ export type EpisodicConsolidationEventTypeFilter = {
   allow?: string[];
   deny?: string[];
 };
+
+function isVectorBackendAvailable(vectorDb: Pick<VectorDB, "isLanceDbAvailable"> | unknown): boolean {
+  const candidate = vectorDb as { isLanceDbAvailable?: () => boolean };
+  if (typeof candidate.isLanceDbAvailable !== "function") return true;
+  return candidate.isLanceDbAvailable();
+}
 
 function episodicDenySet(filter?: EpisodicConsolidationEventTypeFilter | null): Set<string> {
   const s = new Set<string>(DEFAULT_EPISODIC_CONSOLIDATION_EVENT_TYPE_DENY);
@@ -342,9 +351,28 @@ export async function runEpisodicConsolidation(
     );
   }
   let factsCreated = 0;
+  const totalGroups = groups.size;
+  let processedGroups = 0;
+  const consolidationStartedAt = Date.now();
+  let lastProgressLogAt = consolidationStartedAt;
+  const maybeLogConsolidationProgress = (entity: string): void => {
+    if (!verbose) return;
+    const now = Date.now();
+    const shouldLogByCount = processedGroups === 1 || processedGroups % EPISODIC_PROGRESS_GROUP_INTERVAL === 0;
+    const shouldLogByTime = now - lastProgressLogAt >= EPISODIC_PROGRESS_HEARTBEAT_MS;
+    if (!shouldLogByCount && !shouldLogByTime) return;
+    lastProgressLogAt = now;
+    const elapsedSec = Math.floor((now - consolidationStartedAt) / 1000);
+    const safeEntity = entity === "__default__" ? "unattributed" : entity;
+    logger.info(
+      `memory-hybrid: dream-cycle — episodic consolidation progress ${processedGroups}/${totalGroups} group(s); eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}, currentEntity="${safeEntity}"; still running after ${elapsedSec}s`,
+    );
+  };
 
   for (const [entity, groupEvents] of groups) {
     if (groupEvents.length === 0) continue;
+    processedGroups++;
+    maybeLogConsolidationProgress(entity);
 
     if (entity === "__default__" && groupEvents.length > maxEventsPerConsolidation) {
       try {
@@ -523,6 +551,13 @@ export async function runEpisodicConsolidation(
     }
   }
 
+  if (verbose) {
+    const elapsedSec = Math.floor((Date.now() - consolidationStartedAt) / 1000);
+    logger.info(
+      `memory-hybrid: dream-cycle — episodic consolidation complete in ${elapsedSec}s; groups=${processedGroups}/${totalGroups}, eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`,
+    );
+  }
+
   return { eventsConsolidated, factsCreated };
 }
 
@@ -563,21 +598,71 @@ export async function runDreamCycle(
   }
 
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
+  const cycleStartedAt = Date.now();
   const v = !!config.verbose;
-  let stepCounter = 0;
-  const step = (label: string) => {
-    if (v) logger.info(`memory-hybrid: dream-cycle — step ${++stepCounter}: ${label}`);
+  let stageCounter = 0;
+  const beginStage = (
+    label: string,
+    opts?: { heartbeat?: boolean; progressSupplier?: () => string | undefined },
+  ): {
+    complete: (summary?: string) => void;
+    fail: (err: unknown) => void;
+  } => {
+    const stageNumber = ++stageCounter;
+    const startedAt = Date.now();
+    logger.info(`memory-hybrid: dream-cycle — stage ${stageNumber} start: ${label}`);
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    if (v && opts?.heartbeat === true) {
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+        const progress = opts?.progressSupplier?.();
+        logger.info(
+          `memory-hybrid: dream-cycle — stage ${stageNumber} still running after ${elapsedSec}s: ${label}${progress ? `; ${progress}` : ""}`,
+        );
+      }, DREAM_STAGE_HEARTBEAT_MS);
+      heartbeat.unref?.();
+    }
+    const clearHeartbeat = () => {
+      if (heartbeat) clearInterval(heartbeat);
+    };
+    return {
+      complete: (summary?: string) => {
+        clearHeartbeat();
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+        logger.info(
+          `memory-hybrid: dream-cycle — stage ${stageNumber} complete in ${elapsedSec}s: ${label}${summary ? `; ${summary}` : ""}`,
+        );
+      },
+      fail: (err: unknown) => {
+        clearHeartbeat();
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+        logger.warn(`memory-hybrid: dream-cycle — stage ${stageNumber} failed after ${elapsedSec}s: ${label}: ${err}`);
+      },
+    };
+  };
+  const beginSubstep = (label: string): { complete: (summary?: string) => void } => {
+    const startedAt = Date.now();
+    if (v) logger.info(`memory-hybrid: dream-cycle — substep start: ${label}`);
+    return {
+      complete: (summary?: string) => {
+        if (!v) return;
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+        logger.info(
+          `memory-hybrid: dream-cycle — substep complete in ${elapsedSec}s: ${label}${summary ? `; ${summary}` : ""}`,
+        );
+      },
+    };
   };
 
-  // ── Step 1: Prune ────────────────────────────────────────────────────────
-  step("prune / decay / orphaned links");
+  // ── Stage 1: Core pruning / decay / graph-vector maintenance ─────────────
+  const stageCore = beginStage("core prune/decay/link/vector maintenance");
   let factsPruned = 0;
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
     try {
-      const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
-      factsPruned = factsDb.pruneExpired();
-      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
+      const expiredPrune = factsDb.pruneExpiredWithDetails();
+      factsPruned = expiredPrune.factsPruned;
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, expiredPrune.deletedFactIds, {
         operation: "dream-cycle-prune-expired",
         logger,
       });
@@ -598,9 +683,9 @@ export async function runDreamCycle(
   if (config.pruneMode === "decay" || config.pruneMode === "both") {
     try {
       const decayNowSec = Math.floor(Date.now() / 1000);
-      const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
-      factsDecayed = factsDb.decayConfidence(decayNowSec);
-      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, decayDeleteIds, {
+      const decayRun = factsDb.decayConfidenceWithDetails(decayNowSec);
+      factsDecayed = decayRun.factsDecayed;
+      const vectorCleanup = await deleteVectorsForFactIds(vectorDb, decayRun.deletedFactIds, {
         operation: "dream-cycle-decay",
         logger,
       });
@@ -640,7 +725,7 @@ export async function runDreamCycle(
   // meant `decay_class=stable` accumulated and prune found nothing.
   let decayReclassified = 0;
   if (config.reclassifyDecayOnCycle !== false) {
-    step("decay reclassify (source/importance/recall)");
+    const reclassifyStep = beginSubstep("decay reclassify (source/importance/recall)");
     try {
       const report = factsDb.reclassifyDecayClasses({
         apply: true,
@@ -660,6 +745,7 @@ export async function runDreamCycle(
         subsystem: "facts-db",
       });
     }
+    reclassifyStep.complete(`changed=${decayReclassified}`);
   }
 
   // ── Step 1d: Refresh denormalized graph degrees (#1192) ──────────────────
@@ -667,7 +753,7 @@ export async function runDreamCycle(
   // is O(edges) per call. A single nightly refresh keeps reads cheap while still adapting to
   // graph changes within a day.
   if (typeof (factsDb as { refreshFactDegrees?: () => unknown }).refreshFactDegrees === "function") {
-    step("refresh fact degrees");
+    const refreshDegreesStep = beginSubstep("refresh fact degrees");
     try {
       const result = (factsDb as { refreshFactDegrees: () => { updated: number } }).refreshFactDegrees();
       if (v) {
@@ -680,6 +766,7 @@ export async function runDreamCycle(
         subsystem: "facts-db",
       });
     }
+    refreshDegreesStep.complete();
   }
 
   // ── Step 1e: Reconcile LanceDB orphaned vectors ──────────────────────────
@@ -687,7 +774,7 @@ export async function runDreamCycle(
   // corresponding SQLite fact was hard-deleted is now an orphan.  Orphaned vectors
   // pollute semantic search results with stale or deleted facts.  We reconcile here
   // by deleting vector IDs that no longer have a corresponding SQLite fact.
-  step("reconcile LanceDB orphaned vectors");
+  const vectorReconcileStep = beginSubstep("reconcile LanceDB orphaned vectors");
   let orphanVectorsRemoved = 0;
   try {
     const sqliteIds = new Set(factsDb.getAllIds());
@@ -695,18 +782,26 @@ export async function runDreamCycle(
     const orphans = vectorIds.filter((id) => !sqliteIds.has(id));
     if (orphans.length > 0) {
       logger.info(`memory-hybrid: dream-cycle — reconciling ${orphans.length} orphaned vector(s)...`);
-      let removed = 0;
-      for (const id of orphans) {
-        try {
-          await vectorDb.delete(id);
-          removed++;
-        } catch (delErr) {
-          logger.warn(`memory-hybrid: dream-cycle — failed to delete orphaned vector ${id}: ${delErr}`);
-        }
+      const cleanup = await deleteVectorsForFactIds(vectorDb, orphans, {
+        operation: "dream-cycle-orphan-vector-reconcile",
+        logger,
+      });
+      orphanVectorsRemoved = cleanup.deleted;
+      if (cleanup.deleted > 0) {
+        logger.info(`memory-hybrid: dream-cycle — removed ${cleanup.deleted} orphaned vector(s) from LanceDB`);
       }
-      orphanVectorsRemoved = removed;
-      if (removed > 0) {
-        logger.info(`memory-hybrid: dream-cycle — removed ${removed} orphaned vector(s) from LanceDB`);
+      if (cleanup.failed > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — orphan reconciliation partial: deleted ${cleanup.deleted}/${cleanup.attempted}, failed ${cleanup.failed}`,
+        );
+      }
+    }
+    if (isVectorBackendAvailable(vectorDb)) {
+      const vectorlessAfterReconcile = factsDb.countVectorlessActiveFacts();
+      if (vectorlessAfterReconcile > 0) {
+        logger.warn(
+          `memory-hybrid: dream-cycle — detected ${vectorlessAfterReconcile} active SQLite fact(s) without vectors after reconciliation; run 'hybrid-mem reembed-vectorless --apply' to restore semantic recall coverage`,
+        );
       }
     }
   } catch (err) {
@@ -716,11 +811,15 @@ export async function runDreamCycle(
       subsystem: "vector",
     });
   }
+  vectorReconcileStep.complete(`removed=${orphanVectorsRemoved}`);
+  stageCore.complete(
+    `factsPruned=${factsPruned}, factsDecayed=${factsDecayed}, linksPruned=${linksPruned}, decayReclassified=${decayReclassified}, orphanVectorsRemoved=${orphanVectorsRemoved}`,
+  );
 
-  // ── Step 2: Episodic consolidation ───────────────────────────────────────
+  // ── Stage 2: Episodic consolidation + event log maintenance ──────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
-  step("episodic consolidation + event log maintenance");
+  const stageEventLog = beginStage("episodic consolidation + event log maintenance");
   if (eventLog) {
     try {
       const consolidationResult = await runEpisodicConsolidation(
@@ -782,9 +881,10 @@ export async function runDreamCycle(
       });
     }
   }
+  stageEventLog.complete(`eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`);
 
-  // ── Step 3: Reflect ───────────────────────────────────────────────────────
-  step("reflection (patterns)");
+  // ── Stage 3: Reflection (patterns) ────────────────────────────────────────
+  const stageReflection = beginStage("reflection (patterns)");
   let patternsFound = 0;
   const reflectionConfig: ReflectionConfig = {
     enabled: true,
@@ -817,16 +917,16 @@ export async function runDreamCycle(
       subsystem: "reflection",
     });
   }
+  stageReflection.complete(`patternsStored=${patternsFound}`);
 
   const livePatternCountForRules = countActivePatternFactsForMaintenance(factsDb);
   const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
 
-  // ── Step 4: Reflect-rules (optional) ────────────────────────────────────
+  // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
   let rulesGenerated = 0;
-  // Cost optimization: Make reflection rules generation optional (saves 30-40% of dream cycle LLM cost)
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
   if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
-    step("reflect-rules");
+    const stageReflectRules = beginStage("reflect-rules");
     try {
       const rulesResult = await runReflectionRules(
         factsDb,
@@ -846,18 +946,17 @@ export async function runDreamCycle(
         subsystem: "reflection",
       });
     }
+    stageReflectRules.complete(`rulesStored=${rulesGenerated}`);
   } else if (!enableReflectionRules && v) {
-    logger.info(
-      `memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)`,
-    );
+    logger.info("memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)");
   } else if (v) {
     logger.info(
       `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
     );
   }
 
-  // ── Step 4b: Refresh memory awareness index ─────────────────────────────
-  step("MEMORY_INDEX.md refresh");
+  // ── Stage 5: Refresh memory awareness index ───────────────────────────────
+  const stageMemoryIndex = beginStage("MEMORY_INDEX.md refresh");
   try {
     await writeMemoryIndex(
       factsDb,
@@ -877,9 +976,10 @@ export async function runDreamCycle(
       subsystem: "reflection",
     });
   }
+  stageMemoryIndex.complete();
 
-  // ── Step 5: Prune log tables ─────────────────────────────────────────────
-  step("prune operational log tables (recall/reinforcement/trajectories)");
+  // ── Stage 6: Operational table/index cleanup ──────────────────────────────
+  const stageOperational = beginStage("prune operational logs + FTS optimize + optional vacuum");
   let logRowsPruned = 0;
   if (config.logRetentionDays > 0) {
     try {
@@ -898,8 +998,8 @@ export async function runDreamCycle(
     }
   }
 
-  // ── Step 5b: FTS5 optimize ───────────────────────────────────────────────
-  step("FTS5 optimize (facts search)");
+  // ── Stage 6b: FTS5 optimize ───────────────────────────────────────────────
+  const optimizeFtsStep = beginSubstep("FTS5 optimize (facts search)");
   try {
     factsDb.optimizeFts();
     logger.info("memory-hybrid: dream-cycle — FTS5 index optimized");
@@ -910,29 +1010,31 @@ export async function runDreamCycle(
       subsystem: "facts-db",
     });
   }
+  optimizeFtsStep.complete();
 
   // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
   let vacuumRan = false;
+  let walCheckpointRan = false;
   if (config.vacuumOnCycle) {
-    step("VACUUM + WAL checkpoint");
+    const vacuumStep = beginSubstep("VACUUM + WAL checkpoint");
     try {
       // Cost optimization: Skip VACUUM when freed space < 10MB (low benefit, high I/O cost)
-      const pageCountResult = factsDb.getDb().prepare("PRAGMA page_count").get() as { page_count: number } | undefined;
-      const freelistCountResult = factsDb.getDb().prepare("PRAGMA freelist_count").get() as { freelist_count: number } | undefined;
-      const pageSizeResult = factsDb.getDb().prepare("PRAGMA page_size").get() as { page_size: number } | undefined;
-
-      const pageCount = pageCountResult?.page_count ?? 0;
-      const freelistCount = freelistCountResult?.freelist_count ?? 0;
-      const pageSize = pageSizeResult?.page_size ?? 4096;
-      const freedBytes = freelistCount * pageSize;
-      const freedMB = freedBytes / (1024 * 1024);
+      const { freedMB } = factsDb.freelistSpaceStats();
 
       if (freedMB < 10) {
-        logger.info(`memory-hybrid: dream-cycle — Skipping VACUUM (only ${freedMB.toFixed(2)}MB freed space, threshold: 10MB)`);
+        // Preserve historical "checkpoint every cycle" behavior even when VACUUM is deferred.
+        factsDb.checkpointWalTruncate();
+        walCheckpointRan = true;
+        logger.info(
+          `memory-hybrid: dream-cycle — skipping VACUUM (only ${freedMB.toFixed(2)}MB freed space, threshold: 10MB); WAL checkpoint complete`,
+        );
       } else {
         factsDb.vacuumAndCheckpoint();
         vacuumRan = true;
-        logger.info(`memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete (reclaimed ${freedMB.toFixed(2)}MB)`);
+        walCheckpointRan = true;
+        logger.info(
+          `memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete (reclaimed ${freedMB.toFixed(2)}MB)`,
+        );
       }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
@@ -941,7 +1043,11 @@ export async function runDreamCycle(
         subsystem: "facts-db",
       });
     }
+    vacuumStep.complete(`vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`);
   }
+  stageOperational.complete(
+    `logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`,
+  );
 
   // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
@@ -958,7 +1064,8 @@ export async function runDreamCycle(
     orphanVectorsRemoved,
   });
 
-  logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
+  const totalElapsedSec = Math.floor((Date.now() - cycleStartedAt) / 1000);
+  logger.info(`memory-hybrid: dream-cycle — complete in ${totalElapsedSec}s. ${digestSummary}`);
 
   return {
     factsPruned,

@@ -1,9 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
-import { parseGithubPrTarget, runGoalHealthCheck } from "../services/goal-health.js";
+import { getBlockedVerificationHostReason, parseGithubPrTarget, runGoalHealthCheck } from "../services/goal-health.js";
 import { createGoal, readGoal, updateGoal } from "../services/goal-registry.js";
 
 const defaults = {
@@ -176,7 +176,7 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
-    expect(r.actions.some((a) => a.action === "verifying")).toBe(false);
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
     const after = await readGoal(goalsDir, created.id);
     expect(after?.lastMechanicalCheck?.ok).toBe(false);
     expect(after?.lastMechanicalCheck?.detail).toContain("allowPrVerification");
@@ -210,15 +210,18 @@ describe("runGoalHealthCheck", () => {
         workspaceRoot,
         logger: {},
       });
-      expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
       expect(fetchMock).toHaveBeenCalled();
       const after = await readGoal(goalsDir, created.id);
       expect(after?.lastMechanicalCheck?.ok).toBe(true);
       expect(after?.status).toBe("verifying");
     } finally {
       vi.unstubAllGlobals();
-      if (prev === undefined) delete process.env.GITHUB_TOKEN;
-      else process.env.GITHUB_TOKEN = prev;
+      if (prev === undefined) {
+        Reflect.deleteProperty(process.env, "GITHUB_TOKEN");
+      } else {
+        process.env.GITHUB_TOKEN = prev;
+      }
     }
   });
 
@@ -243,7 +246,7 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
-    expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
   });
 
   it("escalates after consecutive failures", async () => {
@@ -362,7 +365,66 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
-    expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
+  });
+
+  it("blocks http_ok verification against local/private hosts", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const g = await createGoal(
+        goalsDir,
+        {
+          label: "http_blocked",
+          description: "d",
+          acceptanceCriteria: ["a"],
+          verification: { type: "http_ok", target: "http://127.0.0.1:8080/health" },
+        },
+        defaults,
+      );
+      const r = await runGoalHealthCheck({
+        goalsDir,
+        cfg: baseCfg(),
+        workspaceRoot,
+        logger: {},
+      });
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const after = await readGoal(goalsDir, g.id);
+      expect(after?.lastMechanicalCheck?.detail).toContain("blocked host");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("blocks http_ok verification for IPv4-mapped IPv6 loopback hosts", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await createGoal(
+        goalsDir,
+        {
+          label: "http_mapped_ipv6_blocked",
+          description: "d",
+          acceptanceCriteria: ["a"],
+          verification: { type: "http_ok", target: "http://[::ffff:127.0.0.1]/health" },
+        },
+        defaults,
+      );
+      const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports literal private IP targets as blocked verification hosts", async () => {
+    await expect(getBlockedVerificationHostReason("192.168.1.20")).resolves.toBe("local/private IP");
   });
 
   it("escalates goal after consecutive failures", async () => {
@@ -428,6 +490,31 @@ describe("runGoalHealthCheck", () => {
     });
     expect(r.goalsChecked).toBe(2);
     expect(r.goalsUpdated).toBe(0);
+  });
+
+  it("continues processing other goals when one goal throws inside loop", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const broken = await createGoal(
+      goalsDir,
+      { label: "broken_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    const brokenPath = join(goalsDir, `${broken.id}.json`);
+    const raw = await readFile(brokenPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed.linkedTasks = null;
+    await writeFile(brokenPath, JSON.stringify(parsed, null, 2), "utf-8");
+    const healthy = await createGoal(
+      goalsDir,
+      { label: "healthy_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.goalsChecked).toBe(2);
+    expect(r.outcomes.some((o) => o.goalId === broken.id && o.outcome === "blocked")).toBe(true);
+    expect(r.outcomes.some((o) => o.goalId === healthy.id)).toBe(true);
   });
 
   it("persists noop pulse outcome in goal history when no action is eligible", async () => {

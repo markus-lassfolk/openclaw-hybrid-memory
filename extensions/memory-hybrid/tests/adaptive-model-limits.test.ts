@@ -20,7 +20,7 @@ describe("adaptive-model-limits", () => {
     expect(adaptiveFailureShrinkRatios("rate_limit").out).toBe(0.95);
   });
 
-  it("uses catalog limits when no state exists", () => {
+  it("uses conservative half-catalog limits when no state exists", () => {
     const state = loadAdaptiveModelLimits("/no/such/file.json");
     const eff = getEffectiveModelLimits({
       state,
@@ -29,8 +29,8 @@ describe("adaptive-model-limits", () => {
       catalogMaxOutputTokens: 8_000,
     });
     expect(eff.source).toBe("catalog");
-    expect(eff.batchTokenLimit).toBe(100_000);
-    expect(eff.maxOutputTokens).toBe(8_000);
+    expect(eff.batchTokenLimit).toBe(50_000);
+    expect(eff.maxOutputTokens).toBe(4_000);
   });
 
   it("shrinks on failures and grows slowly on success", () => {

@@ -2,7 +2,8 @@
  * Regenerate ACTIVE-TASKS.md with an ## Active Goals mirror section (read-only view of goal registry).
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
 import { readActiveTaskFile, serializeActiveTaskFile } from "./active-task.js";
@@ -29,6 +30,36 @@ export function formatGoalsMirrorSection(goals: Goal[]): string {
   return lines.join("\n");
 }
 
+function buildGoalsMirrorBlock(goalsMd: string): string[] {
+  const block = [
+    "## Active Goals",
+    "_Mirror from goal registry — do not edit by hand; refreshed on heartbeat._",
+    "",
+    goalsMd,
+  ].join("\n");
+  const normalized = block.endsWith("\n") ? block : `${block}\n`;
+  return normalized.split("\n");
+}
+
+function replaceOrAppendGoalsMirror(raw: string, goalsMd: string): string {
+  const lines = raw.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "## Active Goals");
+  const replacement = buildGoalsMirrorBlock(goalsMd);
+  if (start >= 0) {
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i]?.trim().startsWith("## ")) {
+        end = i;
+        break;
+      }
+    }
+    const merged = [...lines.slice(0, start), ...replacement, ...lines.slice(end)];
+    return merged.join("\n");
+  }
+  const sep = raw.endsWith("\n") ? "" : "\n";
+  return `${raw}${sep}${sep}${replacement.join("\n")}`;
+}
+
 export async function refreshActiveTaskMirrorWithGoals(opts: {
   activeTaskPath: string;
   goals: Goal[];
@@ -36,13 +67,34 @@ export async function refreshActiveTaskMirrorWithGoals(opts: {
   logger?: { info?: (m: string) => void; warn?: (m: string) => void };
 }): Promise<{ ok: boolean; error?: string }> {
   try {
-    const parsed = await readActiveTaskFile(opts.activeTaskPath, opts.staleMinutes);
-    const active = parsed?.active ?? [];
-    const completed = parsed?.completed ?? [];
     const goalsMd = formatGoalsMirrorSection(opts.goals);
-    const content = serializeActiveTaskFile(active, completed, goalsMd);
     await mkdir(dirname(opts.activeTaskPath), { recursive: true });
-    await writeFile(opts.activeTaskPath, content, "utf-8");
+    let content: string;
+    try {
+      const raw = await readFile(opts.activeTaskPath, "utf-8");
+      content = replaceOrAppendGoalsMirror(raw, goalsMd);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      const parsed = await readActiveTaskFile(opts.activeTaskPath, opts.staleMinutes);
+      const active = parsed?.active ?? [];
+      const completed = parsed?.completed ?? [];
+      content = serializeActiveTaskFile(active, completed, goalsMd);
+    }
+    const tmpPath = `${opts.activeTaskPath}.tmp-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    let existingMode: number | null = null;
+    try {
+      existingMode = (await stat(opts.activeTaskPath)).mode & 0o777;
+    } catch {
+      existingMode = null;
+    }
+    try {
+      await writeFile(tmpPath, content, "utf-8");
+      if (existingMode !== null) await chmod(tmpPath, existingMode);
+      await rename(tmpPath, opts.activeTaskPath);
+    } catch (err) {
+      await unlink(tmpPath).catch(() => {});
+      throw err;
+    }
     opts.logger?.info?.(
       `memory-hybrid: ACTIVE-TASKS.md mirror refreshed (${opts.goals.length} active goal(s) in Goals section)`,
     );

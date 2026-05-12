@@ -76,8 +76,8 @@ export class Embeddings implements EmbeddingProvider {
     this.logicalModelForEmbedding = logicalModelForEmbedding;
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
-    // Increased from 2048 to 8000 to reduce API round trips (OpenAI max is 8191)
-    this.batchSize = batchSize || 8000;
+    // Number of input strings per embeddings request (not a token budget).
+    this.batchSize = batchSize || 40;
     this.omitDimensionsInRequest = omitDimensionsInRequest;
 
     // Validate dimensions against known model limits and capabilities

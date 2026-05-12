@@ -21,7 +21,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 
 | Category | Commands |
 |----------|----------|
-| **Setup & installation** | `install`, `verify [--fix]`, `config` |
+| **Setup & installation** | `install`, `verify [--fix]`, `doctor [--fix]`, `config` |
 | **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
@@ -77,6 +77,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`, **`goalStewardship enabled`** / **`disabled`** (same style as `nightlyCycle`), **`activeTask enabled`** / **`disabled`**). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>] [--test-llm]` | Verify infrastructure and functionality: config (embedding key/model), SQLite, LanceDB, embedding API, credentials vault, scheduled jobs. Use **config** to view or change feature toggles. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. `--test-llm` tests each configured LLM model. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
+| `doctor [--fix] [--dry-run] [--test-llm]` | Guided onboarding flow: install defaults step + verify step, with optional auto-remediation. |
+| `addons [--json]` | Show modular add-on ecosystem domains (analysis, learning, observability, self-extension). |
 \| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `distill.defaultModel` if set, else `distill.modelTier` (unset → `maintenance`) and the first model in that tier. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
 | `export --output <path> [--include-credentials] [--sources X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source with `--sources` (e.g. conversation, distillation, cli, ingest, reflection). |
@@ -260,6 +262,60 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 **Compaction model safety:** Verify warns when compaction appears to route to a stronger-than-mini model (for example `gpt-5.5`). `minimax/MiniMax-M2.7` is explicitly allowed and does not trigger this warning.
 
 **Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect). A **dimension mismatch** between embeddings and LanceDB counts as failure (`1`) so scripts and monitors can detect silent semantic-search breakage. After fixing `embedding.*` / `vector.*`, run `openclaw hybrid-mem re-index` if vectors were built with the wrong model. See [Troubleshooting — dimension mismatch](TROUBLESHOOTING.md#embedding-vs-lancedb-dimension-mismatch).
+
+`openclaw hybrid-mem doctor` adds a guided onboarding wrapper around install + verify:
+
+- step 1: checks/applies recommended defaults (`install`)
+- step 2: runs runtime/storage checks (`verify`)
+- step 3: prints remediation summary and next actions
+
+Use `--fix` to apply install defaults and verify repairs, or `--dry-run` to preview changes.
+
+---
+
+## Session observability (CLI)
+
+Use `openclaw hybrid-mem audit session` to inspect a coherent session timeline:
+
+```bash
+openclaw hybrid-mem audit session --format summary
+openclaw hybrid-mem audit session --format timeline --limit 30
+openclaw hybrid-mem audit session --format json --session-id <id>
+```
+
+It surfaces capture vs injection visibility, suppressions, and “why recalled” context from local stores.
+
+---
+
+## Benchmarks and quality reports
+
+Generate recurring quality reports:
+
+```bash
+openclaw hybrid-mem benchmark report --format markdown
+openclaw hybrid-mem benchmark report --format json --out /tmp/hybrid-mem-quality.json
+```
+
+Reports include latency, recall accuracy (when measured), feature failure rate, and tracked token/cost metrics.
+
+---
+
+## Telemetry summary and encrypted sync
+
+Local telemetry summary (no network calls):
+
+```bash
+openclaw hybrid-mem telemetry-summary
+openclaw hybrid-mem telemetry-summary --hours 168 --json
+```
+
+Encrypted replication bundle workflow:
+
+```bash
+export HYBRID_MEM_SYNC_PASSPHRASE='your-strong-passphrase'
+openclaw hybrid-mem sync-export --out /tmp/hm-sync.hm-sync
+openclaw hybrid-mem sync-import --in /tmp/hm-sync.hm-sync --out /tmp/hm-sync.json
+```
 
 ---
 

@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 
 export function pruneOrphanedLinks(db: DatabaseSync): number {
@@ -39,26 +40,46 @@ export function countActiveFactsByCategory(db: DatabaseSync, category: string): 
 export function pruneLogTables(db: DatabaseSync, retentionDays: number): number {
   if (retentionDays <= 0) return 0;
   const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
-  const recall = db.prepare("DELETE FROM recall_log WHERE occurred_at < ?").run(cutoff);
-  const reinforcement = db.prepare("DELETE FROM reinforcement_log WHERE occurred_at < ?").run(cutoff);
-  const feedback = db.prepare("DELETE FROM feedback_trajectories WHERE created_at < ?").run(cutoff);
-  return Number(recall.changes ?? 0) + Number(reinforcement.changes ?? 0) + Number(feedback.changes ?? 0);
+  const tx = createTransaction(db, () => {
+    const recall = db.prepare("DELETE FROM recall_log WHERE occurred_at < ?").run(cutoff);
+    const reinforcement = db.prepare("DELETE FROM reinforcement_log WHERE occurred_at < ?").run(cutoff);
+    const feedback = db.prepare("DELETE FROM feedback_trajectories WHERE created_at < ?").run(cutoff);
+    return Number(recall.changes ?? 0) + Number(reinforcement.changes ?? 0) + Number(feedback.changes ?? 0);
+  });
+  return tx();
 }
 
-/**
- * Optimize FTS5 index using incremental analysis mode for faster optimization.
- * Cost optimization: Uses 'optimize(0x02)' for incremental analysis instead of full rebuild.
- * Saves 80-90% of optimize time with comparable search quality for typical workloads.
- */
+/** Run standard FTS5 optimize maintenance on `facts_fts`. */
 export function optimizeFts(db: DatabaseSync): void {
-  // Use incremental mode (0x02) instead of full rebuild for cost optimization
   db.exec(`INSERT INTO facts_fts(facts_fts) VALUES('optimize')`);
-  // Note: Could use 'rank' command for even more aggressive optimization if needed
+}
+
+export function freelistSpaceStats(db: DatabaseSync): {
+  freelistCount: number;
+  pageSize: number;
+  freedBytes: number;
+  freedMB: number;
+} {
+  const freelistCountResult = db.prepare("PRAGMA freelist_count").get() as { freelist_count: number } | undefined;
+  const pageSizeResult = db.prepare("PRAGMA page_size").get() as { page_size: number } | undefined;
+  const freelistCount = freelistCountResult?.freelist_count ?? 0;
+  const pageSize = pageSizeResult?.page_size ?? 4096;
+  const freedBytes = freelistCount * pageSize;
+  return {
+    freelistCount,
+    pageSize,
+    freedBytes,
+    freedMB: freedBytes / (1024 * 1024),
+  };
+}
+
+export function checkpointWalTruncate(db: DatabaseSync): void {
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 }
 
 export function vacuumAndCheckpoint(db: DatabaseSync): void {
   db.exec("VACUUM");
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  checkpointWalTruncate(db);
 }
 
 export function statsReflection(db: DatabaseSync): {

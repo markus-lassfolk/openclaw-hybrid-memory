@@ -12,7 +12,7 @@ This document tracks the implementation of the 10 cost-saving opportunities iden
 
 ## ✅ Completed Optimizations
 
-### 1. Embedding Provider Cost Optimization (PARTIAL - 2/3 complete)
+### 1. Embedding Provider Cost Optimization (PARTIAL - 1/3 complete)
 
 **Est. Savings:** $50-200/month per deployment + 75% storage reduction
 
@@ -21,9 +21,9 @@ This document tracks the implementation of the 10 cost-saving opportunities iden
   - 10x improvement in cache hit rate for repeated queries
   - Minimal memory overhead (~40MB for 5K cached embeddings)
 
-- ✅ **Optimized embedding batch size from 2048 to 8000 tokens** (`services/embeddings/openai-provider.ts:80`)
-  - Reduces API round trips by using closer to OpenAI's 8191 token maximum
-  - Fewer network calls = lower latency + lower cost
+- ✅ **Clarified embedding batch semantics and aligned fallback default** (`services/embeddings/openai-provider.ts:80`)
+  - `batchSize` is number of input strings per request (not a token budget)
+  - Fallback constructor default is `40`, matching config parser defaults used in production paths
 
 **Not Yet Implemented:**
 - ⏳ Switch default embedding provider from OpenAI to ONNX (local/free)
@@ -45,6 +45,7 @@ This document tracks the implementation of the 10 cost-saving opportunities iden
 
 - ✅ **Optional reflection rules generation** (`services/dream-cycle.ts:820-851`, `config/types/maintenance.ts:82-88`)
   - Added `nightlyCycle.enableReflectionRules` config flag
+  - Parsed + wired to runtime (`config/parsers/maintenance.ts`, `setup/cli-context.ts`)
   - Default: `true` (backward compatible)
   - When `false`: Saves 30-40% of dream cycle LLM cost
   - Verbose logging when disabled
@@ -107,10 +108,9 @@ if (!entry) {
 **Est. Savings:** Reduced disk I/O + faster maintenance windows
 
 **Implemented:**
-- ✅ **Documented incremental FTS5 optimize approach** (`backends/facts-db/housekeeping.ts:48-57`)
-  - Current code already uses `optimize` without mode flag
-  - Comment added noting this is intentionally incremental
-  - Could use `optimize(0x02)` for even more explicit control
+- ✅ **Corrected FTS5 optimize documentation/comments to match implementation** (`backends/facts-db/housekeeping.ts:56`)
+  - Current code runs the standard FTS5 `optimize` maintenance command
+  - Removed unsupported mode-flag/rank-command wording
 
 **Not Yet Implemented:**
 - ⏳ Defer LanceDB compaction to weekly schedule
@@ -239,11 +239,13 @@ if (!entry) {
 
 ### Completed Optimizations
 - `services/embeddings/shared.ts` - Increased EMBEDDING_CACHE_MAX from 500 to 5000
-- `services/embeddings/openai-provider.ts` - Increased default batch size from 2048 to 8000
+- `services/embeddings/openai-provider.ts` - Clarified `batchSize` semantics and aligned fallback default to 40 inputs/request
 - `services/adaptive-model-limits.ts` - Start at 50% of catalog limits for new models
 - `services/dream-cycle.ts` - Smart VACUUM logic + optional reflection rules
 - `config/types/maintenance.ts` - Added enableReflectionRules flag
-- `backends/facts-db/housekeeping.ts` - Documented incremental FTS5 optimize
+- `config/parsers/maintenance.ts` - Parse and default `nightlyCycle.enableReflectionRules`
+- `setup/cli-context.ts` - Propagate enableReflectionRules into dream-cycle runtime config
+- `backends/facts-db/housekeeping.ts` - Corrected FTS5 optimize comments
 - `.github/workflows/ci.yml` - Coverage upload only on main branch
 
 ### Files to Modify (Future Work)

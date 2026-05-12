@@ -8,6 +8,8 @@ nav_order: 2
 
 Everything that runs automatically or needs periodic attention.
 
+For a cost-first rollout and operator checklist, see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md).
+
 ---
 
 ## Automatic background jobs (no setup needed)

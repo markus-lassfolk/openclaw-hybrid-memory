@@ -3,7 +3,7 @@
  * Tests for ACTIVE-TASKS.md working memory service and CLI commands.
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -118,6 +118,19 @@ describe("parseActiveTaskFile", () => {
     expect(task.next).toBe("Write tests and verify TypeScript");
     expect(task.started).toBe("2026-02-24T10:00:00.000Z");
     expect(task.updated).toBe("2026-02-24T15:00:00.000Z");
+  });
+
+  it("parses Related goal field", () => {
+    const md = `## Active Tasks
+
+### [goal-task]: Task linked to goal
+- **Status:** In progress
+- **Related goal:** goal-123
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+`;
+    const result = parseActiveTaskFile(md);
+    expect(result.active[0].relatedGoal).toBe("goal-123");
   });
 
   it("maps Session: to subagent when Subagent is absent", () => {
@@ -271,6 +284,7 @@ describe("serializeTaskEntry", () => {
       status: "Waiting",
       subagent: "forge-session-xyz",
       next: "Verify something",
+      relatedGoal: "goal-rt-1",
       handoff: {
         schema: "octave/task-handoff@v1",
         artifactId: "artifact-roundtrip",
@@ -292,6 +306,7 @@ describe("serializeTaskEntry", () => {
     expect(parsed.active[0].status).toBe("Waiting");
     expect(parsed.active[0].subagent).toBe("forge-session-xyz");
     expect(parsed.active[0].next).toBe("Verify something");
+    expect(parsed.active[0].relatedGoal).toBe("goal-rt-1");
     expect(parsed.active[0].handoff?.artifactId).toBe("artifact-roundtrip");
   });
 });
@@ -689,6 +704,21 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
     await writeActiveTaskFile(filePath, [makeEntry()], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
+  });
+
+  it("writes without leaving temporary files behind", async () => {
+    const filePath = join(tmpDir, "ACTIVE-TASKS.md");
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "atomic-check" })], []);
+    const files = await readdir(tmpDir);
+    expect(files.some((f) => f.includes("ACTIVE-TASKS.md.tmp-"))).toBe(false);
+  });
+
+  it("preserves existing file permissions during atomic writes", async () => {
+    const filePath = join(tmpDir, "ACTIVE-TASKS.md");
+    await writeFile(filePath, "seed", "utf-8");
+    await chmod(filePath, 0o600);
+    await writeActiveTaskFile(filePath, [makeEntry({ label: "perm-check" })], []);
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 
   it("applies stale detection on read", async () => {
@@ -1282,12 +1312,13 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     expect(agents).toEqual(["agent-1", "agent-2"]);
   });
 
-  it("reads legacy flat signal files for backward compatibility", async () => {
+  it("rejects legacy flat signal files that are missing OCTAVE envelope", async () => {
     const { writeFile: fsWrite, mkdir: fsMkdir } = await import("node:fs/promises");
     const signalsDir = join(tmpDir, "task-signals");
+    const legacyPath = join(signalsDir, "legacy.json");
     await fsMkdir(signalsDir, { recursive: true });
     await fsWrite(
-      join(signalsDir, "legacy.json"),
+      legacyPath,
       JSON.stringify({
         agent: "legacy-agent",
         taskRef: "legacy-task",
@@ -1298,9 +1329,19 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
       "utf-8",
     );
     const signals = await readPendingSignals(tmpDir);
-    expect(signals).toHaveLength(1);
-    expect(signals[0].agent).toBe("legacy-agent");
-    expect(signals[0]._handoff).toBeUndefined();
+    expect(signals).toHaveLength(0);
+    await expect(readFile(legacyPath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("drops oversized signal files", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    const hugePath = join(signalsDir, "huge.json");
+    await fsMkdir(signalsDir, { recursive: true });
+    await fsWrite(hugePath, "x".repeat(300 * 1024), "utf-8");
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(0);
+    await expect(readFile(hugePath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("includes _filePath on each pending signal", async () => {
@@ -1756,13 +1797,10 @@ describe("registerActiveTaskCommands", () => {
     // Intercept console.log and console.error
     const origLog = console.log;
     const origError = console.error;
-    let logged = "";
     let errors = "";
-    console.log = ((...args: unknown[]) => {
-      logged += args.join(" ") + "\n";
-    }) as typeof console.log;
+    console.log = (() => {}) as typeof console.log;
     console.error = ((...args: unknown[]) => {
-      errors += args.join(" ") + "\n";
+      errors += `${args.join(" ")}\n`;
     }) as typeof console.error;
 
     try {
@@ -1772,7 +1810,6 @@ describe("registerActiveTaskCommands", () => {
       // Reset for next parse
       program.commands.length = 0;
       registerActiveTaskCommands(program, mockCfg, mockCtx);
-      logged = "";
       errors = "";
 
       // Test 'active-tasks list'

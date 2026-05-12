@@ -1,5 +1,61 @@
 import { describe, expect, it, vi } from "vitest";
-import { storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+import { deleteVectorsForFactIds, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+
+describe("deleteVectorsForFactIds", () => {
+  it("skips cleanup when LanceDB backend is unavailable", async () => {
+    const deleteMany = vi.fn();
+    const del = vi.fn();
+    const result = await deleteVectorsForFactIds(
+      { delete: del, deleteMany, isLanceDbAvailable: () => false } as never,
+      ["a", "b"],
+      { operation: "test-op" },
+    );
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+    expect(result).toEqual({ attempted: 0, deleted: 0, failed: 0 });
+  });
+
+  it("uses deleteMany when available", async () => {
+    const deleteMany = vi.fn().mockResolvedValue(2);
+    const result = await deleteVectorsForFactIds({ delete: vi.fn(), deleteMany } as never, ["a", "a", "b"], {
+      operation: "test-op",
+    });
+    expect(deleteMany).toHaveBeenCalledWith(["a", "b"]);
+    expect(result).toEqual({ attempted: 2, deleted: 2, failed: 0 });
+  });
+
+  it("does not treat partial bulk deletion as a hard failure", async () => {
+    const deleteMany = vi.fn().mockResolvedValue(1);
+    const result = await deleteVectorsForFactIds({ delete: vi.fn(), deleteMany } as never, ["a", "b"], {
+      operation: "test-op",
+    });
+    expect(result).toEqual({ attempted: 2, deleted: 1, failed: 0 });
+  });
+
+  it("falls back to per-id delete when deleteMany fails", async () => {
+    const deleteMany = vi.fn().mockRejectedValue(new Error("bulk failed"));
+    const del = vi.fn().mockResolvedValue(true);
+    const result = await deleteVectorsForFactIds({ delete: del, deleteMany } as never, ["a", "b"], {
+      operation: "test-op",
+    });
+    expect(del).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ attempted: 2, deleted: 2, failed: 0 });
+  });
+
+  it("treats zero-result bulk cleanup as skipped when LanceDB became unavailable", async () => {
+    const deleteMany = vi.fn().mockResolvedValue(0);
+    const result = await deleteVectorsForFactIds(
+      {
+        delete: vi.fn(),
+        deleteMany,
+        isLanceDbAvailable: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+      } as never,
+      ["a", "b"],
+      { operation: "test-op" },
+    );
+    expect(result).toEqual({ attempted: 0, deleted: 0, failed: 0 });
+  });
+});
 
 describe("storeCanonicalVectorForFact", () => {
   it("stores a canonical vector with the fact id and records embedding metadata after success", async () => {

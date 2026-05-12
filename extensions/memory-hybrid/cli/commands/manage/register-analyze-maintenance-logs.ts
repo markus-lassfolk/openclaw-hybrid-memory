@@ -12,6 +12,7 @@ import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
   collectMaintenanceSteps,
+  parseMaintenanceSinceMs,
   persistMaintenanceFindings,
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
@@ -24,6 +25,7 @@ import type { ManageBindings } from "./bindings.js";
 interface AnalyzeMaintenanceLogOpts {
   root?: string;
   since?: string;
+  staleThreshold?: string;
   autoFix?: boolean;
   autoFixAll?: boolean;
   glitchtip?: boolean;
@@ -76,11 +78,18 @@ export async function runAnalyzeMaintenanceLogs(
   const format = opts?.digest ?? opts?.format ?? "md";
   const outPath = opts?.out ?? "-";
   const root = opts?.root ?? join(homedir(), ".openclaw", "logs", "cron-hybrid-mem");
-  const findingsPath = opts?.persist ?? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db");
+  const staleThreshold = opts?.staleThreshold ?? "45m";
+  const staleThresholdMs = parseMaintenanceSinceMs(staleThreshold);
+  const defaultFindingsPath =
+    typeof b.cfg.sqlitePath === "string" && b.cfg.sqlitePath.trim().length > 0
+      ? join(dirname(b.cfg.sqlitePath), "maintenance-findings.db")
+      : join(homedir(), ".openclaw", "memory", "maintenance-findings.db");
+  const findingsPath =
+    typeof opts?.persist === "string" && opts.persist.trim().length > 0 ? opts.persist : defaultFindingsPath;
 
   let steps: MaintenanceLogStep[] = [];
   if (opts?.root || existsSync(root)) {
-    steps = collectMaintenanceSteps(root, since);
+    steps = collectMaintenanceSteps(root, since, Date.now(), { staleThresholdMs });
   }
   if (steps.length === 0) {
     const piped = await readStdinIfPiped();
@@ -121,8 +130,12 @@ export async function runAnalyzeMaintenanceLogs(
 
 function addAnalyzeOptions(cmd: Chainable): Chainable {
   return cmd
-    .option("--root <path>", "Root cron-hybrid-mem log directory containing YYYYMMDD/*.exit.txt")
+    .option("--root <path>", "Root cron-hybrid-mem log directory (scans recursively for .exit.txt/.log)")
     .option("--since <duration>", "Lookback for --root scans, e.g. 24h, 7d (default: 24h)")
+    .option(
+      "--stale-threshold <duration>",
+      "Flag stale/no-progress orchestration runs after this age (e.g. 45m, 2h; default: 45m)",
+    )
     .option(
       "--auto-fix",
       "Apply whitelisted safe fixes (clear stale .lock with dead PID; mark retry-once). No shell exec for unsafe actions.",

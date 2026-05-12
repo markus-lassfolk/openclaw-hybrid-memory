@@ -49,6 +49,14 @@ import { versionInfo } from "../versionInfo.js";
 const HYBRID_MEM_HELP_GROUPED = `
 Commands by category:
 
+  Getting Started (new users start here!)
+    setup                Interactive setup wizard for first-time configuration
+    demo                 Try the system with sample data (shows semantic search, FTS, categories)
+    examples [category]  Show common command examples (basics, setup, maintenance, advanced)
+    providers            List available embedding providers and their status
+    health               Quick health check with traffic-light indicators 🟢🟡🔴
+    doctor               Run full diagnostics and detect common issues
+
   Setup & installation
     install              Apply recommended config and defaults (run after first setup)
     verify               Verify infrastructure and functionality (DBs, embedding API, jobs); use --fix to apply defaults
@@ -512,6 +520,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           reclassifyDecayOnCycle: cfg.nightlyCycle.reclassifyDecayOnCycle,
           reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
           reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
+          enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
           verbose,
           episodicConsolidationEventTypes: {
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
