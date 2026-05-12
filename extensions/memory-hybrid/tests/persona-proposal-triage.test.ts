@@ -302,6 +302,32 @@ describe("persona proposal triage", () => {
     expect(proposalsDb.get(p.id)?.status).toBe("pending");
   });
 
+  it("does not roll back an applied persona file when backup cleanup fails after status update succeeds", () => {
+    const targetPath = join(tmpDir, "USER.md");
+    const backupPath = `${targetPath}.backup-cleanup-failed`;
+    const original = readFileSync(targetPath, "utf-8");
+    const appliedContent = `${original}\nFormatting: cleanup failure marker.\n`;
+
+    expect(() =>
+      applyPreparedPersonaChange(
+        { targetPath, backupPath, original, appliedContent },
+        () => {
+          // Simulate successful durable proposal bookkeeping.
+        },
+        {
+          writeBackup: (path, content) => writeFileSync(path, content, "utf-8"),
+          writeTargetAtomic: (path, content) => writeFileSync(path, content, "utf-8"),
+          removeBackup: () => {
+            throw new Error("simulated backup cleanup failure");
+          },
+        },
+      ),
+    ).not.toThrow();
+
+    expect(readFileSync(targetPath, "utf-8")).toBe(appliedContent);
+    expect(readFileSync(backupPath, "utf-8")).toBe(original);
+  });
+
   it("preserves the rollback backup when target restore fails after proposal status update failure", () => {
     const targetPath = join(tmpDir, "USER.md");
     const backupPath = `${targetPath}.backup-restore-failed`;

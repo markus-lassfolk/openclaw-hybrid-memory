@@ -363,6 +363,7 @@ function proposalToPendingItem(
   proposal: ProposalEntry,
   workspace: string,
   cfg: Pick<HybridMemoryConfig, "personaProposals">,
+  policyVersion = PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
 ): PersonaProposalPendingItem {
   const target = resolveAllowedPersonaTarget(workspace, proposal.targetFile, cfg.personaProposals.allowedFiles);
   let targetHash: string | null = null;
@@ -401,9 +402,9 @@ function proposalToPendingItem(
       queue: "persona",
       id: proposal.id,
       payload,
-      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+      policyVersion,
     }),
-    policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+    policyVersion,
     capabilityClasses: ["read-only", "safe-state-transition", "apply-low-risk-change"],
     payload,
     visibleAfterCursor: proposal.id,
@@ -1029,7 +1030,13 @@ export function applyPreparedPersonaChange(
     targetWritten = true;
     markApplied();
     appliedMarked = true;
-    (io.removeBackup ?? ((path) => rmSync(path, { force: true })))(preparedApply.backupPath);
+    try {
+      (io.removeBackup ?? ((path) => rmSync(path, { force: true })))(preparedApply.backupPath);
+    } catch {
+      // Bookkeeping has already succeeded and the target file contains the
+      // applied content. Backup cleanup is best-effort at this point; do not
+      // roll back a successful apply or surface it as an apply failure.
+    }
   } catch (err) {
     if (targetWritten && !appliedMarked) {
       try {
@@ -1130,9 +1137,15 @@ export function createPersonaProposalFixtureItem(input: {
   proposal: ProposalEntry;
   workspace: string;
   allowedFiles: Array<"SOUL.md" | "IDENTITY.md" | "USER.md">;
+  policyVersion?: string;
 }): PersonaProposalPendingItem {
-  const item = proposalToPendingItem(input.proposal, input.workspace, {
-    personaProposals: { allowedFiles: input.allowedFiles },
-  } as Pick<HybridMemoryConfig, "personaProposals">);
+  const item = proposalToPendingItem(
+    input.proposal,
+    input.workspace,
+    {
+      personaProposals: { allowedFiles: input.allowedFiles },
+    } as Pick<HybridMemoryConfig, "personaProposals">,
+    input.policyVersion,
+  );
   return item;
 }

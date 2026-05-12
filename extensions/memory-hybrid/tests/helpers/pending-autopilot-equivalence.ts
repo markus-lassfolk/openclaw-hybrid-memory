@@ -50,12 +50,22 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
   expect(normalize(standalone)).toEqual(normalize(parentRun));
 }
 
-function normalize(decisions: PendingDecision[]): Array<Omit<PendingDecision, "runId" | "createdAt">> {
+function normalize(
+  decisions: PendingDecision[],
+): Array<Omit<PendingDecision, "runId" | "createdAt" | "audit"> & { audit?: Omit<NonNullable<PendingDecision["audit"]>, "runId"> }> {
   return decisions
-    .map(({ runId: _runId, createdAt: _createdAt, ...decision }) => decision)
+    .map(({ runId: _runId, createdAt: _createdAt, audit, ...decision }) => ({
+      ...decision,
+      ...(audit ? { audit: stripAuditRunId(audit) } : {}),
+    }))
     .sort((a, b) => {
       const ak = `${a.queue}:${a.itemId}:${a.policy}:${a.inputHash}`;
       const bk = `${b.queue}:${b.itemId}:${b.policy}:${b.inputHash}`;
       return ak < bk ? -1 : ak > bk ? 1 : 0;
     });
+}
+
+function stripAuditRunId(audit: NonNullable<PendingDecision["audit"]>): Omit<typeof audit, "runId"> {
+  const { runId: _runId, ...rest } = audit;
+  return rest;
 }
