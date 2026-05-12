@@ -350,7 +350,7 @@ export async function runVerifiedFactTriage(
           ttlSeconds: opts.lockTtlSeconds ?? 60,
           mode,
         }) ?? false;
-      const actualInputHash = recomputeItemHash(item);
+      const actualInputHash = recomputeItemHash(item, factsDb.getRawDb());
       if (locked && actualInputHash === item.inputHash) {
         store?.recordDecision(decision);
         if (decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
@@ -934,7 +934,8 @@ function findConcreteContradictingEvidence(db: DatabaseSync, fact: TriageFactSna
        WHERE f.id != ?
          AND lower(f.entity) = lower(?)
          AND lower(f.key) = lower(?)
-         AND lower(COALESCE(f.value, '')) != lower(?)
+         AND f.value IS NOT NULL
+         AND lower(f.value) != lower(?)
          AND f.superseded_at IS NULL
          ${scopeClause}
        ORDER BY f.created_at DESC
@@ -1004,11 +1005,20 @@ function summarizeProvenance(fact: TriageFactSnapshot | null): string {
   return parts.join(", ");
 }
 
-function recomputeItemHash(item: VerifiedFactTriageItem): string {
+function recomputeItemHash(item: VerifiedFactTriageItem, db: DatabaseSync): string {
+  const verified = item.payload.verified;
+  const fact = loadFactSnapshot(db, verified.factId);
+  const payload: VerifiedFactTriagePayload = {
+    reviewQueueSource: item.payload.reviewQueueSource,
+    verified,
+    fact,
+    verificationTier: fact?.tier ?? null,
+    reviewCursor: verified.nextVerification,
+  };
   return computePendingInputHash({
     queue: item.queue,
     id: item.id,
-    payload: item.payload,
+    payload,
     policy: "classify",
     policyVersion: item.policyVersion,
   });
