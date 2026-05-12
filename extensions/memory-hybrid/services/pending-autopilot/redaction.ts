@@ -11,6 +11,7 @@ const SECRET_PATTERNS: RegExp[] = [
 const PRIVATE_KEY_BEGIN = "-----BEGIN ";
 const PRIVATE_KEY_END = "-----END ";
 const PRIVATE_KEY_FOOTER = " PRIVATE KEY-----";
+const PRIVATE_KEY_BARE_FOOTER = "PRIVATE KEY-----";
 const MAX_PRIVATE_KEY_BLOCK_LENGTH = 64_000;
 
 export function redactAutopilotText(input: unknown): { redacted: string; redactionCount: number } {
@@ -37,24 +38,27 @@ function redactPrivateKeyBlocks(text: string): { text: string; redactionCount: n
       break;
     }
     const headerEnd = text.indexOf("-----", begin + PRIVATE_KEY_BEGIN.length);
-    if (headerEnd === -1 || !text.slice(begin, headerEnd + 5).endsWith(PRIVATE_KEY_FOOTER)) {
+    if (headerEnd === -1 || !text.slice(begin, headerEnd + 5).endsWith(PRIVATE_KEY_BARE_FOOTER)) {
       redacted += text.slice(cursor, begin + PRIVATE_KEY_BEGIN.length);
       cursor = begin + PRIVATE_KEY_BEGIN.length;
       continue;
     }
     const headerLabel = text.slice(begin + PRIVATE_KEY_BEGIN.length, headerEnd);
-    if (!headerLabel.endsWith(" PRIVATE KEY")) {
+    if (headerLabel !== "PRIVATE KEY" && !headerLabel.endsWith(" PRIVATE KEY")) {
       redacted += text.slice(cursor, begin + PRIVATE_KEY_BEGIN.length);
       cursor = begin + PRIVATE_KEY_BEGIN.length;
       continue;
     }
-    const label = headerLabel.slice(0, -" PRIVATE KEY".length);
-    if (!/^[A-Z0-9 ]{1,48}$/.test(label)) {
+    const label = headerLabel === "PRIVATE KEY" ? "" : headerLabel.slice(0, -" PRIVATE KEY".length);
+    if (label.length > 0 && !/^[A-Z0-9 ]{1,48}$/.test(label)) {
       redacted += text.slice(cursor, begin + PRIVATE_KEY_BEGIN.length);
       cursor = begin + PRIVATE_KEY_BEGIN.length;
       continue;
     }
-    const footer = `${PRIVATE_KEY_END}${label}${PRIVATE_KEY_FOOTER}`;
+    const footer =
+      label.length > 0
+        ? `${PRIVATE_KEY_END}${label}${PRIVATE_KEY_FOOTER}`
+        : `${PRIVATE_KEY_END}${PRIVATE_KEY_BARE_FOOTER}`;
     const end = text.indexOf(footer, headerEnd + 5);
     if (end === -1 || end >= begin + MAX_PRIVATE_KEY_BLOCK_LENGTH) {
       redacted += text.slice(cursor, begin + PRIVATE_KEY_BEGIN.length);
