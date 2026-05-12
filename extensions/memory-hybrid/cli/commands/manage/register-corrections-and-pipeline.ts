@@ -300,9 +300,11 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       ),
     );
 
-  mem
+  const configCommand = mem
     .command("config")
-    .description("Show current configuration and feature toggles (use config-set to change)")
+    .description("Show current configuration and feature toggles (good first stop for understanding your setup)");
+  configCommand.alias?.("settings");
+  configCommand
     .option("--json", "Output configuration as JSON")
     .option("--format <format>", "Output format: text (default) or json")
     .action(
@@ -355,55 +357,57 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       }),
     );
 
-  mem
+  const configModeCommand = mem
     .command("config-mode <mode>")
-    .description("Set memory mode (local, minimal, enhanced, complete). Writes memory/.config if needed.")
-    .action(
-      withExit(async (mode: string) => {
-        let res;
-        try {
-          res = await runConfigMode(mode);
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "config-mode",
-          });
-          throw err;
-        }
-        if (res.ok) {
-          console.log(res.message);
-        } else {
-          console.error(`Error: ${res.error}`);
-          process.exitCode = 1;
-        }
-      }),
-    );
+    .description("Set a preset: local (offline), minimal (cheap), enhanced (balanced), complete (verbose)");
+  configModeCommand.alias?.("mode");
+  configModeCommand.action(
+    withExit(async (mode: string) => {
+      let res;
+      try {
+        res = await runConfigMode(mode);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "config-mode",
+        });
+        throw err;
+      }
+      if (res.ok) {
+        console.log(res.message);
+      } else {
+        console.error(`Error: ${res.error}`);
+        process.exitCode = 1;
+      }
+    }),
+  );
 
-  mem
+  const configSetCommand = mem
     .command("config-set <key> <value>")
     .description(
       'Set a config key in plugins.entries[…].config. Toggles: config-set <feature> enabled|disabled (e.g. nightlyCycle, goalStewardship, activeTask, extraction). Other keys: errorReporting.botName "MyBot". For help: hybrid-mem help config-set <key>',
-    )
-    .action(
-      withExit(async (key: string, value: string) => {
-        let res;
-        try {
-          res = await runConfigSet(key, value);
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "config-set",
-          });
-          throw err;
-        }
-        if (res.ok) {
-          console.log(res.message);
-        } else {
-          console.error(`Error: ${res.error}`);
-          process.exitCode = 1;
-        }
-      }),
     );
+  configSetCommand.alias?.("set");
+  configSetCommand.action(
+    withExit(async (key: string, value: string) => {
+      let res;
+      try {
+        res = await runConfigSet(key, value);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "config-set",
+        });
+        throw err;
+      }
+      if (res.ok) {
+        console.log(res.message);
+      } else {
+        console.error(`Error: ${res.error}`);
+        process.exitCode = 1;
+      }
+    }),
+  );
 
   mem
     .command("help config-set <key>")

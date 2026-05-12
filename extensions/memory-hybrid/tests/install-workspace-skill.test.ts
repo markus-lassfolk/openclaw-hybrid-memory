@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,11 +9,15 @@ const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 import {
   applyHybridMemoryToolsMd,
+  detectRecommendedEmbeddingSetup,
+  getDashboardUrl,
   ensureHybridMemoryWorkspaceSkillIfMissing,
   installHybridMemoryWorkspaceSkill,
+  runInstallForCli,
   resolveAgentWorkspaceRoot,
   resolveOpenclawJsonPathForWorkspace,
 } from "../cli/cmd-install.js";
+import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
 
 describe("workspace skill install", () => {
   const originalEnv = process.env.OPENCLAW_WORKSPACE;
@@ -238,5 +243,210 @@ describe("applyHybridMemoryToolsMd", () => {
     const body = readFileSync(join(tmp, "TOOLS.md"), "utf-8");
     expect(body).toContain("## My notes");
     expect(body).toContain("openclaw-hybrid-memory:managed-begin");
+  });
+});
+
+describe("ensureWorkspaceBootstrap", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = join(tmpdir(), `mh-bootstrap-${randomUUID()}`);
+    mkdirSync(tmp, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("creates starter directories and files without overwriting existing ones", () => {
+    writeFileSync(join(tmp, "USER.md"), "# custom\n", "utf-8");
+    const result = ensureWorkspaceBootstrap({ workspaceRoot: tmp, dryRun: false });
+    expect(result.directories.some((entry) => entry.path.endsWith("memory/projects") && entry.created)).toBe(true);
+    expect(result.files.some((entry) => entry.path.endsWith("AGENTS.md") && entry.created)).toBe(true);
+    expect(readFileSync(join(tmp, "USER.md"), "utf-8")).toBe("# custom\n");
+  });
+
+  it("dry-run reports what would be created", () => {
+    const result = ensureWorkspaceBootstrap({ workspaceRoot: tmp, dryRun: true });
+    expect(result.directories.some((entry) => entry.created)).toBe(true);
+    expect(result.files.some((entry) => entry.created)).toBe(true);
+    expect(() => readFileSync(join(tmp, "AGENTS.md"), "utf-8")).toThrow(/ENOENT|no such file or directory/i);
+  });
+});
+
+describe("install UX helpers", () => {
+  it("prefers local runtimes for embedding recommendations", () => {
+    const saved = process.env.OLLAMA_HOST;
+    process.env.OLLAMA_HOST = "http://127.0.0.1:11434";
+    try {
+      const result = detectRecommendedEmbeddingSetup({}, PLUGIN_ROOT);
+      expect(["onnx", "ollama"]).toContain(result.provider);
+    } finally {
+      if (saved !== undefined) process.env.OLLAMA_HOST = saved;
+      else Reflect.deleteProperty(process.env, "OLLAMA_HOST");
+    }
+  });
+
+  it("builds dashboard URL from plugin config", () => {
+    expect(
+      getDashboardUrl({
+        plugins: {
+          entries: {
+            "openclaw-hybrid-memory": {
+              config: {
+                dashboard: { port: 7788 },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe("http://127.0.0.1:7788/");
+  });
+});
+
+describe("install embedding autofill safety", () => {
+  let tmpHome: string;
+  const originalHome = process.env.HOME;
+  const originalOpenclawHome = process.env.OPENCLAW_HOME;
+  const originalOpenAi = process.env.OPENAI_API_KEY;
+  const originalAzureOpenAi = process.env.AZURE_OPENAI_API_KEY;
+
+  function writeOpenclawConfig(config: Record<string, unknown>): void {
+    const openclawDir = join(tmpHome, ".openclaw");
+    mkdirSync(openclawDir, { recursive: true });
+    writeFileSync(join(openclawDir, "openclaw.json"), JSON.stringify(config, null, 2), "utf-8");
+  }
+
+  beforeEach(() => {
+    tmpHome = join(tmpdir(), `mh-install-${randomUUID()}`);
+    mkdirSync(tmpHome, { recursive: true });
+    process.env.HOME = tmpHome;
+    process.env.OPENCLAW_HOME = join(tmpHome, ".openclaw");
+    Reflect.deleteProperty(process.env, "OPENAI_API_KEY");
+    Reflect.deleteProperty(process.env, "AZURE_OPENAI_API_KEY");
+    Reflect.deleteProperty(process.env, "OLLAMA_HOST");
+  });
+
+  afterEach(() => {
+    if (originalHome !== undefined) process.env.HOME = originalHome;
+    else Reflect.deleteProperty(process.env, "HOME");
+    if (originalOpenclawHome !== undefined) process.env.OPENCLAW_HOME = originalOpenclawHome;
+    else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+    if (originalOpenAi !== undefined) process.env.OPENAI_API_KEY = originalOpenAi;
+    else Reflect.deleteProperty(process.env, "OPENAI_API_KEY");
+    if (originalAzureOpenAi !== undefined) process.env.AZURE_OPENAI_API_KEY = originalAzureOpenAi;
+    else Reflect.deleteProperty(process.env, "AZURE_OPENAI_API_KEY");
+    try {
+      rmSync(tmpHome, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("does not use AZURE_OPENAI_API_KEY as embedding.apiKey autofill source", () => {
+    process.env.AZURE_OPENAI_API_KEY = "azure-key-that-should-not-be-written";
+    const detection = detectRecommendedEmbeddingSetup({}, join(tmpHome, "plugin-root"));
+    expect(detection.envKey).not.toBe("AZURE_OPENAI_API_KEY");
+  });
+
+  it("preserves embedding.apiKey SecretRef objects during install dry-run", () => {
+    writeOpenclawConfig({
+      plugins: {
+        entries: {
+          "openclaw-hybrid-memory": {
+            config: {
+              embedding: {
+                provider: "openai",
+                model: "text-embedding-3-small",
+                apiKey: { source: "env", provider: "openclaw", id: "OPENAI_API_KEY" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const result = runInstallForCli({ dryRun: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parsed = JSON.parse(result.configJson ?? "{}") as Record<string, unknown>;
+    const apiKey = (
+      (
+        (
+          ((parsed.plugins as Record<string, unknown>).entries as Record<string, unknown>)[
+            "openclaw-hybrid-memory"
+          ] as Record<string, unknown>
+        ).config as Record<string, unknown>
+      ).embedding as Record<string, unknown>
+    ).apiKey;
+    expect(apiKey).toEqual({ source: "env", provider: "openclaw", id: "OPENAI_API_KEY" });
+  });
+
+  it("treats llm.providers.openai/azure-foundry keys as valid embedding fallback auth", () => {
+    writeOpenclawConfig({
+      plugins: {
+        entries: {
+          "openclaw-hybrid-memory": {
+            config: {
+              embedding: {
+                provider: "openai",
+                model: "text-embedding-3-small",
+                apiKey: "YOUR_OPENAI_API_KEY",
+              },
+              llm: {
+                providers: {
+                  "azure-foundry": { apiKey: "env:AZURE_OPENAI_API_KEY" },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const result = runInstallForCli({ dryRun: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parsed = JSON.parse(result.configJson ?? "{}") as Record<string, unknown>;
+    const embedding = (
+      (
+        ((parsed.plugins as Record<string, unknown>).entries as Record<string, unknown>)[
+          "openclaw-hybrid-memory"
+        ] as Record<string, unknown>
+      ).config as Record<string, unknown>
+    ).embedding as Record<string, unknown>;
+    expect(embedding.apiKey).toBe("");
+    expect(result.remaining.some((line) => line.includes("OpenAI-compatible embedding API key"))).toBe(false);
+  });
+
+  it("keeps provider/model consistent when provider exists but model is missing", () => {
+    writeOpenclawConfig({
+      plugins: {
+        entries: {
+          "openclaw-hybrid-memory": {
+            config: {
+              embedding: {
+                provider: "google",
+              },
+            },
+          },
+        },
+      },
+    });
+    const result = runInstallForCli({ dryRun: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parsed = JSON.parse(result.configJson ?? "{}") as Record<string, unknown>;
+    const embedding = (
+      (
+        ((parsed.plugins as Record<string, unknown>).entries as Record<string, unknown>)[
+          "openclaw-hybrid-memory"
+        ] as Record<string, unknown>
+      ).config as Record<string, unknown>
+    ).embedding as Record<string, unknown>;
+    expect(embedding.provider).toBe("google");
+    expect(embedding.model).toBe("gemini-embedding-001");
   });
 });
