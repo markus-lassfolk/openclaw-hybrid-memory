@@ -49,7 +49,7 @@ export class VerificationError extends Error {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function computeChecksum(text: string): string {
+export function computeChecksum(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { FactsDB } from "../backends/facts-db.js";
 import { rowToMemoryEntry } from "../backends/facts-db/index.js";
@@ -16,7 +15,7 @@ import {
   type PendingItem,
   type PendingQueueAdapter,
 } from "./pending-autopilot/index.js";
-import type { VerifiedFact } from "./verification-store.js";
+import { computeChecksum, type VerifiedFact } from "./verification-store.js";
 
 export const VERIFIED_TRIAGE_POLICY_VERSION = "verified-fact-triage-v1";
 const DEFAULT_REVERIFICATION_DAYS = 30;
@@ -295,10 +294,6 @@ function isVerifiedRowChecksumValid(row: VerifiedFactRow): boolean {
   return computeChecksum(row.canonical_text) === row.checksum;
 }
 
-function computeChecksum(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
-
 export function decideVerifiedFactTriage(
   item: VerifiedFactTriageItem,
   context: PendingDecisionContext,
@@ -422,7 +417,7 @@ export async function runVerifiedFactTriageWithAdapter(
             item,
             context,
             "lock-conflict",
-            "Verified fact no longer matches due queue before apply.",
+            "Could not acquire lock for verified fact triage (another process may hold it).",
           );
           durableStore.recordDecision(staleDecision);
           decision = staleDecision;
