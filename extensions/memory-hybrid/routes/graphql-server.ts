@@ -15,14 +15,85 @@ import { graphqlSchema } from "./graphql-schema.js";
 import { pluginLogger } from "../utils/logger.js";
 import { resolvers, type GraphQLContext } from "./graphql-resolvers.js";
 
+type FactSubscriptionPayload = { fact: unknown; category?: string; scope?: string };
+type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
+type FactDeletedPayload = { id: string; category?: string };
+type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
+type StatsUpdatedPayload = { stats: unknown };
+
 // PubSub for subscriptions
 const pubSub = createPubSub<{
-  factCreated: [{ fact: unknown; category?: string; scope?: string }];
-  factUpdated: [{ fact: unknown }];
-  factDeleted: [{ id: string; category?: string }];
-  linkCreated: [{ link: unknown }];
-  statsUpdated: [{ stats: unknown }];
+  factCreated: [FactSubscriptionPayload];
+  factUpdated: [FactUpdatedPayload];
+  factDeleted: [FactDeletedPayload];
+  linkCreated: [LinkCreatedPayload];
+  statsUpdated: [StatsUpdatedPayload];
 }>();
+
+function recordValue(value: unknown, key: string): unknown {
+  return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function optionalMatches(expected: unknown, actual: unknown): boolean {
+  return expected == null || expected === "" || actual === expected;
+}
+
+function factCategory(fact: unknown, fallback?: string): string | undefined {
+  return typeof recordValue(fact, "category") === "string" ? (recordValue(fact, "category") as string) : fallback;
+}
+
+function factScope(fact: unknown, fallback?: string): string | undefined {
+  return typeof recordValue(fact, "scope") === "string" ? (recordValue(fact, "scope") as string) : fallback;
+}
+
+function factId(fact: unknown): string | undefined {
+  return typeof recordValue(fact, "id") === "string" ? (recordValue(fact, "id") as string) : undefined;
+}
+
+function linkEndpoint(link: unknown, key: "sourceId" | "targetId", fallback?: string): string | undefined {
+  const direct = recordValue(link, key);
+  return typeof direct === "string" ? direct : fallback;
+}
+
+export function matchesFactCreatedSubscription(
+  payload: FactSubscriptionPayload,
+  args: { category?: string; scope?: string },
+): boolean {
+  return (
+    optionalMatches(args.category, factCategory(payload.fact, payload.category)) &&
+    optionalMatches(args.scope, factScope(payload.fact, payload.scope))
+  );
+}
+
+export function matchesFactUpdatedSubscription(
+  payload: FactUpdatedPayload,
+  args: { factId?: string; category?: string },
+): boolean {
+  return (
+    optionalMatches(args.factId, payload.factId ?? factId(payload.fact)) &&
+    optionalMatches(args.category, factCategory(payload.fact, payload.category))
+  );
+}
+
+export function matchesFactDeletedSubscription(payload: FactDeletedPayload, args: { category?: string }): boolean {
+  return optionalMatches(args.category, payload.category);
+}
+
+export function matchesLinkCreatedSubscription(
+  payload: LinkCreatedPayload,
+  args: { sourceId?: string; targetId?: string },
+): boolean {
+  return (
+    optionalMatches(args.sourceId, linkEndpoint(payload.link, "sourceId", payload.sourceId)) &&
+    optionalMatches(args.targetId, linkEndpoint(payload.link, "targetId", payload.targetId))
+  );
+}
+
+async function* filterAsyncIterator<T>(source: AsyncIterable<T>, predicate: (payload: T) => boolean): AsyncIterable<T> {
+  for await (const payload of source) {
+    if (predicate(payload)) yield payload;
+  }
+}
 
 /**
  * Create GraphQL Yoga server instance
@@ -39,24 +110,36 @@ export function createGraphQLServer(
         ...resolvers,
         Subscription: {
           factCreated: {
-            subscribe: () => pubSub.subscribe("factCreated"),
-            resolve: (payload: { fact: unknown }) => payload.fact,
+            subscribe: (_parent: unknown, args: { category?: string; scope?: string }) =>
+              filterAsyncIterator(pubSub.subscribe("factCreated"), (payload) =>
+                matchesFactCreatedSubscription(payload, args),
+              ),
+            resolve: (payload: FactSubscriptionPayload) => payload.fact,
           },
           factUpdated: {
-            subscribe: () => pubSub.subscribe("factUpdated"),
-            resolve: (payload: { fact: unknown }) => payload.fact,
+            subscribe: (_parent: unknown, args: { factId?: string; category?: string }) =>
+              filterAsyncIterator(pubSub.subscribe("factUpdated"), (payload) =>
+                matchesFactUpdatedSubscription(payload, args),
+              ),
+            resolve: (payload: FactUpdatedPayload) => payload.fact,
           },
           factDeleted: {
-            subscribe: () => pubSub.subscribe("factDeleted"),
-            resolve: (payload: { id: string }) => payload.id,
+            subscribe: (_parent: unknown, args: { category?: string }) =>
+              filterAsyncIterator(pubSub.subscribe("factDeleted"), (payload) =>
+                matchesFactDeletedSubscription(payload, args),
+              ),
+            resolve: (payload: FactDeletedPayload) => payload.id,
           },
           linkCreated: {
-            subscribe: () => pubSub.subscribe("linkCreated"),
-            resolve: (payload: { link: unknown }) => payload.link,
+            subscribe: (_parent: unknown, args: { sourceId?: string; targetId?: string }) =>
+              filterAsyncIterator(pubSub.subscribe("linkCreated"), (payload) =>
+                matchesLinkCreatedSubscription(payload, args),
+              ),
+            resolve: (payload: LinkCreatedPayload) => payload.link,
           },
           statsUpdated: {
             subscribe: () => pubSub.subscribe("statsUpdated"),
-            resolve: (payload: { stats: unknown }) => payload.stats,
+            resolve: (payload: StatsUpdatedPayload) => payload.stats,
           },
         },
       },
@@ -189,7 +272,7 @@ export function publishFactCreated(
  * Publish fact updated event
  */
 export function publishFactUpdated(pubSub: ReturnType<typeof createPubSub>, fact: unknown) {
-  pubSub.publish("factUpdated", { fact });
+  pubSub.publish("factUpdated", { fact, factId: factId(fact), category: factCategory(fact) });
 }
 
 /**
@@ -202,6 +285,14 @@ export function publishFactDeleted(pubSub: ReturnType<typeof createPubSub>, id: 
 /**
  * Publish stats updated event
  */
+export function publishLinkCreated(pubSub: ReturnType<typeof createPubSub>, link: unknown) {
+  pubSub.publish("linkCreated", {
+    link,
+    sourceId: linkEndpoint(link, "sourceId"),
+    targetId: linkEndpoint(link, "targetId"),
+  });
+}
+
 export function publishStatsUpdated(pubSub: ReturnType<typeof createPubSub>, stats: unknown) {
   pubSub.publish("statsUpdated", { stats });
 }

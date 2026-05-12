@@ -59,7 +59,7 @@ export async function detectAvailableProviders(
   const ollamaAvailable = await checkOllamaAvailable();
   const onnxAvailable = checkOnnxAvailable();
   const openaiConfigured = hasConfiguredApiKey(currentApiKey);
-  const googleConfigured = hasConfiguredApiKey(googleApiKey ?? currentApiKey);
+  const googleConfigured = hasConfiguredApiKey(googleApiKey);
 
   return [
     {

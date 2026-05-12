@@ -19,10 +19,25 @@ async function prompt(question: string): Promise<string> {
   });
 }
 
-async function promptHidden(question: string): Promise<string> {
+type HiddenReadline = {
+  question(question: string, callback: (answer: string) => void): void;
+  close(): void;
+  on(event: "close", callback: () => void): unknown;
+};
+
+type HiddenReadlineFactory = (options: { input: NodeJS.ReadStream; output: NodeJS.WriteStream }) => HiddenReadline;
+
+export async function promptHidden(question: string): Promise<string> {
   const readline = await import("node:readline");
+  return promptHiddenWithInterface(question, readline.createInterface as HiddenReadlineFactory);
+}
+
+export async function promptHiddenWithInterface(
+  question: string,
+  createInterface: HiddenReadlineFactory,
+): Promise<string> {
   const mutableOutput = process.stdout as NodeJS.WriteStream & { muted?: boolean };
-  const rl = readline.createInterface({ input: process.stdin, output: mutableOutput });
+  const rl = createInterface({ input: process.stdin, output: mutableOutput });
   const originalWrite = mutableOutput.write.bind(mutableOutput);
   mutableOutput.muted = false;
   mutableOutput.write = ((chunk: unknown, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
@@ -44,8 +59,8 @@ async function promptHidden(question: string): Promise<string> {
     rl.question(question, (answer) => {
       restore();
       process.stdout.write("\n");
-      rl.close();
       resolve(answer.trim());
+      rl.close();
     });
     mutableOutput.muted = true;
   });

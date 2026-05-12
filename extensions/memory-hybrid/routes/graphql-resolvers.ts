@@ -342,9 +342,12 @@ export const resolvers: GraphQLResolvers = {
       const oldFactId = asString(input.oldFactId);
       const newFactId = asString(input.newFactId);
       if (!oldFactId || !newFactId) throw new Error("Missing fact id");
+      const oldFact = context.factsDb.getById(oldFactId);
+      if (!oldFact) throw new Error(`Fact not found: ${oldFactId}`);
       const newFact = context.factsDb.getById(newFactId);
-      if (!newFact) throw new Error("Fact not found");
-      context.factsDb.supersede(oldFactId, newFactId);
+      if (!newFact) throw new Error(`Fact not found: ${newFactId}`);
+      const applied = context.factsDb.supersede(oldFactId, newFactId);
+      if (!applied) throw new Error(`Fact supersede did not apply: ${oldFactId}`);
       return newFact;
     },
 
