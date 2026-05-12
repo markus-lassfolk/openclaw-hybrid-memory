@@ -287,11 +287,11 @@ export async function runPendingDigestAutopilot(
           const decision = await adapter.decide(item, context);
           decisions.push(decision);
           queueResult.decisions.push(decision);
-          const inserted = store?.recordDecision(decision).inserted ?? false;
+          store?.recordDecision(decision);
           const itemCursor = item.visibleAfterCursor ?? item.id;
-          if (inserted && !cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
+          if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
             cursorAdvanceCandidate = { decision, cursor: itemCursor };
-          } else if (inserted) {
+          } else {
             cursorAdvanceBlocked = true;
           }
         }

@@ -297,6 +297,88 @@ describe("pending digest autopilot parent (#1326)", () => {
     reopened.close();
   });
 
+  it("parent persona cursor stays blocked by an already-recorded deferred item", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const older = persona.create({
+      targetFile: "USER.md",
+      title: "Older non-actionable cleanup",
+      observation: "Supported by test evidence.",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-older"],
+    });
+    const newerDeferred = persona.create({
+      targetFile: "USER.md",
+      title: "Newer material persona preference",
+      observation: "The user prefers a different communication pattern.",
+      suggestedChange: "Always use a more casual tone when replying to the user.",
+      confidence: 0.95,
+      evidenceSessions: ["session-newer"],
+    });
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, older.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newerDeferred.id);
+    raw.close();
+    const stateDb = join(dir, "autopilot.db");
+
+    const first = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-cursor-deferred-1",
+    });
+    const second = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 2, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-cursor-deferred-2",
+    });
+
+    expect(first.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id]);
+    expect(first.queues.persona.decisions[0]).toMatchObject({
+      action: "deferred-for-human",
+      humanReviewRequired: true,
+    });
+    expect(second.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id, older.id]);
+    expect(second.queues.persona.decisions[0]).toMatchObject({
+      action: "deferred-for-human",
+      humanReviewRequired: true,
+    });
+    expect(second.queues.persona.decisions[1]).toMatchObject({
+      action: "rejected",
+      humanReviewRequired: false,
+    });
+
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("persona", "cautious")).toBeNull();
+    store.close();
+
+    const third = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-cursor-deferred-3",
+    });
+    expect(third.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id]);
+
+    const reopened = new ProposalsDB(paths.proposals);
+    expect(reopened.get(newerDeferred.id)?.status).toBe("pending");
+    reopened.close();
+  });
+
   it("supports disabled per-queue policies with stable skipped reason codes and max batch sizes", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
