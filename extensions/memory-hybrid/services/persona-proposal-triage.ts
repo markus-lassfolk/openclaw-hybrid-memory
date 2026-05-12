@@ -195,7 +195,8 @@ export async function runPersonaProposalTriage(
       startedAt,
     });
 
-    const listed = await adapter.listPending(null);
+    const cursor = store?.getCursor("persona", policy) ?? null;
+    const listed = await adapter.listPending(cursor);
     const pending = listed.slice(0, max);
     for (const item of pending) {
       const context: PendingDecisionContext = {
@@ -888,13 +889,13 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
     if (/privacy|security|approval|credential|destructive|safeguard/.test(text)) return "high";
   } else if (
-    /identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(
+    /\b(identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule)\b/.test(
       text,
     )
   ) {
     return "high";
   }
-  if (/preference|workflow|routing|project context|communication/.test(text)) return "medium";
+  if (/\b(preference|workflow|routing|project context|communication)\b/.test(text)) return "medium";
   if (isLargeOrBroadDiff(p)) return "medium";
   if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
   return "medium";
