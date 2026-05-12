@@ -275,7 +275,9 @@ export function listVerifiedFactTriageItems(
   ).toISOString();
   const policy = opts.policy ?? "classify";
   const cursor = opts.cursor?.cursor ?? null;
-  const cursorItemId = opts.cursor ? findVerifiedCursorItemId(db, opts.cursor.inputHash, policy, nowIso, cursor, cutoffIso) : null;
+  const cursorItemId = opts.cursor
+    ? findVerifiedCursorItemId(db, opts.cursor.inputHash, policy, nowIso, cursor, cutoffIso)
+    : null;
   const latestRows = db
     .prepare(
       `SELECT vf.*
@@ -302,7 +304,15 @@ export function listVerifiedFactTriageItems(
     .map((row) => triageItemFromRow(db, row, { nowIso, policy }));
 }
 
-function findVerifiedCursorItemId(db: DatabaseSync, inputHash: string, policy: VerifiedTriagePolicy, nowIso: string, cursor: string, cutoffIso: string): string | null {
+function findVerifiedCursorItemId(
+  db: DatabaseSync,
+  inputHash: string,
+  policy: VerifiedTriagePolicy,
+  nowIso: string,
+  cursor: string | null,
+  cutoffIso: string,
+): string | null {
+  if (!cursor) return null;
   const rows = db
     .prepare(
       `SELECT vf.*
@@ -320,11 +330,16 @@ function findVerifiedCursorItemId(db: DatabaseSync, inputHash: string, policy: V
     .all(nowIso, cutoffIso, cursor) as unknown as VerifiedFactRow[];
   for (const row of rows) {
     if (!isVerifiedRowChecksumValid(row)) continue;
-    const item = triageItemFromRow(db, row, {
-      nowIso,
-      policy,
-    });
+    const item = triageItemFromRow(db, row, { nowIso, policy });
     if (item.inputHash === inputHash) return row.id;
+    if (row.next_verification && row.verified_at <= cutoffIso) {
+      const staleContextItem = triageItemFromRow(db, row, {
+        nowIso,
+        policy,
+        dueReason: "verified_at_stale",
+      });
+      if (staleContextItem.inputHash === inputHash) return row.id;
+    }
   }
   return null;
 }
@@ -963,7 +978,7 @@ function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
 function triageItemFromRow(
   db: DatabaseSync,
   row: VerifiedFactRow,
-  opts: { nowIso: string; policy: VerifiedTriagePolicy },
+  opts: { nowIso: string; policy: VerifiedTriagePolicy; dueReason?: VerifiedFactTriagePayload["dueReason"] },
 ): VerifiedFactTriageItem {
   const verified = rowToVerifiedFact(row);
   const fact = loadFactSnapshot(db, verified.factId);
@@ -974,7 +989,10 @@ function triageItemFromRow(
     verificationTier: fact?.tier ?? null,
     reviewCursor: verified.nextVerification ?? verified.verifiedAt,
     dueReason:
-      verified.nextVerification && verified.nextVerification <= opts.nowIso ? "next_verification" : "verified_at_stale",
+      opts.dueReason ??
+      (verified.nextVerification && verified.nextVerification <= opts.nowIso
+        ? "next_verification"
+        : "verified_at_stale"),
   };
   const inputHash = computePendingInputHash({
     queue: "verified",

@@ -507,6 +507,43 @@ describe("verified fact triage idempotency and parent integration", () => {
     expect(secondRun.items.map((item) => item.factId)).toEqual(["second-cursor"]);
   });
 
+  it("uses list-time due context when matching same-timestamp cursor hashes", async () => {
+    const firstRunNowMs = Date.parse("2026-05-12T00:00:00.000Z");
+    const secondRunNowMs = Date.parse("2026-05-12T00:02:00.000Z");
+    addFact("same-a", "Same timestamp A", { provenanceJson: "{}", due: false });
+    addFact("same-b", "Same timestamp B", { provenanceJson: "{}", due: false });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET verified_at = ?, next_verification = ? WHERE fact_id IN (?, ?)")
+      .run("2000-01-01T00:00:00.000Z", "2026-05-12T00:01:00.000Z", "same-a", "same-b");
+
+    const firstRun = await runVerifiedFactTriage(factsDb, {
+      mode: "apply",
+      policy: "classify",
+      max: 1,
+      nowMs: firstRunNowMs,
+      store: pendingStore,
+    });
+    expect(firstRun.items).toHaveLength(1);
+    const firstFactId = firstRun.items[0]?.factId;
+    expect(["same-a", "same-b"]).toContain(firstFactId);
+    expect(firstRun.items[0]?.reason).toBe("stale_due_for_reverification");
+    expect(pendingStore.getCursor("verified", "classify")?.cursor).toBe("2026-05-12T00:01:00.000Z");
+
+    const secondRun = await runVerifiedFactTriage(factsDb, {
+      mode: "apply",
+      policy: "classify",
+      max: 1,
+      nowMs: secondRunNowMs,
+      store: pendingStore,
+    });
+
+    expect(secondRun.items).toHaveLength(1);
+    expect(["same-a", "same-b"]).toContain(secondRun.items[0]?.factId);
+    expect(secondRun.items[0]?.factId).not.toBe(firstFactId);
+    expect(secondRun.items[0]?.reason).toBe("stale_due_for_reverification");
+  });
+
   it("re-running apply is idempotent and changed content/hash creates a new decision", async () => {
     addFact("idem", "Idempotent sourced fact", { provenanceJson: "{}" });
     await runVerifiedFactTriage(factsDb, {
