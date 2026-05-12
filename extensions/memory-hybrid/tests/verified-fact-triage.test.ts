@@ -167,6 +167,27 @@ describe("verified fact triage queue source and policy", () => {
     expect(items.map((i) => i.payload.verified.factId)).toEqual(["good"]);
   });
 
+  it("applies max after checksum validation", () => {
+    addFact("corrupt-first", "Corrupt earliest fact", { provenanceJson: "{}" });
+    addFact("valid-second", "Valid later fact", { provenanceJson: "{}" });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET canonical_text = ? WHERE fact_id = ?")
+      .run("tampered", "corrupt-first");
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
+      .run("1999-01-01T00:00:00.000Z", "corrupt-first");
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET next_verification = ? WHERE fact_id = ?")
+      .run("2000-01-01T00:00:00.000Z", "valid-second");
+
+    const items = listVerifiedFactTriageItems(factsDb.getRawDb(), { max: 1 });
+
+    expect(items.map((i) => i.payload.verified.factId)).toEqual(["valid-second"]);
+  });
+
   it("report-only and dry-run never mutate foundation state", async () => {
     addFact("current", "A sourced current fact", { provenanceJson: "{}" });
     const before = pendingStore.tableCounts();

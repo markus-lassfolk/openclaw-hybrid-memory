@@ -279,42 +279,44 @@ export function listVerifiedFactTriageItems(
        LEFT JOIN facts f ON f.id = vf.fact_id
        WHERE (vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
           OR vf.verified_at <= ?
-       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC
-       LIMIT ?`,
+       ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC, vf.verified_at ASC`,
     )
-    .all(nowIso, cutoffIso, opts.max ?? 100) as unknown as VerifiedFactRow[];
+    .all(nowIso, cutoffIso) as unknown as VerifiedFactRow[];
 
-  return latestRows.filter(isVerifiedRowChecksumValid).map((row) => {
-    const verified = rowToVerifiedFact(row);
-    const fact = loadFactSnapshot(db, verified.factId);
-    const payload: VerifiedFactTriagePayload = {
-      reviewQueueSource: VERIFIED_REVIEW_QUEUE_SOURCE,
-      verified,
-      fact,
-      verificationTier: fact?.tier ?? null,
-      reviewCursor: verified.nextVerification ?? verified.verifiedAt,
-      dueReason:
-        verified.nextVerification && verified.nextVerification <= nowIso ? "next_verification" : "verified_at_stale",
-    };
-    const inputHash = computePendingInputHash({
-      queue: "verified",
-      id: verified.id,
-      payload,
-      policy,
-      policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
+  return latestRows
+    .filter(isVerifiedRowChecksumValid)
+    .slice(0, opts.max ?? 100)
+    .map((row) => {
+      const verified = rowToVerifiedFact(row);
+      const fact = loadFactSnapshot(db, verified.factId);
+      const payload: VerifiedFactTriagePayload = {
+        reviewQueueSource: VERIFIED_REVIEW_QUEUE_SOURCE,
+        verified,
+        fact,
+        verificationTier: fact?.tier ?? null,
+        reviewCursor: verified.nextVerification ?? verified.verifiedAt,
+        dueReason:
+          verified.nextVerification && verified.nextVerification <= nowIso ? "next_verification" : "verified_at_stale",
+      };
+      const inputHash = computePendingInputHash({
+        queue: "verified",
+        id: verified.id,
+        payload,
+        policy,
+        policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
+      });
+      return {
+        queue: "verified",
+        id: verified.id,
+        inputHash,
+        policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
+        capabilityClasses: ["read-only", "record-review-metadata"],
+        payload,
+        visibleAfterCursor: verified.nextVerification ?? verified.verifiedAt,
+        requiresHumanReview: false,
+        validationFailed: !fact,
+      } satisfies VerifiedFactTriageItem;
     });
-    return {
-      queue: "verified",
-      id: verified.id,
-      inputHash,
-      policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
-      capabilityClasses: ["read-only", "record-review-metadata"],
-      payload,
-      visibleAfterCursor: verified.nextVerification ?? verified.verifiedAt,
-      requiresHumanReview: false,
-      validationFailed: !fact,
-    } satisfies VerifiedFactTriageItem;
-  });
 }
 
 function isVerifiedRowChecksumValid(row: VerifiedFactRow): boolean {
