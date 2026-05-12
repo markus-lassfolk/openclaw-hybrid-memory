@@ -384,6 +384,8 @@ function createPersonaProposalTriageAdapterWithCloseable(
   dbPath: string,
   cfg: HybridMemoryConfig,
 ): PendingQueueAdapter<QueueItem> {
+  let cachedAllProposals: ReturnType<ProposalsDB["list"]> | null = null;
+
   return {
     queue: "persona",
     listPending: () => {
@@ -391,7 +393,8 @@ function createPersonaProposalTriageAdapterWithCloseable(
       return withCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
-          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg });
+          cachedAllProposals = db.list();
+          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg, allProposals: cachedAllProposals });
           return adapter.listPending(null);
         },
       );
@@ -400,7 +403,7 @@ function createPersonaProposalTriageAdapterWithCloseable(
       withCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
-          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg });
+          const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg, allProposals: cachedAllProposals ?? undefined });
           return adapter.decide(item as PersonaProposalPendingItem, context);
         },
       ),
