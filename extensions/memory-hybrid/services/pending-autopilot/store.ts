@@ -341,9 +341,13 @@ export function migratePendingAutopilotTables(db: DatabaseSync): void {
       summary_json TEXT,
       audit_json TEXT,
       created_at INTEGER NOT NULL,
-      UNIQUE(queue, item_id, input_hash, policy, action)
+      UNIQUE(queue, item_id, input_hash, policy, policy_version, action)
     );
+  `);
 
+  migrateDecisionPolicyVersionUnique(db);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS pending_autopilot_cursors (
       queue TEXT NOT NULL,
       policy TEXT NOT NULL DEFAULT 'default',
@@ -368,6 +372,49 @@ export function migratePendingAutopilotTables(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_pending_autopilot_decisions_run ON pending_autopilot_decisions(run_id);
     CREATE INDEX IF NOT EXISTS idx_pending_autopilot_decisions_queue ON pending_autopilot_decisions(queue, item_id);
     CREATE INDEX IF NOT EXISTS idx_pending_autopilot_locks_expiry ON pending_autopilot_locks(expires_at);
+  `);
+}
+
+function migrateDecisionPolicyVersionUnique(db: DatabaseSync): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pending_autopilot_decisions'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql?.includes("UNIQUE(queue, item_id, input_hash, policy, action)")) return;
+
+  db.exec(`
+    ALTER TABLE pending_autopilot_decisions RENAME TO pending_autopilot_decisions_old_policy_unique;
+
+    CREATE TABLE pending_autopilot_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      queue TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      policy TEXT NOT NULL DEFAULT 'default',
+      policy_version TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason_code TEXT NOT NULL,
+      action_class TEXT NOT NULL,
+      capability_class TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      human_review_required INTEGER NOT NULL,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      actor_json TEXT NOT NULL DEFAULT '{}',
+      run_id TEXT NOT NULL,
+      job_id TEXT,
+      summary_json TEXT,
+      audit_json TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(queue, item_id, input_hash, policy, policy_version, action)
+    );
+
+    INSERT OR IGNORE INTO pending_autopilot_decisions
+      (id, queue, item_id, input_hash, policy, policy_version, mode, action, reason_code, action_class, capability_class, confidence, human_review_required, evidence_json, actor_json, run_id, job_id, summary_json, audit_json, created_at)
+    SELECT
+      id, queue, item_id, input_hash, policy, policy_version, mode, action, reason_code, action_class, capability_class, confidence, human_review_required, evidence_json, actor_json, run_id, job_id, summary_json, audit_json, created_at
+    FROM pending_autopilot_decisions_old_policy_unique;
+
+    DROP TABLE pending_autopilot_decisions_old_policy_unique;
   `);
 }
 

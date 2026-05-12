@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,10 +10,12 @@ import {
   PENDING_QUEUES,
   PendingAutopilotStore,
   type PendingDecision,
+  migratePendingAutopilotTables,
   type PendingItem,
   type PendingQueueAdapter,
   assertKnownEnum,
   computePendingInputHash,
+  canonicalJson,
   createStableRunSummary,
   redactAutopilotValue,
   stableRunSummaryJson,
@@ -255,6 +258,55 @@ describe("pending-autopilot durable state invariants", () => {
     );
   });
 
+  it("deterministically serializes non-JSON top-level input hash values", () => {
+    const namedFunction = function pendingFixture() {
+      return undefined;
+    };
+    expect(canonicalJson(undefined)).toBe('{"__pendingAutopilotType":"undefined"}');
+    expect(() => computePendingInputHash(undefined)).not.toThrow();
+    expect(() => computePendingInputHash(namedFunction)).not.toThrow();
+    expect(() => computePendingInputHash(Symbol("pending"))).not.toThrow();
+    expect(() => computePendingInputHash(123n)).not.toThrow();
+    expect(computePendingInputHash(undefined)).toBe(computePendingInputHash(undefined));
+    expect(computePendingInputHash(namedFunction)).toBe(computePendingInputHash(namedFunction));
+    expect(computePendingInputHash(Symbol("pending"))).toBe(computePendingInputHash(Symbol("pending")));
+    expect(computePendingInputHash(Symbol("pending"))).not.toBe(computePendingInputHash(Symbol("other")));
+    expect(computePendingInputHash(123n)).not.toBe(computePendingInputHash(124n));
+  });
+
+  it("preserves Map and Set identity through redaction for deterministic canonicalization", () => {
+    const redactedMap = redactAutopilotValue(
+      new Map<unknown, unknown>([
+        ["token", "github_pat_123456789abcdef"],
+        [{ z: 1 }, new Set(["b", "a"])],
+      ]),
+    );
+    const redactedSet = redactAutopilotValue(new Set<unknown>(["b", "a", "Bearer abcdefghijklmnop"]));
+
+    expect(redactedMap).toBeInstanceOf(Map);
+    expect(redactedSet).toBeInstanceOf(Set);
+    expect(canonicalJson(new Set(["b", "a"]))).toBe(canonicalJson(new Set(["a", "b"])));
+    expect(
+      canonicalJson(
+        new Map([
+          ["b", 2],
+          ["a", 1],
+        ]),
+      ),
+    ).toBe(
+      canonicalJson(
+        new Map([
+          ["a", 1],
+          ["b", 2],
+        ]),
+      ),
+    );
+    expect(canonicalJson(redactedMap)).toContain('"__pendingAutopilotType":"Map"');
+    expect(canonicalJson(redactedSet)).toContain('"__pendingAutopilotType":"Set"');
+    expect(canonicalJson(redactedMap)).toContain("[REDACTED]");
+    expect(canonicalJson(redactedSet)).toContain("[REDACTED]");
+  });
+
   it("requires active lock ownership and transactional audit before mutation", () => {
     let mutated = false;
     const fresh = decision({ inputHash: "hash-fresh" });
@@ -343,7 +395,7 @@ describe("pending-autopilot durable state invariants", () => {
     expect(store.listDecisions()).toHaveLength(1);
   });
 
-  it("idempotently records the same queue/item/hash/policy/action only once", () => {
+  it("idempotently records the same queue/item/hash/policy/policy-version/action only once", () => {
     expect(store.recordDecision(decision()).inserted).toBe(true);
     expect(store.recordDecision(decision()).inserted).toBe(false);
     expect(
@@ -351,7 +403,54 @@ describe("pending-autopilot durable state invariants", () => {
         decision({ action: "applied", capabilityClass: "apply-low-risk-change", actionClass: "low-risk-apply" }),
       ).inserted,
     ).toBe(true);
-    expect(store.listDecisions()).toHaveLength(2);
+    expect(store.recordDecision(decision({ policyVersion: "policy-v2", runId: "run-2" })).inserted).toBe(true);
+    expect(store.listDecisions()).toHaveLength(3);
+  });
+
+  it("migrates the decisions unique key so policy-version upgrades are reprocessed", () => {
+    const db = new DatabaseSync(join(tmpDir, "legacy.db"));
+    db.exec(`
+      CREATE TABLE pending_autopilot_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        queue TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        policy TEXT NOT NULL DEFAULT 'default',
+        policy_version TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        action_class TEXT NOT NULL,
+        capability_class TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        human_review_required INTEGER NOT NULL,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        actor_json TEXT NOT NULL DEFAULT '{}',
+        run_id TEXT NOT NULL,
+        job_id TEXT,
+        summary_json TEXT,
+        audit_json TEXT,
+        created_at INTEGER NOT NULL,
+        UNIQUE(queue, item_id, input_hash, policy, action)
+      );
+    `);
+
+    migratePendingAutopilotTables(db);
+
+    const sql = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pending_autopilot_decisions'")
+      .get() as { sql: string };
+    expect(sql.sql).toContain("UNIQUE(queue, item_id, input_hash, policy, policy_version, action)");
+
+    const insert = db.prepare(`
+      INSERT INTO pending_autopilot_decisions
+        (queue, item_id, input_hash, policy, policy_version, mode, action, reason_code, action_class, capability_class, confidence, human_review_required, evidence_json, actor_json, run_id, created_at)
+      VALUES ('persona', 'item-1', 'hash-1', 'default', ?, 'apply', 'classified', 'policy-threshold-not-met', 'record-review', 'record-review-metadata', 0.7, 0, '[]', '{}', ?, ?)
+    `);
+    insert.run("policy-v1", "run-1", 1);
+    insert.run("policy-v2", "run-2", 2);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pending_autopilot_decisions").get() as { n: number }).n).toBe(2);
+    db.close();
   });
 
   it("does not hide human-review-required, failed-validation, failed-audit, or unknown decisions by advancing cursor", () => {

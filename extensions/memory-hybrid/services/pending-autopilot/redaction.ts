@@ -98,7 +98,9 @@ export function redactAutopilotValue(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   if (value instanceof URL) return redactAutopilotText(value.toString()).redacted;
   if (value instanceof Map) {
-    return new Map([...value.entries()].map(([key, child]) => [redactAutopilotValue(key), redactAutopilotValue(child)]));
+    return new Map(
+      [...value.entries()].map(([key, child]) => [redactAutopilotValue(key), redactAutopilotValue(child)]),
+    );
   }
   if (value instanceof Set) return new Set([...value.values()].map((v) => redactAutopilotValue(v)));
   if (value && typeof value === "object") {

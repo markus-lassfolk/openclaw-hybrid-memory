@@ -6,7 +6,7 @@ import { AUTOPILOT_ACTIONS, PENDING_QUEUES, assertKnownEnum } from "./types.js";
 export const PENDING_AUTOPILOT_SCHEMA_VERSION = 1;
 
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortJson(value));
+  return JSON.stringify(toCanonicalJsonValue(value));
 }
 
 export function computePendingInputHash(input: unknown): string {
@@ -91,28 +91,47 @@ function compareCodePointOrder(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
+function toCanonicalJsonValue(value: unknown): unknown {
+  if (value === undefined) return { __pendingAutopilotType: "undefined" };
+  if (typeof value === "bigint") return { __pendingAutopilotType: "bigint", value: value.toString() };
+  if (typeof value === "function") {
+    return { __pendingAutopilotType: "function", name: value.name || null };
+  }
+  if (typeof value === "symbol") {
+    return { __pendingAutopilotType: "symbol", description: value.description ?? null };
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return { __pendingAutopilotType: "non-finite-number", value: String(value) };
+  }
+  if (Array.isArray(value)) return value.map(toCanonicalJsonValue);
   if (value instanceof Date) return value.toISOString();
   if (value instanceof URL) return value.toString();
   if (value instanceof Map) {
-    return [...value.entries()]
-      .map(([k, v]) => [sortJson(k), sortJson(v)] as const)
-      .sort(([a], [b]) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
+    const entries = [...value.entries()]
+      .map(([k, v]) => [toCanonicalJsonValue(k), toCanonicalJsonValue(v)] as const)
+      .sort(([a], [b]) => compareCodePointOrder(stringifyCanonicalValue(a), stringifyCanonicalValue(b)));
+    return { __pendingAutopilotType: "Map", entries };
   }
   if (value instanceof Set) {
-    return [...value.values()].map(sortJson).sort((a, b) => compareCodePointOrder(canonicalJson(a), canonicalJson(b)));
+    const values = [...value.values()]
+      .map(toCanonicalJsonValue)
+      .sort((a, b) => compareCodePointOrder(stringifyCanonicalValue(a), stringifyCanonicalValue(b)));
+    return { __pendingAutopilotType: "Set", values };
   }
   if (value && typeof value === "object") {
     const maybeToJson = (value as { toJSON?: unknown }).toJSON;
     if (typeof maybeToJson === "function" && Object.getPrototypeOf(value) !== Object.prototype) {
-      return sortJson(maybeToJson.call(value));
+      return toCanonicalJsonValue(maybeToJson.call(value));
     }
     return Object.fromEntries(
       Object.entries(value)
         .sort(([a], [b]) => compareCodePointOrder(a, b))
-        .map(([k, v]) => [k, sortJson(v)]),
+        .map(([k, v]) => [k, toCanonicalJsonValue(v)]),
     );
   }
   return value;
+}
+
+function stringifyCanonicalValue(value: unknown): string {
+  return JSON.stringify(value) ?? "";
 }
