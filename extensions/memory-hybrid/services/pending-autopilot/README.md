@@ -3,8 +3,8 @@
 This module is the shared safety substrate for the pending-digest autopilot work. Issue #1334 is a prerequisite for:
 
 - #1326 parent orchestration
-- #1327 procedure/skill queue adapter
-- #1328 persona queue adapter
+- #1327 persona queue adapter
+- #1328 procedure/skill queue adapter
 - #1329 verified-fact queue adapter
 - #1330 cron wrapper and observability
 
