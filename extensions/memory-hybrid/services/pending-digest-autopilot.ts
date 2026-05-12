@@ -19,6 +19,8 @@ import {
   PENDING_QUEUES,
   type PendingAutopilotRunSummary,
   PendingAutopilotStore,
+  canonicalJson,
+  redactAutopilotValue,
   type PendingDecision,
   type PendingDecisionContext,
   type PendingItem,
@@ -27,7 +29,6 @@ import {
   computePendingInputHash,
   createPendingAutopilotRunId,
   createStableRunSummary,
-  stableRunSummaryJson,
 } from "./pending-autopilot/index.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
 
@@ -174,7 +175,10 @@ export async function runPendingDigestAutopilot(
   const actor = { type: "agent" as const, id: opts.actorId ?? "pending-digest-autopilot" };
   const digest = buildPendingReviewDigestReport({ cfg: opts.cfg, factsDb: opts.factsDb, now: opts.now });
   const adapters = { ...createDefaultPendingDigestAdapters(opts), ...(opts.adapters ?? {}) };
-  const store = opts.stateDbPath ? new PendingAutopilotStore(opts.stateDbPath) : null;
+  if (normalized.mode === "apply" && !opts.stateDbPath) {
+    throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
+  }
+  const store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : null;
   const decisions: PendingDecision[] = [];
   const queues = Object.fromEntries(
     PENDING_QUEUES.map((queue) => [
@@ -243,8 +247,8 @@ export async function runPendingDigestAutopilot(
           const decision = await adapter.decide(item, context);
           decisions.push(decision);
           queueResult.decisions.push(decision);
-          store?.recordDecision(decision);
-          store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+          const inserted = store?.recordDecision(decision).inserted ?? false;
+          if (inserted) store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
         }
       } catch (err) {
         const decision = makeFailureDecision({
@@ -346,7 +350,6 @@ export function createPersonaReadOnlyAdapter(input: {
       return withCloseable(
         () => new ProposalsDB(input.dbPath),
         (store) => store.list({ status: "pending" }).map(personaProposalToItem),
-        [],
       );
     },
     decide: decideReadOnlyItem,
@@ -383,7 +386,6 @@ export function createToolProposalReadOnlyAdapter(dbPath: string): PendingQueueA
       withCloseable(
         () => new ToolProposalStore(dbPath),
         (store) => store.list({ status: "proposed" }).map(toolProposalToItem),
-        [],
       ),
     decide: decideReadOnlyItem,
   };
@@ -396,7 +398,6 @@ export function createCrystallizationReadOnlyAdapter(dbPath: string): PendingQue
       withCloseable(
         () => new CrystallizationStore(dbPath),
         (store) => store.list({ status: "pending" }).map(crystallizationProposalToItem),
-        [],
       ),
     decide: decideReadOnlyItem,
   };
@@ -414,7 +415,7 @@ export function decideReadOnlyItem(item: QueueItem, context: PendingDecisionCont
     });
   }
   const reportOnly = context.policy === "report-only";
-  const requiresHuman = item.requiresHumanReview === true || reportOnly || context.mode === "apply";
+  const requiresHuman = item.requiresHumanReview === true || reportOnly;
   return {
     queue: item.queue,
     itemId: item.id,
@@ -631,14 +632,11 @@ function validatePolicies(policies: PendingDigestAutopilotPolicies): void {
 function withCloseable<TStore extends { close?: () => void }, T>(
   factory: () => TStore,
   fn: (store: TStore) => T,
-  fallback: T,
 ): T {
   let store: TStore | null = null;
   try {
     store = factory();
     return fn(store);
-  } catch {
-    return fallback;
   } finally {
     try {
       store?.close?.();
@@ -649,5 +647,5 @@ function withCloseable<TStore extends { close?: () => void }, T>(
 }
 
 export function stablePendingDigestAutopilotJson(result: PendingDigestAutopilotResult): string {
-  return `${JSON.stringify(result, null, 2)}\n`;
+  return `${canonicalJson(redactAutopilotValue(result))}\n`;
 }

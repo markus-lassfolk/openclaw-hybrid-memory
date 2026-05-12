@@ -62,6 +62,12 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
     .option("--max-crystallization <n>", "Maximum crystallization proposals to inspect (default: 50)")
     .action(
       withExit(async (opts?: DigestAutopilotCliOptions) => {
+        if (opts?.apply && opts?.dryRun) {
+          throw new Error("--dry-run and --apply are mutually exclusive for digest autopilot");
+        }
+        if (opts?.apply && !opts?.stateDb) {
+          throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
+        }
         const mode = opts?.apply ? "apply" : "dry-run";
         const policies: Partial<PendingDigestAutopilotPolicies> = {
           persona: opts?.personaPolicy as PendingDigestAutopilotPolicies["persona"] | undefined,

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
@@ -21,6 +21,7 @@ import {
   createDefaultPendingDigestAdapters,
   decideReadOnlyItem,
   runPendingDigestAutopilot,
+  stablePendingDigestAutopilotJson,
 } from "../services/pending-digest-autopilot.js";
 import { pendingStorePaths } from "../services/pending-review-digest.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
@@ -127,7 +128,7 @@ function seedQueues(cfg: HybridMemoryConfig): void {
 }
 
 describe("pending digest autopilot parent (#1326)", () => {
-  it("defaults to dry-run, inspects live pending queues, emits stable structured JSON, and writes no durable state", async () => {
+  it("defaults to dry-run, inspects live pending queues, emits stable structured JSON, and does not open durable state", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
     seedQueues(cfg);
@@ -163,14 +164,7 @@ describe("pending digest autopilot parent (#1326)", () => {
       counts: { inspected: 7, applied: 0 },
     });
 
-    const store = new PendingAutopilotStore(stateDb);
-    expect(store.tableCounts()).toEqual({
-      pending_autopilot_runs: 0,
-      pending_autopilot_decisions: 0,
-      pending_autopilot_cursors: 0,
-      pending_autopilot_locks: 0,
-    });
-    store.close();
+    expect(existsSync(stateDb)).toBe(false);
   });
 
   it("apply mode records only foundation decisions and remains idempotent without queue mutations", async () => {
@@ -195,6 +189,7 @@ describe("pending digest autopilot parent (#1326)", () => {
     });
 
     expect(first.applyBehavior).toBe("record-decisions-only");
+    expect(first.queues.tools.decisions[0]).toMatchObject({ action: "classified", humanReviewRequired: false });
     expect(second.counts).toEqual(first.counts);
     const paths = pendingStorePaths(cfg.sqlitePath);
     const persona = new ProposalsDB(paths.proposals);
@@ -230,6 +225,21 @@ describe("pending digest autopilot parent (#1326)", () => {
       action: "reported",
       reasonCode: "policy-denied",
     });
+  });
+
+  it("requires a state DB before apply mode can record parent decisions", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    seedQueues(cfg);
+
+    await expect(
+      runPendingDigestAutopilot({
+        cfg,
+        factsDb: factsDb(),
+        mode: "apply",
+        runId: "run-apply-no-state",
+      }),
+    ).rejects.toThrow("--apply requires --state-db");
   });
 
   it("captures adapter/list failures as visible failed-validation decisions", async () => {
@@ -279,6 +289,26 @@ describe("pending digest autopilot parent (#1326)", () => {
     });
   });
 
+  it("propagates default inventory store failures as inventory-failed decisions", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    vi.spyOn(ProposalsDB.prototype, "list").mockImplementation(() => {
+      throw new Error("persona sqlite read failed");
+    });
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      runId: "run-default-store-failure",
+    });
+
+    expect(result.queues.persona).toMatchObject({ skipped: true, skipReason: "inventory-failed" });
+    expect(result.queues.persona.decisions[0]).toMatchObject({
+      action: "failed-validation",
+      summary: { body: "persona sqlite read failed" },
+    });
+  });
+
   it("registers digest autopilot CLI and emits JSON helpfully", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
@@ -296,6 +326,67 @@ describe("pending digest autopilot parent (#1326)", () => {
       counts: { applied: 0 },
       queues: { verified: { inspected: 1 } },
     });
+  });
+
+  it("rejects conflicting dry-run/apply CLI flags and apply without state DB", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerManageDigest(program as never, { cfg, factsDb: factsDb() } as ManageBindings);
+
+    await expect(
+      program.parseAsync(["digest", "autopilot", "--dry-run", "--apply", "--state-db", join(dir, "state.db")], {
+        from: "user",
+      }),
+    ).rejects.toThrow("--dry-run and --apply are mutually exclusive");
+    await expect(program.parseAsync(["digest", "autopilot", "--apply"], { from: "user" })).rejects.toThrow(
+      "--apply requires --state-db",
+    );
+  });
+
+  it("uses canonical redacted JSON for stable structured output", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      runId: "run-json-redaction",
+      adapters: {
+        tools: {
+          queue: "tools",
+          listPending: () => [
+            {
+              queue: "tools",
+              id: "secret-tool",
+              inputHash: computePendingInputHash({ id: "secret-tool" }),
+              policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+              capabilityClasses: ["read-only"],
+              payload: { title: "token: sk-test_secret_value_123456789" },
+            },
+          ],
+          decide: decideReadOnlyItem,
+        },
+      },
+    });
+
+    const json = stablePendingDigestAutopilotJson(result);
+    expect(json).toContain("[REDACTED]");
+    expect(json).not.toContain("sk-test_secret_value_123456789");
+    expect(Object.keys(JSON.parse(json))).toEqual([
+      "applyBehavior",
+      "counts",
+      "digestContext",
+      "foundationSummary",
+      "humanSummary",
+      "max",
+      "mode",
+      "policies",
+      "policyVersion",
+      "queues",
+      "runId",
+      "schemaVersion",
+    ]);
   });
 
   it("uses the #1334 harness input hash contract for parent fixture decisions", () => {
