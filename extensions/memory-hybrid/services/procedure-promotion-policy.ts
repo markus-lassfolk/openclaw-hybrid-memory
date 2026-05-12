@@ -270,7 +270,7 @@ export function evaluateProcedureForPromotion(
     gates.push(defer("low_confidence", `confidence ${proc.confidence} < ${minConfidence}`));
   if (!Array.isArray(recipe) || recipe.length === 0)
     gates.push(fail("malformed_recipe", "recipe must be a non-empty JSON array"));
-  if (Array.isArray(recipe) && recipe.length < 2)
+  if (Array.isArray(recipe) && recipe.length === 1)
     gates.push(defer("low_reuse_value", "recipe is too thin to justify a skill"));
   if (!hasEnoughTaskBoundary(proc.taskPattern))
     gates.push(defer("vague_trigger", "task pattern lacks a clear reusable boundary"));
@@ -347,9 +347,11 @@ export function evaluateProcedureForPromotion(
       (g) => g.reason === "skill_static_validation_failed" || g.reason === "malformed_recipe",
     )
       ? "failed"
-      : draft
+      : initialGates > 0
         ? "passed"
-        : "failed",
+        : draft
+          ? "passed"
+          : "failed",
     safetyValidation: gates.some((g) =>
       [
         "unsafe_side_effect",
@@ -361,7 +363,7 @@ export function evaluateProcedureForPromotion(
     )
       ? "failed"
       : "passed",
-    triggerEval: eligible ? "passed" : "failed",
+    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed") ? "failed" : eligible ? "passed" : "passed",
     functionalEval: gates.some((g) => g.reason === "functional_eval_failed") ? "failed" : "passed",
     baselineComparison: {
       withSkillPassed: eligible,
@@ -668,7 +670,7 @@ function looksTooContextSpecific(text: string): boolean {
 }
 
 function looksNoisy(recipe: unknown): boolean {
-  if (!Array.isArray(recipe)) return true;
+  if (!Array.isArray(recipe)) return false;
   const text = JSON.stringify(recipe);
   return recipe.length > 20 || /\b(screenshot|scroll|click|wait|sleep|retry again|random|debug dump)\b/i.test(text);
 }
