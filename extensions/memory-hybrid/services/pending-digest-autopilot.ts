@@ -64,6 +64,7 @@ export interface PendingDigestAutopilotMaxima {
 export interface PendingDigestAutopilotOptions {
   cfg: HybridMemoryConfig;
   factsDb: PendingDigestFactsDb;
+  workspace?: string;
   mode?: AutopilotMode;
   policies?: Partial<PendingDigestAutopilotPolicies>;
   max?: Partial<PendingDigestAutopilotMaxima>;
@@ -368,11 +369,11 @@ export function renderPendingDigestAutopilotHumanSummary(result: PendingDigestAu
 }
 
 export function createDefaultPendingDigestAdapters(
-  opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb">,
+  opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb" | "workspace">,
 ): Record<PendingQueue, PendingQueueAdapter> {
   const paths = pendingStorePaths(opts.cfg.sqlitePath);
   return {
-    persona: createPersonaProposalTriageAdapterWithCloseable(paths.proposals, opts.cfg),
+    persona: createPersonaProposalTriageAdapterWithCloseable(paths.proposals, opts.cfg, opts.workspace),
     procedures: createProcedureReadOnlyAdapter(opts.factsDb),
     verified: createVerifiedReadOnlyAdapter(opts.factsDb),
     tools: createToolProposalReadOnlyAdapter(paths.toolProposals),
@@ -383,6 +384,7 @@ export function createDefaultPendingDigestAdapters(
 function createPersonaProposalTriageAdapterWithCloseable(
   dbPath: string,
   cfg: HybridMemoryConfig,
+  workspace?: string,
 ): PendingQueueAdapter<QueueItem> {
   let cachedAllProposals: ReturnType<ProposalsDB["list"]> | null = null;
 
@@ -397,6 +399,7 @@ function createPersonaProposalTriageAdapterWithCloseable(
           const adapter = createPersonaProposalTriageAdapter({
             proposalsDb: db,
             cfg,
+            workspace,
             allProposals: cachedAllProposals,
           });
           return adapter.listPending(cursor);
@@ -410,6 +413,7 @@ function createPersonaProposalTriageAdapterWithCloseable(
       const adapter = createPersonaProposalTriageAdapter({
         proposalsDb: null as never,
         cfg,
+        workspace,
         allProposals: cachedAllProposals,
       });
       return adapter.decide(item as PersonaProposalPendingItem, context);

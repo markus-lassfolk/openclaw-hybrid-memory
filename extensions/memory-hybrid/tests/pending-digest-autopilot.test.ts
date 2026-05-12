@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
@@ -405,6 +406,61 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("passes the caller workspace through the parent persona adapter", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const callerWorkspace = join(dir, "caller-workspace");
+    const defaultWorkspace = join(dir, "default-workspace");
+    mkdirSync(callerWorkspace, { recursive: true });
+    mkdirSync(defaultWorkspace, { recursive: true });
+    writeFileSync(join(callerWorkspace, "USER.md"), "# USER\nCaller workspace.\n", "utf-8");
+    writeFileSync(join(defaultWorkspace, "USER.md"), "# USER\nDefault workspace.\n", "utf-8");
+    const previousWorkspace = process.env.OPENCLAW_WORKSPACE;
+    process.env.OPENCLAW_WORKSPACE = defaultWorkspace;
+    try {
+      const paths = pendingStorePaths(cfg.sqlitePath);
+      const persona = new ProposalsDB(paths.proposals);
+      const p = persona.create({
+        targetFile: "USER.md",
+        title: "Caller workspace formatting",
+        observation: "Formatting-only proposal for the caller workspace.",
+        suggestedChange: "Formatting: parent adapter workspace marker.",
+        confidence: 0.99,
+        evidenceSessions: ["session-workspace"],
+        targetHash: fileHash(join(callerWorkspace, "USER.md")),
+        targetMtimeMs: null,
+      });
+      persona.close();
+
+      const result = await runPendingDigestAutopilot({
+        cfg,
+        factsDb: factsDb(),
+        workspace: callerWorkspace,
+        stateDbPath: join(dir, "autopilot.db"),
+        mode: "apply",
+        policies: { persona: "apply-safe" },
+        max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+        runId: "run-parent-persona-caller-workspace",
+      });
+
+      const decision = result.queues.persona.decisions[0];
+      expect(decision).toMatchObject({
+        itemId: p.id,
+        action: "applied",
+        reasonCode: "safe-low-risk-localized-change",
+      });
+      expect(decision?.summary?.metadata).toMatchObject({
+        targetHash: fileHash(join(callerWorkspace, "USER.md")),
+      });
+      expect(decision?.summary?.metadata).not.toMatchObject({
+        targetHash: fileHash(join(defaultWorkspace, "USER.md")),
+      });
+    } finally {
+      if (previousWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
+      else process.env.OPENCLAW_WORKSPACE = previousWorkspace;
+    }
+  });
+
   it("parent route delegates to the same adapter decision path as standalone child route", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
@@ -566,3 +622,7 @@ describe("pending digest autopilot parent (#1326)", () => {
     });
   });
 });
+
+function fileHash(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
