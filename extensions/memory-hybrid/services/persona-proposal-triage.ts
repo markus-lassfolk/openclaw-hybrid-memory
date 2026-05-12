@@ -630,7 +630,7 @@ function applyPersonaDecisionWithLock(input: {
     const ok = input.store.mutateWithLockAndAudit({
       decision: input.decision,
       owner,
-      actualInputHash: input.decision.action === "rejected" ? input.decision.inputHash : actualHash,
+      actualInputHash: actualHash,
       audit: () => {},
       mutate: () => {
         if (input.decision.action === "rejected") {
@@ -858,7 +858,7 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
 function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
   const containsSemanticKeywords =
-    /\b(identity|personality|voice|tone|behavior|instruction|response|reply|always|never|must|should)\b/i.test(
+    /(identit|personalit|voice|tone|behavio|instruction|response|repl|always|never|must|should)/i.test(
       suggestedChange,
     );
   return hasFormattingPrefix && !containsSemanticKeywords;
