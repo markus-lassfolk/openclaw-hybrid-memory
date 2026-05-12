@@ -201,6 +201,8 @@ export async function runPersonaProposalTriage(
         decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace });
         if (decision.action === "failed-validation") {
           store.recordDecision(decision);
+        } else {
+          // Successful mutation decisions are already recorded inside mutateWithLockAndAudit
         }
       } else if (policy !== "report-only") {
         store?.recordDecision(decision);
@@ -853,7 +855,7 @@ function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
   if (/privacy/.test(text)) return "privacy-boundary-change";
   if (/security|credential|approval|destructive|safeguard/.test(text)) return "security-boundary-change";
-  if (/preference|profile|personal fact|user/.test(text)) return "user-preference-change-requires-approval";
+  if (/preference|profile|personal fact|user preference/.test(text)) return "user-preference-change-requires-approval";
   return "identity-boundary-change";
 }
 
