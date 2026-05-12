@@ -908,10 +908,10 @@ function failed(
 
 function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): PersonaProposalRisk {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
-  if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)) return "critical";
+  if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
-    if (/privacy|security|approval|credential|destructive|safeguard/.test(text)) return "high";
+    if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
   } else if (
     /\b(identit(?:y|ies)|personalit(?:y|ies)|voice|tone|privacy|security|external|group chat|user preferences?|profile|personal facts?|memory rules?)\b/.test(
       text,
@@ -1154,7 +1154,11 @@ function writeFileAtomic(path: string, content: string): void {
     writeFileSync(tempPath, content, "utf-8");
     renameSync(tempPath, path);
   } finally {
-    if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    try {
+      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    } catch {
+      // Suppress cleanup errors to preserve original error if any
+    }
   }
 }
 
