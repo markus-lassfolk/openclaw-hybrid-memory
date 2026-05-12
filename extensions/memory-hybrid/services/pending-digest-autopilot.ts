@@ -321,7 +321,9 @@ export async function runPendingDigestAutopilot(
           queueResult.decisions.push(decision);
           const itemCursor = item.visibleAfterCursor ?? item.id;
           if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
-            cursorAdvanceCandidate = { decision, cursor: itemCursor };
+            if (cursorAdvanceCandidate === null) {
+              cursorAdvanceCandidate = { decision, cursor: itemCursor };
+            }
           } else {
             cursorAdvanceBlocked = true;
           }
@@ -493,7 +495,7 @@ function makeUnprocessedPersonaDecision(base: PendingDecision): PendingDecision 
 }
 
 function decisionFromPersonaView(base: PendingDecision, view: PersonaProposalDecisionView): PendingDecision {
-  const actionClass = deriveActionClass(view.action, view.capability);
+  const actionClass = deriveActionClass(view.action);
   return {
     ...base,
     action: view.action,
@@ -515,10 +517,7 @@ function decisionFromPersonaView(base: PendingDecision, view: PersonaProposalDec
   };
 }
 
-function deriveActionClass(
-  action: PendingDecision["action"],
-  capability: PendingDecision["capabilityClass"],
-): PendingDecision["actionClass"] {
+function deriveActionClass(action: PendingDecision["action"]): PendingDecision["actionClass"] {
   if (action === "applied") return "low-risk-apply";
   if (action === "rejected") return "state-transition";
   if (action === "deferred-for-human") return "record-review";

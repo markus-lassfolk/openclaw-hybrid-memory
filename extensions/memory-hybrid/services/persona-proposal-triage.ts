@@ -249,7 +249,9 @@ export async function runPersonaProposalTriage(
       }
       const itemCursor = item.visibleAfterCursor ?? item.id;
       if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
-        cursorAdvanceCandidate = { decision, cursor: itemCursor };
+        if (cursorAdvanceCandidate === null) {
+          cursorAdvanceCandidate = { decision, cursor: itemCursor };
+        }
       } else {
         cursorAdvanceBlocked = true;
       }
