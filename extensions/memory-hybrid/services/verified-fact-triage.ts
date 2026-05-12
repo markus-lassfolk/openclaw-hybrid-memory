@@ -16,12 +16,7 @@ import {
   type PendingItem,
   type PendingQueueAdapter,
 } from "./pending-autopilot/index.js";
-import {
-  computeChecksum,
-  rowToVerifiedFact,
-  type VerifiedFact,
-  type VerifiedFactRow,
-} from "./verification-store.js";
+import { computeChecksum, rowToVerifiedFact, type VerifiedFact, type VerifiedFactRow } from "./verification-store.js";
 
 export const VERIFIED_TRIAGE_POLICY_VERSION = "verified-fact-triage-v1";
 const DEFAULT_REVERIFICATION_DAYS = 30;
