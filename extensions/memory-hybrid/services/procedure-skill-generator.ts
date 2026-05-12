@@ -136,9 +136,10 @@ export function generateAutoSkills(
       inRunSkillCandidates,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
+    const reservedCandidate = { slug: resolvedSlug, taskPattern: proc.taskPattern };
     if (evaluation.eligible && evaluation.draft) {
       reservedSlugs.add(resolvedSlug);
-      inRunSkillCandidates.push({ slug: resolvedSlug, taskPattern: proc.taskPattern });
+      inRunSkillCandidates.push(reservedCandidate);
     }
     if (evaluation.eligible) eligible++;
     if (decision.action === "rejected") rejected++;
@@ -212,6 +213,7 @@ export function generateAutoSkills(
       logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
     } catch (err) {
       rollbackDraftSkill(skillDir);
+      releaseInRunReservation(reservedSlugs, inRunSkillCandidates, reservedCandidate);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-skill-generator",
         operation: "write-draft-skill",
@@ -377,6 +379,18 @@ function writeDraftSkill(
   writeFileSync(join(skillDir, "recipe.json"), draft.recipeJson, "utf-8");
   writeFileSync(join(skillDir, "verification.json"), draft.verificationJson, "utf-8");
   writeFileSync(join(skillDir, "evals", "evals.json"), draft.evalsJson, "utf-8");
+}
+
+function releaseInRunReservation(
+  reservedSlugs: Set<string>,
+  inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  candidate: { slug: string; taskPattern: string },
+): void {
+  reservedSlugs.delete(candidate.slug);
+  const index = inRunSkillCandidates.findIndex(
+    (entry) => entry.slug === candidate.slug && entry.taskPattern === candidate.taskPattern,
+  );
+  if (index >= 0) inRunSkillCandidates.splice(index, 1);
 }
 
 function rollbackDraftSkill(skillDir: string): void {

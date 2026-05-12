@@ -530,7 +530,7 @@ describe("generateAutoSkills", () => {
     });
   });
 
-  it("rolls back written draft artifacts when markProcedurePromoted fails during batch generation", () => {
+  it("rolls back written draft artifacts and in-run reservations when batch persistence fails", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate rollback batch behavior",
       recipeJson: JSON.stringify([
@@ -548,8 +548,25 @@ describe("generateAutoSkills", () => {
       sourceSessionId: "rollback-batch-a",
     });
     recordDistinctSuccesses(proc.id);
+    const retry = db.upsertProcedure({
+      taskPattern: "Validate rollback batch behavior",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run validation test",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "rollback-batch-retry-a",
+    });
+    recordDistinctSuccesses(retry.id);
 
-    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementation(() => {
+    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementationOnce(() => {
       throw new Error("mark failed");
     });
 
@@ -561,22 +578,34 @@ describe("generateAutoSkills", () => {
         skillTTLDays: 30,
         apply: true,
         policy: "auto-safe",
-        maxPerRun: 1,
+        maxPerRun: 2,
       },
       { info: () => {}, warn: () => {} },
     );
 
     markSpy.mockRestore();
 
-    expect(result.generated).toBe(0);
+    expect(result.generated).toBe(1);
+    expect(result.paths).toEqual([join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md")]);
     expect(result.skipped).toBe(1);
-    expect(result.summary?.failedValidation).toBe(1);
-    expect(result.decisions?.[0]).toMatchObject({
+    expect(result.summary).toMatchObject({
+      eligible: 2,
+      drafted: 1,
+      failedValidation: 1,
+      deferred: 0,
+    });
+    expect(result.decisions?.find((decision) => decision.procedureId === proc.id)).toMatchObject({
       action: "failed-validation",
       reasons: ["write_failed"],
     });
-    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior"))).toBe(false);
+    expect(result.decisions?.find((decision) => decision.procedureId === retry.id)).toMatchObject({
+      action: "promoted-to-draft",
+      skillPath: join(skillsDir, "validate-rollback-batch-behavior"),
+    });
+    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior-1"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
+    expect(db.getProcedureById(retry.id)?.promotedToSkill).toBe(1);
   });
 
   it("rolls back written draft artifacts when markProcedurePromoted fails for single-procedure generation", () => {

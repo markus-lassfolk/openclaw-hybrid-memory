@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -206,6 +206,63 @@ describe("procedure promotion policy and adapter", () => {
     expect(result.decisions?.find((d) => d.procedureId === first.id)?.action).toBe("promoted-to-draft");
     expect(result.decisions?.find((d) => d.procedureId === second.id)?.reasons).toContain("duplicate_existing_skill");
     expect(existsSync(skillsDir)).toBe(false);
+  });
+
+  it("compares duplicate skills against task-specific sections instead of template boilerplate", () => {
+    const existingSkillDir = join(skillsDir, "collect-weather-sensor-status");
+    mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(
+      join(existingSkillDir, "SKILL.md"),
+      `---
+name: collect-weather-sensor-status
+description: Use when the user asks to collect weather sensor status from telemetry.
+---
+
+# Collect Weather Sensor Status
+
+## Trigger
+Use for weather sensor telemetry collection.
+
+## Workflow
+1. Read status.json.
+2. Verify report output exists.
+
+## Validation
+Confirm report output exists and validation passes.
+
+## Failure handling
+Report failures instead of improvising.
+
+## Provenance
+Source procedure id: proc-weather
+`,
+      "utf-8",
+    );
+    const distinctReportProc = addProcedure({
+      taskPattern: "Validate release health report with objective checks",
+      sourceSessionId: "boilerplate-overlap-a",
+    });
+    db.recordProcedureSuccess(distinctReportProc.id, undefined, "boilerplate-overlap-b");
+    db.recordProcedureSuccess(distinctReportProc.id, undefined, "boilerplate-overlap-c");
+    const duplicateWeatherProc = addProcedure({
+      taskPattern: "Collect weather sensor telemetry status",
+      sourceSessionId: "task-overlap-a",
+    });
+    db.recordProcedureSuccess(duplicateWeatherProc.id, undefined, "task-overlap-b");
+    db.recordProcedureSuccess(duplicateWeatherProc.id, undefined, "task-overlap-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const distinctEval = evaluateProcedureForPromotion(createProcedurePromotionItem(distinctReportProc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+    const duplicateEval = evaluateProcedureForPromotion(createProcedurePromotionItem(duplicateWeatherProc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(distinctEval.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
+    expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
   });
 
   it("does not report generated skill paths for deferred procedures", () => {

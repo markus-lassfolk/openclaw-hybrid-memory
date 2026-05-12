@@ -829,11 +829,19 @@ function safeReadFile(path: string): string {
 }
 
 function extractTaskContentFromSkill(content: string): string {
-  const descMatch = content.match(/description:\s*([^\n]+)/);
-  const desc = descMatch ? descMatch[1] : "";
-  const triggerMatch = content.match(/##\s*trigger\s*([\s\S]*?)(?=##|$)/i);
-  const trigger = triggerMatch ? triggerMatch[1] : "";
-  return `${desc}\n${trigger}`;
+  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  const frontmatter = frontmatterMatch ? frontmatterMatch[1] : content;
+  const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
+  const desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
+  const taskSections = [
+    /##\s*trigger\s*([\s\S]*?)(?=##|$)/i,
+    /##\s*scope\s*([\s\S]*?)(?=##|$)/i,
+    /##\s*examples\s*([\s\S]*?)(?=##|$)/i,
+    /##\s*provenance\s*([\s\S]*?)(?=##|$)/i,
+  ]
+    .map((pattern) => content.match(pattern)?.[1] ?? "")
+    .join("\n");
+  return `${desc}\n${taskSections}`;
 }
 
 function significantWords(text: string): Set<string> {
