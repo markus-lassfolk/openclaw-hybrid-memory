@@ -707,13 +707,30 @@ function withCloseable<TStore extends { close?: () => void }, T>(factory: () => 
   let store: TStore | null = null;
   try {
     store = factory();
-    return fn(store);
-  } finally {
+    const result = fn(store);
+    if (result instanceof Promise) {
+      return result.finally(() => {
+        try {
+          store?.close?.();
+        } catch {
+          // Best-effort close for inventory readers.
+        }
+      }) as T;
+    } else {
+      try {
+        store?.close?.();
+      } catch {
+        // Best-effort close for inventory readers.
+      }
+      return result;
+    }
+  } catch (err) {
     try {
       store?.close?.();
     } catch {
       // Best-effort close for inventory readers.
     }
+    throw err;
   }
 }
 

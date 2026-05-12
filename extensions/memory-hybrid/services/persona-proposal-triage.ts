@@ -850,7 +850,7 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
   if (/destructive|approval boundary|bypass approval|disable safeguard|credential/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
-    if (/privacy|security|approval|credential|destructive|safeguard/.test(suggestedChange)) return "high";
+    if (/privacy|security|approval|credential|destructive|safeguard/.test(text)) return "high";
   } else if (
     /identity|personality|voice|tone|privacy|security|external|group chat|user preference|profile|personal fact|memory rule/.test(
       text,
@@ -1123,7 +1123,7 @@ function topicKey(input: string): string {
 
 function maxRisk(risks: PersonaProposalRisk[]): PersonaProposalRisk {
   const order: PersonaProposalRisk[] = ["low", "medium", "high", "critical"];
-  return risks.sort((a, b) => order.indexOf(b) - order.indexOf(a))[0] ?? "medium";
+  return [...risks].sort((a, b) => order.indexOf(b) - order.indexOf(a))[0] ?? "medium";
 }
 
 export function validatePersonaPolicy(policy: string): asserts policy is PersonaProposalTriagePolicy {
