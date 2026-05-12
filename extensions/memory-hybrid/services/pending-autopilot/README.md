@@ -2,7 +2,7 @@
 
 This module is the shared safety substrate for the pending-digest autopilot work. Issue #1334 is a prerequisite for:
 
-- #1326 parent orchestration
+- #1326 parent orchestration — `openclaw hybrid-mem digest autopilot`
 - #1327 persona queue adapter
 - #1328 procedure/skill queue adapter
 - #1329 verified-fact queue adapter
@@ -39,6 +39,12 @@ Child, parent, and cron work must consume these contracts instead of defining be
 10. `destructive-action`
 
 Adapters may add queue-specific policy, but they must preserve these approval boundaries.
+
+## Parent command (#1326)
+
+`openclaw hybrid-mem digest autopilot` is the Phase 1 parent skeleton. Default mode is `--dry-run` and non-mutating. `--apply` is intentionally limited to recording allowed parent classification decisions in the shared #1334 state DB when `--state-db` is supplied; it does **not** mutate persona proposals, procedures, verified facts, tool proposals, crystallization proposals, or generated skills.
+
+Supported parent flags include `--dry-run`, `--apply`, `--json`, per-queue policies (`--persona-policy`, `--procedure-policy`, `--verified-policy`, `--tool-policy`, `--crystallization-policy`), and per-queue maxes. Queue policy modules/adapters own queue-specific safety logic in #1327/#1328/#1329; tool and crystallization queues are read-only/classify only in #1326.
 
 ## Parent/child equivalence
 

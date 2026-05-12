@@ -268,6 +268,25 @@ describe("pending digest autopilot parent (#1326)", () => {
     ).rejects.toThrow("--apply requires --state-db");
   });
 
+  it("validates apply prerequisites before constructing default adapters", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const listSpy = vi.spyOn(ProposalsDB.prototype, "list");
+
+    await expect(
+      runPendingDigestAutopilot({
+        cfg,
+        factsDb: factsDb(),
+        mode: "apply",
+        runId: "run-apply-no-state-no-adapter-side-effects",
+      }),
+    ).rejects.toThrow("--apply requires --state-db");
+
+    expect(listSpy).not.toHaveBeenCalled();
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    expect(existsSync(paths.proposals)).toBe(false);
+  });
+
   it("captures adapter/list failures as visible failed-validation decisions", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
@@ -296,6 +315,22 @@ describe("pending digest autopilot parent (#1326)", () => {
       humanReviewRequired: true,
     });
     expect(result.humanSummary).toContain("failed validation 1");
+  });
+
+  it("closes persona proposal DB handles opened by the parent adapter", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    seedQueues(cfg);
+    const closeSpy = vi.spyOn(ProposalsDB.prototype, "close");
+
+    await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      runId: "run-close-persona-db-handles",
+      max: { procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+
+    expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("parent route delegates to the same adapter decision path as standalone child route", async () => {

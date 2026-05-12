@@ -30,7 +30,7 @@ import {
   createPendingAutopilotRunId,
   createStableRunSummary,
 } from "./pending-autopilot/index.js";
-import { createPersonaProposalTriageAdapter } from "./persona-proposal-triage.js";
+import { createPersonaProposalTriageAdapter, type PersonaProposalPendingItem } from "./persona-proposal-triage.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
 
 export const PENDING_DIGEST_AUTOPILOT_POLICY_VERSION = "parent-skeleton-v1";
@@ -181,6 +181,9 @@ export async function runPendingDigestAutopilot(
     type: "agent" as const,
     id: opts.actorId ?? "pending-digest-autopilot",
   };
+  if (normalized.mode === "apply" && !opts.stateDbPath) {
+    throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
+  }
   const digest = buildPendingReviewDigestReport({
     cfg: opts.cfg,
     factsDb: opts.factsDb,
@@ -190,9 +193,6 @@ export async function runPendingDigestAutopilot(
     ...createDefaultPendingDigestAdapters(opts),
     ...(opts.adapters ?? {}),
   };
-  if (normalized.mode === "apply" && !opts.stateDbPath) {
-    throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
-  }
 
   let store: PendingAutopilotStore | null = null;
   try {
@@ -399,7 +399,7 @@ function createPersonaProposalTriageAdapterWithCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
           const adapter = createPersonaProposalTriageAdapter({ proposalsDb: db, cfg });
-          return adapter.decide(item as any, context);
+          return adapter.decide(item as PersonaProposalPendingItem, context);
         },
       ),
   };
