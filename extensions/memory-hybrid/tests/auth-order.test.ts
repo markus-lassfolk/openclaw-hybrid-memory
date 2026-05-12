@@ -301,6 +301,14 @@ describe("OAuth profile detection logic", () => {
     expect(hasOAuthProfiles(["openai:api", "openai:default"], "openai")).toBe(false);
   });
 
+  it("treats API-only suffixes case-insensitively", () => {
+    expect(hasOAuthProfiles(["openai:Api", "openai:DEFAULT"], "openai")).toBe(false);
+  });
+
+  it("normalizes provider case/whitespace before API-only matching", () => {
+    expect(hasOAuthProfiles(["openai:api", "openai:default"], "  OPENAI  ")).toBe(false);
+  });
+
   it("returns true when at least one OAuth profile is present (anthropic:claude-cli)", () => {
     expect(hasOAuthProfiles(["anthropic:claude-cli", "anthropic:api"], "anthropic")).toBe(true);
   });
@@ -327,5 +335,14 @@ describe("OAuth profile detection logic", () => {
     expect(hasOAuthProfiles(order, "anthropic")).toBe(true);
     expect(order[0]).toBe("anthropic:claude-cli"); // OAuth is first
     expect(order[1]).toBe("anthropic:api"); // API key is fallback
+  });
+
+  it("fires onOAuthProfile callback only for OAuth profiles", () => {
+    const observed: string[] = [];
+    const hasOAuth = hasOAuthProfiles(["openai:api", "openai-codex", "openai:default"], "openai", {
+      onOAuthProfile: (profile) => observed.push(profile),
+    });
+    expect(hasOAuth).toBe(true);
+    expect(observed).toEqual(["openai-codex"]);
   });
 });
