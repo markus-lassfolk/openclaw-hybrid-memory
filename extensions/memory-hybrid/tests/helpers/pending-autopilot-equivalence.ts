@@ -31,7 +31,6 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
       queue: fixture.item.queue,
       id: fixture.item.id,
       payload: fixture.item.payload,
-      policy: fixture.policy,
       policyVersion: fixture.policyVersion,
     });
     expect(fixture.item.inputHash).toBe(inputHash);

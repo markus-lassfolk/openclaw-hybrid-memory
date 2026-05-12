@@ -575,7 +575,6 @@ describe("pending-autopilot summaries and harness", () => {
         queue: "persona",
         id: "fixture-1",
         payload,
-        policy: "default",
         policyVersion: "policy-v1",
       }),
       policyVersion: "policy-v1",

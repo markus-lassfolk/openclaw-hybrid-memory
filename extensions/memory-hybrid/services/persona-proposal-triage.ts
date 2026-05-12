@@ -199,6 +199,9 @@ export async function runPersonaProposalTriage(
       if (mode === "apply" && policy !== "report-only" && isMutationDecision(decision)) {
         if (!store) throw new Error("apply mode requires pending-autopilot store");
         decision = applyPersonaDecisionWithLock({ store, proposalsDb: opts.proposalsDb, item, decision, workspace });
+        if (decision.action === "failed-validation") {
+          store.recordDecision(decision);
+        }
       } else if (policy !== "report-only") {
         store?.recordDecision(decision);
       }
@@ -846,7 +849,7 @@ function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
   if (/privacy/.test(text)) return "privacy-boundary-change";
   if (/security|credential|approval|destructive|safeguard/.test(text)) return "security-boundary-change";
-  if (/preference|profile|personal fact|markus|user/.test(text)) return "user-preference-change-requires-approval";
+  if (/preference|profile|personal fact|user/.test(text)) return "user-preference-change-requires-approval";
   return "identity-boundary-change";
 }
 
@@ -1043,14 +1046,5 @@ export function createPersonaProposalFixtureItem(input: {
   const item = proposalToPendingItem(input.proposal, input.workspace, {
     personaProposals: { allowedFiles: input.allowedFiles },
   } as Pick<HybridMemoryConfig, "personaProposals">);
-  return {
-    ...item,
-    inputHash: computePendingInputHash({
-      queue: item.queue,
-      id: item.id,
-      payload: item.payload,
-      policy: "cautious",
-      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
-    }),
-  };
+  return item;
 }
