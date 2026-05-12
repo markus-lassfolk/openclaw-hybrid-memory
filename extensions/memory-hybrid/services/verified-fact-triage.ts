@@ -449,7 +449,7 @@ export async function runVerifiedFactTriageWithAdapter(
               inputHash: liveItem.inputHash,
             };
             decision = await adapter.decide(liveItem, liveContext);
-            const { inserted } = durableStore?.recordDecision(decision) ?? {
+            const { inserted } = durableStore?.recordLatestDecision(decision) ?? {
               inserted: false,
             };
             if (decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
