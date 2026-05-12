@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -176,6 +176,123 @@ describe("maintenance log analyzer", () => {
     expect(report.summary.byClassification["plugin-bug"]).toBe(1);
     expect(report.digestMd).toContain("Hybrid-memory maintenance digest");
     expect(report.digestMd).toContain("nightly-distill");
+  });
+
+  it("flags empty exit ledger + progress log as orchestration bug (root-level cron files)", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(
+      logPath,
+      [
+        "[dream-cycle] extract implicit feedback — complete in 2639s",
+        "[dream-cycle] closed-loop effectiveness — complete in 50s",
+        "[dream-cycle] cross-agent learning — complete in 0s",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    const findings = analyzeMaintenanceSteps(steps);
+    const report = buildMaintenanceAnalysisReport({ root, since: "24h", steps, findings });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(findings).toHaveLength(1);
+    expect(findings[0].classification).toBe("orchestration-bug");
+    expect(findings[0].severity).toBe("high");
+    expect(report.summary.jobsOk).toBe(0);
+    expect(report.summary.jobsWithFindings).toBe(1);
+  });
+
+  it("flags stale still-running dream-cycle logs as high orchestration failures", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(
+      logPath,
+      "[dream-cycle] extract implicit feedback — still running after 2210s — stage=scan-sessions; sessions=106/177",
+    );
+
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(exitPath, staleAt, staleAt);
+    utimesSync(logPath, staleAt, staleAt);
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 30 * 60 * 1000 });
+    const findings = analyzeMaintenanceSteps(steps);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-stale-running");
+    expect(findings).toHaveLength(1);
+    expect(findings[0].classification).toBe("orchestration-bug");
+    expect(findings[0].severity).toBe("high");
+    expect(findings[0].suggestedAction.toLowerCase()).toContain("stale");
+  });
+
+  it("detects memory-hybrid stage markers as progress when exit ledger is empty", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(
+      logPath,
+      [
+        "memory-hybrid: dream-cycle — stage 1/6 prune expired facts start",
+        "memory-hybrid: dream-cycle — stage 1/6 prune expired facts complete in 2s",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(steps[0].line).toContain("progress-marker=present");
+  });
+
+  it("detects memory-hybrid still-running heartbeat as stale-running orchestration anomaly", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(logPath, "memory-hybrid: dream-cycle — stage 3 still running after 2210s");
+
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(exitPath, staleAt, staleAt);
+    utimesSync(logPath, staleAt, staleAt);
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 30 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-stale-running");
+  });
+
+  it("keeps normal successful verbose dream-cycle runs as OK", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "2026-05-11T03:58:20Z dream-cycle exit=0\n");
+    writeFileSync(
+      logPath,
+      [
+        "[dream-cycle] stage 2/6 extract implicit feedback — complete in 2639s",
+        "[dream-cycle] pipeline complete in 2740s (core=42s, follow-ups=6/6, follow-up-elapsed=2698s, follow-up-failures=0)",
+        "--- validate-cron-exit ---",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    const findings = analyzeMaintenanceSteps(steps);
+    const report = buildMaintenanceAnalysisReport({ root, since: "24h", steps, findings });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("dream-cycle");
+    expect(findings).toHaveLength(0);
+    expect(report.summary.jobsOk).toBe(1);
+    expect(report.summary.jobsWithFindings).toBe(0);
   });
 
   it("persists one row per finding and returns week-over-week trend", () => {

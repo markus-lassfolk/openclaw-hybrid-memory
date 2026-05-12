@@ -61,6 +61,7 @@ const _optimizeFailuresByPath = new Map<string, number>();
 /** Module-level guard for temporary auto-optimize suppression during bulk writes keyed by dbPath. */
 const _autoOptimizePauseByPath = new Map<string, number>();
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
+const VECTOR_BULK_DELETE_IN_CHUNK = 200;
 
 type VectorDBLogger = { warn: (msg: string) => void };
 
@@ -949,9 +950,9 @@ export class VectorDB {
     }
 
     // Rename shadow → main (with explicit rollback on failure).
-    // Always reconnect in finally so this.db is never left permanently null,
-    // even when the rename or rollback throws.
     let swapSucceeded = false;
+    let rollbackFailed = false;
+    let reopenHealthy = false;
     try {
       await this.renamePath(shadowTableDir, mainTableDir);
       swapSucceeded = true;
@@ -967,6 +968,7 @@ export class VectorDB {
             `memory-hybrid: shadow swap failed — successfully rolled back main table from backup. Error: ${swapErr}`,
           );
         } catch (rollbackErr) {
+          rollbackFailed = true;
           const rollbackMessage =
             `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state!` +
             ` Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'.` +
@@ -980,32 +982,48 @@ export class VectorDB {
       }
       throw swapErr;
     } finally {
-      // Always attempt to reconnect so this.db is never left permanently null.
-      // On a failed swap the reconnect will attach to whichever directory is
-      // currently in place (old main after rollback, or an empty main dir).
-      this.lanceInitFailed = false;
-      this.lanceDbAvailable = true;
-      this.closed = false;
-      this.initPromise = null;
-      try {
-        await this.ensureInitialized();
-      } catch (initErr) {
-        this.logWarn(`memory-hybrid: shadow swap reconnect failed (DB may be degraded): ${initErr}`);
+      // Skip reconnect when rollback itself failed: ensureInitialized() may create a
+      // fresh empty main table, which mutates disk state before operators can recover
+      // from the preserved backup directory.
+      if (rollbackFailed) {
+        this.logWarn(
+          `memory-hybrid: skipping post-swap reconnect because rollback failed; preserving backup at ${oldTableDir} for manual recovery`,
+        );
+      } else {
+        this.lanceInitFailed = false;
+        this.lanceDbAvailable = true;
+        this.closed = false;
+        this.initPromise = null;
+        try {
+          await this.ensureInitialized();
+          reopenHealthy = this.isLanceAvailable();
+          if (!reopenHealthy) {
+            this.logWarn(
+              `memory-hybrid: shadow swap reopen completed in degraded mode; preserving old table backup ${oldTableName} for manual recovery`,
+            );
+          }
+        } catch (initErr) {
+          this.logWarn(`memory-hybrid: shadow swap reconnect failed (DB may be degraded): ${initErr}`);
+        }
       }
     }
 
-    // Remove old table directory (best effort, non-fatal).
-    // `swapSucceeded` tracks the rename outcome separately from the error-path throw so that
-    // we only attempt to remove the old-table backup when we know the new main is in place.
-    // (The finally block above re-throws on swap failure, so control reaches here only on success.)
+    // Remove old table directory only after a healthy reopen so manual rollback remains
+    // possible if the swapped-in table cannot be opened.
     if (swapSucceeded && existsSync(oldTableDir)) {
-      try {
-        rmSync(oldTableDir, { recursive: true, force: true });
-        this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
-      } catch (rmErr) {
+      if (!reopenHealthy) {
         this.logWarn(
-          `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
+          `memory-hybrid: preserved old table backup ${oldTableName} because reopened table health check failed`,
         );
+      } else {
+        try {
+          rmSync(oldTableDir, { recursive: true, force: true });
+          this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
+        } catch (rmErr) {
+          this.logWarn(
+            `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
+          );
+        }
       }
     }
 
@@ -1609,6 +1627,18 @@ export class VectorDB {
     }
   }
 
+  /**
+   * LanceDB predicates are string-based (no parameter binding API), so UUID validation
+   * is the safety boundary before interpolation.
+   */
+  private toSafeUuidLiteral(id: string): string {
+    const normalized = String(id).toLowerCase();
+    if (!UUID_REGEX.test(normalized) || normalized.includes("'")) {
+      throw new Error("Invalid UUID for LanceDB predicate");
+    }
+    return `'${normalized}'`;
+  }
+
   async delete(id: string): Promise<boolean> {
     // SECURITY: UUID validation is the security boundary for delete().
     // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
@@ -1627,6 +1657,7 @@ export class VectorDB {
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
       const normalizedId = id.toLowerCase();
       if (!UUID_REGEX.test(normalizedId)) return false;
+      const idLiteral = this.toSafeUuidLiteral(normalizedId);
       if (this.optimizePromise) {
         try {
           await this.optimizePromise;
@@ -1637,7 +1668,7 @@ export class VectorDB {
         }
       }
       await this.withRetryableWriteConflictRetry("LanceDB delete", async () => {
-        await this.getTable().delete(`id = '${normalizedId}'`);
+        await this.getTable().delete(`id = ${idLiteral}`);
       });
       return true;
     } catch (err) {
@@ -1647,6 +1678,50 @@ export class VectorDB {
       });
       this.logWarn(`memory-hybrid: LanceDB delete failed: ${err}`);
       throw err;
+    }
+  }
+
+  /**
+   * Best-effort batched delete for many IDs.
+   * Returns the number of IDs accepted for deletion (same semantics as repeated delete()).
+   */
+  async deleteMany(ids: readonly string[]): Promise<number> {
+    const normalized = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
+    if (normalized.length === 0) return 0;
+    try {
+      if (!this.lanceDbAvailable) return 0;
+      await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
+      if (this.optimizePromise) {
+        try {
+          await this.optimizePromise;
+        } catch (optimizeErr) {
+          this.logWarn(
+            `memory-hybrid: auto-optimize failed before LanceDB bulk delete; continuing with delete anyway (non-fatal). Error: ${optimizeErr}`,
+          );
+        }
+      }
+      const literals = normalized.map((id) => this.toSafeUuidLiteral(id));
+      let deleted = 0;
+      for (let i = 0; i < literals.length; i += VECTOR_BULK_DELETE_IN_CHUNK) {
+        const chunk = literals.slice(i, i + VECTOR_BULK_DELETE_IN_CHUNK);
+        await this.withRetryableWriteConflictRetry("LanceDB bulk delete", async () => {
+          await this.getTable().delete(`id IN (${chunk.join(", ")})`);
+        });
+        deleted += chunk.length;
+      }
+      return deleted;
+    } catch (err) {
+      this.logWarn(`memory-hybrid: LanceDB bulk delete failed, falling back to per-id delete: ${err}`);
+      let deleted = 0;
+      for (const id of normalized) {
+        try {
+          if (await this.delete(id)) deleted++;
+        } catch {
+          // ignore individual failures in fallback
+        }
+      }
+      return deleted;
     }
   }
 

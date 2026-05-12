@@ -93,12 +93,16 @@ export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => voi
 const SCOPE_PARAM_MAX_LENGTH = 256;
 
 /**
- * Trim a caller-supplied scope parameter to at most SCOPE_PARAM_MAX_LENGTH characters.
+ * Validate a caller-supplied scope parameter length.
  * Returns `undefined` unchanged so optional parameters remain optional.
+ * Throws for oversized values to avoid identity collisions from truncation.
  */
-function sanitizeScopeParam(v: string | undefined): string | undefined {
+function sanitizeScopeParam(paramName: "userId" | "agentId" | "sessionId", v: string | undefined): string | undefined {
   if (v === undefined) return undefined;
-  return v.length > SCOPE_PARAM_MAX_LENGTH ? v.slice(0, SCOPE_PARAM_MAX_LENGTH) : v;
+  if (v.length > SCOPE_PARAM_MAX_LENGTH) {
+    throw new Error(`${paramName} must be <= ${SCOPE_PARAM_MAX_LENGTH} characters`);
+  }
+  return v;
 }
 
 export interface MemoryToolsContext {
@@ -810,9 +814,9 @@ export function registerMemoryTools(
     // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
     const scopeFilter = buildToolScopeFilter(
       {
-        userId: sanitizeScopeParam(userId),
-        agentId: sanitizeScopeParam(agentId),
-        sessionId: sanitizeScopeParam(sessionId),
+        userId: sanitizeScopeParam("userId", userId),
+        agentId: sanitizeScopeParam("agentId", agentId),
+        sessionId: sanitizeScopeParam("sessionId", sessionId),
         confirmCrossTenantScope,
       },
       currentAgentIdRef.value,
@@ -1362,9 +1366,9 @@ export function registerMemoryTools(
             // Build scope filter (same logic as memory_recall)
             const scopeFilter = buildToolScopeFilter(
               {
-                userId: sanitizeScopeParam(userId),
-                agentId: sanitizeScopeParam(agentId),
-                sessionId: sanitizeScopeParam(sessionId),
+                userId: sanitizeScopeParam("userId", userId),
+                agentId: sanitizeScopeParam("agentId", agentId),
+                sessionId: sanitizeScopeParam("sessionId", sessionId),
                 confirmCrossTenantScope,
               },
               currentAgentIdRef.value,

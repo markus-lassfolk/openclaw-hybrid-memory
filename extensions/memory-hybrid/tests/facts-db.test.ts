@@ -1562,6 +1562,58 @@ describe("FactsDB.pruneExpired", () => {
     });
     expect(db.pruneExpired()).toBe(0);
   });
+
+  it("returns actual deleted IDs and removes links where expired facts are either source or target", () => {
+    const expired = db.store({
+      text: "Expired linked fact",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "session",
+      expiresAt: Math.floor(Date.now() / 1000) - 100,
+    });
+    const survivor = db.store({
+      text: "Survivor fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+
+    (
+      db as unknown as {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } };
+      }
+    ).liveDb
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES ('l1', ?, ?, 'RELATED_TO', 1.0, strftime('%s','now'))",
+      )
+      .run(expired.id, survivor.id);
+    (
+      db as unknown as {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } };
+      }
+    ).liveDb
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES ('l2', ?, ?, 'DERIVED_FROM', 1.0, strftime('%s','now'))",
+      )
+      .run(survivor.id, expired.id);
+
+    const details = db.pruneExpiredWithDetails();
+    expect(details.factsPruned).toBe(1);
+    expect(details.deletedFactIds).toEqual([expired.id]);
+
+    const linksLeft = (db as unknown as { liveDb: { prepare: (sql: string) => { get: () => { c: number } } } }).liveDb
+      .prepare("SELECT COUNT(*) AS c FROM memory_links")
+      .get().c;
+    expect(linksLeft).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1675,6 +1727,48 @@ describe("FactsDB.decayConfidence", () => {
     expect(pendingAfterBoundary.has(edge.id)).toBe(true);
     expect(db.decayConfidence(nowSec + 1)).toBe(1);
     expect(db.getById(edge.id)).toBeNull();
+  });
+
+  it("returns deleted IDs from decayConfidenceWithDetails and cleans links for deleted facts", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const low = db.store({
+      text: "Low confidence linked fact",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.05,
+    });
+    const survivor = db.store({
+      text: "Link survivor",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    (
+      db as unknown as {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => void; get: () => { c: number } } };
+      }
+    ).liveDb
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES ('l3', ?, ?, 'RELATED_TO', 1.0, ?)",
+      )
+      .run(survivor.id, low.id, nowSec);
+
+    const details = db.decayConfidenceWithDetails(nowSec);
+    expect(details.factsDecayed).toBe(0);
+    expect(details.deletedFactIds).toContain(low.id);
+    const linksLeft = (db as unknown as { liveDb: { prepare: (sql: string) => { get: () => { c: number } } } }).liveDb
+      .prepare("SELECT COUNT(*) AS c FROM memory_links")
+      .get().c;
+    expect(linksLeft).toBe(0);
   });
 });
 
@@ -2870,6 +2964,36 @@ describe("FactsDB scoping", () => {
     const sessionNotes = remaining.filter((e) => e.text.includes("Session note"));
     expect(sessionNotes.length).toBe(1);
     expect(sessionNotes[0].scopeTarget).toBe("sess-abc");
+  });
+
+  it("pruneSessionScope removes links referencing deleted session facts", () => {
+    const sessionFact = db.store({
+      text: "Session with links",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-links",
+    });
+    const globalFact = db.store({
+      text: "Global survivor",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    db.createLink(globalFact.id, sessionFact.id, "RELATED_TO");
+    expect(db.getLinksFrom(globalFact.id).length).toBe(1);
+
+    const count = db.pruneSessionScope("sess-links");
+    expect(count).toBe(1);
+    expect(db.getLinksFrom(globalFact.id).length).toBe(0);
   });
 
   it("pruneScopedFacts supports global scope filter", () => {

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
@@ -184,13 +184,19 @@ export function maintenanceRules(): MaintenanceRule[] {
 }
 
 export function parseMaintenanceSinceMs(value = "24h"): number {
-  const m = value.trim().match(/^(\d+)([hdw])?$/i);
+  const m = value.trim().match(/^(\d+)([mhdw])?$/i);
   if (!m) return 24 * 3600 * 1000;
   const n = Number.parseInt(m[1], 10);
   const unit = (m[2] ?? "h").toLowerCase();
+  if (unit === "m") return n * 60 * 1000;
   if (unit === "d") return n * 24 * 3600 * 1000;
   if (unit === "w") return n * 7 * 24 * 3600 * 1000;
   return n * 3600 * 1000;
+}
+
+export interface CollectMaintenanceStepsOptions {
+  /** Flag logs with no mtime/progress updates beyond this duration as stale orchestration anomalies. */
+  staleThresholdMs?: number;
 }
 
 function extractJobName(file: string): string {
@@ -205,40 +211,207 @@ function safeRead(path: string): string {
   }
 }
 
-export function collectMaintenanceSteps(root: string, since = "24h", nowMs = Date.now()): MaintenanceLogStep[] {
+function safeStatMtimeMs(path: string): number {
+  try {
+    return existsSync(path) ? statSync(path).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function collectFilesRecursive(root: string, suffix: string): string[] {
+  const out: string[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const p = join(dir, entry);
+      let st;
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        stack.push(p);
+        continue;
+      }
+      if (entry.endsWith(suffix)) out.push(p);
+    }
+  }
+  return out.sort();
+}
+
+function extractJobFromPath(path: string, suffix: string): string {
+  const file = basename(path);
+  if (file.endsWith(suffix)) return extractJobName(file.replace(/\.log$/, ".exit.txt"));
+  return extractJobName(file);
+}
+
+const DREAM_CYCLE_PROGRESS_MARKER_RE =
+  /(?:\[dream-cycle\].*(?:start|still running after|complete)|memory-hybrid:\s*dream-cycle\s*[—-].*(?:start|still running after|complete|episodic consolidation progress)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im;
+const DREAM_CYCLE_STILL_RUNNING_RE =
+  /(?:\[dream-cycle\].*still running after \d+s|memory-hybrid:\s*dream-cycle\s*[—-].*still running after \d+s)/im;
+
+function logHasDreamCycleProgress(logContent: string): boolean {
+  if (!logContent) return false;
+  return DREAM_CYCLE_PROGRESS_MARKER_RE.test(logContent);
+}
+
+function logHasValidateMarker(logContent: string): boolean {
+  if (!logContent) return false;
+  return /(?:--- validate-cron-exit ---|Maintenance Validation|\"maintenanceStatus\")/im.test(logContent);
+}
+
+function buildOrchestrationSyntheticStep(params: {
+  job: string;
+  exitPath: string;
+  logPath: string;
+  logContent: string;
+  nowMs: number;
+  staleThresholdMs: number;
+  latestActivityMs: number;
+  kind: "empty-exit" | "missing-exit-ledger";
+}): MaintenanceLogStep {
+  const { job, exitPath, logPath, logContent, nowMs, staleThresholdMs, latestActivityMs, kind } = params;
+  const staleMs = Math.max(0, nowMs - latestActivityMs);
+  const stale = staleMs > staleThresholdMs;
+  const staleSec = Math.floor(staleMs / 1000);
+  const hasProgress = logHasDreamCycleProgress(logContent);
+  const hasValidate = logHasValidateMarker(logContent);
+  const hasStillRunningHeartbeat = DREAM_CYCLE_STILL_RUNNING_RE.test(logContent);
+
+  let step = "orchestration-empty-exit";
+  let line = "orchestration anomaly: exit ledger exists but has no parseable step rows";
+  if (kind === "missing-exit-ledger") {
+    step = "orchestration-missing-exit-ledger";
+    line = "orchestration anomaly: log exists but matching .exit.txt ledger is missing";
+  } else if (stale && hasStillRunningHeartbeat) {
+    step = "orchestration-stale-running";
+    line = `orchestration anomaly: stale live run heartbeat with no completed ledger row (no progress for ${staleSec}s)`;
+  } else if (stale) {
+    step = "orchestration-stale-empty-exit";
+    line = `orchestration anomaly: empty exit ledger appears stale (no mtime/progress updates for ${staleSec}s)`;
+  } else if (hasProgress) {
+    step = "orchestration-empty-exit-after-progress";
+    line = "orchestration anomaly: log shows dream-cycle progress/completions but exit ledger is empty";
+  }
+
+  const markerBits: string[] = [];
+  markerBits.push(`validate-marker=${hasValidate ? "present" : "missing"}`);
+  markerBits.push(`progress-marker=${hasProgress ? "present" : "missing"}`);
+  if (kind === "empty-exit") markerBits.push(`stale=${stale ? "yes" : "no"}`);
+
+  const iso = new Date(latestActivityMs || nowMs).toISOString();
+  return {
+    occurredAt: Math.floor((latestActivityMs || nowMs) / 1000),
+    iso,
+    job,
+    step,
+    exitCode: 1,
+    exitPath,
+    logPath,
+    logContent,
+    line: `${line}; ${markerBits.join("; ")}`,
+  };
+}
+
+export function collectMaintenanceSteps(
+  root: string,
+  since = "24h",
+  nowMs = Date.now(),
+  opts: CollectMaintenanceStepsOptions = {},
+): MaintenanceLogStep[] {
   if (!existsSync(root)) return [];
   const cutoff = nowMs - parseMaintenanceSinceMs(since);
+  const staleThresholdMs = opts.staleThresholdMs && opts.staleThresholdMs > 0 ? opts.staleThresholdMs : 45 * 60 * 1000;
   const steps: MaintenanceLogStep[] = [];
-  for (const day of readdirSync(root).sort()) {
-    const dayPath = join(root, day);
-    if (!existsSync(dayPath) || !statSync(dayPath).isDirectory()) continue;
-    for (const file of readdirSync(dayPath).sort()) {
-      if (!file.endsWith(".exit.txt")) continue;
-      const exitPath = join(dayPath, file);
-      if (statSync(exitPath).mtimeMs < cutoff) continue;
-      const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
-      const logContent = safeRead(logPath);
-      const job = extractJobName(file);
-      for (const line of safeRead(exitPath).split("\n")) {
-        const m = line.match(/^(\S+)\s+(\S+)\s+exit=(\d+)\b/);
-        if (!m) continue;
-        const [, iso, step, exitRaw] = m;
-        const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
-        if (!Number.isFinite(occurredAt)) continue;
-        steps.push({
-          occurredAt,
-          iso,
+  const exitFiles = collectFilesRecursive(root, ".exit.txt");
+  const seenExit = new Set(exitFiles);
+
+  for (const exitPath of exitFiles) {
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    const exitMtime = safeStatMtimeMs(exitPath);
+    const logMtime = safeStatMtimeMs(logPath);
+    const latestActivityMs = Math.max(exitMtime, logMtime);
+    if (latestActivityMs < cutoff) continue;
+
+    const logContent = safeRead(logPath);
+    const job = extractJobFromPath(exitPath, ".exit.txt");
+    const exitLines = safeRead(exitPath).split("\n");
+    let parsedRows = 0;
+
+    for (const line of exitLines) {
+      const m = line.match(/^(\S+)\s+(\S+)\s+exit=(-?\d+)\b/);
+      if (!m) continue;
+      const [, iso, step, exitRaw] = m;
+      const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
+      if (!Number.isFinite(occurredAt)) continue;
+      parsedRows++;
+      steps.push({
+        occurredAt,
+        iso,
+        job,
+        step,
+        exitCode: Number.parseInt(exitRaw, 10),
+        exitPath,
+        logPath,
+        logContent,
+        line,
+      });
+    }
+
+    if (parsedRows === 0) {
+      steps.push(
+        buildOrchestrationSyntheticStep({
           job,
-          step,
-          exitCode: Number.parseInt(exitRaw, 10),
           exitPath,
           logPath,
           logContent,
-          line,
-        });
-      }
+          nowMs,
+          staleThresholdMs,
+          latestActivityMs: latestActivityMs || nowMs,
+          kind: "empty-exit",
+        }),
+      );
     }
   }
+
+  // Catch orphan logs so analyzer never reports 0/0 OK when recent logs exist but no parseable exit rows.
+  const logFiles = collectFilesRecursive(root, ".log");
+  for (const logPath of logFiles) {
+    const logMtime = safeStatMtimeMs(logPath);
+    if (logMtime < cutoff) continue;
+    const exitPath = logPath.replace(/\.log$/, ".exit.txt");
+    if (seenExit.has(exitPath) || existsSync(exitPath)) continue;
+    const logContent = safeRead(logPath);
+    const job = extractJobFromPath(logPath, ".log");
+    steps.push(
+      buildOrchestrationSyntheticStep({
+        job,
+        exitPath,
+        logPath,
+        logContent,
+        nowMs,
+        staleThresholdMs,
+        latestActivityMs: logMtime,
+        kind: "missing-exit-ledger",
+      }),
+    );
+  }
+
+  steps.sort((a, b) => {
+    if (a.occurredAt !== b.occurredAt) return a.occurredAt - b.occurredAt;
+    if (a.job !== b.job) return a.job.localeCompare(b.job);
+    return a.step.localeCompare(b.step);
+  });
   return steps;
 }
 
@@ -249,6 +422,9 @@ export function classifyMaintenanceFailure(input: {
   line?: string;
   rules?: MaintenanceRule[];
 }): MaintenanceRule {
+  const orchestrationRule = classifyOrchestrationAnomaly(input.step, input.line, input.logContent);
+  if (orchestrationRule) return orchestrationRule;
+
   const auditRule = classifyAuditHealthFailure(input.step, input.exitCode, input.logContent);
   if (auditRule) return auditRule;
 
@@ -268,6 +444,63 @@ export function classifyMaintenanceFailure(input: {
     defaultAction: "user-digest",
     severity: "low",
     suggestedAction: "Inspect the raw maintenance log and decide whether this needs a fix or can be deferred.",
+  };
+}
+
+function classifyOrchestrationAnomaly(
+  step: string | undefined,
+  line: string | undefined,
+  logContent: string | undefined,
+): MaintenanceRule | null {
+  const stepName = step ?? "";
+  if (!/^orchestration-/.test(stepName)) return null;
+
+  const staleHint = /stale=yes|appears stale|still running after/i.test(`${line ?? ""}\n${logContent ?? ""}`);
+
+  if (stepName === "orchestration-missing-exit-ledger") {
+    return {
+      id: "orchestration-missing-exit-ledger",
+      pattern: "",
+      classification: "orchestration-bug",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "A maintenance log exists but its matching .exit.txt ledger is missing. Treat as orchestration failure, inspect cron harness/traps, and ensure validate-cron-exit writes status before guard updates.",
+    };
+  }
+
+  if (stepName === "orchestration-stale-running" || stepName === "orchestration-stale-empty-exit" || staleHint) {
+    return {
+      id: "orchestration-stale-maintenance-run",
+      pattern: "",
+      classification: "orchestration-bug",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "Maintenance appears stale with no recent progress updates. Confirm whether a live process still owns the run; if not, treat as hung orchestration, preserve logs, and rerun after fixing cron harness exit/validation handling.",
+    };
+  }
+
+  if (stepName === "orchestration-empty-exit-after-progress") {
+    return {
+      id: "orchestration-empty-exit-after-progress",
+      pattern: "",
+      classification: "orchestration-bug",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "Dream-cycle log shows work completed but HM_EXIT has no parseable rows. Validate trap/ledger writes and missing validate-cron-exit markers; do not treat this run as successful.",
+    };
+  }
+
+  return {
+    id: "orchestration-empty-exit-ledger",
+    pattern: "",
+    classification: "orchestration-bug",
+    defaultAction: "glitchtip+digest",
+    severity: "high",
+    suggestedAction:
+      "Exit ledger exists but is empty or unparsable. This is an orchestration failure; inspect cron harness step recording and validate-cron-exit execution before accepting job success.",
   };
 }
 
@@ -349,7 +582,7 @@ function excerptFor(logContent: string, line: string): string {
   const interesting = logContent
     .split("\n")
     .filter((l) =>
-      /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module|guard|stopped early|ENOSPC|SQLITE_BUSY/i.test(
+      /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module|guard|stopped early|ENOSPC|SQLITE_BUSY|still running after|validate-cron-exit|orchestration anomaly|empty exit ledger/i.test(
         l,
       ),
     )

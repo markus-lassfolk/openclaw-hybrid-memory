@@ -27,7 +27,7 @@ if (!fs.existsSync(distIndexJs)) {
   failed = true;
 } else if (!fs.existsSync(distIndexDts)) {
   console.error(
-    "FAIL: dist/index.d.ts is missing - tsdown must emit declaration files (`dts: true` in tsdown.config.ts)",
+    "FAIL: dist/index.d.ts is missing - tsdown must emit declaration files (`dts: true` in tsdown config)",
   );
   failed = true;
 } else {

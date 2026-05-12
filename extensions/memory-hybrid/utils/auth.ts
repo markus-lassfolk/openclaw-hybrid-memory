@@ -18,7 +18,8 @@ export function hasOAuthProfiles(
   opts?: { onOAuthProfile?: (profile: string) => void },
 ): boolean {
   if (!order || order.length === 0) return false;
-  const apiOnlyPatternsLower = [`${provider}:api`, `${provider}:default`];
+  const providerLower = provider.trim().toLowerCase();
+  const apiOnlyPatternsLower = [`${providerLower}:api`, `${providerLower}:default`];
   return order.some((p) => {
     const pLower = p.toLowerCase();
     const isApiOnly = apiOnlyPatternsLower.includes(pLower);

@@ -4,6 +4,8 @@
 
 You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `local`** (cost-safety: no external LLM, FTS-only). Set `minimal`, `enhanced`, or `complete` to enable LLM and richer features.
 
+For a concrete rollout with target settings and weekly guardrails, see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md).
+
 ```json
 {
   "plugins": {
