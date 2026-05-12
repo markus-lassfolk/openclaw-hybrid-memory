@@ -24,13 +24,16 @@ export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext
     .command("list")
     .description("List the verified-fact review queue (due-for-reverification latest verified facts).")
     .option("--max <n>", "Maximum items to list (default: 100)")
+    .option("--policy <policy>", "report-only, classify, or apply-obvious (default: classify)")
     .option("--json", "Emit structured JSON")
     .action(
-      withExit(async (opts?: { max?: string; json?: boolean }) => {
+      withExit(async (opts?: { max?: string; policy?: string; json?: boolean }) => {
         const max = parsePositiveInt(opts?.max, 100);
+        const policy: VerifiedTriagePolicy = assertVerifiedTriagePolicy(String(opts?.policy ?? "classify"));
         const items = listVerifiedFactTriageItems(ctx.factsDb.getRawDb(), {
           max,
           reverificationDays: ctx.reverificationDays,
+          policy,
         });
         const output = {
           reviewQueueSource: VERIFIED_REVIEW_QUEUE_SOURCE,

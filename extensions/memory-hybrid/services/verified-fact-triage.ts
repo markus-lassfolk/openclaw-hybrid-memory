@@ -16,7 +16,12 @@ import {
   type PendingItem,
   type PendingQueueAdapter,
 } from "./pending-autopilot/index.js";
-import { computeChecksum, type VerifiedFact } from "./verification-store.js";
+import {
+  computeChecksum,
+  rowToVerifiedFact,
+  type VerifiedFact,
+  type VerifiedFactRow,
+} from "./verification-store.js";
 
 export const VERIFIED_TRIAGE_POLICY_VERSION = "verified-fact-triage-v1";
 const DEFAULT_REVERIFICATION_DAYS = 30;
@@ -960,21 +965,6 @@ function buildRunResult(input: {
   };
 }
 
-function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
-  return {
-    id: row.id,
-    factId: row.fact_id,
-    canonicalText: row.canonical_text,
-    checksum: row.checksum,
-    verifiedAt: row.verified_at,
-    verifiedBy: row.verified_by as VerifiedFact["verifiedBy"],
-    nextVerification: row.next_verification,
-    version: row.version,
-    previousVersionId: row.previous_version_id,
-    createdAt: row.created_at,
-  };
-}
-
 function triageItemFromRow(
   db: DatabaseSync,
   row: VerifiedFactRow,
@@ -1052,19 +1042,6 @@ function registerVerifiedChecksumFunction(db: DatabaseSync): void {
     typeof text === "string" ? computeChecksum(text) : "",
   );
   registeredChecksumDbs.add(db);
-}
-
-interface VerifiedFactRow {
-  id: string;
-  fact_id: string;
-  canonical_text: string;
-  checksum: string;
-  verified_at: string;
-  verified_by: string;
-  next_verification: string | null;
-  version: number;
-  previous_version_id: string | null;
-  created_at: string;
 }
 
 function loadFactSnapshot(db: DatabaseSync, factId: string): TriageFactSnapshot | null {
