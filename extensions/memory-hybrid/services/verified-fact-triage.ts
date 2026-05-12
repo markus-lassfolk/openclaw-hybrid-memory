@@ -1123,10 +1123,11 @@ function loadVerifiedRelatedFact(db: DatabaseSync, factId: string): RelatedFact 
          GROUP BY fact_id
        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
        WHERE f.id = ?
+         AND compute_verified_checksum(vf.canonical_text) = vf.checksum
        LIMIT 1`,
     )
     .get(factId) as Record<string, unknown> | undefined;
-  if (!row || !isVerifiedRelatedFactRowChecksumValid(row)) return null;
+  if (!row) return null;
   return {
     ...snapshotFromRow(row),
     verifiedFactId: row.verified_fact_id as string,
@@ -1210,10 +1211,6 @@ function findSameScopeDuplicateVerifiedFact(db: DatabaseSync, fact: TriageFactSn
     if (normalizeFactText(candidate.text) === normalized) return candidate;
   }
   return null;
-}
-
-function isVerifiedRelatedFactRowChecksumValid(row: Record<string, unknown>): boolean {
-  return typeof row.canonical_text === "string" && computeChecksum(row.canonical_text) === row.checksum;
 }
 
 function normalizeFactText(text: string): string {
