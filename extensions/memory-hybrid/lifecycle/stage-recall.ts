@@ -832,10 +832,10 @@ async function runRecall(
     );
     throw err;
   } finally {
+    ctx.recallInFlightRef.value--;
     clearRecallProbeWatchdog();
     api.logger.debug?.(
       `memory-hybrid: recall-probe id=${recallProbeId} exit elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase} completed=${recallStageCompleted}`,
     );
-    ctx.recallInFlightRef.value--;
   }
 }
