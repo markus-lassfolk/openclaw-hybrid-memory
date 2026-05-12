@@ -408,9 +408,11 @@ function listPersonaProposalItems(
 
 function isVisibleAfterPersonaCursor(proposal: ProposalEntry, cursor?: PendingAutopilotCursor | null): boolean {
   if (!cursor?.cursor) return true;
+  if (proposal.createdAt > cursor.updatedAt) return true;
   // Persona proposals are listed newest-first by ProposalsDB. A durable cursor
-  // therefore means "the newest processed boundary" and subsequent pages must
-  // move toward older proposals, not restart from the newest pending rows.
+  // therefore means "the newest processed boundary" for the already-seen backlog,
+  // and subsequent pages must move toward older proposals without hiding proposals
+  // created after the cursor was advanced.
   return comparePersonaCursor(proposalCursor(proposal), cursor.cursor) < 0;
 }
 

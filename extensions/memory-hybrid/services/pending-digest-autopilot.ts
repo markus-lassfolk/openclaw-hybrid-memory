@@ -386,8 +386,6 @@ function createPersonaProposalTriageAdapterWithCloseable(
   cfg: HybridMemoryConfig,
   workspace?: string,
 ): PendingQueueAdapter<QueueItem> {
-  let cachedAllProposals: ReturnType<ProposalsDB["list"]> | null = null;
-
   return {
     queue: "persona",
     listPending: (cursor) => {
@@ -395,36 +393,30 @@ function createPersonaProposalTriageAdapterWithCloseable(
       return withCloseable(
         () => new ProposalsDB(dbPath),
         (db) => {
-          cachedAllProposals = db.list();
+          const allProposals = db.list();
           const adapter = createPersonaProposalTriageAdapter({
             proposalsDb: db,
             cfg,
             workspace,
-            allProposals: cachedAllProposals,
+            allProposals,
           });
           return adapter.listPending(cursor);
         },
       );
     },
-    decide: (item, context) => {
-      if (cachedAllProposals === null) {
-        throw new Error("listPending must be called before decide in parent adapter");
-      }
-      const freshProposals =
-        context.mode === "apply"
-          ? withCloseable(
-              () => new ProposalsDB(dbPath),
-              (db) => db.list(),
-            )
-          : cachedAllProposals;
-      const adapter = createPersonaProposalTriageAdapter({
-        proposalsDb: null as never,
-        cfg,
-        workspace,
-        allProposals: freshProposals,
-      });
-      return adapter.decide(item as PersonaProposalPendingItem, context);
-    },
+    decide: (item, context) =>
+      withCloseable(
+        () => new ProposalsDB(dbPath),
+        (db) => {
+          const adapter = createPersonaProposalTriageAdapter({
+            proposalsDb: db,
+            cfg,
+            workspace,
+            allProposals: db.list(),
+          });
+          return adapter.decide(item as PersonaProposalPendingItem, context);
+        },
+      ),
   };
 }
 

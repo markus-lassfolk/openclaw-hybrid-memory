@@ -333,6 +333,60 @@ describe("persona proposal triage", () => {
     expect(result.decisions.map((d) => d.reason)).toContain("validation-failed");
   });
 
+  it("apply-mode cursor keeps newly created proposals visible after processing a backlog page", async () => {
+    const older = proposal({
+      title: "Older noisy proposal",
+      suggestedChange: "be better",
+      confidence: 0.9,
+    });
+    const newest = proposal({
+      title: "Newest noisy proposal",
+      suggestedChange: "do better",
+      confidence: 0.9,
+    });
+    const raw = new DatabaseSync(join(tmpDir, "proposals.db"));
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, older.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newest.id);
+    raw.close();
+    const stateDbPath = join(tmpDir, "pending.db");
+
+    const first = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath,
+      max: 1,
+    });
+    const store = new PendingAutopilotStore(stateDbPath);
+    const cursor = store.getCursor("persona", "cautious");
+    store.close();
+    expect(first.decisions.map((d) => d.proposalId)).toEqual([newest.id]);
+    expect(cursor).not.toBeNull();
+
+    const late = proposal({
+      title: "Late noisy proposal",
+      suggestedChange: "improve",
+      confidence: 0.9,
+    });
+    const lateRaw = new DatabaseSync(join(tmpDir, "proposals.db"));
+    lateRaw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run((cursor?.updatedAt ?? 0) + 10, late.id);
+    lateRaw.close();
+
+    const second = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "cautious",
+      stateDbPath,
+      max: 1,
+    });
+
+    expect(second.decisions.map((d) => d.proposalId)).toEqual([late.id]);
+  });
+
   it("hash mismatch before apply aborts/revalidates", async () => {
     const stale = proposal({
       targetFile: "USER.md",

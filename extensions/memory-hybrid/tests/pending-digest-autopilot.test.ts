@@ -406,6 +406,58 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("parent persona adapter refreshes proposals before each decision", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const older = persona.create({
+      targetFile: "USER.md",
+      title: "Older duplicate",
+      observation: "Existing duplicate proposal.",
+      suggestedChange: "Formatting: duplicate parent adapter marker.",
+      confidence: 0.99,
+      evidenceSessions: ["session-old"],
+    });
+    const newer = persona.create({
+      targetFile: "USER.md",
+      title: "Newer duplicate",
+      observation: "Duplicate proposal to classify.",
+      suggestedChange: "Formatting: duplicate parent adapter marker.",
+      confidence: 0.99,
+      evidenceSessions: ["session-new"],
+    });
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, older.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newer.id);
+    raw.close();
+
+    const adapters = createDefaultPendingDigestAdapters({ cfg, factsDb: factsDb() });
+    const listed = (await adapters.persona.listPending(null)) as PendingItem[];
+    const newerItem = listed.find((item) => item.id === newer.id);
+    expect(newerItem).toBeDefined();
+
+    const mutator = new ProposalsDB(paths.proposals);
+    mutator.markApplied(older.id);
+    mutator.close();
+
+    const decision = await adapters.persona.decide(newerItem as PendingItem, {
+      runId: "run-parent-persona-refresh",
+      mode: "apply",
+      policy: "cautious",
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+      inputHash: newerItem?.inputHash ?? "missing",
+      actor: { type: "test", id: "unit" },
+    });
+
+    expect(decision).toMatchObject({
+      itemId: newer.id,
+      action: "rejected",
+      reasonCode: "duplicate-applied-proposal",
+    });
+  });
+
   it("passes the caller workspace through the parent persona adapter", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
