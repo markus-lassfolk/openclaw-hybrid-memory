@@ -59,12 +59,15 @@ export function detectCredentialPatterns(text: string): Array<{ type: string; hi
   return found;
 }
 
+/** Maximum number of characters accepted for any single extracted credential value. */
+const MAX_SECRET_VALUE_LENGTH = 8192;
+
 /** First credential-like match in text; used to extract secret for vault. */
 export function extractCredentialMatch(text: string): { type: string; secretValue: string } | null {
   for (const { regex, type } of CREDENTIAL_PATTERNS) {
     const match = regex.exec(text);
     if (match) {
-      const secretValue = match[0].replace(/^Bearer\s+/i, "").trim();
+      const secretValue = match[0].replace(/^Bearer\s+/i, "").trim().slice(0, MAX_SECRET_VALUE_LENGTH);
       if (secretValue.length >= 8) return { type, secretValue };
     }
   }

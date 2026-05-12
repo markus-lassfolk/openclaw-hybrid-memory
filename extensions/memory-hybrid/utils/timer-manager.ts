@@ -236,6 +236,21 @@ export class TimerManager {
   }
 
   /**
+   * Shut down the TimerManager, cancelling all active timers.
+   * Alias for clearAll() that also supports the explicit resource management
+   * protocol (Symbol.dispose) so TimerManager instances can be used in
+   * `using` declarations or cleaned up automatically when the owning object
+   * is replaced during a hot reload.
+   */
+  shutdown(): void {
+    this.clearAll();
+  }
+
+  [Symbol.dispose](): void {
+    this.clearAll();
+  }
+
+  /**
    * Get statistics about active timers for monitoring.
    */
   getStats(): TimerStats {

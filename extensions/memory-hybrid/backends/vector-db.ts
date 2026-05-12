@@ -949,17 +949,26 @@ export class VectorDB {
       movedMainToOld = true;
     }
 
-    // Rename shadow → main (with explicit rollback on failure)
+    // Rename shadow → main (with explicit rollback on failure).
+    let swapSucceeded = false;
+    let rollbackFailed = false;
+    let reopenHealthy = false;
     try {
       await this.renamePath(shadowTableDir, mainTableDir);
+      swapSucceeded = true;
     } catch (swapErr) {
-      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir) && existsSync(shadowTableDir)) {
+      // Attempt rollback: restore main from old backup when available.
+      // Only require that oldTableDir exists — do NOT gate on shadowTableDir
+      // being present, because a partial cross-device copy may have consumed
+      // the shadow before the error was raised.
+      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
         try {
           await this.renamePath(oldTableDir, mainTableDir);
           this.logWarn(
             `memory-hybrid: shadow swap failed — successfully rolled back main table from backup. Error: ${swapErr}`,
           );
         } catch (rollbackErr) {
+          rollbackFailed = true;
           const rollbackMessage =
             `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state!` +
             ` Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'.` +
@@ -972,24 +981,49 @@ export class VectorDB {
         this.logWarn(`memory-hybrid: shadow swap failed; shadow table preserved for inspection: ${shadowTableName}`);
       }
       throw swapErr;
+    } finally {
+      // Skip reconnect when rollback itself failed: ensureInitialized() may create a
+      // fresh empty main table, which mutates disk state before operators can recover
+      // from the preserved backup directory.
+      if (rollbackFailed) {
+        this.logWarn(
+          `memory-hybrid: skipping post-swap reconnect because rollback failed; preserving backup at ${oldTableDir} for manual recovery`,
+        );
+      } else {
+        this.lanceInitFailed = false;
+        this.lanceDbAvailable = true;
+        this.closed = false;
+        this.initPromise = null;
+        try {
+          await this.ensureInitialized();
+          reopenHealthy = this.isLanceAvailable();
+          if (!reopenHealthy) {
+            this.logWarn(
+              `memory-hybrid: shadow swap reopen completed in degraded mode; preserving old table backup ${oldTableName} for manual recovery`,
+            );
+          }
+        } catch (initErr) {
+          this.logWarn(`memory-hybrid: shadow swap reconnect failed (DB may be degraded): ${initErr}`);
+        }
+      }
     }
 
-    // Reconnect to new main table
-    this.lanceInitFailed = false;
-    this.lanceDbAvailable = true;
-    this.closed = false;
-    this.initPromise = null;
-    await this.ensureInitialized();
-
-    // Remove old table directory (best effort, non-fatal)
-    if (existsSync(oldTableDir)) {
-      try {
-        rmSync(oldTableDir, { recursive: true, force: true });
-        this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
-      } catch (rmErr) {
+    // Remove old table directory only after a healthy reopen so manual rollback remains
+    // possible if the swapped-in table cannot be opened.
+    if (swapSucceeded && existsSync(oldTableDir)) {
+      if (!reopenHealthy) {
         this.logWarn(
-          `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
+          `memory-hybrid: preserved old table backup ${oldTableName} because reopened table health check failed`,
         );
+      } else {
+        try {
+          rmSync(oldTableDir, { recursive: true, force: true });
+          this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
+        } catch (rmErr) {
+          this.logWarn(
+            `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
+          );
+        }
       }
     }
 
