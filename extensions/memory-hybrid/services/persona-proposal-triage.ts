@@ -1020,6 +1020,7 @@ function applyPreparedPersonaChange(
     targetWritten = true;
     markApplied();
     appliedMarked = true;
+    rmSync(preparedApply.backupPath, { force: true });
   } catch (err) {
     if (targetWritten) {
       try {
