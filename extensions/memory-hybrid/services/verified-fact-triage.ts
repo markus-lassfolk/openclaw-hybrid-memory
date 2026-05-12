@@ -211,7 +211,7 @@ const SENSITIVE_RULES: Array<{
   {
     flag: "external-comms",
     reason: "sensitive_personal_fact",
-    pattern: /\b(external comms|external communication|email rule|reply rule|send to|contact\b|customer|client)\b/i,
+    pattern: /\b(external comms|external communication|email rule|reply rule|send to|contact|customer|client)\b/i,
   },
   {
     flag: "persona-preference",
