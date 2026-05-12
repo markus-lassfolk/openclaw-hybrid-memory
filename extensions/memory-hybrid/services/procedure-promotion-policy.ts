@@ -652,7 +652,7 @@ function hasEnoughTaskBoundary(task: string): boolean {
     .toLowerCase()
     .split(/\s+/)
     .filter((w) => w.length > 2);
-  const hasVagueWord = words.some((w) => /^(fix|handle|do|check|run|process|misc|stuff|thing)s?$/i.test(w));
+  const hasVagueWord = words.some((w) => /^(fix|handle|do|run|process|misc|stuff|thing)s?$/i.test(w));
   return words.length >= 3 && !hasVagueWord;
 }
 
