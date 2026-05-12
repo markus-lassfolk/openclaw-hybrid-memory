@@ -655,7 +655,22 @@ function hasEnoughTaskBoundary(task: string): boolean {
     .filter((w) => w.length > 2);
   if (words.length < 3) return false;
 
-  const vagueWords = new Set(["fix", "fixes", "handle", "handles", "do", "does", "run", "runs", "process", "processes", "misc", "stuff", "thing", "things"]);
+  const vagueWords = new Set([
+    "fix",
+    "fixes",
+    "handle",
+    "handles",
+    "do",
+    "does",
+    "run",
+    "runs",
+    "process",
+    "processes",
+    "misc",
+    "stuff",
+    "thing",
+    "things",
+  ]);
   const meaningfulWords = words.filter((word) => {
     return !vagueWords.has(word);
   });
