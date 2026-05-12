@@ -446,10 +446,32 @@ export function createProcedurePromotionDecision(
             : `Procedure ${item.id} ${action}: ${evaluation.gates.map((g) => g.reason).join(", ")}`,
       ).redacted,
     },
-    audit: redactAutopilotValue({
-      procedureId: item.id,
-      evaluation: evaluation.metadata,
-    }) as PendingDecision["audit"],
+    audit: {
+      queue: "procedures",
+      itemId: item.id,
+      inputHash: item.inputHash,
+      policy: context.policy,
+      policyVersion: context.policyVersion,
+      action,
+      reasonCode,
+      capabilityClass,
+      humanReviewRequired: action === "deferred-for-human",
+      evidence,
+      actor: context.actor,
+      runId: context.runId,
+      jobId: context.jobId,
+      summary: {
+        title: "procedure-promotion",
+        body: redactAutopilotText(
+          eligibleForMutation
+            ? `Drafted verified skill candidate ${evaluation.metadata.skill} from procedure ${item.id}; enabled=false.`
+            : evaluation.eligible
+              ? `Procedure ${item.id} deferred-for-human: policy=${context.policy} requires manual approval before draft writes.`
+              : `Procedure ${item.id} ${action}: ${evaluation.gates.map((g) => g.reason).join(", ")}`,
+        ).redacted,
+        metadata: redactAutopilotValue(evaluation.metadata),
+      },
+    },
   };
 }
 
