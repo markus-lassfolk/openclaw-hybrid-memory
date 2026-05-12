@@ -343,10 +343,6 @@ export async function runVerifiedFactTriage(
   opts: VerifiedFactTriageOptions,
 ): Promise<VerifiedTriageRunResult> {
   const policy = assertVerifiedTriagePolicy(opts.policy);
-  const mode = opts.mode;
-  const store = opts.store ?? null;
-  const runId = opts.runId ?? createPendingAutopilotRunId();
-  const actor = opts.actor ?? { type: "agent", id: "verified-triage-cli" };
   const adapter = createVerifiedFactTriageAdapter({
     factsDb,
     max: opts.max,
@@ -906,10 +902,6 @@ function buildRunResult(input: {
     },
     items: input.items,
   };
-}
-
-function hasValidVerifiedFactChecksum(row: VerifiedFactRow): boolean {
-  return createHash("sha256").update(row.canonical_text).digest("hex") === row.checksum;
 }
 
 function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
