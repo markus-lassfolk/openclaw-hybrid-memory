@@ -137,7 +137,15 @@ describe("pending-autopilot durable state invariants", () => {
 
   it("redacts secrets/private data before persisted summaries and audit output", () => {
     const input = decision({
-      summary: { title: "token test", body: "apiKey=sk-secret123456789 and password=hunter2" },
+      summary: {
+        title: "token test",
+        body: [
+          "apiKey=sk-secret123456789 and password=hunter2",
+          "classic github token ghp_123456789abcdef123456789abcdef123456",
+          "fine grained github token github_pat_abcdefghijklmnopqrstuvwxyz1234567890",
+          "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----",
+        ].join("\n"),
+      },
       audit: {
         queue: "persona",
         itemId: "item-1",
@@ -153,7 +161,9 @@ describe("pending-autopilot durable state invariants", () => {
     expect(JSON.stringify(persisted)).not.toContain("sk-secret");
     expect(JSON.stringify(persisted)).not.toContain("hunter2");
     expect(JSON.stringify(persisted)).not.toContain("ghp_123");
+    expect(JSON.stringify(persisted)).not.toContain("github_pat_");
     expect(JSON.stringify(persisted)).not.toContain("Bearer abc");
+    expect(JSON.stringify(persisted)).not.toContain("-----BEGIN PRIVATE KEY-----");
     expect(JSON.stringify(persisted)).toContain("[REDACTED]");
     expect(
       redactAutopilotValue({

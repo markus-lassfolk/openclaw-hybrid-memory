@@ -35,7 +35,7 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
       runId: "standalone",
       mode: "dry-run",
       policyVersion: fixture.policyVersion,
-      inputHash,
+      inputHash: fixture.item.inputHash,
     };
     const parentContext: PendingDecisionContext = { ...baseContext, runId: "parent-run" };
     standalone.push(sanitizePendingDecision(await adapter.decide(fixture.item, baseContext)));
