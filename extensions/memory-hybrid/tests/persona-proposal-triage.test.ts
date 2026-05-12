@@ -12,8 +12,11 @@ import {
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProposalsDB, type ProposalEntry } from "../backends/proposals-db.js";
+import { registerManageBudgetAndProposals } from "../cli/commands/manage/register-budget-proposals.js";
+import type { ManageBindings } from "../cli/commands/manage/bindings.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   applyPreparedPersonaChange,
@@ -69,6 +72,56 @@ function proposal(input: Partial<Parameters<ProposalsDB["create"]>[0]> = {}): Pr
 }
 
 describe("persona proposal triage", () => {
+  it("CLI rejects malformed --max values before triage", async () => {
+    for (const rawMax of ["1.5", "1e3", "10abc", "-1"]) {
+      process.exitCode = undefined;
+      const mem = new Command("hybrid-mem");
+      const triageProposals = vi.fn(async () => ({ humanSummary: "should not run" }));
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      registerManageBudgetAndProposals(mem, {
+        factsDb: {},
+        cfg: {},
+        listCommands: { triageProposals },
+        runGenerateProposals: vi.fn(),
+        ctx: {},
+      } as unknown as ManageBindings);
+
+      await mem.parseAsync(["proposals", "triage", "--max", rawMax], { from: "user" });
+
+      expect(process.exitCode).toBe(1);
+      expect(triageProposals).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(`error: --max must be a non-negative integer. Got: ${rawMax}`);
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("CLI accepts strict non-negative integer --max values", async () => {
+    process.exitCode = undefined;
+    const mem = new Command("hybrid-mem");
+    const triageProposals = vi.fn(async () => ({ humanSummary: "ok" }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    registerManageBudgetAndProposals(mem, {
+      factsDb: {},
+      cfg: {},
+      listCommands: { triageProposals },
+      runGenerateProposals: vi.fn(),
+      ctx: {},
+    } as unknown as ManageBindings);
+
+    await mem.parseAsync(["proposals", "triage", "--max", "10"], { from: "user" });
+
+    expect(process.exitCode).toBeUndefined();
+    expect(triageProposals).toHaveBeenCalledWith(
+      expect.objectContaining({ max: 10, apply: undefined, dryRun: undefined }),
+    );
+    expect(logSpy).toHaveBeenCalledWith("ok");
+    logSpy.mockRestore();
+  });
+
   it("rejects invalid max values before listing proposals", async () => {
     for (const max of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
       await expect(

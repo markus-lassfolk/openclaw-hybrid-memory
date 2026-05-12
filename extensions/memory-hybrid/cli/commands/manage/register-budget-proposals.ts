@@ -289,8 +289,8 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
             process.exitCode = 1;
             return;
           }
-          const max = opts?.max != null ? Number.parseInt(opts.max, 10) : undefined;
-          if (opts?.max != null && (!Number.isFinite(max) || (max ?? 0) < 0)) {
+          const max = opts?.max != null ? Number(opts.max) : undefined;
+          if (opts?.max != null && (!/^\d+$/.test(opts.max) || !Number.isSafeInteger(max))) {
             console.error(`error: --max must be a non-negative integer. Got: ${opts.max}`);
             process.exitCode = 1;
             return;
