@@ -686,7 +686,10 @@ function buildPersonaReviewBundles(views: PersonaProposalDecisionView[]): Person
   const groups = new Map<string, PersonaProposalDecisionView[]>();
   for (const view of reviewable) {
     const semanticTopic = topicKey(
-      [view.diffSummary, ...view.evidence.map((entry) => entry.summary)].filter(Boolean).join("\n"),
+      view.evidence
+        .map((entry) => entry.summary)
+        .filter(Boolean)
+        .join("\n"),
     );
     const key = `${view.targetFile}:${view.risk}:${view.reason}:${semanticTopic}`;
     groups.set(key, [...(groups.get(key) ?? []), view]);

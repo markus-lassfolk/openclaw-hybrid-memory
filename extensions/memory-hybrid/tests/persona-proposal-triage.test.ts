@@ -12,6 +12,7 @@ import {
   createPersonaStandaloneExecutionPath,
   runPersonaProposalTriage,
 } from "../services/persona-proposal-triage.js";
+import { PendingAutopilotStore } from "../services/pending-autopilot/index.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 let tmpDir: string;
@@ -281,6 +282,82 @@ describe("persona proposal triage", () => {
 
     expect(result.bundles.length).toBeGreaterThanOrEqual(2);
     expect(result.bundles.some((b) => b.proposalIds.length === 2)).toBe(true);
+  });
+
+  it("does not collapse unrelated USER.md proposals into one preference bundle from filename-only tokens", async () => {
+    const workflow = proposal({
+      targetFile: "USER.md",
+      title: "Workflow reminder",
+      suggestedChange: "Document workflow for weekly planning updates.",
+      confidence: 0.9,
+    });
+    const communication = proposal({
+      targetFile: "USER.md",
+      title: "Status cadence note",
+      suggestedChange: "Document communication cadence for status updates.",
+      confidence: 0.9,
+    });
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "dry-run",
+      policy: "cautious",
+    });
+
+    const bundleByProposal = new Map<string, string>();
+    for (const bundle of result.bundles) {
+      for (const proposalId of bundle.proposalIds) bundleByProposal.set(proposalId, bundle.id);
+    }
+    expect(bundleByProposal.get(workflow.id)).toBeTruthy();
+    expect(bundleByProposal.get(communication.id)).toBeTruthy();
+    expect(bundleByProposal.get(workflow.id)).not.toBe(bundleByProposal.get(communication.id));
+  });
+
+  it("persists failed-validation decisions when lock/CAS revalidation fails in apply mode", async () => {
+    const blocked = proposal({
+      targetFile: "USER.md",
+      title: "Reject me",
+      suggestedChange: "be better",
+      confidence: 0.4,
+    });
+    const stateDb = join(tmpDir, "pending-lock-conflict.db");
+    const item = createPersonaProposalFixtureItem({
+      proposal: blocked,
+      workspace: tmpDir,
+      allowedFiles: cfg.personaProposals.allowedFiles,
+    });
+    const blocker = new PendingAutopilotStore(stateDb);
+    expect(
+      blocker.acquireLock({
+        queue: "persona",
+        itemId: item.id,
+        inputHash: item.inputHash,
+        owner: "external-lock-owner",
+        ttlSeconds: 300,
+        mode: "apply",
+      }),
+    ).toBe(true);
+    blocker.close();
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath: stateDb,
+      runId: "lock-conflict-run",
+    });
+
+    expect(result.decisions[0]?.action).toBe("failed-validation");
+    expect(result.decisions[0]?.reason).toBe("lock-conflict");
+    expect(proposalsDb.get(blocked.id)?.status).toBe("pending");
+    const store = new PendingAutopilotStore(stateDb);
+    const persisted = store.listDecisions({ queue: "persona", itemId: blocked.id });
+    store.close();
+    expect(persisted.some((d) => d.action === "failed-validation" && d.reasonCode === "lock-conflict")).toBe(true);
   });
 
   it("every decision has action, reason, capability, and evidence using shared contract", async () => {
