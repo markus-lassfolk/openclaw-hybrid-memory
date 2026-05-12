@@ -920,3 +920,62 @@ describe("runRecallPipelineQuery — stale vector hit filtering", () => {
     expect(result.map((r) => r.entry.id)).toEqual(["active"]);
   });
 });
+
+describe("runRecallPipelineQuery — probe logs", () => {
+  it("does not emit probe logs or watchdogs when probeId is omitted", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([makeSearchResult("vec-1")]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => makeEntry(id));
+
+    await runRecallPipelineQuery("probe me", 5, deps, { value: false });
+
+    const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => String(line));
+    const warnCalls = vi.mocked(deps.logger.warn).mock.calls.map(([line]) => String(line));
+    expect(debugCalls.some((line) => line.includes("recall-probe"))).toBe(false);
+    expect(warnCalls.some((line) => line.includes("recall-probe"))).toBe(false);
+  });
+
+  it("emits probe stage markers when probeId is provided", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([makeSearchResult("vec-1")]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => makeEntry(id));
+
+    await runRecallPipelineQuery("probe me", 5, deps, { value: false }, { probeId: "probe-123" });
+
+    const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => String(line));
+    expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 pipeline-enter"))).toBe(true);
+    expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 stage=semantic_fts_search start"))).toBe(
+      true,
+    );
+    expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 stage=lancedb_search start"))).toBe(true);
+    expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 pipeline-exit"))).toBe(true);
+  });
+});
