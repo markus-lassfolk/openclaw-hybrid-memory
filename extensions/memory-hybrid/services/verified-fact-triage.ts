@@ -1089,10 +1089,18 @@ function detectSensitivity(
     .join("\n");
   const flags: string[] = [];
   let reason: VerifiedTriageReason = "sensitive_personal_fact";
+  const priorityMap: Record<VerifiedTriageReason, number> = {
+    sensitive_security_fact: 4,
+    sensitive_privacy_fact: 3,
+    sensitive_operational_runbook: 2,
+    sensitive_personal_fact: 1,
+  };
   for (const rule of SENSITIVE_RULES) {
     if (rule.pattern.test(haystack)) {
       flags.push(rule.flag);
-      if (reason === "sensitive_personal_fact" || rule.reason === "sensitive_security_fact") reason = rule.reason;
+      if ((priorityMap[rule.reason] ?? 0) > (priorityMap[reason] ?? 0)) {
+        reason = rule.reason;
+      }
     }
   }
   return { flags: [...new Set(flags)], reason };
