@@ -14,6 +14,7 @@ export interface VerifiedCliContext {
   factsDb: Pick<FactsDB, "getRawDb">;
   resolvedSqlitePath?: string;
   resolvePath?: (file: string) => string;
+  reverificationDays?: number;
 }
 
 export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext): void {
@@ -29,6 +30,7 @@ export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext
         const max = parsePositiveInt(opts?.max, 100);
         const items = listVerifiedFactTriageItems(ctx.factsDb.getRawDb(), {
           max,
+          reverificationDays: ctx.reverificationDays,
         });
         const output = {
           reviewQueueSource: VERIFIED_REVIEW_QUEUE_SOURCE,
@@ -89,6 +91,7 @@ export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext
               mode,
               policy,
               max,
+              reverificationDays: ctx.reverificationDays,
               store,
             });
             if (opts?.json) console.log(JSON.stringify(result, null, 2));

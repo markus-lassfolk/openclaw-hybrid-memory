@@ -19,6 +19,7 @@ import {
 import type { VerifiedFact } from "./verification-store.js";
 
 export const VERIFIED_TRIAGE_POLICY_VERSION = "verified-fact-triage-v1";
+const DEFAULT_REVERIFICATION_DAYS = 30;
 export const VERIFIED_REVIEW_QUEUE_SOURCE =
   "Latest verified_facts rows whose next_verification timestamp is due (or whose verified_at is older than the verification window), as returned by VerificationStore.listDueForReverification semantics. This is intentionally not all verified facts.";
 
@@ -172,6 +173,7 @@ export interface VerifiedFactTriageOptions {
   mode: "dry-run" | "apply";
   policy: VerifiedTriagePolicy;
   max?: number;
+  reverificationDays?: number;
   actor?: PendingDecision["actor"];
   jobId?: string;
   runId?: string;
@@ -264,7 +266,9 @@ export function listVerifiedFactTriageItems(
 ): VerifiedFactTriageItem[] {
   const nowMs = opts.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const cutoffIso = new Date(nowMs - (opts.reverificationDays ?? 30) * 24 * 60 * 60 * 1000).toISOString();
+  const cutoffIso = new Date(
+    nowMs - (opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS) * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const policy = opts.policy ?? "classify";
   const latestRows = db
     .prepare(
@@ -284,37 +288,7 @@ export function listVerifiedFactTriageItems(
   return latestRows
     .filter(isVerifiedRowChecksumValid)
     .slice(0, opts.max ?? 100)
-    .map((row) => {
-      const verified = rowToVerifiedFact(row);
-      const fact = loadFactSnapshot(db, verified.factId);
-      const payload: VerifiedFactTriagePayload = {
-        reviewQueueSource: VERIFIED_REVIEW_QUEUE_SOURCE,
-        verified,
-        fact,
-        verificationTier: fact?.tier ?? null,
-        reviewCursor: verified.nextVerification ?? verified.verifiedAt,
-        dueReason:
-          verified.nextVerification && verified.nextVerification <= nowIso ? "next_verification" : "verified_at_stale",
-      };
-      const inputHash = computePendingInputHash({
-        queue: "verified",
-        id: verified.id,
-        payload,
-        policy,
-        policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
-      });
-      return {
-        queue: "verified",
-        id: verified.id,
-        inputHash,
-        policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
-        capabilityClasses: ["read-only", "record-review-metadata"],
-        payload,
-        visibleAfterCursor: verified.nextVerification ?? verified.verifiedAt,
-        requiresHumanReview: false,
-        validationFailed: !fact,
-      } satisfies VerifiedFactTriageItem;
-    });
+    .map((row) => triageItemFromRow(db, row, { nowIso, policy }));
 }
 
 function isVerifiedRowChecksumValid(row: VerifiedFactRow): boolean {
@@ -347,6 +321,7 @@ export async function runVerifiedFactTriage(
     factsDb,
     max: opts.max,
     nowMs: opts.nowMs,
+    reverificationDays: opts.reverificationDays,
     policy,
   });
   return runVerifiedFactTriageWithAdapter(factsDb, adapter, opts);
@@ -370,6 +345,7 @@ export async function runVerifiedFactTriageWithAdapter(
     mode,
   });
   const startedAt = Math.floor((opts.nowMs ?? Date.now()) / 1000);
+  const db = factsDb.getRawDb();
 
   const durableStore = policy === "report-only" ? null : store;
 
@@ -385,7 +361,6 @@ export async function runVerifiedFactTriageWithAdapter(
 
   const decisions: PendingDecision[] = [];
   const resultItems: VerifiedTriageResultItem[] = [];
-  const liveItemsMap = new Map(items.map((item) => [item.id, item]));
   for (const item of items) {
     const context: PendingDecisionContext = {
       runId,
@@ -396,8 +371,7 @@ export async function runVerifiedFactTriageWithAdapter(
       inputHash: item.inputHash,
       actor,
     };
-    const decision = await adapter.decide(item, context);
-    decisions.push(decision);
+    let decision: PendingDecision;
     let applied = false;
     if (mode === "apply" && policy !== "report-only") {
       const locked =
@@ -410,14 +384,24 @@ export async function runVerifiedFactTriageWithAdapter(
           mode,
         }) ?? false;
       if (locked) {
-        const liveItem = liveItemsMap.get(item.id) ?? null;
+        const liveItem =
+          loadLiveVerifiedFactTriageItem(db, item.id, {
+            nowMs: opts.nowMs,
+            reverificationDays: opts.reverificationDays,
+            policy,
+          }) ?? null;
         const actualInputHash = liveItem?.inputHash ?? "missing";
         if (liveItem && actualInputHash === item.inputHash) {
+          const liveContext: PendingDecisionContext = {
+            ...context,
+            inputHash: liveItem.inputHash,
+          };
+          decision = await adapter.decide(liveItem, liveContext);
           const { inserted } = durableStore?.recordDecision(decision) ?? {
             inserted: false,
           };
           if (inserted && decision.action !== "deferred-for-human" && decision.action !== "failed-validation") {
-            durableStore?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+            durableStore?.advanceCursorIfSafe(decision, liveItem.visibleAfterCursor ?? liveItem.id);
           }
           applied = inserted && (decision.action === "classified" || decision.action === "reported");
         } else {
@@ -430,7 +414,7 @@ export async function runVerifiedFactTriageWithAdapter(
               : "Verified fact no longer matches due queue before apply.",
           );
           durableStore?.recordDecision(staleDecision);
-          decisions[decisions.length - 1] = staleDecision;
+          decision = staleDecision;
         }
       } else if (durableStore) {
         const staleDecision = validationFailureDecision(
@@ -440,17 +424,24 @@ export async function runVerifiedFactTriageWithAdapter(
           "Verified fact no longer matches due queue before apply.",
         );
         durableStore.recordDecision(staleDecision);
-        decisions[decisions.length - 1] = staleDecision;
+        decision = staleDecision;
+      } else {
+        decision = await adapter.decide(item, context);
       }
-      durableStore?.releaseLock({
-        queue: "verified",
-        itemId: item.id,
-        inputHash: item.inputHash,
-        owner: actor.id,
-        mode,
-      });
+      if (locked) {
+        durableStore?.releaseLock({
+          queue: "verified",
+          itemId: item.id,
+          inputHash: item.inputHash,
+          owner: actor.id,
+          mode,
+        });
+      }
+    } else {
+      decision = await adapter.decide(item, context);
     }
-    resultItems.push(decisionToResultItem(decisions[decisions.length - 1], item, applied));
+    decisions.push(decision);
+    resultItems.push(decisionToResultItem(decision, item, applied));
   }
 
   const summary = createStableRunSummary({
@@ -927,6 +918,71 @@ function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
     previousVersionId: row.previous_version_id,
     createdAt: row.created_at,
   };
+}
+
+function triageItemFromRow(
+  db: DatabaseSync,
+  row: VerifiedFactRow,
+  opts: { nowIso: string; policy: VerifiedTriagePolicy },
+): VerifiedFactTriageItem {
+  const verified = rowToVerifiedFact(row);
+  const fact = loadFactSnapshot(db, verified.factId);
+  const payload: VerifiedFactTriagePayload = {
+    reviewQueueSource: VERIFIED_REVIEW_QUEUE_SOURCE,
+    verified,
+    fact,
+    verificationTier: fact?.tier ?? null,
+    reviewCursor: verified.nextVerification ?? verified.verifiedAt,
+    dueReason:
+      verified.nextVerification && verified.nextVerification <= opts.nowIso ? "next_verification" : "verified_at_stale",
+  };
+  const inputHash = computePendingInputHash({
+    queue: "verified",
+    id: verified.id,
+    payload,
+    policy: opts.policy,
+    policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
+  });
+  return {
+    queue: "verified",
+    id: verified.id,
+    inputHash,
+    policyVersion: VERIFIED_TRIAGE_POLICY_VERSION,
+    capabilityClasses: ["read-only", "record-review-metadata"],
+    payload,
+    visibleAfterCursor: verified.nextVerification ?? verified.verifiedAt,
+    requiresHumanReview: false,
+    validationFailed: !fact,
+  };
+}
+
+function loadLiveVerifiedFactTriageItem(
+  db: DatabaseSync,
+  itemId: string,
+  opts: { nowMs?: number; reverificationDays?: number; policy: VerifiedTriagePolicy },
+): VerifiedFactTriageItem | null {
+  const nowMs = opts.nowMs ?? Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const cutoffIso = new Date(
+    nowMs - (opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS) * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const row = db
+    .prepare(
+      `SELECT vf.*
+       FROM verified_facts vf
+       JOIN (
+         SELECT vf2.fact_id, MAX(vf2.version) AS max_version
+         FROM verified_facts vf2
+         GROUP BY vf2.fact_id
+       ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+       WHERE vf.id = ?
+         AND ((vf.next_verification IS NOT NULL AND vf.next_verification <= ?)
+           OR vf.verified_at <= ?)
+       LIMIT 1`,
+    )
+    .get(itemId, nowIso, cutoffIso) as VerifiedFactRow | undefined;
+  if (!row || !isVerifiedRowChecksumValid(row)) return null;
+  return triageItemFromRow(db, row, { nowIso, policy: opts.policy });
 }
 
 interface VerifiedFactRow {

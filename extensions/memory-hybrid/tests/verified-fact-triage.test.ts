@@ -156,6 +156,33 @@ describe("verified fact triage queue source and policy", () => {
     );
   });
 
+  it("uses configured reverificationDays for stale verified_at cutoff", async () => {
+    addFact("windowed", "Windowed stale fact", {
+      provenanceJson: "{}",
+      due: false,
+    });
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE verified_facts SET verified_at = ? WHERE fact_id = ?")
+      .run("2026-05-01T00:00:00.000Z", "windowed");
+
+    const tightWindow = await runVerifiedFactTriage(factsDb, {
+      mode: "dry-run",
+      policy: "classify",
+      nowMs: Date.parse("2026-05-12T00:00:00Z"),
+      reverificationDays: 7,
+    });
+    expect(tightWindow.items.map((item) => item.factId)).toEqual(["windowed"]);
+
+    const wideWindow = await runVerifiedFactTriage(factsDb, {
+      mode: "dry-run",
+      policy: "classify",
+      nowMs: Date.parse("2026-05-12T00:00:00Z"),
+      reverificationDays: 30,
+    });
+    expect(wideWindow.counts.inspected).toBe(0);
+  });
+
   it("filters checksum-corrupted verified rows before triage", () => {
     addFact("good", "Good verified fact", { provenanceJson: "{}" });
     addFact("corrupt", "Corrupt verified fact", { provenanceJson: "{}" });
@@ -487,6 +514,46 @@ describe("verified fact triage idempotency and parent integration", () => {
     expect(result.items[0]?.action).toBe("failed-validation");
     expect(result.items[0]?.reasonCode).toBe("input-hash-mismatch");
     expect(pendingStore.listDecisions({ queue: "verified" })[0]?.reasonCode).toBe("input-hash-mismatch");
+  });
+
+  it("re-evaluates triage decision under lock before persisting", async () => {
+    addFact("target", "Endpoint A", {
+      entity: "svc",
+      key: "endpoint",
+      value: "A",
+      provenanceJson: "{}",
+    });
+    const originalAcquireLock = pendingStore.acquireLock.bind(pendingStore);
+    let mutated = false;
+    pendingStore.acquireLock = (input) => {
+      if (!mutated) {
+        mutated = true;
+        addFact("target-conflict", "Endpoint B", {
+          entity: "svc",
+          key: "endpoint",
+          value: "B",
+          provenanceJson: "{}",
+        });
+      }
+      return originalAcquireLock(input);
+    };
+
+    const result = await runVerifiedFactTriage(factsDb, {
+      mode: "apply",
+      policy: "classify",
+      store: pendingStore,
+    });
+
+    expect(result.items[0]).toMatchObject({
+      factId: "target",
+      action: "deferred-for-human",
+      reason: "contradicting_verified_fact_exists",
+      applied: false,
+    });
+    expect(pendingStore.listDecisions({ queue: "verified" })[0]).toMatchObject({
+      action: "deferred-for-human",
+      reasonCode: "human-review-required",
+    });
   });
 
   it("standalone verified triage and parent adapter route produce equivalent decisions", async () => {
