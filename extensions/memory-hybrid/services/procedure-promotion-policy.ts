@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {

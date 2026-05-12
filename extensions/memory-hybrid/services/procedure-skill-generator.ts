@@ -179,7 +179,9 @@ export function generateAutoSkills(
       });
       paths.push(skillPath);
       logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);
-      drafted++;
+      if (decision.action !== "deferred-for-human") {
+        drafted++;
+      }
       continue;
     }
 
