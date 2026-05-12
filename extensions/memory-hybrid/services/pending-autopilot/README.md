@@ -59,6 +59,7 @@ The verified-fact child adapter lives in `services/verified-fact-triage.ts` and 
 `PendingQueueAdapter` / `PendingDecision` contract from this foundation. Its review queue source is
 explicit and intentionally narrow: **latest `verified_facts` rows due for reverification** according
 to the same `next_verification`/staleness semantics used by `VerificationStore.listDueForReverification`.
+Rows with checksum/canonical-text mismatches are filtered out before queueing to preserve integrity parity.
 It must not accidentally treat every verified fact as pending review.
 
 CLI surface:
