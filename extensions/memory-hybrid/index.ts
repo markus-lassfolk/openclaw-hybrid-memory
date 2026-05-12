@@ -9,7 +9,6 @@
  * high-confidence FTS5 matches over approximate vector matches.
  */
 
-import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -92,7 +91,26 @@ export type {
 } from "./services/graph-retrieval.js";
 export { DEFAULT_GRAPH_HUB_DEGREE_CAP, resolveGraphHubDegreeCap } from "./services/graph-retrieval.js";
 export * from "./services/pending-autopilot/index.js";
-export * from "./services/persona-proposal-triage.js";
+export {
+  PERSONA_APPLY_CONFIDENCE_THRESHOLD,
+  PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+  PERSONA_REJECT_CONFIDENCE_THRESHOLD,
+  createPersonaProposalTriageAdapter,
+  decidePersonaProposal,
+  renderPersonaProposalTriageHumanSummary,
+  runPersonaProposalTriage,
+  stablePersonaProposalTriageJson,
+  validatePersonaPolicy,
+} from "./services/persona-proposal-triage.js";
+export type {
+  PersonaProposalDecisionView,
+  PersonaProposalPendingItem,
+  PersonaProposalReviewBundle,
+  PersonaProposalRisk,
+  PersonaProposalTriageOptions,
+  PersonaProposalTriagePolicy,
+  PersonaProposalTriageResult,
+} from "./services/persona-proposal-triage.js";
 import { findShortestPath, formatPath, resolveInput } from "./services/shortest-path.js";
 export type { ShortestPathResult, PathStep, ShortestPathLookup } from "./services/shortest-path.js";
 import {

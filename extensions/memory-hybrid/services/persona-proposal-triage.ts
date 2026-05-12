@@ -8,11 +8,13 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
+import { buildAppliedContent } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getEnv } from "../utils/env-manager.js";
+import { getFileSnapshot } from "../utils/file-snapshot.js";
 import {
   type AutopilotMode,
   type PendingDecision,
@@ -557,17 +559,13 @@ function applyPersonaDecisionWithLock(input: {
   if (!locked) return validationFailure(input.decision, "lock-conflict", "Could not acquire persona proposal lock.");
   try {
     const current = input.proposalsDb.get(input.item.id);
-    const currentTarget = resolveAllowedPersonaTarget(input.workspace, input.item.proposal.targetFile, [
-      input.item.proposal.targetFile,
-    ]);
-    const actualHash = current
-      ? proposalToPendingItem(current, input.workspace, {
-          personaProposals: { allowedFiles: [current.targetFile] },
-        } as Pick<HybridMemoryConfig, "personaProposals">).inputHash
-      : "missing";
     if (!current || current.status !== "pending") {
       return validationFailure(input.decision, "already-processed", "Proposal was already processed before apply.");
     }
+    const currentTarget = resolveAllowedPersonaTarget(input.workspace, current.targetFile, [current.targetFile]);
+    const actualHash = proposalToPendingItem(current, input.workspace, {
+      personaProposals: { allowedFiles: [current.targetFile] },
+    } as Pick<HybridMemoryConfig, "personaProposals">).inputHash;
     if (actualHash !== input.decision.inputHash) {
       return validationFailure(
         input.decision,
@@ -582,7 +580,14 @@ function applyPersonaDecisionWithLock(input: {
         "Target file unavailable during apply revalidation.",
       );
     }
-    const currentTargetHash = fileHash(currentTarget.path);
+    const currentSnapshot = getFileSnapshot(currentTarget.path);
+    if (!currentSnapshot) {
+      return validationFailure(
+        input.decision,
+        "stale-target-context",
+        "Target file unreadable during apply revalidation.",
+      );
+    }
     if (input.decision.action === "applied" && !hasReliableTargetSnapshot(current)) {
       return validationFailure(
         input.decision,
@@ -590,14 +595,41 @@ function applyPersonaDecisionWithLock(input: {
         "Auto-apply requires target hash or mtime snapshot.",
       );
     }
-    if (input.decision.action === "applied" && current.targetHash && current.targetHash !== currentTargetHash) {
+    if (input.decision.action === "applied" && current.targetHash && current.targetHash !== currentSnapshot.hash) {
       return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
     }
-    if (input.decision.action === "applied" && !current.targetHash && current.targetMtimeMs != null) {
-      const currentMtimeMs = lstatSync(currentTarget.path).mtimeMs;
-      if (Math.trunc(current.targetMtimeMs) !== Math.trunc(currentMtimeMs)) {
-        return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
+    if (
+      input.decision.action === "applied" &&
+      !current.targetHash &&
+      current.targetMtimeMs != null &&
+      current.targetMtimeMs !== currentSnapshot.mtimeMs
+    ) {
+      return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
+    }
+    let preparedApply:
+      | {
+          targetPath: string;
+          backupPath: string;
+          original: string;
+          appliedContent: string;
+        }
+      | undefined;
+    if (input.decision.action === "applied") {
+      const original = readFileSync(currentTarget.path, "utf-8");
+      const applied = buildAppliedContent(original, current, new Date().toISOString());
+      if (!applied.content.trim()) {
+        return validationFailure(
+          input.decision,
+          "validation-failed",
+          `Proposal ${input.item.id} does not contain replacement content to apply.`,
+        );
       }
+      preparedApply = {
+        targetPath: currentTarget.path,
+        backupPath: `${currentTarget.path}.backup-${Date.now()}`,
+        original,
+        appliedContent: applied.content,
+      };
     }
 
     const ok = input.store.mutateWithLockAndAudit({
@@ -608,12 +640,9 @@ function applyPersonaDecisionWithLock(input: {
       mutate: () => {
         if (input.decision.action === "rejected") {
           input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", input.decision.reasonCode);
-        } else if (input.decision.action === "applied") {
-          const original = readFileSync(currentTarget.path, "utf-8");
-          const next = applyTinyAppend(original, current.suggestedChange);
-          const backupPath = `${currentTarget.path}.backup-${Date.now()}`;
-          writeFileSync(backupPath, original, "utf-8");
-          writeFileSync(currentTarget.path, next, "utf-8");
+        } else if (input.decision.action === "applied" && preparedApply) {
+          writeFileSync(preparedApply.backupPath, preparedApply.original, "utf-8");
+          writeFileAtomic(preparedApply.targetPath, preparedApply.appliedContent);
           input.proposalsDb.markApplied(input.item.id);
         }
       },
@@ -950,10 +979,14 @@ function resolveAllowedPersonaTarget(
   return { ok: true, path: targetPath };
 }
 
-function applyTinyAppend(original: string, suggestedChange: string): string {
-  const addition = suggestedChange.trim();
-  if (!addition) return original;
-  return `${original.replace(/\s*$/, "\n\n")}${addition}\n`;
+function writeFileAtomic(path: string, content: string): void {
+  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    writeFileSync(tempPath, content, "utf-8");
+    renameSync(tempPath, path);
+  } finally {
+    if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+  }
 }
 
 function fileHash(path: string): string {
