@@ -324,7 +324,7 @@ const important = await client.getFacts({
 ✅ **Do:**
 - Use natural language queries
 - Filter by category when you know it
-- Set minimum importance for critical decisions
+- Use `search()` with `minImportance` when you need importance filtering
 - Use entity lookup for structured data
 
 ❌ **Don't:**

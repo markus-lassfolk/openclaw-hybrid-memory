@@ -459,8 +459,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
       embeddings: ctx.embeddings,
+      runConfigSet: ctx.runConfigSet,
     };
-    registerUserFriendlyCommands(mem as any, userFriendlyContext);
+    registerUserFriendlyCommands(mem, userFriendlyContext);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

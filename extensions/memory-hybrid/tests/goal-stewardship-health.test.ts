@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
-import { parseGithubPrTarget, runGoalHealthCheck } from "../services/goal-health.js";
+import { getBlockedVerificationHostReason, parseGithubPrTarget, runGoalHealthCheck } from "../services/goal-health.js";
 import { createGoal, readGoal, updateGoal } from "../services/goal-registry.js";
 
 const defaults = {
@@ -176,7 +176,7 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
-    expect(r.actions.some((a) => a.action === "verifying")).toBe(false);
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
     const after = await readGoal(goalsDir, created.id);
     expect(after?.lastMechanicalCheck?.ok).toBe(false);
     expect(after?.lastMechanicalCheck?.detail).toContain("allowPrVerification");
@@ -210,7 +210,7 @@ describe("runGoalHealthCheck", () => {
         workspaceRoot,
         logger: {},
       });
-      expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
       expect(fetchMock).toHaveBeenCalled();
       const after = await readGoal(goalsDir, created.id);
       expect(after?.lastMechanicalCheck?.ok).toBe(true);
@@ -246,7 +246,7 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
-    expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
   });
 
   it("escalates after consecutive failures", async () => {
@@ -365,7 +365,7 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
-    expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
   });
 
   it("blocks http_ok verification against local/private hosts", async () => {
@@ -390,7 +390,7 @@ describe("runGoalHealthCheck", () => {
         workspaceRoot,
         logger: {},
       });
-      expect(r.actions.some((a) => a.action === "verifying")).toBe(false);
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
       const after = await readGoal(goalsDir, g.id);
       expect(after?.lastMechanicalCheck?.detail).toContain("blocked host");
@@ -416,11 +416,15 @@ describe("runGoalHealthCheck", () => {
         defaults,
       );
       const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
-      expect(r.actions.some((a) => a.action === "verifying")).toBe(false);
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("reports literal private IP targets as blocked verification hosts", async () => {
+    await expect(getBlockedVerificationHostReason("192.168.1.20")).resolves.toBe("local/private IP");
   });
 
   it("escalates goal after consecutive failures", async () => {

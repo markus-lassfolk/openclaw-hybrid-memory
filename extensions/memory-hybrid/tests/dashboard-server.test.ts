@@ -105,6 +105,35 @@ async function httpGet(port: number, path: string): Promise<{ status: number; bo
   });
 }
 
+async function httpPost(port: number, path: string, body: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let responseBody = "";
+        res.on("data", (chunk: Buffer) => {
+          responseBody += chunk.toString();
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: responseBody }));
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(3000, () => {
+      req.destroy(new Error("timeout"));
+    });
+    req.end(body);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -329,6 +358,36 @@ describeCreateDashboardServer("createDashboardServer", () => {
     if (!server) return;
     const { status } = await httpGet(port, "/not-found");
     expect(status).toBe(404);
+  });
+
+  it("GET /graph returns the graph explorer HTML", async () => {
+    if (!server) return;
+    const { status, body } = await httpGet(port, "/graph");
+    expect(status).toBe(200);
+    expect(body).toContain("Memory Graph");
+  });
+
+  it("POST /graphql returns a valid GraphQL response", async () => {
+    if (!server) return;
+    ctx.factsDb.store({ text: "GraphQL route fact", category: "fact", source: "test" });
+    const { status, body } = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: "query { stats { totalFacts activeFactsCount } }" }),
+    );
+    expect(status).toBe(200);
+    const parsed = JSON.parse(body);
+    expect(parsed.errors).toBeUndefined();
+    expect(parsed.data.stats.totalFacts).toBeGreaterThanOrEqual(1);
+    expect(parsed.data.stats.activeFactsCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("POST /graphql rejects oversized request bodies", async () => {
+    if (!server) return;
+    const big = JSON.stringify({ query: "query { stats { totalFacts } }", variables: { filler: "😀".repeat(20_000) } });
+    const { status, body } = await httpPost(port, "/graphql", big);
+    expect(status).toBe(413);
+    expect(JSON.parse(body).error).toBe("PayloadTooLarge");
   });
 
   it("exposes the port in the returned object", () => {

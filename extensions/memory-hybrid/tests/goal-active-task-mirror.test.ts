@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -75,6 +75,18 @@ Do not remove this custom section.
     expect(content).toContain("**Custom Field:** keep me");
     expect(content).toContain("## Active Goals");
     expect(content).toContain("### [g1]: Goal one");
+  });
+
+  it("preserves permissions and leaves no temp files", async () => {
+    dir = await mkdtemp(join(tmpdir(), "goal-mirror-"));
+    const activeTaskPath = join(dir, "ACTIVE-TASKS.md");
+    await writeFile(activeTaskPath, "# ACTIVE-TASKS.md\n", "utf-8");
+    await chmod(activeTaskPath, 0o600);
+    const result = await refreshActiveTaskMirrorWithGoals({ activeTaskPath, goals: [], staleMinutes: 1440 });
+    expect(result.ok).toBe(true);
+    expect((await stat(activeTaskPath)).mode & 0o777).toBe(0o600);
+    const files = await readdir(dir);
+    expect(files.some((f) => f.includes("ACTIVE-TASKS.md.tmp-"))).toBe(false);
   });
 
   it("replaces only the existing goals mirror section", async () => {

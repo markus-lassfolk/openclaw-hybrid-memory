@@ -34,14 +34,7 @@
     "type": "git",
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
   },
-  "keywords": [
-    "openclaw",
-    "plugin",
-    "memory",
-    "sqlite",
-    "lancedb",
-    "embeddings"
-  ],
+  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "peerDependencies": {
     "@sinclair/typebox": "^0.34.48",
     "openai": "^6.16.0",
@@ -50,6 +43,7 @@
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
     "@types/node": "^25.2.3",
+    "commander": "^13.1.0",
     "franc": "^6.2.0",
     "graphql": "^16.14.0",
     "graphql-yoga": "^5.21.0"
@@ -58,12 +52,8 @@
     "onnxruntime-node": "^1.20.0"
   },
   "openclaw": {
-    "extensions": [
-      "./dist/index.js"
-    ],
-    "runtimeExtensions": [
-      "./dist/index.js"
-    ]
+    "extensions": ["./dist/index.js"],
+    "runtimeExtensions": ["./dist/index.js"]
   },
   "scripts": {
     "build": "tsdown",
@@ -85,21 +75,21 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@vitest/coverage-v8": "^4.0.18",
-    "commander": "^13.1.0",
     "knip": "^5.0.0",
-    "unrun": "^0.2.37",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
+    "unrun": "0.2.37",
     "vitest": "^4.0.18"
   },
   "overrides": {
-    "ip-address": ">=10.1.1",
     "@hono/node-server": ">=1.19.10 <2",
     "axios": ">=1.15.0",
     "fast-xml-parser": ">=5.5.6",
     "follow-redirects": ">=1.16.0",
+    "ip-address": ">=10.1.1",
     "opusscript": "0.1.1",
     "tar": ">=7.5.11",
+    "unrun": "0.2.37",
     "yauzl": ">=3.2.1"
   },
   "engines": {

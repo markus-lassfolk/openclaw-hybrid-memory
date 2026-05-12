@@ -22,7 +22,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -475,8 +475,15 @@ export async function writeActiveTaskFile(
 
   const content = serializeActiveTaskFile(active, completed, goalsMirror);
   const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  let existingMode: number | null = null;
+  try {
+    existingMode = (await stat(filePath)).mode & 0o777;
+  } catch {
+    existingMode = null;
+  }
   try {
     await writeFile(tmpPath, content, "utf-8");
+    if (existingMode !== null) await chmod(tmpPath, existingMode);
     await rename(tmpPath, filePath);
   } catch (err) {
     await unlink(tmpPath).catch(() => {});

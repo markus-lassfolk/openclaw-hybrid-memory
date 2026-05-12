@@ -230,8 +230,8 @@ export const graphqlSchema = `#graphql
     pruneFacts(olderThan: DateTime, category: String): Int!
 
     # Maintenance
-    consolidateFacts(categoryPattern: String): Int!
-    recomputeEmbeddings(factIds: [ID!]): Boolean!
+    consolidateFacts(categoryPattern: String): Int
+    recomputeEmbeddings(factIds: [ID!]): Boolean
   }
 
   # Subscriptions for real-time updates

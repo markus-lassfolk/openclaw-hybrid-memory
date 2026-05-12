@@ -173,16 +173,11 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
 
   mem
     .command("doctor")
-    .description(
-      "Guided onboarding checks: runs install/verify in a safe sequence and optionally applies fixes.",
-    )
+    .description("Guided onboarding checks: runs install/verify in a safe sequence and optionally applies fixes.")
     .option("--fix", "Apply recommended install defaults + verify fixes before final verification")
     .option("--dry-run", "Preview install defaults without writing files")
     .option("--test-llm", "Test configured LLM models as part of verification")
-    .option(
-      "--reconcile",
-      "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use with --fix to auto-heal.",
-    )
+    .option("--reconcile", "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use with --fix to auto-heal.")
     .option(
       "--reconcile-policy <policy>",
       "Self-heal policy with --reconcile --fix: conservative|balanced|aggressive (default: balanced)",
@@ -215,8 +210,8 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
             0,
             Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
           );
-          const applyFixes = opts.fix === true;
-          const dryRunInstall = opts.dryRun === true && !applyFixes;
+          const applyFixes = opts.fix === true && opts.dryRun !== true;
+          const dryRunInstall = opts.dryRun === true || !applyFixes;
           const sink = { log: (s: string) => console.log(s), error: (s: string) => console.error(s) };
 
           console.log("🩺 Hybrid Memory Doctor");

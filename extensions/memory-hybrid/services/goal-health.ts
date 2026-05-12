@@ -4,6 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -211,8 +212,9 @@ async function runMechanicalVerification(
     if (parsed.username || parsed.password) {
       return { ok: false, detail: "http_ok: URL credentials are not allowed" };
     }
-    if (isBlockedVerificationHost(parsed.hostname)) {
-      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname})` };
+    const hostBlock = await getBlockedVerificationHostReason(parsed.hostname);
+    if (hostBlock) {
+      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname}: ${hostBlock})` };
     }
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 10_000);
@@ -228,25 +230,39 @@ async function runMechanicalVerification(
   return { ok: false, detail: "unknown verification type" };
 }
 
-function isBlockedVerificationHost(hostname: string): boolean {
-  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
-  if (!h) return true;
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
-  const ipKind = isIP(h);
-  if (ipKind === 0) return false;
-  if (ipKind === 4) {
-    const octets = h.split(".").map((part) => Number(part));
-    return isPrivateOrLocalIpv4(octets);
+export async function getBlockedVerificationHostReason(hostname: string): Promise<string | null> {
+  const h = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  if (!h) return "empty host";
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return "local hostname";
+  if (isBlockedVerificationIpLiteral(h)) return "local/private IP";
+  if (isIP(h) !== 0) return null;
+
+  let records: Array<{ address: string }>;
+  try {
+    records = await lookup(h, { all: true, verbatim: true });
+  } catch (err) {
+    return `DNS lookup failed: ${err instanceof Error ? err.message : String(err)}`;
   }
-  const normalized = h;
+  if (records.length === 0) return "DNS lookup returned no addresses";
+  return records.some((record) => isBlockedVerificationIpLiteral(record.address))
+    ? "DNS resolved to local/private IP"
+    : null;
+}
+
+function isBlockedVerificationIpLiteral(hostname: string): boolean {
+  const ipKind = isIP(hostname);
+  if (ipKind === 0) return false;
+  if (ipKind === 4) return isPrivateOrLocalIpv4(hostname.split(".").map((part) => Number(part)));
+  const normalized = hostname;
+  const mappedIpv4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(normalized)?.[1];
+  if (mappedIpv4) return isPrivateOrLocalIpv4(mappedIpv4.split(".").map((part) => Number(part)));
+  if (normalized.startsWith("::ffff:")) return true;
   if (normalized === "::1" || normalized === "::") return true;
   if (/^fe[89ab][0-9a-f]:/i.test(normalized)) return true; // link-local fe80::/10
   if (/^f[cd][0-9a-f]{2}:/i.test(normalized)) return true; // unique local fc00::/7
-  if (normalized.startsWith("::ffff:")) return true; // IPv4-mapped IPv6
-  const mappedIpv4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(normalized)?.[1];
-  if (mappedIpv4) {
-    return isPrivateOrLocalIpv4(mappedIpv4.split(".").map((part) => Number(part)));
-  }
   return false;
 }
 
