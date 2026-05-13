@@ -136,7 +136,7 @@ type Analysis = {
 };
 
 const CRITICAL_TARGETS = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
-const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md"]);
+const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
 const LOW_RISK_DRIFT_THRESHOLD = 2;
 const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
 
