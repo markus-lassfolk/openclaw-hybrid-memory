@@ -585,20 +585,30 @@ function tryAcquireAutopilotLock(
   mkdirSync(dirname(lockPath), { recursive: true });
   const expiresAt = nowMs + ttlMinutes * 60 * 1000;
   const payload = { runId, acquiredAt: nowMs, expiresAt };
+  const tryWriteExclusive = (): boolean => {
+    try {
+      writeFileSync(lockPath, `${canonicalJson(payload)}\n`, { encoding: "utf-8", flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
   try {
-    writeFileSync(lockPath, `${canonicalJson(payload)}\n`, { encoding: "utf-8", flag: "wx" });
-    return { acquired: true, reason: "lock_acquired" };
-  } catch {
+    if (tryWriteExclusive()) return { acquired: true, reason: "lock_acquired" };
     const existing = parseLock(readSafe(lockPath));
     if (!existing) {
       rmSync(lockPath, { force: true });
-      writeFileSync(lockPath, `${canonicalJson(payload)}\n`, { encoding: "utf-8", flag: "wx" });
-      return { acquired: true, reason: "lock_stale_recovered" };
+      return tryWriteExclusive()
+        ? { acquired: true, reason: "lock_stale_recovered" }
+        : { acquired: false, reason: "lock_already_held" };
     }
     if (existing.expiresAt > nowMs) return { acquired: false, reason: "lock_already_held" };
     rmSync(lockPath, { force: true });
-    writeFileSync(lockPath, `${canonicalJson(payload)}\n`, { encoding: "utf-8", flag: "wx" });
-    return { acquired: true, reason: "lock_stale_recovered" };
+    return tryWriteExclusive()
+      ? { acquired: true, reason: "lock_stale_recovered" }
+      : { acquired: false, reason: "lock_already_held" };
+  } catch {
+    return { acquired: false, reason: "lock_already_held" };
   }
 }
 
