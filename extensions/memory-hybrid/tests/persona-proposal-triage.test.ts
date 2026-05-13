@@ -361,7 +361,7 @@ describe("persona proposal triage", () => {
     });
 
     expect(result.decisions.find((d) => d.proposalId === p.id)).toMatchObject({
-      action: "failed-validation",
+      action: "deferred-for-human",
       reason: "identity-boundary-change",
     });
     expect(proposalsDb.get(p.id)?.status).toBe("pending");
