@@ -1154,21 +1154,21 @@ function compareProposalCreationOrder(
   return a.id.localeCompare(b.id);
 }
 
+const NON_ACTIONABLE_PHRASES = new Set([
+  "be better",
+  "improve",
+  "do better",
+  "fix this",
+  "update",
+  "change",
+  "misc",
+  "note",
+]);
+
 function isNonActionable(change: string): boolean {
   const normalized = normalizeText(change);
   if (normalized.length === 0) return true;
-
-  const nonActionablePhrases = new Set([
-    "be better",
-    "improve",
-    "do better",
-    "fix this",
-    "update",
-    "change",
-    "misc",
-    "note",
-  ]);
-  if (nonActionablePhrases.has(normalized)) return true;
+  if (NON_ACTIONABLE_PHRASES.has(normalized)) return true;
 
   const directiveVerbs =
     /\b(add|append|record|capture|document|replace|remove|delete|update|clarify|format|fix|rewrite|rename|prefer|avoid|use|mention|store|include)\b/i;
