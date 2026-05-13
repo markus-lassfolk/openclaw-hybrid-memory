@@ -96,8 +96,11 @@ function stripReplaceContentLeadIn(input: string): string {
   for (const leadIn of ["with the following content", "with the following", "with"] as const) {
     if (lower === leadIn) return "";
     if (lower.startsWith(leadIn)) {
-      const remainder = stripOneLeadingSeparator(trimmed.slice(leadIn.length));
-      if (remainder.length !== trimmed.length - leadIn.length) return remainder;
+      const afterLeadIn = trimmed.slice(leadIn.length);
+      const trimmedAfter = afterLeadIn.trimStart();
+      if (trimmedAfter.startsWith(":") || trimmedAfter.startsWith(".")) {
+        return stripOneLeadingSeparator(afterLeadIn);
+      }
     }
   }
   return input;
@@ -107,10 +110,13 @@ export function parseSuggestedChange(suggestedChange: string): { changeType: Pro
   const lines = suggestedChange.split(/\r?\n/);
   const firstLine = lines[0]?.trim() ?? "";
   const lowerFirstLine = firstLine.toLowerCase();
-  const replacePrefix = REPLACE_PREFIXES.find(
-    (prefix) =>
-      lowerFirstLine === prefix || lowerFirstLine.startsWith(`${prefix}:`) || lowerFirstLine.startsWith(`${prefix}.`),
-  );
+  const replacePrefix = REPLACE_PREFIXES.find((prefix) => {
+    if (lowerFirstLine === prefix) return true;
+    if (lowerFirstLine.startsWith(`${prefix}:`)) return true;
+    if (lowerFirstLine.startsWith(`${prefix}.`)) return true;
+    if (lowerFirstLine.startsWith(`${prefix} `)) return true;
+    return false;
+  });
   if (replacePrefix) {
     const remainder = stripOneLeadingSeparator(firstLine.slice(replacePrefix.length));
     const content = stripReplaceContentLeadIn([remainder, ...lines.slice(1)].join("\n"));
