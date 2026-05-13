@@ -967,16 +967,12 @@ ${p.suggestedChange}`.toLowerCase();
 }
 
 function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
-  const parsed = parseSuggestedChange(suggestedChange);
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
   if (!hasFormattingPrefix) return false;
   const containsSemanticKeywords =
     /\b(personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate|friendlier|friendly|warmer|casual|greeting)\b/i.test(
       suggestedChange,
     );
-  if (parsed.changeType === "replace") {
-    return !containsSemanticKeywords;
-  }
   return !containsSemanticKeywords;
 }
 
@@ -1363,24 +1359,11 @@ export function createPersonaParentExecutionPath(adapter: PendingQueueAdapter<Pe
   ): Promise<PendingDecision> | PendingDecision => adapter.decide(item, { ...context, runId: "equivalence-run" });
 }
 
-export function createPersonaStandaloneExecutionPath(_adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
+export function createPersonaStandaloneExecutionPath(adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
   return (
     item: PersonaProposalPendingItem,
     context: PendingDecisionContext,
-  ): Promise<PendingDecision> | PendingDecision =>
-    decidePersonaProposal(
-      item,
-      { ...context, runId: "equivalence-run" },
-      {
-        proposalsDb: null as never,
-        cfg: { personaProposals: { allowedFiles: [item.proposal.targetFile] } } as unknown as Pick<
-          HybridMemoryConfig,
-          "personaProposals"
-        >,
-        workspace: item.workspace,
-        allProposals: [item.proposal],
-      },
-    );
+  ): Promise<PendingDecision> | PendingDecision => adapter.decide(item, { ...context, runId: "equivalence-run" });
 }
 
 export function createPersonaProposalFixtureItem(input: {
