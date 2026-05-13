@@ -57,6 +57,14 @@ describe("parseSuggestedChange", () => {
     expect(withDot.changeType).toBe("replace");
     expect(withDot.content.trim()).toBe("with. Content starting with 'with.'");
   });
+
+  it("preserves legitimate content starting with 'with:' (issue #1327)", () => {
+    const result = parseSuggestedChange("Replace the entire file:\nwith: key=value\nmore content");
+    expect(result.changeType).toBe("replace");
+    expect(result.content).toContain("with: key=value");
+    expect(result.content).toContain("more content");
+    expect(result.content.trim()).toBe("with: key=value\nmore content");
+  });
 });
 
 describe("buildAppliedContent", () => {

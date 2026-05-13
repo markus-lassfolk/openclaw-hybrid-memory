@@ -99,7 +99,17 @@ function stripReplaceContentLeadIn(input: string): string {
       const afterLeadIn = trimmed.slice(leadIn.length);
       const trimmedAfter = afterLeadIn.trimStart();
       if (trimmedAfter.startsWith(":")) {
-        return stripOneLeadingSeparator(afterLeadIn);
+        const afterColon = trimmedAfter.slice(1);
+        const afterColonTrimmed = afterColon.trimStart();
+        if (
+          afterColonTrimmed === "" ||
+          afterColon.startsWith("\n") ||
+          afterColon.startsWith("\r") ||
+          afterColon.startsWith(" \n") ||
+          afterColon.startsWith(" \r")
+        ) {
+          return stripOneLeadingSeparator(afterLeadIn);
+        }
       }
     }
   }
