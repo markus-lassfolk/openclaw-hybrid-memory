@@ -653,7 +653,7 @@ describe("pending digest autopilot parent (#1326)", () => {
         targetFile: "AGENTS.md",
         title: "Caller workspace formatting",
         observation: "Formatting-only proposal for the caller workspace.",
-        suggestedChange: "Formatting: parent adapter workspace marker.",
+        suggestedChange: "Replace entire file:\n# AGENTS\nCaller workspace!\n",
         confidence: 0.99,
         evidenceSessions: ["session-workspace"],
         targetHash: callerPreHash,

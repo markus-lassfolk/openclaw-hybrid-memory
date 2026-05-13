@@ -48,6 +48,7 @@ beforeEach(() => {
   writeFileSync(join(tmpDir, "SOUL.md"), "# SOUL\nBe precise.\n", "utf-8");
   writeFileSync(join(tmpDir, "USER.md"), "# USER\nMarkus likes evidence.\n", "utf-8");
   writeFileSync(join(tmpDir, "IDENTITY.md"), "# IDENTITY\nName: Forge\n", "utf-8");
+  writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nBe precise.\n", "utf-8");
   proposalsDb = new ProposalsDB(join(tmpDir, "proposals.db"));
 });
 
@@ -256,8 +257,6 @@ describe("persona proposal triage", () => {
         allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
       },
     };
-    writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nBe precise.\n", "utf-8");
-
     const mechanical = proposal({
       targetFile: "IDENTITY.md",
       targetHash: fileHash(join(tmpDir, "IDENTITY.md")),
@@ -299,7 +298,13 @@ describe("persona proposal triage", () => {
   });
 
   it("apply-safe defers disguised formatting semantic appends for every sensitive persona file", async () => {
-    const files = ["SOUL.md", "USER.md", "IDENTITY.md"] as const;
+    const allowedCfg = {
+      personaProposals: {
+        ...cfg.personaProposals,
+        allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
+      },
+    };
+    const files = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"] as const;
     for (const targetFile of files) {
       proposal({
         targetFile,
@@ -313,7 +318,7 @@ describe("persona proposal triage", () => {
 
     const result = await runPersonaProposalTriage({
       proposalsDb,
-      cfg,
+      cfg: allowedCfg,
       workspace: tmpDir,
       mode: "apply",
       policy: "apply-safe",
@@ -326,6 +331,38 @@ describe("persona proposal triage", () => {
       expect(decision.reason).toBe("identity-boundary-change");
       expect(proposalsDb.get(decision.proposalId)?.status).toBe("pending");
     }
+  });
+
+  it("apply-safe allows mechanically verified formatting-only replace for AGENTS.md", async () => {
+    const allowedCfg = {
+      personaProposals: {
+        ...cfg.personaProposals,
+        allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
+      },
+    };
+    const mechanical = proposal({
+      targetFile: "AGENTS.md",
+      targetHash: fileHash(join(tmpDir, "AGENTS.md")),
+      title: "AGENTS punctuation cleanup",
+      observation: "AGENTS.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# AGENTS\nBe precise!\n",
+      confidence: 0.99,
+    });
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg: allowedCfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(proposalsDb.get(mechanical.id)?.status).toBe("applied");
+    expect(readFileSync(join(tmpDir, "AGENTS.md"), "utf-8")).toContain("Be precise!");
+    expect(result.decisions.find((d) => d.proposalId === mechanical.id)?.reason).toBe(
+      "safe-low-risk-localized-change",
+    );
   });
 
   it("blocks and redacts credential/private-data proposals everywhere", async () => {
@@ -585,15 +622,17 @@ describe("persona proposal triage", () => {
     const first = proposal({
       targetFile: "AGENTS.md" as never,
       targetHash: fileHash(join(tmpDir, "AGENTS.md")),
-      title: "Formatting general one",
-      suggestedChange: "Formatting: first small low risk note.",
+      title: "Formatting punctuation one",
+      observation: "AGENTS.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# AGENTS\nBe precise!\n",
       confidence: 0.99,
     });
     const second = proposal({
       targetFile: "AGENTS.md" as never,
       targetHash: fileHash(join(tmpDir, "AGENTS.md")),
-      title: "Formatting general two",
-      suggestedChange: "Formatting: second small low risk note.",
+      title: "Formatting punctuation two",
+      observation: "AGENTS.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# AGENTS\nBe precise?\n",
       confidence: 0.99,
     });
     proposalsDb.updateStatus(second.id, "rejected", "test", "avoid duplicate-pending setup item");
@@ -617,8 +656,9 @@ describe("persona proposal triage", () => {
     const secondFresh = proposal({
       targetFile: "AGENTS.md" as never,
       targetHash: fileHash(join(tmpDir, "AGENTS.md")),
-      title: "Formatting general two fresh",
-      suggestedChange: "Formatting: second small low risk note.",
+      title: "Formatting punctuation two fresh",
+      observation: "AGENTS.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# AGENTS\nBe precise?\n",
       confidence: 0.99,
     });
     const secondApplied = await runPersonaProposalTriage({
@@ -636,8 +676,9 @@ describe("persona proposal triage", () => {
     const third = proposal({
       targetFile: "AGENTS.md" as never,
       targetHash: fileHash(join(tmpDir, "AGENTS.md")),
-      title: "Formatting general three",
-      suggestedChange: "Formatting: third small low risk note.",
+      title: "Formatting punctuation three",
+      observation: "AGENTS.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# AGENTS\nBe precise.\n",
       confidence: 0.99,
     });
     const secondRun = await runPersonaProposalTriage({
@@ -663,7 +704,9 @@ describe("persona proposal triage", () => {
     const p = proposal({
       targetFile: "AGENTS.md" as never,
       targetHash: fileHash(targetPath),
-      suggestedChange: "Formatting: transactional rollback marker.",
+      title: "AGENTS transactional punctuation cleanup",
+      observation: "AGENTS.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# AGENTS\nBe precise!\n",
       confidence: 0.99,
     });
     const proposalsDbPath = join(tmpDir, "proposals.db");
