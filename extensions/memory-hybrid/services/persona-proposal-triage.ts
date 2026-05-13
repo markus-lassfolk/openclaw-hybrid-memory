@@ -9,6 +9,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange } from "../cli/proposals.js";
@@ -1365,7 +1366,7 @@ export function validatePersonaPolicy(policy: string): asserts policy is Persona
 }
 
 function defaultWorkspace(): string {
-  return getEnv("OPENCLAW_WORKSPACE") ?? join(process.env.HOME ?? ".", ".openclaw", "workspace");
+  return getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 }
 
 export function createPersonaParentExecutionPath(
