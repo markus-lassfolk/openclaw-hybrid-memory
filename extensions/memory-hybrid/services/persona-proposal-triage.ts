@@ -38,6 +38,9 @@ export const PERSONA_REJECT_CONFIDENCE_THRESHOLD = 0.7;
 
 export type PersonaProposalTriagePolicy = "report-only" | "cautious" | "apply-safe";
 export type PersonaProposalRisk = "low" | "medium" | "high" | "critical";
+export const PERSONA_PROPOSAL_SENSITIVE_TARGET_FILES = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"] as const;
+export const PERSONA_PROPOSAL_CRITICAL_TARGET_FILES = [...PERSONA_PROPOSAL_SENSITIVE_TARGET_FILES, "TOOLS.md"] as const;
+export type PersonaProposalTargetFile = (typeof PERSONA_PROPOSAL_CRITICAL_TARGET_FILES)[number];
 
 export interface PersonaProposalTriageOptions {
   proposalsDb: ProposalsDB;
@@ -52,6 +55,7 @@ export interface PersonaProposalTriageOptions {
   jobId?: string;
   actor?: PendingDecisionActorContext;
   now?: Date;
+  runLifecycle?: "standalone" | "embedded";
 }
 
 export interface PersonaProposalTriageResult {
@@ -135,8 +139,8 @@ type Analysis = {
   applyAllowed: boolean;
 };
 
-const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
-const CRITICAL_TARGETS = SENSITIVE_PERSONA_FILES;
+const SENSITIVE_PERSONA_FILES = new Set<string>(PERSONA_PROPOSAL_SENSITIVE_TARGET_FILES);
+const CRITICAL_TARGETS = new Set<string>(PERSONA_PROPOSAL_CRITICAL_TARGET_FILES);
 const LOW_RISK_DRIFT_THRESHOLD = 2;
 const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
 
@@ -184,6 +188,7 @@ export async function runPersonaProposalTriage(
   const actor = opts.actor ?? ({ type: "agent", id: "persona-proposal-triage" } as const);
   const workspace = opts.workspace ?? defaultWorkspace();
   const stateDbPath = opts.stateDbPath ?? join(workspace, "memory", "pending-autopilot.db");
+  const manageRunLifecycle = opts.runLifecycle !== "embedded";
   let store: PendingAutopilotStore | null = null;
   const allProposals = opts.proposalsDb.list();
   const adapter = createPersonaProposalTriageAdapter({
@@ -202,15 +207,17 @@ export async function runPersonaProposalTriage(
 
   try {
     store = mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null;
-    store?.createRun({
-      runId,
-      mode,
-      policy,
-      policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
-      inputHash: runInputHash,
-      queues: ["persona"],
-      startedAt,
-    });
+    if (manageRunLifecycle) {
+      store?.createRun({
+        runId,
+        mode,
+        policy,
+        policyVersion: PERSONA_PROPOSAL_TRIAGE_POLICY_VERSION,
+        inputHash: runInputHash,
+        queues: ["persona"],
+        startedAt,
+      });
+    }
 
     const cursor = store?.getCursor("persona", policy) ?? null;
     const listed = await adapter.listPending(cursor);
@@ -286,7 +293,9 @@ export async function runPersonaProposalTriage(
       finishedAt: Math.floor((opts.now ?? new Date()).getTime() / 1000),
       decisions,
     });
-    store?.finishRun(runId, summary);
+    if (manageRunLifecycle) {
+      store?.finishRun(runId, summary);
+    }
     const result: PersonaProposalTriageResult = {
       schemaVersion: 1,
       runId,
@@ -1386,7 +1395,7 @@ export function createPersonaStandaloneExecutionPath(adapter: PendingQueueAdapte
 export function createPersonaProposalFixtureItem(input: {
   proposal: ProposalEntry;
   workspace: string;
-  allowedFiles: Array<"SOUL.md" | "IDENTITY.md" | "USER.md">;
+  allowedFiles: PersonaProposalTargetFile[];
   policyVersion?: string;
 }): PersonaProposalPendingItem {
   const item = proposalToPendingItem(

@@ -226,6 +226,66 @@ describe("pending digest autopilot parent (#1326)", () => {
     store.close();
   });
 
+  it("parent apply run summary is not overwritten by embedded persona child lifecycle", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const p = persona.create({
+      targetFile: "USER.md",
+      title: "Reject non-actionable persona noise",
+      observation: "Supported by test evidence.",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-persona-child"],
+    });
+    persona.close();
+    const stateDb = join(dir, "autopilot.db");
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 1, verified: 1, tools: 0, crystallization: 0 },
+      runId: "run-parent-summary-not-child",
+    });
+
+    expect(result.queues.persona.decisions[0]).toMatchObject({ itemId: p.id, action: "rejected" });
+    const raw = new DatabaseSync(stateDb);
+    const row = raw
+      .prepare(
+        "SELECT policy, policy_version, queues_json, summary_json, finished_at FROM pending_autopilot_runs WHERE id = ?",
+      )
+      .get("run-parent-summary-not-child") as {
+      policy: string;
+      policy_version: string;
+      queues_json: string;
+      summary_json: string;
+      finished_at: number | null;
+    };
+    raw.close();
+    const summary = JSON.parse(row.summary_json) as {
+      policy: string;
+      policyVersion: string;
+      queues: string[];
+      decisions: unknown[];
+    };
+
+    expect(row.policy).toBe("parent");
+    expect(row.policy_version).toBe(PENDING_DIGEST_AUTOPILOT_POLICY_VERSION);
+    expect(JSON.parse(row.queues_json)).toEqual(["persona", "procedures", "verified", "tools", "crystallization"]);
+    expect(row.finished_at).toBeTypeOf("number");
+    expect(summary).toMatchObject({
+      policy: "parent",
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+      queues: ["persona", "procedures", "verified", "tools", "crystallization"],
+    });
+    expect(summary.decisions).toHaveLength(result.foundationSummary.decisions.length);
+    expect(summary.decisions.length).toBeGreaterThan(1);
+  });
+
   it("apply mode persona cursor pagination advances only after guarded child state mutations", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));

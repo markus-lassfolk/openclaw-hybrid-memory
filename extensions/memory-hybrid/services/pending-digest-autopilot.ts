@@ -303,6 +303,7 @@ export async function runPendingDigestAutopilot(
                 jobId: opts.jobId,
                 actor,
                 now: opts.now,
+                runLifecycle: "embedded",
               });
               const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
               const latestDecision = childDecision
