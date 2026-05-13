@@ -196,13 +196,11 @@ export async function runPendingDigestAutopilot(
     factsDb: opts.factsDb,
     now: opts.now,
   });
-  const adapters = {
-    ...createDefaultPendingDigestAdapters(opts),
-    ...(opts.adapters ?? {}),
-  };
 
   let store: PendingAutopilotStore | null = null;
+  let adapters: Partial<Record<PendingQueue, PendingQueueAdapter>> | null = null;
   try {
+    adapters = createPendingDigestAdapters(opts);
     store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : null;
     const decisions: PendingDecision[] = [];
     const queues = Object.fromEntries(
@@ -354,10 +352,6 @@ export async function runPendingDigestAutopilot(
       }
     }
 
-    for (const adapter of Object.values(adapters)) {
-      (adapter as { close?: () => void }).close?.();
-    }
-
     const foundationSummary = createStableRunSummary({
       runId,
       mode: normalized.mode,
@@ -387,6 +381,9 @@ export async function runPendingDigestAutopilot(
     result.humanSummary = renderPendingDigestAutopilotHumanSummary(result);
     return result;
   } finally {
+    for (const adapter of Object.values(adapters ?? {})) {
+      (adapter as { close?: () => void }).close?.();
+    }
     store?.close();
   }
 }
@@ -419,13 +416,21 @@ export function renderPendingDigestAutopilotHumanSummary(result: PendingDigestAu
 export function createDefaultPendingDigestAdapters(
   opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb" | "workspace">,
 ): Record<PendingQueue, PendingQueueAdapter> {
+  return createPendingDigestAdapters(opts) as Record<PendingQueue, PendingQueueAdapter>;
+}
+
+function createPendingDigestAdapters(
+  opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb" | "workspace" | "adapters">,
+): Partial<Record<PendingQueue, PendingQueueAdapter>> {
+  const overrides = opts.adapters ?? {};
   const paths = pendingStorePaths(opts.cfg.sqlitePath);
   return {
-    persona: createPersonaProposalTriageAdapterWithCloseable(paths.proposals, opts.cfg, opts.workspace),
-    procedures: createProcedureReadOnlyAdapter(opts.factsDb),
-    verified: createVerifiedReadOnlyAdapter(opts.factsDb),
-    tools: createToolProposalReadOnlyAdapter(paths.toolProposals),
-    crystallization: createCrystallizationReadOnlyAdapter(paths.crystallization),
+    persona:
+      overrides.persona ?? createPersonaProposalTriageAdapterWithCloseable(paths.proposals, opts.cfg, opts.workspace),
+    procedures: overrides.procedures ?? createProcedureReadOnlyAdapter(opts.factsDb),
+    verified: overrides.verified ?? createVerifiedReadOnlyAdapter(opts.factsDb),
+    tools: overrides.tools ?? createToolProposalReadOnlyAdapter(paths.toolProposals),
+    crystallization: overrides.crystallization ?? createCrystallizationReadOnlyAdapter(paths.crystallization),
   };
 }
 
@@ -837,14 +842,13 @@ function withCloseable<TStore extends { close?: () => void }, T>(factory: () => 
           // Best-effort close for inventory readers.
         }
       }) as T;
-    } else {
-      try {
-        store?.close?.();
-      } catch {
-        // Best-effort close for inventory readers.
-      }
-      return result;
     }
+    try {
+      store?.close?.();
+    } catch {
+      // Best-effort close for inventory readers.
+    }
+    return result;
   } catch (err) {
     try {
       store?.close?.();

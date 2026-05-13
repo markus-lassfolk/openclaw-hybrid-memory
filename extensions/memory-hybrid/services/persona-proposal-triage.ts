@@ -136,7 +136,7 @@ type Analysis = {
 };
 
 const CRITICAL_TARGETS = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
-const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
+const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md"]);
 const LOW_RISK_DRIFT_THRESHOLD = 2;
 const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
 
@@ -177,7 +177,7 @@ export async function runPersonaProposalTriage(
   const actor = opts.actor ?? ({ type: "agent", id: "persona-proposal-triage" } as const);
   const workspace = opts.workspace ?? defaultWorkspace();
   const stateDbPath = opts.stateDbPath ?? join(workspace, "memory", "pending-autopilot.db");
-  const store = mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null;
+  let store: PendingAutopilotStore | null = null;
   const allProposals = opts.proposalsDb.list();
   const adapter = createPersonaProposalTriageAdapter({
     proposalsDb: opts.proposalsDb,
@@ -194,6 +194,7 @@ export async function runPersonaProposalTriage(
   let cursorAdvanceBlocked = false;
 
   try {
+    store = mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null;
     store?.createRun({
       runId,
       mode,
@@ -334,14 +335,7 @@ export function decidePersonaProposal(
   },
 ): PendingDecision {
   const all = input.allProposals ?? input.proposalsDb.list();
-  const workspace = input.workspace ?? defaultWorkspace();
-  const analysis = analyzePersonaProposal(
-    item,
-    context.policy as PersonaProposalTriagePolicy,
-    all,
-    input.cfg,
-    workspace,
-  );
+  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all);
   const reportOnly = context.policy === "report-only";
   const readOnlyCapability = context.mode === "dry-run" ? "dry-run" : "read-only";
   const action = reportOnly ? "reported" : analysis.action;
@@ -507,8 +501,6 @@ function analyzePersonaProposal(
   item: PersonaProposalPendingItem,
   policy: PersonaProposalTriagePolicy,
   allProposals: ProposalEntry[],
-  cfg: Pick<HybridMemoryConfig, "personaProposals">,
-  workspace: string,
 ): Analysis {
   const p = item.proposal;
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`;
@@ -953,10 +945,11 @@ ${p.observation}
 ${p.suggestedChange}`.toLowerCase();
   if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
-    if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
-    if (SENSITIVE_PERSONA_FILES.has(p.targetFile) && parseSuggestedChange(p.suggestedChange).changeType !== "replace") {
-      return "high";
+    if (SENSITIVE_PERSONA_FILES.has(p.targetFile)) {
+      if (!isMechanicallyVerifiedSensitiveFormatting(item, p.suggestedChange)) return "high";
+      return "low";
     }
+    if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
     if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
     if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
   } else if (
@@ -984,6 +977,18 @@ function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
     return !containsSemanticKeywords;
   }
   return true;
+}
+
+function isMechanicallyVerifiedSensitiveFormatting(item: PersonaProposalPendingItem, suggestedChange: string): boolean {
+  const parsed = parseSuggestedChange(suggestedChange);
+  if (parsed.changeType !== "replace" || !item.targetHash || !item.targetValid || !existsSync(item.targetPath))
+    return false;
+  try {
+    const original = readFileSync(item.targetPath, "utf-8");
+    return stripWhitespaceAndPunctuation(original) === stripWhitespaceAndPunctuation(parsed.content);
+  } catch {
+    return false;
+  }
 }
 
 function lowRiskDriftGuard(
@@ -1016,7 +1021,8 @@ function isAllowedSensitivePersonaApply(
   suggestedChange: string,
 ): boolean {
   if (!SENSITIVE_PERSONA_FILES.has(targetFile)) return true;
-  if (parseSuggestedChange(suggestedChange).changeType !== "replace") return false;
+  const parsed = parseSuggestedChange(suggestedChange);
+  if (parsed.changeType !== "replace") return false;
   return stripWhitespaceAndPunctuation(original) === stripWhitespaceAndPunctuation(applied);
 }
 

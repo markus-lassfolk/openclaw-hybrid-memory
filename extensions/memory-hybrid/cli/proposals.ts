@@ -77,23 +77,43 @@ function formatExpires(proposal: { expiresAt: number | null; createdAt: number }
 type ProposalChangeType = "append" | "replace";
 
 const REPLACE_PREFIXES = [
-  /^replace the entire file\b/i,
-  /^replace entire file\b/i,
-  /^replace the whole file\b/i,
-  /^replace whole file\b/i,
-  /^replace the file\b/i,
-];
+  "replace the entire file",
+  "replace entire file",
+  "replace the whole file",
+  "replace whole file",
+  "replace the file",
+] as const;
+
+function stripOneLeadingSeparator(input: string): string {
+  let out = input.trimStart();
+  if (out.startsWith(":") || out.startsWith(".")) out = out.slice(1);
+  return out.trimStart();
+}
+
+function stripReplaceContentLeadIn(input: string): string {
+  const trimmed = input.trimStart();
+  const lower = trimmed.toLowerCase();
+  for (const leadIn of ["with the following content", "with the following", "with"] as const) {
+    if (lower === leadIn) return "";
+    if (lower.startsWith(leadIn)) {
+      const remainder = stripOneLeadingSeparator(trimmed.slice(leadIn.length));
+      if (remainder.length !== trimmed.length - leadIn.length) return remainder;
+    }
+  }
+  return input;
+}
 
 export function parseSuggestedChange(suggestedChange: string): { changeType: ProposalChangeType; content: string } {
   const lines = suggestedChange.split(/\r?\n/);
   const firstLine = lines[0]?.trim() ?? "";
-  const replaceMatch = REPLACE_PREFIXES.find((re) => re.test(firstLine));
-  if (replaceMatch) {
-    const remainderMatch = firstLine.match(/^\s*replace(?:\s+the)?\s+(?:entire|whole)?\s*file\b\s*:?\s*(.*)$/i);
-    const remainderRaw = remainderMatch?.[1] ? remainderMatch[1].trim() : "";
-    const remainder = remainderRaw && !/^[.:]$/.test(remainderRaw) ? remainderRaw : "";
-    let content = [remainder, ...lines.slice(1)].join("\n");
-    content = content.replace(/^\s*(with|with the following|with the following content)\s*:\s*\n?/i, "");
+  const lowerFirstLine = firstLine.toLowerCase();
+  const replacePrefix = REPLACE_PREFIXES.find(
+    (prefix) =>
+      lowerFirstLine === prefix || lowerFirstLine.startsWith(`${prefix}:`) || lowerFirstLine.startsWith(`${prefix}.`),
+  );
+  if (replacePrefix) {
+    const remainder = stripOneLeadingSeparator(firstLine.slice(replacePrefix.length));
+    const content = stripReplaceContentLeadIn([remainder, ...lines.slice(1)].join("\n"));
     return { changeType: "replace", content };
   }
   return { changeType: "append", content: suggestedChange };
