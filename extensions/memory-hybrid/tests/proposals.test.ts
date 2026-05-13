@@ -40,6 +40,31 @@ describe("parseSuggestedChange", () => {
     const result = parseSuggestedChange("## New section\nSome text");
     expect(result.changeType).toBe("append");
   });
+
+  it("does not strip legitimate content starting with 'with.'", () => {
+    const result = parseSuggestedChange("Replace the entire file:\nwith. Updated guidance for tools.");
+    expect(result.changeType).toBe("replace");
+    expect(result.content).toContain("with. Updated guidance for tools.");
+    expect(result.content.trim()).toBe("with. Updated guidance for tools.");
+  });
+
+  it("strips 'with:' lead-in but not 'with.' content", () => {
+    const withColon = parseSuggestedChange("Replace the entire file with:\nContent here");
+    expect(withColon.changeType).toBe("replace");
+    expect(withColon.content.trim()).toBe("Content here");
+
+    const withDot = parseSuggestedChange("Replace the entire file:\nwith. Content starting with 'with.'");
+    expect(withDot.changeType).toBe("replace");
+    expect(withDot.content.trim()).toBe("with. Content starting with 'with.'");
+  });
+
+  it("preserves legitimate content starting with 'with:' (issue #1327)", () => {
+    const result = parseSuggestedChange("Replace the entire file:\nwith: key=value\nmore content");
+    expect(result.changeType).toBe("replace");
+    expect(result.content).toContain("with: key=value");
+    expect(result.content).toContain("more content");
+    expect(result.content.trim()).toBe("with: key=value\nmore content");
+  });
 });
 
 describe("buildAppliedContent", () => {

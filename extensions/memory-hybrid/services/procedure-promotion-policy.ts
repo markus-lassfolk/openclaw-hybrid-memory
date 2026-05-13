@@ -221,7 +221,6 @@ export function createProcedurePromotionItem(
     queue: "procedures",
     id: proc.id,
     payload,
-    policy,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
   });
   return {

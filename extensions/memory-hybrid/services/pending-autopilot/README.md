@@ -59,6 +59,25 @@ The shared test helper verifies both paths produce equivalent normalized decisio
 
 Dry-run may produce in-memory summaries or CLI output, but any artifact that could influence a later apply must be ephemeral/non-authoritative. The store intentionally skips durable `pending_autopilot_*` writes when mode is `dry-run`.
 
+## Persona proposal triage (#1327)
+
+The persona child adapter lives in `services/persona-proposal-triage.ts` and is exposed as:
+
+```bash
+openclaw hybrid-mem proposals triage --dry-run --policy report-only --json
+openclaw hybrid-mem proposals triage --apply --policy cautious --max 20
+openclaw hybrid-mem proposals triage --apply --policy apply-safe --max 20
+```
+
+Safety boundaries:
+
+- `report-only` is read-only and dry-run remains fully non-mutating, including proposal rows and pending-autopilot durable state.
+- `cautious` may only perform safe proposal state transitions such as rejecting high-confidence duplicates, stale proposals, low-confidence items, or non-actionable/noisy proposals.
+- `apply-safe` may apply only low-risk, localized, evidence-backed changes after shared lock/CAS revalidation. Sensitive targets (`SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, and sensitive `TOOLS.md`) default to human review for semantic writes.
+- Proposal text is untrusted input. Prompt-injection content is classified as a security-boundary risk and cannot alter policy gates.
+- Target files are canonicalized under the workspace allowlist; path traversal and symlink escapes are validation failures.
+- JSON, audit, and bundle output are redacted through the shared foundation redaction helpers; raw secrets/private data are not persisted.
+
 ## Verified-fact triage child adapter (#1329)
 
 The verified-fact child adapter lives in `services/verified-fact-triage.ts` and reuses the shared

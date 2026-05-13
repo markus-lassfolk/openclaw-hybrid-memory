@@ -1,5 +1,7 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -163,7 +165,7 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(result.counts.inspected).toBe(7);
     expect(result.queues.persona.decisions[0]).toMatchObject({
       action: "deferred-for-human",
-      reasonCode: "human-review-required",
+      reasonCode: "identity-boundary-change",
     });
     expect(result.queues.tools.decisions[0]).toMatchObject({
       action: "classified",
@@ -205,7 +207,7 @@ describe("pending digest autopilot parent (#1326)", () => {
       runId: "run-apply-2",
     });
 
-    expect(first.applyBehavior).toBe("record-decisions-only");
+    expect(first.applyBehavior).toBe("child-guarded-persona-apply");
     expect(first.queues.tools.decisions[0]).toMatchObject({
       action: "classified",
       humanReviewRequired: false,
@@ -221,6 +223,444 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(store.listDecisions()).toHaveLength(7);
     expect(store.tableCounts().pending_autopilot_runs).toBe(2);
     expect(store.tableCounts().pending_autopilot_locks).toBe(0);
+    store.close();
+  });
+
+  it("parent apply run summary is not overwritten by embedded persona child lifecycle", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const p = persona.create({
+      targetFile: "USER.md",
+      title: "Reject non-actionable persona noise",
+      observation: "Supported by test evidence.",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-persona-child"],
+    });
+    persona.close();
+    const stateDb = join(dir, "autopilot.db");
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 1, verified: 1, tools: 0, crystallization: 0 },
+      runId: "run-parent-summary-not-child",
+    });
+
+    expect(result.queues.persona.decisions[0]).toMatchObject({ itemId: p.id, action: "rejected" });
+    const raw = new DatabaseSync(stateDb);
+    const row = raw
+      .prepare(
+        "SELECT policy, policy_version, queues_json, summary_json, finished_at FROM pending_autopilot_runs WHERE id = ?",
+      )
+      .get("run-parent-summary-not-child") as {
+      policy: string;
+      policy_version: string;
+      queues_json: string;
+      summary_json: string;
+      finished_at: number | null;
+    };
+    raw.close();
+    const summary = JSON.parse(row.summary_json) as {
+      policy: string;
+      policyVersion: string;
+      queues: string[];
+      decisions: unknown[];
+    };
+
+    expect(row.policy).toBe("parent");
+    expect(row.policy_version).toBe(PENDING_DIGEST_AUTOPILOT_POLICY_VERSION);
+    expect(JSON.parse(row.queues_json)).toEqual(["persona", "procedures", "verified", "tools", "crystallization"]);
+    expect(row.finished_at).toBeTypeOf("number");
+    expect(summary).toMatchObject({
+      policy: "parent",
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+      queues: ["persona", "procedures", "verified", "tools", "crystallization"],
+    });
+    expect(summary.decisions).toHaveLength(result.foundationSummary.decisions.length);
+    expect(summary.decisions.length).toBeGreaterThan(1);
+  });
+
+  it("apply mode persona cursor pagination advances only after guarded child state mutations", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const oldest = persona.create({
+      targetFile: "USER.md",
+      title: "Oldest duplicate/noise",
+      observation: "Supported by test evidence",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-oldest"],
+    });
+    const middle = persona.create({
+      targetFile: "USER.md",
+      title: "Middle duplicate/noise",
+      observation: "Supported by test evidence",
+      suggestedChange: "improve",
+      confidence: 0.9,
+      evidenceSessions: ["session-middle"],
+    });
+    const newest = persona.create({
+      targetFile: "USER.md",
+      title: "Newest duplicate/noise",
+      observation: "Supported by test evidence",
+      suggestedChange: "do better",
+      confidence: 0.9,
+      evidenceSessions: ["session-newest"],
+    });
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id IN (?, ?, ?)").run(100, oldest.id, middle.id, newest.id);
+    raw.close();
+    const expectedNewestFirst = [oldest.id, middle.id, newest.id].sort().reverse();
+    const stateDb = join(dir, "autopilot.db");
+
+    const first = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      runId: "run-cursor-1",
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+    const second = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      runId: "run-cursor-2",
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+    const third = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      runId: "run-cursor-3",
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+
+    expect(first.queues.persona.decisions.map((d) => d.itemId)).toEqual([expectedNewestFirst[0]]);
+    expect(second.queues.persona.decisions.map((d) => d.itemId)).toEqual([expectedNewestFirst[1]]);
+    expect(third.queues.persona.decisions.map((d) => d.itemId)).toEqual([expectedNewestFirst[2]]);
+    const reopened = new ProposalsDB(paths.proposals);
+    expect(
+      [reopened.get(oldest.id)?.status, reopened.get(middle.id)?.status, reopened.get(newest.id)?.status].sort(),
+    ).toEqual(["rejected", "rejected", "rejected"]);
+    reopened.close();
+  });
+
+  it("keeps custom persona adapters valid in apply mode without built-in child metadata", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const stateDb = join(dir, "autopilot.db");
+    const item: PendingItem = {
+      queue: "persona",
+      id: "custom-persona-item",
+      inputHash: computePendingInputHash({ queue: "persona", id: "custom-persona-item" }),
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+      capabilityClasses: ["record-review-metadata"],
+      payload: { title: "Custom persona adapter item" },
+      visibleAfterCursor: "custom-persona-item",
+    };
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-custom-persona-adapter-apply",
+      adapters: {
+        persona: {
+          queue: "persona",
+          listPending: () => [item],
+          decide: (candidate, context) => ({
+            queue: candidate.queue,
+            itemId: candidate.id,
+            inputHash: candidate.inputHash,
+            policy: context.policy,
+            policyVersion: context.policyVersion,
+            mode: context.mode,
+            action: "deferred-for-human",
+            reasonCode: "human-review-required",
+            actionClass: "record-review",
+            capabilityClass: "record-review-metadata",
+            confidence: 0.8,
+            humanReviewRequired: true,
+            evidence: [{ type: "pending-item", id: candidate.id, summary: "custom adapter fixture" }],
+            actor: context.actor,
+            runId: context.runId,
+            summary: { title: "Custom persona adapter item", body: "custom decision" },
+          }),
+        },
+      },
+    });
+
+    expect(result.queues.persona).toMatchObject({
+      inspected: 1,
+      skipped: false,
+    });
+    expect(result.queues.persona.decisions[0]).toMatchObject({
+      itemId: item.id,
+      action: "failed-validation",
+      reasonCode: "capability-not-allowed",
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+    });
+    expect(result.queues.persona.decisions[0]?.summary?.body).toContain(
+      "requires the built-in persona adapter metadata",
+    );
+
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("persona", "cautious")).toBeNull();
+    expect(store.listDecisions({ queue: "persona", itemId: item.id })).toHaveLength(1);
+    store.close();
+  });
+
+  it("parent persona apply binds child triage to each iterated proposal behind a newer deferred item", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const olderReject = persona.create({
+      targetFile: "USER.md",
+      title: "Older non-actionable cleanup",
+      observation: "Supported by test evidence.",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-older-reject"],
+    });
+    const oldestReject = persona.create({
+      targetFile: "USER.md",
+      title: "Oldest non-actionable cleanup",
+      observation: "Supported by test evidence.",
+      suggestedChange: "improve",
+      confidence: 0.9,
+      evidenceSessions: ["session-oldest-reject"],
+    });
+    const newerDeferred = persona.create({
+      targetFile: "USER.md",
+      title: "Newer material persona preference",
+      observation: "The user prefers a different communication pattern.",
+      suggestedChange: "Always use a more casual tone when replying to the user.",
+      confidence: 0.95,
+      evidenceSessions: ["session-newer"],
+    });
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, oldestReject.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, olderReject.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(300, newerDeferred.id);
+    raw.close();
+    const stateDb = join(dir, "autopilot.db");
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 3, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-parent-targeted-persona-apply",
+    });
+
+    expect(result.queues.persona.decisions.map((d) => d.itemId)).toEqual([
+      newerDeferred.id,
+      olderReject.id,
+      oldestReject.id,
+    ]);
+    expect(result.queues.persona.decisions.map((d) => d.action)).toEqual([
+      "deferred-for-human",
+      "rejected",
+      "rejected",
+    ]);
+
+    const reopened = new ProposalsDB(paths.proposals);
+    expect(reopened.get(newerDeferred.id)?.status).toBe("pending");
+    expect(reopened.get(olderReject.id)?.status).toBe("rejected");
+    expect(reopened.get(oldestReject.id)?.status).toBe("rejected");
+    reopened.close();
+
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("persona", "cautious")).toBeNull();
+    expect(store.listDecisions({ queue: "persona", itemId: newerDeferred.id }).map((d) => d.action)).toEqual([
+      "deferred-for-human",
+    ]);
+    expect(store.listDecisions({ queue: "persona", itemId: olderReject.id }).map((d) => d.action)).toEqual([
+      "rejected",
+    ]);
+    expect(store.listDecisions({ queue: "persona", itemId: oldestReject.id }).map((d) => d.action)).toEqual([
+      "rejected",
+    ]);
+    store.close();
+
+    const followup = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-parent-targeted-persona-apply-followup",
+    });
+    expect(followup.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id]);
+  });
+
+  it("parent persona cursor stays blocked by an already-recorded deferred item", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const older = persona.create({
+      targetFile: "USER.md",
+      title: "Older non-actionable cleanup",
+      observation: "Supported by test evidence.",
+      suggestedChange: "be better",
+      confidence: 0.9,
+      evidenceSessions: ["session-older"],
+    });
+    const newerDeferred = persona.create({
+      targetFile: "USER.md",
+      title: "Newer material persona preference",
+      observation: "The user prefers a different communication pattern.",
+      suggestedChange: "Always use a more casual tone when replying to the user.",
+      confidence: 0.95,
+      evidenceSessions: ["session-newer"],
+    });
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, older.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newerDeferred.id);
+    raw.close();
+    const stateDb = join(dir, "autopilot.db");
+
+    const first = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-cursor-deferred-1",
+    });
+    const second = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 2, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-cursor-deferred-2",
+    });
+
+    expect(first.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id]);
+    expect(first.queues.persona.decisions[0]).toMatchObject({
+      action: "deferred-for-human",
+      humanReviewRequired: true,
+    });
+    expect(second.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id, older.id]);
+    expect(second.queues.persona.decisions[0]).toMatchObject({
+      action: "deferred-for-human",
+      humanReviewRequired: true,
+    });
+    expect(second.queues.persona.decisions[1]).toMatchObject({
+      action: "rejected",
+      humanReviewRequired: false,
+    });
+
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("persona", "cautious")).toBeNull();
+    store.close();
+
+    const third = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-cursor-deferred-3",
+    });
+    expect(third.queues.persona.decisions.map((d) => d.itemId)).toEqual([newerDeferred.id]);
+
+    const reopened = new ProposalsDB(paths.proposals);
+    expect(reopened.get(newerDeferred.id)?.status).toBe("pending");
+    reopened.close();
+  });
+
+  it("advances generic queue cursors only to the last contiguous safe decision", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const stateDb = join(dir, "autopilot.db");
+    const items: PendingItem[] = [
+      {
+        queue: "tools",
+        id: "newest-safe",
+        inputHash: computePendingInputHash({ queue: "tools", id: "newest-safe" }),
+        policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+        capabilityClasses: ["read-only"],
+        payload: { title: "Newest safe" },
+        visibleAfterCursor: "300:newest-safe",
+      },
+      {
+        queue: "tools",
+        id: "middle-deferred",
+        inputHash: computePendingInputHash({ queue: "tools", id: "middle-deferred" }),
+        policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+        capabilityClasses: ["read-only"],
+        payload: { title: "Middle deferred" },
+        visibleAfterCursor: "200:middle-deferred",
+        requiresHumanReview: true,
+      },
+      {
+        queue: "tools",
+        id: "oldest-safe",
+        inputHash: computePendingInputHash({ queue: "tools", id: "oldest-safe" }),
+        policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+        capabilityClasses: ["read-only"],
+        payload: { title: "Oldest safe" },
+        visibleAfterCursor: "100:oldest-safe",
+      },
+    ];
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "disabled", tools: "classify" },
+      max: { persona: 0, procedures: 0, verified: 0, tools: 3, crystallization: 0 },
+      runId: "run-generic-contiguous-cursor",
+      adapters: {
+        tools: {
+          queue: "tools",
+          listPending: () => items,
+          decide: decideReadOnlyItem,
+        },
+      },
+    });
+
+    expect(result.queues.tools.decisions.map((d) => d.itemId)).toEqual([
+      "newest-safe",
+      "middle-deferred",
+      "oldest-safe",
+    ]);
+    expect(result.queues.tools.decisions.map((d) => d.action)).toEqual([
+      "classified",
+      "deferred-for-human",
+      "classified",
+    ]);
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("tools", "classify")?.cursor).toBe("300:newest-safe");
     store.close();
   });
 
@@ -268,6 +708,25 @@ describe("pending digest autopilot parent (#1326)", () => {
     ).rejects.toThrow("--apply requires --state-db");
   });
 
+  it("validates apply prerequisites before constructing default adapters", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const listSpy = vi.spyOn(ProposalsDB.prototype, "list");
+
+    await expect(
+      runPendingDigestAutopilot({
+        cfg,
+        factsDb: factsDb(),
+        mode: "apply",
+        runId: "run-apply-no-state-no-adapter-side-effects",
+      }),
+    ).rejects.toThrow("--apply requires --state-db");
+
+    expect(listSpy).not.toHaveBeenCalled();
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    expect(existsSync(paths.proposals)).toBe(false);
+  });
+
   it("captures adapter/list failures as visible failed-validation decisions", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
@@ -298,6 +757,135 @@ describe("pending digest autopilot parent (#1326)", () => {
     expect(result.humanSummary).toContain("failed validation 1");
   });
 
+  it("closes persona proposal DB handles opened by the parent adapter", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    seedQueues(cfg);
+    const closeSpy = vi.spyOn(ProposalsDB.prototype, "close");
+
+    await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      runId: "run-close-persona-db-handles",
+      max: { procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+    });
+
+    expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("parent persona adapter refreshes proposals before each decision", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const older = persona.create({
+      targetFile: "USER.md",
+      title: "Older duplicate",
+      observation: "Existing duplicate proposal.",
+      suggestedChange: "Formatting: duplicate parent adapter marker.",
+      confidence: 0.99,
+      evidenceSessions: ["session-old"],
+    });
+    const newer = persona.create({
+      targetFile: "USER.md",
+      title: "Newer duplicate",
+      observation: "Duplicate proposal to classify.",
+      suggestedChange: "Formatting: duplicate parent adapter marker.",
+      confidence: 0.99,
+      evidenceSessions: ["session-new"],
+    });
+    persona.close();
+    const raw = new DatabaseSync(paths.proposals);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(100, older.id);
+    raw.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(200, newer.id);
+    raw.close();
+
+    const adapters = createDefaultPendingDigestAdapters({ cfg, factsDb: factsDb() });
+    const listed = (await adapters.persona.listPending(null)) as PendingItem[];
+    const newerItem = listed.find((item) => item.id === newer.id);
+    expect(newerItem).toBeDefined();
+
+    const mutator = new ProposalsDB(paths.proposals);
+    mutator.markApplied(older.id);
+    mutator.close();
+
+    const decision = await adapters.persona.decide(newerItem as PendingItem, {
+      runId: "run-parent-persona-refresh",
+      mode: "apply",
+      policy: "cautious",
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+      inputHash: newerItem?.inputHash ?? "missing",
+      actor: { type: "test", id: "unit" },
+    });
+
+    expect(decision).toMatchObject({
+      itemId: newer.id,
+      action: "rejected",
+      reasonCode: "duplicate-applied-proposal",
+    });
+  });
+
+  it("passes the caller workspace through the parent persona adapter", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const callerWorkspace = join(dir, "caller-workspace");
+    const defaultWorkspace = join(dir, "default-workspace");
+    mkdirSync(callerWorkspace, { recursive: true });
+    mkdirSync(defaultWorkspace, { recursive: true });
+    writeFileSync(join(callerWorkspace, "AGENTS.md"), "# AGENTS\nCaller workspace.\n", "utf-8");
+    writeFileSync(join(defaultWorkspace, "AGENTS.md"), "# AGENTS\nDefault workspace.\n", "utf-8");
+    const previousWorkspace = process.env.OPENCLAW_WORKSPACE;
+    process.env.OPENCLAW_WORKSPACE = defaultWorkspace;
+    try {
+      const paths = pendingStorePaths(cfg.sqlitePath);
+      const persona = new ProposalsDB(paths.proposals);
+      cfg.personaProposals.allowedFiles = [
+        ...cfg.personaProposals.allowedFiles,
+        "AGENTS.md",
+      ] as typeof cfg.personaProposals.allowedFiles;
+      const callerPreHash = fileHash(join(callerWorkspace, "AGENTS.md"));
+      const defaultPreHash = fileHash(join(defaultWorkspace, "AGENTS.md"));
+      const p = persona.create({
+        targetFile: "AGENTS.md",
+        title: "Caller workspace formatting",
+        observation: "Formatting-only proposal for the caller workspace.",
+        suggestedChange: "Replace entire file:\n# AGENTS\nCaller workspace!\n",
+        confidence: 0.99,
+        evidenceSessions: ["session-workspace"],
+        targetHash: callerPreHash,
+        targetMtimeMs: null,
+      });
+      persona.close();
+
+      const result = await runPendingDigestAutopilot({
+        cfg,
+        factsDb: factsDb(),
+        workspace: callerWorkspace,
+        stateDbPath: join(dir, "autopilot.db"),
+        mode: "apply",
+        policies: { persona: "apply-safe" },
+        max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+        runId: "run-parent-persona-caller-workspace",
+      });
+
+      const decision = result.queues.persona.decisions[0];
+      expect(decision).toMatchObject({
+        itemId: p.id,
+        action: "applied",
+        reasonCode: "safe-low-risk-localized-change",
+      });
+      expect(decision?.summary?.metadata).toMatchObject({
+        targetHash: callerPreHash,
+      });
+      expect(decision?.summary?.metadata).not.toMatchObject({
+        targetHash: defaultPreHash,
+      });
+    } finally {
+      if (previousWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
+      else process.env.OPENCLAW_WORKSPACE = previousWorkspace;
+    }
+  });
+
   it("parent route delegates to the same adapter decision path as standalone child route", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
@@ -320,8 +908,8 @@ describe("pending digest autopilot parent (#1326)", () => {
       fixtures: [
         {
           item: fixture,
-          policy: "default",
-          policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+          policy: "cautious",
+          policyVersion: fixture.policyVersion,
         },
       ],
     });
@@ -459,3 +1047,7 @@ describe("pending digest autopilot parent (#1326)", () => {
     });
   });
 });
+
+function fileHash(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}

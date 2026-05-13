@@ -54,6 +54,7 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
     .option("--apply", "Record allowed parent classify decisions through #1334 state; no queue mutations in Phase 1")
     .option("--json", "Emit stable structured JSON instead of the concise human summary")
     .option("--state-db <path>", "Optional pending-autopilot state DB for apply-mode decision records")
+    .option("--workspace <path>", "Workspace containing allowed persona target files")
     .option("--persona-policy <policy>", "disabled|report-only|cautious|apply-safe")
     .option("--procedure-policy <policy>", "disabled|report-only|dry-run-skills|auto-safe")
     .option("--verified-policy <policy>", "disabled|report-only|classify|apply-obvious")
@@ -94,6 +95,7 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
           policies,
           max,
           stateDbPath: opts?.stateDb,
+          workspace: opts?.workspace,
         });
         process.stdout.write(opts?.json ? stablePendingDigestAutopilotJson(result) : `${result.humanSummary}\n`);
       }),
@@ -105,6 +107,7 @@ type DigestAutopilotCliOptions = {
   apply?: boolean;
   json?: boolean;
   stateDb?: string;
+  workspace?: string;
   personaPolicy?: string;
   procedurePolicy?: string;
   verifiedPolicy?: string;

@@ -11,7 +11,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { ProcedureTriageReport, ProcedureTriageRow } from "../backends/facts-db/procedures.js";
-import { type ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
+import { ProposalsDB } from "../backends/proposals-db.js";
 import { type ToolProposal, ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
@@ -29,7 +29,14 @@ import {
   computePendingInputHash,
   createPendingAutopilotRunId,
   createStableRunSummary,
+  shouldAdvancePendingCursor,
 } from "./pending-autopilot/index.js";
+import {
+  createPersonaProposalTriageAdapter,
+  runPersonaProposalTriage,
+  type PersonaProposalDecisionView,
+  type PersonaProposalPendingItem,
+} from "./persona-proposal-triage.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
 
 export const PENDING_DIGEST_AUTOPILOT_POLICY_VERSION = "parent-skeleton-v1";
@@ -63,6 +70,7 @@ export interface PendingDigestAutopilotMaxima {
 export interface PendingDigestAutopilotOptions {
   cfg: HybridMemoryConfig;
   factsDb: PendingDigestFactsDb;
+  workspace?: string;
   mode?: AutopilotMode;
   policies?: Partial<PendingDigestAutopilotPolicies>;
   max?: Partial<PendingDigestAutopilotMaxima>;
@@ -94,7 +102,7 @@ export interface PendingDigestAutopilotResult {
   runId: string;
   mode: AutopilotMode;
   policyVersion: string;
-  applyBehavior: "record-decisions-only" | "non-mutating-dry-run";
+  applyBehavior: "child-guarded-persona-apply" | "record-decisions-only" | "non-mutating-dry-run";
   policies: PendingDigestAutopilotPolicies;
   max: PendingDigestAutopilotMaxima;
   counts: {
@@ -180,22 +188,20 @@ export async function runPendingDigestAutopilot(
     type: "agent" as const,
     id: opts.actorId ?? "pending-digest-autopilot",
   };
+  if (normalized.mode === "apply" && !opts.stateDbPath) {
+    throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
+  }
   const digest = buildPendingReviewDigestReport({
     cfg: opts.cfg,
     factsDb: opts.factsDb,
     now: opts.now,
   });
-  const adapters = {
-    ...createDefaultPendingDigestAdapters(opts),
-    ...(opts.adapters ?? {}),
-  };
-  if (normalized.mode === "apply" && !opts.stateDbPath) {
-    throw new Error("--apply requires --state-db so parent classification decisions are recorded durably");
-  }
 
-  let store: PendingAutopilotStore | null = null;
+  let store: PendingAutopilotStore | undefined;
+  let adapters: Partial<Record<PendingQueue, PendingQueueAdapter>> | null = null;
   try {
-    store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : null;
+    adapters = createPendingDigestAdapters(opts);
+    store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : undefined;
     const decisions: PendingDecision[] = [];
     const queues = Object.fromEntries(
       PENDING_QUEUES.map((queue) => [
@@ -268,6 +274,8 @@ export async function runPendingDigestAutopilot(
         const listed = await adapter.listPending(store?.getCursor(queue, policy) ?? null);
         const items = listed.slice(0, normalized.max[queue]);
         queueResult.inspected = items.length;
+        let cursorAdvanceCandidate: { decision: PendingDecision; cursor: string } | null = null;
+        let cursorAdvanceBlocked = false;
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
           const context: PendingDecisionContext = {
@@ -279,11 +287,55 @@ export async function runPendingDigestAutopilot(
             inputHash: item.inputHash,
             actor,
           };
-          const decision = await adapter.decide(item, context);
+          let decision = await adapter.decide(item, context);
+          if (queue === "persona" && normalized.mode === "apply" && policy !== "report-only") {
+            if (hasPersonaParentApplyMetadata(adapter)) {
+              const applied = await runPersonaProposalTriage({
+                proposalsDb: adapter.proposalsDb,
+                cfg: opts.cfg,
+                workspace: opts.workspace,
+                stateDbPath: opts.stateDbPath,
+                mode: "apply",
+                policy: policy as "cautious" | "apply-safe",
+                max: 1,
+                proposalId: item.id,
+                runId,
+                jobId: opts.jobId,
+                actor,
+                now: opts.now,
+                runLifecycle: "embedded",
+                store,
+              });
+              const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
+              const latestDecision = childDecision
+                ? ((store?.listDecisions({ queue: "persona", itemId: item.id }).at(-1) as
+                    | PendingDecision
+                    | undefined) ?? decisionFromPersonaView(decision, childDecision))
+                : makeUnprocessedPersonaDecision(decision);
+              decision = latestDecision;
+              if (!childDecision) {
+                store?.recordDecision(decision);
+              }
+            } else {
+              decision = makeUnsupportedPersonaApplyAdapterDecision(decision);
+              store?.recordDecision(decision);
+            }
+          } else {
+            store?.recordDecision(decision);
+          }
           decisions.push(decision);
           queueResult.decisions.push(decision);
-          const inserted = store?.recordDecision(decision).inserted ?? false;
-          if (inserted) store?.advanceCursorIfSafe(decision, item.visibleAfterCursor ?? item.id);
+          const itemCursor = item.visibleAfterCursor ?? item.id;
+          if (shouldAdvancePendingCursor(decision)) {
+            if (!cursorAdvanceBlocked) {
+              cursorAdvanceCandidate = { decision, cursor: itemCursor };
+            }
+          } else {
+            cursorAdvanceBlocked = true;
+          }
+        }
+        if (policy !== "report-only" && cursorAdvanceCandidate !== null && items.length > 0) {
+          store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);
         }
       } catch (err) {
         queueResult.inspected = queueResult.decisions.length;
@@ -325,7 +377,7 @@ export async function runPendingDigestAutopilot(
       runId,
       mode: normalized.mode,
       policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
-      applyBehavior: normalized.mode === "apply" ? "record-decisions-only" : "non-mutating-dry-run",
+      applyBehavior: normalized.mode === "apply" ? "child-guarded-persona-apply" : "non-mutating-dry-run",
       policies: normalized.policies,
       max: normalized.max,
       counts: summarizeCounts(decisions),
@@ -337,6 +389,9 @@ export async function runPendingDigestAutopilot(
     result.humanSummary = renderPendingDigestAutopilotHumanSummary(result);
     return result;
   } finally {
+    for (const adapter of Object.values(adapters ?? {})) {
+      (adapter as { close?: () => void }).close?.();
+    }
     store?.close();
   }
 }
@@ -344,7 +399,7 @@ export async function runPendingDigestAutopilot(
 export function renderPendingDigestAutopilotHumanSummary(result: PendingDigestAutopilotResult): string {
   const lines = [
     `Pending digest autopilot ${result.runId} (${result.mode})`,
-    `Apply behavior: ${result.applyBehavior}. Queue stores are not mutated by the #1326 parent skeleton.`,
+    `Apply behavior: ${result.applyBehavior}. Persona apply-mode decisions route through the guarded child adapter; other queues remain read-only parent classifications.`,
     `Inspected ${result.counts.inspected}; classified ${result.counts.classified}; deferred ${result.counts.deferred}; skipped ${result.counts.skipped}; failed validation ${result.counts.failedValidation}.`,
     "Queues:",
   ];
@@ -360,43 +415,171 @@ export function renderPendingDigestAutopilotHumanSummary(result: PendingDigestAu
     );
   } else {
     lines.push(
-      "Next: no parent-applied queue mutations. Use child adapters for queue-specific review/apply when implemented.",
+      "Next: no parent-applied non-persona queue mutations. Use child adapters for queue-specific review/apply when implemented.",
     );
   }
   return lines.join("\n");
 }
 
 export function createDefaultPendingDigestAdapters(
-  opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb">,
+  opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb" | "workspace">,
 ): Record<PendingQueue, PendingQueueAdapter> {
+  return createPendingDigestAdapters(opts) as Record<PendingQueue, PendingQueueAdapter>;
+}
+
+function createPendingDigestAdapters(
+  opts: Pick<PendingDigestAutopilotOptions, "cfg" | "factsDb" | "workspace" | "adapters">,
+): Partial<Record<PendingQueue, PendingQueueAdapter>> {
+  const overrides = opts.adapters ?? {};
   const paths = pendingStorePaths(opts.cfg.sqlitePath);
   return {
-    persona: createPersonaReadOnlyAdapter({
-      cfg: opts.cfg,
-      dbPath: paths.proposals,
-    }),
-    procedures: createProcedureReadOnlyAdapter(opts.factsDb),
-    verified: createVerifiedReadOnlyAdapter(opts.factsDb),
-    tools: createToolProposalReadOnlyAdapter(paths.toolProposals),
-    crystallization: createCrystallizationReadOnlyAdapter(paths.crystallization),
+    persona:
+      overrides.persona ?? createPersonaProposalTriageAdapterWithCloseable(paths.proposals, opts.cfg, opts.workspace),
+    procedures: overrides.procedures ?? createProcedureReadOnlyAdapter(opts.factsDb),
+    verified: overrides.verified ?? createVerifiedReadOnlyAdapter(opts.factsDb),
+    tools: overrides.tools ?? createToolProposalReadOnlyAdapter(paths.toolProposals),
+    crystallization: overrides.crystallization ?? createCrystallizationReadOnlyAdapter(paths.crystallization),
   };
 }
 
-export function createPersonaReadOnlyAdapter(input: {
-  cfg: HybridMemoryConfig;
-  dbPath: string;
-}): PendingQueueAdapter<QueueItem> {
+type PersonaParentAdapter = PendingQueueAdapter<QueueItem> & { proposalsDb: ProposalsDB; close?: () => void };
+
+function hasPersonaParentApplyMetadata(adapter: PendingQueueAdapter): adapter is PersonaParentAdapter {
+  return (adapter as { proposalsDb?: unknown }).proposalsDb instanceof ProposalsDB;
+}
+
+function createPersonaProposalTriageAdapterWithCloseable(
+  dbPath: string,
+  cfg: HybridMemoryConfig,
+  workspace?: string,
+): PersonaParentAdapter {
+  const proposalsDb = new ProposalsDB(dbPath);
   return {
     queue: "persona",
-    listPending: () => {
-      if (!input.cfg.personaProposals.enabled) return [];
-      return withCloseable(
-        () => new ProposalsDB(input.dbPath),
-        (store) => store.list({ status: "pending" }).map(personaProposalToItem),
-      );
+    proposalsDb,
+    listPending: (cursor) => {
+      if (!cfg.personaProposals.enabled) return [];
+      const adapter = createPersonaProposalTriageAdapter({ proposalsDb, cfg, workspace });
+      return adapter.listPending(cursor);
     },
-    decide: decideReadOnlyItem,
+    decide: (item, context) => {
+      const adapter = createPersonaProposalTriageAdapter({
+        proposalsDb,
+        cfg,
+        workspace,
+        allProposals: proposalsDb.list(),
+      });
+      return adapter.decide(item as PersonaProposalPendingItem, context);
+    },
+    close: () => proposalsDb.close(),
   };
+}
+
+function makeUnsupportedPersonaApplyAdapterDecision(base: PendingDecision): PendingDecision {
+  const summaryBody =
+    "Persona parent apply mode requires the built-in persona adapter metadata for guarded child triage; custom adapter output was left unmutated and the cursor will not advance.";
+  return {
+    ...base,
+    action: "failed-validation",
+    reasonCode: "capability-not-allowed",
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    humanReviewRequired: true,
+    summary: {
+      ...(base.summary ?? {}),
+      body: summaryBody,
+    },
+    audit: {
+      ...(base.audit ?? {
+        queue: base.queue,
+        itemId: base.itemId,
+        inputHash: base.inputHash,
+        policy: base.policy,
+        policyVersion: base.policyVersion,
+        action: base.action,
+        reasonCode: base.reasonCode,
+        capabilityClass: base.capabilityClass,
+        humanReviewRequired: base.humanReviewRequired,
+        evidence: base.evidence,
+        actor: base.actor,
+        runId: base.runId,
+        jobId: base.jobId,
+      }),
+      action: "failed-validation",
+      reasonCode: "capability-not-allowed",
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+    },
+  };
+}
+
+function makeUnprocessedPersonaDecision(base: PendingDecision): PendingDecision {
+  return {
+    ...base,
+    action: "failed-validation",
+    reasonCode: "invalid-item",
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    humanReviewRequired: true,
+    summary: {
+      ...(base.summary ?? {}),
+      body: "Targeted persona child triage did not process this proposal; parent will not advance cursor or record fallback mutation.",
+    },
+    audit: {
+      ...(base.audit ?? {
+        queue: base.queue,
+        itemId: base.itemId,
+        inputHash: base.inputHash,
+        policy: base.policy,
+        policyVersion: base.policyVersion,
+        action: base.action,
+        reasonCode: base.reasonCode,
+        capabilityClass: base.capabilityClass,
+        humanReviewRequired: base.humanReviewRequired,
+        evidence: base.evidence,
+        actor: base.actor,
+        runId: base.runId,
+        jobId: base.jobId,
+      }),
+      action: "failed-validation",
+      reasonCode: "invalid-item",
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+    },
+  };
+}
+
+function decisionFromPersonaView(base: PendingDecision, view: PersonaProposalDecisionView): PendingDecision {
+  const actionClass = deriveActionClass(view.action);
+  return {
+    ...base,
+    action: view.action,
+    reasonCode: view.reason,
+    actionClass,
+    capabilityClass: view.capability,
+    confidence: view.confidence,
+    humanReviewRequired: view.humanReviewRequired,
+    summary: { ...(base.summary ?? {}), body: view.diffSummary },
+    audit: base.audit
+      ? {
+          ...base.audit,
+          action: view.action,
+          reasonCode: view.reason,
+          capabilityClass: view.capability,
+          humanReviewRequired: view.humanReviewRequired,
+        }
+      : undefined,
+  };
+}
+
+function deriveActionClass(action: PendingDecision["action"]): PendingDecision["actionClass"] {
+  if (action === "applied") return "low-risk-apply";
+  if (action === "rejected") return "state-transition";
+  if (action === "deferred-for-human") return "record-review";
+  if (action === "failed-validation") return "observe";
+  if (action === "reported") return "observe";
+  if (action === "classified") return "preview";
+  return "observe";
 }
 
 export function createProcedureReadOnlyAdapter(factsDb: PendingDigestFactsDb): PendingQueueAdapter<QueueItem> {
@@ -501,19 +684,6 @@ export function decideReadOnlyItem(item: QueueItem, context: PendingDecisionCont
       },
     },
   };
-}
-
-function personaProposalToItem(p: ProposalEntry): QueueItem {
-  const payload = {
-    source: "persona-proposals",
-    title: p.title,
-    targetFile: p.targetFile,
-    confidence: p.confidence,
-    createdAt: p.createdAt,
-    evidenceSessions: p.evidenceSessions,
-    summary: `Pending persona proposal for ${p.targetFile}`,
-  };
-  return makeItem("persona", p.id, payload, true);
 }
 
 function procedureRowToItem(p: ProcedureTriageRow): QueueItem {
@@ -713,13 +883,29 @@ function withCloseable<TStore extends { close?: () => void }, T>(factory: () => 
   let store: TStore | null = null;
   try {
     store = factory();
-    return fn(store);
-  } finally {
+    const result = fn(store);
+    if (result instanceof Promise) {
+      return result.finally(() => {
+        try {
+          store?.close?.();
+        } catch {
+          // Best-effort close for inventory readers.
+        }
+      }) as T;
+    }
     try {
       store?.close?.();
     } catch {
       // Best-effort close for inventory readers.
     }
+    return result;
+  } catch (err) {
+    try {
+      store?.close?.();
+    } catch {
+      // Best-effort close for inventory readers.
+    }
+    throw err;
   }
 }
 

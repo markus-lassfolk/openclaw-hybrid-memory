@@ -431,6 +431,15 @@ export type HybridMemCliContext = {
       error?: string;
     }>;
     showItem: (id: string) => Promise<{ type: "fact" | "proposal"; data: unknown } | null>;
+    triageProposals?: (opts: {
+      dryRun?: boolean;
+      apply?: boolean;
+      policy?: string;
+      max?: number;
+      json?: boolean;
+      stateDb?: string;
+      workspace?: string;
+    }) => Promise<import("../services/persona-proposal-triage.js").PersonaProposalTriageResult>;
   };
   tieringEnabled: boolean;
   resolvedSqlitePath?: string;

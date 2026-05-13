@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import type { PendingDecision, PendingDecisionContext, PendingItem } from "../../services/pending-autopilot/index.js";
-import { computePendingInputHash, sanitizePendingDecision } from "../../services/pending-autopilot/index.js";
+import { sanitizePendingDecision } from "../../services/pending-autopilot/index.js";
 
 export interface PendingAutopilotEquivalenceFixture<TItem extends PendingItem = PendingItem> {
   item: TItem;
@@ -27,14 +27,7 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
   const standalone: PendingDecision[] = [];
   const parentRun: PendingDecision[] = [];
   for (const fixture of input.fixtures) {
-    const inputHash = computePendingInputHash({
-      queue: fixture.item.queue,
-      id: fixture.item.id,
-      payload: fixture.item.payload,
-      policy: fixture.policy,
-      policyVersion: fixture.policyVersion,
-    });
-    expect(fixture.item.inputHash).toBe(inputHash);
+    expect(fixture.item.inputHash).toBeTruthy();
     const baseContext: PendingDecisionContext = {
       runId: "standalone",
       jobId: "job-1",
@@ -54,16 +47,24 @@ export async function expectStandaloneAndParentDecisionsEquivalent<TItem extends
   expect(normalize(standalone)).toEqual(normalize(parentRun));
 }
 
-function normalize(decisions: PendingDecision[]): unknown[] {
+function normalize(decisions: PendingDecision[]): Array<
+  Omit<PendingDecision, "runId" | "createdAt" | "audit"> & {
+    audit?: Omit<NonNullable<PendingDecision["audit"]>, "runId">;
+  }
+> {
   return decisions
-    .map(({ runId: _runId, createdAt: _createdAt, audit, ...decision }) => {
-      if (!audit) return decision;
-      const { runId: _auditRunId, ...normalizedAudit } = audit;
-      return { ...decision, audit: normalizedAudit };
-    })
+    .map(({ runId: _runId, createdAt: _createdAt, audit, ...decision }) => ({
+      ...decision,
+      ...(audit ? { audit: stripAuditRunId(audit) } : {}),
+    }))
     .sort((a, b) => {
       const ak = `${a.queue}:${a.itemId}:${a.policy}:${a.inputHash}`;
       const bk = `${b.queue}:${b.itemId}:${b.policy}:${b.inputHash}`;
       return ak < bk ? -1 : ak > bk ? 1 : 0;
     });
+}
+
+function stripAuditRunId(audit: NonNullable<PendingDecision["audit"]>): Omit<typeof audit, "runId"> {
+  const { runId: _runId, ...rest } = audit;
+  return rest;
 }

@@ -16,6 +16,7 @@ import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
 import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
+import { runPersonaProposalTriage, validatePersonaPolicy } from "../services/persona-proposal-triage.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
 import {
@@ -998,6 +999,29 @@ function buildListCommands(
         if (p) return { type: "proposal" as const, data: p };
       }
       return null;
+    },
+    triageProposals: async (opts: {
+      dryRun?: boolean;
+      apply?: boolean;
+      policy?: string;
+      max?: number;
+      json?: boolean;
+      stateDb?: string;
+      workspace?: string;
+    }) => {
+      if (!proposalsDb) throw new Error("Proposals not available");
+      if (opts.dryRun && opts.apply) throw new Error("Use only one of --dry-run or --apply");
+      const policy = opts.policy ?? "report-only";
+      validatePersonaPolicy(policy);
+      return runPersonaProposalTriage({
+        proposalsDb,
+        cfg,
+        mode: opts.dryRun ? "dry-run" : opts.apply ? "apply" : "dry-run",
+        policy,
+        max: opts.max,
+        stateDbPath: opts.stateDb,
+        workspace: opts.workspace,
+      });
     },
   };
 }
