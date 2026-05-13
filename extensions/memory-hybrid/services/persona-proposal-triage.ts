@@ -263,11 +263,11 @@ export async function runPersonaProposalTriage(
         store?.recordDecision(decision);
       }
       const itemCursor = item.visibleAfterCursor ?? item.id;
-      if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
+      if (shouldAdvancePendingCursor(decision)) {
         if (cursorAdvanceCandidate === null) {
           cursorAdvanceCandidate = { decision, cursor: itemCursor };
         }
-      } else {
+      } else if (cursorAdvanceCandidate === null) {
         cursorAdvanceBlocked = true;
       }
       decisions.push(decision);
@@ -969,6 +969,7 @@ ${p.suggestedChange}`.toLowerCase();
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
     if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
     if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
+    return "medium";
   } else if (
     /\b(identit(?:y|ies)|personalit(?:y|ies)|voice|tone|privacy|security|external|group chat|user preferences?|profile|personal facts?|memory rules?)\b/.test(
       text,

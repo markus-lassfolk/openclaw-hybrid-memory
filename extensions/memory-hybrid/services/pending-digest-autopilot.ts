@@ -325,11 +325,11 @@ export async function runPendingDigestAutopilot(
           decisions.push(decision);
           queueResult.decisions.push(decision);
           const itemCursor = item.visibleAfterCursor ?? item.id;
-          if (!cursorAdvanceBlocked && shouldAdvancePendingCursor(decision)) {
+          if (shouldAdvancePendingCursor(decision)) {
             if (cursorAdvanceCandidate === null) {
               cursorAdvanceCandidate = { decision, cursor: itemCursor };
             }
-          } else {
+          } else if (cursorAdvanceCandidate === null) {
             cursorAdvanceBlocked = true;
           }
         }
