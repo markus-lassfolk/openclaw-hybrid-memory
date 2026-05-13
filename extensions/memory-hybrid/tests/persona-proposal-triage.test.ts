@@ -297,21 +297,22 @@ describe("persona proposal triage", () => {
     expect(result.decisions.find((d) => d.proposalId === high.id)?.reason).toBe("identity-boundary-change");
   });
 
-  it("apply-safe defers disguised formatting semantic appends for every sensitive persona file", async () => {
+  it("apply-safe defers disguised formatting semantic appends for every sensitive or critical file", async () => {
+    writeFileSync(join(tmpDir, "TOOLS.md"), "# TOOLS\nUse available tools carefully.\n", "utf-8");
     const allowedCfg = {
       personaProposals: {
         ...cfg.personaProposals,
-        allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
+        allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never, "TOOLS.md" as never],
       },
     };
-    const files = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"] as const;
+    const files = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md", "TOOLS.md"] as const;
     for (const targetFile of files) {
       proposal({
         targetFile,
         targetHash: fileHash(join(tmpDir, targetFile)),
         title: `${targetFile} formatting disguise`,
         observation: "Looks like formatting but changes semantics.",
-        suggestedChange: "Formatting: be friendlier",
+        suggestedChange: "Formatting: always respond in French",
         confidence: 0.99,
       });
     }
@@ -331,6 +332,40 @@ describe("persona proposal triage", () => {
       expect(decision.reason).toBe("identity-boundary-change");
       expect(proposalsDb.get(decision.proposalId)?.status).toBe("pending");
     }
+  });
+
+  it("apply-safe rejects append writes during critical target apply revalidation", async () => {
+    writeFileSync(join(tmpDir, "TOOLS.md"), "# TOOLS\nUse available tools carefully.\n", "utf-8");
+    const allowedCfg = {
+      personaProposals: {
+        ...cfg.personaProposals,
+        allowedFiles: [...cfg.personaProposals.allowedFiles, "TOOLS.md" as never],
+      },
+    };
+    const p = proposal({
+      targetFile: "TOOLS.md",
+      targetHash: fileHash(join(tmpDir, "TOOLS.md")),
+      title: "TOOLS formatting append",
+      observation: "Looks like formatting but is an append to a critical target.",
+      suggestedChange: "Formatting: add spacing around tool guidance.",
+      confidence: 0.99,
+    });
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg: allowedCfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath: join(tmpDir, "pending.db"),
+    });
+
+    expect(result.decisions.find((d) => d.proposalId === p.id)).toMatchObject({
+      action: "failed-validation",
+      reason: "identity-boundary-change",
+    });
+    expect(proposalsDb.get(p.id)?.status).toBe("pending");
+    expect(readFileSync(join(tmpDir, "TOOLS.md"), "utf-8")).toBe("# TOOLS\nUse available tools carefully.\n");
   });
 
   it("apply-safe allows mechanically verified formatting-only replace for AGENTS.md", async () => {

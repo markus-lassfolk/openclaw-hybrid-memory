@@ -1021,7 +1021,7 @@ function isAllowedSensitivePersonaApply(
   applied: string,
   suggestedChange: string,
 ): boolean {
-  if (!SENSITIVE_PERSONA_FILES.has(targetFile)) return true;
+  if (!isCriticalTarget(targetFile)) return true;
   const parsed = parseSuggestedChange(suggestedChange);
   if (parsed.changeType !== "replace") return false;
   return stripWhitespaceAndPunctuation(original) === stripWhitespaceAndPunctuation(applied);
