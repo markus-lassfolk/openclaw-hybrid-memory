@@ -154,7 +154,11 @@ export function createPersonaProposalTriageAdapter(input: {
   workspace?: string;
   allProposals?: ProposalEntry[];
   proposalId?: string;
-}): PendingQueueAdapter<PersonaProposalPendingItem> {
+}): PendingQueueAdapter<PersonaProposalPendingItem> & {
+  proposalsDb: ProposalsDB;
+  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  workspace: string;
+} {
   return {
     queue: "persona",
     listPending: (cursor) => listPersonaProposalItems(input, cursor),
@@ -162,6 +166,9 @@ export function createPersonaProposalTriageAdapter(input: {
     apply: () => {
       throw new Error("Use runPersonaProposalTriage for lock/CAS guarded apply semantics.");
     },
+    proposalsDb: input.proposalsDb,
+    cfg: input.cfg,
+    workspace: input.workspace ?? defaultWorkspace(),
   };
 }
 
@@ -1352,18 +1359,28 @@ function defaultWorkspace(): string {
   return getEnv("OPENCLAW_WORKSPACE") ?? join(process.env.HOME ?? ".", ".openclaw", "workspace");
 }
 
-export function createPersonaParentExecutionPath(adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
-  return (
-    item: PersonaProposalPendingItem,
-    context: PendingDecisionContext,
-  ): Promise<PendingDecision> | PendingDecision => adapter.decide(item, { ...context, runId: "equivalence-run" });
+export function createPersonaParentExecutionPath(
+  adapter: PendingQueueAdapter<PersonaProposalPendingItem> & {
+    proposalsDb: ProposalsDB;
+    cfg: Pick<HybridMemoryConfig, "personaProposals">;
+    workspace: string;
+  },
+) {
+  return async (item: PersonaProposalPendingItem, context: PendingDecisionContext): Promise<PendingDecision> => {
+    const listed = await adapter.listPending(null);
+    const listedItem = listed.find((i) => i.id === item.id);
+    if (!listedItem) {
+      throw new Error(`Parent execution path: item ${item.id} not found in adapter.listPending()`);
+    }
+    return adapter.decide(listedItem, context);
+  };
 }
 
 export function createPersonaStandaloneExecutionPath(adapter: PendingQueueAdapter<PersonaProposalPendingItem>) {
   return (
     item: PersonaProposalPendingItem,
     context: PendingDecisionContext,
-  ): Promise<PendingDecision> | PendingDecision => adapter.decide(item, { ...context, runId: "equivalence-run" });
+  ): Promise<PendingDecision> | PendingDecision => adapter.decide(item, context);
 }
 
 export function createPersonaProposalFixtureItem(input: {
