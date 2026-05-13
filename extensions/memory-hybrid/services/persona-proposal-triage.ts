@@ -263,6 +263,7 @@ export async function runPersonaProposalTriage(
       policy !== "report-only" &&
       opts.proposalId === undefined &&
       cursorAdvanceCandidate !== null &&
+      !cursorAdvanceBlocked &&
       pending.length > 0
     ) {
       store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);
@@ -969,14 +970,14 @@ function isCriticalTargetFormattingOnly(suggestedChange: string): boolean {
   const parsed = parseSuggestedChange(suggestedChange);
   const hasFormattingPrefix = /^\s*(formatting|typo|whitespace|punctuation)\b/i.test(suggestedChange);
   if (!hasFormattingPrefix) return false;
+  const containsSemanticKeywords =
+    /\b(personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate|friendlier|friendly|warmer|casual|greeting)\b/i.test(
+      suggestedChange,
+    );
   if (parsed.changeType === "replace") {
-    const containsSemanticKeywords =
-      /\b(personalit(?:y|ies)|voice|tone|behaviou?r(?:al)?|instructions?|responses?|reply|replies|always|never|must|should|redirect|defer|escalate|refer|contact|route|forward|delegate|friendlier|friendly|warmer|casual|greeting)\b/i.test(
-        suggestedChange,
-      );
     return !containsSemanticKeywords;
   }
-  return true;
+  return !containsSemanticKeywords;
 }
 
 function isMechanicallyVerifiedSensitiveFormatting(item: PersonaProposalPendingItem, suggestedChange: string): boolean {

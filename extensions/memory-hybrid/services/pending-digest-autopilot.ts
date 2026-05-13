@@ -332,7 +332,7 @@ export async function runPendingDigestAutopilot(
             cursorAdvanceBlocked = true;
           }
         }
-        if (policy !== "report-only" && cursorAdvanceCandidate !== null && items.length > 0) {
+        if (policy !== "report-only" && cursorAdvanceCandidate !== null && !cursorAdvanceBlocked && items.length > 0) {
           store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);
         }
       } catch (err) {
