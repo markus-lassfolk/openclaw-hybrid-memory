@@ -98,7 +98,7 @@ function stripReplaceContentLeadIn(input: string): string {
     if (lower.startsWith(leadIn)) {
       const afterLeadIn = trimmed.slice(leadIn.length);
       const trimmedAfter = afterLeadIn.trimStart();
-      if (trimmedAfter.startsWith(":") || trimmedAfter.startsWith(".")) {
+      if (trimmedAfter.startsWith(":")) {
         return stripOneLeadingSeparator(afterLeadIn);
       }
     }
