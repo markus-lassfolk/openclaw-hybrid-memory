@@ -16,6 +16,9 @@ export interface ExitStep {
   step: string;
   exitCode: number;
   line: string;
+  status?: "ok" | "failed" | "skipped";
+  reason?: string;
+  durationMs?: number;
   failureReason?: string;
   strictFailureReason?: string;
 }
@@ -48,15 +51,23 @@ export function parseExitLine(line: string): ExitStep | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
-  // Match: ISO timestamp, step name, exit code
-  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(\S+)\s+exit=(-?\d+)$/);
+  // Legacy format: "<ts> <step> exit=<code>"
+  // Extended format: "<ts> step=<step> exit=<code> status=<ok|failed|skipped> reason=<reason> duration_ms=<ms>"
+  const match = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(?:(?:step=)?(\S+))\s+exit=(-?\d+)(?:\s+status=(ok|failed|skipped))?(?:\s+reason=(\S+))?(?:\s+duration_ms=(\d+))?.*$/,
+  );
   if (!match) return null;
+  const rawStep = match[2];
+  const step = rawStep.startsWith("step=") ? rawStep.slice("step=".length) : rawStep;
 
   return {
     timestamp: match[1],
-    step: match[2],
+    step,
     exitCode: Number.parseInt(match[3], 10),
     line: trimmed,
+    status: (match[4] as ExitStep["status"]) ?? undefined,
+    reason: match[5] ?? undefined,
+    durationMs: match[6] ? Number.parseInt(match[6], 10) : undefined,
   };
 }
 

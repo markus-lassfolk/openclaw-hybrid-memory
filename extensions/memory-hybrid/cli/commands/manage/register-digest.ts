@@ -11,6 +11,7 @@ import {
   runPendingDigestAutopilot,
   stablePendingDigestAutopilotJson,
 } from "../../../services/pending-digest-autopilot.js";
+import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import {
   buildPendingReviewDigestReport,
   writePendingReviewDigestOutput,
@@ -98,6 +99,29 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
           workspace: opts?.workspace,
         });
         process.stdout.write(opts?.json ? stablePendingDigestAutopilotJson(result) : `${result.humanSummary}\n`);
+      }),
+    );
+
+  digest
+    .command("autopilot-cron")
+    .description(
+      "Cron wrapper for pending digest autopilot (#1330). Enforces guard/lock/config safety, writes HM artifacts, and emits structured summary.",
+    )
+    .option("--json", "Emit structured summary JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        const result = await runPendingDigestAutopilotCron({
+          cfg: b.cfg,
+          factsDb: b.factsDb,
+        });
+        process.stdout.write(
+          opts?.json ? `${JSON.stringify(result.summary, null, 2)}\n` : `${result.humanSummary}\n`,
+        );
+        if (result.summary.status === "failed") {
+          throw new Error(
+            `pending digest autopilot cron failed; see ${result.summary.artifacts.hmLog} and ${result.summary.artifacts.hmExit}`,
+          );
+        }
       }),
     );
 }

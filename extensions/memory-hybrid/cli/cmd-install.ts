@@ -752,6 +752,24 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Monday 08:20 | weekly-pending-digest-autopilot | guarded pending digest autopilot cron wrapper
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest-autopilot`,
+    sessionTarget: "isolated",
+    name: "weekly-pending-digest-autopilot",
+    schedule: { kind: "cron", expr: "20 8 * * 1" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-pending-digest-autopilot", {
+      preamble:
+        "Weekly pending-digest autopilot wrapper. Respect digest.autopilot config defaults (disabled + dry-run), keep durable HM_LOG/HM_EXIT artifacts, and fail on inner-step failures.",
+      steps: [{ name: "digest-autopilot-cron", cmd: "openclaw hybrid-mem digest autopilot-cron --json" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
@@ -957,6 +975,8 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) =>
     /weekly-pending-digest|pending digest/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest-autopilot`]: (j) =>
+    /weekly-pending-digest-autopilot|pending digest autopilot/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`]: (j) =>
     /maintenance-log-analyzer|analyze-maintenance-logs/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>

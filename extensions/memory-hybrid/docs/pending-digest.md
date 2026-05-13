@@ -69,3 +69,19 @@ openclaw hybrid-mem digest pending --since 7d --format md
 ```
 
 Unlike internal maintenance jobs, this job uses announce delivery so the rendered digest is visible to the operator.
+
+## Weekly pending-digest autopilot wrapper
+
+`hybrid-mem install` / `upgrade` also installs:
+
+```text
+hybrid-mem:weekly-pending-digest-autopilot
+```
+
+It runs after the weekly digest window (Mondays at 08:20) and executes:
+
+```bash
+openclaw hybrid-mem digest autopilot-cron --json
+```
+
+The wrapper is safe-by-default (`digest.autopilot.enabled=false`, `mode=dry-run`), emits structured `HM_LOG`/`HM_EXIT` rows for each autopilot step, validates the ledger, and writes JSON/human summaries for maintenance analysis.

@@ -178,6 +178,27 @@ describe("maintenance log analyzer", () => {
     expect(report.digestMd).toContain("nightly-distill");
   });
 
+  it("parses extended HM_EXIT lines with step=<name> format", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260513");
+    mkdirSync(day, { recursive: true });
+    const exitPath = join(day, "weekly-pending-digest-autopilot-20260513T082000Z-123.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(
+      exitPath,
+      [
+        "2026-05-13T08:20:01Z step=guard-check exit=0 status=ok reason=ok duration_ms=10",
+        "2026-05-13T08:20:02Z step=digest-autopilot exit=1 status=failed reason=inner_command_failed duration_ms=20",
+      ].join("\n"),
+    );
+    writeFileSync(logPath, "digest autopilot failed");
+
+    const steps = collectMaintenanceSteps(root, "24h", Date.UTC(2026, 4, 13, 9, 0, 0));
+    expect(steps).toHaveLength(2);
+    expect(steps[0].step).toBe("guard-check");
+    expect(steps[1].step).toBe("digest-autopilot");
+  });
+
   it("flags empty exit ledger + progress log as orchestration bug (root-level cron files)", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");

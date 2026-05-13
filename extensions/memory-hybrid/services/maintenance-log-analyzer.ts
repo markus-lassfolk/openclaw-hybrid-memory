@@ -351,7 +351,8 @@ export function collectMaintenanceSteps(
     for (const line of exitLines) {
       const m = line.match(/^(\S+)\s+(\S+)\s+exit=(-?\d+)\b/);
       if (!m) continue;
-      const [, iso, step, exitRaw] = m;
+      const [, iso, stepRaw, exitRaw] = m;
+      const step = stepRaw.startsWith("step=") ? stepRaw.slice("step=".length) : stepRaw;
       const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
       if (!Number.isFinite(occurredAt)) continue;
       parsedRows++;
