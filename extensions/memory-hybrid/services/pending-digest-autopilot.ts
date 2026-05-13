@@ -197,11 +197,11 @@ export async function runPendingDigestAutopilot(
     now: opts.now,
   });
 
-  let store: PendingAutopilotStore | null = null;
+  let store: PendingAutopilotStore | undefined;
   let adapters: Partial<Record<PendingQueue, PendingQueueAdapter>> | null = null;
   try {
     adapters = createPendingDigestAdapters(opts);
-    store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : null;
+    store = normalized.mode === "apply" ? new PendingAutopilotStore(opts.stateDbPath as string) : undefined;
     const decisions: PendingDecision[] = [];
     const queues = Object.fromEntries(
       PENDING_QUEUES.map((queue) => [
@@ -304,7 +304,7 @@ export async function runPendingDigestAutopilot(
                 actor,
                 now: opts.now,
                 runLifecycle: "embedded",
-                store: store ?? undefined,
+                store,
               });
               const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
               const latestDecision = childDecision
