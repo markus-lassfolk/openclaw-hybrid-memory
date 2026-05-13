@@ -304,6 +304,7 @@ export async function runPendingDigestAutopilot(
                 actor,
                 now: opts.now,
                 runLifecycle: "embedded",
+                store,
               });
               const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
               const latestDecision = childDecision

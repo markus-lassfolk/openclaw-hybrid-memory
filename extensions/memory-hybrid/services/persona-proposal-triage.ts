@@ -57,6 +57,7 @@ export interface PersonaProposalTriageOptions {
   actor?: PendingDecisionActorContext;
   now?: Date;
   runLifecycle?: "standalone" | "embedded";
+  store?: PendingAutopilotStore;
 }
 
 export interface PersonaProposalTriageResult {
@@ -205,9 +206,10 @@ export async function runPersonaProposalTriage(
   const runInputHash = computePendingInputHash({ command: "proposals triage", mode, policy, max, startedAt: 0 });
   let cursorAdvanceCandidate: { decision: PendingDecision; cursor: string } | null = null;
   let cursorAdvanceBlocked = false;
+  const ownStore = !opts.store;
 
   try {
-    store = mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null;
+    store = opts.store ?? (mode === "apply" && policy !== "report-only" ? new PendingAutopilotStore(stateDbPath) : null);
     if (manageRunLifecycle) {
       store?.createRun({
         runId,
@@ -310,7 +312,9 @@ export async function runPersonaProposalTriage(
     result.humanSummary = renderPersonaProposalTriageHumanSummary(result);
     return result;
   } finally {
-    store?.close();
+    if (ownStore) {
+      store?.close();
+    }
   }
 }
 
@@ -358,7 +362,15 @@ export function decidePersonaProposal(
   const action = reportOnly ? "reported" : analysis.action;
   const actionClass = reportOnly ? "observe" : analysis.actionClass;
   const capabilityClass = reportOnly ? readOnlyCapability : analysis.capabilityClass;
-  const humanReviewRequired = reportOnly ? false : analysis.humanReviewRequired;
+  const isSecurityCritical =
+    analysis.reasonCode === "security-boundary-change" ||
+    analysis.reasonCode === "secret-or-private-data-risk" ||
+    analysis.reasonCode === "privacy-boundary-change";
+  const humanReviewRequired = reportOnly
+    ? isSecurityCritical
+      ? analysis.humanReviewRequired
+      : false
+    : analysis.humanReviewRequired;
 
   return {
     queue: "persona",
