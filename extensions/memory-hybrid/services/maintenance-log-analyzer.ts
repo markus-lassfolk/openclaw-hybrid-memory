@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
+import { normalizeExitStepName } from "./cron-exit-validator.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MaintenanceClassification =
@@ -352,7 +353,7 @@ export function collectMaintenanceSteps(
       const m = line.match(/^(\S+)\s+(\S+)\s+exit=(-?\d+)\b/);
       if (!m) continue;
       const [, iso, stepRaw, exitRaw] = m;
-      const step = stepRaw.startsWith("step=") ? stepRaw.slice("step=".length) : stepRaw;
+      const step = normalizeExitStepName(stepRaw);
       const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
       if (!Number.isFinite(occurredAt)) continue;
       parsedRows++;

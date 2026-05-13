@@ -362,8 +362,8 @@ export async function runPendingDigestAutopilotCron(
     const shouldNotify = shouldNotifyRun(summary, autopilotCfg);
     if (shouldNotify) {
       const payloadPath = join(artifactDir, `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${runToken}.notification.json`);
-    const payload = {
-      runId: summary.runId,
+      const payload = {
+        runId: summary.runId,
         status: summary.status,
         counts: summary.counts,
         humanReviewRequired: summary.humanReviewRequired,
