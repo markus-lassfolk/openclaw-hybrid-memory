@@ -135,8 +135,8 @@ type Analysis = {
   applyAllowed: boolean;
 };
 
-const CRITICAL_TARGETS = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
 const SENSITIVE_PERSONA_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md"]);
+const CRITICAL_TARGETS = SENSITIVE_PERSONA_FILES;
 const LOW_RISK_DRIFT_THRESHOLD = 2;
 const SENSITIVE_TOOLS_RE = /^TOOLS\.md$/i;
 
@@ -1020,7 +1020,7 @@ function isAllowedSensitivePersonaApply(
   applied: string,
   suggestedChange: string,
 ): boolean {
-  if (!SENSITIVE_PERSONA_FILES.has(targetFile) || SENSITIVE_TOOLS_RE.test(targetFile)) return true;
+  if (!SENSITIVE_PERSONA_FILES.has(targetFile)) return true;
   const parsed = parseSuggestedChange(suggestedChange);
   if (parsed.changeType !== "replace") return false;
   return stripWhitespaceAndPunctuation(original) === stripWhitespaceAndPunctuation(applied);
