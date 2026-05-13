@@ -360,9 +360,7 @@ describe("persona proposal triage", () => {
 
     expect(proposalsDb.get(mechanical.id)?.status).toBe("applied");
     expect(readFileSync(join(tmpDir, "AGENTS.md"), "utf-8")).toContain("Be precise!");
-    expect(result.decisions.find((d) => d.proposalId === mechanical.id)?.reason).toBe(
-      "safe-low-risk-localized-change",
-    );
+    expect(result.decisions.find((d) => d.proposalId === mechanical.id)?.reason).toBe("safe-low-risk-localized-change");
   });
 
   it("blocks and redacts credential/private-data proposals everywhere", async () => {

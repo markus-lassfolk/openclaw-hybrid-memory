@@ -297,6 +297,75 @@ describe("pending digest autopilot parent (#1326)", () => {
     reopened.close();
   });
 
+  it("keeps custom persona adapters valid in apply mode without built-in child metadata", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const stateDb = join(dir, "autopilot.db");
+    const item: PendingItem = {
+      queue: "persona",
+      id: "custom-persona-item",
+      inputHash: computePendingInputHash({ queue: "persona", id: "custom-persona-item" }),
+      policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+      capabilityClasses: ["record-review-metadata"],
+      payload: { title: "Custom persona adapter item" },
+      visibleAfterCursor: "custom-persona-item",
+    };
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "cautious" },
+      max: { persona: 1, procedures: 0, verified: 0, tools: 0, crystallization: 0 },
+      runId: "run-custom-persona-adapter-apply",
+      adapters: {
+        persona: {
+          queue: "persona",
+          listPending: () => [item],
+          decide: (candidate, context) => ({
+            queue: candidate.queue,
+            itemId: candidate.id,
+            inputHash: candidate.inputHash,
+            policy: context.policy,
+            policyVersion: context.policyVersion,
+            mode: context.mode,
+            action: "deferred-for-human",
+            reasonCode: "human-review-required",
+            actionClass: "record-review",
+            capabilityClass: "record-review-metadata",
+            confidence: 0.8,
+            humanReviewRequired: true,
+            evidence: [{ type: "pending-item", id: candidate.id, summary: "custom adapter fixture" }],
+            actor: context.actor,
+            runId: context.runId,
+            summary: { title: "Custom persona adapter item", body: "custom decision" },
+          }),
+        },
+      },
+    });
+
+    expect(result.queues.persona).toMatchObject({
+      inspected: 1,
+      skipped: false,
+    });
+    expect(result.queues.persona.decisions[0]).toMatchObject({
+      itemId: item.id,
+      action: "failed-validation",
+      reasonCode: "capability-not-allowed",
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+    });
+    expect(result.queues.persona.decisions[0]?.summary?.body).toContain(
+      "requires the built-in persona adapter metadata",
+    );
+
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("persona", "cautious")).toBeNull();
+    expect(store.listDecisions({ queue: "persona", itemId: item.id })).toHaveLength(1);
+    store.close();
+  });
+
   it("parent persona apply binds child triage to each iterated proposal behind a newer deferred item", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
@@ -685,7 +754,7 @@ describe("pending digest autopilot parent (#1326)", () => {
         targetHash: defaultPreHash,
       });
     } finally {
-      if (previousWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
+      if (previousWorkspace === undefined) process.env.OPENCLAW_WORKSPACE = undefined;
       else process.env.OPENCLAW_WORKSPACE = previousWorkspace;
     }
   });

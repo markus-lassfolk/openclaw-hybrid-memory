@@ -289,27 +289,33 @@ export async function runPendingDigestAutopilot(
           };
           let decision = await adapter.decide(item, context);
           if (queue === "persona" && normalized.mode === "apply" && policy !== "report-only") {
-            const applied = await runPersonaProposalTriage({
-              proposalsDb: (adapter as PersonaParentAdapter).proposalsDb,
-              cfg: opts.cfg,
-              workspace: opts.workspace,
-              stateDbPath: opts.stateDbPath,
-              mode: "apply",
-              policy: policy as "cautious" | "apply-safe",
-              max: 1,
-              proposalId: item.id,
-              runId,
-              jobId: opts.jobId,
-              actor,
-              now: opts.now,
-            });
-            const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
-            const latestDecision = childDecision
-              ? ((store?.listDecisions({ queue: "persona", itemId: item.id }).at(-1) as PendingDecision | undefined) ??
-                decisionFromPersonaView(decision, childDecision))
-              : makeUnprocessedPersonaDecision(decision);
-            decision = latestDecision;
-            if (!childDecision) {
+            if (hasPersonaParentApplyMetadata(adapter)) {
+              const applied = await runPersonaProposalTriage({
+                proposalsDb: adapter.proposalsDb,
+                cfg: opts.cfg,
+                workspace: opts.workspace,
+                stateDbPath: opts.stateDbPath,
+                mode: "apply",
+                policy: policy as "cautious" | "apply-safe",
+                max: 1,
+                proposalId: item.id,
+                runId,
+                jobId: opts.jobId,
+                actor,
+                now: opts.now,
+              });
+              const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
+              const latestDecision = childDecision
+                ? ((store?.listDecisions({ queue: "persona", itemId: item.id }).at(-1) as
+                    | PendingDecision
+                    | undefined) ?? decisionFromPersonaView(decision, childDecision))
+                : makeUnprocessedPersonaDecision(decision);
+              decision = latestDecision;
+              if (!childDecision) {
+                store?.recordDecision(decision);
+              }
+            } else {
+              decision = makeUnsupportedPersonaApplyAdapterDecision(decision);
               store?.recordDecision(decision);
             }
           } else {
@@ -434,7 +440,11 @@ function createPendingDigestAdapters(
   };
 }
 
-type PersonaParentAdapter = PendingQueueAdapter<QueueItem> & { proposalsDb: ProposalsDB; close: () => void };
+type PersonaParentAdapter = PendingQueueAdapter<QueueItem> & { proposalsDb: ProposalsDB; close?: () => void };
+
+function hasPersonaParentApplyMetadata(adapter: PendingQueueAdapter): adapter is PersonaParentAdapter {
+  return (adapter as { proposalsDb?: unknown }).proposalsDb instanceof ProposalsDB;
+}
 
 function createPersonaProposalTriageAdapterWithCloseable(
   dbPath: string,
@@ -460,6 +470,44 @@ function createPersonaProposalTriageAdapterWithCloseable(
       return adapter.decide(item as PersonaProposalPendingItem, context);
     },
     close: () => proposalsDb.close(),
+  };
+}
+
+function makeUnsupportedPersonaApplyAdapterDecision(base: PendingDecision): PendingDecision {
+  const summaryBody =
+    "Persona parent apply mode requires the built-in persona adapter metadata for guarded child triage; custom adapter output was left unmutated and the cursor will not advance.";
+  return {
+    ...base,
+    action: "failed-validation",
+    reasonCode: "capability-not-allowed",
+    actionClass: "observe",
+    capabilityClass: "read-only",
+    humanReviewRequired: true,
+    summary: {
+      ...(base.summary ?? {}),
+      body: summaryBody,
+    },
+    audit: {
+      ...(base.audit ?? {
+        queue: base.queue,
+        itemId: base.itemId,
+        inputHash: base.inputHash,
+        policy: base.policy,
+        policyVersion: base.policyVersion,
+        action: base.action,
+        reasonCode: base.reasonCode,
+        capabilityClass: base.capabilityClass,
+        humanReviewRequired: base.humanReviewRequired,
+        evidence: base.evidence,
+        actor: base.actor,
+        runId: base.runId,
+        jobId: base.jobId,
+      }),
+      action: "failed-validation",
+      reasonCode: "capability-not-allowed",
+      capabilityClass: "read-only",
+      humanReviewRequired: true,
+    },
   };
 }
 
