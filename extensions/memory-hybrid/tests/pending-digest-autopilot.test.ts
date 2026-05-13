@@ -814,7 +814,7 @@ describe("pending digest autopilot parent (#1326)", () => {
         targetHash: defaultPreHash,
       });
     } finally {
-      if (previousWorkspace === undefined) process.env.OPENCLAW_WORKSPACE = undefined;
+      if (previousWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
       else process.env.OPENCLAW_WORKSPACE = previousWorkspace;
     }
   });
