@@ -267,7 +267,7 @@ export async function runPersonaProposalTriage(
         if (!cursorAdvanceBlocked) {
           cursorAdvanceCandidate = { decision, cursor: itemCursor };
         }
-      } else if (cursorAdvanceCandidate === null) {
+      } else {
         cursorAdvanceBlocked = true;
       }
       decisions.push(decision);
@@ -277,7 +277,6 @@ export async function runPersonaProposalTriage(
       policy !== "report-only" &&
       opts.proposalId === undefined &&
       cursorAdvanceCandidate !== null &&
-      !cursorAdvanceBlocked &&
       pending.length > 0
     ) {
       store?.advanceCursorIfSafe(cursorAdvanceCandidate.decision, cursorAdvanceCandidate.cursor);

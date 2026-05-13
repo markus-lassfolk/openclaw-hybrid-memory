@@ -597,6 +597,73 @@ describe("pending digest autopilot parent (#1326)", () => {
     reopened.close();
   });
 
+  it("advances generic queue cursors only to the last contiguous safe decision", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const stateDb = join(dir, "autopilot.db");
+    const items: PendingItem[] = [
+      {
+        queue: "tools",
+        id: "newest-safe",
+        inputHash: computePendingInputHash({ queue: "tools", id: "newest-safe" }),
+        policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+        capabilityClasses: ["read-only"],
+        payload: { title: "Newest safe" },
+        visibleAfterCursor: "300:newest-safe",
+      },
+      {
+        queue: "tools",
+        id: "middle-deferred",
+        inputHash: computePendingInputHash({ queue: "tools", id: "middle-deferred" }),
+        policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+        capabilityClasses: ["read-only"],
+        payload: { title: "Middle deferred" },
+        visibleAfterCursor: "200:middle-deferred",
+        requiresHumanReview: true,
+      },
+      {
+        queue: "tools",
+        id: "oldest-safe",
+        inputHash: computePendingInputHash({ queue: "tools", id: "oldest-safe" }),
+        policyVersion: PENDING_DIGEST_AUTOPILOT_POLICY_VERSION,
+        capabilityClasses: ["read-only"],
+        payload: { title: "Oldest safe" },
+        visibleAfterCursor: "100:oldest-safe",
+      },
+    ];
+
+    const result = await runPendingDigestAutopilot({
+      cfg,
+      factsDb: factsDb(),
+      stateDbPath: stateDb,
+      mode: "apply",
+      policies: { persona: "disabled", tools: "classify" },
+      max: { persona: 0, procedures: 0, verified: 0, tools: 3, crystallization: 0 },
+      runId: "run-generic-contiguous-cursor",
+      adapters: {
+        tools: {
+          queue: "tools",
+          listPending: () => items,
+          decide: decideReadOnlyItem,
+        },
+      },
+    });
+
+    expect(result.queues.tools.decisions.map((d) => d.itemId)).toEqual([
+      "newest-safe",
+      "middle-deferred",
+      "oldest-safe",
+    ]);
+    expect(result.queues.tools.decisions.map((d) => d.action)).toEqual([
+      "classified",
+      "deferred-for-human",
+      "classified",
+    ]);
+    const store = new PendingAutopilotStore(stateDb);
+    expect(store.getCursor("tools", "classify")?.cursor).toBe("300:newest-safe");
+    store.close();
+  });
+
   it("supports disabled per-queue policies with stable skipped reason codes and max batch sizes", async () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));
