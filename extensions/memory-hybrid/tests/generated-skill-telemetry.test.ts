@@ -101,6 +101,7 @@ describe("generated skill telemetry", () => {
       requestSummary: "another unrelated request",
       taskOutcome: "failure",
       userCorrection: true,
+      correctionReason: "unrelated to task",
     });
     db.recordGeneratedSkillTelemetry({
       skillName,
