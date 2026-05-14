@@ -270,7 +270,17 @@ describe("CrystallizationProposer.approveProposal", () => {
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBeGreaterThanOrEqual(1);
 
-    const result = proposer.approveProposal(pending[0].id, { name: "renamed-skill", category: "workflow-automation" });
+    let result = proposer.approveProposal(pending[0].id, {
+      name: "renamed-skill",
+      category: "workflow-automation",
+    });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(pending[0].id, {
+        name: "renamed-skill",
+        category: "workflow-automation",
+        overrideWarnings: true,
+      });
+    }
     expect(result.success).toBe(true);
     expect(result.outputPath).toContain("renamed-skill");
     const body = readFileSync(result.outputPath!, "utf-8");

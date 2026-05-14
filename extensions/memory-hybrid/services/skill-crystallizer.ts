@@ -100,7 +100,10 @@ function buildSkillContent(
     : "- (no example goals recorded)";
 
   const stepsText = toolSequence
-    .map((tool, i) => `${i + 1}. Call \`${tool}\` (follow the host tool schema and keep side-effects minimal).`)
+    .map(
+      (tool, i) =>
+        `${i + 1}. Use \`${tool}\` only for the bounded task, follow the host tool schema, keep side-effects minimal, and verify before continuing.`,
+    )
     .join("\n");
 
   const desc = card.description.replace(/\s+/g, " ").trim().slice(0, 260);
