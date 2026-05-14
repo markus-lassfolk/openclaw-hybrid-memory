@@ -212,7 +212,7 @@ export class GeneratedSkillValidationService {
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
     const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
-    const proposedOutputPath = resolve(input.proposedOutputPath);
+    const proposedOutputPath = input.proposedOutputPath;
 
     if (input.skillContent.length > MAX_SKILL_CHARS) {
       violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);

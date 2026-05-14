@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -455,8 +455,8 @@ Bounded canonical path workflow.
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-trailing-slash-"));
     const service = new GeneratedSkillValidationService();
     const canonicalOutputDir = join(tmpDir, "skills");
-    // Trailing slash form — must be accepted as equivalent
-    const outputDirWithSlash = canonicalOutputDir + "/";
+    // Trailing separator form — must be accepted as equivalent
+    const outputDirWithSlash = `${canonicalOutputDir}${sep}`;
     const validation = service.validate({
       outputDir: outputDirWithSlash,
       proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
@@ -473,8 +473,8 @@ Bounded canonical path workflow.
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dot-slash-"));
     const service = new GeneratedSkillValidationService();
     const canonicalOutputDir = join(tmpDir, "skills");
-    // Insert a "./" segment in the middle: /tmp/xxx/./skills — resolves to /tmp/xxx/skills
-    const outputDirDotSlash = `${tmpDir}/./skills`;
+    // Insert a "." segment in the middle: /tmp/xxx/./skills — resolves to /tmp/xxx/skills
+    const outputDirDotSlash = join(tmpDir, ".", "skills");
     const validation = service.validate({
       outputDir: outputDirDotSlash,
       proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
@@ -491,8 +491,8 @@ Bounded canonical path workflow.
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-redundant-sep-"));
     const service = new GeneratedSkillValidationService();
     const canonicalOutputDir = join(tmpDir, "skills");
-    // Double-slash form — must be accepted as equivalent
-    const outputDirDoubleSlash = canonicalOutputDir.replace(/\/([^/]+)$/, "//$1");
+    // Redundant-separator form — must be accepted as equivalent
+    const outputDirDoubleSlash = `${dirname(canonicalOutputDir)}${sep}${sep}${basename(canonicalOutputDir)}`;
     const validation = service.validate({
       outputDir: outputDirDoubleSlash,
       proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
@@ -510,11 +510,11 @@ Bounded canonical path workflow.
     const service = new GeneratedSkillValidationService();
     const outputDir = join(tmpDir, "skills");
     // Path traversal attempt: escapes the outputDir
-    const escapingPath = join(outputDir, "..", "evil-skill", "SKILL.md");
+    const escapingPath = join(outputDir, "..", "canonical-path-skill", "SKILL.md");
     const validation = service.validate({
       outputDir,
       proposedOutputPath: escapingPath,
-      skillName: "evil-skill",
+      skillName: "canonical-path-skill",
       skillContent: CANONICAL_SKILL_CONTENT,
     });
     expect(
