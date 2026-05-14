@@ -469,8 +469,23 @@ function findPreviousNonEmptyLine(lines: string[], startIndex: number): string |
   return null;
 }
 
+function unquoteFrontmatterValue(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length >= 2) {
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return trimmed.slice(1, -1).trim();
+    }
+  }
+  return trimmed;
+}
+
 function getFrontmatterCategory(keys: Map<string, string>): string | undefined {
-  return keys.get("category") ?? keys.get("categories") ?? keys.get("tags") ?? keys.get("type") ?? keys.get("kind");
+  return unquoteFrontmatterValue(
+    keys.get("category") ?? keys.get("categories") ?? keys.get("tags") ?? keys.get("type") ?? keys.get("kind"),
+  );
 }
 
 function parseFrontmatter(lines: string[]): {

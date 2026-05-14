@@ -1337,6 +1337,17 @@ Bounded dry-run override verification workflow.
 
       logSpy.mockClear();
       process.exitCode = undefined;
+      await program.parseAsync(["skills", "validate", proposal.id, "--json"], { from: "user" });
+      expect(process.exitCode).toBe(2);
+      const validateOutput = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+        ok?: boolean;
+        approvalDecision?: string;
+      };
+      expect(validateOutput.approvalDecision).toBe("allow-with-override");
+      expect(validateOutput.ok).toBe(false);
+
+      logSpy.mockClear();
+      process.exitCode = undefined;
       await program.parseAsync(["skills", "install", proposal.id, "--dry-run", "--override-warnings", "--json"], {
         from: "user",
       });
@@ -1412,5 +1423,219 @@ Bounded alternate-category validation workflow.
     } finally {
       delete CATEGORY_SECTION_TAXONOMIES["explain-skill"];
     }
+  });
+
+  it("validateProposal denies proposals install would reject before validation", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validate-preflight-"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const baseSkillContent = `---
+name: preflight-status-skill
+description: Use when checking install preflight parity.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Preflight Status Skill
+
+## Trigger
+Use this skill when checking install preflight parity.
+
+## Scope
+Bounded preflight validation.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect proposal state.
+2. Compare validate and install preflight behavior.
+
+## Verification
+- Confirm validate denies non-approvable proposals.
+
+## Anti-patterns / Known Failures
+- Do not predict install success for terminal states.
+
+## Examples
+- Check install preflight parity for proposal states.
+
+## Provenance
+- Source pattern ID: \`pattern-preflight\``;
+
+    try {
+      const installed = cStore.create({
+        patternId: "pattern-preflight-installed",
+        evidenceHash: "ev-preflight-installed",
+        skillName: "preflight-status-skill",
+        skillContent: baseSkillContent,
+        patternSnapshot: JSON.stringify({
+          toolSequence: ["read"],
+          totalCount: 3,
+          successCount: 3,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 200,
+          exampleGoals: ["Check install preflight parity for proposal states."],
+        }),
+        status: "installed",
+      });
+      const proposer = new CrystallizationProposer(null, cStore, { ...BASE_CFG, outputDir: join(tmpDir, "skills") });
+      const statusResult = proposer.validateProposal(installed.id);
+      expect(statusResult?.approvalDecision).toBe("deny");
+      expect(statusResult?.staticValidation.violations[0]).toMatch(/not approvable/i);
+
+      const limitedStore = new CrystallizationStore(join(tmpDir, "limited.db"));
+      try {
+        limitedStore.create({
+          patternId: "pattern-existing-approved",
+          evidenceHash: "ev-existing-approved",
+          skillName: "existing-approved-skill",
+          skillContent: baseSkillContent.replaceAll("preflight-status-skill", "existing-approved-skill"),
+          patternSnapshot: "{}",
+          status: "approved",
+        });
+        const candidate = limitedStore.create({
+          patternId: "pattern-preflight-candidate",
+          evidenceHash: "ev-preflight-candidate",
+          skillName: "preflight-status-skill",
+          skillContent: baseSkillContent,
+          patternSnapshot: "{}",
+          status: "validated",
+        });
+        const limited = new CrystallizationProposer(null, limitedStore, {
+          ...BASE_CFG,
+          outputDir: join(tmpDir, "limited-skills"),
+          maxCrystallized: 1,
+        });
+        const maxResult = limited.validateProposal(candidate.id);
+        expect(maxResult?.approvalDecision).toBe("deny");
+        expect(maxResult?.staticValidation.violations[0]).toMatch(/maxCrystallized/i);
+      } finally {
+        limitedStore.close();
+      }
+    } finally {
+      cStore.close();
+    }
+  });
+
+  it("uses quoted category frontmatter values for section taxonomy overrides", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-quoted-category-taxonomy-"));
+    const service = new GeneratedSkillValidationService();
+    const skillContent = `---
+name: quoted-category-taxonomy
+description: Use when validating quoted category metadata values.
+category: "explain-skill"
+provenance: test-suite
+---
+
+# Quoted Category Taxonomy
+
+## Trigger
+Use this skill when validating quoted category metadata values.
+
+## Scope
+Bounded quoted-category validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect metadata and section requirements.
+2. Confirm quoted category values drive taxonomy lookup.
+
+## Verification
+- Confirm missing category-specific sections are reported.
+
+## Anti-patterns / Known Failures
+- Do not include YAML quotes in taxonomy lookup keys.
+
+## Examples
+- Validate quoted explain skill category frontmatter.
+
+## Provenance
+- Source pattern ID: \`pattern-quoted-category-taxonomy\``;
+
+    CATEGORY_SECTION_TAXONOMIES["explain-skill"] = [
+      { id: "custom-required", label: "Custom Required", aliases: ["custom required"] },
+    ];
+
+    try {
+      const validation = service.validate({
+        outputDir: join(tmpDir, "skills"),
+        proposedOutputPath: join(tmpDir, "skills", "quoted-category-taxonomy", "SKILL.md"),
+        skillName: "quoted-category-taxonomy",
+        skillContent,
+        pattern: {
+          toolSequence: ["read"],
+          totalCount: 3,
+          successCount: 3,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 200,
+          exampleGoals: ["Validate quoted explain skill category frontmatter."],
+        },
+      });
+
+      expect(validation.staticValidation.violations).toContain("Missing required section: Custom Required");
+    } finally {
+      delete CATEGORY_SECTION_TAXONOMIES["explain-skill"];
+    }
+  });
+
+  it("extracts trigger aliases using shared heading normalization", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-normalized-alias-"));
+    const service = new GeneratedSkillValidationService();
+    const skillContent = `---
+name: normalized-alias-skill
+description: Use when a generated workflow is needed.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Normalized Alias Skill
+
+## When to Activate:
+Use this skill when the user asks to investigate payroll webhook retries after timeout.
+
+## Scope
+Bounded normalized heading alias validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect retry logs.
+2. Summarize the timeout pattern.
+
+## Verification
+- Confirm normalized heading aliases feed activation evaluation.
+
+## Anti-patterns / Known Failures
+- Do not rely on exact heading punctuation.
+
+## Examples
+- Investigate payroll webhook retries after timeout.
+
+## Provenance
+- Source pattern ID: \`pattern-normalized-alias\``;
+
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "normalized-alias-skill", "SKILL.md"),
+      skillName: "normalized-alias-skill",
+      skillContent,
+      pattern: {
+        toolSequence: ["read"],
+        totalCount: 3,
+        successCount: 3,
+        failureCount: 0,
+        successRate: 1,
+        avgDurationMs: 200,
+        exampleGoals: ["Investigate payroll webhook retries after timeout."],
+      },
+    });
+
+    expect(validation.staticValidation.status).toBe("passed");
+    expect(validation.syntheticActivationEval.results.positiveMatched).toBe(true);
   });
 });

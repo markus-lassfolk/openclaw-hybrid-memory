@@ -196,7 +196,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           console.log(
             JSON.stringify(
               {
-                ok: result.approvalDecision !== "deny",
+                ok: result.approvalDecision === "allow",
                 proposalId: id,
                 approvalDecision: result.approvalDecision,
                 overallStatus: result.overallStatus,
@@ -239,7 +239,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           }
         }
 
-        if (result.approvalDecision === "deny") process.exitCode = 2;
+        if (result.approvalDecision !== "allow") process.exitCode = 2;
       }),
     );
 

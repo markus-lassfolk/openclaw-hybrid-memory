@@ -234,6 +234,15 @@ export class CrystallizationProposer {
     const proposal = this.crystallizationStore.getById(proposalId);
     if (!proposal) return null;
 
+    if (proposal.status !== "validated" && proposal.status !== "drafted") {
+      return failedProposalValidation(`Proposal '${proposalId}' is not approvable (status: ${proposal.status})`);
+    }
+
+    const approvedCount = this.crystallizationStore.count("approved");
+    if (approvedCount >= this.cfg.maxCrystallized) {
+      return failedProposalValidation(`maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
+    }
+
     const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
     const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
     const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
@@ -549,6 +558,43 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 }
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
+
+function failedProposalValidation(message: string): SkillProposalValidationResult {
+  return {
+    schemaVersion: 1,
+    validatedAt: new Date().toISOString(),
+    overallStatus: "failed",
+    approvalDecision: "deny",
+    staticValidation: {
+      status: "failed",
+      violations: [message],
+      frontmatter: {},
+      safeOutputPath: "",
+    },
+    dryLoadValidation: {
+      status: "passed",
+      violations: [],
+      discovered: {},
+    },
+    syntheticActivationEval: {
+      status: "passed",
+      score: 100,
+      cases: {
+        positive: "",
+        negative: "",
+        edge: "",
+      },
+      results: {
+        positiveMatched: true,
+        negativeMatched: false,
+        edgeMatched: false,
+      },
+      notes: [],
+    },
+    canarySession: { status: "not-run" },
+  };
+}
+
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
   const lines = skillContent.split("\n");
   let i = 0;

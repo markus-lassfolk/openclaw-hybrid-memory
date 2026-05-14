@@ -15,7 +15,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES } from "../config/skill-sections.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
-import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
+import { NON_PLACEHOLDER_EMAIL_PATTERN, normalizeHeading, SkillValidator } from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
 export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";
@@ -460,26 +460,32 @@ function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
   return out;
 }
 
-function extractSection(skillContent: string, heading: string): string {
-  const match = skillContent.match(
-    new RegExp(`(?:^|\\r?\\n)##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s+|$)`, "i"),
-  );
-  return match?.[1]?.trim() ?? "";
-}
-
 /**
- * Try each heading alias in order and return the first matching section body.
- * Aliases are tried in declaration order; the first non-empty match wins.
- * Supports skills that use section-name aliases (e.g. "## When to Activate" instead of
- * "## Trigger") so the activation eval works for all alias variants (issue #1375).
- * Uses case-insensitive regex matching (same as `extractSection`).
+ * Return the body for the first matching H2 section using the same punctuation/case
+ * normalization as SkillValidator's shared taxonomy checks.
  */
 function extractSectionByAliases(skillContent: string, headingAliases: string[]): string {
-  for (const heading of headingAliases) {
-    const body = extractSection(skillContent, heading);
-    if (body.length > 0) return body;
+  const normalizedAliases = new Set(headingAliases.map(normalizeHeading));
+  const lines = skillContent.split(/\r?\n/);
+  let startLine = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i]?.match(/^##\s+(.+?)\s*$/);
+    if (match && normalizedAliases.has(normalizeHeading(match[1]))) {
+      startLine = i + 1;
+      break;
+    }
   }
-  return "";
+  if (startLine < 0) return "";
+
+  let endLine = lines.length;
+  for (let i = startLine; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i] ?? "")) {
+      endLine = i;
+      break;
+    }
+  }
+  return lines.slice(startLine, endLine).join("\n").trim();
 }
 
 function buildSyntheticActivationCases(
@@ -562,8 +568,4 @@ function significantWords(text: string, minTokenLength = 4): Set<string> {
       .split(/[^a-z0-9]+/)
       .filter((word) => word.length >= minTokenLength && !STOP_WORDS.has(word)),
   );
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
