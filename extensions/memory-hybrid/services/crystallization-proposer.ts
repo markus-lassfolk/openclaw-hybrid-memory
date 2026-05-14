@@ -572,24 +572,24 @@ function failedProposalValidation(message: string): SkillProposalValidationResul
       safeOutputPath: "",
     },
     dryLoadValidation: {
-      status: "passed",
-      violations: [],
+      status: "failed",
+      violations: ["Skipped — pre-flight check failed"],
       discovered: {},
     },
     syntheticActivationEval: {
-      status: "passed",
-      score: 100,
+      status: "failed",
+      score: 0,
       cases: {
         positive: "",
         negative: "",
         edge: "",
       },
       results: {
-        positiveMatched: true,
+        positiveMatched: false,
         negativeMatched: false,
         edgeMatched: false,
       },
-      notes: [],
+      notes: ["Skipped — pre-flight check failed"],
     },
     canarySession: { status: "not-run" },
   };
