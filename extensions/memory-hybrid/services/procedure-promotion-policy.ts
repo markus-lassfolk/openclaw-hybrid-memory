@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
-import { isSkillDirComplete } from "../utils/atomic-write.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -1110,8 +1109,9 @@ function isDuplicateSkill(
     for (const entry of safeReadDir(dir)) {
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
-      // Skip directories that are in-progress writes (no completion marker).
-      if (!isSkillDirComplete(join(dir, entry))) continue;
+      // Legacy skill directories may not have the atomic completion marker. If
+      // they contain SKILL.md, treat them as valid duplicates so marker rollout
+      // never overwrites or re-promotes existing skills.
       if (entry === slug) return true;
       const content = safeReadFile(skillPath).toLowerCase();
       if (content.includes(`name: ${slug}`)) return true;

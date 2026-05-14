@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-import { atomicWriteSkillDir, isSkillDirComplete } from "../utils/atomic-write.js";
+import { atomicWriteSkillDir } from "../utils/atomic-write.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -76,10 +76,10 @@ export type GenerateAutoSkillResult =
 function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-  // A directory that exists but lacks the completion marker is an in-progress
-  // (or crashed) write — treat it as free so retries reuse the same slug and
-  // the atomic write can overwrite the incomplete directory.
-  while (reservedSlugs?.has(candidate) || isSkillDirComplete(join(basePath, candidate))) {
+  // Legacy skill directories created before the atomic completion marker rollout
+  // do not contain `.openclaw-skill-complete`. They are still occupied names and
+  // must not be overwritten. Only atomic temp/backup siblings are reusable.
+  while (reservedSlugs?.has(candidate) || existsSync(join(basePath, candidate))) {
     n++;
     candidate = `${slug}-${n}`;
   }

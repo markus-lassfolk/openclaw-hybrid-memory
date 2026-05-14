@@ -335,6 +335,45 @@ Source procedure id: proc-weather
     expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
   });
 
+  it("treats legacy skill directories without completion markers as duplicate skills", () => {
+    const existingSkillDir = join(skillsDir, "collect-markerless-legacy-report");
+    mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(
+      join(existingSkillDir, "SKILL.md"),
+      `---
+name: collect-markerless-legacy-report
+description: Use when collecting markerless legacy reports.
+---
+
+# Collect Markerless Legacy Report
+
+## Trigger
+Use for collecting markerless legacy reports.
+
+## Workflow
+1. Read status.json.
+2. Verify report output exists.
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({
+      taskPattern: "Collect markerless legacy report",
+      sourceSessionId: "markerless-legacy-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "markerless-legacy-b");
+    db.recordProcedureSuccess(proc.id, undefined, "markerless-legacy-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+    expect(evaluation.metadata.duplicateHandling).toBe("merge");
+  });
+
   it("does not report generated skill paths for deferred procedures", () => {
     const proc = addProcedure({
       taskPattern: "Validate deferred low confidence report",
