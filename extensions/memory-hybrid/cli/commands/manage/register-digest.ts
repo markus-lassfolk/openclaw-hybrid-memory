@@ -5,6 +5,7 @@
  * tool proposals, crystallization proposals, and verified facts.
  */
 
+import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import {
   type PendingDigestAutopilotMaxima,
   type PendingDigestAutopilotPolicies,
@@ -98,6 +99,27 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
           workspace: opts?.workspace,
         });
         process.stdout.write(opts?.json ? stablePendingDigestAutopilotJson(result) : `${result.humanSummary}\n`);
+      }),
+    );
+
+  digest
+    .command("autopilot-cron")
+    .description(
+      "Cron wrapper for pending digest autopilot (#1330). Enforces guard/lock/config safety, writes HM artifacts, and emits structured summary.",
+    )
+    .option("--json", "Emit structured summary JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        const result = await runPendingDigestAutopilotCron({
+          cfg: b.cfg,
+          factsDb: b.factsDb,
+        });
+        process.stdout.write(opts?.json ? `${JSON.stringify(result.summary, null, 2)}\n` : `${result.humanSummary}\n`);
+        if (result.summary.status === "failed" || result.summary.status === "partial") {
+          throw new Error(
+            `pending digest autopilot cron ${result.summary.status}; see ${result.summary.artifacts.hmLog} and ${result.summary.artifacts.hmExit}`,
+          );
+        }
       }),
     );
 }

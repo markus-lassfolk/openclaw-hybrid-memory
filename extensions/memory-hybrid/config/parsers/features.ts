@@ -12,6 +12,7 @@ import type {
   CrossAgentLearningConfig,
   CrystallizationConfig,
   DashboardConfig,
+  DigestAutopilotConfig,
   DigestConfig,
   DigestWeeklyDeliveryConfig,
   DocumentsConfig,
@@ -850,7 +851,116 @@ export function parseDigestWeeklyDeliveryOnly(cfg: Record<string, unknown>): Dig
 }
 
 export function parseDigestConfig(cfg: Record<string, unknown>): DigestConfig {
-  return { weekly: { delivery: parseDigestWeeklyDeliveryOnly(cfg) } };
+  return {
+    weekly: { delivery: parseDigestWeeklyDeliveryOnly(cfg) },
+    autopilot: parseDigestAutopilotConfig(cfg),
+  };
+}
+
+const DIGEST_AUTOPILOT_PERSONA_POLICIES = ["disabled", "report-only", "cautious", "apply-safe"] as const;
+const DIGEST_AUTOPILOT_PROCEDURE_POLICIES = ["disabled", "report-only", "dry-run-skills", "auto-safe"] as const;
+const DIGEST_AUTOPILOT_VERIFIED_POLICIES = ["disabled", "report-only", "classify", "apply-obvious"] as const;
+const DIGEST_AUTOPILOT_READ_ONLY_POLICIES = ["disabled", "report-only", "classify"] as const;
+
+function parseAutopilotPolicy<T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  fallback: T[number],
+  field: string,
+): T[number] {
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T[number];
+  if (value === undefined) return fallback;
+  throw new Error(`Invalid digest.autopilot.${field}: ${String(value)}`);
+}
+
+function parseAutopilotPositiveInt(value: unknown, fallback: number, field: string, min = 1, max = 100_000): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Invalid digest.autopilot.${field}: ${String(value)}`);
+  }
+  const normalized = Math.floor(value);
+  if (normalized < min || normalized > max) {
+    throw new Error(`Invalid digest.autopilot.${field}: ${String(value)}`);
+  }
+  return normalized;
+}
+
+function parseAutopilotStrictBoolean(value: unknown, field: string, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  if (value === true) return true;
+  if (value === false) return false;
+  throw new Error(`Invalid digest.autopilot.${field}: expected boolean, received ${typeof value} (${String(value)})`);
+}
+
+export function parseDigestAutopilotConfig(cfg: Record<string, unknown>): DigestAutopilotConfig {
+  const digest = cfg.digest as Record<string, unknown> | undefined;
+  const autopilot = digest?.autopilot as Record<string, unknown> | undefined;
+  const modeRaw = autopilot?.mode;
+  const mode = modeRaw === "apply" ? "apply" : "dry-run";
+  if (modeRaw !== undefined && modeRaw !== "apply" && modeRaw !== "dry-run") {
+    throw new Error(`Invalid digest.autopilot.mode: ${String(modeRaw)}`);
+  }
+  const scheduleRaw = autopilot?.schedule;
+  const schedule = "after-weekly-pending-digest" as const;
+  if (scheduleRaw !== undefined && scheduleRaw !== schedule) {
+    throw new Error(`Invalid digest.autopilot.schedule: ${String(scheduleRaw)}`);
+  }
+
+  return {
+    enabled: parseAutopilotStrictBoolean(autopilot?.enabled, "enabled", false),
+    mode,
+    schedule,
+    maxPersona: parseAutopilotPositiveInt(autopilot?.maxPersona, 20, "maxPersona", 0),
+    maxProcedures: parseAutopilotPositiveInt(autopilot?.maxProcedures, 50, "maxProcedures", 0),
+    maxVerified: parseAutopilotPositiveInt(autopilot?.maxVerified, 100, "maxVerified", 0),
+    maxTools: parseAutopilotPositiveInt(autopilot?.maxTools, 50, "maxTools", 0),
+    maxCrystallization: parseAutopilotPositiveInt(autopilot?.maxCrystallization, 50, "maxCrystallization", 0),
+    personaPolicy: parseAutopilotPolicy(
+      autopilot?.personaPolicy,
+      DIGEST_AUTOPILOT_PERSONA_POLICIES,
+      "cautious",
+      "personaPolicy",
+    ),
+    procedurePolicy: parseAutopilotPolicy(
+      autopilot?.procedurePolicy,
+      DIGEST_AUTOPILOT_PROCEDURE_POLICIES,
+      "auto-safe",
+      "procedurePolicy",
+    ),
+    verifiedPolicy: parseAutopilotPolicy(
+      autopilot?.verifiedPolicy,
+      DIGEST_AUTOPILOT_VERIFIED_POLICIES,
+      "classify",
+      "verifiedPolicy",
+    ),
+    toolPolicy: parseAutopilotPolicy(
+      autopilot?.toolPolicy,
+      DIGEST_AUTOPILOT_READ_ONLY_POLICIES,
+      "classify",
+      "toolPolicy",
+    ),
+    crystallizationPolicy: parseAutopilotPolicy(
+      autopilot?.crystallizationPolicy,
+      DIGEST_AUTOPILOT_READ_ONLY_POLICIES,
+      "classify",
+      "crystallizationPolicy",
+    ),
+    notifyOnNoop: parseAutopilotStrictBoolean(autopilot?.notifyOnNoop, "notifyOnNoop", false),
+    notifyOnDryRunActions: parseAutopilotStrictBoolean(
+      autopilot?.notifyOnDryRunActions,
+      "notifyOnDryRunActions",
+      false,
+    ),
+    notifyOnApplyActions: parseAutopilotStrictBoolean(autopilot?.notifyOnApplyActions, "notifyOnApplyActions", true),
+    notifyOnHumanReviewRequired: parseAutopilotStrictBoolean(
+      autopilot?.notifyOnHumanReviewRequired,
+      "notifyOnHumanReviewRequired",
+      true,
+    ),
+    notifyOnFailure: parseAutopilotStrictBoolean(autopilot?.notifyOnFailure, "notifyOnFailure", true),
+    guardWindowHours: parseAutopilotPositiveInt(autopilot?.guardWindowHours, 120, "guardWindowHours"),
+    lockTtlMinutes: parseAutopilotPositiveInt(autopilot?.lockTtlMinutes, 120, "lockTtlMinutes"),
+  };
 }
 
 export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAdaptersConfig {

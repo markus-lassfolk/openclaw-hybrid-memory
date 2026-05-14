@@ -16,7 +16,7 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve as pathResolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
 
 import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
@@ -25,7 +25,6 @@ import { findPluginRoot } from "../utils/plugin-root.js";
 import type { DigestWeeklyDeliveryConfig, HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
-import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
 import {
   HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
@@ -36,6 +35,7 @@ import { findDeprecatedHybridMemCronTokens } from "../services/deprecated-cron-c
 import { capturePluginError } from "../services/error-reporter.js";
 import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
+import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
 import { DEFAULT_COMPACTION_MODEL } from "../utils/compaction-model-watchdog.js";
 import { PLUGIN_ID } from "../utils/constants.js";
@@ -752,6 +752,24 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Monday 08:20 | weekly-pending-digest-autopilot | guarded pending digest autopilot cron wrapper
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest-autopilot`,
+    sessionTarget: "isolated",
+    name: "weekly-pending-digest-autopilot",
+    schedule: { kind: "cron", expr: "20 8 * * 1" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-pending-digest-autopilot", {
+      preamble:
+        "Weekly pending-digest autopilot wrapper. Respect digest.autopilot config defaults (disabled + dry-run), keep durable HM_LOG/HM_EXIT artifacts, and fail on inner-step failures.",
+      steps: [{ name: "digest-autopilot-cron", cmd: "openclaw hybrid-mem digest autopilot-cron --json" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
@@ -955,8 +973,13 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [`${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`]: (j) =>
     /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
-  [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) =>
-    /weekly-pending-digest|pending digest/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest-autopilot`]: (j) =>
+    /weekly-pending-digest-autopilot|pending digest autopilot/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) => {
+    const name = String(j.name ?? "");
+    if (/weekly-pending-digest-autopilot|pending digest autopilot/i.test(name)) return false;
+    return /weekly-pending-digest|pending digest/i.test(name);
+  },
   [`${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`]: (j) =>
     /maintenance-log-analyzer|analyze-maintenance-logs/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>

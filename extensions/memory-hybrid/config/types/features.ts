@@ -426,11 +426,42 @@ export type DigestWeeklyDeliveryConfig = {
   chatId?: string;
 };
 
+export type DigestAutopilotMode = "dry-run" | "apply";
+export type DigestAutopilotPersonaPolicy = "disabled" | "report-only" | "cautious" | "apply-safe";
+export type DigestAutopilotProcedurePolicy = "disabled" | "report-only" | "dry-run-skills" | "auto-safe";
+export type DigestAutopilotVerifiedPolicy = "disabled" | "report-only" | "classify" | "apply-obvious";
+export type DigestAutopilotReadOnlyPolicy = "disabled" | "report-only" | "classify";
+
+/** Cron wrapper configuration for pending digest autopilot (#1330). */
+export type DigestAutopilotConfig = {
+  enabled: boolean;
+  mode: DigestAutopilotMode;
+  schedule: "after-weekly-pending-digest";
+  maxPersona: number;
+  maxProcedures: number;
+  maxVerified: number;
+  maxTools: number;
+  maxCrystallization: number;
+  personaPolicy: DigestAutopilotPersonaPolicy;
+  procedurePolicy: DigestAutopilotProcedurePolicy;
+  verifiedPolicy: DigestAutopilotVerifiedPolicy;
+  toolPolicy: DigestAutopilotReadOnlyPolicy;
+  crystallizationPolicy: DigestAutopilotReadOnlyPolicy;
+  notifyOnNoop: boolean;
+  notifyOnDryRunActions: boolean;
+  notifyOnApplyActions: boolean;
+  notifyOnHumanReviewRequired: boolean;
+  notifyOnFailure: boolean;
+  guardWindowHours: number;
+  lockTtlMinutes: number;
+};
+
 /** Operator digest configuration (cron + CLI). */
 export type DigestConfig = {
   weekly: {
     delivery: DigestWeeklyDeliveryConfig;
   };
+  autopilot: DigestAutopilotConfig;
 };
 
 /**

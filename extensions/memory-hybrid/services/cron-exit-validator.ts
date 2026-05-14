@@ -16,6 +16,9 @@ export interface ExitStep {
   step: string;
   exitCode: number;
   line: string;
+  status?: "ok" | "failed" | "skipped";
+  reason?: string;
+  durationMs?: number;
   failureReason?: string;
   strictFailureReason?: string;
 }
@@ -39,6 +42,10 @@ export interface ExitValidationResult {
   error?: string;
 }
 
+export function normalizeExitStepName(rawStep: string): string {
+  return rawStep.startsWith("step=") ? rawStep.slice("step=".length) : rawStep;
+}
+
 /**
  * Parse an HM_EXIT file line.
  * Format: {ISO_TIMESTAMP} {step_name} exit={exit_code}
@@ -48,15 +55,22 @@ export function parseExitLine(line: string): ExitStep | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
 
-  // Match: ISO timestamp, step name, exit code
-  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(\S+)\s+exit=(-?\d+)$/);
+  // Legacy format: "<ts> <step> exit=<code>"
+  // Extended format: "<ts> step=<step> exit=<code> status=<ok|failed|skipped> reason=<reason> duration_ms=<ms>"
+  const match = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+((?:step=)?(\S+))\s+exit=(-?\d+)(?:\s+status=(ok|failed|skipped))?(?:\s+reason=(\S+))?(?:\s+duration_ms=(\d+))?\s*$/,
+  );
   if (!match) return null;
+  const step = normalizeExitStepName(match[2]);
 
   return {
     timestamp: match[1],
-    step: match[2],
-    exitCode: Number.parseInt(match[3], 10),
+    step,
+    exitCode: Number.parseInt(match[4], 10),
     line: trimmed,
+    status: (match[5] as ExitStep["status"]) ?? undefined,
+    reason: match[6] ?? undefined,
+    durationMs: match[7] ? Number.parseInt(match[7], 10) : undefined,
   };
 }
 
