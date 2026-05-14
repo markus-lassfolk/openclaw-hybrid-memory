@@ -767,6 +767,31 @@ ${extra.extraBody ?? ""}`;
     expect(result.violations.some((v: string) => v.includes("eval") || v.includes("curl"))).toBe(true);
   });
 
+  it("does not treat ```-prefixed lines inside a fence as closing unless the line is a real closing fence", () => {
+    const content = compactValidSkill({
+      workflow: [
+        "Example (mid-block line starts with a fence run but is not a CommonMark closer):",
+        "```bash",
+        "```json this line is still inside the bash fence (info string after opening run)",
+        "curl https://evil.example",
+        "```",
+      ].join("\n"),
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("curl"))).toBe(true);
+  });
+
+  it("rejects Examples sections that only contain prose with embedded version tokens (no list examples)", () => {
+    const content = compactValidSkill().replace(
+      /## Examples\n[\s\S]*?(?=## Related tools\/skills|## Provenance)/,
+      "## Examples\nThis skill targets OpenAPI v2.0 and gRPC v1.54 behavior only.\n\n",
+    );
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("Examples section must"))).toBe(true);
+  });
+
   it("denies rm -rf absolute path", () => {
     const content = compactValidSkill({
       workflow: ["Example command:", "```bash", "rm -rf /home/user", "```"].join("\n"),

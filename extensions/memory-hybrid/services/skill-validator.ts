@@ -297,11 +297,14 @@ export class SkillValidator {
       const trimmed = line.trim();
 
       // Track fenced blocks; closing delimiter must match opener (``` vs ~~~) and length (CommonMark).
-      const fenceMatch = trimmed.match(/^(`{3,}|~{3,})(\w*)/);
-      if (fenceMatch) {
-        const marker = fenceMatch[1];
+      // Closing lines must be fence + optional whitespace only — not ```json mid-block, etc.
+      const fenceStart = trimmed.match(/^(`{3,}|~{3,})/);
+      if (fenceStart) {
+        const marker = fenceStart[1];
         const ch = marker[0] as "`" | "~";
         const len = marker.length;
+        const afterMarker = trimmed.slice(marker.length);
+        const isCloseLine = /^\s*$/.test(afterMarker);
         if (!inCodeBlock) {
           inCodeBlock = true;
           fenceChar = ch;
@@ -316,7 +319,7 @@ export class SkillValidator {
           }
           continue;
         }
-        if (fenceChar === ch && len >= fenceOpenLen) {
+        if (isCloseLine && fenceChar === ch && len >= fenceOpenLen) {
           if (currentFenceLines > MAX_FENCED_BLOCK_LINES) {
             violations.push(
               `Line ${currentFenceStartLine}: [codeblock-size] Fenced code/log block has ${currentFenceLines} lines (max ${MAX_FENCED_BLOCK_LINES}). Summarize instead.`,
@@ -410,18 +413,20 @@ function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: stri
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
-    const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
-    if (fenceMatch) {
-      const marker = fenceMatch[1];
+    const fenceStart = trimmed.match(/^(`{3,}|~{3,})/);
+    if (fenceStart) {
+      const marker = fenceStart[1];
       const ch = marker[0] as "`" | "~";
       const len = marker.length;
+      const afterMarker = trimmed.slice(marker.length);
+      const isCloseLine = /^\s*$/.test(afterMarker);
       if (!inFence) {
         inFence = true;
         fenceChar = ch;
         fenceOpenLen = len;
         continue;
       }
-      if (fenceChar === ch && len >= fenceOpenLen) {
+      if (isCloseLine && fenceChar === ch && len >= fenceOpenLen) {
         inFence = false;
         fenceChar = null;
         fenceOpenLen = 0;
@@ -464,7 +469,7 @@ function containsConcreteExample(examplesBody: string): boolean {
     .filter(Boolean);
   // Accept any bullet/numbered item that isn't an obvious placeholder.
   return lines.some((l) => {
-    if (!/^[-*]|\d+\./.test(l)) return false;
+    if (!/^(?:[-*+]|\d+\.)\s+\S/.test(l)) return false;
     if (/\b(?:tbd|todo|placeholder|example here|fill in)\b/i.test(l)) return false;
     return l.length >= 18;
   });
