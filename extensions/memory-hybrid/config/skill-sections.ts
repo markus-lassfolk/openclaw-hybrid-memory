@@ -29,9 +29,14 @@ export interface SectionDefinition {
   label: string;
   /**
    * Normalised heading text that counts as satisfying this requirement.
-   * Each alias should already be lowercase with spaces and only contain
+   * Each alias MUST already be lowercase with spaces and only contain
    * letters, digits, slashes, spaces, and hyphens — matching the output of
    * the `normalizeHeading` helper in skill-validator.ts.
+   *
+   * **Callers adding entries to `CATEGORY_SECTION_TAXONOMIES` are responsible for
+   * pre-normalising all alias strings.** The validators do not re-normalise the
+   * values stored here; they compare against the normalised heading text from
+   * `parseH2Headings()` which applies that same transform to the SKILL.md content.
    */
   aliases: string[];
 }

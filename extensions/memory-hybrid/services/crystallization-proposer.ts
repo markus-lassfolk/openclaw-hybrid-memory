@@ -212,7 +212,16 @@ export class CrystallizationProposer {
    * anything to disk.  This makes `skills validate <id>` produce the same outcome
    * prediction as `skills install <id>` would (issue #1402).
    *
-   * Returns `null` when the proposal ID is not found.
+   * A `null` WorkflowStore is fine here — this method only uses the validator and the
+   * crystallization store; the workflow-store-backed pattern detector is not involved.
+   *
+   * @param proposalId - The crystallization proposal to validate.
+   * @param opts.name - Rename the skill before validation (mirrors the install --name flag).
+   * @param opts.category - Override the category before validation.
+   * @param opts.recommendedOutput - Override the recommended-output field.
+   * @returns Full validation result, or `null` when the proposal ID is not found.
+   *          A "deny" approval decision means install would have failed; "allow-with-override"
+   *          means install would require --override-warnings; "allow" means install succeeds.
    */
   validateProposal(
     proposalId: string,

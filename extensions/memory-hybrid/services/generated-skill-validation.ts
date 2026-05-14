@@ -464,8 +464,10 @@ function extractSection(skillContent: string, heading: string): string {
 
 /**
  * Try each heading alias in order and return the first matching section body.
+ * Aliases are tried in declaration order; the first non-empty match wins.
  * Supports skills that use section-name aliases (e.g. "## When to Activate" instead of
  * "## Trigger") so the activation eval works for all alias variants (issue #1375).
+ * Uses case-insensitive regex matching (same as `extractSection`).
  */
 function extractSectionByAliases(skillContent: string, headingAliases: string[]): string {
   for (const heading of headingAliases) {

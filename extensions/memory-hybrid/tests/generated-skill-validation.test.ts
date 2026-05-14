@@ -1248,8 +1248,7 @@ Bounded dry-run test workflow.
       expect(output.dryRun).toBe(true);
       // Dry run must NOT create the skill file on disk.
       if (output.staticValidation?.outputPath) {
-        const { existsSync: exists } = await import("node:fs");
-        expect(exists(output.staticValidation.outputPath)).toBe(false);
+        expect(existsSync(output.staticValidation.outputPath)).toBe(false);
       }
     } finally {
       cStore.close();
