@@ -406,8 +406,10 @@ function scoreActivationPrompt(prompt: string, sourceText: string): { matched: b
   if (NEGATION_PATTERN.test(normalizedPrompt) && !NEGATION_PATTERN.test(normalizedSource)) {
     score -= 2;
   }
-  const minimumOverlap = promptWords.size <= 2 ? 1 : 2;
-  return { matched: overlap >= minimumOverlap && score >= 2 };
+  const isShortPrompt = promptWords.size <= 2;
+  const minimumOverlap = isShortPrompt ? 1 : 2;
+  const minimumScore = isShortPrompt ? 1 : 2;
+  return { matched: overlap >= minimumOverlap && score >= minimumScore };
 }
 
 function significantWords(text: string): Set<string> {
