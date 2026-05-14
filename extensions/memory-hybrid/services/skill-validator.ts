@@ -283,6 +283,8 @@ export class SkillValidator {
     }
 
     let inCodeBlock = false;
+    let fenceChar: "`" | "~" | null = null;
+    let fenceOpenLen = 0;
     let currentFenceStartLine = 0;
     let currentFenceLines = 0;
     let lineNumber = 0;
@@ -294,27 +296,37 @@ export class SkillValidator {
       lineNumber++;
       const trimmed = line.trim();
 
-      // Track code block boundaries (``` or ~~~ fences)
-      const fenceMatch = trimmed.match(/^(```+|~{3,})(\w*)/);
+      // Track fenced blocks; closing delimiter must match opener (``` vs ~~~) and length (CommonMark).
+      const fenceMatch = trimmed.match(/^(`{3,}|~{3,})(\w*)/);
       if (fenceMatch) {
-        inCodeBlock = !inCodeBlock;
-        if (inCodeBlock) {
+        const marker = fenceMatch[1];
+        const ch = marker[0] as "`" | "~";
+        const len = marker.length;
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          fenceChar = ch;
+          fenceOpenLen = len;
           currentFenceStartLine = lineNumber;
           currentFenceLines = 0;
           const contextLine = findPreviousNonEmptyLine(lines, lineNumber - 2);
-          if (!contextLine || /^#{1,6}\s+/.test(contextLine) || /^(```+|~{3,})/.test(contextLine)) {
+          if (!contextLine || /^#{1,6}\s+/.test(contextLine) || /^(`{3,}|~{3,})/.test(contextLine)) {
             violations.push(
               `Line ${lineNumber}: [codeblock-context] Code/log snippet must have a preceding explanatory sentence (avoid raw dumps).`,
             );
           }
-        } else {
+          continue;
+        }
+        if (fenceChar === ch && len >= fenceOpenLen) {
           if (currentFenceLines > MAX_FENCED_BLOCK_LINES) {
             violations.push(
               `Line ${currentFenceStartLine}: [codeblock-size] Fenced code/log block has ${currentFenceLines} lines (max ${MAX_FENCED_BLOCK_LINES}). Summarize instead.`,
             );
           }
+          inCodeBlock = false;
+          fenceChar = null;
+          fenceOpenLen = 0;
+          continue;
         }
-        continue;
       }
 
       if (inCodeBlock) {
@@ -393,11 +405,28 @@ function normalizeHeading(value: string): string {
 function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: string; line: number }> {
   const out: Array<{ raw: string; normalized: string; line: number }> = [];
   let inFence = false;
+  let fenceChar: "`" | "~" | null = null;
+  let fenceOpenLen = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
-    if (/^(```+|~{3,})/.test(trimmed)) {
-      inFence = !inFence;
+    const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      const ch = marker[0] as "`" | "~";
+      const len = marker.length;
+      if (!inFence) {
+        inFence = true;
+        fenceChar = ch;
+        fenceOpenLen = len;
+        continue;
+      }
+      if (fenceChar === ch && len >= fenceOpenLen) {
+        inFence = false;
+        fenceChar = null;
+        fenceOpenLen = 0;
+        continue;
+      }
       continue;
     }
     if (inFence) continue;
