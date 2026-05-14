@@ -53,6 +53,9 @@ describe("GeneratedSkillValidationService", () => {
       pattern,
     });
 
+    expect(result.skillContent).toContain('- Handle "fix bug" using the exec → read workflow, then verify the result before reporting back.');
+    expect(validation.staticValidation.status).toBe("passed");
+    expect(validation.dryLoadValidation.status).toBe("passed");
     expect(validation.syntheticActivationEval.status).toBe("passed");
     expect(validation.approvalDecision).not.toBe("deny");
   });
