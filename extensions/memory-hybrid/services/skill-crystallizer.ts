@@ -181,7 +181,7 @@ function buildExamplesText(exampleGoals: string[], skillName: string, toolSequen
     .filter((g) => g.length > 0);
   const concreteGoals = cleanedGoals.filter((g) => g.length >= 18);
   const primaryGoal = cleanedGoals[0] ?? skillName.replace(/[-_]+/g, " ");
-  const concreteFallback = `- Run the ${toolSequence.join(" → ")} workflow to validate "${primaryGoal}" end-to-end, then report what changed.`;
+  const concreteFallback = `Run the ${toolSequence.join(" → ")} workflow to validate "${primaryGoal}" end-to-end, then report what changed.`;
   const examples = [...concreteGoals];
   if (examples.length === 0) examples.push(concreteFallback);
   for (const goal of cleanedGoals) {
