@@ -472,11 +472,6 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
-  // Current SkillCrystallizer output uses the proposal-card Markdown template (heading + "Auto-crystallized…").
-  // Those proposals must go through full generated-skill validation, not the legacy bypass.
-  if (skillContent.includes("Auto-crystallized from workflow pattern")) {
-    return false;
-  }
   const lines = skillContent.split("\n");
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
