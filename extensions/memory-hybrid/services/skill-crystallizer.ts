@@ -98,6 +98,7 @@ function buildSkillContent(
   const exampleGoalsText = card.provenance.example_goals.length
     ? card.provenance.example_goals.map((g) => `- ${g.replace(/\n/g, " ")}`).join("\n")
     : "- (no example goals recorded)";
+  const capturesText = card.captures.length ? card.captures.map((c) => `- ${c}`).join("\n") : "- (none)";
 
   const stepsText = toolSequence
     .map(
@@ -105,6 +106,11 @@ function buildSkillContent(
         `${i + 1}. Use \`${tool}\` only for the bounded task, follow the host tool schema, keep side-effects minimal, and verify before continuing.`,
     )
     .join("\n");
+
+  const antiPatterns =
+    pattern.failureCount > 0
+      ? `- Do not assume the pattern always succeeds (${pattern.failureCount} recorded failures). Add a verification gate and record feedback on failure.\n- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.`
+      : `- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not treat tool sequencing as sufficient; always include verification and failure handling.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.`;
 
   const desc = card.description.replace(/\s+/g, " ").trim().slice(0, 260);
   const primaryGoal =
@@ -117,6 +123,8 @@ function buildSkillContent(
 name: ${skillName}
 description: ${desc}
 category: ${card.category}
+provenance: workflow-pattern:${patternId}
+generated_at: ${createdAt}
 ---
 
 # ${skillName}
@@ -140,9 +148,21 @@ Bounded workflow for tool sequence \`${toolSequence.join(" → ")}\` (${successP
 - Tasks that do not match the tool pattern or goals above.
 - Open-ended explanation-only requests with no intent to execute the workflow.
 
+## Captures
+
+${capturesText}
+
 ## Workflow
 
 ${stepsText}
+
+## Verification
+- Confirm the output matches the user's request (objective checks preferred).
+- Keep snippets compact; avoid pasting long command output or transcripts.
+- If a step fails, stop and record a failure signal rather than improvising.
+
+## Anti-patterns / Known Failures
+${antiPatterns}
 
 ## Examples
 
