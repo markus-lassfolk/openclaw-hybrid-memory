@@ -12,10 +12,7 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { SkillValidator } from "../services/skill-validator.js";
-import {
-  detailSkillProposalValidation,
-  summarizeSkillProposalValidation,
-} from "../services/generated-skill-validation.js";
+import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
 import type { Chainable } from "./shared.js";
 import { relativeTime, withExit } from "./shared.js";
 

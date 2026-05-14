@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
-import { MAX_SKILL_LINES } from "../config/skill-sections.js";
+import { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES } from "../config/skill-sections.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
 
@@ -339,7 +339,8 @@ export class GeneratedSkillValidationService {
     const cases = buildSyntheticActivationCases(input, frontmatter);
     // Support all trigger-section aliases so skills that use ## When to Activate
     // or ## When to use are also covered (issue #1375).
-    const triggerSection = extractSectionByAliases(input.skillContent, ["Trigger", "When to Activate", "When to use"]);
+    const triggerAliases = DEFAULT_REQUIRED_SECTIONS.find((s) => s.id === "trigger")?.aliases ?? [];
+    const triggerSection = extractSectionByAliases(input.skillContent, triggerAliases);
     const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
     const positive = scoreActivationPrompt(cases.positive, sourceText);
     const negative = scoreActivationPrompt(cases.negative, sourceText);
@@ -495,7 +496,8 @@ function buildSyntheticActivationCases(
   const keywords = [...significantWords(positive)].slice(0, 3);
   const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
   // Use alias-aware extraction so skills with "## When to Activate" also match (issue #1375).
-  const triggerSection = extractSectionByAliases(input.skillContent, ["Trigger", "When to Activate", "When to use"]);
+  const triggerAliases = DEFAULT_REQUIRED_SECTIONS.find((s) => s.id === "trigger")?.aliases ?? [];
+  const triggerSection = extractSectionByAliases(input.skillContent, triggerAliases);
   const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
   return {
     positive,
