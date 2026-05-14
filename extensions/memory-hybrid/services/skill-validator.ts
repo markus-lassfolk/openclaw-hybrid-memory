@@ -497,6 +497,12 @@ function parseFrontmatter(lines: string[]): {
   // Only treat it as frontmatter when it starts the document (after optional leading blank lines).
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
+  // Skip optional leading HTML comment block(s) (e.g., injected by injectInstallMetadata).
+  while (i < lines.length && lines[i]?.trimStart().startsWith("<!--")) {
+    while (i < lines.length && !(lines[i] ?? "").includes("-->")) i++;
+    i++; // skip the line containing the closing -->
+    while (i < lines.length && lines[i]?.trim() === "") i++;
+  }
   if (lines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
   i++;
   for (; i < lines.length; i++) {
