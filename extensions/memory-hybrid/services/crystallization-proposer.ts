@@ -38,12 +38,14 @@ function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: stri
     head += fmMatch[0];
     body = body.slice(fmMatch[0].length);
   }
+  const leadingNewlineMatch = body.match(/^\r?\n/);
+  const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
   body = body.replace(/^\r?\n/, "");
   const h1Line = /^#\s+(?!#)\S.*$/m;
   if (!h1Line.test(body)) {
     return skillContent;
   }
-  return head + body.replace(h1Line, `# ${newTitle}`);
+  return head + leadingNewline + body.replace(h1Line, `# ${newTitle}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -592,7 +594,7 @@ function stripInlineYamlTrailingComment(fragment: string): string {
 }
 
 function isTopLevelYamlKeyLine(line: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_-]*:\s/.test(line);
+  return /^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)/.test(line);
 }
 
 function leadingIndentLen(line: string): number {
