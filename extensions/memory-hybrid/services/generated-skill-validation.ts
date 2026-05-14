@@ -123,8 +123,14 @@ const STOP_WORDS = new Set([
 ]);
 
 export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
-  // Strip optional leading HTML comment (e.g., injected by injectInstallMetadata)
-  const body = skillContent.replace(/^\uFEFF?[\s\r\n]*<!--[\s\S]*?-->\s*/, "").replace(/^\uFEFF/, "");
+  // Strip optional leading HTML comment(s) (e.g., injected by injectInstallMetadata)
+  let body = skillContent.replace(/^\uFEFF/, "");
+  // Strip multiple leading HTML comments (consistent with parseFrontmatter in skill-validator.ts)
+  while (true) {
+    const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
+    if (stripped === body) break;
+    body = stripped;
+  }
   const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
   const frontmatter: SkillFrontmatter = {};
