@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
@@ -384,11 +385,32 @@ function buildSyntheticActivationCases(
       .trim() ?? `Please use the ${input.skillName} workflow for the matching task.`;
   const keywords = [...significantWords(`${positive} ${frontmatter.description ?? ""}`)].slice(0, 3);
   const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
+  const triggerSection = extractSection(input.skillContent, "Trigger");
+  const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
   return {
     positive,
-    negative: "How do I create a GitHub issue?",
+    negative: pickUnrelatedNegativePrompt(sourceText),
     edge: `Explain ${edgePhrase} without executing the workflow or changing files.`,
   };
+}
+
+/** Out-of-domain prompts for activation eval; pick one with no token overlap with the skill surface text. */
+const SYNTHETIC_NEGATIVE_PROMPT_CANDIDATES: string[] = [
+  "How much does an adult emperor penguin weigh on average?",
+  "In what year did the Byzantine Empire fall to the Ottomans?",
+  "Convert 3.5 US cups to millilitres for a baking recipe.",
+  "What is the speed of sound in dry air at 20 degrees Celsius?",
+  "Who composed the Goldberg Variations for harpsichord?",
+  "What is the postal code for the South Georgia research station?",
+];
+
+function pickUnrelatedNegativePrompt(sourceText: string): string {
+  const sourceWords = activationMatchTokens(sourceText);
+  for (const candidate of SYNTHETIC_NEGATIVE_PROMPT_CANDIDATES) {
+    const promptWords = activationMatchTokens(candidate);
+    if ([...promptWords].every((w) => !sourceWords.has(w))) return candidate;
+  }
+  return `Unrelated offline trivia ${randomUUID().replace(/-/g, "")} cobalt zephyr`;
 }
 
 function scoreActivationPrompt(prompt: string, sourceText: string): { matched: boolean } {
