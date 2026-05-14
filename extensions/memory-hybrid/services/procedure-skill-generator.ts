@@ -21,6 +21,15 @@ import {
 } from "./procedure-promotion-policy.js";
 
 const MAX_SKILLS_PER_RUN = 10;
+const EVIDENCE_STOP_WORDS = new Set([
+  "with",
+  "from",
+  "that",
+  "this",
+  "workflow",
+  "procedure",
+  "report",
+]);
 
 /** Per-procedure result returned by {@link generateAutoSkillForProcedure}. */
 export type GenerateAutoSkillResult =
@@ -416,7 +425,7 @@ function significantWords(text: string): Set<string> {
       .toLowerCase()
       .split(/[^a-z0-9]+/)
       .map((word) => word.trim())
-      .filter((word) => word.length >= 4 && !["with", "from", "that", "this", "workflow", "procedure", "report"].includes(word)),
+      .filter((word) => word.length >= 4 && !EVIDENCE_STOP_WORDS.has(word)),
   );
 }
 

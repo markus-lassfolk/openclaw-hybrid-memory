@@ -890,7 +890,11 @@ function collectDistinctSessionIds(
 
 function determineRiskLevel(proc: ProcedureEntry, recipe: unknown): "low" | "medium" | "high" {
   const combined = `${proc.taskPattern}\n${JSON.stringify(recipe)}`;
-  if (/(?:\brm\s+-[rf]+\b|\bdd\s+if=|\bmkfs\b|\bshred\b|\bdrop\s+table\b|\btruncate\s+table\b|private[_-]?key|token\s*[:=]|password\s*[:=])/i.test(combined))
+  if (
+    /(?:\brm\s+-[rf]+\b|\bdd\s+if=|\bmkfs\b|\bshred\b|\bdrop\s+table\b|\btruncate\s+table\b)|(?:\bprivate[_-]?key\b|\b(?:token|password)\b)\s*[:=]/i.test(
+      combined,
+    )
+  )
     return "high";
   if (
     /\b(systemctl|service)\s+(?:start|stop|restart|reload|enable|disable)\b|\b(npm|pnpm|yarn|pip|apt|brew|cargo)\s+(install|add|remove|uninstall|upgrade)\b|\bssh\b|\bscp\b|\brsync\b|\b(curl|wget)\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))/i.test(
