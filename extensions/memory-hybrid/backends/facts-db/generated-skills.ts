@@ -235,7 +235,17 @@ export function recordGeneratedSkillTelemetry(
     const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(input.procedureId) as
       | Record<string, unknown>
       | undefined;
-    proc = row ? procedureRowToEntry(db, row) : null;
+    const candidate = row ? procedureRowToEntry(db, row) : null;
+    if (!candidate) throw new Error(`Procedure not found for telemetry: ${input.procedureId}`);
+    if (candidate.promotedToSkill !== 1 || !candidate.skillPath?.trim()) {
+      throw new Error(`Procedure ${input.procedureId} is not a promoted generated skill`);
+    }
+    const skill = input.skillName.trim();
+    const path = candidate.skillPath.trim();
+    if (path !== skill && basename(path) !== skill) {
+      throw new Error(`Procedure ${input.procedureId} skill_path does not match skill name "${input.skillName}"`);
+    }
+    proc = candidate;
   }
   if (!proc) throw new Error(`Generated skill not found: ${input.skillName}`);
   const now = input.createdAt ?? Math.floor(Date.now() / 1000);

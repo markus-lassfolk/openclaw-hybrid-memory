@@ -163,6 +163,71 @@ describe("generated skill telemetry", () => {
     expect(report.rows[0]?.recommendation).toBe("archive");
   });
 
+  it("accepts procedureId when it matches the promoted skill for the same skill name", () => {
+    const { id, skillName } = createGeneratedSkill();
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      procedureId: id,
+      decision: "selected",
+      requestSummary: "validate release health report",
+      taskOutcome: "success",
+    });
+    const skill = db.getGeneratedSkillByName(skillName);
+    expect(skill?.id).toBe(id);
+  });
+
+  it("rejects procedureId that is not a promoted generated skill", () => {
+    const { skillName } = createGeneratedSkill();
+    const other = db.upsertProcedure({
+      taskPattern: "Unrelated workflow pattern",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 1,
+      confidence: 0.5,
+      sourceSessionId: "session-other",
+    });
+    expect(() =>
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        procedureId: other.id,
+        decision: "selected",
+        requestSummary: "validate release health report",
+        taskOutcome: "success",
+      }),
+    ).toThrow(/not a promoted generated skill/);
+  });
+
+  it("rejects procedureId when skill_path does not match skillName", () => {
+    const procA = db.upsertProcedure({
+      taskPattern: "Alpha workflow for telemetry mismatch",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "session-a",
+    });
+    db.markProcedurePromoted(procA.id, "skills/auto/skill-alpha-telemetry");
+    const procB = db.upsertProcedure({
+      taskPattern: "Beta workflow for telemetry mismatch",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "session-b",
+    });
+    db.markProcedurePromoted(procB.id, "skills/auto/skill-beta-telemetry");
+
+    expect(() =>
+      db.recordGeneratedSkillTelemetry({
+        skillName: "skill-alpha-telemetry",
+        procedureId: procB.id,
+        decision: "selected",
+        requestSummary: "validate release health report",
+        taskOutcome: "success",
+      }),
+    ).toThrow(/skill_path does not match/);
+  });
+
   it("exposes telemetry and demotion commands through the CLI", async () => {
     const { skillName } = createGeneratedSkill();
     db.recordGeneratedSkillTelemetry({
