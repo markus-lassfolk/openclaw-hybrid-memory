@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureEntry } from "../types/memory.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   ProcedurePromotionAdapter,
@@ -13,6 +12,7 @@ import {
   parseProcedurePromotionPolicy,
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import type { ProcedureEntry } from "../types/memory.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 let tmpDir: string;
@@ -342,14 +342,26 @@ Source procedure id: proc-weather
             id: "version-fail-1",
             versionNumber: 1,
             successCount: 2,
-            failureCount: 5,
+            failureCount: 7,
             avoidanceNotes: ["step 2 failed repeatedly"],
             createdAt: 1_700_000_001,
           },
         ],
         procedureFailures: [
-          { id: "failure-1", versionNumber: 1, timestamp: 1_700_000_100, context: "timeout", failedAtStep: 2 },
-          { id: "failure-2", versionNumber: 1, timestamp: 1_700_000_200, context: "bad output", failedAtStep: 3 },
+          {
+            id: "failure-1",
+            versionNumber: 1,
+            timestamp: 1_700_000_100,
+            context: "timeout",
+            failedAtStep: 2,
+          },
+          {
+            id: "failure-2",
+            versionNumber: 1,
+            timestamp: 1_700_000_200,
+            context: "bad output",
+            failedAtStep: 3,
+          },
         ],
         episodes: [
           { id: "episode-failure-1", outcome: "failure", sessionId: "score-a" },
@@ -617,8 +629,16 @@ Source procedure id: proc-weather
     const proc = addProcedure({
       taskPattern: "Check release report status",
       recipeJson: JSON.stringify([
-        { tool: "read", args: { path: "status.json" }, summary: "Read status input" },
-        { tool: "read", args: { path: "report.json" }, summary: "Open report output" },
+        {
+          tool: "read",
+          args: { path: "status.json" },
+          summary: "Read status input",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Open report output",
+        },
       ]),
       sourceSessionId: "no-validation-a",
     });
@@ -811,8 +831,16 @@ Source procedure id: proc-weather
     const proc = addProcedure({
       taskPattern: "Validate workflow that still lacks explicit checks",
       recipeJson: JSON.stringify([
-        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
-        { tool: "read", args: { path: "report.json" }, summary: "Review report output" },
+        {
+          tool: "read",
+          args: { path: "status.json" },
+          summary: "Check status input",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Review report output",
+        },
       ]),
       sourceSessionId: "no-validation-reason-a",
     });

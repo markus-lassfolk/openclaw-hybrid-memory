@@ -832,26 +832,22 @@ function summarizeProcedureEvidence(
   const procedureVersions = evidence?.procedureVersions ?? [];
   const versionSuccesses = procedureVersions.reduce((sum, version) => sum + Math.max(0, version.successCount), 0);
   const versionFailures = procedureVersions.reduce((sum, version) => sum + Math.max(0, version.failureCount), 0);
-  // When callers attach explicit version aggregates (eval harness / scoring previews), those
-  // counts should drive evidence summaries — otherwise live procedure.successCount from the DB
-  // dominates and masks synthetic failure-heavy scenarios.
+  const versionTotal = versionSuccesses + versionFailures;
+  const procTotal = item.payload.successCount + item.payload.failureCount;
   let successCount: number;
   let failureCount: number;
-  if (procedureVersions.length > 0 && (versionSuccesses > 0 || versionFailures > 0)) {
+  if (procedureVersions.length === 0) {
+    successCount = item.procedure.successCount;
+    failureCount = item.procedure.failureCount;
+  } else if (versionTotal >= procTotal && (versionSuccesses > 0 || versionFailures > 0)) {
     successCount = versionSuccesses;
     failureCount = versionFailures;
-  } else if (procedureVersions.length > 0) {
+  } else {
     successCount = Math.max(item.procedure.successCount, versionSuccesses);
     failureCount = Math.max(item.procedure.failureCount, versionFailures);
-  } else {
-    successCount = Math.max(item.procedure.successCount, versionSuccesses || item.procedure.successCount);
-    failureCount = Math.max(item.procedure.failureCount, versionFailures || item.procedure.failureCount);
   }
   const successRateFromCounts = successCount + failureCount > 0 ? successCount / (successCount + failureCount) : 1;
-  const successRate =
-    procedureVersions.length > 0 && (versionSuccesses > 0 || versionFailures > 0)
-      ? Math.max(0, Math.min(1, successRateFromCounts))
-      : Math.max(0, Math.min(1, item.payload.successRate ?? successRateFromCounts));
+  const successRate = Math.max(0, Math.min(1, successRateFromCounts));
 
   const failureRecords = evidence?.procedureFailures ?? [];
   const failureEpisodes = (evidence?.episodes ?? []).filter((episode) => episode.outcome === "failure").length;
@@ -916,10 +912,6 @@ function collectDistinctSessionIds(
   for (const episode of evidence?.episodes ?? []) {
     if (typeof episode.sessionId === "string" && episode.sessionId.trim().length > 0)
       source.add(episode.sessionId.trim());
-  }
-  for (const request of evidence?.manualWorkflowRequests ?? []) {
-    if (typeof request.sourceSession === "string" && request.sourceSession.trim().length > 0)
-      source.add(request.sourceSession.trim());
   }
   return [...source];
 }
