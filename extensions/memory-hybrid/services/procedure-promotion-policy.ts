@@ -1,17 +1,17 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
-  computePendingInputHash,
   type AutopilotReasonCode,
-  redactAutopilotText,
-  redactAutopilotValue,
   type PendingDecision,
   type PendingDecisionContext,
   type PendingDecisionEvidence,
   type PendingItem,
   type PendingQueueAdapter,
+  computePendingInputHash,
+  redactAutopilotText,
+  redactAutopilotValue,
 } from "./pending-autopilot/index.js";
 import { SkillValidator } from "./skill-validator.js";
 

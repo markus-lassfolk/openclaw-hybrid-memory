@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { registerManageProcedureAndLifecycle } from "../cli/commands/manage/register-procedure-lifecycle.js";
 import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { registerManageProcedureAndLifecycle } from "../cli/commands/manage/register-procedure-lifecycle.js";
 
 let tmpDir: string;
 let db: FactsDB;

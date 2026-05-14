@@ -23,25 +23,9 @@ import {
 } from "./fact-read-queries.js";
 import { FactsDBLayer1 } from "./facts-db-layer1.js";
 import {
-  backfillDecayClasses as backfillDecayClassesImpl,
-  expireBySourcePattern as expireBySourcePatternImpl,
-  lifecycleEntityReport as lifecycleEntityReportImpl,
-  reclassifyDecayClasses as reclassifyDecayClassesImpl,
-  confirmFact as confirmFactImpl,
-  decayConfidence as decayConfidenceImpl,
-  decayConfidenceWithDetails as decayConfidenceWithDetailsImpl,
-  promoteScope as promoteScopeImpl,
-  listExpiredFactIdsPendingPrune as listExpiredFactIdsPendingPruneImpl,
-  listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
-  listFactIdsToBeDeletedByDecayRun as listFactIdsToBeDeletedByDecayRunImpl,
-  pruneExpired as pruneExpiredImpl,
-  pruneExpiredWithDetails as pruneExpiredWithDetailsImpl,
-  listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
-  pruneSessionScope as pruneSessionScopeImpl,
-  restoreCheckpoint as restoreCheckpointImpl,
-  saveCheckpoint as saveCheckpointImpl,
-} from "./maintenance.js";
-import {
+  type GeneratedSkillLifecyclePolicy,
+  type GeneratedSkillTelemetryRecordInput,
+  type GeneratedSkillTelemetryReport,
   buildGeneratedSkillTelemetryReport as buildGeneratedSkillTelemetryReportImpl,
   getGeneratedSkillByName as getGeneratedSkillByNameImpl,
   listGeneratedSkillProcedures as listGeneratedSkillProceduresImpl,
@@ -50,10 +34,26 @@ import {
   recordGeneratedSkillTelemetry as recordGeneratedSkillTelemetryImpl,
   refreshGeneratedSkillLifecycleState as refreshGeneratedSkillLifecycleStateImpl,
   setGeneratedSkillLifecycleState as setGeneratedSkillLifecycleStateImpl,
-  type GeneratedSkillLifecyclePolicy,
-  type GeneratedSkillTelemetryReport,
-  type GeneratedSkillTelemetryRecordInput,
 } from "./generated-skills.js";
+import {
+  backfillDecayClasses as backfillDecayClassesImpl,
+  confirmFact as confirmFactImpl,
+  decayConfidence as decayConfidenceImpl,
+  decayConfidenceWithDetails as decayConfidenceWithDetailsImpl,
+  expireBySourcePattern as expireBySourcePatternImpl,
+  lifecycleEntityReport as lifecycleEntityReportImpl,
+  listExpiredFactIdsPendingPrune as listExpiredFactIdsPendingPruneImpl,
+  listFactIdsToBeDeletedByDecayRun as listFactIdsToBeDeletedByDecayRunImpl,
+  listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
+  listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
+  promoteScope as promoteScopeImpl,
+  pruneExpired as pruneExpiredImpl,
+  pruneExpiredWithDetails as pruneExpiredWithDetailsImpl,
+  pruneSessionScope as pruneSessionScopeImpl,
+  reclassifyDecayClasses as reclassifyDecayClassesImpl,
+  restoreCheckpoint as restoreCheckpointImpl,
+  saveCheckpoint as saveCheckpointImpl,
+} from "./maintenance.js";
 import {
   findProcedureByTaskPattern as findProcedureByTaskPatternImpl,
   getNegativeProceduresMatching as getNegativeProceduresMatchingImpl,
@@ -63,7 +63,6 @@ import {
   getProceduresForAudit as getProceduresForAuditImpl,
   getProceduresReadyForSkill as getProceduresReadyForSkillImpl,
   getStaleProcedures as getStaleProceduresImpl,
-  triageProcedures as triageProceduresImpl,
   listProcedures as listProceduresImpl,
   listProceduresUpdatedInLastNDays as listProceduresUpdatedInLastNDaysImpl,
   markProcedurePromoted as markProcedurePromotedImpl,
@@ -76,6 +75,7 @@ import {
   recordProcedureSuccess as recordProcedureSuccessImpl,
   searchProcedures as searchProceduresImpl,
   searchProceduresRanked as searchProceduresRankedImpl,
+  triageProcedures as triageProceduresImpl,
   upsertProcedure as upsertProcedureImpl,
 } from "./procedures.js";
 import {
@@ -87,19 +87,19 @@ import {
 } from "./reinforcement.js";
 import { getSupersededTextsSnapshot } from "./search.js";
 import {
+  auditCategories as auditCategoriesImpl,
   cleanEntityStopwords as cleanEntityStopwordsImpl,
   countExpiredFacts as countExpiredFactsImpl,
   countFacts as countFactsImpl,
+  countVectorlessActiveFacts as countVectorlessActiveFactsImpl,
   directivesCount as directivesCountImpl,
   entityCount as entityCountImpl,
-  countVectorlessActiveFacts as countVectorlessActiveFactsImpl,
   estimateStoredTokensByTier as estimateStoredTokensByTierImpl,
   estimateStoredTokens as estimateStoredTokensImpl,
-  listVectorlessActiveFacts as listVectorlessActiveFactsImpl,
   linksCount as linksCountImpl,
   listForDashboard as listForDashboardImpl,
+  listVectorlessActiveFacts as listVectorlessActiveFactsImpl,
   metaPatternsCount as metaPatternsCountImpl,
-  auditCategories as auditCategoriesImpl,
   proposedCategories as proposedCategoriesImpl,
   remapCategory as remapCategoryImpl,
   statsBreakdownByCategory as statsBreakdownByCategoryImpl,
@@ -107,8 +107,8 @@ import {
   statsBreakdownBySource as statsBreakdownBySourceImpl,
   statsBreakdownByTier as statsBreakdownByTierImpl,
   statsBreakdown as statsBreakdownImpl,
-  topEntities as topEntitiesImpl,
   topEntitiesFiltered as topEntitiesFilteredImpl,
+  topEntities as topEntitiesImpl,
   uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
   vectorlessActiveFactsBySource as vectorlessActiveFactsBySourceImpl,
 } from "./stats.js";

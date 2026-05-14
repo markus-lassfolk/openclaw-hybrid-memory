@@ -16,7 +16,6 @@ import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
 import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
-import { runPersonaProposalTriage, validatePersonaPolicy } from "../services/persona-proposal-triage.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
 import {
@@ -37,6 +36,7 @@ import { runExport } from "../services/export-memory.js";
 import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { mergeResults } from "../services/merge-results.js";
+import { runPersonaProposalTriage, validatePersonaPolicy } from "../services/persona-proposal-triage.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";

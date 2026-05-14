@@ -9,13 +9,13 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   createProcedurePromotionItem,
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
 } from "../../../services/procedure-promotion-policy.js";
+import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { resolveWorkspacePath } from "../../../utils/path.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
