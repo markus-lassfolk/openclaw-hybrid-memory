@@ -474,7 +474,7 @@ Bounded canonical path workflow.
     const service = new GeneratedSkillValidationService();
     const canonicalOutputDir = join(tmpDir, "skills");
     // Insert a "." segment in the middle: /tmp/xxx/./skills — resolves to /tmp/xxx/skills
-    const outputDirDotSlash = join(tmpDir, ".", "skills");
+    const outputDirDotSlash = `${tmpDir}${sep}.${sep}skills`;
     const validation = service.validate({
       outputDir: outputDirDotSlash,
       proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
