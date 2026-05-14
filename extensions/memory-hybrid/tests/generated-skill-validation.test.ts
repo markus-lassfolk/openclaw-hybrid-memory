@@ -55,10 +55,11 @@ describe("GeneratedSkillValidationService", () => {
     });
     const examplesSection = result.skillContent.match(/## Examples\s+([\s\S]*?)\n## Provenance/);
     expect(examplesSection, "Generated skill should keep an Examples section before Provenance.").not.toBeNull();
-    const exampleLines = examplesSection?.[1]
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("- ")) ?? [];
+    const exampleLines =
+      examplesSection?.[1]
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("- ")) ?? [];
 
     expect(
       exampleLines.some((line) => line.length >= MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS),
