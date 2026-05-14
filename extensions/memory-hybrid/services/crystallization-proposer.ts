@@ -354,14 +354,15 @@ export class CrystallizationProposer {
   ): { skillContent: string; proposalCardJson?: string } {
     let skillContent = proposal.skillContent;
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
-      // Update title line only (keep the rest intact and concise).
       skillContent = skillContent.replace(
         new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
         `# ${overrides.skillName}`,
       );
+      skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
       skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
+      skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
     }
     if (overrides.recommendedOutput) {
       skillContent = skillContent.replace(
@@ -422,6 +423,24 @@ export class CrystallizationProposer {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, skillContent, "utf-8");
   }
+}
+
+/** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
+function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
+  let body = skillContent;
+  let prefix = "";
+  const commentMatch = body.match(/^<!--[\s\S]*?-->\s*\n*/);
+  if (commentMatch) {
+    prefix = commentMatch[0];
+    body = body.slice(commentMatch[0].length);
+  }
+  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!m) return skillContent;
+  const inner = m[1];
+  const re = new RegExp(`^${escapeRegExp(key)}:\\s*.*$`, "m");
+  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${value}`) : `${key}: ${value}\n${inner}`;
+  const newBlock = `---\n${nextInner}\n---\n`;
+  return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, newBlock);
 }
 
 function escapeRegExp(value: string): string {
