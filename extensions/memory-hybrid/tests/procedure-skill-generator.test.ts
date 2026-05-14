@@ -73,8 +73,10 @@ describe("generateAutoSkills", () => {
     expect(result.paths).toHaveLength(1);
     const skillPath = join(skillsDir, "check-moltbook-notifications", "SKILL.md");
     const recipePath = join(skillsDir, "check-moltbook-notifications", "recipe.json");
+    const proposalMetadataPath = join(skillsDir, "check-moltbook-notifications", "proposal-metadata.json");
     expect(existsSync(skillPath)).toBe(true);
     expect(existsSync(recipePath)).toBe(true);
+    expect(existsSync(proposalMetadataPath)).toBe(true);
 
     const skillContent = readFileSync(skillPath, "utf-8");
     expect(skillContent).toContain("Check Moltbook notifications");
@@ -88,9 +90,19 @@ describe("generateAutoSkills", () => {
     expect(recipeContent).toHaveLength(3);
     const verification = JSON.parse(
       readFileSync(join(skillsDir, "check-moltbook-notifications", "verification.json"), "utf-8"),
-    ) as { lifecycleState?: string; telemetryCommand?: string };
+    ) as { lifecycleState?: string; telemetryCommand?: string; validatorScore?: number };
     expect(verification.lifecycleState).toBe("experimental");
     expect(verification.telemetryCommand).toBe("openclaw hybrid-mem skills record check-moltbook-notifications");
+    expect(typeof verification.validatorScore).toBe("number");
+
+    const proposalMetadata = JSON.parse(readFileSync(proposalMetadataPath, "utf-8"));
+    expect(proposalMetadata).toMatchObject({
+      source_procedures: [proc.id],
+      success_count: expect.any(Number),
+      failure_count: expect.any(Number),
+      risk_level: expect.stringMatching(/^(low|medium|high)$/),
+      validator_score: expect.any(Number),
+    });
 
     const updated = db.getProcedureById(proc.id);
     expect(updated?.promotedToSkill).toBe(1);
