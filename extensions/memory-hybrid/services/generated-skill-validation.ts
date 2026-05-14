@@ -419,7 +419,7 @@ function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
 
 function extractSection(skillContent: string, heading: string): string {
   const match = skillContent.match(
-    new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|$)`, "im"),
+    new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|\\z)`, "im"),
   );
   return match?.[1]?.trim() ?? "";
 }
