@@ -328,6 +328,20 @@ export class CrystallizationStore extends BaseSqliteStore {
     });
   }
 
+  /**
+   * List proposals for a single `pattern_id` (newest `created_at` first).
+   * Used when pattern-scoped scans must not be truncated by the global `list({ limit })` cap.
+   */
+  listByPatternId(patternId: string, limit = 10_000): CrystallizationProposal[] {
+    return this.runWithDb("listByPatternId", () => {
+      const cap = limit > 0 ? limit : 10_000;
+      const rows = this.liveDb
+        .prepare("SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT ?")
+        .all(patternId, cap) as Record<string, unknown>[];
+      return rows.map((r) => this.rowToProposal(r));
+    });
+  }
+
   // -------------------------------------------------------------------------
   // approve — transition drafted/validated → approved
   // -------------------------------------------------------------------------
