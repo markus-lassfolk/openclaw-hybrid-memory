@@ -82,6 +82,16 @@ function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: Readon
   return candidate;
 }
 
+/**
+ * Rebase all slug-identity and path-identity fields in a generated draft after
+ * {@link ensureUniqueSlug} resolves a different slug than the base slug.
+ *
+ * **Invariant**: `recipeJson`, `evalsJson`, and `proposalMetadataJson` MUST NOT
+ * contain slug or path identity fields (`skill`, `generatedSkillPath`, etc.).
+ * If new fields with slug/path identity are ever added to those artifacts, they
+ * must also be rebased here. Regression tests in `procedure-skill-generator.test.ts`
+ * enforce this invariant.
+ */
 function rebaseDraftSlug(
   draft: {
     skillMd: string;
@@ -108,9 +118,16 @@ function rebaseDraftSlug(
   verification.skill = resolvedSlug;
   verification.generatedSkillPath = generatedSkillPath;
 
+  // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
+  // its raw slug form (e.g. "# my-skill") so that non-standard headings are also
+  // rebased correctly after a slug collision.
+  const h1Pattern = new RegExp(
+    `^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`,
+    "m",
+  );
   const skillMd = draft.skillMd
     .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
-    .replace(new RegExp(`^# ${escapeRegExp(titleCase(originalSlug))}$`, "m"), `# ${titleCase(resolvedSlug)}`);
+    .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`);
 
   return {
     ...draft,
@@ -184,7 +201,11 @@ export function generateAutoSkills(
       slug: resolvedSlug,
       taskPattern: proc.taskPattern,
     };
-    if (evaluation.eligible && evaluation.draft) {
+    // Only reserve the slug when a draft write will actually occur (or is simulated
+    // to occur under the same policy path as apply). Deferred-for-human procedures
+    // must NOT consume reservations: doing so causes later same-batch procedures to
+    // receive spurious -N suffixed slugs even though nothing was written.
+    if (evaluation.eligible && evaluation.draft && !evaluation.metadata.requiresHumanApproval) {
       reservedSlugs.add(resolvedSlug);
       inRunSkillCandidates.push(reservedCandidate);
     }

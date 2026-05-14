@@ -150,6 +150,25 @@ describe("generateAutoSkills", () => {
       skill: "validate-colliding-release-report-1",
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
     });
+
+    // Invariant: recipe.json, proposal-metadata.json, and evals/evals.json must NOT
+    // contain slug or path identity fields. If any future addition embeds a slug/path
+    // identity field in these artifacts, it must also be rebased in rebaseDraftSlug.
+    const recipe = JSON.parse(readFileSync(join(collidedDir, "recipe.json"), "utf-8")) as unknown;
+    expect(Array.isArray(recipe)).toBe(true);
+    const recipeStr = JSON.stringify(recipe);
+    expect(recipeStr).not.toContain('"skill"');
+    expect(recipeStr).not.toContain('"generatedSkillPath"');
+
+    const proposalMeta = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8")) as Record<string, unknown>;
+    expect(proposalMeta).not.toHaveProperty("skill");
+    expect(proposalMeta).not.toHaveProperty("generatedSkillPath");
+    // Proposal metadata must not contain the pre-collision slug as a value
+    expect(JSON.stringify(proposalMeta)).not.toContain('"validate-colliding-release-report"');
+
+    const evalsContent = JSON.parse(readFileSync(join(collidedDir, "evals", "evals.json"), "utf-8")) as Record<string, unknown>;
+    expect(evalsContent).not.toHaveProperty("skill");
+    expect(evalsContent).not.toHaveProperty("generatedSkillPath");
   });
 
   it("dry-run does not write files", () => {
@@ -385,6 +404,60 @@ describe("generateAutoSkills", () => {
       humanReviewRequired: true,
     });
     expect(existsSync(join(skillsDir, "validate-explicit-draft-policy-report", "SKILL.md"))).toBe(false);
+  });
+
+  it("draft-only batch: deferred procedures do not consume slug reservations for later entries", () => {
+    // Two procedures with identical task patterns → same base slug.
+    // Under draft-only policy both defer and neither should inflate the other's resolved slug.
+    const recipeJson = JSON.stringify([
+      { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+      { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+      { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+    ]);
+    const procA = db.upsertProcedure({
+      id: "deferred-slug-res-a",
+      taskPattern: "Validate deferred slug reservation",
+      recipeJson,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "deferred-slug-res-a1",
+    });
+    recordDistinctSuccesses(procA.id);
+    const procB = db.upsertProcedure({
+      id: "deferred-slug-res-b",
+      taskPattern: "Validate deferred slug reservation",
+      recipeJson,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "deferred-slug-res-b1",
+    });
+    recordDistinctSuccesses(procB.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "draft-only",
+        maxPerRun: 2,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.summary).toMatchObject({ deferred: 2, drafted: 0 });
+    expect(result.generated).toBe(0);
+    // No skill file should be written for either procedure
+    expect(existsSync(join(skillsDir, "validate-deferred-slug-reservation", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-deferred-slug-reservation-1", "SKILL.md"))).toBe(false);
+    // Neither decision should have a slug-inflated (-1 suffix) skillPath caused by
+    // the other deferred procedure spuriously reserving the base slug.
+    const deferredDecisions = (result.decisions ?? []).filter((d) => d.action === "deferred-for-human");
+    expect(deferredDecisions).toHaveLength(2);
+    expect(deferredDecisions.every((d) => !d.skillPath?.endsWith("-1"))).toBe(true);
   });
 
   it("single procedure dry-run under default draft-only policy requires human approval and writes nothing", () => {
