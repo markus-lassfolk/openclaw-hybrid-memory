@@ -14,6 +14,14 @@ import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { SkillValidator } from "../services/skill-validator.js";
 import type { Chainable } from "./shared.js";
+
+type ArgumentChainable = {
+  command(name: string): ArgumentChainable;
+  argument(name: string, desc?: string): ArgumentChainable;
+  description(desc: string): ArgumentChainable;
+  option(flags: string, desc?: string, defaultValue?: unknown): ArgumentChainable;
+  action(fn: (...args: any[]) => void | Promise<void>): ArgumentChainable;
+};
 import { withExit } from "./shared.js";
 
 type SkillsCliContext = {
@@ -30,13 +38,13 @@ function requireStore(ctx: SkillsCliContext): CrystallizationStore {
 }
 
 export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): void {
-  const skills = mem.command("skills").description("Generated skill proposals (crystallization queue)");
-  if (!skills.argument) {
-    throw new Error("CLI command builder missing argument() support");
-  }
+  const skills = mem
+    .command("skills")
+    .description("Generated skill proposals (crystallization queue)") as ArgumentChainable;
 
-  skills
-    .command("queue")
+  const queue = skills.command("queue") as ArgumentChainable;
+
+  queue
     .description("List proposal cards in the approval queue")
     .option("--status <status>", "Filter by status (pending/drafted/validated/approved/installed/rejected/superseded)")
     .option("--limit <n>", "Limit results (default: 20)")
@@ -45,7 +53,8 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       withExit(async (opts: { status?: string; limit?: string; json?: boolean }) => {
         const store = requireStore(ctx);
         const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
-        const status = (opts.status as CrystallizationStatus | "pending" | "approved" | "rejected" | undefined) ?? undefined;
+        const status =
+          (opts.status as CrystallizationStatus | "pending" | "approved" | "rejected" | undefined) ?? undefined;
         const proposals = store.list({ status, limit });
 
         if (opts.json) {
@@ -78,8 +87,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
-  skills
-    .command("show")
+  (skills.command("show") as ArgumentChainable)
     .description("Show a single proposal card and draft content")
     .argument("<id>", "Proposal id")
     .option("--json", "Print JSON")
@@ -120,8 +128,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
-  skills
-    .command("validate")
+  (skills.command("validate") as ArgumentChainable)
     .description("Run the static validator against the draft SKILL.md content")
     .argument("<id>", "Proposal id")
     .option("--json", "Print JSON")
@@ -148,8 +155,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
-  skills
-    .command("install")
+  (skills.command("install") as ArgumentChainable)
     .description("Approve and install a proposal (writes SKILL.md to the skills directory)")
     .argument("<id>", "Proposal id")
     .option("--name <slug>", "Rename before install")
@@ -157,22 +163,23 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     .option("--recommended-output <type>", "Output type override (currently: 'SKILL.md only')", "SKILL.md only")
     .option("--json", "Print JSON")
     .action(
-      withExit(async (id: string, opts: { name?: string; category?: string; recommendedOutput?: string; json?: boolean }) => {
-        const store = requireStore(ctx);
-        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
-        const result = proposer.approveProposal(id, {
-          name: opts.name,
-          category: opts.category,
-          recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
-        });
-        if (opts.json) {
-          console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));
+      withExit(
+        async (id: string, opts: { name?: string; category?: string; recommendedOutput?: string; json?: boolean }) => {
+          const store = requireStore(ctx);
+          const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+          const result = proposer.approveProposal(id, {
+            name: opts.name,
+            category: opts.category,
+            recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+          });
+          if (opts.json) {
+            console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));
+            if (!result.success) process.exitCode = 1;
+            return;
+          }
+          console.log(result.success ? `✓ ${result.message}` : `✗ ${result.message}`);
           if (!result.success) process.exitCode = 1;
-          return;
-        }
-        console.log(result.success ? `✓ ${result.message}` : `✗ ${result.message}`);
-        if (!result.success) process.exitCode = 1;
-      }),
+        },
+      ),
     );
 }
-

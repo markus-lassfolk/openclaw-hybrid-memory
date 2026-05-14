@@ -196,17 +196,21 @@ function inferCaptures(toolSequence: string[]): string[] {
   return captures;
 }
 
-function buildProposalCard(skillName: string, pattern: WorkflowPattern, patternId: string, evidenceHash: string): SkillProposalCard {
+function buildProposalCard(
+  skillName: string,
+  pattern: WorkflowPattern,
+  patternId: string,
+  evidenceHash: string,
+): SkillProposalCard {
   const successPct = Math.round(pattern.successRate * 100);
   const category = inferCategory(pattern.toolSequence);
   const goals = pattern.exampleGoals
     .map((g) => g.trim().replace(/\s+/g, " "))
     .filter((g) => g.length > 0)
     .slice(0, 5);
-  const description =
-    goals[0]?.length
-      ? goals[0]
-      : `Repeated tool sequence (${pattern.toolSequence.slice(0, 4).join(" → ")}${pattern.toolSequence.length > 4 ? " → …" : ""})`;
+  const description = goals[0]?.length
+    ? goals[0]
+    : `Repeated tool sequence (${pattern.toolSequence.slice(0, 4).join(" → ")}${pattern.toolSequence.length > 4 ? " → …" : ""})`;
   const risks = inferRisks(pattern.toolSequence);
   const captures = inferCaptures(pattern.toolSequence);
   const confidence = computeConfidence(pattern);

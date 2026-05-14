@@ -307,7 +307,10 @@ export class CrystallizationProposer {
     let skillContent = proposal.skillContent;
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
       // Update title line only (keep the rest intact and concise).
-      skillContent = skillContent.replace(new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"), `# ${overrides.skillName}`);
+      skillContent = skillContent.replace(
+        new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
+        `# ${overrides.skillName}`,
+      );
     }
     if (overrides.category) {
       skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
@@ -335,7 +338,10 @@ export class CrystallizationProposer {
     return { skillContent, proposalCardJson };
   }
 
-  private injectInstallMetadata(proposal: { id: string; patternId: string; evidenceHash: string; skillContent: string }, outputPath: string): string {
+  private injectInstallMetadata(
+    proposal: { id: string; patternId: string; evidenceHash: string; skillContent: string },
+    outputPath: string,
+  ): string {
     const header = `<!-- openclaw:skill-proposal id=${proposal.id} pattern_id=${proposal.patternId} evidence_hash=${proposal.evidenceHash} output_path=${outputPath} -->`;
     if (proposal.skillContent.startsWith("<!-- openclaw:skill-proposal")) {
       return proposal.skillContent;
@@ -345,7 +351,9 @@ export class CrystallizationProposer {
 
   private trySupersedeOlderInstalls(patternId: string, supersededBy: string): void {
     try {
-      const existing = this.crystallizationStore.list({ skillName: undefined, limit: 50 }).filter((p) => p.patternId === patternId);
+      const existing = this.crystallizationStore
+        .list({ skillName: undefined, limit: 50 })
+        .filter((p) => p.patternId === patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
         if (p.status === "installed" || p.status === "approved") {

@@ -414,7 +414,9 @@ export class CrystallizationStore extends BaseSqliteStore {
         const statuses = this.expandStatusFilter(status);
         if (!statuses || statuses.length === 0) return 0;
         const row = this.liveDb
-          .prepare(`SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN (${statuses.map(() => "?").join(",")})`)
+          .prepare(
+            `SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN (${statuses.map(() => "?").join(",")})`,
+          )
           .get(...statuses) as { n: number };
         return row.n;
       }
@@ -486,7 +488,9 @@ export class CrystallizationStore extends BaseSqliteStore {
       category: row.category ? (row.category as string) : undefined,
       description: row.description ? (row.description as string) : undefined,
       confidence: row.confidence !== null && row.confidence !== undefined ? (row.confidence as number) : undefined,
-      recommendedOutput: row.recommended_output ? (row.recommended_output as SkillProposalRecommendedOutput) : undefined,
+      recommendedOutput: row.recommended_output
+        ? (row.recommended_output as SkillProposalRecommendedOutput)
+        : undefined,
       rejectionReason: row.rejection_reason ? (row.rejection_reason as string) : undefined,
       outputPath: row.output_path ? (row.output_path as string) : undefined,
       approvedAt: row.approved_at ? (row.approved_at as string) : undefined,
