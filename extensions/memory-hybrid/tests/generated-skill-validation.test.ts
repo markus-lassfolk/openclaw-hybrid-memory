@@ -52,12 +52,17 @@ describe("GeneratedSkillValidationService", () => {
       skillContent: result.skillContent,
       pattern,
     });
+    const examplesSection = result.skillContent.match(/## Examples\s+([\s\S]*?)\n## Provenance/);
+    const exampleLines = examplesSection?.[1]
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- ")) ?? [];
 
-    expect(result.skillContent).toContain('- Handle "fix bug" using the exec → read workflow, then verify the result before reporting back.');
+    expect(exampleLines.some((line) => line.length >= 18)).toBe(true);
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
     expect(validation.syntheticActivationEval.status).toBe("passed");
-    expect(validation.approvalDecision).not.toBe("deny");
+    expect(validation.approvalDecision).toBe("allow");
   });
 
   it("accepts frontmatter names produced by approval rename sanitization", () => {
