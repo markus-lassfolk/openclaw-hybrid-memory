@@ -115,6 +115,7 @@ function buildSkillContent(skillName: string, pattern: WorkflowPattern, patternI
 name: ${skillName}
 description: ${description}
 category: crystallized-workflow
+provenance: pattern:${patternId}
 ---
 
 # ${toTitleCase(skillName)}
@@ -142,6 +143,18 @@ This skill is for a bounded, repeatable workflow that follows the recorded tool 
 ## Workflow
 
 ${workflowText}
+
+## Verification
+
+- Confirm each step produced the expected artifact or observable before moving on.
+- Prefer objective checks (files exist, command exit codes, structured output) over subjective judgment.
+- Stop and ask for clarification when validation signals are ambiguous or missing.
+
+## Anti-patterns / Known Failures
+
+- Do not paste raw transcripts, stack traces, or multi-page logs into follow-up work; summarize as checklist updates.
+- Do not skip verification because a step "probably" succeeded without evidence.
+- Do not broaden scope beyond the captured tool sequence unless the user explicitly expands the task.
 
 ## Examples
 

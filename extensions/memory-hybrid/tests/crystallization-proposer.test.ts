@@ -71,10 +71,18 @@ afterEach(() => {
 function seedPatterns(seq: string[], count: number, successRate = 1): void {
   const successCount = Math.round(count * successRate);
   for (let i = 0; i < successCount; i++) {
-    wfStore.record({ goal: `deploy app ${i}`, toolSequence: seq, outcome: "success" });
+    wfStore.record({
+      goal: `Deploy production application release ${i}`,
+      toolSequence: seq,
+      outcome: "success",
+    });
   }
   for (let i = successCount; i < count; i++) {
-    wfStore.record({ goal: `deploy app ${i}`, toolSequence: seq, outcome: "failure" });
+    wfStore.record({
+      goal: `Deploy production application release ${i}`,
+      toolSequence: seq,
+      outcome: "failure",
+    });
   }
 }
 
