@@ -995,4 +995,192 @@ Source procedure id: proc-weather
       parent: (_fixture, context) => adapter.decide(listed, context),
     });
   });
+
+  describe("procedure scoring and risk-aware policy (#1414)", () => {
+    it("userSignal separates no user evidence from one manual request plus one correction", () => {
+      const proc = addProcedure({
+        sourceSessionId: "usig-a",
+        successCount: 6,
+        failureCount: 0,
+        confidence: 0.92,
+      });
+      db.recordProcedureSuccess(proc.id, undefined, "usig-b");
+      db.recordProcedureSuccess(proc.id, undefined, "usig-c");
+      const policy = parseProcedurePromotionPolicy("auto-safe");
+      const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+      const baseOpts = {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        minDistinctContexts: 1,
+      };
+      const none = evaluateProcedureForPromotion(item, policy, { ...baseOpts, evidence: {} });
+      const mixed = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: {
+          manualWorkflowRequests: [{ id: "m1", sourceSession: "usig-a" }],
+          userCorrections: [{ id: "c1", sourceSession: "usig-a" }],
+        },
+      });
+      expect(none.metadata.candidateScoreBreakdown.userSignal).toBeGreaterThan(
+        mixed.metadata.candidateScoreBreakdown.userSignal,
+      );
+    });
+
+    it("userSignal is monotone: more manual requests increases score; more corrections decreases it", () => {
+      const proc = addProcedure({
+        taskPattern: "Validate monotone user signal scoring workflow",
+        sourceSessionId: "mono-a",
+        successCount: 6,
+        failureCount: 0,
+        confidence: 0.92,
+      });
+      db.recordProcedureSuccess(proc.id, undefined, "mono-b");
+      db.recordProcedureSuccess(proc.id, undefined, "mono-c");
+      const policy = parseProcedurePromotionPolicy("auto-safe");
+      const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+      const baseOpts = {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        minDistinctContexts: 1,
+      };
+      const baseline = evaluateProcedureForPromotion(item, policy, { ...baseOpts, evidence: {} });
+      const oneManual = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: { manualWorkflowRequests: [{ id: "m1" }] },
+      });
+      const twoManual = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: { manualWorkflowRequests: [{ id: "m1" }, { id: "m2" }] },
+      });
+      expect(oneManual.metadata.candidateScoreBreakdown.userSignal).toBeGreaterThan(
+        baseline.metadata.candidateScoreBreakdown.userSignal,
+      );
+      expect(twoManual.metadata.candidateScoreBreakdown.userSignal).toBeGreaterThan(
+        oneManual.metadata.candidateScoreBreakdown.userSignal,
+      );
+
+      const oneCorrection = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: { userCorrections: [{ id: "c1" }] },
+      });
+      const twoCorrections = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: { userCorrections: [{ id: "c1" }, { id: "c2" }] },
+      });
+      expect(oneCorrection.metadata.candidateScoreBreakdown.userSignal).toBeLessThan(
+        baseline.metadata.candidateScoreBreakdown.userSignal,
+      );
+      expect(twoCorrections.metadata.candidateScoreBreakdown.userSignal).toBeLessThan(
+        oneCorrection.metadata.candidateScoreBreakdown.userSignal,
+      );
+    });
+
+    it("caps rules-and-preferences contribution so repeated rules do not dominate userSignal", () => {
+      const proc = addProcedure({
+        taskPattern: "Validate rules cap user signal scoring workflow",
+        sourceSessionId: "cap-a",
+        successCount: 6,
+        failureCount: 0,
+        confidence: 0.92,
+      });
+      db.recordProcedureSuccess(proc.id, undefined, "cap-b");
+      db.recordProcedureSuccess(proc.id, undefined, "cap-c");
+      const policy = parseProcedurePromotionPolicy("auto-safe");
+      const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+      const baseOpts = {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        minDistinctContexts: 1,
+      };
+      const manyRules = Array.from({ length: 12 }, (_, i) => ({ id: `rule-${i}` }));
+      const fiveRules = manyRules.slice(0, 5);
+      const capped = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: { rulesAndPreferences: fiveRules },
+      });
+      const uncappedWouldDiffer = evaluateProcedureForPromotion(item, policy, {
+        ...baseOpts,
+        evidence: { rulesAndPreferences: manyRules },
+      });
+      expect(uncappedWouldDiffer.metadata.candidateScoreBreakdown.userSignal).toBe(
+        capped.metadata.candidateScoreBreakdown.userSignal,
+      );
+    });
+
+    it("ranks low-risk candidates above high-risk with otherwise similar promotion evidence", () => {
+      const lowProc = addProcedure({
+        taskPattern: "Validate low risk ranking workflow with objective checks",
+        recipeJson: goodRecipe(),
+        sourceSessionId: "rank-low-a",
+        successCount: 6,
+        failureCount: 0,
+        confidence: 0.92,
+      });
+      db.recordProcedureSuccess(lowProc.id, undefined, "rank-low-b");
+      db.recordProcedureSuccess(lowProc.id, undefined, "rank-low-c");
+
+      const highProc = addProcedure({
+        taskPattern: "Validate high risk ranking workflow with objective checks",
+        recipeJson: JSON.stringify([
+          {
+            tool: "exec",
+            args: { command: "rm -rf /tmp/x" },
+            summary: "delete temp",
+          },
+          {
+            tool: "exec",
+            args: { command: "npm test -- --runInBand" },
+            summary: "Run validation test command",
+          },
+          {
+            tool: "read",
+            args: { path: "report.json" },
+            summary: "Verify generated report exists",
+          },
+        ]),
+        sourceSessionId: "rank-high-a",
+        successCount: 6,
+        failureCount: 0,
+        confidence: 0.92,
+      });
+      db.recordProcedureSuccess(highProc.id, undefined, "rank-high-b");
+      db.recordProcedureSuccess(highProc.id, undefined, "rank-high-c");
+
+      const policy = parseProcedurePromotionPolicy("auto-safe");
+      const sharedEvidence = {
+        procedureVersions: [
+          {
+            id: "v1",
+            versionNumber: 1,
+            successCount: 6,
+            failureCount: 0,
+            avoidanceNotes: null,
+            createdAt: 1_700_000_001,
+          },
+        ],
+        episodes: [{ id: "e1", outcome: "success" as const, sessionId: "s-shared" }],
+      };
+      const baseOpts = {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        minDistinctContexts: 1,
+        evidence: sharedEvidence,
+      };
+
+      const lowEval = evaluateProcedureForPromotion(
+        createProcedurePromotionItem(requireProcedure(lowProc.id), policy),
+        policy,
+        baseOpts,
+      );
+      const highEval = evaluateProcedureForPromotion(
+        createProcedurePromotionItem(requireProcedure(highProc.id), policy),
+        policy,
+        baseOpts,
+      );
+
+      expect(lowEval.metadata.riskLevel).toBe("low");
+      expect(highEval.metadata.riskLevel).toBe("high");
+      expect(lowEval.metadata.candidateScore).toBeGreaterThan(highEval.metadata.candidateScore);
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { determineRiskLevel } from "../../services/procedure-promotion-policy.js";
 import type {
   GeneratedSkillLifecycleState,
   GeneratedSkillTelemetryDecision,
@@ -79,6 +80,8 @@ export type GeneratedSkillTelemetryReportRow = {
   skillName: string;
   skillPath: string;
   skillVersion: number;
+  /** Heuristic tier from procedure task + recipe (same classifier as procedure promotion). */
+  riskLevel: "low" | "medium" | "high";
   state: GeneratedSkillLifecycleState;
   stateReason: string | null;
   generatedAt: number | null;
@@ -128,6 +131,31 @@ type GeneratedSkillTelemetryRow = {
   session_id: string | null;
   created_at: number;
 };
+
+function parseProcedureRecipeJson(recipeJson: string): unknown {
+  try {
+    return JSON.parse(recipeJson) as unknown;
+  } catch {
+    return { malformed: true, raw: recipeJson };
+  }
+}
+
+/**
+ * Demote thresholds mirror promotion risk bumps: higher-risk generated skills need **stricter** false-positive
+ * evidence to stay trusted (lower FP rate threshold, fewer minimum activations); low-risk skills use a slightly
+ * **higher** FP bar to avoid noisy demotions. Documented in docs/PROCEDURAL-MEMORY.md.
+ */
+export function effectiveDemoteThresholdsForRisk(
+  riskLevel: "low" | "medium" | "high",
+  policy: GeneratedSkillLifecyclePolicy,
+): { falsePositiveRate: number; minSamples: number } {
+  const fpAdjust = riskLevel === "high" ? -0.1 : riskLevel === "medium" ? -0.05 : 0.05;
+  const minSamplesAdjust = riskLevel === "high" ? -1 : 0;
+  return {
+    falsePositiveRate: Math.max(0.1, policy.demoteFalsePositiveRate + fpAdjust),
+    minSamples: Math.max(1, policy.demoteMinSamples + minSamplesAdjust),
+  };
+}
 
 function mapGeneratedSkillTelemetryRow(row: GeneratedSkillTelemetryRow): GeneratedSkillTelemetryEntry {
   return {
@@ -349,7 +377,11 @@ function summarizeSkillTelemetry(
   activations: GeneratedSkillTelemetryEntry[],
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
-): { metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } {
+): {
+  metrics: GeneratedSkillTelemetryMetrics;
+  flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
+} {
   const weekAgo = now - 7 * 24 * 60 * 60;
   let activationCountPerWeek = 0;
   let activationCountTotal = 0;
@@ -401,6 +433,11 @@ function summarizeSkillTelemetry(
   const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
   const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
+  const riskLevel = determineRiskLevel(proc, parseProcedureRecipeJson(proc.recipeJson));
+  const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+    riskLevel,
+    policy,
+  );
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveCandidate =
     activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
@@ -410,9 +447,7 @@ function summarizeSkillTelemetry(
     proc.skillState !== "trusted" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
-    activationCountTotal >= policy.demoteMinSamples &&
-    falsePositiveRate != null &&
-    falsePositiveRate >= policy.demoteFalsePositiveRate;
+    activationCountTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
 
   return {
@@ -446,6 +481,7 @@ function summarizeSkillTelemetry(
       neverUsed: activationCountTotal === 0,
       archiveCandidate,
     },
+    riskLevel,
   };
 }
 
@@ -454,6 +490,7 @@ function desiredLifecycleTransition(
   flags: GeneratedSkillTelemetryFlags,
   metrics: GeneratedSkillTelemetryMetrics,
   policy: GeneratedSkillLifecyclePolicy,
+  proc: ProcedureEntry,
 ): { state: GeneratedSkillLifecycleState; reason: string } | null {
   if (currentState !== "archived" && flags.archiveCandidate) {
     return {
@@ -462,9 +499,14 @@ function desiredLifecycleTransition(
     };
   }
   if (currentState !== "demoted" && flags.overTriggering) {
+    const riskLevel = determineRiskLevel(proc, parseProcedureRecipeJson(proc.recipeJson));
+    const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+      riskLevel,
+      policy,
+    );
     return {
       state: "demoted",
-      reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
+      reason: `auto-demoted (${riskLevel} risk): FP rate ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}% reached threshold ${Math.round(demoteFpRate * 100)}% over ${demoteMinSamples}+ activations`,
     };
   }
   if (currentState === "experimental" && flags.promotionCandidate) {
@@ -488,7 +530,7 @@ export function refreshGeneratedSkillLifecycleState(
   const activations = skillTelemetryEntries(db, canonicalSkillName);
   const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
-  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
+  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, proc);
   if (transition == null) return proc;
   return setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now);
 }
@@ -519,7 +561,7 @@ export function buildGeneratedSkillTelemetryReport(
     .map((proc) => {
       const skillName = basename(proc.skillPath ?? proc.taskPattern);
       const activations = skillTelemetryEntries(db, skillName);
-      const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
+      const { metrics, flags, riskLevel } = summarizeSkillTelemetry(proc, activations, policy, now);
       const recommendation = flags.archiveCandidate
         ? "archive"
         : flags.overTriggering
@@ -534,6 +576,7 @@ export function buildGeneratedSkillTelemetryReport(
         skillName,
         skillPath: proc.skillPath ?? skillName,
         skillVersion: proc.skillVersion ?? 1,
+        riskLevel,
         state: proc.skillState ?? "experimental",
         stateReason: proc.skillStateReason ?? null,
         generatedAt: proc.skillGeneratedAt ?? proc.promotedAt ?? null,
