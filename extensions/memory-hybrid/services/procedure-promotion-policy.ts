@@ -403,15 +403,6 @@ export function evaluateProcedureForPromotion(
               : ("skill_safety_validation_failed" as ProcedurePromotionReason),
         })),
       );
-    if (
-      !draft.skillMd.includes("## Trigger") ||
-      !draft.skillMd.includes("## When not to use") ||
-      !draft.skillMd.includes("## Workflow")
-    ) {
-      gates.push(
-        fail("skill_static_validation_failed", "generated skill lacks required trigger/scope/workflow sections"),
-      );
-    }
   }
 
   const eligible = gates.length === 0;
@@ -648,16 +639,20 @@ function buildProcedureSkillDraft(
   )} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
   const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
   const telemetryRequestSummaryArg = shellQuote(redactedTask.redacted);
+  const antiPatterns = buildAntiPatternsForProcedure(proc);
   const skillMd = `---
 name: ${slug}
 description: Use when the user asks to ${redactedTask.redacted}. Trigger examples: "${
     redactedTask.redacted
   }", "run the validated ${firstKeyword(proc.taskPattern)} workflow". Do not use for destructive changes, external sends, credential access, or unrelated near-miss tasks.
+category: procedure
+provenance: procedure:${proc.id}
+generated_at: ${new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString().slice(0, 10)}
 ---
 
 # ${titleCase(slug)}
 
-## Trigger
+## When to Activate
 Use this skill when the task clearly matches this validated procedure: **${redactedTask.redacted}**.
 
 Positive examples:
@@ -671,7 +666,7 @@ Near-miss examples that should not trigger:
 ## Scope
 This skill guides a bounded, repeatable workflow learned from procedural memory.
 
-## When not to use
+## Do Not Use When
 - Do not use for destructive shell/service/package operations.
 - Do not use for SSH, remote writes, credential retrieval, or external sending/posting unless a human explicitly approves.
 - Do not use when the user request is broader than the source procedure.
@@ -690,7 +685,7 @@ ${workflow}
 ## Safe tool usage
 Use only the tools implied by the source recipe and only in dry-run/read-only ways unless the user explicitly approves the side effect. Redact secrets and private paths from all logs and summaries.
 
-## Validation
+## Verification
 - Confirm the expected output exists and matches the user's request.
 - Prefer objective checks such as file existence, JSON/schema validation, command exit status, or exact status text.
 - Stop and ask for review if validation is unavailable or ambiguous.
@@ -708,9 +703,16 @@ Leave this generated skill disabled until verification or human approval. To dis
 - When this skill was considered but skipped, record a near-miss with \`${telemetryCommand} --decision skipped --request-summary ${telemetryRequestSummaryArg} --reason "near-miss summary"\`.
 - Capture the returned activation id so a later user correction can mark that exact run as a false-positive with \`openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"\`.
 
+## Anti-patterns / Known Failures
+${antiPatterns}
+
 ## Examples
 - Good: "${redactedTask.redacted}" → follow the ordered workflow and validation gate.
 - Bad: "${nearMiss}" → do not use; ask for clarification or use another skill.
+
+## Related tools/skills
+- Related tool: \`memory_procedure_feedback\` (record failures/success so anti-patterns improve over time).
+- Related skill: Prefer a more specific existing skill if it matches the trigger more precisely.
 
 ## Provenance
 - Source procedure id: \`${proc.id}\`
@@ -1178,14 +1180,38 @@ function extractTaskContentFromSkill(content: string): string {
   const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
   const desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
   const taskSections = [
-    /##\s*trigger\s*([\s\S]*?)(?=##|$)/i,
+    /##\s*(?:when\s+to\s+activate|trigger)\s*([\s\S]*?)(?=##|$)/i,
     /##\s*scope\s*([\s\S]*?)(?=##|$)/i,
+    /##\s*(?:do\s+not\s+use\s+when|when\s+not\s+to\s+use)\s*([\s\S]*?)(?=##|$)/i,
     /##\s*examples\s*([\s\S]*?)(?=##|$)/i,
     /##\s*provenance\s*([\s\S]*?)(?=##|$)/i,
   ]
     .map((pattern) => content.match(pattern)?.[1] ?? "")
     .join("\n");
   return `${desc}\n${taskSections}`;
+}
+
+function buildAntiPatternsForProcedure(proc: ProcedureEntry): string {
+  const evidence = (proc.avoidanceNotes ?? [])
+    .filter((n): n is string => typeof n === "string" && n.trim().length > 0)
+    .slice(0, 5)
+    .map((n) => `- Known failure: ${n.replace(/\s+/g, " ").trim()}`);
+
+  const generic = [
+    "- Do not paste long command output, stack traces, JSON blobs, or transcripts into this skill; summarize as workflow phases and checklists.",
+    "- Do not claim the workflow is complete unless the verification checklist passes and the output matches the user’s request.",
+    "- Do not broaden scope beyond the validated trigger; ask for clarification on near-miss tasks or defer to a more specific skill.",
+    "- Do not clone repositories under `~/.openclaw`; use `/tmp` for task checkouts.",
+    "- Do not claim implementation work is complete unless a PR exists or the change is merged to `main`.",
+    "- Do not poll subagents in a tight loop; yield and wait for push-based completion.",
+  ];
+
+  if (evidence.length === 0)
+    return [
+      ...generic,
+      "- If this workflow starts failing in practice, record procedure feedback so future drafts include concrete known failures.",
+    ].join("\n");
+  return [...evidence, ...generic].join("\n");
 }
 
 function significantWords(text: string): Set<string> {

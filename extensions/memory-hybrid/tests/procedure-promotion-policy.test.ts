@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
@@ -140,15 +140,17 @@ describe("procedure promotion policy and adapter", () => {
 
     const skill = readFileSync(skillPath, "utf-8");
     for (const section of [
-      "## Trigger",
+      "## When to Activate",
       "## Scope",
-      "## When not to use",
+      "## Do Not Use When",
       "## Workflow",
       "## Safe tool usage",
-      "## Validation",
+      "## Verification",
       "## Failure handling",
       "## Rollback / disable guidance",
+      "## Anti-patterns / Known Failures",
       "## Examples",
+      "## Related tools/skills",
       "## Provenance",
     ]) {
       expect(skill).toContain(section);
@@ -169,6 +171,59 @@ describe("procedure promotion policy and adapter", () => {
       riskLevel: expect.stringMatching(/^(low|medium|high)$/),
     });
     expect(verification.sourceProcedureIds).toEqual([proc.id]);
+  });
+
+  it("includes negative evidence in anti-patterns when failures exist", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+
+    const proc = addProcedure({ sourceSessionId: "s1" });
+    db.recordProcedureSuccess(proc.id, undefined, "s2");
+    db.recordProcedureSuccess(proc.id, undefined, "s3");
+
+    vi.advanceTimersByTime(2000);
+    db.procedureFeedback({
+      procedureId: proc.id,
+      success: false,
+      context: "Command output was pasted verbatim; validation step was missing",
+      failedAtStep: 2,
+    });
+
+    vi.advanceTimersByTime(2000);
+    db.procedureFeedback({
+      procedureId: proc.id,
+      success: true,
+      context: "Re-validated with objective checks",
+    });
+    // Version-tracked feedback yields successRate = successes / (successes + failures) across
+    // procedure_versions. One failure + one success on the same version is 0.5 — below the
+    // promotion policy minimum — so add two more successes to recover eligibility while
+    // retaining the recorded avoidance note for anti-patterns.
+    vi.advanceTimersByTime(2000);
+    db.procedureFeedback({ procedureId: proc.id, success: true, context: "Stable re-run A" });
+    vi.advanceTimersByTime(2000);
+    db.procedureFeedback({ procedureId: proc.id, success: true, context: "Stable re-run B" });
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+        skillTTLDays: 30,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    vi.useRealTimers();
+
+    const skillPath = result.paths[0];
+    const skill = readFileSync(skillPath, "utf-8");
+    expect(skill).toContain("## Anti-patterns / Known Failures");
+    expect(skill).toMatch(/Known failure: v\d+ step 2:/);
+    expect(skill).toContain("validation step was missing");
   });
 
   it("dry-run includes earlier same-run drafts when detecting duplicate skills", () => {
