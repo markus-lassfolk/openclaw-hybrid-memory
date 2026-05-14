@@ -2,7 +2,7 @@
  * CLI: skill proposal queue (crystallization lifecycle) and generated-skill telemetry.
  *
  * Commands:
- * - hybrid-mem skills queue | show | validate | install
+ * - hybrid-mem skills queue | show | validate | install | rescan
  * - hybrid-mem skills telemetry | record | correct | demote (when FactsDB is available)
  */
 
@@ -60,7 +60,10 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
 
   queue
     .description("List proposal cards in the approval queue")
-    .option("--status <status>", "Filter by status (pending/drafted/validated/approved/installed/rejected/superseded)")
+    .option(
+      "--status <status>",
+      "Filter by status (pending/drafted/validated/approved/installed/quarantined/rejected/superseded)",
+    )
     .option("--limit <n>", "Limit results (default: 20)")
     .option("--json", "Print JSON")
     .action(
@@ -206,6 +209,28 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           if (!result.success) process.exitCode = 1;
         },
       ),
+    );
+
+  (skills.command("rescan") as ArgumentChainable)
+    .description(
+      "Re-validate on-disk SKILL.md for each installed crystallization proposal; quarantine rows that fail generated-skill validation",
+    )
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (opts: { json?: boolean }) => {
+        const store = requireStore(ctx);
+        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+        const result = proposer.rescanInstalledSkills();
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: true, ...result }, null, 2));
+          if (result.errors.length > 0) process.exitCode = 1;
+          return;
+        }
+        console.log(`Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`);
+        for (const line of result.messages) console.log(`  ${line}`);
+        for (const line of result.errors) console.error(`  error: ${line}`);
+        if (result.errors.length > 0) process.exitCode = 1;
+      }),
     );
 }
 

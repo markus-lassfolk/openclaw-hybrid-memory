@@ -31,6 +31,7 @@ export type CrystallizationStatus =
   | "validated"
   | "approved"
   | "installed"
+  | "quarantined"
   | "rejected"
   | "superseded";
 
@@ -431,6 +432,22 @@ export class CrystallizationStore extends BaseSqliteStore {
     });
   }
 
+  /** Mark an installed proposal as quarantined (failed re-validation of on-disk SKILL.md). */
+  quarantine(id: string, reason: string): CrystallizationProposal | null {
+    return this.runWithDb("quarantine", () => {
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+         SET status = 'quarantined', rejection_reason = ?, updated_at = ?
+         WHERE id = ? AND status = 'installed'`,
+        )
+        .run(reason, now, id);
+      if (result.changes === 0) return null;
+      return this.getByIdInternal(id);
+    });
+  }
+
   // -------------------------------------------------------------------------
   // count
   // -------------------------------------------------------------------------
@@ -468,8 +485,8 @@ export class CrystallizationStore extends BaseSqliteStore {
   }
 
   /**
-   * Rejection guard: returns true if the latest proposal for this pattern was rejected
-   * with the same evidence hash (i.e., no meaningful new evidence since rejection).
+   * Rejection / quarantine guard: returns true if the latest proposal for this pattern was rejected
+   * or quarantined with the same evidence hash (no meaningful new evidence since suppression).
    */
   isRejectedWithSameEvidence(patternId: string, evidenceHash: string): boolean {
     return this.runWithDb("isRejectedWithSameEvidence", () => {
@@ -479,7 +496,9 @@ export class CrystallizationStore extends BaseSqliteStore {
         )
         .get(patternId) as { status?: string; evidence_hash?: string } | undefined;
       if (!row) return false;
-      return row.status === "rejected" && (row.evidence_hash ?? "") === evidenceHash;
+      const same = (row.evidence_hash ?? "") === evidenceHash;
+      if (!same) return false;
+      return row.status === "rejected" || row.status === "quarantined";
     });
   }
 

@@ -197,6 +197,11 @@ export type CrystallizationConfig = {
   maxCrystallized: number;
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
+  /**
+   * Bucket width for `totalCount` in evidence hashing (default: 5).
+   * Uses `floor(totalCount / m) * m`; `successRate` is rounded to one decimal in the hash payload.
+   */
+  evidenceCountBucketSize: number;
 };
 
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */

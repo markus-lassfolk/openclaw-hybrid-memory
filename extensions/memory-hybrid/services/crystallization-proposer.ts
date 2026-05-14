@@ -9,7 +9,7 @@ import { getEnv } from "../utils/env-manager.js";
  * When autoApprove=true the proposer immediately writes the skill to disk.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -38,6 +38,14 @@ interface ApproveResult {
   success: boolean;
   outputPath?: string;
   message: string;
+}
+
+export interface RescanInstalledSkillsResult {
+  scanned: number;
+  quarantined: number;
+  skipped: number;
+  errors: string[];
+  messages: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +342,71 @@ export class CrystallizationProposer {
     }
 
     return { success: true, message: `Proposal '${proposalId}' rejected` };
+  }
+
+  /**
+   * Re-validate on-disk SKILL.md for every installed proposal (operator / cron hygiene).
+   * Persists validation via {@link CrystallizationStore.saveValidationResult}; on `deny`, sets status `quarantined`.
+   */
+  rescanInstalledSkills(): RescanInstalledSkillsResult {
+    const installed = this.crystallizationStore.list({ status: "installed", limit: 500 });
+    let scanned = 0;
+    let quarantined = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const messages: string[] = [];
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+
+    for (const proposal of installed) {
+      if (!proposal.outputPath?.trim()) {
+        skipped++;
+        messages.push(`Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
+        continue;
+      }
+      let skillContent: string;
+      try {
+        skillContent = readFileSync(proposal.outputPath, "utf-8");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${proposal.id}: read failed — ${msg}`);
+        continue;
+      }
+
+      scanned++;
+      try {
+        const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+        const legacy = isLegacyMarkdownCrystallizationProposal(skillContent);
+        const validation = this.validator.validate(
+          {
+            outputDir,
+            proposedOutputPath: proposal.outputPath,
+            skillName: proposal.skillName,
+            skillContent,
+            pattern,
+          },
+          { legacyQueuedCrystallization: legacy },
+        );
+        this.crystallizationStore.saveValidationResult(proposal.id, validation);
+        if (validation.approvalDecision === "deny") {
+          const detail = detailSkillProposalValidation(validation);
+          const reason = `stale validation: ${detail}`;
+          const updated = this.crystallizationStore.quarantine(proposal.id, reason);
+          if (updated) {
+            quarantined++;
+            messages.push(`Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+          } else {
+            errors.push(`${proposal.id}: quarantine update failed`);
+          }
+        } else {
+          messages.push(`OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${proposal.id}: validate failed — ${msg}`);
+      }
+    }
+
+    return { scanned, quarantined, skipped, errors, messages };
   }
 
   // -------------------------------------------------------------------------

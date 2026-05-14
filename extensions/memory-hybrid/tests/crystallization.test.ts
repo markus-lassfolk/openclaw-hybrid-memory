@@ -41,6 +41,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  evidenceCountBucketSize: 5,
 };
 
 function makeTmpOutputDir(): string {
@@ -97,6 +98,22 @@ describe("CrystallizationStore.getById", () => {
     });
     const fetched = cStore.getById(p.id);
     expect(fetched?.id).toBe(p.id);
+  });
+});
+
+describe("CrystallizationStore.quarantine", () => {
+  it("moves installed row to quarantined with reason", () => {
+    const p = cStore.create({
+      patternId: "pat-q",
+      evidenceHash: "evq",
+      skillName: "quarantined-skill",
+      skillContent: "# c",
+      patternSnapshot: "{}",
+      status: "installed",
+    });
+    const updated = cStore.quarantine(p.id, "stale validation: test");
+    expect(updated?.status).toBe("quarantined");
+    expect(updated?.rejectionReason).toContain("stale validation");
   });
 });
 
@@ -454,7 +471,7 @@ describe("PatternDetector.detect", () => {
     const patterns = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
     const pattern =
       patterns.find((p: any) => computePatternId(p.toolSequence) === candidates[0].patternId) ?? patterns[0];
-    const evidenceHash = computeEvidenceHash(pattern);
+    const evidenceHash = computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 });
 
     cStore.create({
       patternId: candidates[0].patternId,
@@ -493,6 +510,51 @@ describe("PatternDetector.detect", () => {
     if (candidates.length >= 2) {
       expect(candidates[0].score).toBeGreaterThanOrEqual(candidates[1].score);
     }
+  });
+});
+
+describe("computeEvidenceHash", () => {
+  const basePattern = (overrides: Record<string, unknown>) => ({
+    toolSequence: ["read", "write"],
+    totalCount: 12,
+    successCount: 10,
+    failureCount: 2,
+    successRate: 0.833333,
+    avgDurationMs: 100,
+    exampleGoals: ["deploy app"],
+    ...overrides,
+  });
+
+  it("changes hash when totalCount crosses bucket boundary (m=5)", () => {
+    const a = basePattern({ totalCount: 14, successRate: 0.8 });
+    const b = basePattern({ totalCount: 15, successRate: 0.8 });
+    expect(computeEvidenceHash(a, { evidenceCountBucketSize: 5 })).not.toBe(
+      computeEvidenceHash(b, { evidenceCountBucketSize: 5 }),
+    );
+  });
+
+  it("stable hash for small totalCount increments within the same bucket", () => {
+    const a = basePattern({ totalCount: 12, successRate: 0.8 });
+    const b = basePattern({ totalCount: 14, successRate: 0.8 });
+    expect(computeEvidenceHash(a, { evidenceCountBucketSize: 5 })).toBe(
+      computeEvidenceHash(b, { evidenceCountBucketSize: 5 }),
+    );
+  });
+
+  it("changes hash when successRate rounds to different 1dp bucket", () => {
+    const a = basePattern({ totalCount: 10, successRate: 0.74 });
+    const b = basePattern({ totalCount: 10, successRate: 0.76 });
+    expect(computeEvidenceHash(a, { evidenceCountBucketSize: 5 })).not.toBe(
+      computeEvidenceHash(b, { evidenceCountBucketSize: 5 }),
+    );
+  });
+
+  it("stable for tiny successRate jitter within same 1dp", () => {
+    const a = basePattern({ totalCount: 10, successRate: 0.801 });
+    const b = basePattern({ totalCount: 10, successRate: 0.804 });
+    expect(computeEvidenceHash(a, { evidenceCountBucketSize: 5 })).toBe(
+      computeEvidenceHash(b, { evidenceCountBucketSize: 5 }),
+    );
   });
 });
 
@@ -1132,6 +1194,7 @@ describe("parseCrystallizationConfig", () => {
         outputDir: "~/my-skills",
         maxCrystallized: 100,
         pruneUnusedDays: 60,
+        evidenceCountBucketSize: 10,
       },
     });
     expect(cfg.crystallization.enabled).toBe(true);
@@ -1141,6 +1204,7 @@ describe("parseCrystallizationConfig", () => {
     expect(cfg.crystallization.outputDir).toBe("~/my-skills");
     expect(cfg.crystallization.maxCrystallized).toBe(100);
     expect(cfg.crystallization.pruneUnusedDays).toBe(60);
+    expect(cfg.crystallization.evidenceCountBucketSize).toBe(10);
   });
 
   it("defaults to disabled with sensible values when omitted", async () => {
@@ -1153,6 +1217,7 @@ describe("parseCrystallizationConfig", () => {
     expect(cfg.crystallization.outputDir).toBe("~/.openclaw/workspace/skills/auto");
     expect(cfg.crystallization.maxCrystallized).toBe(50);
     expect(cfg.crystallization.pruneUnusedDays).toBe(30);
+    expect(cfg.crystallization.evidenceCountBucketSize).toBe(5);
   });
 
   it("ignores invalid minSuccessRate outside 0-1 range", async () => {
