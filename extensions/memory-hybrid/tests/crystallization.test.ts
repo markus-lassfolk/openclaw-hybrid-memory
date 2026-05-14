@@ -1061,7 +1061,12 @@ describe("CrystallizationProposer.approveProposal", () => {
       patternId: "legacy-pattern",
       evidenceHash: "legacy-evidence",
       skillName: "legacy-safe-skill",
-      skillContent: "# Legacy Crystallized Workflow\n\nBounded narrative body without YAML.\n",
+      skillContent: `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`,
       patternSnapshot: "{}",
     });
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: outDir };

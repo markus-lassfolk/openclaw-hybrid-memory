@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
-import { SkillValidator } from "./skill-validator.js";
+import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
 export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";
@@ -84,7 +84,7 @@ const SECRET_OR_PRIVATE_PATTERNS = [
   /sk-[a-z0-9]{20,}/i,
   /gh[pousr]_[a-z0-9_]{20,}/i,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
+  NON_PLACEHOLDER_EMAIL_PATTERN,
   /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/,
   /\/(?:Users|home)\/[^\s/]+/i,
 ];
@@ -499,7 +499,9 @@ function pickUnrelatedNegativePrompt(sourceText: string): string {
     const promptWords = activationMatchTokens(candidate);
     if ([...promptWords].every((w) => !sourceWords.has(w))) return candidate;
   }
-  return `Unrelated offline trivia ${randomUUID().replace(/-/g, "")} cobalt zephyr`;
+
+  const stableDigest = createHash("sha256").update(sourceText.replace(/\s+/g, " ").trim().toLowerCase()).digest("hex");
+  return `${stableDigest.slice(0, 16)} ${stableDigest.slice(16, 32)}`;
 }
 
 function scoreActivationPrompt(prompt: string, sourceText: string): { matched: boolean } {
