@@ -189,6 +189,73 @@ Bounded release-health review workflow.
     expect(validation.syntheticActivationEval.score).toBeGreaterThanOrEqual(100 / 3);
   });
 
+  it("uses a deterministic fallback negative prompt when canned prompts overlap the skill surface", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-deterministic-negative-"));
+    const service = new GeneratedSkillValidationService();
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+    const skillContent = `---
+name: trivia-collision-review
+description: Use when the user asks to handle adult emperor penguin Byzantine Empire Ottomans cups millilitres baking speed sound dry air Celsius Goldberg Variations harpsichord postal code South Georgia research station checks.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Trivia Collision Review
+
+## Trigger
+Use this skill when the user asks to handle adult emperor penguin Byzantine Empire Ottomans cups millilitres baking speed sound dry air Celsius Goldberg Variations harpsichord postal code South Georgia research station checks.
+
+## Scope
+Bounded collision review workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the collision review input.
+2. Report deterministic findings.
+
+## Verification
+- Confirm deterministic findings are summarized with objective evidence.
+
+## Anti-patterns / Known Failures
+- Do not introduce random prompts during revalidation.
+
+## Examples
+- Review collision checks for deterministic generated skill validation.
+
+## Provenance
+- Source pattern ID: \`pattern-deterministic-negative\``;
+    const pattern: WorkflowPattern = {
+      toolSequence: ["read", "exec"],
+      totalCount: 3,
+      successCount: 3,
+      failureCount: 0,
+      successRate: 1,
+      avgDurationMs: 100,
+      exampleGoals: ["Review collision checks for deterministic generated skill validation."],
+    };
+
+    const first = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: join(cfg.outputDir, "trivia-collision-review", "SKILL.md"),
+      skillName: "trivia-collision-review",
+      skillContent,
+      pattern,
+    });
+    const second = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: join(cfg.outputDir, "trivia-collision-review", "SKILL.md"),
+      skillName: "trivia-collision-review",
+      skillContent,
+      pattern,
+    });
+
+    expect(first.syntheticActivationEval.cases.negative).toBe(second.syntheticActivationEval.cases.negative);
+    expect(first.syntheticActivationEval.cases.negative).toMatch(/^[0-9a-f]{16} [0-9a-f]{16}$/);
+    expect(first.syntheticActivationEval.results.negativeMatched).toBe(false);
+  });
+
   it("fails static validation for transcript dumps and path escapes", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-static-fail-"));
     const service = new GeneratedSkillValidationService();

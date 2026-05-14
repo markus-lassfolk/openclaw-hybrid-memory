@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
@@ -462,7 +462,9 @@ function pickUnrelatedNegativePrompt(sourceText: string): string {
     const promptWords = activationMatchTokens(candidate);
     if ([...promptWords].every((w) => !sourceWords.has(w))) return candidate;
   }
-  return `Unrelated offline trivia ${randomUUID().replace(/-/g, "")} cobalt zephyr`;
+
+  const stableDigest = createHash("sha256").update(sourceText.replace(/\s+/g, " ").trim().toLowerCase()).digest("hex");
+  return `${stableDigest.slice(0, 16)} ${stableDigest.slice(16, 32)}`;
 }
 
 function scoreActivationPrompt(prompt: string, sourceText: string): { matched: boolean } {
