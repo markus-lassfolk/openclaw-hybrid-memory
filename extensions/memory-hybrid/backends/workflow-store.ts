@@ -419,7 +419,7 @@ export class WorkflowStore extends BaseSqliteStore {
         else byHash.set(h, [row]);
       }
 
-      const clusters: {
+      const allClusters: {
         representative: string[];
         goals: string[];
         outcomes: string[];
@@ -427,6 +427,13 @@ export class WorkflowStore extends BaseSqliteStore {
       }[] = [];
 
       for (const group of byHash.values()) {
+        const clusters: {
+          representative: string[];
+          goals: string[];
+          outcomes: string[];
+          durations: number[];
+        }[] = [];
+
         for (const row of group) {
           let seq: string[];
           try {
@@ -454,9 +461,11 @@ export class WorkflowStore extends BaseSqliteStore {
             });
           }
         }
+
+        allClusters.push(...clusters);
       }
 
-      const patterns: WorkflowPattern[] = clusters.map((c) => {
+      const patterns: WorkflowPattern[] = allClusters.map((c) => {
         const totalCount = c.outcomes.length;
         const successCount = c.outcomes.filter((o) => o === "success").length;
         const failureCount = c.outcomes.filter((o) => o === "failure").length;
