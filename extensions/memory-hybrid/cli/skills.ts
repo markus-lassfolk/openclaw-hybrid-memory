@@ -31,6 +31,9 @@ function requireStore(ctx: SkillsCliContext): CrystallizationStore {
 
 export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): void {
   const skills = mem.command("skills").description("Generated skill proposals (crystallization queue)");
+  if (!skills.argument) {
+    throw new Error("CLI command builder missing argument() support");
+  }
 
   skills
     .command("queue")
@@ -75,7 +78,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
-  skills!
+  skills
     .command("show")
     .description("Show a single proposal card and draft content")
     .argument("<id>", "Proposal id")
@@ -117,7 +120,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
-  skills!
+  skills
     .command("validate")
     .description("Run the static validator against the draft SKILL.md content")
     .argument("<id>", "Proposal id")
@@ -145,7 +148,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
-  skills!
+  skills
     .command("install")
     .description("Approve and install a proposal (writes SKILL.md to the skills directory)")
     .argument("<id>", "Proposal id")
