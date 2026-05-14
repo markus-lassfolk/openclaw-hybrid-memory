@@ -217,8 +217,8 @@ export class GeneratedSkillValidationService {
       if (frontmatter.name && frontmatter.name !== input.skillName) {
         violations.push(`Frontmatter name '${frontmatter.name}' must match skill name '${input.skillName}'`);
       }
-      if (frontmatter.name && !/^[a-z0-9-]+$/.test(frontmatter.name)) {
-        violations.push("Frontmatter name must use lowercase letters, digits, and hyphens only");
+      if (frontmatter.name && !isApprovalSanitizedSkillName(frontmatter.name)) {
+        violations.push("Frontmatter name must use letters, digits, underscores, or hyphens only");
       }
       if ((frontmatter.description ?? "").length > 280) {
         violations.push("Frontmatter description exceeds 280 characters");
@@ -272,7 +272,8 @@ export class GeneratedSkillValidationService {
       const workspaceDir = join(tempDir, "workspace");
       const skillsDir = join(workspaceDir, "skills");
       const normalizedSkillName = normalizeSkillName(skillName);
-      const skillDir = join(skillsDir, normalizedSkillName);
+      const skillDirName = isApprovalSanitizedSkillName(skillName) ? skillName : normalizedSkillName;
+      const skillDir = join(skillsDir, skillDirName);
       mkdirSync(skillDir, { recursive: true });
       const skillPath = join(skillDir, "SKILL.md");
       writeFileSync(skillPath, skillContent, "utf-8");
@@ -289,7 +290,9 @@ export class GeneratedSkillValidationService {
       }
 
       const entries = loadDrySkillEntries(skillsDir);
-      const entry = entries.find((candidate) => candidate.name === normalizedSkillName);
+      const entry = entries.find((candidate) =>
+        candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
+      );
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
       } else {
@@ -352,14 +355,15 @@ export class GeneratedSkillValidationService {
 }
 
 function legacyIgnorableSkillValidatorViolation(violation: string): boolean {
+  const normalized = violation.toLowerCase();
   return (
-    violation.includes("Frontmatter") ||
-    violation.includes("required section") ||
-    violation.includes("Examples section") ||
-    violation.includes("log-dump-guard") ||
-    violation.includes("tool-blob-guard") ||
-    violation.includes("codeblock-") ||
-    violation.includes("exceeds 300 lines")
+    normalized.includes("frontmatter") ||
+    normalized.includes("required section") ||
+    normalized.includes("examples section") ||
+    normalized.includes("log-dump-guard") ||
+    normalized.includes("tool-blob-guard") ||
+    normalized.includes("codeblock-") ||
+    normalized.includes("exceeds 300 lines")
   );
 }
 
@@ -381,6 +385,10 @@ function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, ski
   if (!isAbsolute(proposedOutputPath)) return false;
   const expected = resolve(outputDir, skillName, "SKILL.md");
   return proposedOutputPath === expected && isWithinDir(resolve(outputDir), dirname(proposedOutputPath));
+}
+
+function isApprovalSanitizedSkillName(value: string): boolean {
+  return value.length > 0 && /^[a-z0-9_-]+$/i.test(value) && !value.startsWith(".");
 }
 
 function isWithinDir(rootDir: string, candidatePath: string): boolean {
@@ -480,16 +488,8 @@ function scoreActivationPrompt(prompt: string, sourceText: string): { matched: b
 
 /** Tokens for activation overlap; relax length so terse goals (e.g. "fix bug") still match. */
 function activationMatchTokens(text: string): Set<string> {
-  let words = significantWords(text, 3);
-  if (words.size === 0) words = significantWords(text, 2);
-  if (words.size === 0) {
-    words = new Set(
-      text
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((word) => word.length >= 2 && !STOP_WORDS.has(word)),
-    );
-  }
+  const words = significantWords(text, 3);
+  for (const shortToken of significantWords(text, 2)) words.add(shortToken);
   return words;
 }
 

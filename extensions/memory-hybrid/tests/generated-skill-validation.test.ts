@@ -57,6 +57,64 @@ describe("GeneratedSkillValidationService", () => {
     expect(validation.approvalDecision).not.toBe("deny");
   });
 
+  it("accepts frontmatter names produced by approval rename sanitization", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-rename-"));
+    const service = new GeneratedSkillValidationService();
+    const skillContent = `---
+name: Release_Health
+description: Use when the user asks to review release health checks.
+category: crystallized-workflow
+provenance: test
+---
+
+# Release_Health
+
+## Trigger
+Use this skill when the user asks to review release health checks.
+
+## Scope
+Bounded release-health review workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the release health report.
+2. Run the bounded validation checklist.
+
+## Verification
+- Confirm release health findings are summarized with objective evidence.
+
+## Anti-patterns / Known Failures
+- Do not broaden into generic release management.
+
+## Examples
+- Review release health checks for the latest deployment.
+
+## Provenance
+- Source pattern ID: \`pattern-1\``;
+
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "Release_Health", "SKILL.md"),
+      skillName: "Release_Health",
+      skillContent,
+      pattern: {
+        toolSequence: ["read", "exec"],
+        totalCount: 3,
+        successCount: 3,
+        failureCount: 0,
+        successRate: 1,
+        avgDurationMs: 100,
+        exampleGoals: ["Review release health checks for the latest deployment."],
+      },
+    });
+
+    expect(validation.staticValidation.status).toBe("passed");
+    expect(validation.dryLoadValidation.status).toBe("passed");
+    expect(validation.approvalDecision).toBe("allow-with-override");
+  });
+
   it("passes static, dry-load, and activation eval for crystallized skills", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
@@ -95,6 +153,7 @@ describe("GeneratedSkillValidationService", () => {
 name: transcript-skill
 description: Use when the user asks to dump a transcript.
 category: crystallized-workflow
+provenance: test-suite
 ---
 
 # Transcript Skill
@@ -146,6 +205,7 @@ assistant: here is the full log
 name: release-health-review
 description: Use when the user asks to review release health checks.
 category: crystallized-workflow
+provenance: test-suite
 ---
 
 # Release Health Review
@@ -163,6 +223,12 @@ Bounded release-health review workflow.
 ## Workflow
 1. Use \`read\` to inspect the release report.
 2. Use \`exec\` only for the bounded release-health validation command.
+
+## Verification
+- Confirm release health findings are grounded in the report.
+
+## Anti-patterns / Known Failures
+- Do not broaden into generic release management.
 
 ## Examples
 - Positive: "Review release health checks for the latest deployment."
@@ -225,6 +291,7 @@ Bounded release-health review workflow.
 name: release-health-review
 description: Use when the user asks to review release health checks.
 category: crystallized-workflow
+provenance: test-suite
 ---
 
 # Release Health Review
@@ -243,6 +310,12 @@ Bounded release-health review workflow.
 1. Use \`read\` to inspect the release report.
 2. Use \`exec\` only for the bounded release-health validation command.
 
+## Verification
+- Confirm release health findings are grounded in the report.
+
+## Anti-patterns / Known Failures
+- Do not broaden into generic release management.
+
 ## Examples
 - Positive: "Review release health checks for the latest deployment."
 - Negative: "How do I create a GitHub issue?"
@@ -259,7 +332,7 @@ Bounded release-health review workflow.
         skillContent,
         pattern,
       });
-      const expectedPositive = pattern.exampleGoals[0]!.replace(/\s+/g, " ").trim();
+      const expectedPositive = pattern.exampleGoals[0]?.replace(/\s+/g, " ").trim();
       expect(initial.syntheticActivationEval.cases.positive).toBe(expectedPositive);
 
       const proposal = cStore.create({

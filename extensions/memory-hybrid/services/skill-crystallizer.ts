@@ -95,9 +95,7 @@ function buildSkillContent(
 ): string {
   const toolSequence = pattern.toolSequence;
   const successPct = Math.round(pattern.successRate * 100);
-  const exampleGoalsText = card.provenance.example_goals.length
-    ? card.provenance.example_goals.map((g) => `- ${g.replace(/\n/g, " ")}`).join("\n")
-    : "- (no example goals recorded)";
+  const exampleGoalsText = buildExamplesText(card.provenance.example_goals, skillName, toolSequence);
   const capturesText = card.captures.length ? card.captures.map((c) => `- ${c}`).join("\n") : "- (none)";
 
   const stepsText = toolSequence
@@ -175,6 +173,23 @@ ${exampleGoalsText}
 - Success rate: ${successPct}% (${pattern.successCount}/${pattern.totalCount} executions)
 - Tool sequence: \`${toolSequence.join(" → ")}\`
 `;
+}
+
+
+function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
+  const cleanedGoals = exampleGoals
+    .map((g) => g.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
+    .filter((g) => g.length > 0);
+  const concreteGoals = cleanedGoals.filter((g) => g.length >= 18);
+  const primaryGoal = cleanedGoals[0] ?? skillName.replace(/[-_]+/g, " ");
+  const concreteFallback = `Handle "${primaryGoal}" using the ${toolSequence.join(" → ")} workflow, then verify the result before reporting back.`;
+  const examples = [...concreteGoals];
+  if (examples.length === 0) examples.push(concreteFallback);
+  for (const goal of cleanedGoals) {
+    if (examples.length >= 5) break;
+    if (!examples.includes(goal)) examples.push(goal);
+  }
+  return examples.map((g) => `- ${g}`).join("\n");
 }
 
 function recommendedOutput(): SkillProposalRecommendedOutput {
