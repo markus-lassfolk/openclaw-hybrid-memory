@@ -186,6 +186,42 @@ describe("CrystallizationStore.approve", () => {
   });
 });
 
+describe("CrystallizationStore.install", () => {
+  it("keeps at most one installed proposal per pattern by superseding older installs", () => {
+    const first = cStore.create({
+      patternId: "pattern-shared",
+      evidenceHash: "ev1",
+      skillName: "skill-1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    const second = cStore.create({
+      patternId: "pattern-shared",
+      evidenceHash: "ev2",
+      skillName: "skill-2",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    cStore.approve(first.id);
+    cStore.install(first.id, "/out/skill-1/SKILL.md");
+    cStore.approve(second.id);
+    cStore.install(second.id, "/out/skill-2/SKILL.md");
+
+    const updatedFirst = cStore.getById(first.id);
+    const updatedSecond = cStore.getById(second.id);
+    expect(updatedFirst?.status).toBe("superseded");
+    expect(updatedFirst?.supersededBy).toBe(second.id);
+    expect(updatedSecond?.status).toBe("installed");
+
+    const installedForPattern = cStore.list().filter((p) => p.patternId === "pattern-shared" && p.status === "installed");
+    expect(installedForPattern).toHaveLength(1);
+    expect(installedForPattern[0]?.id).toBe(second.id);
+  });
+});
+
 describe("CrystallizationStore.reject", () => {
   it("transitions pending to rejected with reason", () => {
     const p = cStore.create({

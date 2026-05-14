@@ -289,6 +289,53 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(body).toContain("openclaw:skill-proposal");
   });
 
+  it("enforces maxCrystallized when approvals interleave", () => {
+    const outputDir = join(tmpDir, "skills-race");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false, maxCrystallized: 1 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const first = cStore.create({
+      patternId: "race-pattern-1",
+      evidenceHash: "race-ev-1",
+      skillName: "race-skill-1",
+      skillContent:
+        "# Race Skill One\n\nThis is a test skill file with adequate content for validation purposes and interleaving approval checks.",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    const second = cStore.create({
+      patternId: "race-pattern-2",
+      evidenceHash: "race-ev-2",
+      skillName: "race-skill-2",
+      skillContent:
+        "# Race Skill Two\n\nThis is a test skill file with adequate content for validation purposes and interleaving approval checks.",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let nestedResult: ReturnType<CrystallizationProposer["approveProposal"]> | null = null;
+    const originalApproveWithinCap = cStore.approveWithinCap.bind(cStore);
+    let injected = false;
+    cStore.approveWithinCap = ((id, maxCrystallized, opts) => {
+      if (!injected && id === first.id) {
+        injected = true;
+        nestedResult = proposer.approveProposal(second.id, { overrideWarnings: true });
+      }
+      return originalApproveWithinCap(id, maxCrystallized, opts);
+    }) as CrystallizationStore["approveWithinCap"];
+
+    try {
+      const firstResult = proposer.approveProposal(first.id, { overrideWarnings: true });
+      expect(nestedResult).not.toBeNull();
+      const results = [firstResult, nestedResult!];
+      expect(results.filter((r) => r.success)).toHaveLength(1);
+      expect(results.filter((r) => !r.success)[0]?.message).toMatch(/maxCrystallized/i);
+      expect(cStore.count("approved")).toBe(1);
+    } finally {
+      cStore.approveWithinCap = originalApproveWithinCap;
+    }
+  });
+
   it("returns success=false when maxCrystallized is 0", () => {
     // Manually create a pending proposal
     const proposal = cStore.create({

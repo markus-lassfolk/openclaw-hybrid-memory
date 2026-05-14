@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,11 @@ interface ProposalFilter {
   skillName?: string;
   limit?: number;
 }
+
+type ApproveWithinCapResult =
+  | { kind: "approved"; proposal: CrystallizationProposal }
+  | { kind: "limit-reached" }
+  | { kind: "not-approvable" };
 
 // ---------------------------------------------------------------------------
 // CrystallizationStore
@@ -215,6 +221,38 @@ export class CrystallizationStore extends BaseSqliteStore {
     // Use pattern_id as a conservative stable fallback.
     this.liveDb.exec(
       "UPDATE crystallization_proposals SET evidence_hash = pattern_id WHERE (evidence_hash IS NULL OR evidence_hash = '') AND pattern_id IS NOT NULL",
+    );
+
+    // Ensure at most one installed proposal per pattern before creating unique partial index.
+    const duplicates = this.liveDb
+      .prepare(
+        "SELECT pattern_id FROM crystallization_proposals WHERE status = 'installed' GROUP BY pattern_id HAVING COUNT(*) > 1",
+      )
+      .all() as Array<{ pattern_id: string }>;
+    for (const row of duplicates) {
+      const installedRows = this.liveDb
+        .prepare(
+          `SELECT id
+             FROM crystallization_proposals
+            WHERE pattern_id = ? AND status = 'installed'
+            ORDER BY COALESCE(installed_at, created_at) DESC, updated_at DESC, created_at DESC, id DESC`,
+        )
+        .all(row.pattern_id) as Array<{ id: string }>;
+      const keepId = installedRows[0]?.id;
+      if (!keepId) continue;
+      this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+              SET status = 'superseded',
+                  superseded_by = ?,
+                  superseded_at = COALESCE(superseded_at, datetime('now')),
+                  updated_at = datetime('now')
+            WHERE pattern_id = ? AND status = 'installed' AND id <> ?`,
+        )
+        .run(keepId, row.pattern_id, keepId);
+    }
+    this.liveDb.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_one_installed_per_pattern ON crystallization_proposals(pattern_id) WHERE status = 'installed'",
     );
   }
 
@@ -376,6 +414,73 @@ export class CrystallizationStore extends BaseSqliteStore {
     });
   }
 
+  approveWithinCap(
+    id: string,
+    maxCrystallized: number,
+    opts?: {
+      skillName?: string;
+      skillContent?: string;
+      category?: string;
+      description?: string;
+      recommendedOutput?: SkillProposalRecommendedOutput;
+      proposalCardJson?: string;
+    },
+  ): ApproveWithinCapResult {
+    return this.runWithDb("approveWithinCap", () => {
+      const tx = createTransaction(
+        this.liveDb,
+        (): ApproveWithinCapResult => {
+          const row = this.liveDb
+            .prepare(
+              "SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN ('approved', 'installed')",
+            )
+            .get() as { n: number };
+          if (row.n >= maxCrystallized) {
+            return { kind: "limit-reached" };
+          }
+
+          const now = new Date().toISOString();
+          const result = this.liveDb
+            .prepare(
+              `UPDATE crystallization_proposals
+                 SET status = 'approved',
+                     skill_name = COALESCE(?, skill_name),
+                     skill_content = COALESCE(?, skill_content),
+                     category = COALESCE(?, category),
+                     description = COALESCE(?, description),
+                     recommended_output = COALESCE(?, recommended_output),
+                     proposal_card_json = COALESCE(?, proposal_card_json),
+                     approved_at = COALESCE(approved_at, ?),
+                     updated_at = ?
+               WHERE id = ? AND status IN ('drafted', 'validated')`,
+            )
+            .run(
+              opts?.skillName ?? null,
+              opts?.skillContent ?? null,
+              opts?.category ?? null,
+              opts?.description ?? null,
+              opts?.recommendedOutput ?? null,
+              opts?.proposalCardJson ?? null,
+              now,
+              now,
+              id,
+            );
+
+          if (result.changes === 0) {
+            return { kind: "not-approvable" };
+          }
+          const proposal = this.getByIdInternal(id);
+          if (!proposal) {
+            return { kind: "not-approvable" };
+          }
+          return { kind: "approved", proposal };
+        },
+        "IMMEDIATE",
+      );
+      return tx();
+    });
+  }
+
   saveValidationResult(id: string, validationResult: SkillProposalValidationResult): CrystallizationProposal | null {
     return this.runWithDb("saveValidationResult", () => {
       const now = new Date().toISOString();
@@ -397,17 +502,41 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   install(id: string, outputPath: string): CrystallizationProposal | null {
     return this.runWithDb("install", () => {
-      const now = new Date().toISOString();
-      const result = this.liveDb
-        .prepare(
-          `UPDATE crystallization_proposals
-         SET status = 'installed', output_path = ?, installed_at = COALESCE(installed_at, ?), updated_at = ?
-         WHERE id = ? AND status = 'approved'`,
-        )
-        .run(outputPath, now, now, id);
+      const tx = createTransaction(
+        this.liveDb,
+        (): CrystallizationProposal | null => {
+          const proposal = this.liveDb
+            .prepare("SELECT id, pattern_id, status FROM crystallization_proposals WHERE id = ?")
+            .get(id) as { id: string; pattern_id: string; status: CrystallizationStatus } | undefined;
+          if (!proposal || proposal.status !== "approved") {
+            return null;
+          }
 
-      if (result.changes === 0) return null;
-      return this.getByIdInternal(id);
+          const now = new Date().toISOString();
+          this.liveDb
+            .prepare(
+              `UPDATE crystallization_proposals
+                  SET status = 'superseded',
+                      superseded_by = ?,
+                      superseded_at = COALESCE(superseded_at, ?),
+                      updated_at = ?
+                WHERE pattern_id = ? AND id <> ? AND status = 'installed'`,
+            )
+            .run(id, now, now, proposal.pattern_id, id);
+
+          const result = this.liveDb
+            .prepare(
+              `UPDATE crystallization_proposals
+                  SET status = 'installed', output_path = ?, installed_at = COALESCE(installed_at, ?), updated_at = ?
+                WHERE id = ? AND status = 'approved'`,
+            )
+            .run(outputPath, now, now, id);
+          if (result.changes === 0) return null;
+          return this.getByIdInternal(id);
+        },
+        "IMMEDIATE",
+      );
+      return tx();
     });
   }
 
