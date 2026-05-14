@@ -27,6 +27,7 @@ interface ValidationResult {
 const MAX_SKILL_LINES = 300;
 const MAX_FENCED_BLOCK_LINES = 80;
 const MAX_TRANSCRIPT_LIKE_RATIO = 0.4;
+const MAX_TOOL_BLOB_LINES = 40;
 
 interface DenyRule {
   name: string;
@@ -208,10 +209,17 @@ export class SkillValidator {
         aliases: ["do not use when", "when not to use", "do not use", "anti-activation conditions"],
       },
       { id: "workflow", label: "Workflow", aliases: ["workflow", "steps"] },
-      { id: "verify", label: "Verification / Quality Checklist", aliases: ["verification", "quality checklist", "validation"] },
-      { id: "anti", label: "Anti-patterns / Known Failures", aliases: ["anti-patterns / known failures", "anti-patterns", "known failures"] },
+      {
+        id: "verify",
+        label: "Verification / Quality Checklist",
+        aliases: ["verification", "quality checklist", "validation"],
+      },
+      {
+        id: "anti",
+        label: "Anti-patterns / Known Failures",
+        aliases: ["anti-patterns / known failures", "anti-patterns", "known failures"],
+      },
       { id: "examples", label: "Examples", aliases: ["examples"] },
-      { id: "related", label: "Related tools/skills", aliases: ["related tools/skills", "related tools", "related skills"] },
     ];
 
     for (const section of requiredSections) {
@@ -232,6 +240,8 @@ export class SkillValidator {
     let lineNumber = 0;
     let codeBlockLineCount = 0;
     let transcriptLikeLineCount = 0;
+    let toolBlobLikeLineCount = 0;
+    let stackTraceLikeLineCount = 0;
 
     for (const line of lines) {
       lineNumber++;
@@ -263,8 +273,10 @@ export class SkillValidator {
       if (inCodeBlock) {
         currentFenceLines++;
         codeBlockLineCount++;
-      } else if (/^\s*(assistant|user|tool|system)\s*:/i.test(line)) {
-        transcriptLikeLineCount++;
+      } else {
+        if (/^\s*(assistant|user|tool|system)\s*:/i.test(line)) transcriptLikeLineCount++;
+        if (looksLikeToolOrJsonBlob(trimmed)) toolBlobLikeLineCount++;
+        if (looksLikeStackTraceLine(trimmed)) stackTraceLikeLineCount++;
       }
 
       // Apply rules
@@ -285,10 +297,18 @@ export class SkillValidator {
     }
 
     const rawLikeRatio =
-      lines.length === 0 ? 0 : (codeBlockLineCount + transcriptLikeLineCount) / Math.max(1, lines.length);
+      lines.length === 0
+        ? 0
+        : (codeBlockLineCount + transcriptLikeLineCount + toolBlobLikeLineCount + stackTraceLikeLineCount) /
+          Math.max(1, lines.length);
     if (rawLikeRatio > MAX_TRANSCRIPT_LIKE_RATIO) {
       violations.push(
         `[log-dump-guard] ${Math.round(rawLikeRatio * 100)}% of lines look like raw transcript/log/code. Summarize and keep snippets short.`,
+      );
+    }
+    if (toolBlobLikeLineCount > MAX_TOOL_BLOB_LINES) {
+      violations.push(
+        `[tool-blob-guard] Detected ${toolBlobLikeLineCount} tool/JSON-like lines outside code blocks. Summarize tool-call blobs into workflow steps and checklists instead of pasting raw dumps.`,
       );
     }
 
@@ -392,4 +412,22 @@ function parseFrontmatter(lines: string[]): { present: boolean; keys: Map<string
     if (!keys.has(key)) keys.set(key, value);
   }
   return { present: false, keys, endLine: -1 };
+}
+
+function looksLikeToolOrJsonBlob(trimmed: string): boolean {
+  if (trimmed.length === 0) return false;
+  if (/^diff --git\b/i.test(trimmed) || /^@@\s+[-+]\d+/i.test(trimmed)) return true;
+  if (/^\s*\{/.test(trimmed) || /^\s*\[/.test(trimmed)) {
+    if (trimmed.includes(`":`) || trimmed.includes("':")) return true;
+  }
+  if (/"tool"\s*:|"toolCall"|tool_call_id|"args"\s*:|"content"\s*:/i.test(trimmed)) return true;
+  if (/^\s*Command:\s+/i.test(trimmed) || /^\s*Output:\s+/i.test(trimmed)) return true;
+  return false;
+}
+
+function looksLikeStackTraceLine(trimmed: string): boolean {
+  if (trimmed.length === 0) return false;
+  if (/^\s*at\s+\S+/.test(trimmed)) return true;
+  if (/^(?:Caused by:|Exception in thread|Traceback \(most recent call last\):)/i.test(trimmed)) return true;
+  return false;
 }

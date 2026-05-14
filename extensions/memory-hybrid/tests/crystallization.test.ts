@@ -470,8 +470,11 @@ describe("SkillValidator", () => {
     validator = new SkillValidator();
   });
 
-  function compactValidSkill(extra: { workflow?: string; extraBody?: string } = {}): string {
+  function compactValidSkill(
+    extra: { workflow?: string; extraBody?: string; includeRelated?: boolean } = {},
+  ): string {
     const workflow = extra.workflow ?? "1. Use `read` to load inputs.\n2. Use `exec` only in dry-run mode.\n3. Verify outputs before continuing.";
+    const includeRelated = extra.includeRelated !== false;
     return `---
 name: test-skill
 description: Compact, reusable workflow for validating a bounded task.
@@ -500,8 +503,7 @@ ${workflow}
 ## Examples
 - Good: "Validate the bounded workflow" → follow Workflow + Verification.
 
-## Related tools/skills
-- Related tool: \`memory_procedure_feedback\` (record failures/success).
+${includeRelated ? "## Related tools/skills\n- Related tool: `memory_procedure_feedback` (record failures/success).\n" : ""}
 
 ## Provenance
 - Generated for tests.
@@ -517,6 +519,11 @@ ${extra.extraBody ?? ""}`;
     const result = validator.validate(content);
     expect(result.valid).toBe(false);
     expect(result.violations.some((v: string) => v.includes("Anti-patterns"))).toBe(true);
+  });
+
+  it("does not require related tools/skills section", () => {
+    const result = validator.validate(compactValidSkill({ includeRelated: false }));
+    expect(result.valid).toBe(true);
   });
 
   it("denies eval() in code block", () => {
