@@ -316,13 +316,14 @@ describe("CrystallizationProposer.approveProposal", () => {
     let nestedResult: ReturnType<CrystallizationProposer["approveProposal"]> | null = null;
     const originalApproveWithinCap = cStore.approveWithinCap.bind(cStore);
     let injected = false;
-    cStore.approveWithinCap = ((id, maxCrystallized, opts) => {
+    const interleavingApproveWithinCap: CrystallizationStore["approveWithinCap"] = (id, maxCrystallized, opts) => {
       if (!injected && id === first.id) {
         injected = true;
         nestedResult = proposer.approveProposal(second.id, { overrideWarnings: true });
       }
       return originalApproveWithinCap(id, maxCrystallized, opts);
-    }) as CrystallizationStore["approveWithinCap"];
+    };
+    cStore.approveWithinCap = interleavingApproveWithinCap;
 
     try {
       const firstResult = proposer.approveProposal(first.id, { overrideWarnings: true });
