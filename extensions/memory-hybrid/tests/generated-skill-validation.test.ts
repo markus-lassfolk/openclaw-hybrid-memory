@@ -19,7 +19,7 @@ const BASE_CFG: CrystallizationConfig = {
   maxCrystallized: 50,
   pruneUnusedDays: 30,
 };
-const MIN_CONCRETE_EXAMPLE_LINE_LENGTH = 18;
+const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
 
 describe("GeneratedSkillValidationService", () => {
   let tmpDir: string;
@@ -54,12 +54,16 @@ describe("GeneratedSkillValidationService", () => {
       pattern,
     });
     const examplesSection = result.skillContent.match(/## Examples\s+([\s\S]*?)\n## Provenance/);
+    expect(examplesSection, "Generated skill should keep an Examples section before Provenance.").not.toBeNull();
     const exampleLines = examplesSection?.[1]
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.startsWith("- ")) ?? [];
 
-    expect(exampleLines.some((line) => line.length >= MIN_CONCRETE_EXAMPLE_LINE_LENGTH)).toBe(true);
+    expect(
+      exampleLines.some((line) => line.length >= MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS),
+      "At least one example line must satisfy the SkillValidator concrete-example length threshold.",
+    ).toBe(true);
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
     expect(validation.syntheticActivationEval.status).toBe("passed");
