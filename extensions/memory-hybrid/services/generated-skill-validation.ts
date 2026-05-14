@@ -399,7 +399,8 @@ function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, ski
   const outputRoot = resolve(outputDir);
   const skillDir = resolve(outputRoot, skillName);
   const expected = resolve(skillDir, "SKILL.md");
-  if (proposedOutputPath !== expected || !isWithinDir(outputRoot, dirname(proposedOutputPath))) return false;
+  const resolvedProposed = resolve(proposedOutputPath);
+  if (resolvedProposed !== expected || !isWithinDir(outputRoot, dirname(resolvedProposed))) return false;
 
   return existingSkillPathIsSafe(outputRoot, skillDir, expected);
 }
