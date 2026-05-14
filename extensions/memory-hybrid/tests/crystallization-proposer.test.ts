@@ -402,7 +402,7 @@ Bounded HTML prefix validation workflow.
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
 
     const htmlComment = `<!-- openclaw:skill-proposal id=test-id pattern_id=html-prefix-pattern evidence_hash=ev-html output_path=${outputDir}/html-prefix-skill/SKILL.md -->`;
-    const contentWithHtmlPrefix = `${htmlComment}\n${FULL_SKILL_CONTENT}`;
+    const contentWithHtmlPrefix = `\uFEFF\n  \n${htmlComment}\n${FULL_SKILL_CONTENT}`;
 
     const proposal = cStore.create({
       patternId: "html-prefix-pattern",

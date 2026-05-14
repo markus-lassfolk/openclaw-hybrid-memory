@@ -834,6 +834,13 @@ provenance: test-suite
     expect(fm.description).toBe("Use when the user asks to test things.");
   });
 
+  it("parses frontmatter when BOM and whitespace precede an HTML comment", () => {
+    const content = `\uFEFF\n  \t\n<!-- openclaw:skill-proposal id=abc123 -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
   it("parses frontmatter when a multi-line HTML comment precedes ---", () => {
     const content = `<!-- openclaw:skill-proposal\n  id=abc123\n  pattern_id=p1\n-->\n${FRONTMATTER_BODY}`;
     const fm = parseSkillFrontmatter(content);

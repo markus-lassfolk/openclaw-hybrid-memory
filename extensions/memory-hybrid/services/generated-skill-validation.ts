@@ -25,6 +25,8 @@ export interface SyntheticActivationCases {
   edge: string;
 }
 
+export type SkillFrontmatter = Record<string, string | undefined>;
+
 export interface SkillProposalValidationResult {
   schemaVersion: 1;
   validatedAt: string;
@@ -33,7 +35,7 @@ export interface SkillProposalValidationResult {
   staticValidation: {
     status: ValidationStageStatus;
     violations: string[];
-    frontmatter: Record<string, string>;
+    frontmatter: SkillFrontmatter;
     safeOutputPath: string;
   };
   dryLoadValidation: {
@@ -120,12 +122,12 @@ const STOP_WORDS = new Set([
   "without",
 ]);
 
-export function parseSkillFrontmatter(skillContent: string): Record<string, string> {
+export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
   // Strip optional leading HTML comment (e.g., injected by injectInstallMetadata)
-  const body = skillContent.replace(/^<!--[\s\S]*?-->\s*/, "");
+  const body = skillContent.replace(/^\uFEFF?[\s\r\n]*<!--[\s\S]*?-->\s*/, "").replace(/^\uFEFF/, "");
   const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
-  const frontmatter: Record<string, string> = {};
+  const frontmatter: SkillFrontmatter = {};
   for (const rawLine of match[1].split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
@@ -209,7 +211,7 @@ export class GeneratedSkillValidationService {
 
   private validateStatic(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     legacy: boolean,
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
@@ -275,7 +277,7 @@ export class GeneratedSkillValidationService {
 
   private validateDryLoad(
     skillContent: string,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     skillName: string,
   ): SkillProposalValidationResult["dryLoadValidation"] {
     const violations: string[] = [];
@@ -305,7 +307,9 @@ export class GeneratedSkillValidationService {
 
       const entries = loadDrySkillEntries(skillsDir);
       const entry = entries.find(
-        (candidate) => candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
+        (candidate) =>
+          candidate.name === skillName ||
+          (candidate.name ? normalizeSkillName(candidate.name) === normalizedSkillName : false),
       );
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
@@ -334,7 +338,7 @@ export class GeneratedSkillValidationService {
 
   private evaluateActivation(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
     const cases = buildSyntheticActivationCases(input, frontmatter);
     const triggerSection = extractSection(input.skillContent, "Trigger");
@@ -435,8 +439,8 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
-  const out: Array<Record<string, string>> = [];
+function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
+  const out: SkillFrontmatter[] = [];
   for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const skillPath = join(skillsDir, entry.name, "SKILL.md");
@@ -465,7 +469,7 @@ function extractSection(skillContent: string, heading: string): string {
 
 function buildSyntheticActivationCases(
   input: ValidateGeneratedSkillInput,
-  frontmatter: Record<string, string>,
+  frontmatter: SkillFrontmatter,
 ): SyntheticActivationCases {
   const positive =
     input.pattern?.exampleGoals
