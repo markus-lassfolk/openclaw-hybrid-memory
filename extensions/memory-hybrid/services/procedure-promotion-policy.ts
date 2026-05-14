@@ -1094,8 +1094,8 @@ function hasValidationCheck(recipe: unknown, _task: string): boolean {
 }
 const skillMdDuplicateDigestCache = new Map<string, { mtimeMs: number; lower: string }>();
 
-/** Clears the SKILL.md mtime cache used by duplicate-skill detection (tests / --no-skill-duplicate-cache). */
-export function clearProcedurePromotionDuplicateSkillCache(): void {
+/** Clears the SKILL.md mtime cache used by duplicate-skill detection (for future test use). */
+function clearProcedurePromotionDuplicateSkillCache(): void {
   skillMdDuplicateDigestCache.clear();
 }
 

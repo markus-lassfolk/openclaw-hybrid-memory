@@ -322,13 +322,13 @@ function applyTelemetryRollupDelta(
   );
 }
 
-function countSelectedActivationsSince(db: DatabaseSync, skillName: string, sinceSec: number): number {
+function countSelectedActivationsSince(db: DatabaseSync, procedureId: string, sinceSec: number): number {
   const row = db
     .prepare(
       `SELECT COUNT(*) as c FROM generated_skill_telemetry
-        WHERE skill_name = ? AND decision = 'selected' AND created_at >= ?`,
+        WHERE procedure_id = ? AND decision = 'selected' AND created_at >= ?`,
     )
-    .get(skillName, sinceSec) as { c: number };
+    .get(procedureId, sinceSec) as { c: number };
   return row?.c ?? 0;
 }
 
@@ -644,7 +644,7 @@ function summarizeSkillTelemetryFromRollups(
     return summarizeSkillTelemetry(proc, skillTelemetryEntries(db, canonicalSkillName), policy, now);
   }
   const weekAgo = now - 7 * 24 * 60 * 60;
-  const activationCountPerWeek = countSelectedActivationsSince(db, canonicalSkillName, weekAgo);
+  const activationCountPerWeek = countSelectedActivationsSince(db, proc.id, weekAgo);
   const activationCountTotal = r.gst_sel_total;
   const nearMissCount = r.gst_near_miss_total;
   const falsePositiveSignals = r.gst_fp_signals_total;
