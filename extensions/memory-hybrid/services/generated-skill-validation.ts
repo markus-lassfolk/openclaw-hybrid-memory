@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { normalizeSkillName } from "./skill-crystallizer.js";
 import { SkillValidator } from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
@@ -67,7 +68,9 @@ const REQUIRED_SECTIONS = ["## Trigger", "## Scope", "## When not to use", "## W
 const MAX_SKILL_CHARS = 16_000;
 const MAX_SKILL_LINES = 320;
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
-const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ][0-9:.+-z]+/i;
+const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
+const EXPLANATION_PATTERN = /\b(?:explain|describe|summarize|review)\b/;
+const NEGATION_PATTERN = /\b(?:without|do not|don't|avoid)\b/;
 const SECRET_OR_PRIVATE_PATTERNS = [
   /sk-[a-z0-9]{20,}/i,
   /gh[pousr]_[a-z0-9_]{20,}/i,
@@ -240,22 +243,25 @@ export class GeneratedSkillValidationService {
     try {
       const workspaceDir = join(tempDir, "workspace");
       const skillsDir = join(workspaceDir, "skills");
-      const skillDir = join(skillsDir, skillName);
+      const normalizedSkillName = normalizeSkillName(skillName);
+      const skillDir = join(skillsDir, normalizedSkillName);
       mkdirSync(skillDir, { recursive: true });
       const skillPath = join(skillDir, "SKILL.md");
       writeFileSync(skillPath, skillContent, "utf-8");
 
+      const skillDirStat = lstatSync(skillDir);
+      const skillPathStat = lstatSync(skillPath);
+      if (skillDirStat.isSymbolicLink() || skillPathStat.isSymbolicLink()) {
+        violations.push("Dry-load skill path contains a symlink");
+      }
       const skillDirReal = realpathSync(skillDir);
       const skillsDirReal = realpathSync(skillsDir);
       if (!isWithinDir(skillsDirReal, skillDirReal)) {
         violations.push("Dry-load skill directory escapes the isolated workspace");
       }
-      if (lstatSync(skillDir).isSymbolicLink() || lstatSync(skillPath).isSymbolicLink()) {
-        violations.push("Dry-load skill path contains a symlink");
-      }
 
       const entries = loadDrySkillEntries(skillsDir);
-      const entry = entries.find((candidate) => candidate.name === skillName);
+      const entry = entries.find((candidate) => candidate.name === normalizedSkillName);
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
       } else {
@@ -333,7 +339,13 @@ function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
   for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const skillPath = join(skillsDir, entry.name, "SKILL.md");
-    const skillContent = readFileSync(skillPath, "utf-8");
+    let skillContent = "";
+    try {
+      skillContent = readFileSync(skillPath, "utf-8");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Unable to read dry-load skill '${entry.name}': ${message}`);
+    }
     const frontmatter = parseSkillFrontmatter(skillContent);
     if (!frontmatter.name || !frontmatter.description) {
       throw new Error(`Malformed SKILL.md for ${entry.name}: missing name or description frontmatter`);
@@ -372,11 +384,11 @@ function scoreActivationPrompt(prompt: string, sourceText: string): { matched: b
   const normalizedPrompt = prompt.toLowerCase();
   const normalizedSource = sourceText.toLowerCase();
   if (/\b(?:run|follow|execute|process|perform|use)\b/.test(normalizedPrompt)) score += 1;
-  if (/\b(?:explain|describe|summarize|review)\b/.test(normalizedPrompt)) {
-    if (/\b(?:explain|describe|summarize|review)\b/.test(normalizedSource)) score += 1;
+  if (EXPLANATION_PATTERN.test(normalizedPrompt)) {
+    if (EXPLANATION_PATTERN.test(normalizedSource)) score += 1;
     else score -= 1;
   }
-  if (/\b(?:without|do not|don't|avoid)\b/.test(normalizedPrompt) && !/\b(?:without|do not|don't|avoid)\b/.test(normalizedSource)) {
+  if (NEGATION_PATTERN.test(normalizedPrompt) && !NEGATION_PATTERN.test(normalizedSource)) {
     score -= 2;
   }
   const minimumOverlap = promptWords.size <= 2 ? 1 : 2;

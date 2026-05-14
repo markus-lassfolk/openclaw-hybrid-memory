@@ -18,7 +18,7 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
-import { SkillCrystallizer } from "./skill-crystallizer.js";
+import { normalizeSkillName, SkillCrystallizer } from "./skill-crystallizer.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -185,7 +185,7 @@ export class CrystallizationProposer {
     }
 
     const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const safeName = proposal.skillName.replace(/[^a-z0-9-]/gi, "-").replace(/^-+|-+$/g, "") || "auto-generated-skill";
+    const safeName = normalizeSkillName(proposal.skillName);
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
     // Re-validate before writing

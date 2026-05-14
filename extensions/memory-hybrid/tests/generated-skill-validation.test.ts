@@ -165,9 +165,7 @@ Bounded release-health review workflow.
       const approved = proposer.approveProposal(proposal.id, { overrideWarnings: true });
       expect(approved.success).toBe(true);
       expect(approved.outputPath).toBeDefined();
-      if (!approved.outputPath) {
-        expect.fail("expected output path after approval override");
-      }
+      if (!approved.outputPath) return;
       expect(existsSync(approved.outputPath)).toBe(true);
     } finally {
       wfStore.close();
