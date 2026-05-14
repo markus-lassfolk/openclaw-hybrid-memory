@@ -7,11 +7,12 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-import { resolveWorkspacePath } from "../utils/path.js";
+import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
+  type ProcedurePromotionDuplicateCandidate,
   type ProcedurePromotionEvidence,
   type ProcedurePromotionPolicy,
   createProcedurePromotionDecision,
@@ -131,6 +132,8 @@ type GenerateAutoSkillsOptions = {
   dryRun?: boolean;
   apply?: boolean;
   policy?: string;
+  /** Same-run draft slugs/task patterns for duplicate detection (single-procedure promote / custom orchestration). */
+  inRunSkillCandidates?: readonly ProcedurePromotionDuplicateCandidate[];
 };
 
 /**
@@ -176,7 +179,7 @@ export function generateAutoSkills(
       skillsAutoPath: basePath,
       validationThreshold: options.validationThreshold,
       resolvedSlug,
-      inRunSkillCandidates,
+      inRunSkillCandidates: [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
       evidence,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
@@ -239,7 +242,7 @@ export function generateAutoSkills(
     }
 
     try {
-      const relativePath = join(options.skillsAutoPath, resolvedSlug);
+      const relativePath = toWorkspaceRelativePath(join(options.skillsAutoPath, resolvedSlug));
       writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
@@ -346,6 +349,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
+    inRunSkillCandidates: options.inRunSkillCandidates ?? [],
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -364,7 +368,7 @@ export function generateAutoSkillForProcedure(
 
   const skillDir = join(basePath, resolvedSlug);
   const skillPath = join(skillDir, "SKILL.md");
-  const relativePath = join(options.skillsAutoPath, resolvedSlug);
+  const relativePath = toWorkspaceRelativePath(join(options.skillsAutoPath, resolvedSlug));
 
   if (dryRun) {
     logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);

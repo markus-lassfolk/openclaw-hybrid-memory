@@ -57,6 +57,13 @@ Use your HEARTBEAT.md checklist or a periodic reminder:
 
 Keep it as a **lightweight pointer file**: links to active projects, people, technical docs; status emojis. No detailed content — just enough to orient the agent. Keep under ~3k tokens.
 
+### Procedural memory (extract, promote, digest)
+
+- **Extract procedures from session logs:** `openclaw hybrid-mem extract-procedures [--days N] [--dir <sessions>] [--dry-run] [-v]`. Default session dir comes from `procedures.sessionsDir` in plugin config. Run weekly or after distillation if you want the procedures table updated from JSONL transcripts.
+- **Draft skills from validated procedures:** `openclaw hybrid-mem generate-auto-skills [--dry-run|--apply] [--max N] [--policy auto-safe|draft-only|manual]`. The canonical cron chain is documented in [OPERATIONS.md § Weekly extraction pipeline](OPERATIONS.md#weekly-extraction-pipeline-procedures-directives-reinforcement) (`weekly-extract-procedures`: extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills).
+- **Promote one procedure by id:** `openclaw hybrid-mem procedure promote <id> [--apply] [--force] [--in-run-skill-json '<json>']` — optional JSON array of `{ "slug", "taskPattern" }` objects flags same-run duplicates when orchestrating parallel single promotes.
+- **Operator review digest (pending queue):** `openclaw hybrid-mem digest pending --since 7d --format md` (see [OPERATIONS.md](OPERATIONS.md) optional jobs and [README.md in the extension](../extensions/memory-hybrid/README.md) for `digest.weekly` / autopilot). Install or `verify --fix` adds `hybrid-mem:weekly-pending-digest` when missing.
+
 ### Daily files (`memory/YYYY-MM-DD.md`)
 
 Raw session logs. Write what happened, decisions made, issues found. Searchable via memorySearch, source material for periodic reviews, not loaded at bootstrap.
