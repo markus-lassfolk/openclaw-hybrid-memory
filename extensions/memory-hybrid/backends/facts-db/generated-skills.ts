@@ -236,8 +236,8 @@ export function rebuildGeneratedSkillTelemetryRollupsForProcedure(db: DatabaseSy
            gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
            gst_considered_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'considered'),
            gst_skipped_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'skipped'),
-           gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(t.saved_tool_calls), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
-           gst_saved_time_ms_sum = (SELECT COALESCE(SUM(t.saved_time_ms), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
+           gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_tool_calls > 0 THEN t.saved_tool_calls ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
+           gst_saved_time_ms_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_time_ms > 0 THEN t.saved_time_ms ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
            gst_last_selected_at = (SELECT MAX(t.created_at) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected')
      WHERE p.id = ?`,
   ).run(procedureId);

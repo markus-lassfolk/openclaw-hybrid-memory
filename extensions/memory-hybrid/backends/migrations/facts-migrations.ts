@@ -472,14 +472,15 @@ function migrateGeneratedSkillTelemetryRollupColumns(db: DatabaseSync): void {
   // telemetry but zero rollups (indicating incomplete backfill from a previous crash).
   const needsBackfill =
     !hadGst ||
-    (db
-      .prepare(
-        `SELECT COUNT(*) as c FROM procedures p
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM procedures p
          WHERE EXISTS (SELECT 1 FROM generated_skill_telemetry t WHERE t.procedure_id = p.id)
            AND p.gst_sel_total = 0
            AND p.gst_near_miss_total = 0`,
-      )
-      .get() as { c: number }
+        )
+        .get() as { c: number }
     ).c > 0;
 
   if (needsBackfill) {
