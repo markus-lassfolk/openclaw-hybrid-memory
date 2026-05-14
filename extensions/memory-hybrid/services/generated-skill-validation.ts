@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { MAX_SKILL_LINES } from "../config/skill-sections.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
 
@@ -66,16 +67,11 @@ interface ValidateGeneratedSkillInput {
 }
 
 const REQUIRED_FRONTMATTER_FIELDS = ["name", "description", "category"] as const;
-const REQUIRED_SECTIONS = [
-  "## Trigger",
-  "## Scope",
-  "## When not to use",
-  "## Workflow",
-  "## Examples",
-  "## Provenance",
-] as const;
+// REQUIRED_SECTIONS removed: section validation is now delegated to SkillValidator which
+// uses the shared alias-aware taxonomy from config/skill-sections.ts (issues #1375, #1408).
 const MAX_SKILL_CHARS = 16_000;
-const MAX_SKILL_LINES = 320;
+// MAX_SKILL_LINES is imported from config/skill-sections.ts — the single source of truth
+// shared with SkillValidator (issue #1366).
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
 const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
 const EXPLANATION_PATTERN = /\b(?:explain|describe|summarize|review)\b/;
@@ -235,11 +231,9 @@ export class GeneratedSkillValidationService {
       if ((frontmatter.description ?? "").length > 280) {
         violations.push("Frontmatter description exceeds 280 characters");
       }
-      for (const section of REQUIRED_SECTIONS) {
-        if (!input.skillContent.includes(section)) {
-          violations.push(`Missing required section: ${section}`);
-        }
-      }
+      // NOTE: Required-section checks have been removed from this method.
+      // They are now performed by SkillValidator (called below) using the alias-aware
+      // taxonomy from config/skill-sections.ts (issues #1375, #1366, #1408).
       const transcriptLineCount = input.skillContent
         .split(/\r?\n/)
         .filter((line) => TRANSCRIPT_LINE_RE.test(line.trim()) || TIMESTAMP_LINE_RE.test(line.trim())).length;
@@ -335,7 +329,13 @@ export class GeneratedSkillValidationService {
     frontmatter: Record<string, string>,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
     const cases = buildSyntheticActivationCases(input, frontmatter);
-    const triggerSection = extractSection(input.skillContent, "Trigger");
+    // Support all trigger-section aliases so skills that use ## When to Activate
+    // or ## When to use are also covered (issue #1375).
+    const triggerSection = extractSectionByAliases(input.skillContent, [
+      "Trigger",
+      "When to Activate",
+      "When to use",
+    ]);
     const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
     const positive = scoreActivationPrompt(cases.positive, sourceText);
     const negative = scoreActivationPrompt(cases.negative, sourceText);
@@ -375,7 +375,8 @@ function legacyIgnorableSkillValidatorViolation(violation: string): boolean {
     normalized.includes("log-dump-guard") ||
     normalized.includes("tool-blob-guard") ||
     normalized.includes("codeblock-") ||
-    normalized.includes("exceeds 300 lines")
+    // Matches both the old "exceeds 300 lines" message and the current shared constant.
+    normalized.includes(`exceeds ${MAX_SKILL_LINES} lines`)
   );
 }
 
@@ -461,6 +462,19 @@ function extractSection(skillContent: string, heading: string): string {
   return match?.[1]?.trim() ?? "";
 }
 
+/**
+ * Try each heading alias in order and return the first matching section body.
+ * Supports skills that use section-name aliases (e.g. "## When to Activate" instead of
+ * "## Trigger") so the activation eval works for all alias variants (issue #1375).
+ */
+function extractSectionByAliases(skillContent: string, headingAliases: string[]): string {
+  for (const heading of headingAliases) {
+    const body = extractSection(skillContent, heading);
+    if (body.length > 0) return body;
+  }
+  return "";
+}
+
 function buildSyntheticActivationCases(
   input: ValidateGeneratedSkillInput,
   frontmatter: Record<string, string>,
@@ -474,7 +488,8 @@ function buildSyntheticActivationCases(
   // boilerplate like "auto-crystallized"), or the edge case overlaps the trigger surface by construction.
   const keywords = [...significantWords(positive)].slice(0, 3);
   const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
-  const triggerSection = extractSection(input.skillContent, "Trigger");
+  // Use alias-aware extraction so skills with "## When to Activate" also match (issue #1375).
+  const triggerSection = extractSectionByAliases(input.skillContent, ["Trigger", "When to Activate", "When to use"]);
   const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
   return {
     positive,

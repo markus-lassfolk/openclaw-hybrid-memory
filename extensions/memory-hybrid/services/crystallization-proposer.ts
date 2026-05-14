@@ -18,6 +18,7 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
+  type SkillProposalValidationResult,
   detailSkillProposalValidation,
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
@@ -199,6 +200,57 @@ export class CrystallizationProposer {
     }
 
     return { proposed, skipped, reasons };
+  }
+
+  // -------------------------------------------------------------------------
+  // validateProposal — dry-run the full GSV pipeline without writing to disk
+  // -------------------------------------------------------------------------
+
+  /**
+   * Run the exact same validation pipeline used by `approveProposal` (static checks +
+   * dry-load filesystem verification + synthetic activation eval) WITHOUT writing
+   * anything to disk.  This makes `skills validate <id>` produce the same outcome
+   * prediction as `skills install <id>` would (issue #1402).
+   *
+   * Returns `null` when the proposal ID is not found.
+   */
+  validateProposal(
+    proposalId: string,
+    opts?: {
+      name?: string;
+      category?: string;
+      recommendedOutput?: "SKILL.md only";
+    },
+  ): SkillProposalValidationResult | null {
+    const proposal = this.crystallizationStore.getById(proposalId);
+    if (!proposal) return null;
+
+    const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
+    const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
+    const desiredRecommendedOutput = opts?.recommendedOutput ?? proposal.recommendedOutput;
+
+    const { skillContent: rewrittenContent } = this.applyOverridesToDraft(proposal, {
+      skillName: safeName,
+      category: desiredCategory,
+      recommendedOutput: desiredRecommendedOutput,
+    });
+
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const proposedOutputPath = this.computeOutputPath(safeName);
+    const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+    const legacy = isLegacyMarkdownCrystallizationProposal(rewrittenContent);
+
+    return this.validator.validate(
+      {
+        outputDir,
+        proposedOutputPath,
+        skillName: safeName,
+        skillContent: rewrittenContent,
+        pattern,
+      },
+      { legacyQueuedCrystallization: legacy },
+    );
   }
 
   // -------------------------------------------------------------------------

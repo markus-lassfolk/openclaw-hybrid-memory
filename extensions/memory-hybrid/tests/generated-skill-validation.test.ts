@@ -802,4 +802,457 @@ Bounded metadata installation workflow.
       cStore.close();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Epic: Single validation truth (issues #1366, #1375, #1402, #1408)
+  // ---------------------------------------------------------------------------
+
+  it("validateProposal produces the same outcome prediction as approveProposal (issue #1402)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validate-vs-approve-"));
+    const wfStore = new WorkflowStore(join(tmpDir, "workflow.db"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+
+    try {
+      const skillContent = `---
+name: ops-validate-consistency
+description: Use when the user asks to validate installation consistency.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Ops Validate Consistency
+
+## Trigger
+Use this skill when the user asks to validate installation consistency.
+
+## Scope
+Bounded validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Use \`read\` to inspect the configuration.
+2. Use \`exec\` to run the validation commands.
+
+## Verification
+- Confirm validation results match expectations.
+
+## Anti-patterns / Known Failures
+- Do not skip verification steps.
+
+## Examples
+- Validate installation consistency for the latest deployment.
+
+## Provenance
+- Source pattern ID: \`pattern-validate-consistency\``;
+
+      const pattern: WorkflowPattern = {
+        toolSequence: ["read", "exec"],
+        totalCount: 5,
+        successCount: 5,
+        failureCount: 0,
+        successRate: 1,
+        avgDurationMs: 500,
+        exampleGoals: ["Validate installation consistency for the latest deployment."],
+      };
+
+      const proposal = cStore.create({
+        patternId: "pattern-validate-consistency",
+        evidenceHash: "ev-validate-consistency",
+        skillName: "ops-validate-consistency",
+        skillContent,
+        patternSnapshot: JSON.stringify(pattern),
+        status: "validated",
+      });
+
+      const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+      // validateProposal must predict the same outcome as approveProposal.
+      const validateResult = proposer.validateProposal(proposal.id);
+      expect(validateResult).not.toBeNull();
+      if (!validateResult) return;
+
+      const approveResult = proposer.approveProposal(proposal.id, {
+        overrideWarnings: validateResult.approvalDecision === "allow-with-override",
+      });
+
+      // The validate prediction must agree with the approve outcome.
+      expect(approveResult.success).toBe(validateResult.approvalDecision !== "deny");
+    } finally {
+      wfStore.close();
+      cStore.close();
+    }
+  });
+
+  it("SkillValidator and GeneratedSkillValidationService agree on alias-based section names (issue #1375)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-alias-agreement-"));
+    const service = new GeneratedSkillValidationService();
+
+    // Fixture using "## When to Activate" instead of "## Trigger" — accepted by SkillValidator
+    // but previously rejected by GSV's exact-match check.
+    const skillWithAlias = `---
+name: alias-section-skill
+description: Use when the user asks to test alias-based section validation.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Alias Section Skill
+
+## When to Activate
+Use this skill for alias-based section validation.
+
+## Scope
+Bounded alias validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the alias configuration.
+2. Run the bounded alias validation.
+
+## Verification
+- Confirm alias mappings are correct.
+
+## Anti-patterns / Known Failures
+- Do not hard-code section names.
+
+## Examples
+- Test alias-based section validation for generated skills.
+
+## Provenance
+- Source pattern ID: \`pattern-alias\``;
+
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "alias-section-skill", "SKILL.md"),
+      skillName: "alias-section-skill",
+      skillContent: skillWithAlias,
+      pattern: {
+        toolSequence: ["read"],
+        totalCount: 3,
+        successCount: 3,
+        failureCount: 0,
+        successRate: 1,
+        avgDurationMs: 100,
+        exampleGoals: ["Test alias-based section validation for generated skills."],
+      },
+    });
+
+    // The skill uses "## When to Activate" (a valid alias for "trigger").
+    // Both SkillValidator (propagated through GSV staticValidation) and GSV itself
+    // must accept it — no "Missing required section" for the trigger.
+    const triggerViolation = validation.staticValidation.violations.some(
+      (v) => v.toLowerCase().includes("trigger") || v.toLowerCase().includes("when to activate"),
+    );
+    expect(triggerViolation).toBe(false);
+    expect(validation.staticValidation.status).toBe("passed");
+  });
+
+  it("both validators agree: skill using all canonical section names passes without violations (issue #1375)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-canonical-sections-"));
+    const service = new GeneratedSkillValidationService();
+
+    const skillContent = `---
+name: canonical-sections-skill
+description: Use when the user asks to verify canonical section naming.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Canonical Sections Skill
+
+## Trigger
+Use this skill when the user asks to verify canonical section naming.
+
+## Scope
+Bounded canonical section verification workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the canonical section names.
+2. Validate each required section.
+
+## Verification
+- Confirm all required sections are present and correctly named.
+
+## Anti-patterns / Known Failures
+- Do not use section aliases when canonical names are available.
+
+## Examples
+- Verify canonical section naming for generated skills.
+
+## Provenance
+- Source pattern ID: \`pattern-canonical\``;
+
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "canonical-sections-skill", "SKILL.md"),
+      skillName: "canonical-sections-skill",
+      skillContent,
+    });
+
+    expect(validation.staticValidation.violations.filter((v) => v.includes("required section"))).toHaveLength(0);
+    expect(validation.staticValidation.status).toBe("passed");
+  });
+
+  it("rejects a skill missing Scope and Provenance (unified taxonomy coverage — issue #1375, #1366)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-missing-sections-"));
+    const service = new GeneratedSkillValidationService();
+
+    // Skill that would have passed the OLD SkillValidator (which didn't check Scope/Provenance)
+    // but must now fail because the unified taxonomy includes them.
+    const skillMissingGsvOnlySections = `---
+name: missing-scope-provenance
+description: Use when the user asks to detect missing required sections.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Missing Scope Provenance
+
+## Trigger
+Use this skill for missing-section detection.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the section configuration.
+
+## Verification
+- Confirm all required sections pass.
+
+## Anti-patterns / Known Failures
+- Do not skip provenance.
+
+## Examples
+- Detect missing required sections in generated skills.`;
+
+    // No ## Scope and no ## Provenance sections.
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "missing-scope-provenance", "SKILL.md"),
+      skillName: "missing-scope-provenance",
+      skillContent: skillMissingGsvOnlySections,
+    });
+
+    const missingSections = validation.staticValidation.violations.filter((v) => v.includes("required section"));
+    expect(missingSections.some((v) => /scope/i.test(v))).toBe(true);
+    expect(missingSections.some((v) => /provenance/i.test(v))).toBe(true);
+    expect(validation.approvalDecision).toBe("deny");
+  });
+
+  it("MAX_SKILL_LINES is the same constant (300) used by both validators (issue #1366)", async () => {
+    // Import both constants to confirm they resolve to the same value.
+    const { MAX_SKILL_LINES: configConst } = await import("../config/skill-sections.js");
+    const { MAX_SKILL_LINES: svConst } = await import("../services/skill-validator.js");
+    expect(configConst).toBe(300);
+    expect(svConst).toBe(300);
+    expect(configConst).toBe(svConst);
+  });
+
+  it("getSectionTaxonomy returns per-category override when registered (issue #1408)", async () => {
+    const { DEFAULT_REQUIRED_SECTIONS, CATEGORY_SECTION_TAXONOMIES, getSectionTaxonomy } = await import(
+      "../config/skill-sections.js"
+    );
+    // By default, all categories use the default taxonomy.
+    expect(getSectionTaxonomy("unknown-category")).toEqual(DEFAULT_REQUIRED_SECTIONS);
+    expect(getSectionTaxonomy()).toEqual(DEFAULT_REQUIRED_SECTIONS);
+
+    // Temporarily register a custom taxonomy for a test category.
+    const customTaxonomy = [
+      { id: "risk", label: "Risk", aliases: ["risk", "risks"] },
+      { id: "examples", label: "Examples", aliases: ["examples"] },
+    ];
+    CATEGORY_SECTION_TAXONOMIES["test-category"] = customTaxonomy;
+    try {
+      const result = getSectionTaxonomy("test-category");
+      expect(result).toEqual(customTaxonomy);
+      expect(result).not.toEqual(DEFAULT_REQUIRED_SECTIONS);
+    } finally {
+      delete CATEGORY_SECTION_TAXONOMIES["test-category"];
+    }
+  });
+
+  it("skills validate --json reports same outcome as skills install would produce (CLI parity — issue #1402)", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-cli-validate-parity-"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+
+    try {
+      const skillContent = `---
+name: cli-validate-parity
+description: Use when the user asks to verify CLI validate and install parity.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# CLI Validate Parity
+
+## Trigger
+Use this skill when the user asks to verify CLI validate and install parity.
+
+## Scope
+Bounded CLI parity verification workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Use \`read\` to inspect the CLI configuration.
+2. Use \`exec\` to run the parity verification.
+
+## Verification
+- Confirm validate and install produce consistent outcomes.
+
+## Anti-patterns / Known Failures
+- Do not bypass validation in install.
+
+## Examples
+- Positive: "Verify CLI validate and install parity for the latest deployment."
+- Negative: "How do I create a GitHub issue?"
+
+## Provenance
+- Source pattern ID: \`pattern-cli-parity\``;
+
+      const proposal = cStore.create({
+        patternId: "pattern-cli-parity",
+        evidenceHash: "ev-cli-parity",
+        skillName: "cli-validate-parity",
+        skillContent,
+        patternSnapshot: JSON.stringify({
+          toolSequence: ["read", "exec"],
+          totalCount: 4,
+          successCount: 4,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 300,
+          exampleGoals: ["Verify CLI validate and install parity for the latest deployment."],
+        }),
+        status: "validated",
+      });
+
+      const program = new Command("hybrid-mem");
+      program.exitOverride();
+      registerSkillsCommands(program, {
+        crystallizationStore: cStore,
+        factsDb: null,
+        cfg: { crystallization: cfg } as never,
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      // Run skills validate --json
+      await program.parseAsync(["skills", "validate", proposal.id, "--json"], { from: "user" });
+      const validateOutput = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+        ok?: boolean;
+        approvalDecision?: string;
+      };
+
+      logSpy.mockClear();
+
+      // Run skills install --json with the appropriate flags to match what validate predicted.
+      const installArgs = ["skills", "install", proposal.id, "--json"];
+      if (validateOutput.approvalDecision === "allow-with-override") {
+        installArgs.push("--override-warnings");
+      }
+      await program.parseAsync(installArgs, { from: "user" });
+      const installOutput = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean };
+
+      // Validate must predict the same success/failure outcome as install.
+      expect(installOutput.ok).toBe(validateOutput.ok);
+    } finally {
+      cStore.close();
+    }
+  });
+
+  it("skills install --dry-run does not write to disk and reports the same outcome as validate (issue #1402)", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dry-run-"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+
+    try {
+      const skillContent = `---
+name: dry-run-test-skill
+description: Use when the user asks to test the dry-run install path.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Dry Run Test Skill
+
+## Trigger
+Use this skill when the user asks to test the dry-run install path.
+
+## Scope
+Bounded dry-run test workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Use \`read\` to inspect the configuration.
+2. Verify the dry-run result.
+
+## Verification
+- Confirm the skill was NOT written to disk.
+
+## Anti-patterns / Known Failures
+- Do not mistake dry-run output for actual installation.
+
+## Examples
+- Positive: "Test the dry-run install path for generated skills."
+- Negative: "How do I delete a file?"
+
+## Provenance
+- Source pattern ID: \`pattern-dry-run\``;
+
+      const proposal = cStore.create({
+        patternId: "pattern-dry-run",
+        evidenceHash: "ev-dry-run",
+        skillName: "dry-run-test-skill",
+        skillContent,
+        patternSnapshot: JSON.stringify({
+          toolSequence: ["read"],
+          totalCount: 3,
+          successCount: 3,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 200,
+          exampleGoals: ["Test the dry-run install path for generated skills."],
+        }),
+        status: "validated",
+      });
+
+      const program = new Command("hybrid-mem");
+      program.exitOverride();
+      registerSkillsCommands(program, {
+        crystallizationStore: cStore,
+        factsDb: null,
+        cfg: { crystallization: cfg } as never,
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await program.parseAsync(["skills", "install", proposal.id, "--dry-run", "--json"], { from: "user" });
+
+      const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+        dryRun?: boolean;
+        ok?: boolean;
+        staticValidation?: { outputPath?: string };
+      };
+      expect(output.dryRun).toBe(true);
+      // Dry run must NOT create the skill file on disk.
+      if (output.staticValidation?.outputPath) {
+        const { existsSync: exists } = await import("node:fs");
+        expect(exists(output.staticValidation.outputPath)).toBe(false);
+      }
+    } finally {
+      cStore.close();
+    }
+  });
 });

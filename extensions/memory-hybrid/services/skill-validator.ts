@@ -9,7 +9,13 @@
  *
  * The validator is intentionally conservative: false positives are acceptable,
  * false negatives (allowing dangerous content) are not.
+ *
+ * Required section taxonomy is shared with GeneratedSkillValidationService via
+ * config/skill-sections.ts (issues #1375, #1366, #1408).
  */
+
+import { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
+export { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -23,8 +29,6 @@ interface ValidationResult {
 // ---------------------------------------------------------------------------
 // Rule definitions
 // ---------------------------------------------------------------------------
-
-const MAX_SKILL_LINES = 300;
 const MAX_FENCED_BLOCK_LINES = 80;
 const MAX_TRANSCRIPT_LIKE_RATIO = 0.4;
 const MAX_TOOL_BLOB_LINES = 40;
@@ -240,34 +244,11 @@ export class SkillValidator {
     }
 
     const headings = parseH2Headings(lines);
-    const requiredSections: Array<{
-      id: string;
-      label: string;
-      aliases: string[];
-    }> = [
-      {
-        id: "when",
-        label: "When to Activate",
-        aliases: ["when to activate", "when to use", "trigger"],
-      },
-      {
-        id: "dont",
-        label: "Do Not Use When",
-        aliases: ["do not use when", "when not to use", "do not use", "anti-activation conditions"],
-      },
-      { id: "workflow", label: "Workflow", aliases: ["workflow", "steps"] },
-      {
-        id: "verify",
-        label: "Verification / Quality Checklist",
-        aliases: ["verification", "quality checklist", "validation"],
-      },
-      {
-        id: "anti",
-        label: "Anti-patterns / Known Failures",
-        aliases: ["anti-patterns / known failures", "anti-patterns", "known failures"],
-      },
-      { id: "examples", label: "Examples", aliases: ["examples"] },
-    ];
+    // Use the shared taxonomy from config/skill-sections.ts so that both
+    // SkillValidator and GeneratedSkillValidationService check the same sections
+    // (issues #1375, #1408).
+    const frontmatterCategory = frontmatter.present ? frontmatter.keys.get("category") : undefined;
+    const requiredSections = getSectionTaxonomy(frontmatterCategory);
 
     for (const section of requiredSections) {
       if (!hasHeadingAlias(headings, section.aliases)) {
@@ -401,7 +382,7 @@ export class SkillValidator {
 // Markdown helpers (lightweight, intentionally conservative)
 // ---------------------------------------------------------------------------
 
-function normalizeHeading(value: string): string {
+export function normalizeHeading(value: string): string {
   return value
     .trim()
     .toLowerCase()
@@ -409,7 +390,7 @@ function normalizeHeading(value: string): string {
     .replace(/\s+/g, " ");
 }
 
-function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: string; line: number }> {
+export function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: string; line: number }> {
   const out: Array<{ raw: string; normalized: string; line: number }> = [];
   let inFence = false;
   let fenceChar: "`" | "~" | null = null;
@@ -447,7 +428,7 @@ function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: stri
   return out;
 }
 
-function hasHeadingAlias(headings: Array<{ normalized: string }>, aliases: string[]): boolean {
+export function hasHeadingAlias(headings: Array<{ normalized: string }>, aliases: string[]): boolean {
   const normalizedAliases = aliases.map(normalizeHeading);
   return headings.some((h) => normalizedAliases.includes(h.normalized));
 }
