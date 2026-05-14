@@ -154,12 +154,13 @@ describe("generateAutoSkills", () => {
     // Invariant: recipe.json, proposal-metadata.json, and evals/evals.json must NOT
     // contain slug or path identity fields. If any future addition embeds a slug/path
     // identity field in these artifacts, it must also be rebased in rebaseDraftSlug.
-    const recipe = JSON.parse(readFileSync(join(collidedDir, "recipe.json"), "utf-8")) as unknown;
+    const recipe = JSON.parse(readFileSync(join(collidedDir, "recipe.json"), "utf-8")) as Array<Record<string, unknown>>;
     expect(Array.isArray(recipe)).toBe(true);
-    // Check for identity keys ("skill":, "generatedSkillPath":) not merely the substring
-    const recipeStr = JSON.stringify(recipe);
-    expect(recipeStr).not.toMatch(/"skill"\s*:/);
-    expect(recipeStr).not.toMatch(/"generatedSkillPath"\s*:/);
+    // Verify each recipe step carries no slug/path identity keys
+    for (const step of recipe) {
+      expect(step).not.toHaveProperty("skill");
+      expect(step).not.toHaveProperty("generatedSkillPath");
+    }
 
     const proposalMeta = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8")) as Record<string, unknown>;
     expect(proposalMeta).not.toHaveProperty("skill");
