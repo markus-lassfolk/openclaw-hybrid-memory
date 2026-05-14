@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type HybridMemoryConfig, hybridConfigSchema } from "../config.js";
 import { parseExitLine, validateMaintenanceExecution } from "../services/cron-exit-validator.js";
 import { runPendingDigestAutopilotCron } from "../services/pending-digest-autopilot-cron.js";
@@ -129,6 +130,44 @@ describe("pending digest autopilot cron wrapper", () => {
         "notification-policy",
       ]),
     );
+  });
+
+  it("elevates skipped run to partial when notification payload write fails", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"), {
+      autopilot: {
+        enabled: false,
+        notifyOnNoop: true,
+      },
+    });
+    const orig = nodeFs.writeFileSync.bind(nodeFs);
+    const spy = vi
+      .spyOn(nodeFs, "writeFileSync")
+      .mockImplementation((...args: Parameters<typeof nodeFs.writeFileSync>) => {
+        const path = args[0];
+        if (typeof path === "string" && path.includes(".notification.json")) {
+          throw new Error("simulated notification failure");
+        }
+        return Reflect.apply(orig, nodeFs, args);
+      });
+    try {
+      const result = await runPendingDigestAutopilotCron({
+        cfg,
+        factsDb: factsDb(),
+        openclawHome: dir,
+        now: new Date("2026-05-13T08:20:00Z"),
+      });
+      expect(result.summary.status).toBe("partial");
+      expect(result.summary.skipReason).toBeUndefined();
+      const notif = readFileSync(result.summary.artifacts.hmExit, "utf-8")
+        .split("\n")
+        .map((line) => parseExitLine(line))
+        .find((l) => l?.step === "notification-policy");
+      expect(notif?.exitCode).toBe(1);
+      expect(notif?.status).toBe("failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("runs dry-run safely, validates exit ledger compatibility, and stays quiet on no-op by default", async () => {

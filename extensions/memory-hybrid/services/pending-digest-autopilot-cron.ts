@@ -385,7 +385,7 @@ export async function runPendingDigestAutopilotCron(
         });
       }
     } catch (err) {
-      if (status === "ok") status = "partial";
+      if (status === "ok" || status === "skipped") status = "partial";
       summary.status = status;
       markStep("notification-policy", {
         exit: 1,
