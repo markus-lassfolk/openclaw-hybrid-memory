@@ -5,7 +5,7 @@ import { getEnv } from "../utils/env-manager.js";
  *         SkillValidator, CrystallizationProposer, config parsing.
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -638,6 +638,24 @@ describe("CrystallizationProposer.approveProposal", () => {
     const result = proposer.approveProposal(p.id);
     expect(result.success).toBe(false);
     expect(result.message).toContain("not pending");
+  });
+
+  it("allows approving a legacy pending proposal without YAML frontmatter when content is safe", () => {
+    const outDir = join(tmpDir, "legacy-approve-out");
+    mkdirSync(outDir, { recursive: true });
+    const p = cStore.create({
+      patternId: "legacy-pattern",
+      skillName: "legacy-safe-skill",
+      skillContent: "# Legacy Crystallized Workflow\n\nBounded narrative body without YAML.\n",
+      patternSnapshot: "{}",
+    });
+    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: outDir };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    const result = proposer.approveProposal(p.id);
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toBeDefined();
+    if (!result.outputPath) return;
+    expect(existsSync(result.outputPath)).toBe(true);
   });
 });
 

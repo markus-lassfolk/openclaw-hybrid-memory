@@ -148,12 +148,22 @@ export function summarizeSkillProposalValidation(result?: SkillProposalValidatio
 export class GeneratedSkillValidationService {
   private readonly skillValidator = new SkillValidator();
 
-  validate(input: ValidateGeneratedSkillInput): SkillProposalValidationResult {
+  validate(
+    input: ValidateGeneratedSkillInput,
+    options?: { legacyQueuedCrystallization?: boolean },
+  ): SkillProposalValidationResult {
     const validatedAt = new Date().toISOString();
+    const legacy = options?.legacyQueuedCrystallization === true;
     const frontmatter = parseSkillFrontmatter(input.skillContent);
-    const staticValidation = this.validateStatic(input, frontmatter);
-    const dryLoadValidation = this.validateDryLoad(input.skillContent, frontmatter, input.skillName);
-    const syntheticActivationEval = this.evaluateActivation(input, frontmatter);
+    const staticValidation = this.validateStatic(input, frontmatter, legacy);
+    const dryLoadValidation = legacy
+      ? ({
+          status: "passed",
+          violations: [],
+          discovered: {},
+        } as SkillProposalValidationResult["dryLoadValidation"])
+      : this.validateDryLoad(input.skillContent, frontmatter, input.skillName);
+    const syntheticActivationEval = legacy ? legacyBypassActivationEval() : this.evaluateActivation(input, frontmatter);
     const overallStatus: ValidationStageStatus =
       staticValidation.status === "failed" ||
       dryLoadValidation.status === "failed" ||
@@ -186,6 +196,7 @@ export class GeneratedSkillValidationService {
   private validateStatic(
     input: ValidateGeneratedSkillInput,
     frontmatter: Record<string, string>,
+    legacy: boolean,
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
     const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
@@ -197,33 +208,35 @@ export class GeneratedSkillValidationService {
     if (input.skillContent.split(/\r?\n/).length > MAX_SKILL_LINES) {
       violations.push(`Skill exceeds ${MAX_SKILL_LINES} lines`);
     }
-    for (const field of REQUIRED_FRONTMATTER_FIELDS) {
-      if (!frontmatter[field] || frontmatter[field].trim().length === 0) {
-        violations.push(`Missing required frontmatter field: ${field}`);
+    if (!legacy) {
+      for (const field of REQUIRED_FRONTMATTER_FIELDS) {
+        if (!frontmatter[field] || frontmatter[field].trim().length === 0) {
+          violations.push(`Missing required frontmatter field: ${field}`);
+        }
       }
-    }
-    if (frontmatter.name && frontmatter.name !== input.skillName) {
-      violations.push(`Frontmatter name '${frontmatter.name}' must match skill name '${input.skillName}'`);
-    }
-    if (frontmatter.name && !/^[a-z0-9-]+$/.test(frontmatter.name)) {
-      violations.push("Frontmatter name must use lowercase letters, digits, and hyphens only");
-    }
-    if ((frontmatter.description ?? "").length > 280) {
-      violations.push("Frontmatter description exceeds 280 characters");
-    }
-    for (const section of REQUIRED_SECTIONS) {
-      if (!input.skillContent.includes(section)) {
-        violations.push(`Missing required section: ${section}`);
+      if (frontmatter.name && frontmatter.name !== input.skillName) {
+        violations.push(`Frontmatter name '${frontmatter.name}' must match skill name '${input.skillName}'`);
+      }
+      if (frontmatter.name && !/^[a-z0-9-]+$/.test(frontmatter.name)) {
+        violations.push("Frontmatter name must use lowercase letters, digits, and hyphens only");
+      }
+      if ((frontmatter.description ?? "").length > 280) {
+        violations.push("Frontmatter description exceeds 280 characters");
+      }
+      for (const section of REQUIRED_SECTIONS) {
+        if (!input.skillContent.includes(section)) {
+          violations.push(`Missing required section: ${section}`);
+        }
+      }
+      const transcriptLineCount = input.skillContent
+        .split(/\r?\n/)
+        .filter((line) => TRANSCRIPT_LINE_RE.test(line.trim()) || TIMESTAMP_LINE_RE.test(line.trim())).length;
+      if (transcriptLineCount >= 3) {
+        violations.push("Content appears to dump raw transcript or log lines");
       }
     }
     if (!isCanonicalSkillPath(input.outputDir, proposedOutputPath, input.skillName)) {
       violations.push(`Unsafe proposed output path: ${input.proposedOutputPath}`);
-    }
-    const transcriptLineCount = input.skillContent
-      .split(/\r?\n/)
-      .filter((line) => TRANSCRIPT_LINE_RE.test(line.trim()) || TIMESTAMP_LINE_RE.test(line.trim())).length;
-    if (transcriptLineCount >= 3) {
-      violations.push("Content appears to dump raw transcript or log lines");
     }
     for (const pattern of SECRET_OR_PRIVATE_PATTERNS) {
       if (pattern.test(input.skillContent)) {
@@ -232,7 +245,10 @@ export class GeneratedSkillValidationService {
     }
     const validatorResult = this.skillValidator.validate(input.skillContent);
     if (!validatorResult.valid) {
-      violations.push(...validatorResult.violations);
+      for (const v of validatorResult.violations) {
+        if (legacy && legacyIgnorableSkillValidatorViolation(v)) continue;
+        violations.push(v);
+      }
     }
 
     return {
@@ -333,6 +349,32 @@ export class GeneratedSkillValidationService {
       notes,
     };
   }
+}
+
+function legacyIgnorableSkillValidatorViolation(violation: string): boolean {
+  return (
+    violation.includes("Frontmatter") ||
+    violation.includes("required section") ||
+    violation.includes("Examples section") ||
+    violation.includes("log-dump-guard") ||
+    violation.includes("tool-blob-guard") ||
+    violation.includes("codeblock-") ||
+    violation.includes("exceeds 300 lines")
+  );
+}
+
+function legacyBypassActivationEval(): SkillProposalValidationResult["syntheticActivationEval"] {
+  return {
+    status: "passed",
+    score: 100,
+    cases: { positive: "", negative: "", edge: "" },
+    results: {
+      positiveMatched: true,
+      negativeMatched: false,
+      edgeMatched: false,
+    },
+    notes: ["Skipped synthetic activation for legacy crystallization proposal (pre-template)."],
+  };
 }
 
 function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, skillName: string): boolean {

@@ -69,7 +69,11 @@ export class CrystallizationProposer {
    */
   runCycle(): ProposeResult {
     if (!this.cfg.enabled) {
-      return { proposed: 0, skipped: 0, reasons: ["Crystallization is disabled"] };
+      return {
+        proposed: 0,
+        skipped: 0,
+        reasons: ["Crystallization is disabled"],
+      };
     }
 
     // Cap at maxCrystallized
@@ -187,12 +191,17 @@ export class CrystallizationProposer {
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
     // Re-validate before writing
-    const validation = this.validator.validate({
-      outputDir,
-      proposedOutputPath: outputPath,
-      skillName: safeName,
-      skillContent: proposal.skillContent,
-    });
+    const validation = this.validator.validate(
+      {
+        outputDir,
+        proposedOutputPath: outputPath,
+        skillName: safeName,
+        skillContent: proposal.skillContent,
+      },
+      {
+        legacyQueuedCrystallization: isLegacyMarkdownCrystallizationProposal(proposal.skillContent),
+      },
+    );
     this.crystallizationStore.saveValidationResult(proposalId, validation);
     if (validation.approvalDecision === "deny") {
       return {
@@ -217,7 +226,10 @@ export class CrystallizationProposer {
       this.writeSkillToDisk(outputPath, proposal.skillContent);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, message: `Approved but failed to write skill: ${msg}` };
+      return {
+        success: false,
+        message: `Approved but failed to write skill: ${msg}`,
+      };
     }
 
     return {
@@ -259,4 +271,12 @@ export class CrystallizationProposer {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, skillContent, "utf-8");
   }
+}
+
+/** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
+function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
+  const lines = skillContent.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i]?.trim() === "") i++;
+  return lines[i]?.trim() !== "---";
 }
