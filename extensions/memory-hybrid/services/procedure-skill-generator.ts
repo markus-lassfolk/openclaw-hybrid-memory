@@ -121,10 +121,7 @@ function rebaseDraftSlug(
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
   // its raw slug form (e.g. "# my-skill") so that non-standard headings are also
   // rebased correctly after a slug collision.
-  const h1Pattern = new RegExp(
-    `^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`,
-    "m",
-  );
+  const h1Pattern = new RegExp(`^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`, "m");
   const skillMd = draft.skillMd
     .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
     .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`);
