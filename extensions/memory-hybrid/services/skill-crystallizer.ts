@@ -175,7 +175,6 @@ ${exampleGoalsText}
 `;
 }
 
-
 function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
   const cleanedGoals = exampleGoals
     .map((g) => g.replace(/\n/g, " ").replace(/\s+/g, " ").trim())

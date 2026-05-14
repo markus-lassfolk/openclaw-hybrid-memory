@@ -290,8 +290,8 @@ export class GeneratedSkillValidationService {
       }
 
       const entries = loadDrySkillEntries(skillsDir);
-      const entry = entries.find((candidate) =>
-        candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
+      const entry = entries.find(
+        (candidate) => candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
       );
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
