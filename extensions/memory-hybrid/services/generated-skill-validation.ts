@@ -425,7 +425,9 @@ function buildSyntheticActivationCases(
       .find((goal) => goal.trim().length > 0)
       ?.replace(/\s+/g, " ")
       .trim() ?? `Please use the ${input.skillName} workflow for the matching task.`;
-  const keywords = [...significantWords(`${positive} ${frontmatter.description ?? ""}`)].slice(0, 3);
+  // Edge prompt tokens must come from the workflow goal, not frontmatter description (often contains
+  // boilerplate like "auto-crystallized"), or the edge case overlaps the trigger surface by construction.
+  const keywords = [...significantWords(positive)].slice(0, 3);
   const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
   const triggerSection = extractSection(input.skillContent, "Trigger");
   const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
