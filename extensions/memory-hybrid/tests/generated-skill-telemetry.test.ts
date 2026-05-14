@@ -10,408 +10,569 @@ let tmpDir: string;
 let db: FactsDB;
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-telemetry-"));
-  db = new FactsDB(join(tmpDir, "facts.db"));
+	tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-telemetry-"));
+	db = new FactsDB(join(tmpDir, "facts.db"));
 });
 
 afterEach(() => {
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  db.close();
-  rmSync(tmpDir, { recursive: true, force: true });
+	vi.useRealTimers();
+	vi.restoreAllMocks();
+	db.close();
+	rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function createGeneratedSkill(taskPattern = "Validate release health report"): { id: string; skillName: string } {
-  const proc = db.upsertProcedure({
-    taskPattern,
-    recipeJson: JSON.stringify([
-      { tool: "read", args: { path: "status.json" }, summary: "Read status" },
-      { tool: "exec", args: { command: "npm test" }, summary: "Run validation" },
-    ]),
-    procedureType: "positive",
-    successCount: 3,
-    confidence: 0.9,
-    sourceSessionId: "session-1",
-  });
-  const skillName = "validate-release-health-report";
-  db.markProcedurePromoted(proc.id, `skills/auto/${skillName}`);
-  return { id: proc.id, skillName };
+function createGeneratedSkill(taskPattern = "Validate release health report"): {
+	id: string;
+	skillName: string;
+} {
+	const proc = db.upsertProcedure({
+		taskPattern,
+		recipeJson: JSON.stringify([
+			{ tool: "read", args: { path: "status.json" }, summary: "Read status" },
+			{
+				tool: "exec",
+				args: { command: "npm test" },
+				summary: "Run validation",
+			},
+		]),
+		procedureType: "positive",
+		successCount: 3,
+		confidence: 0.9,
+		sourceSessionId: "session-1",
+	});
+	const skillName = "validate-release-health-report";
+	db.markProcedurePromoted(proc.id, `skills/auto/${skillName}`);
+	return { id: proc.id, skillName };
 }
 
 describe("generated skill telemetry", () => {
-  it("promotes experimental skills after repeated successful activations without correction", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
-    const { skillName } = createGeneratedSkill();
+	it("promotes experimental skills after repeated successful activations without correction", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+		const { skillName } = createGeneratedSkill();
 
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "validate release health report",
-      taskOutcome: "success",
-      savedToolCalls: 2,
-    });
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "run validated release health workflow",
-      taskOutcome: "success",
-      savedToolCalls: 1,
-    });
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "validate release health report again",
-      taskOutcome: "success",
-      savedTimeMs: 4000,
-    });
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "validate release health report",
+			taskOutcome: "success",
+			savedToolCalls: 2,
+		});
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "run validated release health workflow",
+			taskOutcome: "success",
+			savedToolCalls: 1,
+		});
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "validate release health report again",
+			taskOutcome: "success",
+			savedTimeMs: 4000,
+		});
 
-    const skill = db.getGeneratedSkillByName(skillName);
-    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+		const skill = db.getGeneratedSkillByName(skillName);
+		const report = db.buildGeneratedSkillTelemetryReport({ skillName });
 
-    expect(skill?.skillState).toBe("trusted");
-    expect(report.rows[0]?.metrics.activationCountPerWeek).toBe(3);
-    expect(report.rows[0]?.metrics.successRate).toBe(1);
-    expect(report.rows[0]?.flags.promotionCandidate).toBe(false);
-    expect(report.rows[0]?.recommendation).toBe("observe");
-    expect(report.rows[0]?.metrics.savedToolCalls).toBe(3);
-    expect(report.rows[0]?.metrics.savedTimeMs).toBe(4000);
-    expect(report.rows[0]?.metrics.lastUsedAt).not.toBeNull();
-  });
+		expect(skill?.skillState).toBe("trusted");
+		expect(report.rows[0]?.metrics.activationCountPerWeek).toBe(3);
+		expect(report.rows[0]?.metrics.successRate).toBe(1);
+		expect(report.rows[0]?.flags.promotionCandidate).toBe(false);
+		expect(report.rows[0]?.recommendation).toBe("observe");
+		expect(report.rows[0]?.metrics.savedToolCalls).toBe(3);
+		expect(report.rows[0]?.metrics.savedTimeMs).toBe(4000);
+		expect(report.rows[0]?.metrics.lastUsedAt).not.toBeNull();
+	});
 
-  it("marks a specific activation as false-positive and demotes over-triggering skills", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
-    const { skillName } = createGeneratedSkill();
+	it("marks a specific activation as false-positive and demotes over-triggering skills", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+		const { skillName } = createGeneratedSkill();
 
-    const activation = db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "validate release health report",
-      taskOutcome: "success",
-    });
+		const activation = db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "validate release health report",
+			taskOutcome: "success",
+		});
 
-    const corrected = db.markGeneratedSkillTelemetryFalsePositive(activation.id, "user said this was unrelated");
-    expect(corrected?.userCorrection).toBe(true);
+		const corrected = db.markGeneratedSkillTelemetryFalsePositive(
+			activation.id,
+			"user said this was unrelated",
+		);
+		expect(corrected?.userCorrection).toBe(true);
 
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "another unrelated request",
-      taskOutcome: "failure",
-      userCorrection: true,
-    });
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "one more unrelated request",
-      taskOutcome: "partial",
-      causedRework: true,
-    });
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "another unrelated request",
+			taskOutcome: "failure",
+			userCorrection: true,
+		});
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "one more unrelated request",
+			taskOutcome: "partial",
+			causedRework: true,
+		});
 
-    const skill = db.getGeneratedSkillByName(skillName);
-    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+		const skill = db.getGeneratedSkillByName(skillName);
+		const report = db.buildGeneratedSkillTelemetryReport({ skillName });
 
-    expect(skill?.skillState).toBe("demoted");
-    expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
-    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(2);
-    expect(report.rows[0]?.flags.overTriggering).toBe(true);
-    expect(report.rows[0]?.recommendation).toBe("demote");
-  });
+		expect(skill?.skillState).toBe("demoted");
+		expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
+		expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(2);
+		expect(report.rows[0]?.flags.overTriggering).toBe(true);
+		expect(report.rows[0]?.recommendation).toBe("demote");
+	});
 
-  it("archives generated skills that are never used after the configured period", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
-    const { id, skillName } = createGeneratedSkill();
-    db.getRawDb()
-      .prepare("UPDATE procedures SET skill_generated_at = ?, updated_at = ? WHERE id = ?")
-      .run(
-        Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
-        Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
-        id,
-      );
+	it("archives generated skills that are never used after the configured period", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+		const { id, skillName } = createGeneratedSkill();
+		db.getRawDb()
+			.prepare(
+				"UPDATE procedures SET skill_generated_at = ?, updated_at = ? WHERE id = ?",
+			)
+			.run(
+				Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
+				Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
+				id,
+			);
 
-    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
-    const skill = db.getGeneratedSkillByName(skillName);
+		const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+		const skill = db.getGeneratedSkillByName(skillName);
 
-    expect(skill?.skillState).toBe("archived");
-    expect(report.rows[0]?.flags.neverUsed).toBe(true);
-    expect(report.rows[0]?.flags.archiveCandidate).toBe(true);
-    expect(report.rows[0]?.recommendation).toBe("archive");
-  });
+		expect(skill?.skillState).toBe("archived");
+		expect(report.rows[0]?.flags.neverUsed).toBe(true);
+		expect(report.rows[0]?.flags.archiveCandidate).toBe(true);
+		expect(report.rows[0]?.recommendation).toBe("archive");
+	});
 
-  it("accepts procedureId when it matches the promoted skill for the same skill name", () => {
-    const { id, skillName } = createGeneratedSkill();
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      procedureId: id,
-      decision: "selected",
-      requestSummary: "validate release health report",
-      taskOutcome: "success",
-    });
-    const skill = db.getGeneratedSkillByName(skillName);
-    expect(skill?.id).toBe(id);
-  });
+	it("accepts procedureId when it matches the promoted skill for the same skill name", () => {
+		const { id, skillName } = createGeneratedSkill();
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			procedureId: id,
+			decision: "selected",
+			requestSummary: "validate release health report",
+			taskOutcome: "success",
+		});
+		const skill = db.getGeneratedSkillByName(skillName);
+		expect(skill?.id).toBe(id);
+	});
 
-  it("rejects procedureId that is not a promoted generated skill", () => {
-    const { skillName } = createGeneratedSkill();
-    const other = db.upsertProcedure({
-      taskPattern: "Unrelated workflow pattern",
-      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
-      procedureType: "positive",
-      successCount: 1,
-      confidence: 0.5,
-      sourceSessionId: "session-other",
-    });
-    expect(() =>
-      db.recordGeneratedSkillTelemetry({
-        skillName,
-        procedureId: other.id,
-        decision: "selected",
-        requestSummary: "validate release health report",
-        taskOutcome: "success",
-      }),
-    ).toThrow(/not a promoted generated skill/);
-  });
+	it("rejects procedureId that is not a promoted generated skill", () => {
+		const { skillName } = createGeneratedSkill();
+		const other = db.upsertProcedure({
+			taskPattern: "Unrelated workflow pattern",
+			recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+			procedureType: "positive",
+			successCount: 1,
+			confidence: 0.5,
+			sourceSessionId: "session-other",
+		});
+		expect(() =>
+			db.recordGeneratedSkillTelemetry({
+				skillName,
+				procedureId: other.id,
+				decision: "selected",
+				requestSummary: "validate release health report",
+				taskOutcome: "success",
+			}),
+		).toThrow(/not a promoted generated skill/);
+	});
 
-  it("rejects procedureId when skill_path does not match skillName", () => {
-    const procA = db.upsertProcedure({
-      taskPattern: "Alpha workflow for telemetry mismatch",
-      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
-      procedureType: "positive",
-      successCount: 3,
-      confidence: 0.9,
-      sourceSessionId: "session-a",
-    });
-    db.markProcedurePromoted(procA.id, "skills/auto/skill-alpha-telemetry");
-    const procB = db.upsertProcedure({
-      taskPattern: "Beta workflow for telemetry mismatch",
-      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
-      procedureType: "positive",
-      successCount: 3,
-      confidence: 0.9,
-      sourceSessionId: "session-b",
-    });
-    db.markProcedurePromoted(procB.id, "skills/auto/skill-beta-telemetry");
+	it("rejects procedureId when skill_path does not match skillName", () => {
+		const procA = db.upsertProcedure({
+			taskPattern: "Alpha workflow for telemetry mismatch",
+			recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+			procedureType: "positive",
+			successCount: 3,
+			confidence: 0.9,
+			sourceSessionId: "session-a",
+		});
+		db.markProcedurePromoted(procA.id, "skills/auto/skill-alpha-telemetry");
+		const procB = db.upsertProcedure({
+			taskPattern: "Beta workflow for telemetry mismatch",
+			recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+			procedureType: "positive",
+			successCount: 3,
+			confidence: 0.9,
+			sourceSessionId: "session-b",
+		});
+		db.markProcedurePromoted(procB.id, "skills/auto/skill-beta-telemetry");
 
-    expect(() =>
-      db.recordGeneratedSkillTelemetry({
-        skillName: "skill-alpha-telemetry",
-        procedureId: procB.id,
-        decision: "selected",
-        requestSummary: "validate release health report",
-        taskOutcome: "success",
-      }),
-    ).toThrow(/skill_path does not match/);
-  });
+		expect(() =>
+			db.recordGeneratedSkillTelemetry({
+				skillName: "skill-alpha-telemetry",
+				procedureId: procB.id,
+				decision: "selected",
+				requestSummary: "validate release health report",
+				taskOutcome: "success",
+			}),
+		).toThrow(/skill_path does not match/);
+	});
 
-  it("exposes telemetry and demotion commands through the CLI", async () => {
-    const { skillName } = createGeneratedSkill();
-    db.recordGeneratedSkillTelemetry({
-      skillName,
-      decision: "selected",
-      requestSummary: "validate release health report",
-      taskOutcome: "success",
-    });
+	it("exposes telemetry and demotion commands through the CLI", async () => {
+		const { skillName } = createGeneratedSkill();
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			requestSummary: "validate release health report",
+			taskOutcome: "success",
+		});
 
-    process.argv = ["node", "vitest", "hybrid-mem"];
-    const program = new Command("hybrid-mem");
-    program.exitOverride();
-    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		process.argv = ["node", "vitest", "hybrid-mem"];
+		const program = new Command("hybrid-mem");
+		program.exitOverride();
+		registerSkillsCommands(program, {
+			factsDb: db,
+			crystallizationStore: null,
+			cfg: {} as never,
+		});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await program.parseAsync(["skills", "telemetry", skillName, "--json"], { from: "user" });
-    const telemetry = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { rows?: Array<{ skillName: string }> };
-    expect(telemetry.rows?.[0]?.skillName).toBe(skillName);
+		await program.parseAsync(["skills", "telemetry", skillName, "--json"], {
+			from: "user",
+		});
+		const telemetry = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+			rows?: Array<{ skillName: string }>;
+		};
+		expect(telemetry.rows?.[0]?.skillName).toBe(skillName);
 
-    logSpy.mockClear();
-    await program.parseAsync(["skills", "demote", skillName, "--reason", "over-triggering", "--json"], {
-      from: "user",
-    });
-    const demoted = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
-      skillState?: string;
-      skillStateReason?: string;
-    };
-    expect(demoted.skillState).toBe("demoted");
-    expect(demoted.skillStateReason).toContain("over-triggering");
-  });
+		logSpy.mockClear();
+		await program.parseAsync(
+			["skills", "demote", skillName, "--reason", "over-triggering", "--json"],
+			{
+				from: "user",
+			},
+		);
+		const demoted = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+			skillState?: string;
+			skillStateReason?: string;
+		};
+		expect(demoted.skillState).toBe("demoted");
+		expect(demoted.skillStateReason).toContain("over-triggering");
+	});
 
-  it("round-trip: experimental → demoted → experimental → trusted", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
-    const { skillName } = createGeneratedSkill();
+	it("round-trip: experimental → demoted → experimental → trusted", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+		const { skillName } = createGeneratedSkill();
 
-    // Step 1: trigger demotion via false positives (advance time so each step is distinct)
-    vi.advanceTimersByTime(60_000);
-    db.recordGeneratedSkillTelemetry({ skillName, decision: "selected", taskOutcome: "failure", userCorrection: true });
-    vi.advanceTimersByTime(60_000);
-    db.recordGeneratedSkillTelemetry({ skillName, decision: "selected", taskOutcome: "failure", userCorrection: true });
-    vi.advanceTimersByTime(60_000);
-    db.recordGeneratedSkillTelemetry({ skillName, decision: "selected", taskOutcome: "partial", causedRework: true });
-    expect(db.getGeneratedSkillByName(skillName)?.skillState).toBe("demoted");
+		// Step 1: trigger demotion via false positives (advance time so each step is distinct)
+		vi.advanceTimersByTime(60_000);
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			taskOutcome: "failure",
+			userCorrection: true,
+		});
+		vi.advanceTimersByTime(60_000);
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			taskOutcome: "failure",
+			userCorrection: true,
+		});
+		vi.advanceTimersByTime(60_000);
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			taskOutcome: "partial",
+			causedRework: true,
+		});
+		expect(db.getGeneratedSkillByName(skillName)?.skillState).toBe("demoted");
 
-    // Step 2: operator manually resets to experimental (advances time for clean window start)
-    vi.advanceTimersByTime(300_000);
-    const reset = db.setGeneratedSkillLifecycleState(skillName, "experimental", "manually reset for second chance");
-    expect(reset?.skillState).toBe("experimental");
+		// Step 2: operator manually resets to experimental (advances time for clean window start)
+		vi.advanceTimersByTime(300_000);
+		const reset = db.setGeneratedSkillLifecycleState(
+			skillName,
+			"experimental",
+			"manually reset for second chance",
+		);
+		expect(reset?.skillState).toBe("experimental");
 
-    // Step 3: accumulate 3 clean successful activations after the reset window
-    vi.advanceTimersByTime(60_000);
-    db.recordGeneratedSkillTelemetry({ skillName, decision: "selected", taskOutcome: "success" });
-    vi.advanceTimersByTime(60_000);
-    db.recordGeneratedSkillTelemetry({ skillName, decision: "selected", taskOutcome: "success" });
-    vi.advanceTimersByTime(60_000);
-    db.recordGeneratedSkillTelemetry({ skillName, decision: "selected", taskOutcome: "success" });
-    expect(db.getGeneratedSkillByName(skillName)?.skillState).toBe("trusted");
-  });
+		// Step 3: accumulate 3 clean successful activations after the reset window
+		vi.advanceTimersByTime(60_000);
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			taskOutcome: "success",
+		});
+		vi.advanceTimersByTime(60_000);
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			taskOutcome: "success",
+		});
+		vi.advanceTimersByTime(60_000);
+		db.recordGeneratedSkillTelemetry({
+			skillName,
+			decision: "selected",
+			taskOutcome: "success",
+		});
+		expect(db.getGeneratedSkillByName(skillName)?.skillState).toBe("trusted");
+	});
 
-  it("skills reset CLI command moves demoted skill back to experimental", async () => {
-    const { skillName } = createGeneratedSkill();
-    db.setGeneratedSkillLifecycleState(skillName, "demoted", "too many false positives");
+	it("skills reset CLI command moves demoted skill back to experimental", async () => {
+		const { skillName } = createGeneratedSkill();
+		db.setGeneratedSkillLifecycleState(
+			skillName,
+			"demoted",
+			"too many false positives",
+		);
 
-    process.argv = ["node", "vitest", "hybrid-mem"];
-    const program = new Command("hybrid-mem");
-    program.exitOverride();
-    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		process.argv = ["node", "vitest", "hybrid-mem"];
+		const program = new Command("hybrid-mem");
+		program.exitOverride();
+		registerSkillsCommands(program, {
+			factsDb: db,
+			crystallizationStore: null,
+			cfg: {} as never,
+		});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await program.parseAsync(["skills", "reset", skillName, "--reason", "agent behaviour changed", "--json"], {
-      from: "user",
-    });
-    const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
-      skillState?: string;
-      skillStateReason?: string;
-    };
-    expect(result.skillState).toBe("experimental");
-    expect(result.skillStateReason).toContain("agent behaviour changed");
-  });
+		await program.parseAsync(
+			[
+				"skills",
+				"reset",
+				skillName,
+				"--reason",
+				"agent behaviour changed",
+				"--json",
+			],
+			{
+				from: "user",
+			},
+		);
+		const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+			skillState?: string;
+			skillStateReason?: string;
+		};
+		expect(result.skillState).toBe("experimental");
+		expect(result.skillStateReason).toContain("agent behaviour changed");
+	});
 
-  it("skills reset CLI refuses to reset a skill that is not demoted or archived", async () => {
-    const { skillName } = createGeneratedSkill();
-    // skill is in default experimental state
+	it("skills reset CLI refuses to reset a skill that is not demoted or archived", async () => {
+		const { skillName } = createGeneratedSkill();
+		// skill is in default experimental state
 
-    process.argv = ["node", "vitest", "hybrid-mem"];
-    const program = new Command("hybrid-mem");
-    program.exitOverride();
-    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		process.argv = ["node", "vitest", "hybrid-mem"];
+		const program = new Command("hybrid-mem");
+		program.exitOverride();
+		registerSkillsCommands(program, {
+			factsDb: db,
+			crystallizationStore: null,
+			cfg: {} as never,
+		});
+		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await program.parseAsync(["skills", "reset", skillName, "--reason", "test"], { from: "user" });
-    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("experimental"))).toBe(true);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
-  });
+		await program.parseAsync(
+			["skills", "reset", skillName, "--reason", "test"],
+			{ from: "user" },
+		);
+		expect(
+			errSpy.mock.calls.some((c) => String(c[0]).includes("experimental")),
+		).toBe(true);
+		expect(process.exitCode).toBe(1);
+		process.exitCode = 0;
+	});
 
-  it("skills reject CLI permanently rejects a skill", async () => {
-    const { skillName } = createGeneratedSkill();
+	it("skills reject CLI permanently rejects a skill", async () => {
+		const { skillName } = createGeneratedSkill();
 
-    process.argv = ["node", "vitest", "hybrid-mem"];
-    const program = new Command("hybrid-mem");
-    program.exitOverride();
-    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		process.argv = ["node", "vitest", "hybrid-mem"];
+		const program = new Command("hybrid-mem");
+		program.exitOverride();
+		registerSkillsCommands(program, {
+			factsDb: db,
+			crystallizationStore: null,
+			cfg: {} as never,
+		});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await program.parseAsync(["skills", "reject", skillName, "--reason", "bad skill", "--json"], { from: "user" });
-    const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { skillState?: string };
-    expect(result.skillState).toBe("rejected");
-  });
+		await program.parseAsync(
+			["skills", "reject", skillName, "--reason", "bad skill", "--json"],
+			{ from: "user" },
+		);
+		const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+			skillState?: string;
+		};
+		expect(result.skillState).toBe("rejected");
+	});
 
-  it("auto-unblocks demoted skill after enough clean uses (unblockAfterCleanUses policy)", () => {
-    vi.useFakeTimers();
-    const now = Math.floor(new Date("2026-05-14T10:00:00Z").getTime() / 1000);
-    vi.setSystemTime(new Date(now * 1000));
+	it("auto-unblocks demoted skill after enough clean uses (unblockAfterCleanUses policy)", () => {
+		vi.useFakeTimers();
+		const now = Math.floor(new Date("2026-05-14T10:00:00Z").getTime() / 1000);
+		vi.setSystemTime(new Date(now * 1000));
 
-    const { skillName } = createGeneratedSkill();
-    // Demote the skill manually (simulates prior over-triggering)
-    db.setGeneratedSkillLifecycleState(skillName, "demoted", "prior false positives");
+		const { skillName } = createGeneratedSkill();
+		// Demote the skill manually (simulates prior over-triggering)
+		db.setGeneratedSkillLifecycleState(
+			skillName,
+			"demoted",
+			"prior false positives",
+		);
 
-    // Advance time so telemetry comes after demotion timestamp
-    const afterDemotion = now + 3600;
-    vi.setSystemTime(new Date(afterDemotion * 1000));
+		// Advance time so telemetry comes after demotion timestamp
+		const afterDemotion = now + 3600;
+		vi.setSystemTime(new Date(afterDemotion * 1000));
 
-    // Record 5 clean successful activations — default unblockAfterCleanUses is 5.
-    // The internal policy evaluation triggered by the last record should auto-unblock.
-    for (let i = 0; i < 5; i++) {
-      db.recordGeneratedSkillTelemetry({
-        skillName,
-        decision: "selected",
-        taskOutcome: "success",
-        createdAt: afterDemotion + i,
-      });
-    }
+		// Record 5 clean successful activations — default unblockAfterCleanUses is 5.
+		// The internal policy evaluation triggered by the last record should auto-unblock.
+		for (let i = 0; i < 5; i++) {
+			db.recordGeneratedSkillTelemetry({
+				skillName,
+				decision: "selected",
+				taskOutcome: "success",
+				createdAt: afterDemotion + i,
+			});
+		}
 
-    // The internal refresh triggered by the 5th telemetry record should have unblocked the skill.
-    // Do NOT call refreshGeneratedSkillLifecycleState again — the auto-promotion to trusted
-    // would follow on the next refresh cycle.
-    const skill = db.getGeneratedSkillByName(skillName);
-    expect(skill?.skillState).toBe("experimental");
-    expect(skill?.skillStateReason).toContain("auto-unblocked");
-  });
+		// The internal refresh triggered by the 5th telemetry record should have unblocked the skill.
+		// Do NOT call refreshGeneratedSkillLifecycleState again — the auto-promotion to trusted
+		// would follow on the next refresh cycle.
+		const skill = db.getGeneratedSkillByName(skillName);
+		expect(skill?.skillState).toBe("experimental");
+		expect(skill?.skillStateReason).toContain("auto-unblocked");
+	});
 });
 
 describe("skills doctor — disk reconciler", () => {
-  it("reports no issues when all skill paths exist on disk", () => {
-    const { skillName } = createGeneratedSkill();
-    // skill path is "skills/auto/validate-release-health-report" — doesn't exist on disk
-    // but we test with a real temp dir to make it pass
-    const proc = db.getGeneratedSkillByName(skillName);
-    expect(proc).not.toBeNull();
+	it("reports no issues when all skill paths have SKILL.md on disk", () => {
+		const { skillName } = createGeneratedSkill();
+		// skill path is "skills/auto/validate-release-health-report" — doesn't exist on disk
+		// but we test with a real temp dir to make it pass
+		const proc = db.getGeneratedSkillByName(skillName);
+		expect(proc).not.toBeNull();
 
-    // Create the skill file on disk
-    const skillDir = join(tmpDir, "skills", "auto", skillName);
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, "SKILL.md"), "# test skill");
+		// Create the skill file on disk
+		const skillDir = join(tmpDir, "skills", "auto", skillName);
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(join(skillDir, "SKILL.md"), "# test skill");
 
-    // Update DB to point to the absolute path
-    db.getRawDb()
-      .prepare("UPDATE procedures SET skill_path = ? WHERE id = ?")
-      .run(skillDir, proc!.id);
+		// Update DB to point to the absolute path
+		db.getRawDb()
+			.prepare("UPDATE procedures SET skill_path = ? WHERE id = ?")
+			.run(skillDir, proc.id);
 
-    const report = db.reconcileGeneratedSkillDiskState({ workspaceRoot: tmpDir });
-    expect(report.issues).toHaveLength(0);
-    expect(report.totalChecked).toBeGreaterThan(0);
-  });
+		const report = db.reconcileGeneratedSkillDiskState({
+			workspaceRoot: tmpDir,
+		});
+		expect(report.issues).toHaveLength(0);
+		expect(report.totalChecked).toBeGreaterThan(0);
+	});
 
-  it("detects missing skill files and reports them", () => {
-    createGeneratedSkill("Missing skill on disk");
-    const report = db.reconcileGeneratedSkillDiskState({ workspaceRoot: tmpDir });
-    // The skill path points to skills/auto/... but that doesn't exist in tmpDir
-    expect(report.issues.length).toBeGreaterThan(0);
-    expect(report.issues[0]?.issue).toBe("missing_on_disk");
-  });
+	it("requires SKILL.md and reports a bare skill directory as missing", () => {
+		const { skillName } = createGeneratedSkill("Bare skill directory");
+		const proc = db.getGeneratedSkillByName(skillName);
+		expect(proc).not.toBeNull();
 
-  it("marks missing skills as uninstalled when fix=true", () => {
-    const { skillName } = createGeneratedSkill("Skill that will be deleted");
-    const report = db.reconcileGeneratedSkillDiskState({ workspaceRoot: tmpDir, fix: true });
-    expect(report.issues.length).toBeGreaterThan(0);
-    const updated = db.getGeneratedSkillByName(skillName);
-    expect(updated?.skillState).toBe("uninstalled");
-  });
+		const skillDir = join(tmpDir, "skills", "auto", skillName);
+		mkdirSync(skillDir, { recursive: true });
+		db.getRawDb()
+			.prepare("UPDATE procedures SET skill_path = ? WHERE id = ?")
+			.run(skillDir, proc.id);
 
-  it("skips already-uninstalled rows", () => {
-    const { skillName } = createGeneratedSkill("Already uninstalled skill");
-    db.setGeneratedSkillLifecycleState(skillName, "uninstalled", "manually uninstalled");
-    const report = db.reconcileGeneratedSkillDiskState({ workspaceRoot: tmpDir });
-    // The already-uninstalled row should not be counted as an issue
-    const issueForThisSkill = report.issues.find((i) => i.skillName === skillName);
-    expect(issueForThisSkill).toBeUndefined();
-  });
+		const report = db.reconcileGeneratedSkillDiskState({
+			workspaceRoot: tmpDir,
+		});
+		const issueForThisSkill = report.issues.find(
+			(i) => i.skillName === skillName,
+		);
+		expect(issueForThisSkill?.issue).toBe("missing_on_disk");
+	});
 
-  it("skills doctor CLI reports missing skills", async () => {
-    createGeneratedSkill("Doctor test skill");
+	it("detects missing skill files and reports them", () => {
+		createGeneratedSkill("Missing skill on disk");
+		const report = db.reconcileGeneratedSkillDiskState({
+			workspaceRoot: tmpDir,
+		});
+		// The skill path points to skills/auto/... but that doesn't exist in tmpDir
+		expect(report.issues.length).toBeGreaterThan(0);
+		expect(report.issues[0]?.issue).toBe("missing_on_disk");
+	});
 
-    process.argv = ["node", "vitest", "hybrid-mem"];
-    const program = new Command("hybrid-mem");
-    program.exitOverride();
-    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+	it("marks missing skills as uninstalled when fix=true", () => {
+		const { skillName } = createGeneratedSkill("Skill that will be deleted");
+		const report = db.reconcileGeneratedSkillDiskState({
+			workspaceRoot: tmpDir,
+			fix: true,
+		});
+		expect(report.issues.length).toBeGreaterThan(0);
+		const updated = db.getGeneratedSkillByName(skillName);
+		expect(updated?.skillState).toBe("uninstalled");
+	});
 
-    await program.parseAsync(["skills", "doctor", "--workspace", tmpDir, "--json"], { from: "user" });
-    const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
-      totalChecked?: number;
-      issues?: Array<{ issue: string }>;
-    };
-    expect(result.totalChecked).toBeGreaterThan(0);
-    expect(result.issues?.some((i) => i.issue === "missing_on_disk")).toBe(true);
-  });
+	it("skips already-uninstalled rows", () => {
+		const { skillName } = createGeneratedSkill("Already uninstalled skill");
+		db.setGeneratedSkillLifecycleState(
+			skillName,
+			"uninstalled",
+			"manually uninstalled",
+		);
+		const report = db.reconcileGeneratedSkillDiskState({
+			workspaceRoot: tmpDir,
+		});
+		// The already-uninstalled row should not be counted as an issue
+		const issueForThisSkill = report.issues.find(
+			(i) => i.skillName === skillName,
+		);
+		expect(issueForThisSkill).toBeUndefined();
+	});
+
+	it("preserves rejected terminal rows when fix=true", () => {
+		const { skillName } = createGeneratedSkill(
+			"Rejected skill missing on disk",
+		);
+		db.setGeneratedSkillLifecycleState(
+			skillName,
+			"rejected",
+			"operator rejected",
+		);
+
+		const report = db.reconcileGeneratedSkillDiskState({
+			workspaceRoot: tmpDir,
+			fix: true,
+		});
+		const issueForThisSkill = report.issues.find(
+			(i) => i.skillName === skillName,
+		);
+		const updated = db.getGeneratedSkillByName(skillName);
+
+		expect(issueForThisSkill).toBeUndefined();
+		expect(updated?.skillState).toBe("rejected");
+	});
+
+	it("skills doctor CLI reports missing skills", async () => {
+		createGeneratedSkill("Doctor test skill");
+
+		process.argv = ["node", "vitest", "hybrid-mem"];
+		const program = new Command("hybrid-mem");
+		program.exitOverride();
+		registerSkillsCommands(program, {
+			factsDb: db,
+			crystallizationStore: null,
+			cfg: {} as never,
+		});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await program.parseAsync(
+			["skills", "doctor", "--workspace", tmpDir, "--json"],
+			{ from: "user" },
+		);
+		const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+			totalChecked?: number;
+			issues?: Array<{ issue: string }>;
+		};
+		expect(result.totalChecked).toBeGreaterThan(0);
+		expect(result.issues?.some((i) => i.issue === "missing_on_disk")).toBe(
+			true,
+		);
+	});
 });
