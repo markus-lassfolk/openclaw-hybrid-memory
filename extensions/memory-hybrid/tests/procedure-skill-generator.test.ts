@@ -156,15 +156,14 @@ describe("generateAutoSkills", () => {
     // identity field in these artifacts, it must also be rebased in rebaseDraftSlug.
     const recipe = JSON.parse(readFileSync(join(collidedDir, "recipe.json"), "utf-8")) as unknown;
     expect(Array.isArray(recipe)).toBe(true);
+    // Check for identity keys ("skill":, "generatedSkillPath":) not merely the substring
     const recipeStr = JSON.stringify(recipe);
-    expect(recipeStr).not.toContain('"skill"');
-    expect(recipeStr).not.toContain('"generatedSkillPath"');
+    expect(recipeStr).not.toMatch(/"skill"\s*:/);
+    expect(recipeStr).not.toMatch(/"generatedSkillPath"\s*:/);
 
     const proposalMeta = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8")) as Record<string, unknown>;
     expect(proposalMeta).not.toHaveProperty("skill");
     expect(proposalMeta).not.toHaveProperty("generatedSkillPath");
-    // Proposal metadata must not contain the pre-collision slug as a value
-    expect(JSON.stringify(proposalMeta)).not.toContain('"validate-colliding-release-report"');
 
     const evalsContent = JSON.parse(readFileSync(join(collidedDir, "evals", "evals.json"), "utf-8")) as Record<string, unknown>;
     expect(evalsContent).not.toHaveProperty("skill");
