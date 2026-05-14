@@ -11,6 +11,7 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
+import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
 
 const BASE_CFG: CrystallizationConfig = {
   enabled: true,
@@ -20,6 +21,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
 
@@ -803,3 +805,136 @@ Bounded metadata installation workflow.
     }
   });
 });
+
+// ============================================================================
+// Issue #1383 — custom placeholder-email allow-list
+// ============================================================================
+
+describe("GeneratedSkillValidationService — custom placeholderEmailDomains", () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags an internal-placeholder email address with the default allow-list", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-default-"));
+    const service = new GeneratedSkillValidationService();
+    const skillContent = makeMinimalSkill(join(tmpDir, "skills"), "custom-domain-test", "team@company.internal");
+    const violations: string[] = [];
+    for (const pattern of [buildNonPlaceholderEmailPattern(["example.com", "localhost", "test.com", "example.org"])]) {
+      if (pattern.test(skillContent)) violations.push("email detected");
+    }
+    expect(violations.length).toBeGreaterThan(0);
+  });
+
+  it("does not flag custom placeholder domain when configured with extended allow-list", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-extended-"));
+    const customEmailPattern = buildNonPlaceholderEmailPattern([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+      "company.internal",
+    ]);
+    const service = new GeneratedSkillValidationService({ emailPattern: customEmailPattern });
+    const cfg: CrystallizationConfig = {
+      ...BASE_CFG,
+      outputDir: join(tmpDir, "skills"),
+      placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org", "company.internal"],
+    };
+    const crystallizer = new SkillCrystallizer(cfg);
+    const pattern = {
+      toolSequence: ["read", "write"],
+      totalCount: 5,
+      successCount: 5,
+      failureCount: 0,
+      successRate: 1,
+      avgDurationMs: 400,
+      exampleGoals: ["Send the weekly summary to ops@company.internal after deploy"],
+    };
+    const result = crystallizer.crystallize({ patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern });
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
+    const emailViolations = validation.staticValidation.violations.filter(
+      (v) => v.includes("email") || v.includes("company.internal"),
+    );
+    expect(emailViolations).toHaveLength(0);
+  });
+
+  it("parseCrystallizationConfig picks up custom placeholderEmailDomains", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "openai",
+        apiKey: "sk-test-key-12345678",
+        model: "text-embedding-3-small",
+      },
+      crystallization: {
+        placeholderEmailDomains: ["example.com", "company.internal"],
+      },
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual(["example.com", "company.internal"]);
+  });
+
+  it("parseCrystallizationConfig defaults to standard domains when field is omitted", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "openai",
+        apiKey: "sk-test-key-12345678",
+        model: "text-embedding-3-small",
+      },
+      mode: "minimal",
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeMinimalSkill(outputDir: string, skillName: string, emailInContent: string): string {
+  return `---
+name: ${skillName}
+description: Minimal skill for email pattern tests.
+category: test
+provenance: test-suite
+---
+
+# ${skillName}
+
+## Trigger
+- Use this skill for email-pattern validation tests.
+
+## Scope
+- Bounded to test fixtures.
+
+## When not to use
+- When no email validation is needed.
+
+## Workflow
+1. Contact: ${emailInContent}
+2. Verify output.
+
+## Examples
+- Good: "Test the email pattern validation."
+
+## Provenance
+- Generated for email-pattern tests.
+`;
+}
