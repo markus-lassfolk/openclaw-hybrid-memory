@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
@@ -190,13 +190,15 @@ export class CrystallizationProposer {
     const safeName = normalizeSkillName(proposal.skillName);
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 
-    // Re-validate before writing
+    // Re-validate before writing (include stored pattern so activation eval matches runCycle)
+    const pattern = parsePatternSnapshot(proposal.patternSnapshot);
     const validation = this.validator.validate(
       {
         outputDir,
         proposedOutputPath: outputPath,
         skillName: safeName,
         skillContent: proposal.skillContent,
+        pattern,
       },
       {
         legacyQueuedCrystallization: isLegacyMarkdownCrystallizationProposal(proposal.skillContent),
@@ -270,6 +272,29 @@ export class CrystallizationProposer {
   private writeSkillToDisk(outputPath: string, skillContent: string): void {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, skillContent, "utf-8");
+  }
+}
+
+function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
+  if (!snapshot?.trim()) return undefined;
+  try {
+    const raw = JSON.parse(snapshot) as unknown;
+    if (!raw || typeof raw !== "object") return undefined;
+    const o = raw as Record<string, unknown>;
+    if (!Array.isArray(o.toolSequence) || !o.toolSequence.every((t) => typeof t === "string")) return undefined;
+    if (
+      typeof o.totalCount !== "number" ||
+      typeof o.successCount !== "number" ||
+      typeof o.failureCount !== "number" ||
+      typeof o.successRate !== "number" ||
+      typeof o.avgDurationMs !== "number"
+    ) {
+      return undefined;
+    }
+    if (!Array.isArray(o.exampleGoals) || !o.exampleGoals.every((g) => typeof g === "string")) return undefined;
+    return o as unknown as WorkflowPattern;
+  } catch {
+    return undefined;
   }
 }
 

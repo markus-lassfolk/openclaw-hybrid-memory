@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
@@ -195,6 +196,85 @@ Bounded release-health review workflow.
       expect(approved.outputPath).toBeDefined();
       if (!approved.outputPath) return;
       expect(existsSync(approved.outputPath)).toBe(true);
+    } finally {
+      wfStore.close();
+      cStore.close();
+    }
+  });
+
+  it("approveProposal re-validates activation using patternSnapshot goals", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-pattern-snapshot-"));
+    const validationService = new GeneratedSkillValidationService();
+    const wfStore = new WorkflowStore(join(tmpDir, "workflow.db"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+
+    const pattern: WorkflowPattern = {
+      toolSequence: ["read", "exec"],
+      totalCount: 10,
+      successCount: 9,
+      failureCount: 1,
+      successRate: 0.9,
+      avgDurationMs: 1200,
+      exampleGoals: ["Review release health checks for the latest deployment."],
+    };
+
+    const skillContent = `---
+name: release-health-review
+description: Use when the user asks to review release health checks.
+category: crystallized-workflow
+---
+
+# Release Health Review
+
+## Trigger
+Use this skill when the user asks to review release health checks or explain the release health workflow.
+
+## Scope
+Bounded release-health review workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+- Do not use for generic GitHub help.
+
+## Workflow
+1. Use \`read\` to inspect the release report.
+2. Use \`exec\` only for the bounded release-health validation command.
+
+## Examples
+- Positive: "Review release health checks for the latest deployment."
+- Negative: "How do I create a GitHub issue?"
+- Edge: "Explain release health workflow without executing the workflow or changing files."
+
+## Provenance
+- Source pattern ID: \`pattern-1\``;
+
+    try {
+      const initial = validationService.validate({
+        outputDir: cfg.outputDir,
+        proposedOutputPath: join(cfg.outputDir, "release-health-review", "SKILL.md"),
+        skillName: "release-health-review",
+        skillContent,
+        pattern,
+      });
+      const expectedPositive = pattern.exampleGoals[0]!.replace(/\s+/g, " ").trim();
+      expect(initial.syntheticActivationEval.cases.positive).toBe(expectedPositive);
+
+      const proposal = cStore.create({
+        patternId: "pattern-1",
+        skillName: "release-health-review",
+        skillContent,
+        patternSnapshot: JSON.stringify(pattern),
+        validationResult: initial,
+      });
+      const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+      const approved = proposer.approveProposal(proposal.id, {
+        overrideWarnings: initial.approvalDecision === "allow-with-override",
+      });
+      expect(approved.success).toBe(true);
+
+      const stored = cStore.getById(proposal.id);
+      expect(stored?.validationResult?.syntheticActivationEval.cases.positive).toBe(expectedPositive);
     } finally {
       wfStore.close();
       cStore.close();
