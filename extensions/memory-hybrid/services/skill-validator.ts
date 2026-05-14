@@ -58,6 +58,34 @@ const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string
   ],
 ];
 
+const PRIVATE_CONTEXT_PATTERNS: Array<[name: string, pattern: RegExp, description: string]> = [
+  [
+    "private-ip",
+    /\b(?:10\.|127\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+    "Private IP / host inventory detected (replace with placeholders)",
+  ],
+  [
+    "home-path-linux",
+    /(?:^|[\s"'=:])\/home\/(?!user\/|runner\/|ubuntu\/)[^\s"'/:]+\/[^\s"']+/,
+    "User-specific /home/... path detected (replace with placeholders)",
+  ],
+  [
+    "home-path-macos",
+    /(?:^|[\s"'=:])\/Users\/(?!user\/|runner\/)[^\s"'/:]+\/[^\s"']+/,
+    "User-specific /Users/... path detected (replace with placeholders)",
+  ],
+  [
+    "tilde-home-path",
+    /(?:^|[\s"'=:])~\/(?!\.)[^\s"']+/,
+    "Tilde home path detected (replace with placeholders; avoid personal paths in skills)",
+  ],
+  [
+    "email-address",
+    /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+    "Non-example email address detected (remove or replace with example.com)",
+  ],
+];
+
 const DENY_RULES: DenyRule[] = [
   // Shell execution
   {
@@ -173,6 +201,13 @@ export class SkillValidator {
 
     // Secrets are a hard-fail regardless of where they appear.
     for (const [name, pattern, desc] of SECRET_PATTERNS) {
+      if (pattern.test(skillContent)) {
+        violations.push(`[${name}] ${desc}`);
+      }
+    }
+
+    // Reject private context that should not be embedded into reusable skills.
+    for (const [name, pattern, desc] of PRIVATE_CONTEXT_PATTERNS) {
       if (pattern.test(skillContent)) {
         violations.push(`[${name}] ${desc}`);
       }

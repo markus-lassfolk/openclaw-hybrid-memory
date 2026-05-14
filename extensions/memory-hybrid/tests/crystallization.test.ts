@@ -624,6 +624,13 @@ ${extra.extraBody ?? ""}`;
     expect(result.valid).toBe(false);
     expect(result.violations.some((v: string) => v.includes("codeblock-size"))).toBe(true);
   });
+
+  it("rejects private IP / host inventory leaks", () => {
+    const content = compactValidSkill({ extraBody: "\nObserved host inventory: 192.168.1.10\n" });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
+  });
 });
 
 // ============================================================================
