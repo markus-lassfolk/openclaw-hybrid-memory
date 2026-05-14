@@ -526,7 +526,11 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   }
 
   try {
-    registerSkillsCommands(mem, { crystallizationStore: ctx.crystallizationStore ?? null, cfg: ctx.cfg });
+    registerSkillsCommands(mem, {
+      crystallizationStore: ctx.crystallizationStore ?? null,
+      cfg: ctx.cfg,
+      factsDb: ctx.factsDb ?? null,
+    });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

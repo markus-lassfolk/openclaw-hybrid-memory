@@ -3979,6 +3979,7 @@ describe("Issue #1191 vectorless facts and procedure triage", () => {
     const promoted = db.getProcedureById(proc.id);
     expect(promoted?.skillPath).toBe("skills/auto/original");
     expect(promoted?.promotedToSkill).toBe(1);
+    expect(promoted?.skillState).toBe("experimental");
   });
 });
 

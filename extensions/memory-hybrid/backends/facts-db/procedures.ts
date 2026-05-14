@@ -237,6 +237,10 @@ export function procedureRowToEntry(db: DatabaseSync, row: Record<string, unknow
       }
     })(),
     promotedAt: (row.promoted_at as number) ?? null,
+    skillState: (row.skill_state as ProcedureEntry["skillState"]) ?? "draft",
+    skillStateReason: (row.skill_state_reason as string) ?? null,
+    skillVersion: (row.skill_version as number) ?? 1,
+    skillGeneratedAt: (row.skill_generated_at as number) ?? null,
     scope: (row.scope as string) ?? "global",
     scopeTarget: (row.scope_target as string) ?? null,
   };
@@ -963,9 +967,22 @@ export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: s
   const existing = getProcedureById(db, id);
   if (!existing) return false;
   const finalPath = existing.skillPath && existing.skillPath.trim() !== "" ? existing.skillPath : skillPath;
+  const nowSec = Math.floor(Date.now() / 1000);
   const result = db
-    .prepare("UPDATE procedures SET promoted_to_skill = 1, skill_path = ?, updated_at = ? WHERE id = ?")
-    .run(finalPath, Math.floor(Date.now() / 1000), id);
+    .prepare(
+      `UPDATE procedures
+          SET promoted_to_skill = 1,
+              skill_path = ?,
+              updated_at = ?,
+              skill_state = CASE
+                WHEN skill_state IS NULL OR skill_state = '' OR skill_state = 'draft' THEN 'experimental'
+                ELSE skill_state
+              END,
+              skill_generated_at = COALESCE(skill_generated_at, ?, promoted_at, created_at),
+              skill_version = COALESCE(skill_version, 1)
+        WHERE id = ?`,
+    )
+    .run(finalPath, nowSec, nowSec, id);
   return result.changes > 0;
 }
 

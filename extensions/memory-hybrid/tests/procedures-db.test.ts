@@ -34,6 +34,7 @@ describe("FactsDB procedures table", () => {
     expect(proc.successCount).toBe(1);
     expect(proc.promotedToSkill).toBe(0);
     expect(proc.skillPath).toBeNull();
+    expect(proc.skillState).toBe("draft");
   });
 
   it("getProcedureById returns null for unknown id", () => {
@@ -133,6 +134,8 @@ describe("FactsDB procedures table", () => {
     const after = db.getProcedureById(created.id);
     expect(after?.promotedToSkill).toBe(1);
     expect(after?.skillPath).toBe("skills/auto/check-moltbook");
+    expect(after?.skillState).toBe("experimental");
+    expect(after?.skillGeneratedAt).toBeGreaterThan(0);
   });
 
   it("getStaleProcedures returns procedures past TTL", () => {
