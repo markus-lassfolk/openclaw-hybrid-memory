@@ -19,6 +19,7 @@ const {
   SkillValidator,
   CrystallizationProposer,
   computePatternId,
+  computeEvidenceHash,
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
@@ -64,15 +65,16 @@ afterEach(() => {
 // ============================================================================
 
 describe("CrystallizationStore.create", () => {
-  it("creates a proposal with pending status", () => {
+  it("creates a proposal with drafted status by default", () => {
     const p = cStore.create({
       patternId: "abc123",
+      evidenceHash: "ev1",
       skillName: "auto-deploy-server",
       skillContent: "# test",
       patternSnapshot: "{}",
     });
     expect(p.id).toBeDefined();
-    expect(p.status).toBe("pending");
+    expect(p.status).toBe("drafted");
     expect(p.skillName).toBe("auto-deploy-server");
     expect(p.patternId).toBe("abc123");
     expect(p.rejectionReason).toBeUndefined();
@@ -88,6 +90,7 @@ describe("CrystallizationStore.getById", () => {
   it("returns proposal by id", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "# c",
       patternSnapshot: "{}",
@@ -101,6 +104,7 @@ describe("CrystallizationStore.getByPatternId", () => {
   it("returns the latest proposal for a pattern", () => {
     cStore.create({
       patternId: "pat1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
@@ -118,17 +122,20 @@ describe("CrystallizationStore.list", () => {
   beforeEach(() => {
     cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
     });
     const p2 = cStore.create({
       patternId: "p2",
+      evidenceHash: "ev2",
       skillName: "s2",
       skillContent: "#c",
       patternSnapshot: "{}",
     });
-    cStore.approve(p2.id, "/path/skill.md");
+    cStore.approve(p2.id);
+    cStore.install(p2.id, "/path/skill.md");
   });
 
   it("lists all proposals", () => {
@@ -138,13 +145,13 @@ describe("CrystallizationStore.list", () => {
   it("filters by pending", () => {
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBe(1);
-    expect(pending[0].status).toBe("pending");
+    expect(["drafted", "validated"]).toContain(pending[0].status);
   });
 
   it("filters by approved", () => {
     const approved = cStore.list({ status: "approved" });
     expect(approved.length).toBe(1);
-    expect(approved[0].status).toBe("approved");
+    expect(["approved", "installed"]).toContain(approved[0].status);
   });
 
   it("respects limit", () => {
@@ -153,27 +160,29 @@ describe("CrystallizationStore.list", () => {
 });
 
 describe("CrystallizationStore.approve", () => {
-  it("transitions pending to approved with outputPath", () => {
+  it("transitions drafted/validated to approved", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
     });
-    const updated = cStore.approve(p.id, "/out/path/SKILL.md");
+    const updated = cStore.approve(p.id);
     expect(updated?.status).toBe("approved");
-    expect(updated?.outputPath).toBe("/out/path/SKILL.md");
+    expect(updated?.outputPath).toBeUndefined();
   });
 
   it("returns null for non-pending proposal", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
     });
-    cStore.approve(p.id, "/out");
-    expect(cStore.approve(p.id, "/out")).toBeNull();
+    cStore.approve(p.id);
+    expect(cStore.approve(p.id)).toBeNull();
   });
 });
 
@@ -181,6 +190,7 @@ describe("CrystallizationStore.reject", () => {
   it("transitions pending to rejected with reason", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
@@ -193,6 +203,7 @@ describe("CrystallizationStore.reject", () => {
   it("returns null for non-pending", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
@@ -210,6 +221,7 @@ describe("CrystallizationStore.hasPendingOrApprovedForPattern", () => {
   it("returns true for pending proposal", () => {
     cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
@@ -220,11 +232,25 @@ describe("CrystallizationStore.hasPendingOrApprovedForPattern", () => {
   it("returns false for rejected proposal", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
     });
     cStore.reject(p.id);
+    expect(cStore.hasPendingOrApprovedForPattern("p1")).toBe(false);
+  });
+
+  it("returns false when only an installed proposal exists", () => {
+    const p = cStore.create({
+      patternId: "p1",
+      evidenceHash: "ev1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
+    cStore.approve(p.id);
+    cStore.install(p.id, "/tmp/skill-out");
     expect(cStore.hasPendingOrApprovedForPattern("p1")).toBe(false);
   });
 });
@@ -234,6 +260,7 @@ describe("CrystallizationStore.count", () => {
     expect(cStore.count()).toBe(0);
     cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
@@ -244,11 +271,13 @@ describe("CrystallizationStore.count", () => {
   it("counts by status", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",
     });
-    cStore.approve(p.id, "/out");
+    cStore.approve(p.id);
+    cStore.install(p.id, "/out");
     expect(cStore.count("approved")).toBe(1);
     expect(cStore.count("pending")).toBe(0);
   });
@@ -395,6 +424,7 @@ describe("PatternDetector.detect", () => {
     const patternId = candidates[0].patternId;
     cStore.create({
       patternId,
+      evidenceHash: "ev-existing",
       skillName: "existing",
       skillContent: "#c",
       patternSnapshot: "{}",
@@ -403,6 +433,41 @@ describe("PatternDetector.detect", () => {
     // Second detect should skip this pattern
     const candidates2 = detector.detect();
     expect(candidates2.some((c: any) => c.patternId === patternId)).toBe(false);
+  });
+
+  it("skips patterns rejected with the same unchanged evidence", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: `g${i}`,
+        toolSequence: ["exec", "read"],
+        outcome: "success",
+      });
+    }
+    const detector = new PatternDetector(wfStore, cStore, {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+    });
+    const candidates = detector.detect();
+    expect(candidates.length).toBeGreaterThan(0);
+
+    // Re-create the workflow pattern snapshot for the rejected record.
+    const patterns = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    const pattern =
+      patterns.find((p: any) => computePatternId(p.toolSequence) === candidates[0].patternId) ?? patterns[0];
+    const evidenceHash = computeEvidenceHash(pattern);
+
+    cStore.create({
+      patternId: candidates[0].patternId,
+      evidenceHash,
+      skillName: "rejected-skill",
+      skillContent: "# rejected",
+      patternSnapshot: JSON.stringify(pattern),
+      status: "rejected",
+      rejectionReason: "human: not useful",
+    });
+
+    const candidates2 = detector.detect();
+    expect(candidates2.some((c: any) => c.patternId === candidates[0].patternId)).toBe(false);
   });
 
   it("sorts candidates by score descending", () => {
@@ -853,11 +918,14 @@ describe("CrystallizationProposer.runCycle", () => {
     for (let i = 0; i < 3; i++) {
       const p = cStore.create({
         patternId: `pat${i}`,
+        evidenceHash: `ev${i}`,
         skillName: `s${i}`,
         skillContent: "#c",
         patternSnapshot: "{}",
+        status: "validated",
       });
-      cStore.approve(p.id, `/out/s${i}/SKILL.md`);
+      cStore.approve(p.id);
+      cStore.install(p.id, `/out/s${i}/SKILL.md`);
     }
 
     for (let i = 0; i < 3; i++) {
@@ -905,7 +973,7 @@ describe("CrystallizationProposer.runCycle", () => {
 });
 
 describe("CrystallizationProposer.approveProposal", () => {
-  it("writes skill and transitions to approved", () => {
+  it("writes skill and transitions to installed", () => {
     for (let i = 0; i < 3; i++) {
       wfStore.record({
         goal: `g${i}`,
@@ -929,7 +997,7 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(existsSync(result.outputPath!)).toBe(true);
 
     const updated = cStore.getById(pending[0].id);
-    expect(updated?.status).toBe("approved");
+    expect(updated?.status).toBe("installed");
   });
 
   it("fails for unknown proposal id", () => {
@@ -943,16 +1011,19 @@ describe("CrystallizationProposer.approveProposal", () => {
   it("fails for already-approved proposal", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "# safe\n\n",
       patternSnapshot: "{}",
+      status: "validated",
     });
-    cStore.approve(p.id, "/out");
+    cStore.approve(p.id);
+    cStore.install(p.id, "/out");
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: tmpDir };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
     const result = proposer.approveProposal(p.id);
     expect(result.success).toBe(false);
-    expect(result.message).toContain("not pending");
+    expect(result.message).toMatch(/not approvable|not pending/i);
   });
 });
 
@@ -960,6 +1031,7 @@ describe("CrystallizationProposer.rejectProposal", () => {
   it("rejects pending proposal with reason", () => {
     const p = cStore.create({
       patternId: "p1",
+      evidenceHash: "ev1",
       skillName: "s1",
       skillContent: "#c",
       patternSnapshot: "{}",

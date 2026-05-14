@@ -299,7 +299,7 @@ import {
 } from "./backends/workflow-store.js";
 import { CrystallizationProposer } from "./services/crystallization-proposer.js";
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
-import { PatternDetector, computePatternId, scorePattern } from "./services/pattern-detector.js";
+import { PatternDetector, computeEvidenceHash, computePatternId, scorePattern } from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
 import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
 import { SkillValidator } from "./services/skill-validator.js";
@@ -737,6 +737,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
         proposalsDb: runtime.proposalsDb,
         identityReflectionStore: runtime.identityReflectionStore,
         personaStateStore: runtime.personaStateStore,
+        crystallizationStore: runtime.crystallizationStore ?? null,
         eventLog: runtime.eventLog,
         verificationStore: runtime.verificationStore,
         provenanceService: runtime.provenanceService,
@@ -989,6 +990,7 @@ export const _testing = {
   SkillValidator,
   CrystallizationProposer,
   computePatternId,
+  computeEvidenceHash,
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,

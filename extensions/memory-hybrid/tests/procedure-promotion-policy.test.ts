@@ -132,6 +132,9 @@ describe("procedure promotion policy and adapter", () => {
       existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "verification.json")),
     ).toBe(true);
     expect(
+      existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "proposal-metadata.json")),
+    ).toBe(true);
+    expect(
       existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "evals", "evals.json")),
     ).toBe(true);
 
@@ -164,6 +167,8 @@ describe("procedure promotion policy and adapter", () => {
       safetyValidation: "passed",
       triggerEval: "passed",
       functionalEval: "passed",
+      candidateScore: expect.any(Number),
+      riskLevel: expect.stringMatching(/^(low|medium|high)$/),
     });
     expect(verification.sourceProcedureIds).toEqual([proc.id]);
   });
@@ -348,6 +353,101 @@ Source procedure id: proc-weather
     expect(evaluation.metadata.promotionDecision).toBe("deferred");
     expect(evaluation.draft).toBeNull();
     expect(evaluation.metadata.generatedSkillPath).toBeNull();
+  });
+
+  it("scores candidates using success/failure outcomes and duplicate-skill evidence", () => {
+    const proc = addProcedure({
+      taskPattern: "Validate scoring workflow with objective checks",
+      sourceSessionId: "score-a",
+      successCount: 6,
+      failureCount: 0,
+      confidence: 0.92,
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "score-b");
+    db.recordProcedureSuccess(proc.id, undefined, "score-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
+    const baseOptions = {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    };
+    const successfulOnly = evaluateProcedureForPromotion(item, policy, {
+      ...baseOptions,
+      evidence: {
+        procedureVersions: [
+          {
+            id: "version-success-1",
+            versionNumber: 1,
+            successCount: 6,
+            failureCount: 0,
+            avoidanceNotes: null,
+            createdAt: 1_700_000_001,
+          },
+        ],
+        episodes: [{ id: "episode-success-1", outcome: "success", sessionId: "score-a" }],
+        manualWorkflowRequests: [{ id: "manual-request-1", sourceSession: "score-a" }],
+      },
+    });
+    const failureHeavy = evaluateProcedureForPromotion(item, policy, {
+      ...baseOptions,
+      evidence: {
+        procedureVersions: [
+          {
+            id: "version-fail-1",
+            versionNumber: 1,
+            successCount: 2,
+            failureCount: 7,
+            avoidanceNotes: ["step 2 failed repeatedly"],
+            createdAt: 1_700_000_001,
+          },
+        ],
+        procedureFailures: [
+          {
+            id: "failure-1",
+            versionNumber: 1,
+            timestamp: 1_700_000_100,
+            context: "timeout",
+            failedAtStep: 2,
+          },
+          {
+            id: "failure-2",
+            versionNumber: 1,
+            timestamp: 1_700_000_200,
+            context: "bad output",
+            failedAtStep: 3,
+          },
+        ],
+        episodes: [
+          { id: "episode-failure-1", outcome: "failure", sessionId: "score-a" },
+          { id: "episode-failure-2", outcome: "failure", sessionId: "score-b" },
+          { id: "episode-partial-1", outcome: "partial", sessionId: "score-c" },
+        ],
+        userCorrections: [{ id: "correction-1", sourceSession: "score-a" }],
+      },
+    });
+    const duplicateSkill = evaluateProcedureForPromotion(item, policy, {
+      ...baseOptions,
+      inRunSkillCandidates: [{ slug: item.payload.skillSlug, taskPattern: proc.taskPattern }],
+      evidence: {
+        procedureVersions: [
+          {
+            id: "version-success-2",
+            versionNumber: 2,
+            successCount: 6,
+            failureCount: 0,
+            avoidanceNotes: null,
+            createdAt: 1_700_000_300,
+          },
+        ],
+      },
+    });
+
+    expect(successfulOnly.metadata.candidateScore).toBeGreaterThan(failureHeavy.metadata.candidateScore);
+    expect(duplicateSkill.metadata.candidateScore).toBeLessThan(successfulOnly.metadata.candidateScore);
+    expect(failureHeavy.metadata.sourceFailureCount).toBeGreaterThan(failureHeavy.metadata.sourceSuccessCount);
+    expect(duplicateSkill.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+    expect(duplicateSkill.metadata.duplicateHandling).toBe("merge");
   });
 
   it("rejects or defers low-value noisy, recent-failure, low-confidence, destructive, external, duplicate, and malformed recipes", () => {
@@ -584,8 +684,16 @@ Source procedure id: proc-weather
     const proc = addProcedure({
       taskPattern: "Check release report status",
       recipeJson: JSON.stringify([
-        { tool: "read", args: { path: "status.json" }, summary: "Read status input" },
-        { tool: "read", args: { path: "report.json" }, summary: "Open report output" },
+        {
+          tool: "read",
+          args: { path: "status.json" },
+          summary: "Read status input",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Open report output",
+        },
       ]),
       sourceSessionId: "no-validation-a",
     });
@@ -778,8 +886,16 @@ Source procedure id: proc-weather
     const proc = addProcedure({
       taskPattern: "Validate workflow that still lacks explicit checks",
       recipeJson: JSON.stringify([
-        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
-        { tool: "read", args: { path: "report.json" }, summary: "Review report output" },
+        {
+          tool: "read",
+          args: { path: "status.json" },
+          summary: "Check status input",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Review report output",
+        },
       ]),
       sourceSessionId: "no-validation-reason-a",
     });
