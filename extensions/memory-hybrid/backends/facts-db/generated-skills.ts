@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type {
   GeneratedSkillLifecycleState,
@@ -17,6 +18,11 @@ export type GeneratedSkillLifecyclePolicy = {
   demoteMinSamples: number;
   archiveAfterUnusedDays: number;
   revisionNearMissThreshold: number;
+  /**
+   * Number of successful activations without correction required to automatically
+   * unblock a demoted skill back to experimental. 0 = no automatic unblocking.
+   */
+  unblockAfterCleanUses: number;
 };
 
 export type GeneratedSkillTelemetryRecordInput = {
@@ -64,6 +70,8 @@ export type GeneratedSkillTelemetryMetrics = {
   savedToolCalls: number;
   savedTimeMs: number;
   falsePositiveRate: number | null;
+  /** Successful activations without correction since the last demotion reset (for unblock tracking). */
+  cleanUsesAfterDemotion: number;
 };
 
 export type GeneratedSkillTelemetryFlags = {
@@ -72,6 +80,8 @@ export type GeneratedSkillTelemetryFlags = {
   revisionCandidate: boolean;
   neverUsed: boolean;
   archiveCandidate: boolean;
+  /** True when a demoted/archived skill has enough clean uses to be unblocked back to experimental. */
+  unblockCandidate: boolean;
 };
 
 export type GeneratedSkillTelemetryReportRow = {
@@ -101,6 +111,7 @@ export const DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY: GeneratedSkillLifecyclePo
   demoteMinSamples: 3,
   archiveAfterUnusedDays: 30,
   revisionNearMissThreshold: 3,
+  unblockAfterCleanUses: 5,
 };
 
 const MAX_REQUEST_SUMMARY_LENGTH = 240;
@@ -317,13 +328,27 @@ export function setGeneratedSkillLifecycleState(
 ): ProcedureEntry | null {
   const proc = findGeneratedSkillProcedure(db, skillName);
   if (!proc) return null;
-  db.prepare(
-    `UPDATE procedures
-        SET skill_state = ?,
-            skill_state_reason = ?,
-            updated_at = ?
-      WHERE id = ?`,
-  ).run(state, normalizeSummary(reason), at, proc.id);
+  if (state === "experimental") {
+    // When a skill is reset/unblocked back to experimental, update skill_generated_at to mark
+    // the new evaluation window start. This prevents pre-reset telemetry from counting against
+    // the skill's overTriggering and promotionCandidate evaluations.
+    db.prepare(
+      `UPDATE procedures
+          SET skill_state = ?,
+              skill_state_reason = ?,
+              skill_generated_at = ?,
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(state, normalizeSummary(reason), at, at, proc.id);
+  } else {
+    db.prepare(
+      `UPDATE procedures
+          SET skill_state = ?,
+              skill_state_reason = ?,
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(state, normalizeSummary(reason), at, proc.id);
+  }
   return getGeneratedSkillByName(db, skillName);
 }
 
@@ -351,6 +376,14 @@ function summarizeSkillTelemetry(
   now: number,
 ): { metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } {
   const weekAgo = now - 7 * 24 * 60 * 60;
+
+  // For experimental skills, evaluate only activations since skill_generated_at.
+  // This prevents pre-reset telemetry from blocking promotion or re-triggering demotion
+  // after an operator manually resets or the system auto-unblocks a skill.
+  const isExperimental = proc.skillState === "experimental" || proc.skillState == null;
+  const evalWindowStart = isExperimental && proc.skillGeneratedAt != null ? proc.skillGeneratedAt : 0;
+  const evalActivations = evalWindowStart > 0 ? activations.filter((a) => a.createdAt >= evalWindowStart) : activations;
+
   let activationCountPerWeek = 0;
   let activationCountTotal = 0;
   let nearMissCount = 0;
@@ -368,7 +401,14 @@ function summarizeSkillTelemetry(
   let savedToolCalls = 0;
   let savedTimeMs = 0;
 
-  for (const activation of activations) {
+  // For unblock tracking: count clean (uncorrected) successful activations since the
+  // most recent demotion reset (recorded in skill_generated_at when reset clears it).
+  // We approximate using proc.updatedAt as the reset baseline when state is demoted/archived.
+  const demotedOrArchivedAt =
+    (proc.skillState === "demoted" || proc.skillState === "archived") ? (proc.updatedAt ?? 0) : null;
+  let cleanUsesAfterDemotion = 0;
+
+  for (const activation of evalActivations) {
     savedToolCalls += activation.savedToolCalls ?? 0;
     savedTimeMs += activation.savedTimeMs ?? 0;
     if (activation.decision === "selected") {
@@ -378,7 +418,13 @@ function summarizeSkillTelemetry(
       if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
       if (activation.taskOutcome === "success") {
         successCount++;
-        if (!activation.userCorrection) successfulUsesWithoutCorrection++;
+        if (!activation.userCorrection) {
+          successfulUsesWithoutCorrection++;
+          // Count clean uses recorded after a demotion reset
+          if (demotedOrArchivedAt != null && activation.createdAt > demotedOrArchivedAt) {
+            cleanUsesAfterDemotion++;
+          }
+        }
       } else if (activation.taskOutcome === "failure") {
         failureCount++;
       } else if (activation.taskOutcome === "partial") {
@@ -408,12 +454,19 @@ function summarizeSkillTelemetry(
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
     proc.skillState !== "trusted" &&
+    proc.skillState !== "uninstalled" &&
+    proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
     activationCountTotal >= policy.demoteMinSamples &&
     falsePositiveRate != null &&
     falsePositiveRate >= policy.demoteFalsePositiveRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
+  const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
+  const unblockCandidate =
+    unblockAfterCleanUses > 0 &&
+    (proc.skillState === "demoted" || proc.skillState === "archived") &&
+    cleanUsesAfterDemotion >= unblockAfterCleanUses;
 
   return {
     metrics: {
@@ -438,6 +491,7 @@ function summarizeSkillTelemetry(
       savedToolCalls,
       savedTimeMs,
       falsePositiveRate,
+      cleanUsesAfterDemotion,
     },
     flags: {
       promotionCandidate,
@@ -445,6 +499,7 @@ function summarizeSkillTelemetry(
       revisionCandidate,
       neverUsed: activationCountTotal === 0,
       archiveCandidate,
+      unblockCandidate,
     },
   };
 }
@@ -455,6 +510,9 @@ function desiredLifecycleTransition(
   metrics: GeneratedSkillTelemetryMetrics,
   policy: GeneratedSkillLifecyclePolicy,
 ): { state: GeneratedSkillLifecycleState; reason: string } | null {
+  // Uninstalled and rejected are terminal — no automatic transitions out.
+  if (currentState === "uninstalled" || currentState === "rejected") return null;
+
   if (currentState !== "archived" && flags.archiveCandidate) {
     return {
       state: "archived",
@@ -465,6 +523,14 @@ function desiredLifecycleTransition(
     return {
       state: "demoted",
       reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
+    };
+  }
+  // Allow automatic unblocking of demoted/archived skills when they accumulate
+  // enough clean uses after the demotion reset.
+  if (flags.unblockCandidate) {
+    return {
+      state: "experimental",
+      reason: `auto-unblocked after ${metrics.cleanUsesAfterDemotion} clean activations since demotion`,
     };
   }
   if (currentState === "experimental" && flags.promotionCandidate) {
@@ -549,5 +615,87 @@ export function buildGeneratedSkillTelemetryReport(
     policy,
     totalSkills: rows.length,
     rows,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Disk reconciler (#1391) — detect DB rows whose skill file no longer exists
+// ---------------------------------------------------------------------------
+
+export type GeneratedSkillDoctorRow = {
+  procedureId: string;
+  skillName: string;
+  skillPath: string;
+  state: GeneratedSkillLifecycleState;
+  issue: "missing_on_disk";
+  resolvedAbsolutePath: string;
+};
+
+export type GeneratedSkillDoctorReport = {
+  checkedAt: string;
+  totalChecked: number;
+  issues: GeneratedSkillDoctorRow[];
+};
+
+/**
+ * Reconcile the DB's generated-skill records against disk.
+ *
+ * For each procedure row that is marked promoted (`promoted_to_skill = 1`) and has a
+ * `skill_path`, this function checks whether the directory (or SKILL.md file) still
+ * exists on disk. Rows whose path is missing are reported as `"missing_on_disk"` and,
+ * when `fix` is true, are transitioned to the `"uninstalled"` state.
+ *
+ * @param workspaceRoot  Absolute path used to resolve relative skill paths. Defaults to `process.cwd()`.
+ * @param fix            When true, update missing rows to `uninstalled` in the DB.
+ */
+export function reconcileGeneratedSkillDiskState(
+  db: DatabaseSync,
+  opts: { workspaceRoot?: string; fix?: boolean; now?: number } = {},
+): GeneratedSkillDoctorReport {
+  const workspaceRoot = opts.workspaceRoot ?? process.cwd();
+  const fix = opts.fix ?? false;
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const procedures = listGeneratedSkillProcedures(db);
+  const issues: GeneratedSkillDoctorRow[] = [];
+
+  for (const proc of procedures) {
+    if (!proc.skillPath) continue;
+    // Skip already-uninstalled rows — they are already correctly modelled.
+    if (proc.skillState === "uninstalled") continue;
+
+    const resolvedPath = proc.skillPath.startsWith("/")
+      ? proc.skillPath
+      : join(workspaceRoot, proc.skillPath);
+    // Accept either a SKILL.md file path or the parent directory
+    const dirPath = resolvedPath.endsWith("SKILL.md") ? resolvedPath.replace(/\/SKILL\.md$/, "") : resolvedPath;
+    const skillMdPath = dirPath.endsWith("/") ? `${dirPath}SKILL.md` : `${dirPath}/SKILL.md`;
+
+    const exists = existsSync(skillMdPath) || existsSync(dirPath);
+    if (!exists) {
+      const skillName = basename(proc.skillPath);
+      issues.push({
+        procedureId: proc.id,
+        skillName,
+        skillPath: proc.skillPath,
+        state: proc.skillState ?? "experimental",
+        issue: "missing_on_disk",
+        resolvedAbsolutePath: skillMdPath,
+      });
+      if (fix) {
+        setGeneratedSkillLifecycleState(
+          db,
+          skillName,
+          "uninstalled",
+          "auto-detected: skill file no longer exists on disk",
+          now,
+        );
+      }
+    }
+  }
+
+  return {
+    checkedAt: new Date(now * 1000).toISOString(),
+    totalChecked: procedures.length,
+    issues,
   };
 }

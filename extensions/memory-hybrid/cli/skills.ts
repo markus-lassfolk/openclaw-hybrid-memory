@@ -429,4 +429,109 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
         console.log(`Demoted ${skillName}: ${updated.skillStateReason ?? "manual demotion"}`);
       }),
     );
+
+  skills
+    .command("reset <skillName>")
+    .description(
+      "Reset a demoted or archived skill back to experimental for a second chance.\nUse this when a skill was wrongly demoted or after agent behaviour has changed.",
+    )
+    .requiredOption("--reason <reason>", "Operator reason for the reset")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
+        const current = factsDb.getGeneratedSkillByName(skillName);
+        if (!current) {
+          console.error(`error: generated skill not found: ${skillName}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (current.skillState !== "demoted" && current.skillState !== "archived") {
+          console.error(
+            `error: skill '${skillName}' is in state '${current.skillState ?? "experimental"}' — only demoted or archived skills can be reset`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        const updated = factsDb.setGeneratedSkillLifecycleState(
+          skillName,
+          "experimental",
+          opts?.reason ?? "manual reset",
+        );
+        if (!updated) {
+          console.error(`error: generated skill not found: ${skillName}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify(updated, null, 2));
+          return;
+        }
+        console.log(`Reset ${skillName} to experimental: ${updated.skillStateReason ?? "manual reset"}`);
+      }),
+    );
+
+  skills
+    .command("reject <skillName>")
+    .description("Permanently reject a generated skill (operator decision after install)")
+    .requiredOption("--reason <reason>", "Operator reason for rejection")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
+        const updated = factsDb.setGeneratedSkillLifecycleState(
+          skillName,
+          "rejected",
+          opts?.reason ?? "manual rejection",
+        );
+        if (!updated) {
+          console.error(`error: generated skill not found: ${skillName}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify(updated, null, 2));
+          return;
+        }
+        console.log(`Rejected ${skillName}: ${updated.skillStateReason ?? "manual rejection"}`);
+      }),
+    );
+
+  skills
+    .command("doctor")
+    .description(
+      "Scan for generated skills whose SKILL.md no longer exists on disk.\n" +
+        "Reports rows with missing files and optionally marks them as uninstalled.",
+    )
+    .option("--fix", "Mark missing skills as uninstalled in the DB")
+    .option("--workspace <path>", "Workspace root used to resolve relative skill paths")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { fix?: boolean; workspace?: string; json?: boolean }) => {
+        const report = factsDb.reconcileGeneratedSkillDiskState({
+          fix: opts?.fix === true,
+          workspaceRoot: opts?.workspace,
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        console.log(
+          `Skills doctor: checked ${report.totalChecked} generated skill(s) at ${report.checkedAt}`,
+        );
+        if (report.issues.length === 0) {
+          console.log("✓ All generated skills found on disk.");
+          return;
+        }
+        console.log(`\n⚠ ${report.issues.length} skill(s) missing on disk:`);
+        for (const issue of report.issues) {
+          console.log(`  [${issue.state}] ${issue.skillName}`);
+          console.log(`    path: ${issue.skillPath}`);
+          console.log(`    expected at: ${issue.resolvedAbsolutePath}`);
+        }
+        if (!opts?.fix) {
+          console.log("\nRun with --fix to mark these as uninstalled in the DB.");
+        } else {
+          console.log("\nMarked missing skills as uninstalled.");
+        }
+      }),
+    );
 }

@@ -279,40 +279,49 @@ function buildProposalCard(
 }
 
 // ---------------------------------------------------------------------------
-// SkillCrystallizer
+// SkillCrystallizer — exported as a free function (no class wrapper needed)
 // ---------------------------------------------------------------------------
 
+/**
+ * Generate a SKILL.md from a crystallization candidate.
+ * Does NOT write to disk — returns content + proposed path for the approval flow.
+ */
+export function crystallize(cfg: CrystallizationConfig, input: CrystallizationInput): CrystallizationResult {
+  const { patternId, pattern, evidenceHash } = input;
+  const createdAt = new Date().toISOString().slice(0, 10);
+
+  const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
+  const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
+  const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
+
+  // Resolve output directory (expand ~ for home dir)
+  const outputDir = cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+  const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
+
+  // Generate shell script for exec-only sequences
+  const hasScript = isExecOnlySequence(pattern.toolSequence);
+  const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
+
+  return {
+    skillName,
+    skillContent,
+    proposalCard,
+    proposedOutputPath,
+    hasScript,
+    scriptContent,
+  };
+}
+
+/**
+ * @deprecated Use the free function `crystallize(cfg, input)` instead.
+ * Kept for backward compatibility; will be removed in a future release.
+ */
 export class SkillCrystallizer {
   constructor(private readonly cfg: CrystallizationConfig) {}
 
-  /**
-   * Generate a SKILL.md from a crystallization candidate.
-   * Does NOT write to disk — returns content + proposed path for the approval flow.
-   */
+  /** @deprecated Use `crystallize(cfg, input)` instead. */
   crystallize(input: CrystallizationInput): CrystallizationResult {
-    const { patternId, pattern, evidenceHash } = input;
-    const createdAt = new Date().toISOString().slice(0, 10);
-
-    const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
-    const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
-    const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
-
-    // Resolve output directory (expand ~ for home dir)
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
-
-    // Generate shell script for exec-only sequences
-    const hasScript = isExecOnlySequence(pattern.toolSequence);
-    const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
-
-    return {
-      skillName,
-      skillContent,
-      proposalCard,
-      proposedOutputPath,
-      hasScript,
-      scriptContent,
-    };
+    return crystallize(this.cfg, input);
   }
 }
 
