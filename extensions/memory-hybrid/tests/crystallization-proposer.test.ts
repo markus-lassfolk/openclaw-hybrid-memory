@@ -35,7 +35,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import { CrystallizationProposer, patchOpeningYamlField } from "../services/crystallization-proposer.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -53,6 +53,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "", // will be set in beforeEach
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  evidenceCountBucketSize: 5,
 };
 
 beforeEach(() => {
@@ -353,5 +354,131 @@ describe("CrystallizationProposer.rejectProposal", () => {
     const result = proposer.rejectProposal(proposal.id);
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not rejectable|not pending/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// patchOpeningYamlField — multiline YAML (Issue #1427)
+// ---------------------------------------------------------------------------
+
+describe("patchOpeningYamlField", () => {
+  it("replaces a literal block scalar (|) through the next top-level key", () => {
+    const src = `---
+description: |
+  line one
+  line two
+category: keep-me
+---
+
+# Title
+`;
+    const out = patchOpeningYamlField(src, "description", "short");
+    expect(out).toMatch(/description: short\r?\n/);
+    expect(out).not.toContain("line one");
+    expect(out).toContain("category: keep-me");
+  });
+
+  it("replaces a folded block scalar (>) through the next top-level key", () => {
+    const src = `---
+notes: >
+  folded a
+  folded b
+name: keep-name
+---
+`;
+    const out = patchOpeningYamlField(src, "notes", "x");
+    expect(out).toMatch(/notes: x\r?\n/);
+    expect(out).not.toContain("folded a");
+    expect(out).toContain("name: keep-name");
+  });
+
+  it("replaces plain multiline values with indented continuation lines", () => {
+    const src = `---
+title: first line
+  second line
+category: cat
+---
+`;
+    const out = patchOpeningYamlField(src, "title", "single");
+    expect(out).toMatch(/title: single\r?\n/);
+    expect(out).not.toContain("second line");
+    expect(out).toContain("category: cat");
+  });
+
+  it("preserves CRLF inside frontmatter when present", () => {
+    const src = "---\r\ndescription: |\r\n  a\r\n  b\r\ncategory: z\r\n---\r\n\r\n# x\r\n";
+    const out = patchOpeningYamlField(src, "description", "n");
+    expect(out).toContain("\r\n");
+    expect(out).toMatch(/description: n\r\n/);
+    expect(out).not.toContain("  a");
+    expect(out).toContain("category: z");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// approveProposal — H1 override when renaming (Issue #1427)
+// ---------------------------------------------------------------------------
+
+const MINIMAL_VALID_SKILL_SECTIONS = `## Trigger
+
+Positive: user asks to run a minimal workflow for deployment tasks without explain-only fluff.
+
+## Scope
+
+Covers only scripted steps described in workflow.
+
+## When not to use
+
+Avoid when credentials or secrets appear in goals.
+
+## Workflow
+
+First gather context then apply changes safely.
+
+## Examples
+
+Good: user requests a bounded automation sequence.
+
+## Provenance
+
+Synthetic fixture for crystallization proposer tests.`;
+
+function skillFixture(skillName: string, h1Title: string): string {
+  return `---
+name: ${skillName}
+description: Short description for validation.
+category: testing
+---
+
+# ${h1Title}
+
+${MINIMAL_VALID_SKILL_SECTIONS}
+`;
+}
+
+describe("CrystallizationProposer.approveProposal — custom H1 on rename", () => {
+  it("replaces the first body H1 when it differs from the proposal skill name", () => {
+    const outputDir = join(tmpDir, "skills-h1");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, maxCrystallized: 50 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const proposal = cStore.create({
+      patternId: "p-h1",
+      evidenceHash: "ev-h1",
+      skillName: "orig-skill-name",
+      skillContent: skillFixture("orig-skill-name", "Custom Human Title"),
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let result = proposer.approveProposal(proposal.id, { name: "renamed-h1-skill" });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(proposal.id, { name: "renamed-h1-skill", overrideWarnings: true });
+    }
+    expect(result.success).toBe(true);
+    const written = readFileSync(result.outputPath!, "utf-8");
+    expect(written).toMatch(/^#\s+renamed-h1-skill\s*$/m);
+    expect(written).not.toContain("# Custom Human Title");
+    expect(written).toMatch(/name:\s*renamed-h1-skill/);
   });
 });
