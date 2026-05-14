@@ -331,11 +331,7 @@ export class GeneratedSkillValidationService {
     const cases = buildSyntheticActivationCases(input, frontmatter);
     // Support all trigger-section aliases so skills that use ## When to Activate
     // or ## When to use are also covered (issue #1375).
-    const triggerSection = extractSectionByAliases(input.skillContent, [
-      "Trigger",
-      "When to Activate",
-      "When to use",
-    ]);
+    const triggerSection = extractSectionByAliases(input.skillContent, ["Trigger", "When to Activate", "When to use"]);
     const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
     const positive = scoreActivationPrompt(cases.positive, sourceText);
     const negative = scoreActivationPrompt(cases.negative, sourceText);

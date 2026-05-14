@@ -152,10 +152,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
         "— same validator as 'skills install'.  Use --legacy for a quick static-only check.",
     )
     .argument("<id>", "Proposal id")
-    .option(
-      "--legacy",
-      "Run only the fast SkillValidator (static checks only — skips dry-load and activation eval)",
-    )
+    .option("--legacy", "Run only the fast SkillValidator (static checks only — skips dry-load and activation eval)")
     .option("--json", "Print JSON")
     .action(
       withExit(async (id: string, opts: { legacy?: boolean; json?: boolean }) => {
@@ -319,11 +316,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
               return;
             }
             const icon =
-              result.approvalDecision === "deny"
-                ? "✗"
-                : result.approvalDecision === "allow-with-override"
-                  ? "⚠"
-                  : "✓";
+              result.approvalDecision === "deny" ? "✗" : result.approvalDecision === "allow-with-override" ? "⚠" : "✓";
             console.log(`[dry-run] ${icon} ${result.approvalDecision.toUpperCase()} (${id})`);
             console.log(`  would write to: ${result.staticValidation.safeOutputPath}`);
             console.log(`  static:         ${result.staticValidation.status}`);
