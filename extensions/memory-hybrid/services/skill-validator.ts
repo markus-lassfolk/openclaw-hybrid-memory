@@ -273,8 +273,13 @@ export class SkillValidator {
 
     // Examples must include at least one compact real example (avoid placeholders).
     const examplesBody = extractSectionBody(lines, headings, ["examples"]);
-    if (examplesBody && !containsConcreteExample(examplesBody)) {
-      violations.push("Examples section must include at least one compact, concrete example (not just placeholders).");
+    if (examplesBody !== null) {
+      const examplesTrimmed = examplesBody.trim();
+      if (examplesTrimmed.length === 0 || !containsConcreteExample(examplesBody)) {
+        violations.push(
+          "Examples section must include at least one compact, concrete example (not just placeholders).",
+        );
+      }
     }
 
     let inCodeBlock = false;
@@ -282,9 +287,8 @@ export class SkillValidator {
     let currentFenceLines = 0;
     let lineNumber = 0;
     let codeBlockLineCount = 0;
-    let transcriptLikeLineCount = 0;
+    let transcriptToolOrStackLineCount = 0;
     let toolBlobLikeLineCount = 0;
-    let stackTraceLikeLineCount = 0;
 
     for (const line of lines) {
       lineNumber++;
@@ -317,9 +321,11 @@ export class SkillValidator {
         currentFenceLines++;
         codeBlockLineCount++;
       } else {
-        if (/^\s*(assistant|user|tool|system)\s*:/i.test(line)) transcriptLikeLineCount++;
-        if (looksLikeToolOrJsonBlob(trimmed)) toolBlobLikeLineCount++;
-        if (looksLikeStackTraceLine(trimmed)) stackTraceLikeLineCount++;
+        const transcriptLike = /^\s*(assistant|user|tool|system)\s*:/i.test(line);
+        const toolBlobLike = looksLikeToolOrJsonBlob(trimmed);
+        const stackTraceLike = looksLikeStackTraceLine(trimmed);
+        if (toolBlobLike) toolBlobLikeLineCount++;
+        if (transcriptLike || toolBlobLike || stackTraceLike) transcriptToolOrStackLineCount++;
       }
 
       // Apply rules
@@ -340,10 +346,7 @@ export class SkillValidator {
     }
 
     const rawLikeRatio =
-      lines.length === 0
-        ? 0
-        : (codeBlockLineCount + transcriptLikeLineCount + toolBlobLikeLineCount + stackTraceLikeLineCount) /
-          Math.max(1, lines.length);
+      lines.length === 0 ? 0 : (codeBlockLineCount + transcriptToolOrStackLineCount) / Math.max(1, lines.length);
     if (rawLikeRatio > MAX_TRANSCRIPT_LIKE_RATIO) {
       violations.push(
         `[log-dump-guard] ${Math.round(rawLikeRatio * 100)}% of lines look like raw transcript/log/code. Summarize and keep snippets short.`,
@@ -383,8 +386,16 @@ function normalizeHeading(value: string): string {
 
 function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: string; line: number }> {
   const out: Array<{ raw: string; normalized: string; line: number }> = [];
+  let inFence = false;
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i]?.match(/^##\s+(.+?)\s*$/);
+    const line = lines[i] ?? "";
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const match = line.match(/^##\s+(.+?)\s*$/);
     if (!match) continue;
     const raw = match[1];
     out.push({ raw, normalized: normalizeHeading(raw), line: i + 1 });

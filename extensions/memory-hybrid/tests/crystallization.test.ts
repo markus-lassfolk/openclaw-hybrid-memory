@@ -706,6 +706,37 @@ ${extra.extraBody ?? ""}`;
     ).toBe(false);
   });
 
+  it("does not treat ## headings inside fenced blocks as document sections", () => {
+    let content = compactValidSkill();
+    content = content.replace(/## Examples\n- Good:[^\n]+\n\n/, "");
+    content = content.replace(
+      "## Workflow\n",
+      "## Workflow\n\n```markdown\n## Examples\n- This is inside a fence and must not count.\n```\n\n",
+    );
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("Examples"))).toBe(true);
+  });
+
+  it("rejects Examples section that is empty or whitespace-only", () => {
+    const content = compactValidSkill()
+      .replace("## Examples\n- Good:", "## Examples\n\n- REMOVED:")
+      .replace(/- REMOVED:[^\n]+\n/, "");
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("Examples section must"))).toBe(true);
+  });
+
+  it("counts transcript-like and tool/blob/stack heuristics at most once per line for log-dump ratio", () => {
+    const filler = Array.from({ length: 50 }, (_, i) => `- Narration point ${i + 1} for the bounded workflow.`).join(
+      "\n",
+    );
+    const hybrid = Array.from({ length: 25 }, () => 'assistant: {"tool":"memory_search","args":{}}').join("\n");
+    const content = compactValidSkill({ extraBody: `\n${filler}\n${hybrid}\n` });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(true);
+  });
+
   it("rejects oversized transcript-like dumps", () => {
     const transcript = Array.from({ length: 310 }, (_, i) => `assistant: line ${i + 1}`).join("\n");
     const content = compactValidSkill({ extraBody: `\n${transcript}\n` });
