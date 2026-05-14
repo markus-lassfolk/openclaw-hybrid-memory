@@ -113,6 +113,9 @@ export interface ProcedurePromotionVerification {
   };
   enabled: boolean;
   requiresHumanApproval: boolean;
+  lifecycleState: "experimental";
+  telemetryCommand: string;
+  falsePositiveCommandTemplate: string;
   lastVerifiedAt: string;
 }
 
@@ -331,6 +334,7 @@ export function evaluateProcedureForPromotion(
   const eligible = gates.length === 0;
   const finalDraft = eligible ? draft : null;
   const generatedPath = eligible && finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
+  const telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillSlug}`;
   const metadata: ProcedurePromotionVerification = {
     skill: resolvedSkillSlug,
     sourceProcedureIds: [proc.id],
@@ -384,6 +388,9 @@ export function evaluateProcedureForPromotion(
     },
     enabled: false,
     requiresHumanApproval: policy !== "auto-safe" || !eligible,
+    lifecycleState: "experimental",
+    telemetryCommand,
+    falsePositiveCommandTemplate: "openclaw hybrid-mem skills correct <activation-id> --reason \"user rejected skill\"",
     lastVerifiedAt: new Date(now * 1000).toISOString(),
   };
   return { eligible, gates, draft: finalDraft, metadata };
@@ -528,6 +535,7 @@ function buildProcedureSkillDraft(
   const nearMiss = `Tasks that mention ${firstKeyword(
     proc.taskPattern,
   )} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
+  const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
   const skillMd = `---
 name: ${slug}
 description: Use when the user asks to ${redactedTask.redacted}. Trigger examples: "${
@@ -583,6 +591,11 @@ Use only the tools implied by the source recipe and only in dry-run/read-only wa
 ## Rollback / disable guidance
 Leave this generated skill disabled until verification or human approval. To disable, remove it from the enabled skill path or keep it in quarantine/draft storage.
 
+## Telemetry
+- When this skill is selected, record the activation with \`${telemetryCommand} --decision selected --request-summary "${redactedTask.redacted}" --outcome success\` (or \`failure\` / \`partial\` if the run did not fully succeed).
+- When this skill was considered but skipped, record a near-miss with \`${telemetryCommand} --decision skipped --request-summary "${redactedTask.redacted}" --reason "near-miss summary"\`.
+- Capture the returned activation id so a later user correction can mark that exact run as a false-positive with \`openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"\`.
+
 ## Examples
 - Good: "${redactedTask.redacted}" → follow the ordered workflow and validation gate.
 - Bad: "${nearMiss}" → do not use; ask for clarification or use another skill.
@@ -623,6 +636,9 @@ Leave this generated skill disabled until verification or human approval. To dis
     },
     enabled: false,
     requiresHumanApproval: policy !== "auto-safe",
+    lifecycleState: "experimental",
+    telemetryCommand,
+    falsePositiveCommandTemplate: "openclaw hybrid-mem skills correct <activation-id> --reason \"user rejected skill\"",
     lastVerifiedAt: new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
   };
   const evals = {

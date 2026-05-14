@@ -79,15 +79,23 @@ describe("generateAutoSkills", () => {
     const skillContent = readFileSync(skillPath, "utf-8");
     expect(skillContent).toContain("Check Moltbook notifications");
     expect(skillContent).toContain("## Workflow");
+    expect(skillContent).toContain("## Telemetry");
+    expect(skillContent).toContain("openclaw hybrid-mem skills record check-moltbook-notifications");
     expect(skillContent).toContain(proc.id);
 
     const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8"));
     expect(Array.isArray(recipeContent)).toBe(true);
     expect(recipeContent).toHaveLength(3);
+    const verification = JSON.parse(
+      readFileSync(join(skillsDir, "check-moltbook-notifications", "verification.json"), "utf-8"),
+    ) as { lifecycleState?: string; telemetryCommand?: string };
+    expect(verification.lifecycleState).toBe("experimental");
+    expect(verification.telemetryCommand).toBe("openclaw hybrid-mem skills record check-moltbook-notifications");
 
     const updated = db.getProcedureById(proc.id);
     expect(updated?.promotedToSkill).toBe(1);
     expect(updated?.skillPath).toContain("check-moltbook-notifications");
+    expect(updated?.skillState).toBe("experimental");
   });
 
   it("keeps collision-adjusted draft metadata aligned with the output directory", () => {

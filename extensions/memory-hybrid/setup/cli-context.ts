@@ -103,6 +103,8 @@ Commands by category:
     extract-directives   Extract directive rules from sessions
     extract-reinforcement  Extract reinforcement from praise
     generate-auto-skills   Generate skills from procedures
+    skills telemetry [name]  Report generated skill activation telemetry
+    skills demote <name>   Demote an over-triggering generated skill
     generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
 
   Reflection & classification

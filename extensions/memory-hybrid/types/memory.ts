@@ -114,6 +114,45 @@ export type ProcedureStep = {
   summary?: string;
 };
 
+export const GENERATED_SKILL_LIFECYCLE_STATES = [
+  "draft",
+  "experimental",
+  "trusted",
+  "demoted",
+  "archived",
+] as const;
+export type GeneratedSkillLifecycleState = (typeof GENERATED_SKILL_LIFECYCLE_STATES)[number];
+
+export const GENERATED_SKILL_TELEMETRY_DECISIONS = ["selected", "considered", "skipped"] as const;
+export type GeneratedSkillTelemetryDecision = (typeof GENERATED_SKILL_TELEMETRY_DECISIONS)[number];
+
+export const GENERATED_SKILL_TELEMETRY_OUTCOMES = ["success", "failure", "partial", "unknown"] as const;
+export type GeneratedSkillTelemetryOutcome = (typeof GENERATED_SKILL_TELEMETRY_OUTCOMES)[number];
+
+export type GeneratedSkillTelemetryEntry = {
+  id: string;
+  procedureId: string;
+  skillName: string;
+  skillVersion: number;
+  requestHash?: string | null;
+  requestSummary?: string | null;
+  decision: GeneratedSkillTelemetryDecision;
+  confidence?: number | null;
+  reason?: string | null;
+  taskOutcome?: GeneratedSkillTelemetryOutcome | null;
+  userCorrection: boolean;
+  correctionReason?: string | null;
+  falseNegativeSignal: boolean;
+  causedRework: boolean;
+  savedToolCalls?: number | null;
+  savedTimeMs?: number | null;
+  scope?: MemoryScope | null;
+  scopeTarget?: string | null;
+  agentId?: string | null;
+  sessionId?: string | null;
+  createdAt: number;
+};
+
 /** Stored procedure (procedures table). */
 export type ProcedureEntry = {
   id: string;
@@ -139,6 +178,14 @@ export type ProcedureEntry = {
   reinforcedQuotes?: string[] | null;
   /** Phase 2: When this procedure was auto-promoted via reinforcement (epoch seconds). */
   promotedAt?: number | null;
+  /** Generated skill lifecycle state. */
+  skillState?: GeneratedSkillLifecycleState | null;
+  /** Latest lifecycle transition reason (manual or policy-driven). */
+  skillStateReason?: string | null;
+  /** Generated skill version counter. */
+  skillVersion?: number;
+  /** When the generated skill was first materialized (epoch seconds). */
+  skillGeneratedAt?: number | null;
   /** Memory scope (global, user, agent, session). */
   scope?: string;
   /** Scope target (userId, agentId, or sessionId). */

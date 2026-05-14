@@ -5,6 +5,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry, ProcedureEntry, ScopeFilter } from "../../types/memory.js";
+import type {
+  GeneratedSkillLifecycleState,
+  GeneratedSkillTelemetryEntry,
+} from "../../types/memory.js";
 import {
   getAllIds as getAllIdsImpl,
   getAll as getAllImpl,
@@ -40,6 +44,19 @@ import {
   restoreCheckpoint as restoreCheckpointImpl,
   saveCheckpoint as saveCheckpointImpl,
 } from "./maintenance.js";
+import {
+  buildGeneratedSkillTelemetryReport as buildGeneratedSkillTelemetryReportImpl,
+  getGeneratedSkillByName as getGeneratedSkillByNameImpl,
+  listGeneratedSkillProcedures as listGeneratedSkillProceduresImpl,
+  listGeneratedSkillTelemetry as listGeneratedSkillTelemetryImpl,
+  markGeneratedSkillTelemetryFalsePositive as markGeneratedSkillTelemetryFalsePositiveImpl,
+  recordGeneratedSkillTelemetry as recordGeneratedSkillTelemetryImpl,
+  refreshGeneratedSkillLifecycleState as refreshGeneratedSkillLifecycleStateImpl,
+  setGeneratedSkillLifecycleState as setGeneratedSkillLifecycleStateImpl,
+  type GeneratedSkillLifecyclePolicy,
+  type GeneratedSkillTelemetryReport,
+  type GeneratedSkillTelemetryRecordInput,
+} from "./generated-skills.js";
 import {
   findProcedureByTaskPattern as findProcedureByTaskPatternImpl,
   getNegativeProceduresMatching as getNegativeProceduresMatchingImpl,
@@ -611,5 +628,54 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   getStaleProcedures(ttlDays: number, limit = 100): ProcedureEntry[] {
     return getStaleProceduresImpl(this.liveDb, ttlDays, limit);
+  }
+
+  listGeneratedSkillProcedures(): ProcedureEntry[] {
+    return listGeneratedSkillProceduresImpl(this.liveDb);
+  }
+
+  getGeneratedSkillByName(skillName: string): ProcedureEntry | null {
+    return getGeneratedSkillByNameImpl(this.liveDb, skillName);
+  }
+
+  recordGeneratedSkillTelemetry(
+    input: GeneratedSkillTelemetryRecordInput,
+    policy?: GeneratedSkillLifecyclePolicy,
+  ): GeneratedSkillTelemetryEntry {
+    return recordGeneratedSkillTelemetryImpl(this.liveDb, input, policy);
+  }
+
+  listGeneratedSkillTelemetry(skillName?: string, limit?: number): GeneratedSkillTelemetryEntry[] {
+    return listGeneratedSkillTelemetryImpl(this.liveDb, skillName, limit);
+  }
+
+  markGeneratedSkillTelemetryFalsePositive(
+    activationId: string,
+    correctionReason: string,
+    policy?: GeneratedSkillLifecyclePolicy,
+  ): GeneratedSkillTelemetryEntry | null {
+    return markGeneratedSkillTelemetryFalsePositiveImpl(this.liveDb, activationId, correctionReason, policy);
+  }
+
+  setGeneratedSkillLifecycleState(
+    skillName: string,
+    state: GeneratedSkillLifecycleState,
+    reason: string | null,
+    at?: number,
+  ): ProcedureEntry | null {
+    return setGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, state, reason, at);
+  }
+
+  refreshGeneratedSkillLifecycleState(skillName: string, policy?: GeneratedSkillLifecyclePolicy, now?: number): ProcedureEntry | null {
+    return refreshGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, policy, now);
+  }
+
+  buildGeneratedSkillTelemetryReport(options?: {
+    skillName?: string;
+    policy?: Partial<GeneratedSkillLifecyclePolicy>;
+    recentActivationLimit?: number;
+    now?: number;
+  }): GeneratedSkillTelemetryReport {
+    return buildGeneratedSkillTelemetryReportImpl(this.liveDb, options);
   }
 }

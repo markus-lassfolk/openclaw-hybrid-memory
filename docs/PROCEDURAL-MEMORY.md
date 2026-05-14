@@ -64,6 +64,17 @@ openclaw hybrid-mem generate-auto-skills --dry-run
 
 Generated skills live under `skills/auto/` (or your `procedures.skillsAutoPath`). To promote one to a permanent skill, move the folder out of `auto/` (e.g. to `skills/` or a custom path).
 
+### Generated skill telemetry
+
+```bash
+openclaw hybrid-mem skills telemetry
+openclaw hybrid-mem skills telemetry moltbook-check
+openclaw hybrid-mem skills demote moltbook-check --reason "over-triggering"
+```
+
+Generated skills now start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`
+Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. The lifecycle policy auto-promotes experimental skills to `trusted` after repeated successful uses without correction, auto-demotes when false-positive rate crosses the threshold, and auto-archives never-used skills after the configured window.
+
 ---
 
 ## Tools
@@ -104,7 +115,16 @@ So the model sees procedure hints without having to call the tool first.
 - `id`, `task_pattern`, `recipe_json`, `procedure_type` (`positive` | `negative`)
 - `success_count`, `failure_count`, `last_validated`, `last_failed`
 - `confidence`, `ttl_days`, `promoted_to_skill`, `skill_path`
+- `skill_state`, `skill_state_reason`, `skill_version`, `skill_generated_at`
 - `created_at`, `updated_at`
+
+### Generated skill telemetry table
+
+- `procedure_id`, `skill_name`, `skill_version`
+- `request_hash`, `request_summary`, `decision`, `confidence`, `reason`
+- `task_outcome`, `user_correction`, `correction_reason`
+- `false_negative_signal`, `caused_rework`, `saved_tool_calls`, `saved_time_ms`
+- `scope`, `scope_target`, `agent_id`, `session_id`, `created_at`
 
 Full-text search: `procedures_fts` on `task_pattern` for `searchProcedures` and `getNegativeProceduresMatching`.
 
