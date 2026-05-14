@@ -856,6 +856,9 @@ function buildAntiPatternsForProcedure(proc: ProcedureEntry): string {
     "- Do not paste long command output, stack traces, JSON blobs, or transcripts into this skill; summarize as workflow phases and checklists.",
     "- Do not claim the workflow is complete unless the verification checklist passes and the output matches the user’s request.",
     "- Do not broaden scope beyond the validated trigger; ask for clarification on near-miss tasks or defer to a more specific skill.",
+    "- Do not clone repositories under `~/.openclaw`; use `/tmp` for task checkouts.",
+    "- Do not claim implementation work is complete unless a PR exists or the change is merged to `main`.",
+    "- Do not poll subagents in a tight loop; yield and wait for push-based completion.",
   ];
 
   if (evidence.length === 0) return [...generic, "- If this workflow starts failing in practice, record procedure feedback so future drafts include concrete known failures."].join("\n");
