@@ -1258,7 +1258,6 @@ Bounded dry-run test workflow.
     }
   });
 
-
   it("skills install --dry-run requires override for allow-with-override proposals", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dry-run-override-"));
     const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
