@@ -48,6 +48,12 @@ export type GeneratedSkillTelemetryMetrics = {
   nearMissCount: number;
   falsePositiveSignals: number;
   falseNegativeSignals: number;
+  /** Activations with `user_correction` set (explicit user pushback). */
+  correctionCount: number;
+  /**
+   * Count of distinct `request_hash` values (non-null) in the last 30 days that have
+   * at least two user-correction activations for this skill.
+   */
   repeatedCorrectionCount: number;
   lastUsedAt: number | null;
   successCount: number;
@@ -63,6 +69,7 @@ export type GeneratedSkillTelemetryMetrics = {
   skippedCount: number;
   savedToolCalls: number;
   savedTimeMs: number;
+  /** `falsePositiveSignals / (activationCountTotal + nearMissCount)` when there is any exposure. */
   falsePositiveRate: number | null;
 };
 
@@ -230,6 +237,12 @@ export function recordGeneratedSkillTelemetry(
   input: GeneratedSkillTelemetryRecordInput,
   policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
 ): GeneratedSkillTelemetryEntry {
+  if (input.userCorrection === true) {
+    const cr = normalizeSummary(input.correctionReason);
+    if (!cr) {
+      throw new Error("user correction telemetry requires a non-empty correctionReason");
+    }
+  }
   let proc = findGeneratedSkillProcedure(db, input.skillName);
   if (input.procedureId != null) {
     const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(input.procedureId) as
@@ -344,6 +357,24 @@ function skillTelemetryEntries(db: DatabaseSync, skillName: string): GeneratedSk
   ).map(mapGeneratedSkillTelemetryRow);
 }
 
+const REPEATED_CORRECTION_WINDOW_SEC = 30 * 24 * 60 * 60;
+
+function countRepeatedUserCorrectionBuckets(activations: GeneratedSkillTelemetryEntry[], now: number): number {
+  const windowStart = now - REPEATED_CORRECTION_WINDOW_SEC;
+  const byHash = new Map<string, number>();
+  for (const a of activations) {
+    if (!a.userCorrection || a.createdAt < windowStart) continue;
+    const h = a.requestHash;
+    if (typeof h !== "string" || h.length === 0) continue;
+    byHash.set(h, (byHash.get(h) ?? 0) + 1);
+  }
+  let buckets = 0;
+  for (const c of byHash.values()) {
+    if (c >= 2) buckets++;
+  }
+  return buckets;
+}
+
 function summarizeSkillTelemetry(
   proc: ProcedureEntry,
   activations: GeneratedSkillTelemetryEntry[],
@@ -356,7 +387,7 @@ function summarizeSkillTelemetry(
   let nearMissCount = 0;
   let falsePositiveSignals = 0;
   let falseNegativeSignals = 0;
-  let repeatedCorrectionCount = 0;
+  let correctionCount = 0;
   let lastUsedAt: number | null = null;
   let successCount = 0;
   let failureCount = 0;
@@ -371,11 +402,12 @@ function summarizeSkillTelemetry(
   for (const activation of activations) {
     savedToolCalls += activation.savedToolCalls ?? 0;
     savedTimeMs += activation.savedTimeMs ?? 0;
+    if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
+    if (activation.userCorrection) correctionCount++;
     if (activation.decision === "selected") {
       activationCountTotal++;
       if (activation.createdAt >= weekAgo) activationCountPerWeek++;
       lastUsedAt = lastUsedAt == null ? activation.createdAt : Math.max(lastUsedAt, activation.createdAt);
-      if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
       if (activation.taskOutcome === "success") {
         successCount++;
         if (!activation.userCorrection) successfulUsesWithoutCorrection++;
@@ -392,7 +424,6 @@ function summarizeSkillTelemetry(
       if (activation.decision === "skipped") skippedCount++;
     }
     if (activation.falseNegativeSignal) falseNegativeSignals++;
-    if (activation.userCorrection) repeatedCorrectionCount++;
   }
 
   const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
@@ -400,7 +431,9 @@ function summarizeSkillTelemetry(
   const failureRate = knownOutcomeTotal > 0 ? failureCount / knownOutcomeTotal : null;
   const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
-  const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
+  const exposureTotal = activationCountTotal + nearMissCount;
+  const falsePositiveRate = exposureTotal > 0 ? falsePositiveSignals / exposureTotal : null;
+  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(activations, now);
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveCandidate =
     activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
@@ -410,7 +443,7 @@ function summarizeSkillTelemetry(
     proc.skillState !== "trusted" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
-    activationCountTotal >= policy.demoteMinSamples &&
+    exposureTotal >= policy.demoteMinSamples &&
     falsePositiveRate != null &&
     falsePositiveRate >= policy.demoteFalsePositiveRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
@@ -422,6 +455,7 @@ function summarizeSkillTelemetry(
       nearMissCount,
       falsePositiveSignals,
       falseNegativeSignals,
+      correctionCount,
       repeatedCorrectionCount,
       lastUsedAt,
       successCount,

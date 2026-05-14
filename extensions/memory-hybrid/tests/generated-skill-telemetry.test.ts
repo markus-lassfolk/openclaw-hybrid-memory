@@ -10,6 +10,7 @@ let tmpDir: string;
 let db: FactsDB;
 
 beforeEach(() => {
+  process.exitCode = undefined;
   tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-telemetry-"));
   db = new FactsDB(join(tmpDir, "facts.db"));
 });
@@ -114,7 +115,8 @@ describe("generated skill telemetry", () => {
 
     expect(skill?.skillState).toBe("demoted");
     expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
-    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(2);
+    expect(report.rows[0]?.metrics.correctionCount).toBe(2);
+    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(0);
     expect(report.rows[0]?.flags.overTriggering).toBe(true);
     expect(report.rows[0]?.recommendation).toBe("demote");
   });
@@ -234,5 +236,100 @@ describe("generated skill telemetry", () => {
     };
     expect(demoted.skillState).toBe("demoted");
     expect(demoted.skillStateReason).toContain("over-triggering");
+  });
+
+  it("counts considered/skipped user corrections toward false-positive rate (#1416)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const { skillName } = createGeneratedSkill();
+    for (let i = 0; i < 3; i++) {
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "considered",
+        requestSummary: `near-miss-${i}`,
+        userCorrection: true,
+        correctionReason: "should not have been offered",
+      });
+    }
+    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+    expect(report.rows[0]?.metrics.activationCountTotal).toBe(0);
+    expect(report.rows[0]?.metrics.nearMissCount).toBe(3);
+    expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
+    expect(report.rows[0]?.metrics.correctionCount).toBe(3);
+    expect(report.rows[0]?.metrics.falsePositiveRate).toBe(1);
+    expect(report.rows[0]?.flags.overTriggering).toBe(true);
+  });
+
+  it("tracks repeated user corrections on the same request hash within 30 days (#1416)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const { skillName } = createGeneratedSkill();
+    const summary = "same request context for repeat";
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: summary,
+      taskOutcome: "success",
+      userCorrection: true,
+      correctionReason: "first",
+    });
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: summary,
+      taskOutcome: "failure",
+      userCorrection: true,
+      correctionReason: "second",
+    });
+    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+    expect(report.rows[0]?.metrics.correctionCount).toBe(2);
+    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(1);
+  });
+
+  it("CLI record rejects --user-correction without --reason (#1416)", async () => {
+    const { skillName } = createGeneratedSkill();
+    process.argv = ["node", "vitest", "hybrid-mem"];
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await program.parseAsync(["skills", "record", skillName, "--decision", "selected", "--user-correction", "--json"], {
+      from: "user",
+    });
+    expect(process.exitCode).toBe(1);
+    expect(String(errSpy.mock.calls[0]?.[0] ?? "")).toMatch(/user-correction requires/i);
+  });
+
+  it("rejects telemetry record with user correction but no correctionReason", () => {
+    const { skillName } = createGeneratedSkill();
+    expect(() =>
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "selected",
+        requestSummary: "x",
+        userCorrection: true,
+      }),
+    ).toThrow(/correctionReason/i);
+  });
+
+  it("CLI record maps --false-positive to caused rework without user correction (#1416)", async () => {
+    const { skillName } = createGeneratedSkill();
+    process.argv = ["node", "vitest", "hybrid-mem"];
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await program.parseAsync(
+      ["skills", "record", skillName, "--decision", "considered", "--false-positive", "--json"],
+      { from: "user" },
+    );
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      activation?: { userCorrection?: boolean; causedRework?: boolean; correctionReason?: string | null };
+    };
+    expect(payload.activation?.userCorrection).toBe(false);
+    expect(payload.activation?.causedRework).toBe(true);
+    expect(payload.activation?.correctionReason).toBeFalsy();
   });
 });
