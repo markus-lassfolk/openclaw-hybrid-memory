@@ -341,6 +341,22 @@ describe("WorkflowStore.getPatterns", () => {
     const patterns = store.getPatterns();
     expect(Array.isArray(patterns)).toBe(true);
   });
+
+  it("getPatterns stays within a few seconds for hundreds of traces using sampling (#1415)", () => {
+    for (let i = 0; i < 400; i++) {
+      store.record({
+        goal: `goal-${i}`,
+        toolSequence: ["alpha", "beta"],
+        outcome: i % 6 === 0 ? "failure" : "success",
+        argsHash: "perf-bucket",
+      });
+    }
+    const t0 = performance.now();
+    const patterns = store.getPatterns({ minSuccessRate: 0, limit: 30, traceSampleLimit: 2000 });
+    const ms = performance.now() - t0;
+    expect(patterns.length).toBeGreaterThan(0);
+    expect(ms).toBeLessThan(3000);
+  });
 });
 
 describe("WorkflowStore.prune", () => {

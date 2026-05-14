@@ -350,6 +350,25 @@ describe("scorePattern", () => {
   });
 });
 
+describe("WorkflowStore.getPatterns memo (#1415)", () => {
+  it("returns identical JSON for repeated calls until a new trace is recorded", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: `stable-${i}`,
+        toolSequence: ["t1", "t2"],
+        outcome: "success",
+        argsHash: "memo-bucket",
+      });
+    }
+    const a = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    const b = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    expect(JSON.stringify(a)).toEqual(JSON.stringify(b));
+    wfStore.record({ goal: "bump", toolSequence: ["z"], outcome: "success" });
+    const c = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    expect(c.length).toBeGreaterThan(0);
+  });
+});
+
 // ============================================================================
 // PatternDetector
 // ============================================================================

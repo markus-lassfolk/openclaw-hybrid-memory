@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
@@ -197,6 +197,8 @@ export interface ProcedurePromotionPolicyOptions {
   now?: number;
   resolvedSlug?: string;
   evidence?: ProcedurePromotionEvidence;
+  /** When true, re-read every SKILL.md from disk for duplicate detection (ignore mtime cache). */
+  bypassDuplicateSkillCache?: boolean;
 }
 
 const DEFAULT_MIN_DISTINCT_CONTEXTS = 2;
@@ -368,6 +370,7 @@ export function evaluateProcedureForPromotion(
     options.skillsAutoPath,
     options.existingSkillDirs,
     options.inRunSkillCandidates,
+    options.bypassDuplicateSkillCache === true,
   );
   if (similarSkillExists)
     gates.push(defer("duplicate_existing_skill", "existing or earlier same-run skill appears to cover this trigger"));
@@ -1089,12 +1092,39 @@ function hasValidationCheck(recipe: unknown, _task: string): boolean {
     return explicitValidationPattern.test(`${fields}\n${argFields}`);
   });
 }
+const skillMdDuplicateDigestCache = new Map<string, { mtimeMs: number; lower: string }>();
+
+/** Clears the SKILL.md mtime cache used by duplicate-skill detection (tests / --no-skill-duplicate-cache). */
+export function clearProcedurePromotionDuplicateSkillCache(): void {
+  skillMdDuplicateDigestCache.clear();
+}
+
+function readSkillMdLowerCached(skillPath: string, bypassCache: boolean): string | null {
+  if (bypassCache) {
+    const raw = safeReadFile(skillPath);
+    return raw ? raw.toLowerCase() : null;
+  }
+  try {
+    const mtimeMs = Math.trunc(statSync(skillPath).mtimeMs);
+    const hit = skillMdDuplicateDigestCache.get(skillPath);
+    if (hit && hit.mtimeMs === mtimeMs) return hit.lower;
+    const raw = safeReadFile(skillPath);
+    if (!raw) return null;
+    const lower = raw.toLowerCase();
+    skillMdDuplicateDigestCache.set(skillPath, { mtimeMs, lower });
+    return lower;
+  } catch {
+    return null;
+  }
+}
+
 function isDuplicateSkill(
   slug: string,
   task: string,
   skillsAutoPath: string,
   extraDirs: string[] = [],
   inRunCandidates: readonly ProcedurePromotionDuplicateCandidate[] = [],
+  bypassDiskCache = false,
 ): boolean {
   const dirs = [skillsAutoPath, ...extraDirs];
   const taskWords = significantWords(task);
@@ -1110,7 +1140,8 @@ function isDuplicateSkill(
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
       if (entry === slug) return true;
-      const content = safeReadFile(skillPath).toLowerCase();
+      const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
+      if (!content) continue;
       if (content.includes(`name: ${slug}`)) return true;
       const taskContent = extractTaskContentFromSkill(content);
       const contentWords = significantWords(taskContent);
