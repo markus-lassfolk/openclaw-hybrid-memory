@@ -490,7 +490,7 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
   // Strip optional leading HTML comment (e.g., injected by injectInstallMetadata)
-  const body = skillContent.replace(/^<!--[\s\S]*?-->\s*\n*/, "");
+  const body = skillContent.replace(/^<!--[\s\S]*?-->\s*/, "");
   const lines = body.split("\n");
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;

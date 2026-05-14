@@ -499,7 +499,9 @@ function parseFrontmatter(lines: string[]): {
   while (i < lines.length && lines[i]?.trim() === "") i++;
   // Skip optional leading HTML comment block(s) (e.g., injected by injectInstallMetadata).
   while (i < lines.length && lines[i]?.trimStart().startsWith("<!--")) {
-    while (i < lines.length && !(lines[i] ?? "").includes("-->")) i++;
+    while (i < lines.length && !(lines[i] ?? "").includes("-->")) {
+      i++;
+    }
     i++; // skip the line containing the closing -->
     while (i < lines.length && lines[i]?.trim() === "") i++;
   }

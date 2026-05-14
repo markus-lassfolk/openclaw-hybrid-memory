@@ -122,7 +122,7 @@ const STOP_WORDS = new Set([
 
 export function parseSkillFrontmatter(skillContent: string): Record<string, string> {
   // Strip optional leading HTML comment (e.g., injected by injectInstallMetadata)
-  const body = skillContent.replace(/^<!--[\s\S]*?-->\s*\r?\n*/, "");
+  const body = skillContent.replace(/^<!--[\s\S]*?-->\s*/, "");
   const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
   const frontmatter: Record<string, string> = {};
