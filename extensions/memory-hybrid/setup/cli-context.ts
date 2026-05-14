@@ -277,6 +277,7 @@ export interface HybridMemCliRegistrationContext {
   proposalsDb: HandlerContext["proposalsDb"];
   identityReflectionStore: HandlerContext["identityReflectionStore"];
   personaStateStore: HandlerContext["personaStateStore"];
+  crystallizationStore?: HandlerContext["crystallizationStore"];
   verificationStore?: import("../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;
@@ -651,6 +652,7 @@ export function registerHybridMemCliHelpOnlyWithApi(api: ClawdbotPluginApi): voi
     proposalsDb: null,
     identityReflectionStore: null,
     personaStateStore: null,
+    crystallizationStore: null,
     verificationStore: null,
     provenanceService: null,
     resolvedSqlitePath,
@@ -1067,6 +1069,7 @@ function createHybridMemCliContext(
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
     aliasDb: handlerCtx.aliasDb,
+    crystallizationStore: handlerCtx.crystallizationStore ?? null,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,
