@@ -390,7 +390,7 @@ export function evaluateProcedureForPromotion(
     requiresHumanApproval: policy !== "auto-safe" || !eligible,
     lifecycleState: "experimental",
     telemetryCommand,
-    falsePositiveCommandTemplate: "openclaw hybrid-mem skills correct <activation-id> --reason \"user rejected skill\"",
+    falsePositiveCommandTemplate: 'openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"',
     lastVerifiedAt: new Date(now * 1000).toISOString(),
   };
   return { eligible, gates, draft: finalDraft, metadata };
@@ -639,7 +639,7 @@ Leave this generated skill disabled until verification or human approval. To dis
     requiresHumanApproval: policy !== "auto-safe",
     lifecycleState: "experimental",
     telemetryCommand,
-    falsePositiveCommandTemplate: "openclaw hybrid-mem skills correct <activation-id> --reason \"user rejected skill\"",
+    falsePositiveCommandTemplate: 'openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"',
     lastVerifiedAt: new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
   };
   const evals = {

@@ -5,10 +5,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry, ProcedureEntry, ScopeFilter } from "../../types/memory.js";
-import type {
-  GeneratedSkillLifecycleState,
-  GeneratedSkillTelemetryEntry,
-} from "../../types/memory.js";
+import type { GeneratedSkillLifecycleState, GeneratedSkillTelemetryEntry } from "../../types/memory.js";
 import {
   getAllIds as getAllIdsImpl,
   getAll as getAllImpl,
@@ -666,7 +663,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return setGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, state, reason, at);
   }
 
-  refreshGeneratedSkillLifecycleState(skillName: string, policy?: GeneratedSkillLifecyclePolicy, now?: number): ProcedureEntry | null {
+  refreshGeneratedSkillLifecycleState(
+    skillName: string,
+    policy?: GeneratedSkillLifecyclePolicy,
+    now?: number,
+  ): ProcedureEntry | null {
     return refreshGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, policy, now);
   }
 

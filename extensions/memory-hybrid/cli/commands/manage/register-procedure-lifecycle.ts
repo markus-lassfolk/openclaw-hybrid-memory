@@ -70,7 +70,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           return;
         }
         if (report.rows.length === 0) {
-          console.log(skillName ? `No generated skill found for ${skillName}.` : "No generated skills have been promoted yet.");
+          console.log(
+            skillName ? `No generated skill found for ${skillName}.` : "No generated skills have been promoted yet.",
+          );
           return;
         }
         console.log("Generated skill telemetry");
@@ -161,13 +163,19 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             return;
           }
           const confidence = opts?.confidence != null ? Number.parseFloat(opts.confidence) : null;
-          if (opts?.confidence != null && (confidence == null || !Number.isFinite(confidence) || confidence < 0 || confidence > 1)) {
+          if (
+            opts?.confidence != null &&
+            (confidence == null || !Number.isFinite(confidence) || confidence < 0 || confidence > 1)
+          ) {
             console.error("error: --confidence must be a number between 0 and 1");
             process.exitCode = 1;
             return;
           }
           const savedToolCalls = opts?.savedToolCalls != null ? Number.parseInt(opts.savedToolCalls, 10) : null;
-          if (opts?.savedToolCalls != null && (savedToolCalls == null || !Number.isFinite(savedToolCalls) || savedToolCalls < 0)) {
+          if (
+            opts?.savedToolCalls != null &&
+            (savedToolCalls == null || !Number.isFinite(savedToolCalls) || savedToolCalls < 0)
+          ) {
             console.error("error: --saved-tool-calls must be a non-negative integer");
             process.exitCode = 1;
             return;
@@ -188,7 +196,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               reason: opts?.reason,
               taskOutcome: outcome as "success" | "failure" | "partial" | "unknown" | undefined,
               userCorrection: opts?.falsePositive,
-              correctionReason: opts?.falsePositive ? opts.reason ?? "user rejected skill" : undefined,
+              correctionReason: opts?.falsePositive ? (opts.reason ?? "user rejected skill") : undefined,
               falseNegativeSignal: opts?.falseNegative,
               causedRework: opts?.causedRework,
               savedToolCalls,
@@ -220,7 +228,10 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--json", "Emit JSON")
     .action(
       withExit(async (activationId: string, opts?: { reason?: string; json?: boolean }) => {
-        const activation = factsDb.markGeneratedSkillTelemetryFalsePositive(activationId, opts?.reason ?? "user correction");
+        const activation = factsDb.markGeneratedSkillTelemetryFalsePositive(
+          activationId,
+          opts?.reason ?? "user correction",
+        );
         if (!activation) {
           console.error(`error: activation not found: ${activationId}`);
           process.exitCode = 1;
@@ -243,7 +254,11 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--json", "Emit JSON")
     .action(
       withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
-        const updated = factsDb.setGeneratedSkillLifecycleState(skillName, "demoted", opts?.reason ?? "manual demotion");
+        const updated = factsDb.setGeneratedSkillLifecycleState(
+          skillName,
+          "demoted",
+          opts?.reason ?? "manual demotion",
+        );
         if (!updated) {
           console.error(`error: generated skill not found: ${skillName}`);
           process.exitCode = 1;

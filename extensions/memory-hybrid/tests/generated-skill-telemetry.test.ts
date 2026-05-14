@@ -146,11 +146,13 @@ describe("generated skill telemetry", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
     const { id, skillName } = createGeneratedSkill();
-    db.getRawDb().prepare("UPDATE procedures SET skill_generated_at = ?, updated_at = ? WHERE id = ?").run(
-      Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
-      Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
-      id,
-    );
+    db.getRawDb()
+      .prepare("UPDATE procedures SET skill_generated_at = ?, updated_at = ? WHERE id = ?")
+      .run(
+        Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
+        Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
+        id,
+      );
 
     const report = db.buildGeneratedSkillTelemetryReport({ skillName });
     const skill = db.getGeneratedSkillByName(skillName);
@@ -181,8 +183,13 @@ describe("generated skill telemetry", () => {
     expect(telemetry.rows?.[0]?.skillName).toBe(skillName);
 
     logSpy.mockClear();
-    await program.parseAsync(["skills", "demote", skillName, "--reason", "over-triggering", "--json"], { from: "user" });
-    const demoted = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { skillState?: string; skillStateReason?: string };
+    await program.parseAsync(["skills", "demote", skillName, "--reason", "over-triggering", "--json"], {
+      from: "user",
+    });
+    const demoted = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      skillState?: string;
+      skillStateReason?: string;
+    };
     expect(demoted.skillState).toBe("demoted");
     expect(demoted.skillStateReason).toContain("over-triggering");
   });

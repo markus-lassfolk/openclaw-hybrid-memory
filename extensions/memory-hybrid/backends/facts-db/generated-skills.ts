@@ -161,7 +161,10 @@ function normalizeSummary(summary: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized.slice(0, MAX_REQUEST_SUMMARY_LENGTH) : null;
 }
 
-function requestHashFromInput(requestHash: string | null | undefined, requestSummary: string | null | undefined): string | null {
+function requestHashFromInput(
+  requestHash: string | null | undefined,
+  requestSummary: string | null | undefined,
+): string | null {
   if (typeof requestHash === "string" && requestHash.trim().length > 0) return requestHash.trim();
   const normalizedSummary = normalizeSummary(requestSummary);
   if (!normalizedSummary) return null;
