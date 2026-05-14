@@ -1,0 +1,397 @@
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { SkillValidator } from "./skill-validator.js";
+
+export type ValidationStageStatus = "passed" | "warn" | "failed";
+export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";
+
+export interface SyntheticActivationCases {
+  positive: string;
+  negative: string;
+  edge: string;
+}
+
+export interface SkillProposalValidationResult {
+  schemaVersion: 1;
+  validatedAt: string;
+  overallStatus: ValidationStageStatus;
+  approvalDecision: ProposalApprovalDecision;
+  staticValidation: {
+    status: ValidationStageStatus;
+    violations: string[];
+    frontmatter: Record<string, string>;
+    safeOutputPath: string;
+  };
+  dryLoadValidation: {
+    status: ValidationStageStatus;
+    violations: string[];
+    discovered: Record<string, string>;
+  };
+  syntheticActivationEval: {
+    status: ValidationStageStatus;
+    score: number;
+    cases: SyntheticActivationCases;
+    results: {
+      positiveMatched: boolean;
+      negativeMatched: boolean;
+      edgeMatched: boolean;
+    };
+    notes: string[];
+  };
+  canarySession: {
+    status: "not-run";
+  };
+}
+
+interface ValidateGeneratedSkillInput {
+  outputDir: string;
+  proposedOutputPath: string;
+  skillName: string;
+  skillContent: string;
+  pattern?: WorkflowPattern;
+}
+
+const REQUIRED_FRONTMATTER_FIELDS = ["name", "description", "category"] as const;
+const REQUIRED_SECTIONS = ["## Trigger", "## Scope", "## When not to use", "## Workflow", "## Examples", "## Provenance"] as const;
+const MAX_SKILL_CHARS = 16_000;
+const MAX_SKILL_LINES = 320;
+const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
+const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ][0-9:.+-z]+/i;
+const SECRET_OR_PRIVATE_PATTERNS = [
+  /sk-[a-z0-9]{20,}/i,
+  /gh[pousr]_[a-z0-9_]{20,}/i,
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
+  /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/,
+  /\/(?:Users|home)\/[^\s/]+/i,
+];
+const STOP_WORDS = new Set([
+  "about",
+  "after",
+  "agent",
+  "asks",
+  "bound",
+  "clearly",
+  "does",
+  "explain",
+  "file",
+  "follow",
+  "from",
+  "generated",
+  "have",
+  "into",
+  "just",
+  "only",
+  "please",
+  "request",
+  "skill",
+  "task",
+  "that",
+  "then",
+  "this",
+  "user",
+  "using",
+  "when",
+  "with",
+  "workflow",
+  "without",
+]);
+
+export function parseSkillFrontmatter(skillContent: string): Record<string, string> {
+  const match = skillContent.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return {};
+  const frontmatter: Record<string, string> = {};
+  for (const rawLine of match[1].split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) continue;
+    const colonIndex = line.indexOf(":");
+    if (colonIndex <= 0) continue;
+    const key = line.slice(0, colonIndex).trim();
+    const value = line
+      .slice(colonIndex + 1)
+      .trim()
+      .replace(/^["']|["']$/g, "");
+    if (key.length > 0) frontmatter[key] = value;
+  }
+  return frontmatter;
+}
+
+export function summarizeSkillProposalValidation(result?: SkillProposalValidationResult): string {
+  if (!result) return "not validated";
+  const status = result.overallStatus.toUpperCase();
+  const override = result.approvalDecision === "allow-with-override" ? " (override required)" : "";
+  return `${status}${override}; static=${result.staticValidation.status}, dry-load=${result.dryLoadValidation.status}, activation=${result.syntheticActivationEval.status} (${result.syntheticActivationEval.score})`;
+}
+
+export class GeneratedSkillValidationService {
+  private readonly skillValidator = new SkillValidator();
+
+  validate(input: ValidateGeneratedSkillInput): SkillProposalValidationResult {
+    const validatedAt = new Date().toISOString();
+    const frontmatter = parseSkillFrontmatter(input.skillContent);
+    const staticValidation = this.validateStatic(input, frontmatter);
+    const dryLoadValidation = this.validateDryLoad(input.skillContent, frontmatter, input.skillName);
+    const syntheticActivationEval = this.evaluateActivation(input, frontmatter);
+    const overallStatus: ValidationStageStatus =
+      staticValidation.status === "failed" || dryLoadValidation.status === "failed" || syntheticActivationEval.status === "failed"
+        ? "failed"
+        : syntheticActivationEval.status === "warn"
+          ? "warn"
+          : "passed";
+    const approvalDecision: ProposalApprovalDecision =
+      staticValidation.status === "failed" || dryLoadValidation.status === "failed" || syntheticActivationEval.status === "failed"
+        ? "deny"
+        : syntheticActivationEval.status === "warn"
+          ? "allow-with-override"
+          : "allow";
+
+    return {
+      schemaVersion: 1,
+      validatedAt,
+      overallStatus,
+      approvalDecision,
+      staticValidation,
+      dryLoadValidation,
+      syntheticActivationEval,
+      canarySession: { status: "not-run" },
+    };
+  }
+
+  private validateStatic(
+    input: ValidateGeneratedSkillInput,
+    frontmatter: Record<string, string>,
+  ): SkillProposalValidationResult["staticValidation"] {
+    const violations: string[] = [];
+    const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
+    const proposedOutputPath = resolve(input.proposedOutputPath);
+
+    if (input.skillContent.length > MAX_SKILL_CHARS) {
+      violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);
+    }
+    if (input.skillContent.split(/\r?\n/).length > MAX_SKILL_LINES) {
+      violations.push(`Skill exceeds ${MAX_SKILL_LINES} lines`);
+    }
+    for (const field of REQUIRED_FRONTMATTER_FIELDS) {
+      if (!frontmatter[field] || frontmatter[field].trim().length === 0) {
+        violations.push(`Missing required frontmatter field: ${field}`);
+      }
+    }
+    if (frontmatter.name && frontmatter.name !== input.skillName) {
+      violations.push(`Frontmatter name '${frontmatter.name}' must match skill name '${input.skillName}'`);
+    }
+    if (frontmatter.name && !/^[a-z0-9-]+$/.test(frontmatter.name)) {
+      violations.push("Frontmatter name must use lowercase letters, digits, and hyphens only");
+    }
+    if ((frontmatter.description ?? "").length > 280) {
+      violations.push("Frontmatter description exceeds 280 characters");
+    }
+    for (const section of REQUIRED_SECTIONS) {
+      if (!input.skillContent.includes(section)) {
+        violations.push(`Missing required section: ${section}`);
+      }
+    }
+    if (!isCanonicalSkillPath(input.outputDir, proposedOutputPath, input.skillName)) {
+      violations.push(`Unsafe proposed output path: ${input.proposedOutputPath}`);
+    }
+    const transcriptLineCount = input.skillContent
+      .split(/\r?\n/)
+      .filter((line) => TRANSCRIPT_LINE_RE.test(line.trim()) || TIMESTAMP_LINE_RE.test(line.trim())).length;
+    if (transcriptLineCount >= 3) {
+      violations.push("Content appears to dump raw transcript or log lines");
+    }
+    for (const pattern of SECRET_OR_PRIVATE_PATTERNS) {
+      if (pattern.test(input.skillContent)) {
+        violations.push(`Secret/private-data pattern detected: ${pattern}`);
+      }
+    }
+    const validatorResult = this.skillValidator.validate(input.skillContent);
+    if (!validatorResult.valid) {
+      violations.push(...validatorResult.violations);
+    }
+
+    return {
+      status: violations.length > 0 ? "failed" : "passed",
+      violations,
+      frontmatter,
+      safeOutputPath,
+    };
+  }
+
+  private validateDryLoad(
+    skillContent: string,
+    frontmatter: Record<string, string>,
+    skillName: string,
+  ): SkillProposalValidationResult["dryLoadValidation"] {
+    const violations: string[] = [];
+    const discovered: Record<string, string> = {};
+    const tempDir = mkdtempSync(join(tmpdir(), "hm-crystallization-dry-load-"));
+
+    try {
+      const workspaceDir = join(tempDir, "workspace");
+      const skillsDir = join(workspaceDir, "skills");
+      const skillDir = join(skillsDir, skillName);
+      mkdirSync(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      writeFileSync(skillPath, skillContent, "utf-8");
+
+      const skillDirReal = realpathSync(skillDir);
+      const skillsDirReal = realpathSync(skillsDir);
+      if (!isWithinDir(skillsDirReal, skillDirReal)) {
+        violations.push("Dry-load skill directory escapes the isolated workspace");
+      }
+      if (lstatSync(skillDir).isSymbolicLink() || lstatSync(skillPath).isSymbolicLink()) {
+        violations.push("Dry-load skill path contains a symlink");
+      }
+
+      const entries = loadDrySkillEntries(skillsDir);
+      const entry = entries.find((candidate) => candidate.name === skillName);
+      if (!entry) {
+        violations.push("Dry-load discovery did not return the generated skill");
+      } else {
+        Object.assign(discovered, entry);
+        if (entry.description !== frontmatter.description) {
+          violations.push("Dry-load description does not match frontmatter description");
+        }
+        if (entry.category !== frontmatter.category) {
+          violations.push("Dry-load category does not match frontmatter category");
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      violations.push(`Dry-load validation failed: ${message}`);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+
+    return {
+      status: violations.length > 0 ? "failed" : "passed",
+      violations,
+      discovered,
+    };
+  }
+
+  private evaluateActivation(
+    input: ValidateGeneratedSkillInput,
+    frontmatter: Record<string, string>,
+  ): SkillProposalValidationResult["syntheticActivationEval"] {
+    const cases = buildSyntheticActivationCases(input, frontmatter);
+    const triggerSection = extractSection(input.skillContent, "Trigger");
+    const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
+    const positive = scoreActivationPrompt(cases.positive, sourceText);
+    const negative = scoreActivationPrompt(cases.negative, sourceText);
+    const edge = scoreActivationPrompt(cases.edge, sourceText);
+    const notes: string[] = [];
+
+    if (!positive.matched) notes.push("Positive eval did not match the skill trigger");
+    if (negative.matched) notes.push("Negative eval over-triggered on an unrelated prompt");
+    if (edge.matched) notes.push("Edge eval looks too broad and would likely over-trigger");
+
+    const status: ValidationStageStatus =
+      !positive.matched || negative.matched ? "failed" : edge.matched ? "warn" : "passed";
+    const score = Math.round(
+      ((positive.matched ? 1 : 0) + (negative.matched ? 0 : 1) + (edge.matched ? 0 : 1)) * (100 / 3),
+    );
+
+    return {
+      status,
+      score,
+      cases,
+      results: {
+        positiveMatched: positive.matched,
+        negativeMatched: negative.matched,
+        edgeMatched: edge.matched,
+      },
+      notes,
+    };
+  }
+}
+
+function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, skillName: string): boolean {
+  if (!isAbsolute(proposedOutputPath)) return false;
+  const expected = resolve(outputDir, skillName, "SKILL.md");
+  return proposedOutputPath === expected && isWithinDir(resolve(outputDir), dirname(proposedOutputPath));
+}
+
+function isWithinDir(rootDir: string, candidatePath: string): boolean {
+  const rel = relative(rootDir, candidatePath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
+  const out: Array<Record<string, string>> = [];
+  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const skillPath = join(skillsDir, entry.name, "SKILL.md");
+    const skillContent = readFileSync(skillPath, "utf-8");
+    const frontmatter = parseSkillFrontmatter(skillContent);
+    if (!frontmatter.name || !frontmatter.description) {
+      throw new Error(`Malformed SKILL.md for ${entry.name}: missing name or description frontmatter`);
+    }
+    out.push(frontmatter);
+  }
+  return out;
+}
+
+function extractSection(skillContent: string, heading: string): string {
+  const match = skillContent.match(new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|$)`, "im"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function buildSyntheticActivationCases(
+  input: ValidateGeneratedSkillInput,
+  frontmatter: Record<string, string>,
+): SyntheticActivationCases {
+  const positive =
+    input.pattern?.exampleGoals.find((goal) => goal.trim().length > 0)?.replace(/\s+/g, " ").trim() ??
+    `Please use the ${input.skillName} workflow for the matching task.`;
+  const keywords = [...significantWords(`${positive} ${frontmatter.description ?? ""}`)].slice(0, 3);
+  const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
+  return {
+    positive,
+    negative: "How do I create a GitHub issue?",
+    edge: `Explain ${edgePhrase} without executing the workflow or changing files.`,
+  };
+}
+
+function scoreActivationPrompt(prompt: string, sourceText: string): { matched: boolean } {
+  const promptWords = significantWords(prompt);
+  const sourceWords = significantWords(sourceText);
+  const overlap = [...promptWords].filter((word) => sourceWords.has(word)).length;
+  let score = overlap;
+  const normalizedPrompt = prompt.toLowerCase();
+  const normalizedSource = sourceText.toLowerCase();
+  if (/\b(?:run|follow|execute|process|perform|use)\b/.test(normalizedPrompt)) score += 1;
+  if (/\b(?:explain|describe|summarize|review)\b/.test(normalizedPrompt)) {
+    if (/\b(?:explain|describe|summarize|review)\b/.test(normalizedSource)) score += 1;
+    else score -= 1;
+  }
+  if (/\b(?:without|do not|don't|avoid)\b/.test(normalizedPrompt) && !/\b(?:without|do not|don't|avoid)\b/.test(normalizedSource)) {
+    score -= 2;
+  }
+  const minimumOverlap = promptWords.size <= 2 ? 1 : 2;
+  return { matched: overlap >= minimumOverlap && score >= 2 };
+}
+
+function significantWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 4 && !STOP_WORDS.has(word)),
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

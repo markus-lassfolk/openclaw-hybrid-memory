@@ -6,6 +6,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { pluginLogger } from "../utils/logger.js";
 
 type FactsDbForPendingDigest = {
@@ -85,7 +86,13 @@ export type PendingReviewDigestReport = {
     pending: number;
     approved: number;
     rejected: number;
-    pendingEntries: Array<{ id: string; skillName: string; approveCommand: string; declineCommand: string }>;
+    pendingEntries: Array<{
+      id: string;
+      skillName: string;
+      approveCommand: string;
+      declineCommand: string;
+      validation: string;
+    }>;
   };
   verifiedFacts: { pendingReview: number; reviewCommand: string };
 };
@@ -114,8 +121,8 @@ export function pendingStorePaths(sqlitePath: string): {
   };
 }
 
-function withStore<T>(factory: () => { close?: () => void }, fn: (store: any) => T, fallback: T): T {
-  let store: { close?: () => void } | null = null;
+function withStore<TStore extends { close?: () => void }, T>(factory: () => TStore, fn: (store: TStore) => T, fallback: T): T {
+  let store: TStore | null = null;
   try {
     store = factory();
     return fn(store);
@@ -276,7 +283,7 @@ export function buildPendingReviewDigestReport(opts: {
         createdAt: p.createdAt,
         approveCommand: `openclaw hybrid-mem proposals approve ${p.id}`,
         declineCommand: `openclaw hybrid-mem proposals reject ${p.id}`,
-        deferCommand: `openclaw hybrid-mem proposals list --status pending`,
+        deferCommand: "openclaw hybrid-mem proposals list --status pending",
         evidence: evidenceForProposal(p.evidenceSessions ?? []),
       })),
     },
@@ -301,6 +308,7 @@ export function buildPendingReviewDigestReport(opts: {
         skillName: p.skillName,
         approveCommand: `memory_crystallize_approve id=${p.id}`,
         declineCommand: `memory_crystallize_reject id=${p.id}`,
+        validation: summarizeSkillProposalValidation(p.validationResult),
       })),
     },
     verifiedFacts: {
@@ -336,9 +344,9 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
   lines.push(
     "",
     `## Procedure promotions (${report.procedures.validatedNotPromoted} backlog, ${report.procedures.newThisWeek} new this week)`,
-    `- Review: openclaw hybrid-mem procedures triage --not-promoted`,
-    `- Approve/promote: openclaw hybrid-mem generate-auto-skills`,
-    `- Defer: leave validated procedures unpromoted`,
+    "- Review: openclaw hybrid-mem procedures triage --not-promoted",
+    "- Approve/promote: openclaw hybrid-mem generate-auto-skills",
+    "- Defer: leave validated procedures unpromoted",
     "",
   );
   lines.push(`## Tool proposals (${report.toolProposals.proposed})`);
@@ -353,6 +361,7 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
   if (report.crystallization.pendingEntries.length === 0) lines.push("No pending crystallization proposals.");
   report.crystallization.pendingEntries.forEach((p, i) => {
     lines.push(`${i + 1}. ${p.skillName}`);
+    lines.push(`   - Validation: ${p.validation}`);
     lines.push(`   - Approve: ${p.approveCommand}`);
     lines.push(`   - Decline: ${p.declineCommand}`);
     lines.push("   - Defer: leave pending");

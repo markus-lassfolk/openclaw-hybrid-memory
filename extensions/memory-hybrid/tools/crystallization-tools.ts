@@ -15,6 +15,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
 
 interface CrystallizationToolsContext {
   crystallizationStore: CrystallizationStore;
@@ -45,7 +46,9 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         lines.push(`  Skipped:  ${result.skipped}`);
         if (result.reasons.length > 0) {
           lines.push("  Details:");
-          result.reasons.forEach((r) => lines.push(`    - ${r}`));
+          for (const reason of result.reasons) {
+            lines.push(`    - ${reason}`);
+          }
         }
         if (result.proposed > 0) {
           lines.push("");
@@ -129,9 +132,12 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           }
           const outputInfo = p.outputPath ? ` → ${p.outputPath}` : "";
           const rejectInfo = p.rejectionReason ? ` (reason: ${p.rejectionReason})` : "";
+          const validationInfo = p.validationResult
+            ? `\n   Validation: ${summarizeSkillProposalValidation(p.validationResult)}`
+            : "";
           return (
             `${i + 1}. [${p.status.toUpperCase()}] ${p.skillName}${patternStats}\n` +
-            `   ID: ${p.id}${outputInfo}${rejectInfo}\n` +
+            `   ID: ${p.id}${outputInfo}${rejectInfo}${validationInfo}\n` +
             `   Created: ${p.createdAt}`
           );
         });
@@ -165,13 +171,18 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
       id: Type.String({
         description: "The proposal ID to approve (from memory_crystallize_list).",
       }),
+      overrideWarnings: Type.Optional(
+        Type.Boolean({
+          description: "Explicitly override activation-eval warnings for an otherwise safe proposal.",
+        }),
+      ),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
-      const { id } = params as { id: string };
+      const { id, overrideWarnings } = params as { id: string; overrideWarnings?: boolean };
 
       try {
         const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
-        const result = proposer.approveProposal(id);
+        const result = proposer.approveProposal(id, { overrideWarnings });
 
         return {
           content: [

@@ -16,9 +16,9 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
 import { SkillCrystallizer } from "./skill-crystallizer.js";
-import { SkillValidator } from "./skill-validator.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -43,7 +43,7 @@ interface ApproveResult {
 export class CrystallizationProposer {
   private readonly detector: PatternDetector;
   private readonly crystallizer: SkillCrystallizer;
-  private readonly validator: SkillValidator;
+  private readonly validator: GeneratedSkillValidationService;
 
   constructor(
     private readonly workflowStore: WorkflowStore,
@@ -52,7 +52,7 @@ export class CrystallizationProposer {
   ) {
     this.detector = new PatternDetector(workflowStore, crystallizationStore, cfg);
     this.crystallizer = new SkillCrystallizer(cfg);
-    this.validator = new SkillValidator();
+    this.validator = new GeneratedSkillValidationService();
   }
 
   // -------------------------------------------------------------------------
@@ -94,16 +94,13 @@ export class CrystallizationProposer {
     for (const candidate of candidates) {
       try {
         const result = this.crystallizer.crystallize(candidate);
-
-        // Static analysis gate
-        const validation = this.validator.validate(result.skillContent);
-        if (!validation.valid) {
-          skipped++;
-          reasons.push(
-            `Skipped '${result.skillName}': failed validation — ${validation.violations.slice(0, 2).join("; ")}`,
-          );
-          continue;
-        }
+        const validation = this.validator.validate({
+          outputDir: this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir()),
+          proposedOutputPath: result.proposedOutputPath,
+          skillName: result.skillName,
+          skillContent: result.skillContent,
+          pattern: candidate.pattern,
+        });
 
         const patternSnapshot = JSON.stringify(candidate.pattern);
 
@@ -122,9 +119,17 @@ export class CrystallizationProposer {
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
+            validationResult: validation,
           });
-          this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
-          this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
+          if (validation.approvalDecision === "allow") {
+            this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
+            this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
+          } else {
+            skipped++;
+            reasons.push(
+              `Pending '${result.skillName}': ${summarizeSkillProposalValidation(validation)}`,
+            );
+          }
           proposed++;
         } else {
           // Store as pending, awaiting human approval
@@ -133,8 +138,12 @@ export class CrystallizationProposer {
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
+            validationResult: validation,
           });
           proposed++;
+          if (validation.overallStatus !== "passed") {
+            reasons.push(`Pending '${result.skillName}': ${summarizeSkillProposalValidation(validation)}`);
+          }
         }
       } catch (err) {
         skipped++;
@@ -154,7 +163,7 @@ export class CrystallizationProposer {
   // approveProposal — write skill to disk and mark as approved
   // -------------------------------------------------------------------------
 
-  approveProposal(proposalId: string): ApproveResult {
+  approveProposal(proposalId: string, opts?: { overrideWarnings?: boolean }): ApproveResult {
     const proposal = this.crystallizationStore.getById(proposalId);
     if (!proposal) {
       return { success: false, message: `Proposal '${proposalId}' not found` };
@@ -175,19 +184,30 @@ export class CrystallizationProposer {
       };
     }
 
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const safeName = proposal.skillName.replace(/[^a-z0-9-]/gi, "-").replace(/^-+|-+$/g, "") || "auto-generated-skill";
+    const outputPath = `${outputDir}/${safeName}/SKILL.md`;
+
     // Re-validate before writing
-    const validation = this.validator.validate(proposal.skillContent);
-    if (!validation.valid) {
+    const validation = this.validator.validate({
+      outputDir,
+      proposedOutputPath: outputPath,
+      skillName: safeName,
+      skillContent: proposal.skillContent,
+    });
+    this.crystallizationStore.saveValidationResult(proposalId, validation);
+    if (validation.approvalDecision === "deny") {
       return {
         success: false,
-        message: `Validation failed: ${validation.violations.join("; ")}`,
+        message: `Validation failed: ${summarizeSkillProposalValidation(validation)}`,
       };
     }
-
-    // Determine output path — sanitize skill name to prevent path traversal
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
-    const outputPath = `${outputDir}/${safeName}/SKILL.md`;
+    if (validation.approvalDecision === "allow-with-override" && opts?.overrideWarnings !== true) {
+      return {
+        success: false,
+        message: `Validation requires explicit override: ${summarizeSkillProposalValidation(validation)}`,
+      };
+    }
 
     // Approve in DB first (source of truth), then write to disk
     const updated = this.crystallizationStore.approve(proposalId, outputPath);

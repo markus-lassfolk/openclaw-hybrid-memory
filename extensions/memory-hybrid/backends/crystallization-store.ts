@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,6 +32,8 @@ interface CrystallizationProposal {
   rejectionReason?: string;
   /** Path where the skill was written on approval */
   outputPath?: string;
+  /** Stored validation/eval result for the proposal */
+  validationResult?: SkillProposalValidationResult;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,6 +43,7 @@ interface CreateProposalInput {
   skillName: string;
   skillContent: string;
   patternSnapshot: string;
+  validationResult?: SkillProposalValidationResult;
 }
 
 interface ProposalFilter {
@@ -68,6 +72,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         pattern_snapshot TEXT NOT NULL DEFAULT '{}',
         rejection_reason TEXT,
         output_path      TEXT,
+        validation_result TEXT,
         created_at       TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
       );
@@ -76,10 +81,18 @@ export class CrystallizationStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_cp_pattern_id  ON crystallization_proposals(pattern_id);
       CREATE INDEX IF NOT EXISTS idx_cp_skill_name  ON crystallization_proposals(skill_name);
     `);
+
+    this.migrateValidationResultColumn();
   }
 
   protected getSubsystemName(): string {
     return "crystallization-store";
+  }
+
+  private migrateValidationResultColumn(): void {
+    const cols = this.liveDb.prepare("PRAGMA table_info(crystallization_proposals)").all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "validation_result")) return;
+    this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN validation_result TEXT");
   }
 
   // -------------------------------------------------------------------------
@@ -94,10 +107,19 @@ export class CrystallizationStore extends BaseSqliteStore {
       this.liveDb
         .prepare(
           `INSERT INTO crystallization_proposals
-           (id, pattern_id, skill_name, skill_content, status, pattern_snapshot, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+           (id, pattern_id, skill_name, skill_content, status, pattern_snapshot, validation_result, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
         )
-        .run(id, input.patternId, input.skillName, input.skillContent, input.patternSnapshot, now, now);
+        .run(
+          id,
+          input.patternId,
+          input.skillName,
+          input.skillContent,
+          input.patternSnapshot,
+          input.validationResult ? JSON.stringify(input.validationResult) : null,
+          now,
+          now,
+        );
 
       // biome-ignore lint/style/noNonNullAssertion: Known to exist
       return this.getByIdInternal(id)!;
@@ -184,6 +206,21 @@ export class CrystallizationStore extends BaseSqliteStore {
     });
   }
 
+  saveValidationResult(id: string, validationResult: SkillProposalValidationResult): CrystallizationProposal | null {
+    return this.runWithDb("saveValidationResult", () => {
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+         SET validation_result = ?, updated_at = ?
+         WHERE id = ?`,
+        )
+        .run(JSON.stringify(validationResult), now, id);
+      if (result.changes === 0) return null;
+      return this.getByIdInternal(id);
+    });
+  }
+
   // -------------------------------------------------------------------------
   // reject — transition pending → rejected
   // -------------------------------------------------------------------------
@@ -250,8 +287,18 @@ export class CrystallizationStore extends BaseSqliteStore {
       patternSnapshot: row.pattern_snapshot as string,
       rejectionReason: row.rejection_reason ? (row.rejection_reason as string) : undefined,
       outputPath: row.output_path ? (row.output_path as string) : undefined,
+      validationResult: parseValidationResult(row.validation_result),
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
+  }
+}
+
+function parseValidationResult(value: unknown): SkillProposalValidationResult | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  try {
+    return JSON.parse(value) as SkillProposalValidationResult;
+  } catch {
+    return undefined;
   }
 }
