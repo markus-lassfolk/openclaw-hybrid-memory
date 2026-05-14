@@ -13,6 +13,10 @@ import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { readSchemaVersion, writeSchemaVersion } from "./sqlite-schema-meta.js";
+
+/** Increment when adding a new idempotent migration step in `runSchemaMigrations`. */
+export const CRYSTALLIZATION_STORE_SCHEMA_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -154,68 +158,25 @@ export class CrystallizationStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_cp_evidence_hash ON crystallization_proposals(evidence_hash);
     `);
 
-    this.migrateSchema();
+    this.runSchemaMigrations();
   }
 
   protected getSubsystemName(): string {
     return "crystallization-store";
   }
 
-  private migrateSchema(): void {
-    const cols = this.liveDb.prepare("PRAGMA table_info(crystallization_proposals)").all() as Array<{ name: string }>;
-    const has = (name: string) => cols.some((c) => c.name === name);
-
-    if (!has("evidence_hash")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN evidence_hash TEXT");
+  private runSchemaMigrations(): void {
+    let v = readSchemaVersion(this.liveDb);
+    while (v < CRYSTALLIZATION_STORE_SCHEMA_VERSION) {
+      const next = v + 1;
+      if (next === 1) migrateCrystallizationSchemaV1(this.liveDb);
+      else if (next === 2) migrateCrystallizationSchemaV2(this.liveDb);
+      else {
+        throw new Error(`crystallization-store: unsupported schema migration target ${next}`);
+      }
+      writeSchemaVersion(this.liveDb, next);
+      v = next;
     }
-    if (!has("proposal_card_json")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN proposal_card_json TEXT");
-    }
-    if (!has("category")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN category TEXT");
-    }
-    if (!has("description")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN description TEXT");
-    }
-    if (!has("confidence")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN confidence REAL");
-    }
-    if (!has("recommended_output")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN recommended_output TEXT");
-    }
-    if (!has("approved_at")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN approved_at TEXT");
-    }
-    if (!has("installed_at")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN installed_at TEXT");
-    }
-    if (!has("superseded_at")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN superseded_at TEXT");
-    }
-    if (!has("superseded_by")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN superseded_by TEXT");
-    }
-    if (!has("validation_result")) {
-      this.liveDb.exec("ALTER TABLE crystallization_proposals ADD COLUMN validation_result TEXT");
-    }
-
-    // Status migration: legacy values → lifecycle.
-    // - pending (generated + awaiting human) → validated (already passed SkillValidator historically)
-    // - approved (written, legacy rows with output_path) → installed — only when a path exists so we
-    //   do not flip new lifecycle rows that are approved but not yet installed.
-    // - rejected stays rejected
-    this.liveDb.exec(
-      "UPDATE crystallization_proposals SET status = 'validated' WHERE status = 'pending' AND status IS NOT NULL",
-    );
-    this.liveDb.exec(
-      "UPDATE crystallization_proposals SET status = 'installed', installed_at = COALESCE(installed_at, datetime('now')) WHERE status = 'approved' AND output_path IS NOT NULL AND TRIM(output_path) <> ''",
-    );
-
-    // Backfill evidence_hash for legacy rows so regeneration guards can work.
-    // Use pattern_id as a conservative stable fallback.
-    this.liveDb.exec(
-      "UPDATE crystallization_proposals SET evidence_hash = pattern_id WHERE (evidence_hash IS NULL OR evidence_hash = '') AND pattern_id IS NOT NULL",
-    );
   }
 
   private expandStatusFilter(status?: CrystallizationStatusFilter): CrystallizationStatus[] | undefined {
@@ -529,6 +490,58 @@ export class CrystallizationStore extends BaseSqliteStore {
       updatedAt: row.updated_at as string,
     };
   }
+}
+
+function migrateCrystallizationSchemaV1(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(crystallization_proposals)").all() as Array<{ name: string }>;
+  const has = (name: string) => cols.some((c) => c.name === name);
+
+  if (!has("evidence_hash")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN evidence_hash TEXT");
+  }
+  if (!has("proposal_card_json")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN proposal_card_json TEXT");
+  }
+  if (!has("category")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN category TEXT");
+  }
+  if (!has("description")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN description TEXT");
+  }
+  if (!has("confidence")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN confidence REAL");
+  }
+  if (!has("recommended_output")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN recommended_output TEXT");
+  }
+  if (!has("approved_at")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN approved_at TEXT");
+  }
+  if (!has("installed_at")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN installed_at TEXT");
+  }
+  if (!has("superseded_at")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN superseded_at TEXT");
+  }
+  if (!has("superseded_by")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN superseded_by TEXT");
+  }
+  if (!has("validation_result")) {
+    db.exec("ALTER TABLE crystallization_proposals ADD COLUMN validation_result TEXT");
+  }
+
+  db.exec("UPDATE crystallization_proposals SET status = 'validated' WHERE status = 'pending' AND status IS NOT NULL");
+  db.exec(
+    "UPDATE crystallization_proposals SET status = 'installed', installed_at = COALESCE(installed_at, datetime('now')) WHERE status = 'approved' AND output_path IS NOT NULL AND TRIM(output_path) <> ''",
+  );
+
+  db.exec(
+    "UPDATE crystallization_proposals SET evidence_hash = pattern_id WHERE (evidence_hash IS NULL OR evidence_hash = '') AND pattern_id IS NOT NULL",
+  );
+}
+
+function migrateCrystallizationSchemaV2(db: DatabaseSync): void {
+  db.exec("CREATE INDEX IF NOT EXISTS idx_cp_created_at ON crystallization_proposals(created_at)");
 }
 
 function parseValidationResult(value: unknown): SkillProposalValidationResult | undefined {

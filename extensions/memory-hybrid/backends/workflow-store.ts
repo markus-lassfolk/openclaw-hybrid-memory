@@ -16,6 +16,10 @@ import type { SQLInputValue } from "node:sqlite";
 
 import { capturePluginError } from "../services/error-reporter.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { readSchemaVersion, writeSchemaVersion } from "./sqlite-schema-meta.js";
+
+/** Increment when adding a new idempotent migration step. */
+export const WORKFLOW_STORE_SCHEMA_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -184,10 +188,26 @@ export class WorkflowStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_wt_outcome       ON workflow_traces(outcome);
       CREATE INDEX IF NOT EXISTS idx_wt_session_id    ON workflow_traces(session_id);
     `);
+
+    this.runSchemaMigrations();
   }
 
   protected getSubsystemName(): string {
     return "workflow-store";
+  }
+
+  private runSchemaMigrations(): void {
+    let v = readSchemaVersion(this.liveDb);
+    while (v < WORKFLOW_STORE_SCHEMA_VERSION) {
+      const next = v + 1;
+      if (next === 1) migrateWorkflowSchemaV1(this.liveDb);
+      else if (next === 2) migrateWorkflowSchemaV2(this.liveDb);
+      else {
+        throw new Error(`workflow-store: unsupported schema migration target ${next}`);
+      }
+      writeSchemaVersion(this.liveDb, next);
+      v = next;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -484,4 +504,13 @@ export class WorkflowStore extends BaseSqliteStore {
       createdAt: row.created_at as string,
     };
   }
+}
+
+function migrateWorkflowSchemaV1(_db: DatabaseSync): void {
+  // Baseline migration: `schema_meta` + version tracking (Issue #1430). No DDL beyond
+  // what `CREATE TABLE IF NOT EXISTS` already guarantees for fresh databases.
+}
+
+function migrateWorkflowSchemaV2(db: DatabaseSync): void {
+  db.exec("CREATE INDEX IF NOT EXISTS idx_wt_created_at ON workflow_traces(created_at)");
 }

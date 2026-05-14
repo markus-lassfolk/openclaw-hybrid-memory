@@ -6,11 +6,13 @@
  * Deduplication: skips patterns that already have a pending/approved proposal.
  */
 
-import { createHash } from "node:crypto";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
+
+export { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,42 +26,6 @@ interface CrystallizationCandidate {
   pattern: WorkflowPattern;
   /** Composite score: usageCount × successRate (higher = better candidate) */
   score: number;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Compute a stable string id for a WorkflowPattern based on its tool sequence.
- * Uses SHA-256 truncated to 16 hex chars.
- */
-export function computePatternId(toolSequence: string[]): string {
-  return createHash("sha256").update(JSON.stringify(toolSequence)).digest("hex").slice(0, 16);
-}
-
-/**
- * Compute a stable hash of "evidence" used to generate proposal content, intentionally
- * excluding metric counters so we don't regenerate immediately from unchanged substance.
- */
-export function computeEvidenceHash(pattern: WorkflowPattern): string {
-  const payload = {
-    toolSequence: pattern.toolSequence,
-    exampleGoals: pattern.exampleGoals
-      .map((g) => g.trim().replace(/\s+/g, " "))
-      .filter((g) => g.length > 0)
-      .slice(0, 5),
-  };
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
-}
-
-/**
- * Score a pattern for crystallization priority.
- * Formula: usageCount × successRate
- * Both components are bounded and well-defined.
- */
-export function scorePattern(pattern: WorkflowPattern): number {
-  return pattern.totalCount * pattern.successRate;
 }
 
 // ---------------------------------------------------------------------------
