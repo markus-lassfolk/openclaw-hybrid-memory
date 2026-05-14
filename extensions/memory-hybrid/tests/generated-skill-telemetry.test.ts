@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import type { ManageBindings } from "../cli/commands/manage/bindings.js";
-import { registerManageProcedureAndLifecycle } from "../cli/commands/manage/register-procedure-lifecycle.js";
+import { registerSkillsCommands } from "../cli/skills.js";
 
 let tmpDir: string;
 let db: FactsDB;
@@ -37,30 +36,6 @@ function createGeneratedSkill(taskPattern = "Validate release health report"): {
   const skillName = "validate-release-health-report";
   db.markProcedurePromoted(proc.id, `skills/auto/${skillName}`);
   return { id: proc.id, skillName };
-}
-
-function makeBindings(): ManageBindings {
-  return {
-    factsDb: db,
-    cfg: {
-      procedures: {
-        validationThreshold: 3,
-        skillTTLDays: 30,
-        skillsAutoPath: "skills/auto",
-      },
-    },
-    runExtractProcedures: vi.fn(),
-    runGenerateAutoSkills: vi.fn(),
-    ctx: { versionInfo: { pluginVersion: "test" } },
-    runUpgrade: vi.fn(),
-    runUninstall: vi.fn(),
-    runBackup: vi.fn(),
-    runBackupVerify: vi.fn(),
-    resolvedSqlitePath: join(tmpDir, "facts.db"),
-    resolvedLancePath: join(tmpDir, "lancedb"),
-    merge: vi.fn(),
-    BACKFILL_DECAY_MARKER: ".backfill-decay-done",
-  } as unknown as ManageBindings;
 }
 
 describe("generated skill telemetry", () => {
@@ -240,7 +215,7 @@ describe("generated skill telemetry", () => {
     process.argv = ["node", "vitest", "hybrid-mem"];
     const program = new Command("hybrid-mem");
     program.exitOverride();
-    registerManageProcedureAndLifecycle(program, makeBindings());
+    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await program.parseAsync(["skills", "telemetry", skillName, "--json"], { from: "user" });
