@@ -208,6 +208,30 @@ describe("CrystallizationProposer.runCycle — autoApprove=true", () => {
     expect(skillPath).toBeDefined();
     expect(existsSync(skillPath!)).toBe(true);
   });
+
+  it("does not persist auto-approve candidates after maxCrystallized is reached mid-cycle", () => {
+    const outputDir = join(tmpDir, "skills-capped");
+    const cfg: CrystallizationConfig = {
+      ...BASE_CFG,
+      outputDir,
+      autoApprove: true,
+      minUsageCount: 2,
+      minSuccessRate: 0.5,
+      maxCrystallized: 1,
+    };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    seedPatterns(["exec", "read", "write"], 3, 1);
+    seedPatterns(["read", "edit", "exec"], 3, 1);
+
+    const result = proposer.runCycle();
+
+    expect(result.proposed).toBe(1);
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result.reasons.some((reason) => /maxCrystallized limit reached/i.test(reason))).toBe(true);
+    expect(cStore.count("approved")).toBe(1);
+    expect(cStore.list({ status: "pending" })).toHaveLength(0);
+    expect(cStore.list()).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

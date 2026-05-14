@@ -119,6 +119,10 @@ type ApproveWithinCapResult =
   | { kind: "limit-reached" }
   | { kind: "not-approvable" };
 
+type CreateApprovedWithinCapResult =
+  | { kind: "approved"; proposal: CrystallizationProposal }
+  | { kind: "limit-reached" };
+
 // ---------------------------------------------------------------------------
 // CrystallizationStore
 // ---------------------------------------------------------------------------
@@ -128,6 +132,7 @@ export class CrystallizationStore extends BaseSqliteStore {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     super(db, { deferClose: true });
+    this.registerSqlFunctions();
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS crystallization_proposals (
@@ -165,6 +170,12 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   protected getSubsystemName(): string {
     return "crystallization-store";
+  }
+
+  private registerSqlFunctions(): void {
+    this.liveDb.function("normalizedCrystallizationTimestamp", { deterministic: true }, (primary, fallback) => {
+      return normalizeCrystallizationTimestamp(primary) ?? normalizeCrystallizationTimestamp(fallback) ?? 0;
+    });
   }
 
   private migrateSchema(): void {
@@ -235,7 +246,10 @@ export class CrystallizationStore extends BaseSqliteStore {
           `SELECT id
              FROM crystallization_proposals
             WHERE pattern_id = ? AND status = 'installed'
-            ORDER BY COALESCE(installed_at, created_at) DESC, updated_at DESC, created_at DESC, id DESC`,
+            ORDER BY normalizedCrystallizationTimestamp(installed_at, created_at) DESC,
+                     normalizedCrystallizationTimestamp(updated_at, created_at) DESC,
+                     normalizedCrystallizationTimestamp(created_at, NULL) DESC,
+                     id DESC`,
         )
         .all(row.pattern_id) as Array<{ id: string }>;
       const keepId = installedRows[0]?.id;
@@ -271,36 +285,72 @@ export class CrystallizationStore extends BaseSqliteStore {
     return this.runWithDb("create", () => {
       const id = randomUUID();
       const now = new Date().toISOString();
-      const status = input.status ?? "drafted";
-
-      this.liveDb
-        .prepare(
-          `INSERT INTO crystallization_proposals
-           (id, pattern_id, evidence_hash, skill_name, skill_content, status, pattern_snapshot, proposal_card_json, category, description, confidence, recommended_output, rejection_reason, validation_result, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          input.patternId,
-          input.evidenceHash,
-          input.skillName,
-          input.skillContent,
-          status,
-          input.patternSnapshot,
-          input.proposalCardJson ?? null,
-          input.category ?? null,
-          input.description ?? null,
-          input.confidence ?? null,
-          input.recommendedOutput ?? null,
-          input.rejectionReason ?? null,
-          input.validationResult ? JSON.stringify(input.validationResult) : null,
-          now,
-          now,
-        );
+      this.insertProposalInternal(id, input, input.status ?? "drafted", now);
 
       // biome-ignore lint/style/noNonNullAssertion: Known to exist
       return this.getByIdInternal(id)!;
     });
+  }
+
+  createApprovedWithinCap(input: CreateProposalInput, maxCrystallized: number): CreateApprovedWithinCapResult {
+    return this.runWithDb("createApprovedWithinCap", () => {
+      const tx = createTransaction(
+        this.liveDb,
+        (): CreateApprovedWithinCapResult => {
+          const row = this.liveDb
+            .prepare("SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN ('approved', 'installed')")
+            .get() as { n: number };
+          if (row.n >= maxCrystallized) {
+            return { kind: "limit-reached" };
+          }
+
+          const id = randomUUID();
+          const now = new Date().toISOString();
+          this.insertProposalInternal(id, input, "approved", now, now);
+          const proposal = this.getByIdInternal(id);
+          if (!proposal) {
+            throw new Error("Failed to read created crystallization proposal");
+          }
+          return { kind: "approved", proposal };
+        },
+        "IMMEDIATE",
+      );
+      return tx();
+    });
+  }
+
+  private insertProposalInternal(
+    id: string,
+    input: CreateProposalInput,
+    status: CrystallizationStatus,
+    now: string,
+    approvedAt?: string,
+  ): void {
+    this.liveDb
+      .prepare(
+        `INSERT INTO crystallization_proposals
+           (id, pattern_id, evidence_hash, skill_name, skill_content, status, pattern_snapshot, proposal_card_json, category, description, confidence, recommended_output, rejection_reason, validation_result, approved_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.patternId,
+        input.evidenceHash,
+        input.skillName,
+        input.skillContent,
+        status,
+        input.patternSnapshot,
+        input.proposalCardJson ?? null,
+        input.category ?? null,
+        input.description ?? null,
+        input.confidence ?? null,
+        input.recommendedOutput ?? null,
+        input.rejectionReason ?? null,
+        input.validationResult ? JSON.stringify(input.validationResult) : null,
+        approvedAt ?? null,
+        now,
+        now,
+      );
   }
 
   // -------------------------------------------------------------------------
@@ -431,9 +481,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         this.liveDb,
         (): ApproveWithinCapResult => {
           const row = this.liveDb
-            .prepare(
-              "SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN ('approved', 'installed')",
-            )
+            .prepare("SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN ('approved', 'installed')")
             .get() as { n: number };
           if (row.n >= maxCrystallized) {
             return { kind: "limit-reached" };
@@ -667,4 +715,19 @@ function parseValidationResult(value: unknown): SkillProposalValidationResult | 
   } catch {
     return undefined;
   }
+}
+
+function normalizeCrystallizationTimestamp(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value / 1000 : value;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return numeric > 10_000_000_000 ? numeric / 1000 : numeric;
+  }
+  const parsed = Date.parse(trimmed.includes("T") ? trimmed : `${trimmed.replace(" ", "T")}Z`);
+  return Number.isFinite(parsed) ? parsed / 1000 : null;
 }

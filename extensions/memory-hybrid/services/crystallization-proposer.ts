@@ -151,8 +151,7 @@ export class CrystallizationProposer {
           continue;
         }
 
-        // Store as validated proposal (awaiting human approval)
-        const proposal = this.crystallizationStore.create({
+        const proposalInput = {
           patternId: candidate.patternId,
           evidenceHash: candidate.evidenceHash,
           skillName: result.skillName,
@@ -163,20 +162,29 @@ export class CrystallizationProposer {
           description: result.proposalCard.description,
           confidence: result.proposalCard.confidence,
           recommendedOutput: result.proposalCard.recommended_output,
-          status: "validated",
+          status: "validated" as const,
           validationResult: gsv,
-        });
+        };
 
         if (autoApprove && gsv.approvalDecision === "allow") {
-          const approval = this.crystallizationStore.approveWithinCap(proposal.id, this.cfg.maxCrystallized);
+          const approval = this.crystallizationStore.createApprovedWithinCap(proposalInput, this.cfg.maxCrystallized);
           if (approval.kind === "limit-reached") {
+            skipped++;
             reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
-          } else if (approval.kind === "approved") {
-            const outputPath = this.computeOutputPath(approval.proposal.skillName);
-            this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approval.proposal, outputPath));
-            this.crystallizationStore.install(approval.proposal.id, outputPath);
+            continue;
           }
-        } else if (autoApprove && gsv.approvalDecision !== "allow") {
+
+          const outputPath = this.computeOutputPath(approval.proposal.skillName);
+          this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approval.proposal, outputPath));
+          this.crystallizationStore.install(approval.proposal.id, outputPath);
+          proposed++;
+          continue;
+        }
+
+        // Store as validated proposal (awaiting human approval)
+        this.crystallizationStore.create(proposalInput);
+
+        if (autoApprove && gsv.approvalDecision !== "allow") {
           reasons.push(
             `Queued '${result.skillName}' (auto-approve skipped; needs override or fixes): ${summarizeSkillProposalValidation(gsv)}`,
           );
