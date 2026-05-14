@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { FactsDB } from "../backends/facts-db.js";
 import {
-  extractProceduresFromSessions,
   type ParsedSession,
+  extractProceduresFromSessions,
   minimalRecipe,
   parseSessionJsonl,
   taskSimilarity,
@@ -209,7 +209,11 @@ describe("procedure-extractor", () => {
       } as unknown as FactsDB;
 
       try {
-        await extractProceduresFromSessions(factsDb, { filePaths: [join(dir, "session-1.jsonl")] }, { info: vi.fn(), warn: vi.fn() });
+        await extractProceduresFromSessions(
+          factsDb,
+          { filePaths: [join(dir, "session-1.jsonl")] },
+          { info: vi.fn(), warn: vi.fn() },
+        );
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -231,7 +235,11 @@ describe("procedure-extractor", () => {
       } as unknown as FactsDB;
 
       try {
-        await extractProceduresFromSessions(factsDb, { filePaths: [join(dir, "session-1.jsonl")] }, { info: vi.fn(), warn: vi.fn() });
+        await extractProceduresFromSessions(
+          factsDb,
+          { filePaths: [join(dir, "session-1.jsonl")] },
+          { info: vi.fn(), warn: vi.fn() },
+        );
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
