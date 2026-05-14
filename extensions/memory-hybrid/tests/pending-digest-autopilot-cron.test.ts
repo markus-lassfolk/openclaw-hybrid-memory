@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { hybridConfigSchema, type HybridMemoryConfig } from "../config.js";
-import type { PendingDigestFactsDb } from "../services/pending-digest-autopilot.js";
-import { runPendingDigestAutopilotCron } from "../services/pending-digest-autopilot-cron.js";
+import { type HybridMemoryConfig, hybridConfigSchema } from "../config.js";
 import { parseExitLine, validateMaintenanceExecution } from "../services/cron-exit-validator.js";
+import { runPendingDigestAutopilotCron } from "../services/pending-digest-autopilot-cron.js";
+import type { PendingDigestFactsDb } from "../services/pending-digest-autopilot.js";
 
 const dirs: string[] = [];
 
@@ -76,6 +76,22 @@ function seedLatestDigestSuccess(openclawHome: string): void {
     "utf-8",
   );
   writeFileSync(logPath, "weekly pending digest ok\n", "utf-8");
+}
+
+function seedLatestDigestFailedWithOlderSuccess(openclawHome: string): void {
+  const day = join(openclawHome, "logs", "cron-hybrid-mem", "20260512");
+  rmSync(day, { recursive: true, force: true });
+  mkdirSync(day, { recursive: true });
+  const older = join(day, "weekly-pending-digest-2026-05-12T07-00-00Z.exit.txt");
+  const newer = join(day, "weekly-pending-digest-2026-05-12T09-00-00Z.exit.txt");
+  writeFileSync(older, "2026-05-12T07:00:00Z step=digest-pending exit=0 status=ok reason=ok duration_ms=1\n", "utf-8");
+  writeFileSync(
+    newer,
+    "2026-05-12T09:00:00Z step=digest-pending exit=1 status=failed reason=inner_command_failed duration_ms=1\n",
+    "utf-8",
+  );
+  utimesSync(older, new Date("2026-05-12T07:00:00Z"), new Date("2026-05-12T07:00:00Z"));
+  utimesSync(newer, new Date("2026-05-12T09:00:00Z"), new Date("2026-05-12T09:00:00Z"));
 }
 
 describe("pending digest autopilot cron wrapper", () => {
@@ -155,6 +171,61 @@ describe("pending digest autopilot cron wrapper", () => {
       true,
     );
     expect(validation.maintenanceStatus).toBe("success");
+  });
+
+  it("skips when newest weekly pending digest failed even if an older digest succeeded", async () => {
+    const dir = newDir();
+    seedLatestDigestFailedWithOlderSuccess(dir);
+    const cfg = configFor(join(dir, "facts.db"), {
+      autopilot: {
+        enabled: true,
+        mode: "dry-run",
+      },
+    });
+
+    const result = await runPendingDigestAutopilotCron({
+      cfg,
+      factsDb: factsDb(),
+      openclawHome: dir,
+      now: new Date("2026-05-13T08:20:00Z"),
+    });
+
+    expect(result.summary.status).toBe("skipped");
+    expect(result.summary.skipReason).toBe("latest_digest_failed");
+    expect(result.summary.latestDigest.found).toBe(false);
+    expect(result.summary.latestDigest.status).toBe("failed");
+  });
+
+  it("ignores autopilot HM_EXIT artifacts when resolving latest digest", async () => {
+    const dir = newDir();
+    const day = join(dir, "logs", "cron-hybrid-mem", "20260512");
+    mkdirSync(day, { recursive: true });
+    writeFileSync(
+      join(day, "weekly-pending-digest-autopilot-2026-05-12T10-00-00Z.exit.txt"),
+      "2026-05-12T10:00:00Z step=digest-autopilot exit=1 status=failed reason=inner_command_failed duration_ms=1\n",
+      "utf-8",
+    );
+    utimesSync(
+      join(day, "weekly-pending-digest-autopilot-2026-05-12T10-00-00Z.exit.txt"),
+      new Date("2026-05-12T10:00:00Z"),
+      new Date("2026-05-12T10:00:00Z"),
+    );
+    const cfg = configFor(join(dir, "facts.db"), {
+      autopilot: {
+        enabled: true,
+        mode: "dry-run",
+      },
+    });
+
+    const result = await runPendingDigestAutopilotCron({
+      cfg,
+      factsDb: factsDb(),
+      openclawHome: dir,
+      now: new Date("2026-05-13T08:20:00Z"),
+    });
+
+    expect(result.summary.status).toBe("skipped");
+    expect(result.summary.skipReason).toBe("latest_digest_missing");
   });
 
   it("skips apply mode when lock is already held", async () => {

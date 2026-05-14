@@ -885,6 +885,13 @@ function parseAutopilotPositiveInt(value: unknown, fallback: number, field: stri
   return normalized;
 }
 
+function parseAutopilotStrictBoolean(value: unknown, field: string, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  if (value === true) return true;
+  if (value === false) return false;
+  throw new Error(`Invalid digest.autopilot.${field}: expected boolean, received ${typeof value} (${String(value)})`);
+}
+
 export function parseDigestAutopilotConfig(cfg: Record<string, unknown>): DigestAutopilotConfig {
   const digest = cfg.digest as Record<string, unknown> | undefined;
   const autopilot = digest?.autopilot as Record<string, unknown> | undefined;
@@ -938,11 +945,19 @@ export function parseDigestAutopilotConfig(cfg: Record<string, unknown>): Digest
       "classify",
       "crystallizationPolicy",
     ),
-    notifyOnNoop: autopilot?.notifyOnNoop === true,
-    notifyOnDryRunActions: autopilot?.notifyOnDryRunActions === true,
-    notifyOnApplyActions: autopilot?.notifyOnApplyActions !== false,
-    notifyOnHumanReviewRequired: autopilot?.notifyOnHumanReviewRequired !== false,
-    notifyOnFailure: autopilot?.notifyOnFailure !== false,
+    notifyOnNoop: parseAutopilotStrictBoolean(autopilot?.notifyOnNoop, "notifyOnNoop", false),
+    notifyOnDryRunActions: parseAutopilotStrictBoolean(
+      autopilot?.notifyOnDryRunActions,
+      "notifyOnDryRunActions",
+      false,
+    ),
+    notifyOnApplyActions: parseAutopilotStrictBoolean(autopilot?.notifyOnApplyActions, "notifyOnApplyActions", true),
+    notifyOnHumanReviewRequired: parseAutopilotStrictBoolean(
+      autopilot?.notifyOnHumanReviewRequired,
+      "notifyOnHumanReviewRequired",
+      true,
+    ),
+    notifyOnFailure: parseAutopilotStrictBoolean(autopilot?.notifyOnFailure, "notifyOnFailure", true),
     guardWindowHours: parseAutopilotPositiveInt(autopilot?.guardWindowHours, 120, "guardWindowHours"),
     lockTtlMinutes: parseAutopilotPositiveInt(autopilot?.lockTtlMinutes, 120, "lockTtlMinutes"),
   };

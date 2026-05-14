@@ -67,4 +67,17 @@ describe("digest autopilot config parsing", () => {
       }),
     ).toThrow(/digest\.autopilot\.personaPolicy/);
   });
+
+  it("rejects non-boolean digest.autopilot notification flags", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...baseConfig("/tmp/hm-config-notify-string.db"),
+        digest: {
+          autopilot: {
+            notifyOnFailure: "false",
+          },
+        },
+      }),
+    ).toThrow(/digest\.autopilot\.notifyOnFailure/);
+  });
 });

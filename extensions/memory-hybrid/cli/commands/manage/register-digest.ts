@@ -5,13 +5,13 @@
  * tool proposals, crystallization proposals, and verified facts.
  */
 
+import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import {
   type PendingDigestAutopilotMaxima,
   type PendingDigestAutopilotPolicies,
   runPendingDigestAutopilot,
   stablePendingDigestAutopilotJson,
 } from "../../../services/pending-digest-autopilot.js";
-import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import {
   buildPendingReviewDigestReport,
   writePendingReviewDigestOutput,
@@ -114,12 +114,10 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
           cfg: b.cfg,
           factsDb: b.factsDb,
         });
-        process.stdout.write(
-          opts?.json ? `${JSON.stringify(result.summary, null, 2)}\n` : `${result.humanSummary}\n`,
-        );
-        if (result.summary.status === "failed") {
+        process.stdout.write(opts?.json ? `${JSON.stringify(result.summary, null, 2)}\n` : `${result.humanSummary}\n`);
+        if (result.summary.status === "failed" || result.summary.status === "partial") {
           throw new Error(
-            `pending digest autopilot cron failed; see ${result.summary.artifacts.hmLog} and ${result.summary.artifacts.hmExit}`,
+            `pending digest autopilot cron ${result.summary.status}; see ${result.summary.artifacts.hmLog} and ${result.summary.artifacts.hmExit}`,
           );
         }
       }),

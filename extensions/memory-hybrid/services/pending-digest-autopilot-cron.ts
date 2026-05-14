@@ -1,12 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HybridMemoryConfig } from "../config.js";
-import type { PendingDigestFactsDb, PendingDigestAutopilotResult } from "./pending-digest-autopilot.js";
-import { runPendingDigestAutopilot } from "./pending-digest-autopilot.js";
-import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { validateMaintenanceExecution } from "./cron-exit-validator.js";
+import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { canonicalJson, redactAutopilotValue } from "./pending-autopilot/index.js";
+import type { PendingDigestAutopilotResult, PendingDigestFactsDb } from "./pending-digest-autopilot.js";
+import { runPendingDigestAutopilot } from "./pending-digest-autopilot.js";
 
 export const PENDING_DIGEST_AUTOPILOT_CRON_JOB = "weekly-pending-digest-autopilot";
 const PENDING_DIGEST_JOB = "weekly-pending-digest";
@@ -97,7 +97,8 @@ export async function runPendingDigestAutopilotCron(
   const now = opts.now ?? new Date();
   const runId = opts.runId ?? `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${now.toISOString()}`;
   const openclawHome = resolveOpenclawHome(opts.openclawHome);
-  const artifactDir = join(openclawHome, "logs", "cron-hybrid-mem", now.toISOString().slice(0, 10).replace(/-/g, ""));
+  const cronLogRoot = resolveWritableCronHybridMemRoot(openclawHome);
+  const artifactDir = join(cronLogRoot, now.toISOString().slice(0, 10).replace(/-/g, ""));
   mkdirSync(artifactDir, { recursive: true });
   const runToken = now.toISOString().replace(/[:.]/g, "-");
   const hmLog = process.env.HM_LOG?.trim() || join(artifactDir, `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${runToken}.log`);
@@ -191,7 +192,7 @@ export async function runPendingDigestAutopilotCron(
 
   if (status !== "failed" && status !== "skipped") {
     const latestStartedAt = Date.now();
-    latestDigest = findLatestWeeklyPendingDigestArtifact(join(openclawHome, "logs", "cron-hybrid-mem"));
+    latestDigest = findLatestWeeklyPendingDigestArtifact(cronLogRoot);
     logLine(
       hmLog,
       `run.latest_digest found=${String(latestDigest.found)} status=${latestDigest.status ?? "unknown"} path=${latestDigest.path ?? "none"}`,
@@ -234,177 +235,192 @@ export async function runPendingDigestAutopilotCron(
     }
   }
 
-  if (status !== "failed" && status !== "skipped" && !stepRows.has("digest-autopilot")) {
-    const startedAt = Date.now();
-    try {
-      logLine(
-        hmLog,
-        `run.command openclaw hybrid-mem digest autopilot --${autopilotCfg.mode} --max-persona ${autopilotCfg.maxPersona} --max-procedures ${autopilotCfg.maxProcedures} --max-verified ${autopilotCfg.maxVerified} --max-tools ${autopilotCfg.maxTools} --max-crystallization ${autopilotCfg.maxCrystallization}`,
-      );
-      autopilotResult = await runPendingDigestAutopilot({
-        cfg: opts.cfg,
-        factsDb: opts.factsDb,
-        mode: autopilotCfg.mode,
-        runId,
-        jobId: `hybrid-mem:${PENDING_DIGEST_AUTOPILOT_CRON_JOB}`,
-        now,
-        stateDbPath: join(dirname(opts.cfg.sqlitePath), "pending-autopilot.db"),
-        policies: {
-          persona: autopilotCfg.personaPolicy,
-          procedures: autopilotCfg.procedurePolicy,
-          verified: autopilotCfg.verifiedPolicy,
-          tools: autopilotCfg.toolPolicy,
-          crystallization: autopilotCfg.crystallizationPolicy,
-        },
-        max: {
-          persona: autopilotCfg.maxPersona,
-          procedures: autopilotCfg.maxProcedures,
-          verified: autopilotCfg.maxVerified,
-          tools: autopilotCfg.maxTools,
-          crystallization: autopilotCfg.maxCrystallization,
-        },
-      });
-      markStep("digest-autopilot", { exit: 0, status: "ok", reason: "ok", durationMs: Date.now() - startedAt });
-    } catch (err) {
+  let summary!: PendingDigestAutopilotCronSummary;
+  let humanSummary = "";
+
+  try {
+    if (status !== "failed" && status !== "skipped" && !stepRows.has("digest-autopilot")) {
+      const startedAt = Date.now();
+      try {
+        logLine(
+          hmLog,
+          `run.command openclaw hybrid-mem digest autopilot --${autopilotCfg.mode} --max-persona ${autopilotCfg.maxPersona} --max-procedures ${autopilotCfg.maxProcedures} --max-verified ${autopilotCfg.maxVerified} --max-tools ${autopilotCfg.maxTools} --max-crystallization ${autopilotCfg.maxCrystallization}`,
+        );
+        autopilotResult = await runPendingDigestAutopilot({
+          cfg: opts.cfg,
+          factsDb: opts.factsDb,
+          mode: autopilotCfg.mode,
+          runId,
+          jobId: `hybrid-mem:${PENDING_DIGEST_AUTOPILOT_CRON_JOB}`,
+          now,
+          stateDbPath: join(dirname(opts.cfg.sqlitePath), "pending-autopilot.db"),
+          policies: {
+            persona: autopilotCfg.personaPolicy,
+            procedures: autopilotCfg.procedurePolicy,
+            verified: autopilotCfg.verifiedPolicy,
+            tools: autopilotCfg.toolPolicy,
+            crystallization: autopilotCfg.crystallizationPolicy,
+          },
+          max: {
+            persona: autopilotCfg.maxPersona,
+            procedures: autopilotCfg.maxProcedures,
+            verified: autopilotCfg.maxVerified,
+            tools: autopilotCfg.maxTools,
+            crystallization: autopilotCfg.maxCrystallization,
+          },
+        });
+        markStep("digest-autopilot", { exit: 0, status: "ok", reason: "ok", durationMs: Date.now() - startedAt });
+      } catch (err) {
+        status = "failed";
+        markStep("digest-autopilot", {
+          exit: 1,
+          status: "failed",
+          reason: "inner_command_failed",
+          durationMs: Date.now() - startedAt,
+        });
+        logLine(hmLog, `error.digest-autopilot ${stringifyError(err)}`);
+      }
+    }
+
+    const queueMap: Array<[CronStepName, keyof NonNullable<typeof autopilotResult>["queues"]]> = [
+      ["persona-triage", "persona"],
+      ["procedure-promotion", "procedures"],
+      ["verified-triage", "verified"],
+      ["tool-proposals", "tools"],
+      ["crystallization-proposals", "crystallization"],
+    ];
+    for (const [stepName, queueName] of queueMap) {
+      if (stepRows.has(stepName)) continue;
+      if (!autopilotResult) {
+        markStep(stepName, {
+          exit: 0,
+          status: "skipped",
+          reason: skipReason ?? "digest_autopilot_not_run",
+          durationMs: 0,
+        });
+        continue;
+      }
+      const queue = autopilotResult.queues[queueName];
+      if (queue.skipped) {
+        markStep(stepName, { exit: 0, status: "skipped", reason: queue.skipReason ?? "queue_skipped", durationMs: 0 });
+      } else if (queue.decisions.length === 0) {
+        markStep(stepName, { exit: 0, status: "skipped", reason: "policy_report_only_no_actions", durationMs: 0 });
+      } else {
+        markStep(stepName, { exit: 0, status: "ok", reason: "ok", durationMs: 0 });
+      }
+    }
+
+    if (status === "skipped") {
+      markMissingAsSkipped(skipReason ?? "skipped");
+    } else if (status === "failed") {
+      markMissingAsSkipped("blocked_by_failure");
+    }
+
+    summary = buildCronSummary({
+      runId,
+      status,
+      skipReason,
+      mode: autopilotCfg.mode,
+      latestDigest,
+      autopilotResult,
+      artifacts,
+      notificationSent,
+      autopilotCfg,
+    });
+
+    const validateStartedAt = Date.now();
+    const requiredBeforeValidate = REQUIRED_STEPS.filter(
+      (s) => s !== "validate-cron-exit" && s !== "notification-policy" && s !== "summary-write",
+    );
+    const validation = validateMaintenanceExecution(hmExit, hmLog, [...requiredBeforeValidate], true);
+    if (validation.maintenanceStatus === "failed" || validation.maintenanceStatus === "partial") {
       status = "failed";
-      markStep("digest-autopilot", {
+      summary.status = "failed";
+      markStep("validate-cron-exit", {
         exit: 1,
         status: "failed",
-        reason: "inner_command_failed",
-        durationMs: Date.now() - startedAt,
+        reason: "validate_cron_exit_failed",
+        durationMs: Date.now() - validateStartedAt,
       });
-      logLine(hmLog, `error.digest-autopilot ${stringifyError(err)}`);
-    }
-  }
-
-  const queueMap: Array<[CronStepName, keyof NonNullable<typeof autopilotResult>["queues"]]> = [
-    ["persona-triage", "persona"],
-    ["procedure-promotion", "procedures"],
-    ["verified-triage", "verified"],
-    ["tool-proposals", "tools"],
-    ["crystallization-proposals", "crystallization"],
-  ];
-  for (const [stepName, queueName] of queueMap) {
-    if (stepRows.has(stepName)) continue;
-    if (!autopilotResult) {
-      markStep(stepName, { exit: 0, status: "skipped", reason: skipReason ?? "digest_autopilot_not_run", durationMs: 0 });
-      continue;
-    }
-    const queue = autopilotResult.queues[queueName];
-    if (queue.skipped) {
-      markStep(stepName, { exit: 0, status: "skipped", reason: queue.skipReason ?? "queue_skipped", durationMs: 0 });
-    } else if (queue.decisions.length === 0) {
-      markStep(stepName, { exit: 0, status: "skipped", reason: "policy_report_only_no_actions", durationMs: 0 });
+      logLine(hmLog, `error.validate-cron-exit ${validation.error ?? "validation_failed"}`);
     } else {
-      markStep(stepName, { exit: 0, status: "ok", reason: "ok", durationMs: 0 });
-    }
-  }
-
-  if (status === "skipped") {
-    markMissingAsSkipped(skipReason ?? "skipped");
-  } else if (status === "failed") {
-    markMissingAsSkipped("blocked_by_failure");
-  }
-
-  const summaryStartedAt = Date.now();
-  const summary = buildCronSummary({
-    runId,
-    status,
-    skipReason,
-    mode: autopilotCfg.mode,
-    latestDigest,
-    autopilotResult,
-    artifacts,
-    notificationSent,
-    autopilotCfg,
-  });
-  const humanSummary = renderCronHumanSummary(summary);
-  try {
-    writeFileSync(summaryJson, `${canonicalJson(redactAutopilotValue(summary))}\n`, "utf-8");
-    writeFileSync(summaryText, `${humanSummary}\n`, "utf-8");
-    markStep("summary-write", { exit: 0, status: "ok", reason: "ok", durationMs: Date.now() - summaryStartedAt });
-  } catch (err) {
-    status = "failed";
-    summary.status = "failed";
-    markStep("summary-write", {
-      exit: 1,
-      status: "failed",
-      reason: "artifact_write_failed",
-      durationMs: Date.now() - summaryStartedAt,
-    });
-    logLine(hmLog, `error.summary-write ${stringifyError(err)}`);
-  }
-
-  const validateStartedAt = Date.now();
-  const requiredBeforeValidate = REQUIRED_STEPS.filter((s) => s !== "validate-cron-exit" && s !== "notification-policy");
-  const validation = validateMaintenanceExecution(hmExit, hmLog, [...requiredBeforeValidate], true);
-  if (validation.maintenanceStatus === "failed" || validation.maintenanceStatus === "partial") {
-    status = "failed";
-    summary.status = "failed";
-    markStep("validate-cron-exit", {
-      exit: 1,
-      status: "failed",
-      reason: "validate_cron_exit_failed",
-      durationMs: Date.now() - validateStartedAt,
-    });
-    logLine(hmLog, `error.validate-cron-exit ${validation.error ?? "validation_failed"}`);
-  } else {
-    markStep("validate-cron-exit", {
-      exit: 0,
-      status: "ok",
-      reason: "ok",
-      durationMs: Date.now() - validateStartedAt,
-    });
-  }
-
-  const notifyStartedAt = Date.now();
-  try {
-    const shouldNotify = shouldNotifyRun(summary, autopilotCfg);
-    if (shouldNotify) {
-      const payloadPath = join(artifactDir, `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${runToken}.notification.json`);
-      const payload = {
-        runId: summary.runId,
-        status: summary.status,
-        counts: summary.counts,
-        humanReviewRequired: summary.humanReviewRequired,
-        skipReason: summary.skipReason,
-        artifacts: summary.artifacts,
-      };
-      writeFileSync(payloadPath, `${canonicalJson(redactAutopilotValue(payload))}\n`, "utf-8");
-      artifacts.notificationJson = payloadPath;
-      notificationSent = true;
-      summary.notificationSent = true;
-      markStep("notification-policy", {
+      markStep("validate-cron-exit", {
         exit: 0,
         status: "ok",
-        reason: "notification_sent",
-        durationMs: Date.now() - notifyStartedAt,
-      });
-      logLine(hmLog, `run.notification payload=${payloadPath}`);
-    } else {
-      markStep("notification-policy", {
-        exit: 0,
-        status: "skipped",
-        reason: "notification_not_required",
-        durationMs: Date.now() - notifyStartedAt,
+        reason: "ok",
+        durationMs: Date.now() - validateStartedAt,
       });
     }
-  } catch (err) {
-    if (status === "ok") status = "partial";
+
+    const notifyStartedAt = Date.now();
+    try {
+      const shouldNotify = shouldNotifyRun(summary, autopilotCfg);
+      if (shouldNotify) {
+        const payloadPath = join(artifactDir, `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${runToken}.notification.json`);
+        const payload = {
+          runId: summary.runId,
+          status: summary.status,
+          counts: summary.counts,
+          humanReviewRequired: summary.humanReviewRequired,
+          skipReason: summary.skipReason,
+          artifacts: summary.artifacts,
+        };
+        writeFileSync(payloadPath, `${canonicalJson(redactAutopilotValue(payload))}\n`, "utf-8");
+        artifacts.notificationJson = payloadPath;
+        notificationSent = true;
+        summary.notificationSent = true;
+        markStep("notification-policy", {
+          exit: 0,
+          status: "ok",
+          reason: "notification_sent",
+          durationMs: Date.now() - notifyStartedAt,
+        });
+        logLine(hmLog, `run.notification payload=${payloadPath}`);
+      } else {
+        markStep("notification-policy", {
+          exit: 0,
+          status: "skipped",
+          reason: "notification_not_required",
+          durationMs: Date.now() - notifyStartedAt,
+        });
+      }
+    } catch (err) {
+      if (status === "ok") status = "partial";
+      summary.status = status;
+      markStep("notification-policy", {
+        exit: 1,
+        status: "failed",
+        reason: "notification_failed",
+        durationMs: Date.now() - notifyStartedAt,
+      });
+      logLine(hmLog, `error.notification-policy ${stringifyError(err)}`);
+    }
+
     summary.status = status;
-    markStep("notification-policy", {
-      exit: 1,
-      status: "failed",
-      reason: "notification_failed",
-      durationMs: Date.now() - notifyStartedAt,
-    });
-    logLine(hmLog, `error.notification-policy ${stringifyError(err)}`);
+    summary.skipReason = status === "skipped" ? skipReason : undefined;
+    summary.notificationSent = notificationSent;
+
+    const summaryStartedAt = Date.now();
+    humanSummary = renderCronHumanSummary(summary);
+    try {
+      writeFileSync(summaryJson, `${canonicalJson(redactAutopilotValue(summary))}\n`, "utf-8");
+      writeFileSync(summaryText, `${humanSummary}\n`, "utf-8");
+      markStep("summary-write", { exit: 0, status: "ok", reason: "ok", durationMs: Date.now() - summaryStartedAt });
+    } catch (err) {
+      status = "failed";
+      summary.status = "failed";
+      markStep("summary-write", {
+        exit: 1,
+        status: "failed",
+        reason: "artifact_write_failed",
+        durationMs: Date.now() - summaryStartedAt,
+      });
+      logLine(hmLog, `error.summary-write ${stringifyError(err)}`);
+    }
   } finally {
     if (acquiredLock) releaseAutopilotLock(lockPath, runId);
   }
 
-  summary.status = status;
-  summary.skipReason = status === "skipped" ? skipReason : undefined;
   logLine(hmLog, `run.finish status=${summary.status} skip_reason=${summary.skipReason ?? "none"}`);
   if (status === "ok" && !skipReason) {
     mkdirSync(dirname(guardPath), { recursive: true });
@@ -421,6 +437,33 @@ function resolveOpenclawHome(openclawHome?: string): string {
     return process.env.OPENCLAW_HOME.trim();
   }
   return join(homedir(), ".openclaw");
+}
+
+/** Match hybrid-mem cron bash harness: prefer ~/.openclaw/logs/cron-hybrid-mem, fall back to /tmp when not writable. */
+function resolveWritableCronHybridMemRoot(openclawHome: string): string {
+  const primary = join(openclawHome, "logs", "cron-hybrid-mem");
+  try {
+    mkdirSync(primary, { recursive: true });
+    const probe = join(primary, `.write-probe-${process.pid}-${Date.now()}`);
+    writeFileSync(probe, "ok", "utf-8");
+    unlinkSync(probe);
+    return primary;
+  } catch {
+    const user = process.env.USER || process.env.USERNAME || "user";
+    const fallback =
+      process.platform === "win32"
+        ? join(tmpdir(), `openclaw-cron-hybrid-mem-${user}`)
+        : join("/tmp", `openclaw-cron-hybrid-mem-${user}`);
+    mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+}
+
+function spinWaitMs(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    /* tight spin for short lock-acquisition backoff */
+  }
 }
 
 function ensureFile(path: string): void {
@@ -458,7 +501,7 @@ function findLatestWeeklyPendingDigestArtifact(root: string): PendingDigestAutop
     if (!dir) continue;
     for (const entry of safeReadDir(dir)) {
       const fullPath = join(dir, entry);
-      let st;
+      let st: ReturnType<typeof statSync>;
       try {
         st = statSync(fullPath);
       } catch {
@@ -469,27 +512,29 @@ function findLatestWeeklyPendingDigestArtifact(root: string): PendingDigestAutop
         continue;
       }
       if (!entry.startsWith(`${PENDING_DIGEST_JOB}-`) || !entry.endsWith(".exit.txt")) continue;
+      if (entry.startsWith(`${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-`)) continue;
       const content = readSafe(fullPath);
-      const success = /\bstep=digest-pending\b.*\bexit=0\b/.test(content) || /\bdigest-pending\b.*\bexit=0\b/.test(content);
+      const success =
+        /\bstep=digest-pending\b.*\bexit=0\b/.test(content) || /\bdigest-pending\b.*\bexit=0\b/.test(content);
       candidates.push({ path: fullPath, mtimeMs: st.mtimeMs, success });
     }
   }
   if (candidates.length === 0) return { found: false };
   candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  const latestSuccess = candidates.find((c) => c.success);
-  if (latestSuccess) {
+  const newest = candidates[0];
+  if (!newest) return { found: false };
+  if (newest.success) {
     return {
       found: true,
-      path: latestSuccess.path,
-      timestamp: new Date(latestSuccess.mtimeMs).toISOString(),
+      path: newest.path,
+      timestamp: new Date(newest.mtimeMs).toISOString(),
       status: "success",
     };
   }
-  const latest = candidates[0];
   return {
     found: false,
-    path: latest.path,
-    timestamp: new Date(latest.mtimeMs).toISOString(),
+    path: newest.path,
+    timestamp: new Date(newest.mtimeMs).toISOString(),
     status: "failed",
   };
 }
@@ -593,20 +638,33 @@ function tryAcquireAutopilotLock(
       return false;
     }
   };
+
+  const recoverStaleOrCorruptLock = (): { acquired: boolean; reason: "lock_stale_recovered" | "lock_already_held" } => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const snapshot = readSafe(lockPath);
+        const existing = parseLock(snapshot);
+        if (existing && existing.expiresAt > nowMs) return { acquired: false, reason: "lock_already_held" };
+        if (existing && existing.expiresAt <= nowMs) {
+          rmSync(lockPath, { force: true });
+        } else if (!existing) {
+          rmSync(lockPath, { force: true });
+        }
+        spinWaitMs(2 + attempt * 5);
+        if (tryWriteExclusive()) return { acquired: true, reason: "lock_stale_recovered" };
+      } catch {
+        spinWaitMs(2 + attempt * 5);
+      }
+    }
+    return { acquired: false, reason: "lock_already_held" };
+  };
+
   try {
     if (tryWriteExclusive()) return { acquired: true, reason: "lock_acquired" };
     const existing = parseLock(readSafe(lockPath));
-    if (!existing) {
-      rmSync(lockPath, { force: true });
-      return tryWriteExclusive()
-        ? { acquired: true, reason: "lock_stale_recovered" }
-        : { acquired: false, reason: "lock_already_held" };
-    }
+    if (!existing) return recoverStaleOrCorruptLock();
     if (existing.expiresAt > nowMs) return { acquired: false, reason: "lock_already_held" };
-    rmSync(lockPath, { force: true });
-    return tryWriteExclusive()
-      ? { acquired: true, reason: "lock_stale_recovered" }
-      : { acquired: false, reason: "lock_already_held" };
+    return recoverStaleOrCorruptLock();
   } catch {
     return { acquired: false, reason: "lock_already_held" };
   }
