@@ -1008,7 +1008,10 @@ ${extra.extraBody ?? ""}`;
   });
 
   it("does not flag custom domain when validator is configured with custom allow-list", () => {
-    const customValidator = new SkillValidator({ emailPattern: buildNonPlaceholderEmailPattern(["example.com", "localhost", "test.com", "example.org", "acme-internal.corp"]) });
+    const customEmailPattern = buildNonPlaceholderEmailPattern([
+      "example.com", "localhost", "test.com", "example.org", "acme-internal.corp",
+    ]);
+    const customValidator = new SkillValidator({ emailPattern: customEmailPattern });
     const content = compactValidSkill({
       extraBody: "\nContact: team@acme-internal.corp\n",
     });

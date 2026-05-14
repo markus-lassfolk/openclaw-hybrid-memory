@@ -54,6 +54,7 @@ export const DEFAULT_PLACEHOLDER_EMAIL_DOMAINS = ["example.com", "localhost", "t
 /**
  * Build a regex that matches real-looking email addresses while excluding placeholder domains.
  * Domain entries are regex-escaped so arbitrary strings are safe to pass.
+ * If the allow-list is empty, returns a pattern that flags all valid-looking email addresses.
  * @param allowList - domains to treat as safe placeholders (default: {@link DEFAULT_PLACEHOLDER_EMAIL_DOMAINS})
  */
 export function buildNonPlaceholderEmailPattern(allowList: string[]): RegExp {
@@ -61,6 +62,10 @@ export function buildNonPlaceholderEmailPattern(allowList: string[]): RegExp {
     .filter((d) => d.length > 0)
     .map((d) => d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|");
+  if (escaped.length === 0) {
+    // No placeholder domains: flag all valid-looking email addresses.
+    return /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+  }
   return new RegExp(`\\b[A-Za-z0-9._%+-]+@(?!${escaped})[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b`);
 }
 
