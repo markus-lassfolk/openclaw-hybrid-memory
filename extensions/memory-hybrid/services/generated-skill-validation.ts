@@ -78,7 +78,6 @@ const MAX_SKILL_CHARS = 16_000;
 const MAX_SKILL_LINES = 320;
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
 const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
-const EXPLANATION_PATTERN = /\b(?:explain|describe|summarize|review)\b/;
 const NEGATION_PATTERN = /\b(?:without|do not|don't|avoid)\b/;
 const SECRET_OR_PRIVATE_PATTERNS = [
   /sk-[a-z0-9]{20,}/i,
@@ -512,10 +511,6 @@ function scoreActivationPrompt(prompt: string, sourceText: string): { matched: b
   const normalizedPrompt = prompt.toLowerCase();
   const normalizedSource = sourceText.toLowerCase();
   if (/\b(?:run|follow|execute|process|perform|use)\b/.test(normalizedPrompt)) score += 1;
-  if (EXPLANATION_PATTERN.test(normalizedPrompt)) {
-    if (EXPLANATION_PATTERN.test(normalizedSource)) score += 1;
-    else score -= 1;
-  }
   if (NEGATION_PATTERN.test(normalizedPrompt) && !NEGATION_PATTERN.test(normalizedSource)) {
     score -= 2;
   }

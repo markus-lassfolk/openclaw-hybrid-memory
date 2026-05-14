@@ -8,9 +8,9 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
+import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -181,7 +181,7 @@ function buildExamplesText(exampleGoals: string[], skillName: string, toolSequen
     .filter((g) => g.length > 0);
   const concreteGoals = cleanedGoals.filter((g) => g.length >= 18);
   const primaryGoal = cleanedGoals[0] ?? skillName.replace(/[-_]+/g, " ");
-  const concreteFallback = `Handle "${primaryGoal}" using the ${toolSequence.join(" → ")} workflow, then verify the result before reporting back.`;
+  const concreteFallback = `- Run the ${toolSequence.join(" → ")} workflow to validate "${primaryGoal}" end-to-end, then report what changed.`;
   const examples = [...concreteGoals];
   if (examples.length === 0) examples.push(concreteFallback);
   for (const goal of cleanedGoals) {
@@ -202,8 +202,11 @@ function computeConfidence(pattern: WorkflowPattern): number {
 }
 
 function inferCategory(toolSequence: string[]): string {
-  if (toolSequence.some((t) => t.toLowerCase().includes("github"))) return "workflow-automation";
-  if (toolSequence.includes("exec")) return "workflow-automation";
+  const tl = toolSequence.map((t) => t.toLowerCase());
+  if (tl.some((t) => t.includes("github"))) return "source-control";
+  if (tl.includes("exec")) return "shell-automation";
+  if (tl.some((t) => t === "write" || t.includes("patch"))) return "filesystem-editing";
+  if (tl.some((t) => t.includes("read") || t.includes("search"))) return "research-and-analysis";
   return "workflow-automation";
 }
 

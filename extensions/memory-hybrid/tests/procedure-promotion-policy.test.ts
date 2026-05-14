@@ -709,6 +709,44 @@ Source procedure id: proc-weather
     expect(evaluation.metadata.rejectionReasons).toContain("no_validation_possible");
   });
 
+  it("detects validation hints nested under args (#1421)", () => {
+    const proc = addProcedure({
+      taskPattern: "Run packaged CLI wrapper integration check",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "cfg.json" }, summary: "load config" },
+        {
+          tool: "exec",
+          args: { options: { expected: "exit 0" }, command: "npm test" },
+          summary: "run nested gate",
+        },
+      ]),
+      sourceSessionId: "nested-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "nested-b");
+    db.recordProcedureSuccess(proc.id, undefined, "nested-c");
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+    expect(evaluation.metadata.rejectionReasons).not.toContain("no_validation_possible");
+  });
+
+  it("defers tasks mentioning our team (#1421)", () => {
+    const proc = addProcedure({
+      taskPattern: "Sync release notes with our team Slack channel",
+      sourceSessionId: "ourteam-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "ourteam-b");
+    db.recordProcedureSuccess(proc.id, undefined, "ourteam-c");
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+    expect(evaluation.metadata.rejectionReasons).toContain("too_context_specific");
+  });
+
   it("blocks private/high-entropy data and redacts generated artifacts", () => {
     const proc = addProcedure({
       taskPattern: "Validate private report workflow",

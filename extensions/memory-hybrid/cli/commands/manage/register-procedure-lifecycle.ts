@@ -272,6 +272,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               apply,
               policy: opts?.policy,
               requireValidation: opts?.force !== true,
+              promotionContextSpecificPatterns: cfg.procedures.promotionContextSpecificPatterns,
             },
             { info: (s) => console.log(s), warn: (s) => console.warn(s) },
           );

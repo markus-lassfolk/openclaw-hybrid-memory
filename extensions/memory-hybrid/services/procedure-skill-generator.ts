@@ -131,6 +131,8 @@ type GenerateAutoSkillsOptions = {
   dryRun?: boolean;
   apply?: boolean;
   policy?: string;
+  /** Extra regex sources for `too_context_specific` deferrals (merged with defaults; #1421). */
+  promotionContextSpecificPatterns?: readonly string[];
 };
 
 /**
@@ -178,6 +180,7 @@ export function generateAutoSkills(
       resolvedSlug,
       inRunSkillCandidates,
       evidence,
+      contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     const reservedCandidate = {
@@ -346,6 +349,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
+    contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
