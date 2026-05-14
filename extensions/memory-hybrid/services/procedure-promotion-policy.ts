@@ -312,7 +312,8 @@ export function evaluateProcedureForPromotion(
   const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
   const minSuccessRate = Math.min(
     0.95,
-    (options.minSuccessRate ?? DEFAULT_MIN_SUCCESS_RATE) + (riskLevel === "high" ? 0.15 : riskLevel === "medium" ? 0.05 : 0),
+    (options.minSuccessRate ?? DEFAULT_MIN_SUCCESS_RATE) +
+      (riskLevel === "high" ? 0.15 : riskLevel === "medium" ? 0.05 : 0),
   );
   const requiredSuccessCount = options.validationThreshold + riskValidationBump;
   const proc = item.procedure;
@@ -375,7 +376,8 @@ export function evaluateProcedureForPromotion(
     userSignal: evidenceSummary.userSignal,
     generality: Math.min(1, evidenceSummary.sourceSessionCount / 3),
     riskLevel,
-    activationSpecificity: hasEnoughTaskBoundary(proc.taskPattern) && !looksTooContextSpecific(proc.taskPattern) ? 1 : 0.4,
+    activationSpecificity:
+      hasEnoughTaskBoundary(proc.taskPattern) && !looksTooContextSpecific(proc.taskPattern) ? 1 : 0.4,
     similarSkillExists,
   });
 
@@ -413,7 +415,13 @@ export function evaluateProcedureForPromotion(
   const finalDraft = eligible ? draft : null;
   const generatedPath = eligible && finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
   const validatorScore = Number(
-    Math.max(0, Math.min(1, candidateScoring.score * (gates.length === 0 ? 1 : gates.some((g) => g.severity === "reject") ? 0.35 : 0.65))).toFixed(3),
+    Math.max(
+      0,
+      Math.min(
+        1,
+        candidateScoring.score * (gates.length === 0 ? 1 : gates.some((g) => g.severity === "reject") ? 0.35 : 0.65),
+      ),
+    ).toFixed(3),
   );
   const metadata: ProcedurePromotionVerification = {
     skill: resolvedSkillSlug,
@@ -824,10 +832,26 @@ function summarizeProcedureEvidence(
   const procedureVersions = evidence?.procedureVersions ?? [];
   const versionSuccesses = procedureVersions.reduce((sum, version) => sum + Math.max(0, version.successCount), 0);
   const versionFailures = procedureVersions.reduce((sum, version) => sum + Math.max(0, version.failureCount), 0);
-  const successCount = Math.max(item.procedure.successCount, versionSuccesses || item.procedure.successCount);
-  const failureCount = Math.max(item.procedure.failureCount, versionFailures || item.procedure.failureCount);
+  // When callers attach explicit version aggregates (eval harness / scoring previews), those
+  // counts should drive evidence summaries — otherwise live procedure.successCount from the DB
+  // dominates and masks synthetic failure-heavy scenarios.
+  let successCount: number;
+  let failureCount: number;
+  if (procedureVersions.length > 0 && (versionSuccesses > 0 || versionFailures > 0)) {
+    successCount = versionSuccesses;
+    failureCount = versionFailures;
+  } else if (procedureVersions.length > 0) {
+    successCount = Math.max(item.procedure.successCount, versionSuccesses);
+    failureCount = Math.max(item.procedure.failureCount, versionFailures);
+  } else {
+    successCount = Math.max(item.procedure.successCount, versionSuccesses || item.procedure.successCount);
+    failureCount = Math.max(item.procedure.failureCount, versionFailures || item.procedure.failureCount);
+  }
   const successRateFromCounts = successCount + failureCount > 0 ? successCount / (successCount + failureCount) : 1;
-  const successRate = Math.max(0, Math.min(1, item.payload.successRate ?? successRateFromCounts));
+  const successRate =
+    procedureVersions.length > 0 && (versionSuccesses > 0 || versionFailures > 0)
+      ? Math.max(0, Math.min(1, successRateFromCounts))
+      : Math.max(0, Math.min(1, item.payload.successRate ?? successRateFromCounts));
 
   const failureRecords = evidence?.procedureFailures ?? [];
   const failureEpisodes = (evidence?.episodes ?? []).filter((episode) => episode.outcome === "failure").length;
@@ -838,7 +862,15 @@ function summarizeProcedureEvidence(
   );
   const failureSeverity = Math.max(
     0,
-    Math.min(1, (failureCount * 0.2 + failureRecords.length * 0.1 + failureEpisodes * 0.15 + partialEpisodes * 0.05 + avoidanceNotes * 0.05) / 3),
+    Math.min(
+      1,
+      (failureCount * 0.2 +
+        failureRecords.length * 0.1 +
+        failureEpisodes * 0.15 +
+        partialEpisodes * 0.05 +
+        avoidanceNotes * 0.05) /
+        3,
+    ),
   );
 
   const correctionCount = evidence?.userCorrections?.length ?? 0;
@@ -846,7 +878,10 @@ function summarizeProcedureEvidence(
   const rulesPreferenceCount = evidence?.rulesAndPreferences?.length ?? 0;
   const userSignal = Math.max(
     0,
-    Math.min(1, 0.5 + manualRequestCount * 0.15 + rulesPreferenceCount * 0.05 - correctionCount * 0.15 - failureEpisodes * 0.08),
+    Math.min(
+      1,
+      0.5 + manualRequestCount * 0.15 + rulesPreferenceCount * 0.05 - correctionCount * 0.15 - failureEpisodes * 0.08,
+    ),
   );
 
   const sourceSessionIds = collectDistinctSessionIds(item.procedure.sourceSessions, evidence);
@@ -872,10 +907,15 @@ function collectDistinctSessionIds(
 ): string[] {
   const source = new Set<string>();
   if (sourceSessions) {
-    for (const session of sourceSessions.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean)) source.add(session);
+    for (const session of sourceSessions
+      .split(/[\s,;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean))
+      source.add(session);
   }
   for (const episode of evidence?.episodes ?? []) {
-    if (typeof episode.sessionId === "string" && episode.sessionId.trim().length > 0) source.add(episode.sessionId.trim());
+    if (typeof episode.sessionId === "string" && episode.sessionId.trim().length > 0)
+      source.add(episode.sessionId.trim());
   }
   for (const correction of evidence?.userCorrections ?? []) {
     if (typeof correction.sourceSession === "string" && correction.sourceSession.trim().length > 0)

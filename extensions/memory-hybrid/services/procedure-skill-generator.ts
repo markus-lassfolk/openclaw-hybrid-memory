@@ -21,15 +21,7 @@ import {
 } from "./procedure-promotion-policy.js";
 
 const MAX_SKILLS_PER_RUN = 10;
-const EVIDENCE_STOP_WORDS = new Set([
-  "with",
-  "from",
-  "that",
-  "this",
-  "workflow",
-  "procedure",
-  "report",
-]);
+const EVIDENCE_STOP_WORDS = new Set(["with", "from", "that", "this", "workflow", "procedure", "report"]);
 
 /** Per-procedure result returned by {@link generateAutoSkillForProcedure}. */
 export type GenerateAutoSkillResult =
