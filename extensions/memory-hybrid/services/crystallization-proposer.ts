@@ -211,6 +211,7 @@ export class CrystallizationProposer {
       overrideWarnings?: boolean;
       name?: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): ApproveResult {
@@ -244,6 +245,7 @@ export class CrystallizationProposer {
       {
         skillName: safeName,
         category: desiredCategory,
+        description: opts?.description?.trim() || undefined,
         recommendedOutput: desiredRecommendedOutput,
       },
     );
@@ -281,6 +283,7 @@ export class CrystallizationProposer {
       skillName: safeName,
       skillContent: rewrittenContent,
       category: desiredCategory,
+      ...(opts?.description?.trim() ? { description: opts.description.trim() } : {}),
       recommendedOutput: desiredRecommendedOutput,
       proposalCardJson: rewrittenCardJson,
     });
@@ -354,6 +357,7 @@ export class CrystallizationProposer {
     overrides: {
       skillName: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): { skillContent: string; proposalCardJson?: string } {
@@ -369,6 +373,10 @@ export class CrystallizationProposer {
       skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
       skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
     }
+    if (overrides.description) {
+      skillContent = skillContent.replace(/^\*\*Description:\*\* .+$/m, `**Description:** ${overrides.description}`);
+      skillContent = patchOpeningYamlField(skillContent, "description", yamlScalarForPatch(overrides.description));
+    }
     if (overrides.recommendedOutput) {
       skillContent = skillContent.replace(
         /^\*\*Recommended output:\*\* .+$/m,
@@ -382,6 +390,7 @@ export class CrystallizationProposer {
         const parsed = JSON.parse(proposalCardJson) as Record<string, unknown>;
         parsed.name = overrides.skillName;
         if (overrides.category) parsed.category = overrides.category;
+        if (overrides.description) parsed.description = overrides.description;
         if (overrides.recommendedOutput) parsed.recommended_output = overrides.recommendedOutput;
         proposalCardJson = JSON.stringify(parsed);
       } catch {
@@ -440,6 +449,13 @@ ${proposal.skillContent}`;
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, skillContent, "utf-8");
   }
+}
+
+/** YAML scalar suitable for single-line `key: value` frontmatter patches. */
+function yamlScalarForPatch(value: string): string {
+  if (value.length === 0) return '""';
+  if (!/[\n:#"']|^\s|\s$/.test(value) && value.length < 200) return value;
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */

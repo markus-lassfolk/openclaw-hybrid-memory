@@ -36,6 +36,33 @@ export type CrystallizationStatus =
 
 type CrystallizationStatusFilter = CrystallizationStatus | "pending" | "approved";
 
+/** Values accepted by `skills queue --status` and `CrystallizationStore.list({ status })`. */
+export type CrystallizationQueueStatusFilter = CrystallizationStatusFilter | "ready" | "needs-override";
+
+export const CRYSTALLIZATION_QUEUE_STATUS_FILTERS: ReadonlyArray<CrystallizationQueueStatusFilter> = [
+  "candidate",
+  "drafted",
+  "validated",
+  "approved",
+  "installed",
+  "rejected",
+  "superseded",
+  "pending",
+  "ready",
+  "needs-override",
+];
+
+export function isCrystallizationQueueStatusFilter(s: string): s is CrystallizationQueueStatusFilter {
+  return (CRYSTALLIZATION_QUEUE_STATUS_FILTERS as readonly string[]).includes(s);
+}
+
+export function assertCrystallizationQueueStatusFilter(status: string | undefined): void {
+  if (status === undefined) return;
+  if (!isCrystallizationQueueStatusFilter(status)) {
+    throw new Error(`Invalid status filter: "${status}". Allowed: ${CRYSTALLIZATION_QUEUE_STATUS_FILTERS.join(", ")}`);
+  }
+}
+
 export type SkillProposalRecommendedOutput = "SKILL.md only";
 
 export type SkillProposalCard = {
@@ -108,7 +135,7 @@ interface CreateProposalInput {
 }
 
 interface ProposalFilter {
-  status?: CrystallizationStatusFilter;
+  status?: CrystallizationQueueStatusFilter;
   skillName?: string;
   limit?: number;
 }
@@ -218,11 +245,25 @@ export class CrystallizationStore extends BaseSqliteStore {
     );
   }
 
-  private expandStatusFilter(status?: CrystallizationStatusFilter): CrystallizationStatus[] | undefined {
-    if (!status) return undefined;
+  private expandStatusFilter(status: CrystallizationStatusFilter): CrystallizationStatus[] {
     if (status === "pending") return ["drafted", "validated"];
     if (status === "approved") return ["approved", "installed"];
-    return [status as CrystallizationStatus];
+    const canonical: CrystallizationStatus[] = [
+      "candidate",
+      "drafted",
+      "validated",
+      "approved",
+      "installed",
+      "rejected",
+      "superseded",
+    ];
+    const single = status as CrystallizationStatus;
+    if (!canonical.includes(single)) {
+      throw new Error(
+        `Invalid crystallization status filter: "${status}". Allowed: ${CRYSTALLIZATION_QUEUE_STATUS_FILTERS.join(", ")}`,
+      );
+    }
+    return [single];
   }
 
   // -------------------------------------------------------------------------
@@ -301,12 +342,20 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   list(filter?: ProposalFilter): CrystallizationProposal[] {
     return this.runWithDb("list", () => {
+      assertCrystallizationQueueStatusFilter(filter?.status);
+
       let query = "SELECT * FROM crystallization_proposals WHERE 1=1";
       const params: SQLInputValue[] = [];
 
-      if (filter?.status) {
-        const statuses = this.expandStatusFilter(filter.status);
-        if (statuses && statuses.length > 0) {
+      if (filter?.status === "ready") {
+        query +=
+          " AND status = 'validated' AND COALESCE(json_extract(validation_result, '$.approvalDecision'), '') = 'allow'";
+      } else if (filter?.status === "needs-override") {
+        query +=
+          " AND status = 'validated' AND json_extract(validation_result, '$.approvalDecision') = 'allow-with-override'";
+      } else if (filter?.status) {
+        const statuses = this.expandStatusFilter(filter.status as CrystallizationStatusFilter);
+        if (statuses.length > 0) {
           query += ` AND status IN (${statuses.map(() => "?").join(",")})`;
           params.push(...statuses);
         }
@@ -435,10 +484,27 @@ export class CrystallizationStore extends BaseSqliteStore {
   // count
   // -------------------------------------------------------------------------
 
-  count(status?: CrystallizationStatusFilter): number {
+  count(status?: CrystallizationQueueStatusFilter): number {
     return this.runWithDb("count", () => {
+      assertCrystallizationQueueStatusFilter(status);
+      if (status === "ready") {
+        const row = this.liveDb
+          .prepare(
+            "SELECT COUNT(*) as n FROM crystallization_proposals WHERE status = 'validated' AND COALESCE(json_extract(validation_result, '$.approvalDecision'), '') = 'allow'",
+          )
+          .get() as { n: number };
+        return row.n;
+      }
+      if (status === "needs-override") {
+        const row = this.liveDb
+          .prepare(
+            "SELECT COUNT(*) as n FROM crystallization_proposals WHERE status = 'validated' AND json_extract(validation_result, '$.approvalDecision') = 'allow-with-override'",
+          )
+          .get() as { n: number };
+        return row.n;
+      }
       if (status) {
-        const statuses = this.expandStatusFilter(status);
+        const statuses = this.expandStatusFilter(status as CrystallizationStatusFilter);
         if (!statuses || statuses.length === 0) return 0;
         const row = this.liveDb
           .prepare(

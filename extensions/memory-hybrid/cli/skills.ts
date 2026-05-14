@@ -2,15 +2,22 @@
  * CLI: skill proposal queue (crystallization lifecycle) and generated-skill telemetry.
  *
  * Commands:
- * - hybrid-mem skills queue | show | validate | install
- * - hybrid-mem skills telemetry | record | correct | demote (when FactsDB is available)
+ * - hybrid-mem skills queue | show | validate | reject | install | telemetry …
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { CrystallizationStatus } from "../backends/crystallization-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import {
+  assertCrystallizationQueueStatusFilter,
+  CRYSTALLIZATION_QUEUE_STATUS_FILTERS,
+} from "../backends/crystallization-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import {
+  summarizeSkillProposalValidation,
+  type SkillProposalValidationResult,
+} from "../services/generated-skill-validation.js";
 import { SkillValidator } from "../services/skill-validator.js";
 import type { Chainable } from "./shared.js";
 import { relativeTime, withExit } from "./shared.js";
@@ -46,6 +53,15 @@ function requireStore(ctx: SkillsCliContext): CrystallizationStore {
   return store;
 }
 
+function formatProposalReadiness(p: { validationResult?: SkillProposalValidationResult }): string {
+  const vr = p.validationResult;
+  if (!vr) return " — validation: not run";
+  if (vr.approvalDecision === "allow") return " — ready ✓";
+  if (vr.approvalDecision === "allow-with-override") return " — needs override";
+  if (vr.approvalDecision === "deny") return " — blocked (deny)";
+  return ` — ${vr.approvalDecision}`;
+}
+
 export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): void {
   const skills = mem
     .command("skills")
@@ -60,7 +76,10 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
 
   queue
     .description("List proposal cards in the approval queue")
-    .option("--status <status>", "Filter by status (pending/drafted/validated/approved/installed/rejected/superseded)")
+    .option(
+      "--status <status>",
+      `Filter: ${CRYSTALLIZATION_QUEUE_STATUS_FILTERS.join(", ")} (pending=drafted+validated, approved=approved+installed; ready=validated+allow; needs-override=validated+allow-with-override)`,
+    )
     .option("--limit <n>", "Limit results (default: 20)")
     .option("--json", "Print JSON")
     .action(
@@ -69,7 +88,15 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
         const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
         const status =
           (opts.status as CrystallizationStatus | "pending" | "approved" | "rejected" | undefined) ?? undefined;
-        const proposals = store.list({ status, limit });
+        let proposals;
+        try {
+          assertCrystallizationQueueStatusFilter(opts.status);
+          proposals = store.list({ status, limit });
+        } catch (err) {
+          console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+          process.exitCode = 1;
+          return;
+        }
 
         if (opts.json) {
           console.log(JSON.stringify({ ok: true, count: proposals.length, proposals }, null, 2));
@@ -91,8 +118,11 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           } catch {
             // ignore
           }
-          console.log(`[${p.status}] ${p.skillName}${observed}`);
+          console.log(`[${p.status}] ${p.skillName}${observed}${formatProposalReadiness(p)}`);
           console.log(`  id: ${p.id}`);
+          if (p.validationResult) {
+            console.log(`  validation: ${summarizeSkillProposalValidation(p.validationResult)}`);
+          }
           if (p.category) console.log(`  category: ${p.category}`);
           if (p.outputPath) console.log(`  output: ${p.outputPath}`);
           if (p.rejectionReason) console.log(`  rejected: ${p.rejectionReason}`);
@@ -169,11 +199,32 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
+  (skills.command("reject") as ArgumentChainable)
+    .description("Reject a crystallization proposal (does not write to disk)")
+    .argument("<id>", "Proposal id")
+    .option("--reason <reason>", "Reason recorded for audit")
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (id: string, opts?: { reason?: string; json?: boolean }) => {
+        const store = requireStore(ctx);
+        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+        const result = proposer.rejectProposal(id, opts?.reason);
+        if (opts?.json) {
+          console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));
+          if (!result.success) process.exitCode = 1;
+          return;
+        }
+        console.log(result.success ? `✓ ${result.message}` : `✗ ${result.message}`);
+        if (!result.success) process.exitCode = 1;
+      }),
+    );
+
   (skills.command("install") as ArgumentChainable)
     .description("Approve and install a proposal (writes SKILL.md to the skills directory)")
     .argument("<id>", "Proposal id")
     .option("--name <slug>", "Rename before install")
     .option("--category <category>", "Category override")
+    .option("--description <text>", "Override proposal description (frontmatter + card)")
     .option("--recommended-output <type>", "Output type override (currently: 'SKILL.md only')", "SKILL.md only")
     .option("--override-warnings", "Approve proposals with activation warnings (explicit operator override)")
     .option("--json", "Print JSON")
@@ -184,6 +235,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           opts: {
             name?: string;
             category?: string;
+            description?: string;
             recommendedOutput?: string;
             overrideWarnings?: boolean;
             json?: boolean;
@@ -194,6 +246,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           const result = proposer.approveProposal(id, {
             name: opts.name,
             category: opts.category,
+            description: opts.description,
             recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
             overrideWarnings: opts.overrideWarnings === true,
           });

@@ -187,12 +187,20 @@ function generatedSkillRows(db: DatabaseSync): Array<Record<string, unknown>> {
 function findGeneratedSkillProcedure(db: DatabaseSync, skillName: string): ProcedureEntry | null {
   const trimmed = skillName.trim();
   if (trimmed.length === 0) return null;
+  const matches: ProcedureEntry[] = [];
   for (const row of generatedSkillRows(db)) {
     const proc = procedureRowToEntry(db, row);
-    if (proc.skillPath === trimmed) return proc;
-    if (proc.skillPath && basename(proc.skillPath) === trimmed) return proc;
+    if (!proc.skillPath?.trim()) continue;
+    const path = proc.skillPath.trim();
+    if (path === trimmed || basename(path) === trimmed) matches.push(proc);
   }
-  return null;
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new Error(
+      `Ambiguous skill name "${trimmed}": multiple promoted procedures match; pass procedureId to disambiguate`,
+    );
+  }
+  return matches[0] ?? null;
 }
 
 export function listGeneratedSkillProcedures(db: DatabaseSync): ProcedureEntry[] {
@@ -242,7 +250,8 @@ export function recordGeneratedSkillTelemetry(
     }
     const skill = input.skillName.trim();
     const path = candidate.skillPath.trim();
-    if (path !== skill && basename(path) !== skill) {
+    const canonicalName = basename(path);
+    if (skill !== path && skill !== canonicalName) {
       throw new Error(`Procedure ${input.procedureId} skill_path does not match skill name "${input.skillName}"`);
     }
     proc = candidate;

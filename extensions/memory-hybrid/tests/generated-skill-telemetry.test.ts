@@ -235,4 +235,33 @@ describe("generated skill telemetry", () => {
     expect(demoted.skillState).toBe("demoted");
     expect(demoted.skillStateReason).toContain("over-triggering");
   });
+
+  it("rejects ambiguous skillName when multiple promoted procedures share basename (#1420)", () => {
+    const procA = db.upsertProcedure({
+      taskPattern: "Alpha basename collision",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "session-a",
+    });
+    db.markProcedurePromoted(procA.id, "skills/auto/foo");
+    const procB = db.upsertProcedure({
+      taskPattern: "Beta basename collision",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "session-b",
+    });
+    db.markProcedurePromoted(procB.id, "skills/custom/foo");
+    expect(() =>
+      db.recordGeneratedSkillTelemetry({
+        skillName: "foo",
+        decision: "selected",
+        requestSummary: "x",
+        taskOutcome: "success",
+      }),
+    ).toThrow(/Ambiguous/i);
+  });
 });
