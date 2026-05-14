@@ -193,12 +193,15 @@ export class CrystallizationStore extends BaseSqliteStore {
 
     // Status migration: legacy values → lifecycle.
     // - pending (generated + awaiting human) → validated (already passed SkillValidator historically)
-    // - approved (written) → installed
+    // - approved (written, legacy rows with output_path) → installed — only when a path exists so we
+    //   do not flip new lifecycle rows that are approved but not yet installed.
     // - rejected stays rejected
     this.liveDb.exec(
       "UPDATE crystallization_proposals SET status = 'validated' WHERE status = 'pending' AND status IS NOT NULL",
     );
-    this.liveDb.exec("UPDATE crystallization_proposals SET status = 'installed' WHERE status = 'approved'");
+    this.liveDb.exec(
+      "UPDATE crystallization_proposals SET status = 'installed', installed_at = COALESCE(installed_at, datetime('now')) WHERE status = 'approved' AND output_path IS NOT NULL AND TRIM(output_path) <> ''",
+    );
 
     // Backfill evidence_hash for legacy rows so regeneration guards can work.
     // Use pattern_id as a conservative stable fallback.
