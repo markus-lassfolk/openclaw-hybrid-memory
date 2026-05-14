@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureEntry } from "../types/memory.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   ProcedurePromotionAdapter,
@@ -13,6 +12,7 @@ import {
   parseProcedurePromotionPolicy,
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import type { ProcedureEntry } from "../types/memory.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 let tmpDir: string;
@@ -190,6 +190,14 @@ describe("procedure promotion policy and adapter", () => {
       success: true,
       context: "Re-validated with objective checks",
     });
+    // Version-tracked feedback yields successRate = successes / (successes + failures) across
+    // procedure_versions. One failure + one success on the same version is 0.5 — below the
+    // promotion policy minimum — so add two more successes to recover eligibility while
+    // retaining the recorded avoidance note for anti-patterns.
+    vi.advanceTimersByTime(2000);
+    db.procedureFeedback({ procedureId: proc.id, success: true, context: "Stable re-run A" });
+    vi.advanceTimersByTime(2000);
+    db.procedureFeedback({ procedureId: proc.id, success: true, context: "Stable re-run B" });
 
     const result = generateAutoSkills(
       db,
