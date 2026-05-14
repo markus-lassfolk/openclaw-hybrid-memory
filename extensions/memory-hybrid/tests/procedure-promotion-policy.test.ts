@@ -13,6 +13,7 @@ import {
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import type { ProcedureEntry } from "../types/memory.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 let tmpDir: string;
@@ -271,6 +272,7 @@ describe("procedure promotion policy and adapter", () => {
   it("compares duplicate skills against task-specific sections instead of template boilerplate", () => {
     const existingSkillDir = join(skillsDir, "collect-weather-sensor-status");
     mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(join(existingSkillDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
     writeFileSync(
       join(existingSkillDir, "SKILL.md"),
       `---

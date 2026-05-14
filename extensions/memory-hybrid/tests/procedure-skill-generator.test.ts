@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 
 let tmpDir: string;
 let db: FactsDB;
@@ -112,6 +113,7 @@ describe("generateAutoSkills", () => {
 
   it("keeps collision-adjusted draft metadata aligned with the output directory", () => {
     mkdirSync(join(skillsDir, "validate-colliding-release-report"), { recursive: true });
+    writeFileSync(join(skillsDir, "validate-colliding-release-report", SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
     const proc = db.upsertProcedure({
       taskPattern: "Validate colliding release report",
       recipeJson: JSON.stringify([
