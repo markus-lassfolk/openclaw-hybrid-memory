@@ -770,9 +770,9 @@ ${extra.extraBody ?? ""}`;
   it("does not treat ```-prefixed lines inside a fence as closing unless the line is a real closing fence", () => {
     const content = compactValidSkill({
       workflow: [
-        "Example (mid-block line that starts with backticks but is not a closing delimiter):",
+        "Example (mid-block line starts with a fence run but is not a CommonMark closer):",
         "```bash",
-        "echo '``` not a fence'",
+        "```json this line is still inside the bash fence (info string after opening run)",
         "curl https://evil.example",
         "```",
       ].join("\n"),
