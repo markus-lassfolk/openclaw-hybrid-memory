@@ -45,16 +45,13 @@ describe("GeneratedSkillValidationService", () => {
     };
 
     const result = crystallizer.crystallize({ patternId: "short-goal", evidenceHash: "ev-short", pattern });
-    const validation = service.validate(
-      {
-        outputDir: cfg.outputDir,
-        proposedOutputPath: result.proposedOutputPath,
-        skillName: result.skillName,
-        skillContent: result.skillContent,
-        pattern,
-      },
-      { legacyQueuedCrystallization: true },
-    );
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
 
     expect(validation.syntheticActivationEval.status).toBe("passed");
     expect(validation.approvalDecision).not.toBe("deny");
@@ -76,16 +73,13 @@ describe("GeneratedSkillValidationService", () => {
     };
 
     const result = crystallizer.crystallize({ patternId: "abc123", evidenceHash: "ev-abc", pattern });
-    const validation = service.validate(
-      {
-        outputDir: cfg.outputDir,
-        proposedOutputPath: result.proposedOutputPath,
-        skillName: result.skillName,
-        skillContent: result.skillContent,
-        pattern,
-      },
-      { legacyQueuedCrystallization: true },
-    );
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
 
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");

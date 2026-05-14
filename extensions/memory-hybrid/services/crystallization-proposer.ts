@@ -153,14 +153,6 @@ export class CrystallizationProposer {
           continue;
         }
 
-        if (autoApprove && gsv.approvalDecision !== "allow") {
-          skipped++;
-          reasons.push(
-            `Skipped '${result.skillName}' (auto-approve requires clean eval): ${summarizeSkillProposalValidation(gsv)}`,
-          );
-          continue;
-        }
-
         // Store as validated proposal (awaiting human approval)
         const proposal = this.crystallizationStore.create({
           patternId: candidate.patternId,
@@ -177,13 +169,17 @@ export class CrystallizationProposer {
           validationResult: gsv,
         });
 
-        if (autoApprove) {
+        if (autoApprove && gsv.approvalDecision === "allow") {
           const approved = this.crystallizationStore.approve(proposal.id);
           if (approved) {
             const outputPath = this.computeOutputPath(approved.skillName);
             this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approved, outputPath));
             this.crystallizationStore.install(approved.id, outputPath);
           }
+        } else if (autoApprove && gsv.approvalDecision !== "allow") {
+          reasons.push(
+            `Queued '${result.skillName}' (auto-approve skipped; needs override or fixes): ${summarizeSkillProposalValidation(gsv)}`,
+          );
         }
 
         proposed++;
@@ -457,6 +453,11 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
+  // Current SkillCrystallizer output uses the proposal-card Markdown template (heading + "Auto-crystallized…").
+  // Those proposals must go through full generated-skill validation, not the legacy bypass.
+  if (skillContent.includes("Auto-crystallized from workflow pattern")) {
+    return false;
+  }
   const lines = skillContent.split("\n");
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
