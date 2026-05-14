@@ -64,9 +64,9 @@ export function buildNonPlaceholderEmailPattern(allowList: string[]): RegExp {
     .join("|");
   if (escaped.length === 0) {
     // No placeholder domains: flag all valid-looking email addresses.
-    return /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+    return /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i;
   }
-  return new RegExp(`\\b[A-Za-z0-9._%+-]+@(?!${escaped})[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b`);
+  return new RegExp(`\\b[A-Za-z0-9._%+-]+@(?!${escaped}\\b)[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b`, "i");
 }
 
 const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string]> = [

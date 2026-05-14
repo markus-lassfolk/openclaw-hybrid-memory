@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
-import { NON_PLACEHOLDER_EMAIL_PATTERN, PEM_PRIVATE_KEY_PATTERN, SkillValidator, buildNonPlaceholderEmailPattern } from "./skill-validator.js";
+import { NON_PLACEHOLDER_EMAIL_PATTERN, PEM_PRIVATE_KEY_PATTERN, SkillValidator } from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
 export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";

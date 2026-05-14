@@ -822,13 +822,10 @@ describe("GeneratedSkillValidationService — custom placeholderEmailDomains", (
 
   it("flags an internal-placeholder email address with the default allow-list", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-default-"));
-    const service = new GeneratedSkillValidationService();
-    const skillContent = makeMinimalSkill(join(tmpDir, "skills"), "custom-domain-test", "team@company.internal");
-    const violations: string[] = [];
-    for (const pattern of [buildNonPlaceholderEmailPattern(["example.com", "localhost", "test.com", "example.org"])]) {
-      if (pattern.test(skillContent)) violations.push("email detected");
-    }
-    expect(violations.length).toBeGreaterThan(0);
+    const skillContent = makeMinimalSkill("custom-domain-test", "team@company.internal");
+    const defaultPattern = buildNonPlaceholderEmailPattern(["example.com", "localhost", "test.com", "example.org"]);
+    expect(defaultPattern.test(skillContent)).toBe(true);
+    expect(defaultPattern.test(makeMinimalSkill("custom-domain-test", "team@EXAMPLE.COM"))).toBe(false);
   });
 
   it("does not flag custom placeholder domain when configured with extended allow-list", () => {
@@ -908,7 +905,7 @@ describe("GeneratedSkillValidationService — custom placeholderEmailDomains", (
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeMinimalSkill(outputDir: string, skillName: string, emailInContent: string): string {
+function makeMinimalSkill(skillName: string, emailInContent: string): string {
   return `---
 name: ${skillName}
 description: Minimal skill for email pattern tests.
