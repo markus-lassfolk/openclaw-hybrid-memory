@@ -1,4 +1,3 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,12 +12,12 @@ const dirs: string[] = [];
 afterEach(() => {
   while (dirs.length > 0) {
     const dir = dirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    if (dir) nodeFs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 function newDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "pending-digest-autopilot-cron-"));
+  const dir = nodeFs.mkdtempSync(join(tmpdir(), "pending-digest-autopilot-cron-"));
   dirs.push(dir);
   return dir;
 }
@@ -69,30 +68,34 @@ function seedLatestDigestSuccess(openclawHome: string): void {
   const day = join(openclawHome, "logs", "cron-hybrid-mem", "20260512");
   const exitPath = join(day, "weekly-pending-digest-2026-05-12T08-00-00Z.exit.txt");
   const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
-  rmSync(day, { recursive: true, force: true });
-  mkdirSync(day, { recursive: true });
-  writeFileSync(
+  nodeFs.rmSync(day, { recursive: true, force: true });
+  nodeFs.mkdirSync(day, { recursive: true });
+  nodeFs.writeFileSync(
     exitPath,
     "2026-05-12T08:00:00Z step=digest-pending exit=0 status=ok reason=ok duration_ms=1\n",
     "utf-8",
   );
-  writeFileSync(logPath, "weekly pending digest ok\n", "utf-8");
+  nodeFs.writeFileSync(logPath, "weekly pending digest ok\n", "utf-8");
 }
 
 function seedLatestDigestFailedWithOlderSuccess(openclawHome: string): void {
   const day = join(openclawHome, "logs", "cron-hybrid-mem", "20260512");
-  rmSync(day, { recursive: true, force: true });
-  mkdirSync(day, { recursive: true });
+  nodeFs.rmSync(day, { recursive: true, force: true });
+  nodeFs.mkdirSync(day, { recursive: true });
   const older = join(day, "weekly-pending-digest-2026-05-12T07-00-00Z.exit.txt");
   const newer = join(day, "weekly-pending-digest-2026-05-12T09-00-00Z.exit.txt");
-  writeFileSync(older, "2026-05-12T07:00:00Z step=digest-pending exit=0 status=ok reason=ok duration_ms=1\n", "utf-8");
-  writeFileSync(
+  nodeFs.writeFileSync(
+    older,
+    "2026-05-12T07:00:00Z step=digest-pending exit=0 status=ok reason=ok duration_ms=1\n",
+    "utf-8",
+  );
+  nodeFs.writeFileSync(
     newer,
     "2026-05-12T09:00:00Z step=digest-pending exit=1 status=failed reason=inner_command_failed duration_ms=1\n",
     "utf-8",
   );
-  utimesSync(older, new Date("2026-05-12T07:00:00Z"), new Date("2026-05-12T07:00:00Z"));
-  utimesSync(newer, new Date("2026-05-12T09:00:00Z"), new Date("2026-05-12T09:00:00Z"));
+  nodeFs.utimesSync(older, new Date("2026-05-12T07:00:00Z"), new Date("2026-05-12T07:00:00Z"));
+  nodeFs.utimesSync(newer, new Date("2026-05-12T09:00:00Z"), new Date("2026-05-12T09:00:00Z"));
 }
 
 describe("pending digest autopilot cron wrapper", () => {
@@ -108,7 +111,8 @@ describe("pending digest autopilot cron wrapper", () => {
     expect(result.summary.status).toBe("skipped");
     expect(result.summary.skipReason).toBe("autopilot_disabled");
 
-    const lines = readFileSync(result.summary.artifacts.hmExit, "utf-8")
+    const lines = nodeFs
+      .readFileSync(result.summary.artifacts.hmExit, "utf-8")
       .trim()
       .split("\n")
       .map((line) => parseExitLine(line))
@@ -159,7 +163,8 @@ describe("pending digest autopilot cron wrapper", () => {
       });
       expect(result.summary.status).toBe("partial");
       expect(result.summary.skipReason).toBeUndefined();
-      const notif = readFileSync(result.summary.artifacts.hmExit, "utf-8")
+      const notif = nodeFs
+        .readFileSync(result.summary.artifacts.hmExit, "utf-8")
         .split("\n")
         .map((line) => parseExitLine(line))
         .find((l) => l?.step === "notification-policy");
@@ -238,13 +243,13 @@ describe("pending digest autopilot cron wrapper", () => {
   it("ignores autopilot HM_EXIT artifacts when resolving latest digest", async () => {
     const dir = newDir();
     const day = join(dir, "logs", "cron-hybrid-mem", "20260512");
-    mkdirSync(day, { recursive: true });
-    writeFileSync(
+    nodeFs.mkdirSync(day, { recursive: true });
+    nodeFs.writeFileSync(
       join(day, "weekly-pending-digest-autopilot-2026-05-12T10-00-00Z.exit.txt"),
       "2026-05-12T10:00:00Z step=digest-autopilot exit=1 status=failed reason=inner_command_failed duration_ms=1\n",
       "utf-8",
     );
-    utimesSync(
+    nodeFs.utimesSync(
       join(day, "weekly-pending-digest-autopilot-2026-05-12T10-00-00Z.exit.txt"),
       new Date("2026-05-12T10:00:00Z"),
       new Date("2026-05-12T10:00:00Z"),
@@ -271,8 +276,8 @@ describe("pending digest autopilot cron wrapper", () => {
     const dir = newDir();
     seedLatestDigestSuccess(dir);
     const lockPath = join(dir, "cron", "locks", "weekly-pending-digest-autopilot.lock.json");
-    mkdirSync(dirname(lockPath), { recursive: true });
-    writeFileSync(
+    nodeFs.mkdirSync(dirname(lockPath), { recursive: true });
+    nodeFs.writeFileSync(
       lockPath,
       JSON.stringify({
         runId: "other-run",
