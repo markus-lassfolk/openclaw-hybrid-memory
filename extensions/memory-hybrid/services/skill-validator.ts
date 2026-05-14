@@ -294,15 +294,15 @@ export class SkillValidator {
       lineNumber++;
       const trimmed = line.trim();
 
-      // Track code block boundaries
-      const codeBlockFence = trimmed.match(/^```(\w*)/);
-      if (codeBlockFence) {
+      // Track code block boundaries (``` or ~~~ fences)
+      const fenceMatch = trimmed.match(/^(```+|~{3,})(\w*)/);
+      if (fenceMatch) {
         inCodeBlock = !inCodeBlock;
         if (inCodeBlock) {
           currentFenceStartLine = lineNumber;
           currentFenceLines = 0;
           const contextLine = findPreviousNonEmptyLine(lines, lineNumber - 2);
-          if (!contextLine || /^#{1,6}\s+/.test(contextLine) || /^```/.test(contextLine)) {
+          if (!contextLine || /^#{1,6}\s+/.test(contextLine) || /^(```+|~{3,})/.test(contextLine)) {
             violations.push(
               `Line ${lineNumber}: [codeblock-context] Code/log snippet must have a preceding explanatory sentence (avoid raw dumps).`,
             );
@@ -343,6 +343,12 @@ export class SkillValidator {
           `Line ${lineNumber}: [shell-subst] Command substitution $(...) in code block — "${trimmed.slice(0, 80)}"`,
         );
       }
+    }
+
+    if (inCodeBlock && currentFenceLines > MAX_FENCED_BLOCK_LINES) {
+      violations.push(
+        `Line ${currentFenceStartLine}: [codeblock-size] Fenced code/log block has ${currentFenceLines} lines (max ${MAX_FENCED_BLOCK_LINES}) and no closing fence at end of file. Summarize instead.`,
+      );
     }
 
     const rawLikeRatio =
@@ -390,7 +396,7 @@ function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: stri
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
-    if (/^```/.test(trimmed)) {
+    if (/^(```+|~{3,})/.test(trimmed)) {
       inFence = !inFence;
       continue;
     }

@@ -756,6 +756,24 @@ ${extra.extraBody ?? ""}`;
     expect(result.violations.some((v: string) => v.includes("codeblock-size"))).toBe(true);
   });
 
+  it("rejects unclosed oversized fenced block at end of file", () => {
+    const big = ["Large unclosed dump (bad):", "```text"];
+    for (let i = 0; i < 81; i++) big.push(`line ${i + 1}`);
+    const content = compactValidSkill({ workflow: big.join("\n") });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("no closing fence at end of file"))).toBe(true);
+  });
+
+  it("does not treat ## headings inside tilde fences as document sections", () => {
+    let content = compactValidSkill();
+    content = content.replace(/## Examples\n- Good:[^\n]+\n\n/, "");
+    content = content.replace("## Workflow\n", "## Workflow\n\n~~~markdown\n## Examples\n- Fake\n~~~\n\n");
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("Examples"))).toBe(true);
+  });
+
   it("rejects private IP / host inventory leaks", () => {
     const content = compactValidSkill({
       extraBody: "\nObserved host inventory: 192.168.1.10\n",
