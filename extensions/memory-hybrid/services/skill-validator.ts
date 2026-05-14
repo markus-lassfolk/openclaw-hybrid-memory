@@ -499,10 +499,21 @@ function parseFrontmatter(lines: string[]): {
   while (i < lines.length && lines[i]?.trim() === "") i++;
   // Skip optional leading HTML comment block(s) (e.g., injected by injectInstallMetadata).
   while (i < lines.length && lines[i]?.trimStart().startsWith("<!--")) {
-    while (i < lines.length && !(lines[i] ?? "").includes("-->")) {
+    while (i < lines.length) {
+      const currentLine = lines[i] ?? "";
+      const closePos = currentLine.indexOf("-->");
+      if (closePos !== -1) {
+        // Check if there's non-whitespace content after -->
+        const afterClose = currentLine.slice(closePos + 3).trim();
+        if (afterClose.length > 0) {
+          // Content after -->, don't skip this line entirely
+          break;
+        }
+        i++; // skip the line with closing -->
+        break;
+      }
       i++;
     }
-    if (i < lines.length) i++; // skip the line containing the closing -->
     while (i < lines.length && lines[i]?.trim() === "") i++;
   }
   if (lines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };

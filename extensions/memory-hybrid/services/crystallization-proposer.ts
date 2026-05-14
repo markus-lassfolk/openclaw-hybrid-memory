@@ -489,18 +489,21 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
-  // Strip optional leading HTML comment(s) (e.g., injected by injectInstallMetadata)
-  let body = skillContent.replace(/^\uFEFF/, "");
-  // Strip multiple leading HTML comments (consistent with parseFrontmatter in skill-validator.ts)
+  const body = stripLeadingHtmlComments(skillContent);
+  const lines = body.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i]?.trim() === "") i++;
+  return lines[i]?.trim() !== "---";
+}
+
+function stripLeadingHtmlComments(content: string): string {
+  let body = content.replace(/^\uFEFF/, "");
   while (true) {
     const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
     if (stripped === body) break;
     body = stripped;
   }
-  const lines = body.split("\n");
-  let i = 0;
-  while (i < lines.length && lines[i]?.trim() === "") i++;
-  return lines[i]?.trim() !== "---";
+  return body;
 }
 
 function validationRejectionReason(

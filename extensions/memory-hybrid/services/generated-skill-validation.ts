@@ -122,15 +122,18 @@ const STOP_WORDS = new Set([
   "without",
 ]);
 
-export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
-  // Strip optional leading HTML comment(s) (e.g., injected by injectInstallMetadata)
-  let body = skillContent.replace(/^\uFEFF/, "");
-  // Strip multiple leading HTML comments (consistent with parseFrontmatter in skill-validator.ts)
+function stripLeadingHtmlComments(content: string): string {
+  let body = content.replace(/^\uFEFF/, "");
   while (true) {
     const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
     if (stripped === body) break;
     body = stripped;
   }
+  return body;
+}
+
+export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
+  const body = stripLeadingHtmlComments(skillContent);
   const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
   const frontmatter: SkillFrontmatter = {};
