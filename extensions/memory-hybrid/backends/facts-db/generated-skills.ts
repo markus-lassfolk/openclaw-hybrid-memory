@@ -238,7 +238,7 @@ export function recordGeneratedSkillTelemetry(
   input: GeneratedSkillTelemetryRecordInput,
   policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
 ): GeneratedSkillTelemetryEntry {
-  let proc = findGeneratedSkillProcedure(db, input.skillName);
+  let proc: ProcedureEntry | null = null;
   if (input.procedureId != null) {
     const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(input.procedureId) as
       | Record<string, unknown>
@@ -255,6 +255,8 @@ export function recordGeneratedSkillTelemetry(
       throw new Error(`Procedure ${input.procedureId} skill_path does not match skill name "${input.skillName}"`);
     }
     proc = candidate;
+  } else {
+    proc = findGeneratedSkillProcedure(db, input.skillName);
   }
   if (!proc) throw new Error(`Generated skill not found: ${input.skillName}`);
   const now = input.createdAt ?? Math.floor(Date.now() / 1000);
@@ -289,7 +291,13 @@ export function recordGeneratedSkillTelemetry(
     input.sessionId ?? null,
     now,
   );
-  refreshGeneratedSkillLifecycleState(db, proc.skillPath ? basename(proc.skillPath) : input.skillName, policy, now);
+  refreshGeneratedSkillLifecycleState(
+    db,
+    proc.skillPath ? basename(proc.skillPath) : input.skillName,
+    policy,
+    now,
+    proc.id,
+  );
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(id) as GeneratedSkillTelemetryRow,
   );
@@ -311,7 +319,7 @@ export function markGeneratedSkillTelemetryFalsePositive(
             correction_reason = COALESCE(?, correction_reason)
       WHERE id = ?`,
   ).run(normalizeSummary(correctionReason), activationId);
-  refreshGeneratedSkillLifecycleState(db, row.skill_name, policy);
+  refreshGeneratedSkillLifecycleState(db, row.skill_name, policy, undefined, row.procedure_id);
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(activationId) as GeneratedSkillTelemetryRow,
   );
@@ -490,8 +498,17 @@ export function refreshGeneratedSkillLifecycleState(
   skillName: string,
   policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
   now = Math.floor(Date.now() / 1000),
+  procedureId?: string,
 ): ProcedureEntry | null {
-  const proc = findGeneratedSkillProcedure(db, skillName);
+  let proc: ProcedureEntry | null = null;
+  if (procedureId != null) {
+    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
+      | Record<string, unknown>
+      | undefined;
+    proc = row ? procedureRowToEntry(db, row) : null;
+  } else {
+    proc = findGeneratedSkillProcedure(db, skillName);
+  }
   if (!proc?.skillPath) return null;
   const canonicalSkillName = basename(proc.skillPath);
   const activations = skillTelemetryEntries(db, canonicalSkillName);
