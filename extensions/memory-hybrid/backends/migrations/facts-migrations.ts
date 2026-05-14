@@ -383,8 +383,12 @@ function migrateGeneratedSkillLifecycleColumns(db: DatabaseSync): void {
   if (!colNames.has("skill_generated_at")) {
     db.exec("ALTER TABLE procedures ADD COLUMN skill_generated_at INTEGER");
   }
+  if (!colNames.has("skill_state_changed_at")) {
+    db.exec("ALTER TABLE procedures ADD COLUMN skill_state_changed_at INTEGER");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_state ON procedures(skill_state)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_generated_at ON procedures(skill_generated_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_state_changed_at ON procedures(skill_state_changed_at)");
   db.exec(`
     UPDATE procedures
     SET skill_state = 'experimental',

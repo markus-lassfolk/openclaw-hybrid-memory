@@ -188,6 +188,8 @@ export type ProcedureEntry = {
   skillVersion: number;
   /** When the generated skill was first materialized (epoch seconds). */
   skillGeneratedAt?: number | null;
+  /** When the skill_state last changed (epoch seconds). */
+  skillStateChangedAt?: number | null;
   /** Memory scope (global, user, agent, session). */
   scope?: string;
   /** Scope target (userId, agentId, or sessionId). */

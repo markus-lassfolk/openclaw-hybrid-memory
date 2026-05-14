@@ -365,20 +365,22 @@ export function setGeneratedSkillLifecycleState(
 		// the skill's overTriggering and promotionCandidate evaluations.
 		db.prepare(
 			`UPDATE procedures
-          SET skill_state = ?,
-              skill_state_reason = ?,
-              skill_generated_at = ?,
-              updated_at = ?
-        WHERE id = ?`,
-		).run(state, normalizeSummary(reason), at, at, proc.id);
+         SET skill_state = ?,
+             skill_state_reason = ?,
+             skill_generated_at = ?,
+             skill_state_changed_at = ?,
+             updated_at = ?
+       WHERE id = ?`,
+		).run(state, normalizeSummary(reason), at, at, at, proc.id);
 	} else {
 		db.prepare(
 			`UPDATE procedures
-          SET skill_state = ?,
-              skill_state_reason = ?,
-              updated_at = ?
-        WHERE id = ?`,
-		).run(state, normalizeSummary(reason), at, proc.id);
+         SET skill_state = ?,
+             skill_state_reason = ?,
+             skill_state_changed_at = ?,
+             updated_at = ?
+       WHERE id = ?`,
+		).run(state, normalizeSummary(reason), at, at, proc.id);
 	}
 	return getGeneratedSkillByName(db, skillName);
 }
@@ -451,11 +453,12 @@ function summarizeSkillTelemetry(
 	let savedTimeMs = 0;
 
 	// For unblock tracking: count clean (uncorrected) successful activations since the
-	// most recent demotion/archive state change. The state transition updates proc.updatedAt,
-	// so use it as the reset baseline while the skill remains demoted or archived.
+	// most recent demotion/archive state change. Use skill_state_changed_at as the
+	// reset baseline — it tracks state transitions exclusively and is not affected by
+	// other procedure updates (e.g., upsertProcedure).
 	const demotedOrArchivedAt =
 		proc.skillState === "demoted" || proc.skillState === "archived"
-			? (proc.updatedAt ?? 0)
+			? (proc.skillStateChangedAt ?? proc.updatedAt ?? 0)
 			: null;
 	let cleanUsesAfterDemotion = 0;
 
