@@ -215,7 +215,7 @@ export function buildPendingReviewDigestReport(opts: {
     ? Math.max(0, factsDb.proceduresValidatedSince(sinceSec))
     : 0;
   const toolProposed = toolAll.filter((p) => p.status === "proposed");
-  const crystalPending = crystalAll.filter((p) => p.status === "pending");
+  const crystalPending = crystalAll.filter((p) => p.status === "drafted" || p.status === "validated");
   const pendingReview = {
     persona: personaPending.length,
     procedures: validatedNotPromoted,

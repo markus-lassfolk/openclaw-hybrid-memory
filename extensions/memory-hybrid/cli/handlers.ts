@@ -14,6 +14,7 @@ import type { AgentHealthStore } from "../backends/agent-health-store.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { EventBus } from "../backends/event-bus.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
@@ -37,6 +38,7 @@ export interface HandlerContext {
   proposalsDb: ProposalsDB | null;
   identityReflectionStore: IdentityReflectionStore | null;
   personaStateStore: PersonaStateStore | null;
+  crystallizationStore?: CrystallizationStore | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
