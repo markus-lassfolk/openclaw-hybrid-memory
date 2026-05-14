@@ -14,8 +14,8 @@
  * config/skill-sections.ts (issues #1375, #1366, #1408).
  */
 
-import { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
-export { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
+import { CATEGORY_FRONTMATTER_KEYS, DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
+export { CATEGORY_FRONTMATTER_KEYS, DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -230,8 +230,7 @@ export class SkillValidator {
       for (const req of ["name", "description"] as const) {
         if (!keys.has(req)) violations.push(`Frontmatter missing required field: ${req}`);
       }
-      const hasCategory =
-        keys.has("category") || keys.has("categories") || keys.has("tags") || keys.has("type") || keys.has("kind");
+      const hasCategory = CATEGORY_FRONTMATTER_KEYS.some((key) => keys.has(key));
       if (!hasCategory) violations.push("Frontmatter missing required category (or equivalent: tags/type/kind).");
       const hasProvenance =
         keys.has("provenance") ||
@@ -483,9 +482,11 @@ function unquoteFrontmatterValue(value: string | undefined): string | undefined 
 }
 
 function getFrontmatterCategory(keys: Map<string, string>): string | undefined {
-  return unquoteFrontmatterValue(
-    keys.get("category") ?? keys.get("categories") ?? keys.get("tags") ?? keys.get("type") ?? keys.get("kind"),
-  );
+  for (const key of CATEGORY_FRONTMATTER_KEYS) {
+    const value = keys.get(key);
+    if (value) return unquoteFrontmatterValue(value);
+  }
+  return undefined;
 }
 
 function parseFrontmatter(lines: string[]): {

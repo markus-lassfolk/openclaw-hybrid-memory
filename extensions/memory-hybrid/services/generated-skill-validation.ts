@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
-import { DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES } from "../config/skill-sections.js";
+import { CATEGORY_FRONTMATTER_KEYS, DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES } from "../config/skill-sections.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, normalizeHeading, parseH2Headings, SkillValidator } from "./skill-validator.js";
 
@@ -136,7 +136,10 @@ export function parseSkillFrontmatter(skillContent: string): Record<string, stri
 }
 
 function getFrontmatterCategory(frontmatter: Record<string, string>): string | undefined {
-  return frontmatter.category ?? frontmatter.categories ?? frontmatter.tags ?? frontmatter.type ?? frontmatter.kind;
+  for (const key of CATEGORY_FRONTMATTER_KEYS) {
+    if (frontmatter[key]) return frontmatter[key];
+  }
+  return undefined;
 }
 
 export function summarizeSkillProposalValidation(result?: SkillProposalValidationResult): string {

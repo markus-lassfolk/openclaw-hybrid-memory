@@ -46,6 +46,18 @@ export interface SectionDefinition {
 export const MAX_SKILL_LINES = 300;
 
 // ---------------------------------------------------------------------------
+// Shared category frontmatter keys
+// ---------------------------------------------------------------------------
+
+/**
+ * Alternate frontmatter keys that resolve to "category" semantics.
+ * Used by BOTH SkillValidator and GeneratedSkillValidationService when
+ * extracting category information from skill frontmatter.
+ * Order matters: earlier keys take precedence in fallback chains.
+ */
+export const CATEGORY_FRONTMATTER_KEYS = ["category", "categories", "tags", "type", "kind"] as const;
+
+// ---------------------------------------------------------------------------
 // Default required-section taxonomy
 // ---------------------------------------------------------------------------
 
