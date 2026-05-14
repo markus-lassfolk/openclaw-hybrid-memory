@@ -1,17 +1,17 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
-  computePendingInputHash,
   type AutopilotReasonCode,
-  redactAutopilotText,
-  redactAutopilotValue,
   type PendingDecision,
   type PendingDecisionContext,
   type PendingDecisionEvidence,
   type PendingItem,
   type PendingQueueAdapter,
+  computePendingInputHash,
+  redactAutopilotText,
+  redactAutopilotValue,
 } from "./pending-autopilot/index.js";
 import { SkillValidator } from "./skill-validator.js";
 
@@ -916,10 +916,6 @@ function collectDistinctSessionIds(
   for (const episode of evidence?.episodes ?? []) {
     if (typeof episode.sessionId === "string" && episode.sessionId.trim().length > 0)
       source.add(episode.sessionId.trim());
-  }
-  for (const correction of evidence?.userCorrections ?? []) {
-    if (typeof correction.sourceSession === "string" && correction.sourceSession.trim().length > 0)
-      source.add(correction.sourceSession.trim());
   }
   for (const request of evidence?.manualWorkflowRequests ?? []) {
     if (typeof request.sourceSession === "string" && request.sourceSession.trim().length > 0)

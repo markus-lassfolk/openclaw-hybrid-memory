@@ -6,22 +6,49 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
-import type { MemoryEntry, ProcedureEntry } from "../types/memory.js";
+import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
+  type ProcedurePromotionEvidence,
+  type ProcedurePromotionPolicy,
   createProcedurePromotionDecision,
   createProcedurePromotionItem,
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
-  type ProcedurePromotionEvidence,
-  type ProcedurePromotionPolicy,
 } from "./procedure-promotion-policy.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 const EVIDENCE_STOP_WORDS = new Set(["with", "from", "that", "this", "workflow", "procedure", "report"]);
+
+function normalizeProcedureScope(proc: ProcedureEntry): MemoryScope {
+  const raw = (proc.scope ?? "global").toString().toLowerCase().trim();
+  if (raw === "user" || raw === "agent" || raw === "session" || raw === "global") return raw;
+  return "global";
+}
+
+function entryMatchesProcedureScope(proc: ProcedureEntry, entry: MemoryEntry): boolean {
+  const procScope = normalizeProcedureScope(proc);
+  const entryScope = entry.scope ?? "global";
+  if (procScope === "global") return entryScope === "global";
+  if (procScope !== entryScope) return false;
+  const pt = proc.scopeTarget?.trim() || null;
+  const et = entry.scopeTarget?.trim() || null;
+  if (!pt) return !et;
+  return et === pt;
+}
+
+function scopeFilterForProcedure(proc: ProcedureEntry): ScopeFilter | null {
+  const s = normalizeProcedureScope(proc);
+  const t = proc.scopeTarget?.trim();
+  if (s === "global" || !t) return null;
+  if (s === "user") return { userId: t };
+  if (s === "agent") return { agentId: t };
+  if (s === "session") return { sessionId: t };
+  return null;
+}
 
 /** Per-procedure result returned by {@link generateAutoSkillForProcedure}. */
 export type GenerateAutoSkillResult =
@@ -153,7 +180,10 @@ export function generateAutoSkills(
       evidence,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
-    const reservedCandidate = { slug: resolvedSlug, taskPattern: proc.taskPattern };
+    const reservedCandidate = {
+      slug: resolvedSlug,
+      taskPattern: proc.taskPattern,
+    };
     if (evaluation.eligible && evaluation.draft) {
       reservedSlugs.add(resolvedSlug);
       inRunSkillCandidates.push(reservedCandidate);
@@ -378,11 +408,14 @@ function collectProcedurePromotionEvidence(factsDb: FactsDB, proc: ProcedureEntr
     const overlap = [...relatedWords].filter((word) => words.has(word)).length;
     return relatedWords.size < 2 ? overlap >= 1 : overlap >= 2;
   };
-  const corrections = factsDb.list(250, { source: "self-correction" }).filter((entry) => matchesProcedure(entry.text));
+  const corrections = factsDb
+    .list(250, { source: "self-correction" })
+    .filter((entry) => entryMatchesProcedureScope(proc, entry) && matchesProcedure(entry.text));
   const manualWorkflowRequests = factsDb
     .list(250, { source: "user" })
     .filter(
       (entry) =>
+        entryMatchesProcedureScope(proc, entry) &&
         /\bremember\b[^\n]{0,80}\bworkflow\b/i.test(entry.text) &&
         (matchesProcedure(entry.text) || (entry.why ? matchesProcedure(entry.why) : false)),
     );
@@ -390,8 +423,16 @@ function collectProcedurePromotionEvidence(factsDb: FactsDB, proc: ProcedureEntr
     ...factsDb.getByCategory("rule"),
     ...factsDb.getByCategory("preference"),
     ...factsDb.getByCategory("pattern"),
-  ].filter((entry) => matchesProcedure(entry.text) || (entry.why ? matchesProcedure(entry.why) : false));
-  const episodes = factsDb.searchEpisodes({ procedureId: proc.id, limit: 50 });
+  ].filter(
+    (entry) =>
+      entryMatchesProcedureScope(proc, entry) &&
+      (matchesProcedure(entry.text) || (entry.why ? matchesProcedure(entry.why) : false)),
+  );
+  const episodes = factsDb.searchEpisodes({
+    procedureId: proc.id,
+    limit: 50,
+    scopeFilter: scopeFilterForProcedure(proc),
+  });
 
   return {
     procedureVersions: factsDb.getProcedureVersions(proc.id),
@@ -407,7 +448,10 @@ function collectProcedurePromotionEvidence(factsDb: FactsDB, proc: ProcedureEntr
   };
 }
 
-function toEvidenceFactRef(entry: MemoryEntry): { id: string; sourceSession?: string | null } {
+function toEvidenceFactRef(entry: MemoryEntry): {
+  id: string;
+  sourceSession?: string | null;
+} {
   return { id: entry.id, sourceSession: entry.provenanceSession ?? null };
 }
 
