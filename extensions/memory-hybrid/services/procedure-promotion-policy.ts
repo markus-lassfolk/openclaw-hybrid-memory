@@ -794,15 +794,26 @@ function parseRecipeOrRaw(recipeJson: string): unknown {
 }
 
 function countDistinctSourceSessions(raw: string | undefined): number {
-  if (!raw) return 1;
+  const tokens = parseSourceSessionTokenList(raw);
+  if (tokens.length === 0) return 1;
+  return new Set(tokens).size || 1;
+}
+
+/** Normalized session ids from `procedures.source_sessions` (JSON array or legacy delimited text). */
+function parseSourceSessionTokenList(raw: string | undefined): string[] {
+  if (!raw?.trim()) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed))
-      return new Set(parsed.filter((x): x is string => typeof x === "string" && x.trim().length > 0)).size || 1;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((s) => s.trim());
+    }
   } catch {
     // fall through
   }
-  return new Set(raw.split(/[\s,;]+/).filter(Boolean)).size || 1;
+  return raw
+    .split(/[\s,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 function computeSuccessRate(proc: ProcedureEntry): number | null {
@@ -903,11 +914,7 @@ function collectDistinctSessionIds(
 ): string[] {
   const source = new Set<string>();
   if (sourceSessions) {
-    for (const session of sourceSessions
-      .split(/[\s,;]+/)
-      .map((value) => value.trim())
-      .filter(Boolean))
-      source.add(session);
+    for (const session of parseSourceSessionTokenList(sourceSessions)) source.add(session);
   }
   for (const episode of evidence?.episodes ?? []) {
     if (typeof episode.sessionId === "string" && episode.sessionId.trim().length > 0)
