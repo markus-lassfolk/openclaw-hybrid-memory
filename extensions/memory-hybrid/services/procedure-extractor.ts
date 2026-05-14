@@ -93,6 +93,8 @@ export function parseSessionJsonl(
   const lines = content.split("\n").filter((l) => l.trim());
   let taskIntent = "";
   const steps: ProcedureStep[] = [];
+  /** Any tool-result failure in the session marks the procedure outcome as failed (not only the last result). */
+  let anyFailure = false;
   let lastFailure: string | undefined;
 
   for (const line of lines) {
@@ -160,10 +162,9 @@ export function parseSessionJsonl(
       if (isToolResult && (type === "tool_result" || type === "result" || type === "toolResult" || type === "text")) {
         const toolContent = (block as Record<string, unknown>).content ?? (block as Record<string, unknown>).text;
         if (looksLikeFailure(toolContent)) {
+          anyFailure = true;
           lastFailure =
             typeof toolContent === "string" ? toolContent.slice(0, 200) : JSON.stringify(toolContent).slice(0, 200);
-        } else {
-          lastFailure = undefined;
         }
       }
     }
@@ -180,8 +181,8 @@ export function parseSessionJsonl(
     sessionId,
     taskIntent,
     steps,
-    success: !lastFailure,
-    errorMessage: lastFailure,
+    success: !anyFailure,
+    errorMessage: anyFailure ? lastFailure : undefined,
   };
 }
 

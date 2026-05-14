@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
+import { toWorkspaceRelativePath } from "../utils/path.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -160,10 +161,12 @@ export interface ProcedurePromotionVerification {
   validatorScore: number;
   promotionDecision: "approved" | "rejected" | "deferred" | "drafted" | "enabled" | "failed-validation";
   rejectionReasons: ProcedurePromotionReason[];
+  /** Workspace-relative skill directory when known; otherwise null. */
   generatedSkillPath: string | null;
   policy: ProcedurePromotionPolicy;
   policyVersion: string;
   inputHash: string;
+  /** `failed` only when static SKILL.md / recipe structure validation failed; unrelated promotion gates do not flip this. */
   staticValidation: "passed" | "failed";
   safetyValidation: "passed" | "failed";
   triggerEval: "passed" | "failed";
@@ -407,7 +410,8 @@ export function evaluateProcedureForPromotion(
 
   const eligible = gates.length === 0;
   const finalDraft = eligible ? draft : null;
-  const generatedPath = eligible && finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
+  const generatedPath =
+    eligible && finalDraft ? toWorkspaceRelativePath(join(options.skillsAutoPath, finalDraft.slug)) : null;
   const telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillSlug}`;
   const validatorScore = Number(
     Math.max(
@@ -451,15 +455,12 @@ export function evaluateProcedureForPromotion(
     policy,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
     inputHash: item.inputHash,
+    // Static validation runs only after an initial draft exists; do not mark "failed" for unrelated defer/reject gates.
     staticValidation: gates.some(
       (g) => g.reason === "skill_static_validation_failed" || g.reason === "malformed_recipe",
     )
       ? "failed"
-      : initialGates > 0
-        ? "failed"
-        : draft
-          ? "passed"
-          : "failed",
+      : "passed",
     safetyValidation: gates.some((g) =>
       [
         "unsafe_side_effect",
@@ -754,7 +755,7 @@ ${antiPatterns}
     validatorScore: 0,
     promotionDecision: "drafted",
     rejectionReasons: gates.map((g) => g.reason),
-    generatedSkillPath: join(options.skillsAutoPath, slug),
+    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, slug)),
     policy,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
     inputHash: item.inputHash,
@@ -1010,6 +1011,7 @@ function createProposalMetadata(
   evidenceSummary: ReturnType<typeof summarizeProcedureEvidence>,
 ): Record<string, unknown> {
   return {
+    ...(metadata.generatedSkillPath != null ? { generated_skill_path: metadata.generatedSkillPath } : {}),
     source_procedures: metadata.sourceProcedureIds,
     source_sessions: metadata.sourceSessionIds,
     source_episodes: metadata.sourceEpisodeIds,

@@ -4,7 +4,7 @@ import { getEnv } from "./env-manager.js";
  */
 
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, normalize, relative } from "node:path";
 
 /**
  * Expand tilde (~) in path to user's home directory.
@@ -45,4 +45,20 @@ export function resolveWorkspaceRoot(): string {
  */
 export function resolveWorkspacePath(filePath: string): string {
   return isAbsolute(filePath) ? filePath : join(resolveWorkspaceRoot(), filePath);
+}
+
+/**
+ * Prefer a path relative to the OpenClaw workspace root for JSON metadata and portability.
+ * When the resolved path is outside the workspace (or cannot be expressed as a downward relative path),
+ * returns a normalized absolute path with forward slashes.
+ */
+export function toWorkspaceRelativePath(filePath: string): string {
+  const root = normalize(resolveWorkspaceRoot());
+  const abs = normalize(isAbsolute(filePath) ? filePath : join(root, filePath));
+  const rel = relative(root, abs);
+  const posix = rel.split("\\").join("/");
+  if (!posix || posix.startsWith("..")) {
+    return abs.split("\\").join("/");
+  }
+  return posix;
 }
