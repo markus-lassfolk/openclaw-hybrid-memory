@@ -161,7 +161,7 @@ function buildSecretOrPrivatePatterns(emailPattern: RegExp): RegExp[] {
     /gh[pousr]_[a-z0-9_]{20,}/i,
     PEM_PRIVATE_KEY_PATTERN,
     emailPattern,
-    /\b(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+    /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
     /\/(?:Users|home)\/[^\s/]+/i,
   ];
 }
