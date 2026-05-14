@@ -19,6 +19,7 @@ const BASE_CFG: CrystallizationConfig = {
   maxCrystallized: 50,
   pruneUnusedDays: 30,
 };
+const MIN_CONCRETE_EXAMPLE_LINE_LENGTH = 18;
 
 describe("GeneratedSkillValidationService", () => {
   let tmpDir: string;
@@ -58,7 +59,7 @@ describe("GeneratedSkillValidationService", () => {
       .map((line) => line.trim())
       .filter((line) => line.startsWith("- ")) ?? [];
 
-    expect(exampleLines.some((line) => line.length >= 18)).toBe(true);
+    expect(exampleLines.some((line) => line.length >= MIN_CONCRETE_EXAMPLE_LINE_LENGTH)).toBe(true);
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
     expect(validation.syntheticActivationEval.status).toBe("passed");
