@@ -502,7 +502,7 @@ function parseFrontmatter(lines: string[]): {
     while (i < lines.length && !(lines[i] ?? "").includes("-->")) {
       i++;
     }
-    i++; // skip the line containing the closing -->
+    if (i < lines.length) i++; // skip the line containing the closing -->
     while (i < lines.length && lines[i]?.trim() === "") i++;
   }
   if (lines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
