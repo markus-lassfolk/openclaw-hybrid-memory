@@ -16,7 +16,11 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
-import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
+import {
+  GeneratedSkillValidationService,
+  detailSkillProposalValidation,
+  summarizeSkillProposalValidation,
+} from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
 import { SkillCrystallizer } from "./skill-crystallizer.js";
 
@@ -139,7 +143,7 @@ export class CrystallizationProposer {
             confidence: result.proposalCard.confidence,
             recommendedOutput: result.proposalCard.recommended_output,
             status: "rejected",
-            rejectionReason: `generated-skill-validation: ${summarizeSkillProposalValidation(gsv)}`,
+            rejectionReason: `generated-skill-validation: ${detailSkillProposalValidation(gsv)}`,
             validationResult: gsv,
           });
           skipped++;
@@ -262,7 +266,7 @@ export class CrystallizationProposer {
     if (validation.approvalDecision === "deny") {
       return {
         success: false,
-        message: `Validation failed: ${summarizeSkillProposalValidation(validation)}`,
+        message: `Validation failed: ${detailSkillProposalValidation(validation)}`,
       };
     }
     if (validation.approvalDecision === "allow-with-override" && opts?.overrideWarnings !== true) {
@@ -323,7 +327,8 @@ export class CrystallizationProposer {
       };
     }
 
-    const updated = this.crystallizationStore.reject(proposalId, reason);
+    const rejectionReason = reason ?? validationRejectionReason(proposal.validationResult);
+    const updated = this.crystallizationStore.reject(proposalId, rejectionReason);
     if (!updated) {
       return { success: false, message: "Failed to update proposal status" };
     }
@@ -397,10 +402,22 @@ export class CrystallizationProposer {
     outputPath: string,
   ): string {
     const header = `<!-- openclaw:skill-proposal id=${proposal.id} pattern_id=${proposal.patternId} evidence_hash=${proposal.evidenceHash} output_path=${outputPath} -->`;
-    if (proposal.skillContent.startsWith("<!-- openclaw:skill-proposal")) {
+    if (proposal.skillContent.includes("<!-- openclaw:skill-proposal")) {
       return proposal.skillContent;
     }
-    return `${header}\n\n${proposal.skillContent}`;
+    const frontmatterMatch = proposal.skillContent.match(/^---\s*\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+    if (frontmatterMatch) {
+      const frontmatter = frontmatterMatch[0].trimEnd();
+      const rest = proposal.skillContent.slice(frontmatterMatch[0].length).replace(/^\r?\n/, "");
+      return `${frontmatter}
+
+${header}
+
+${rest}`;
+    }
+    return `${header}
+
+${proposal.skillContent}`;
   }
 
   private trySupersedeOlderInstalls(patternId: string, supersededBy: string): void {
@@ -476,4 +493,11 @@ function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean 
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
   return lines[i]?.trim() !== "---";
+}
+
+function validationRejectionReason(
+  validationResult: ReturnType<typeof GeneratedSkillValidationService.prototype.validate> | undefined,
+): string | undefined {
+  if (!validationResult) return undefined;
+  return `generated-skill-validation: ${detailSkillProposalValidation(validationResult)}`;
 }

@@ -175,16 +175,27 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     .option("--name <slug>", "Rename before install")
     .option("--category <category>", "Category override")
     .option("--recommended-output <type>", "Output type override (currently: 'SKILL.md only')", "SKILL.md only")
+    .option("--override-warnings", "Approve proposals with activation warnings (explicit operator override)")
     .option("--json", "Print JSON")
     .action(
       withExit(
-        async (id: string, opts: { name?: string; category?: string; recommendedOutput?: string; json?: boolean }) => {
+        async (
+          id: string,
+          opts: {
+            name?: string;
+            category?: string;
+            recommendedOutput?: string;
+            overrideWarnings?: boolean;
+            json?: boolean;
+          },
+        ) => {
           const store = requireStore(ctx);
           const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
           const result = proposer.approveProposal(id, {
             name: opts.name,
             category: opts.category,
             recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+            overrideWarnings: opts.overrideWarnings === true,
           });
           if (opts.json) {
             console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));

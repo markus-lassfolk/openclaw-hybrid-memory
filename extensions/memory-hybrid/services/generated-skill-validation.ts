@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -143,6 +144,17 @@ export function summarizeSkillProposalValidation(result?: SkillProposalValidatio
   const status = result.overallStatus.toUpperCase();
   const override = result.approvalDecision === "allow-with-override" ? " (override required)" : "";
   return `${status}${override}; static=${result.staticValidation.status}, dry-load=${result.dryLoadValidation.status}, activation=${result.syntheticActivationEval.status} (${result.syntheticActivationEval.score})`;
+}
+
+export function detailSkillProposalValidation(result?: SkillProposalValidationResult): string {
+  if (!result) return "not validated";
+  const details = [
+    ...result.staticValidation.violations.map((v) => `static: ${v}`),
+    ...result.dryLoadValidation.violations.map((v) => `dry-load: ${v}`),
+    ...result.syntheticActivationEval.notes.map((v) => `activation: ${v}`),
+  ];
+  if (details.length === 0) return summarizeSkillProposalValidation(result);
+  return `${summarizeSkillProposalValidation(result)}; violations: ${details.slice(0, 8).join("; ")}`;
 }
 
 export class GeneratedSkillValidationService {
@@ -383,8 +395,33 @@ function legacyBypassActivationEval(): SkillProposalValidationResult["syntheticA
 
 function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, skillName: string): boolean {
   if (!isAbsolute(proposedOutputPath)) return false;
-  const expected = resolve(outputDir, skillName, "SKILL.md");
-  return proposedOutputPath === expected && isWithinDir(resolve(outputDir), dirname(proposedOutputPath));
+
+  const outputRoot = resolve(outputDir);
+  const skillDir = resolve(outputRoot, skillName);
+  const expected = resolve(skillDir, "SKILL.md");
+  if (proposedOutputPath !== expected || !isWithinDir(outputRoot, dirname(proposedOutputPath))) return false;
+
+  return existingSkillPathIsSafe(outputRoot, skillDir, expected);
+}
+
+function existingSkillPathIsSafe(outputRoot: string, skillDir: string, skillPath: string): boolean {
+  for (const candidate of [outputRoot, skillDir, skillPath]) {
+    if (!existsSync(candidate)) continue;
+    if (lstatSync(candidate).isSymbolicLink()) return false;
+  }
+
+  const existingAnchor = existsSync(skillPath)
+    ? skillPath
+    : existsSync(skillDir)
+      ? skillDir
+      : existsSync(outputRoot)
+        ? outputRoot
+        : null;
+  if (!existingAnchor) return true;
+
+  const rootReal = realpathSync(outputRoot);
+  const anchorReal = realpathSync(existingAnchor);
+  return isWithinDir(rootReal, anchorReal);
 }
 
 function isApprovalSanitizedSkillName(value: string): boolean {
@@ -419,7 +456,7 @@ function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
 
 function extractSection(skillContent: string, heading: string): string {
   const match = skillContent.match(
-    new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|$)`, "im"),
+    new RegExp(`(?:^|\\r?\\n)##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s+|$)`, "i"),
   );
   return match?.[1]?.trim() ?? "";
 }
