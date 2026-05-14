@@ -64,7 +64,14 @@ interface ValidateGeneratedSkillInput {
 }
 
 const REQUIRED_FRONTMATTER_FIELDS = ["name", "description", "category"] as const;
-const REQUIRED_SECTIONS = ["## Trigger", "## Scope", "## When not to use", "## Workflow", "## Examples", "## Provenance"] as const;
+const REQUIRED_SECTIONS = [
+  "## Trigger",
+  "## Scope",
+  "## When not to use",
+  "## Workflow",
+  "## Examples",
+  "## Provenance",
+] as const;
 const MAX_SKILL_CHARS = 16_000;
 const MAX_SKILL_LINES = 320;
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
@@ -147,13 +154,17 @@ export class GeneratedSkillValidationService {
     const dryLoadValidation = this.validateDryLoad(input.skillContent, frontmatter, input.skillName);
     const syntheticActivationEval = this.evaluateActivation(input, frontmatter);
     const overallStatus: ValidationStageStatus =
-      staticValidation.status === "failed" || dryLoadValidation.status === "failed" || syntheticActivationEval.status === "failed"
+      staticValidation.status === "failed" ||
+      dryLoadValidation.status === "failed" ||
+      syntheticActivationEval.status === "failed"
         ? "failed"
         : syntheticActivationEval.status === "warn"
           ? "warn"
           : "passed";
     const approvalDecision: ProposalApprovalDecision =
-      staticValidation.status === "failed" || dryLoadValidation.status === "failed" || syntheticActivationEval.status === "failed"
+      staticValidation.status === "failed" ||
+      dryLoadValidation.status === "failed" ||
+      syntheticActivationEval.status === "failed"
         ? "deny"
         : syntheticActivationEval.status === "warn"
           ? "allow-with-override"
@@ -356,7 +367,9 @@ function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
 }
 
 function extractSection(skillContent: string, heading: string): string {
-  const match = skillContent.match(new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|$)`, "im"));
+  const match = skillContent.match(
+    new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|$)`, "im"),
+  );
   return match?.[1]?.trim() ?? "";
 }
 
@@ -365,8 +378,10 @@ function buildSyntheticActivationCases(
   frontmatter: Record<string, string>,
 ): SyntheticActivationCases {
   const positive =
-    input.pattern?.exampleGoals.find((goal) => goal.trim().length > 0)?.replace(/\s+/g, " ").trim() ??
-    `Please use the ${input.skillName} workflow for the matching task.`;
+    input.pattern?.exampleGoals
+      .find((goal) => goal.trim().length > 0)
+      ?.replace(/\s+/g, " ")
+      .trim() ?? `Please use the ${input.skillName} workflow for the matching task.`;
   const keywords = [...significantWords(`${positive} ${frontmatter.description ?? ""}`)].slice(0, 3);
   const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
   return {

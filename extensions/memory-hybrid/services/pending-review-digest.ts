@@ -6,8 +6,8 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { pluginLogger } from "../utils/logger.js";
+import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 
 type FactsDbForPendingDigest = {
   proceduresCount(): number;
@@ -121,7 +121,11 @@ export function pendingStorePaths(sqlitePath: string): {
   };
 }
 
-function withStore<TStore extends { close?: () => void }, T>(factory: () => TStore, fn: (store: TStore) => T, fallback: T): T {
+function withStore<TStore extends { close?: () => void }, T>(
+  factory: () => TStore,
+  fn: (store: TStore) => T,
+  fallback: T,
+): T {
   let store: TStore | null = null;
   try {
     store = factory();

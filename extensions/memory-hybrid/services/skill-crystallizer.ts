@@ -96,13 +96,18 @@ function buildSkillContent(skillName: string, pattern: WorkflowPattern, patternI
   const normalizedGoals = pattern.exampleGoals
     .filter((goal) => goal.trim().length > 0)
     .map((goal) => goal.replace(/\s+/g, " ").trim());
-  const exampleGoalsText = normalizedGoals.length > 0 ? normalizedGoals.map((g) => `- ${g}`).join("\n") : "- Match a task that follows this workflow.";
+  const exampleGoalsText =
+    normalizedGoals.length > 0
+      ? normalizedGoals.map((g) => `- ${g}`).join("\n")
+      : "- Match a task that follows this workflow.";
   const primaryGoal = normalizedGoals[0] ?? `follow the ${skillName} workflow`;
-  const shortGoal =
-    primaryGoal.length > 120 ? `${primaryGoal.slice(0, 117).trimEnd()}...` : primaryGoal;
+  const shortGoal = primaryGoal.length > 120 ? `${primaryGoal.slice(0, 117).trimEnd()}...` : primaryGoal;
   const description = `Use when the user asks to ${shortGoal}. Auto-crystallized from repeated workflow evidence.`;
   const workflowText = toolSequence
-    .map((tool, i) => `${i + 1}. Use \`${tool}\` for step ${i + 1} of the bounded workflow, then confirm the result before continuing.`)
+    .map(
+      (tool, i) =>
+        `${i + 1}. Use \`${tool}\` for step ${i + 1} of the bounded workflow, then confirm the result before continuing.`,
+    )
     .join("\n");
   const nearMiss = `Do not use for requests that only discuss ${shortGoal} without asking you to run the workflow.`;
 

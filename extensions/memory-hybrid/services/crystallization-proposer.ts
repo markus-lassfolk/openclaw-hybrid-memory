@@ -18,7 +18,7 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
-import { normalizeSkillName, SkillCrystallizer } from "./skill-crystallizer.js";
+import { SkillCrystallizer, normalizeSkillName } from "./skill-crystallizer.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -126,9 +126,7 @@ export class CrystallizationProposer {
             this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
           } else {
             skipped++;
-            reasons.push(
-              `Pending '${result.skillName}': ${summarizeSkillProposalValidation(validation)}`,
-            );
+            reasons.push(`Pending '${result.skillName}': ${summarizeSkillProposalValidation(validation)}`);
           }
           proposed++;
         } else {

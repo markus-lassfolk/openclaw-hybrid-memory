@@ -6,14 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import { hybridConfigSchema, type HybridMemoryConfig } from "../config.js";
+import { type HybridMemoryConfig, hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 import {
   buildPendingReviewDigestReport,
   countPendingReviewBacklogs,
   pendingStorePaths,
   renderPendingReviewDigestMarkdown,
 } from "../services/pending-review-digest.js";
-import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 

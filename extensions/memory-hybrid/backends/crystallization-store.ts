@@ -11,8 +11,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
