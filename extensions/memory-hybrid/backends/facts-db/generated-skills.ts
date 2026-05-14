@@ -380,8 +380,8 @@ function summarizeSkillTelemetry(
   // For experimental skills, evaluate only activations since skill_generated_at.
   // This prevents pre-reset telemetry from blocking promotion or re-triggering demotion
   // after an operator manually resets or the system auto-unblocks a skill.
-  const isExperimental = proc.skillState === "experimental" || proc.skillState == null;
-  const evalWindowStart = isExperimental && proc.skillGeneratedAt != null ? proc.skillGeneratedAt : 0;
+  const isExperimental = proc.skillState === "experimental" || proc.skillState === null;
+  const evalWindowStart = isExperimental && proc.skillGeneratedAt !== null && proc.skillGeneratedAt !== undefined ? proc.skillGeneratedAt : 0;
   const evalActivations = evalWindowStart > 0 ? activations.filter((a) => a.createdAt >= evalWindowStart) : activations;
 
   let activationCountPerWeek = 0;
@@ -672,7 +672,9 @@ export function reconcileGeneratedSkillDiskState(
 
     const exists = existsSync(skillMdPath) || existsSync(dirPath);
     if (!exists) {
-      const skillName = basename(proc.skillPath);
+      // Derive skill name from the directory component of the path (not the raw skill_path
+      // which might include a SKILL.md suffix or be a full directory path).
+      const skillName = basename(dirPath);
       issues.push({
         procedureId: proc.id,
         skillName,
@@ -682,9 +684,11 @@ export function reconcileGeneratedSkillDiskState(
         resolvedAbsolutePath: skillMdPath,
       });
       if (fix) {
+        // Use the full skill_path for the lookup so findGeneratedSkillProcedure
+        // matches on exact path regardless of basename edge cases.
         setGeneratedSkillLifecycleState(
           db,
-          skillName,
+          proc.skillPath,
           "uninstalled",
           "auto-detected: skill file no longer exists on disk",
           now,

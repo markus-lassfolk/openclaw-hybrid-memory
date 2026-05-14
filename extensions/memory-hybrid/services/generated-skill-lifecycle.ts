@@ -13,7 +13,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import type { ProcedureEntry } from "../types/memory.js";
+import type { GeneratedSkillLifecycleState, ProcedureEntry } from "../types/memory.js";
 import type { GeneratedSkillTelemetryEntry } from "../types/memory.js";
 import {
   type GeneratedSkillDoctorReport,
@@ -83,7 +83,7 @@ export class GeneratedSkillLifecycleService {
    */
   setState(
     skillName: string,
-    state: Parameters<typeof setGeneratedSkillLifecycleState>[2],
+    state: GeneratedSkillLifecycleState,
     reason: string | null,
     at?: number,
   ): ProcedureEntry | null {
