@@ -156,3 +156,17 @@ export function titleCase(slug: string): string {
     .map((p) => (p ? p[0]?.toUpperCase() + p.slice(1) : p))
     .join(" ");
 }
+
+/**
+ * Strip leading HTML comments and BOM from content (used by skill parsers).
+ * Repeatedly removes HTML comments at the start of the string until none remain.
+ */
+export function stripLeadingHtmlComments(content: string): string {
+  let body = content.replace(/^\uFEFF/, "");
+  while (true) {
+    const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
+    if (stripped === body) break;
+    body = stripped;
+  }
+  return body;
+}

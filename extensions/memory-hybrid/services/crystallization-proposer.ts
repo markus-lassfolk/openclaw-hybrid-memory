@@ -15,6 +15,7 @@ import { dirname } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -494,16 +495,6 @@ function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean 
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
   return lines[i]?.trim() !== "---";
-}
-
-function stripLeadingHtmlComments(content: string): string {
-  let body = content.replace(/^\uFEFF/, "");
-  while (true) {
-    const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
-    if (stripped === body) break;
-    body = stripped;
-  }
-  return body;
 }
 
 function validationRejectionReason(

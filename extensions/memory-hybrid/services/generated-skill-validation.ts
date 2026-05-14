@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
 
@@ -121,16 +122,6 @@ const STOP_WORDS = new Set([
   "workflow",
   "without",
 ]);
-
-function stripLeadingHtmlComments(content: string): string {
-  let body = content.replace(/^\uFEFF/, "");
-  while (true) {
-    const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
-    if (stripped === body) break;
-    body = stripped;
-  }
-  return body;
-}
 
 export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
   const body = stripLeadingHtmlComments(skillContent);

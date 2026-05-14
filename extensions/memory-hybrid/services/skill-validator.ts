@@ -506,7 +506,8 @@ function parseFrontmatter(lines: string[]): {
         // Check if there's non-whitespace content after -->
         const afterClose = currentLine.slice(closePos + 3).trim();
         if (afterClose.length > 0) {
-          // Content after -->, don't skip this line entirely
+          // Content after -->, we've consumed the comment portion; advance past this line
+          i++;
           break;
         }
         i++; // skip the line with closing -->
