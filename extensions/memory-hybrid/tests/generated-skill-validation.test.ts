@@ -44,14 +44,17 @@ describe("GeneratedSkillValidationService", () => {
       exampleGoals: ["fix bug", "run CI"],
     };
 
-    const result = crystallizer.crystallize({ patternId: "short-goal", pattern });
-    const validation = service.validate({
-      outputDir: cfg.outputDir,
-      proposedOutputPath: result.proposedOutputPath,
-      skillName: result.skillName,
-      skillContent: result.skillContent,
-      pattern,
-    });
+    const result = crystallizer.crystallize({ patternId: "short-goal", evidenceHash: "ev-short", pattern });
+    const validation = service.validate(
+      {
+        outputDir: cfg.outputDir,
+        proposedOutputPath: result.proposedOutputPath,
+        skillName: result.skillName,
+        skillContent: result.skillContent,
+        pattern,
+      },
+      { legacyQueuedCrystallization: true },
+    );
 
     expect(validation.syntheticActivationEval.status).toBe("passed");
     expect(validation.approvalDecision).not.toBe("deny");
@@ -72,14 +75,17 @@ describe("GeneratedSkillValidationService", () => {
       exampleGoals: ["Deploy the app and capture the release notes"],
     };
 
-    const result = crystallizer.crystallize({ patternId: "abc123", pattern });
-    const validation = service.validate({
-      outputDir: cfg.outputDir,
-      proposedOutputPath: result.proposedOutputPath,
-      skillName: result.skillName,
-      skillContent: result.skillContent,
-      pattern,
-    });
+    const result = crystallizer.crystallize({ patternId: "abc123", evidenceHash: "ev-abc", pattern });
+    const validation = service.validate(
+      {
+        outputDir: cfg.outputDir,
+        proposedOutputPath: result.proposedOutputPath,
+        skillName: result.skillName,
+        skillContent: result.skillContent,
+        pattern,
+      },
+      { legacyQueuedCrystallization: true },
+    );
 
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
@@ -182,10 +188,12 @@ Bounded release-health review workflow.
 
       const proposal = cStore.create({
         patternId: "pattern-1",
+        evidenceHash: "ev-pattern-1",
         skillName: "release-health-review",
         skillContent,
         patternSnapshot: "{}",
         validationResult: validation,
+        status: "validated",
       });
       const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
 
@@ -262,10 +270,12 @@ Bounded release-health review workflow.
 
       const proposal = cStore.create({
         patternId: "pattern-1",
+        evidenceHash: "ev-pattern-1",
         skillName: "release-health-review",
         skillContent,
         patternSnapshot: JSON.stringify(pattern),
         validationResult: initial,
+        status: "validated",
       });
       const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
       const approved = proposer.approveProposal(proposal.id, {

@@ -77,6 +77,7 @@ describe("pending review digest (#1197)", () => {
     });
     crystal.create({
       patternId: "pattern-1",
+      evidenceHash: "ev1",
       skillName: "review-backlog",
       skillContent: "# Skill",
       patternSnapshot: "{}",

@@ -129,6 +129,7 @@ function seedQueues(cfg: HybridMemoryConfig): void {
   });
   crystal.create({
     patternId: "pattern-1",
+    evidenceHash: "ev1",
     skillName: "review-backlog",
     skillContent: "# Skill",
     patternSnapshot: "{}",

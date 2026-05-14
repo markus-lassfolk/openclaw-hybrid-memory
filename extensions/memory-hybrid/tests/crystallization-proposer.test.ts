@@ -28,7 +28,7 @@
  * - Marks proposal as rejected on success.
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -148,6 +148,23 @@ describe("CrystallizationProposer.runCycle — pending proposals", () => {
     expect(proposals.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("stores a proposal card with required fields", () => {
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: tmpDir, minUsageCount: 2, minSuccessRate: 0.5 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    seedPatterns(["exec", "read", "write"], 3, 1);
+
+    proposer.runCycle();
+    const proposals = cStore.list({ status: "pending", limit: 1 });
+    expect(proposals.length).toBe(1);
+    const p = proposals[0];
+    expect(["drafted", "validated"]).toContain(p.status);
+    expect(p.proposalCardJson).toBeTruthy();
+    const card = JSON.parse(p.proposalCardJson!) as Record<string, unknown>;
+    for (const key of ["name", "category", "captures", "risks", "confidence", "recommended_output", "provenance"]) {
+      expect(card).toHaveProperty(key);
+    }
+  });
+
   it("does not write skill to disk when autoApprove=false", () => {
     const cfg: CrystallizationConfig = {
       ...BASE_CFG,
@@ -219,7 +236,7 @@ describe("CrystallizationProposer.approveProposal", () => {
     cStore.reject(pending[0].id);
     const result = proposer.approveProposal(pending[0].id);
     expect(result.success).toBe(false);
-    expect(result.message).toMatch(/not pending/i);
+    expect(result.message).toMatch(/not approvable|not pending/i);
   });
 
   it("approves a pending proposal and writes file to disk", () => {
@@ -243,13 +260,34 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(existsSync(result.outputPath!)).toBe(true);
   });
 
+  it("applies rename/category overrides before installation", () => {
+    const outputDir = join(tmpDir, "skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false, minUsageCount: 2 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    seedPatterns(["exec", "read", "write"], 3, 1);
+    proposer.runCycle();
+
+    const pending = cStore.list({ status: "pending" });
+    expect(pending.length).toBeGreaterThanOrEqual(1);
+
+    const result = proposer.approveProposal(pending[0].id, { name: "renamed-skill", category: "workflow-automation" });
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toContain("renamed-skill");
+    const body = readFileSync(result.outputPath!, "utf-8");
+    expect(body).toContain("# renamed-skill");
+    expect(body).toContain("**Category:** workflow-automation");
+    expect(body).toContain("openclaw:skill-proposal");
+  });
+
   it("returns success=false when maxCrystallized is 0", () => {
     // Manually create a pending proposal
     const proposal = cStore.create({
       patternId: "test-pattern-id",
+      evidenceHash: "ev1",
       skillName: "test-skill",
       skillContent: "# Test Skill\n\nThis is a test skill file with adequate content for validation purposes.",
       patternSnapshot: "{}",
+      status: "validated",
     });
 
     // Now use a proposer with maxCrystallized=0 to try to approve
@@ -295,6 +333,7 @@ describe("CrystallizationProposer.rejectProposal", () => {
 
     const proposal = cStore.create({
       patternId: "pid",
+      evidenceHash: "ev1",
       skillName: "skill",
       skillContent: "# content",
       patternSnapshot: "{}",
@@ -303,6 +342,6 @@ describe("CrystallizationProposer.rejectProposal", () => {
 
     const result = proposer.rejectProposal(proposal.id);
     expect(result.success).toBe(false);
-    expect(result.message).toMatch(/not pending/i);
+    expect(result.message).toMatch(/not rejectable|not pending/i);
   });
 });

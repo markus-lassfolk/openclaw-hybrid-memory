@@ -38,7 +38,8 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
     async execute(_toolCallId: string, _params: Record<string, unknown>) {
       try {
         const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
-        const result = proposer.runCycle();
+        // Issue: skill proposal lifecycle — tool-triggered crystallization should never install directly.
+        const result = proposer.runCycle({ autoApproveOverride: false });
 
         const lines: string[] = [];
         lines.push("Crystallization cycle complete.");
@@ -46,9 +47,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         lines.push(`  Skipped:  ${result.skipped}`);
         if (result.reasons.length > 0) {
           lines.push("  Details:");
-          for (const reason of result.reasons) {
-            lines.push(`    - ${reason}`);
-          }
+          result.reasons.forEach((r) => lines.push(`    - ${r}`));
         }
         if (result.proposed > 0) {
           lines.push("");
@@ -78,12 +77,23 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
     name: "memory_crystallize_list",
     label: "List Crystallization Proposals",
     description:
-      "List crystallization proposals. Filter by status (pending/approved/rejected). Each proposal includes the skill name, pattern stats, and proposal ID needed for approve/reject actions.",
+      "List crystallization proposals (proposal cards). Filter by lifecycle status (pending/approved/rejected or drafted/validated/installed/etc). Each entry includes ID for approve/reject.",
     parameters: Type.Object({
       status: Type.Optional(
-        Type.Union([Type.Literal("pending"), Type.Literal("approved"), Type.Literal("rejected")], {
-          description: "Filter by proposal status. Omit to list all proposals.",
-        }),
+        Type.Union(
+          [
+            Type.Literal("pending"),
+            Type.Literal("approved"),
+            Type.Literal("rejected"),
+            Type.Literal("drafted"),
+            Type.Literal("validated"),
+            Type.Literal("installed"),
+            Type.Literal("superseded"),
+          ],
+          {
+            description: "Filter by proposal status. Omit to list all proposals.",
+          },
+        ),
       ),
       limit: Type.Optional(
         Type.Integer({
@@ -95,7 +105,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
       const { status, limit } = params as {
-        status?: "pending" | "approved" | "rejected";
+        status?: "pending" | "approved" | "rejected" | "drafted" | "validated" | "installed" | "superseded";
         limit?: number;
       };
 
@@ -130,13 +140,26 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           } catch {
             // ignore parse errors
           }
+          let cardSummary = "";
+          try {
+            if (p.proposalCardJson) {
+              const card = JSON.parse(p.proposalCardJson) as { category?: string; risks?: unknown; captures?: unknown };
+              const cat = typeof card.category === "string" ? card.category : "";
+              const captures =
+                Array.isArray(card.captures) && card.captures.length > 0 ? ` | captures: ${card.captures.length}` : "";
+              const risks = Array.isArray(card.risks) && card.risks.length > 0 ? ` | risks: ${card.risks.length}` : "";
+              cardSummary = [cat ? ` | ${cat}` : "", captures, risks].join("");
+            }
+          } catch {
+            // ignore parse errors
+          }
           const outputInfo = p.outputPath ? ` → ${p.outputPath}` : "";
           const rejectInfo = p.rejectionReason ? ` (reason: ${p.rejectionReason})` : "";
           const validationInfo = p.validationResult
             ? `\n   Validation: ${summarizeSkillProposalValidation(p.validationResult)}`
             : "";
           return (
-            `${i + 1}. [${p.status.toUpperCase()}] ${p.skillName}${patternStats}\n` +
+            `${i + 1}. [${p.status.toUpperCase()}] ${p.skillName}${patternStats}${cardSummary}\n` +
             `   ID: ${p.id}${outputInfo}${rejectInfo}${validationInfo}\n` +
             `   Created: ${p.createdAt}`
           );
@@ -166,23 +189,49 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
     name: "memory_crystallize_approve",
     label: "Approve Crystallization Proposal",
     description:
-      "Approve a pending crystallization proposal. Re-validates the skill content, then writes the SKILL.md file to disk. Requires the proposal ID from memory_crystallize_list.",
+      "Approve a crystallization proposal. Re-validates the skill content, then writes the SKILL.md file to disk. Optional overrides let you rename/categorize before installation.",
     parameters: Type.Object({
       id: Type.String({
         description: "The proposal ID to approve (from memory_crystallize_list).",
       }),
+      name: Type.Optional(
+        Type.String({
+          description: "Optional rename (slug). If omitted, keeps the generated name.",
+        }),
+      ),
+      category: Type.Optional(
+        Type.String({
+          description: "Optional category override (e.g. workflow-automation).",
+        }),
+      ),
+      recommended_output: Type.Optional(
+        Type.Union([Type.Literal("SKILL.md only")], {
+          description: "Optional output-type override.",
+        }),
+      ),
       overrideWarnings: Type.Optional(
         Type.Boolean({
-          description: "Explicitly override activation-eval warnings for an otherwise safe proposal.",
+          description: "Set true to approve when activation evaluation warns (requires explicit human intent).",
         }),
       ),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
-      const { id, overrideWarnings } = params as { id: string; overrideWarnings?: boolean };
+      const { id, name, category, recommended_output, overrideWarnings } = params as {
+        id: string;
+        name?: string;
+        category?: string;
+        recommended_output?: "SKILL.md only";
+        overrideWarnings?: boolean;
+      };
 
       try {
         const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
-        const result = proposer.approveProposal(id, { overrideWarnings });
+        const result = proposer.approveProposal(id, {
+          name,
+          category,
+          recommendedOutput: recommended_output,
+          overrideWarnings,
+        });
 
         return {
           content: [

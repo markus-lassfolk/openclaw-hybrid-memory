@@ -18,7 +18,7 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
-import { SkillCrystallizer, normalizeSkillName } from "./skill-crystallizer.js";
+import { SkillCrystallizer } from "./skill-crystallizer.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -41,16 +41,16 @@ interface ApproveResult {
 // ---------------------------------------------------------------------------
 
 export class CrystallizationProposer {
-  private readonly detector: PatternDetector;
+  private readonly detector: PatternDetector | null;
   private readonly crystallizer: SkillCrystallizer;
   private readonly validator: GeneratedSkillValidationService;
 
   constructor(
-    private readonly workflowStore: WorkflowStore,
+    private readonly workflowStore: WorkflowStore | null,
     private readonly crystallizationStore: CrystallizationStore,
     private readonly cfg: CrystallizationConfig,
   ) {
-    this.detector = new PatternDetector(workflowStore, crystallizationStore, cfg);
+    this.detector = workflowStore ? new PatternDetector(workflowStore, crystallizationStore, cfg) : null;
     this.crystallizer = new SkillCrystallizer(cfg);
     this.validator = new GeneratedSkillValidationService();
   }
@@ -67,12 +67,19 @@ export class CrystallizationProposer {
    *
    * Returns a summary of what was proposed / skipped.
    */
-  runCycle(): ProposeResult {
+  runCycle(opts?: { autoApproveOverride?: boolean }): ProposeResult {
     if (!this.cfg.enabled) {
       return {
         proposed: 0,
         skipped: 0,
         reasons: ["Crystallization is disabled"],
+      };
+    }
+    if (!this.detector) {
+      return {
+        proposed: 0,
+        skipped: 0,
+        reasons: ["Crystallization workflow store is not available"],
       };
     }
 
@@ -94,59 +101,92 @@ export class CrystallizationProposer {
     let proposed = 0;
     let skipped = 0;
     const reasons: string[] = [];
+    const autoApprove = opts?.autoApproveOverride ?? this.cfg.autoApprove;
 
     for (const candidate of candidates) {
       try {
-        const result = this.crystallizer.crystallize(candidate);
-        const validation = this.validator.validate({
-          outputDir: this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir()),
-          proposedOutputPath: result.proposedOutputPath,
-          skillName: result.skillName,
-          skillContent: result.skillContent,
+        const result = this.crystallizer.crystallize({
+          patternId: candidate.patternId,
+          evidenceHash: candidate.evidenceHash,
           pattern: candidate.pattern,
         });
 
+        const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+        const legacy = isLegacyMarkdownCrystallizationProposal(result.skillContent);
+        const gsv = this.validator.validate(
+          {
+            outputDir,
+            proposedOutputPath: result.proposedOutputPath,
+            skillName: result.skillName,
+            skillContent: result.skillContent,
+            pattern: candidate.pattern,
+          },
+          { legacyQueuedCrystallization: legacy },
+        );
         const patternSnapshot = JSON.stringify(candidate.pattern);
 
-        if (this.cfg.autoApprove) {
-          // Re-check cap before approving each skill
-          const currentApprovedCount = this.crystallizationStore.count("approved");
-          if (currentApprovedCount >= this.cfg.maxCrystallized) {
-            skipped++;
-            reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
-            continue;
-          }
-
-          // Create proposal, approve in DB, THEN write to disk (DB is source of truth)
-          const proposal = this.crystallizationStore.create({
-            patternId: candidate.patternId,
-            skillName: result.skillName,
-            skillContent: result.skillContent,
-            patternSnapshot,
-            validationResult: validation,
-          });
-          if (validation.approvalDecision === "allow") {
-            this.crystallizationStore.approve(proposal.id, result.proposedOutputPath);
-            this.writeSkillToDisk(result.proposedOutputPath, result.skillContent);
-          } else {
-            skipped++;
-            reasons.push(`Pending '${result.skillName}': ${summarizeSkillProposalValidation(validation)}`);
-          }
-          proposed++;
-        } else {
-          // Store as pending, awaiting human approval
+        if (gsv.approvalDecision === "deny") {
+          // Record as rejected so we have durable provenance + reason, and suppress immediate regen.
           this.crystallizationStore.create({
             patternId: candidate.patternId,
+            evidenceHash: candidate.evidenceHash,
             skillName: result.skillName,
             skillContent: result.skillContent,
             patternSnapshot,
-            validationResult: validation,
+            proposalCardJson: JSON.stringify(result.proposalCard),
+            category: result.proposalCard.category,
+            description: result.proposalCard.description,
+            confidence: result.proposalCard.confidence,
+            recommendedOutput: result.proposalCard.recommended_output,
+            status: "rejected",
+            rejectionReason: `generated-skill-validation: ${summarizeSkillProposalValidation(gsv)}`,
+            validationResult: gsv,
           });
-          proposed++;
-          if (validation.overallStatus !== "passed") {
-            reasons.push(`Pending '${result.skillName}': ${summarizeSkillProposalValidation(validation)}`);
+          skipped++;
+          reasons.push(`Rejected '${result.skillName}': failed validation — ${summarizeSkillProposalValidation(gsv)}`);
+          continue;
+        }
+
+        if (autoApprove && this.crystallizationStore.count("approved") >= this.cfg.maxCrystallized) {
+          skipped++;
+          reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
+          continue;
+        }
+
+        if (autoApprove && gsv.approvalDecision !== "allow") {
+          skipped++;
+          reasons.push(
+            `Skipped '${result.skillName}' (auto-approve requires clean eval): ${summarizeSkillProposalValidation(gsv)}`,
+          );
+          continue;
+        }
+
+        // Store as validated proposal (awaiting human approval)
+        const proposal = this.crystallizationStore.create({
+          patternId: candidate.patternId,
+          evidenceHash: candidate.evidenceHash,
+          skillName: result.skillName,
+          skillContent: result.skillContent,
+          patternSnapshot,
+          proposalCardJson: JSON.stringify(result.proposalCard),
+          category: result.proposalCard.category,
+          description: result.proposalCard.description,
+          confidence: result.proposalCard.confidence,
+          recommendedOutput: result.proposalCard.recommended_output,
+          status: "validated",
+          validationResult: gsv,
+        });
+
+        if (autoApprove) {
+          const approved = this.crystallizationStore.approve(proposal.id);
+          if (approved) {
+            const outputPath = this.computeOutputPath(approved.skillName);
+            this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approved, outputPath));
+            this.crystallizationStore.install(approved.id, outputPath);
           }
         }
+
+        proposed++;
       } catch (err) {
         skipped++;
         const msg = err instanceof Error ? err.message : String(err);
@@ -165,15 +205,23 @@ export class CrystallizationProposer {
   // approveProposal — write skill to disk and mark as approved
   // -------------------------------------------------------------------------
 
-  approveProposal(proposalId: string, opts?: { overrideWarnings?: boolean }): ApproveResult {
+  approveProposal(
+    proposalId: string,
+    opts?: {
+      overrideWarnings?: boolean;
+      name?: string;
+      category?: string;
+      recommendedOutput?: "SKILL.md only";
+    },
+  ): ApproveResult {
     const proposal = this.crystallizationStore.getById(proposalId);
     if (!proposal) {
       return { success: false, message: `Proposal '${proposalId}' not found` };
     }
-    if (proposal.status !== "pending") {
+    if (proposal.status !== "validated" && proposal.status !== "drafted") {
       return {
         success: false,
-        message: `Proposal '${proposalId}' is not pending (status: ${proposal.status})`,
+        message: `Proposal '${proposalId}' is not approvable (status: ${proposal.status})`,
       };
     }
 
@@ -186,23 +234,33 @@ export class CrystallizationProposer {
       };
     }
 
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const safeName = normalizeSkillName(proposal.skillName);
-    const outputPath = `${outputDir}/${safeName}/SKILL.md`;
+    const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
+    const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
+    const desiredRecommendedOutput = opts?.recommendedOutput ?? proposal.recommendedOutput;
 
-    // Re-validate before writing (include stored pattern so activation eval matches runCycle)
+    const { skillContent: rewrittenContent, proposalCardJson: rewrittenCardJson } = this.applyOverridesToDraft(
+      proposal,
+      {
+        skillName: safeName,
+        category: desiredCategory,
+        recommendedOutput: desiredRecommendedOutput,
+      },
+    );
+
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const proposedOutputPath = this.computeOutputPath(safeName);
     const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+    const legacy = isLegacyMarkdownCrystallizationProposal(rewrittenContent);
     const validation = this.validator.validate(
       {
         outputDir,
-        proposedOutputPath: outputPath,
+        proposedOutputPath,
         skillName: safeName,
-        skillContent: proposal.skillContent,
+        skillContent: rewrittenContent,
         pattern,
       },
-      {
-        legacyQueuedCrystallization: isLegacyMarkdownCrystallizationProposal(proposal.skillContent),
-      },
+      { legacyQueuedCrystallization: legacy },
     );
     this.crystallizationStore.saveValidationResult(proposalId, validation);
     if (validation.approvalDecision === "deny") {
@@ -218,14 +276,26 @@ export class CrystallizationProposer {
       };
     }
 
-    // Approve in DB first (source of truth), then write to disk
-    const updated = this.crystallizationStore.approve(proposalId, outputPath);
+    // Approve in DB first (source of truth), then write to disk, then mark installed.
+    const updated = this.crystallizationStore.approve(proposalId, {
+      skillName: safeName,
+      skillContent: rewrittenContent,
+      category: desiredCategory,
+      recommendedOutput: desiredRecommendedOutput,
+      proposalCardJson: rewrittenCardJson,
+    });
     if (!updated) {
       return { success: false, message: "Failed to update proposal status" };
     }
 
+    const outputPath = this.computeOutputPath(updated.skillName);
+
     try {
-      this.writeSkillToDisk(outputPath, proposal.skillContent);
+      this.writeSkillToDisk(outputPath, this.injectInstallMetadata(updated, outputPath));
+      // Mark installed and keep output path link.
+      this.crystallizationStore.install(updated.id, outputPath);
+      // Supersede older installed approvals for the same pattern (best-effort).
+      this.trySupersedeOlderInstalls(updated.patternId, updated.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
@@ -237,7 +307,7 @@ export class CrystallizationProposer {
     return {
       success: true,
       outputPath,
-      message: `Skill '${proposal.skillName}' written to ${outputPath}`,
+      message: `Skill '${updated.skillName}' written to ${outputPath}`,
     };
   }
 
@@ -250,10 +320,10 @@ export class CrystallizationProposer {
     if (!proposal) {
       return { success: false, message: `Proposal '${proposalId}' not found` };
     }
-    if (proposal.status !== "pending") {
+    if (proposal.status !== "validated" && proposal.status !== "drafted" && proposal.status !== "approved") {
       return {
         success: false,
-        message: `Proposal '${proposalId}' is not pending (status: ${proposal.status})`,
+        message: `Proposal '${proposalId}' is not rejectable (status: ${proposal.status})`,
       };
     }
 
@@ -269,10 +339,97 @@ export class CrystallizationProposer {
   // Private helpers
   // -------------------------------------------------------------------------
 
+  private computeOutputPath(skillName: string): string {
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    return `${outputDir}/${skillName}/SKILL.md`;
+  }
+
+  private applyOverridesToDraft(
+    proposal: {
+      skillName: string;
+      skillContent: string;
+      proposalCardJson?: string;
+    },
+    overrides: {
+      skillName: string;
+      category?: string;
+      recommendedOutput?: "SKILL.md only";
+    },
+  ): { skillContent: string; proposalCardJson?: string } {
+    let skillContent = proposal.skillContent;
+    if (overrides.skillName && overrides.skillName !== proposal.skillName) {
+      // Update title line only (keep the rest intact and concise).
+      skillContent = skillContent.replace(
+        new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
+        `# ${overrides.skillName}`,
+      );
+    }
+    if (overrides.category) {
+      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
+    }
+    if (overrides.recommendedOutput) {
+      skillContent = skillContent.replace(
+        /^\*\*Recommended output:\*\* .+$/m,
+        `**Recommended output:** ${overrides.recommendedOutput}`,
+      );
+    }
+
+    let proposalCardJson = proposal.proposalCardJson;
+    if (proposalCardJson) {
+      try {
+        const parsed = JSON.parse(proposalCardJson) as Record<string, unknown>;
+        parsed.name = overrides.skillName;
+        if (overrides.category) parsed.category = overrides.category;
+        if (overrides.recommendedOutput) parsed.recommended_output = overrides.recommendedOutput;
+        proposalCardJson = JSON.stringify(parsed);
+      } catch {
+        // leave as-is
+      }
+    }
+
+    return { skillContent, proposalCardJson };
+  }
+
+  private injectInstallMetadata(
+    proposal: {
+      id: string;
+      patternId: string;
+      evidenceHash: string;
+      skillContent: string;
+    },
+    outputPath: string,
+  ): string {
+    const header = `<!-- openclaw:skill-proposal id=${proposal.id} pattern_id=${proposal.patternId} evidence_hash=${proposal.evidenceHash} output_path=${outputPath} -->`;
+    if (proposal.skillContent.startsWith("<!-- openclaw:skill-proposal")) {
+      return proposal.skillContent;
+    }
+    return `${header}\n\n${proposal.skillContent}`;
+  }
+
+  private trySupersedeOlderInstalls(patternId: string, supersededBy: string): void {
+    try {
+      const existing = this.crystallizationStore
+        .list({ skillName: undefined, limit: 50 })
+        .filter((p) => p.patternId === patternId);
+      for (const p of existing) {
+        if (p.id === supersededBy) continue;
+        if (p.status === "installed" || p.status === "approved") {
+          this.crystallizationStore.supersede(p.id, supersededBy);
+        }
+      }
+    } catch {
+      // best-effort; ignore
+    }
+  }
+
   private writeSkillToDisk(outputPath: string, skillContent: string): void {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, skillContent, "utf-8");
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {

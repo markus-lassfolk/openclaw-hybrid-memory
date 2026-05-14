@@ -10,6 +10,7 @@ import { getEnv } from "../utils/env-manager.js";
 import { homedir } from "node:os";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -17,12 +18,14 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 
 interface CrystallizationInput {
   patternId: string;
+  evidenceHash: string;
   pattern: WorkflowPattern;
 }
 
 interface CrystallizationResult {
   skillName: string;
   skillContent: string;
+  proposalCard: SkillProposalCard;
   /** Resolved output path for the SKILL.md (not yet written to disk — requires approval) */
   proposedOutputPath: string;
   /** Whether a companion shell script was generated */
@@ -34,23 +37,6 @@ interface CrystallizationResult {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function toTitleCase(value: string): string {
-  return value
-    .split("-")
-    .filter((part) => part.length > 0)
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-export function normalizeSkillName(value: string): string {
-  const normalized = value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized.length > 0 ? normalized : "auto-generated-skill";
-}
 
 /**
  * Derive a kebab-case skill name from example goals and tool sequence.
@@ -67,7 +53,7 @@ export function deriveSkillName(exampleGoals: string[], toolSequence: string[], 
       .split(/\s+/)
       .slice(0, 4)
       .join("-");
-    if (slug.length >= 3) return normalizeSkillName(`auto-${slug}`);
+    if (slug.length >= 3) return `auto-${slug}`;
   }
 
   // Fall back: use the first two tool names + hash fragment (lowercase for consistency)
@@ -76,7 +62,16 @@ export function deriveSkillName(exampleGoals: string[], toolSequence: string[], 
     .join("-")
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-");
-  return normalizeSkillName(`auto-${toolSlug}-${patternId.slice(0, 6)}`);
+  return `auto-${toolSlug}-${patternId.slice(0, 6)}`;
+}
+
+export function normalizeSkillName(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : "auto-generated-skill";
 }
 
 /**
@@ -90,86 +85,165 @@ export function isExecOnlySequence(toolSequence: string[]): boolean {
 // SKILL.md template builder
 // ---------------------------------------------------------------------------
 
-function buildSkillContent(skillName: string, pattern: WorkflowPattern, patternId: string, createdAt: string): string {
+function buildSkillContent(
+  skillName: string,
+  pattern: WorkflowPattern,
+  patternId: string,
+  evidenceHash: string,
+  createdAt: string,
+  card: SkillProposalCard,
+): string {
   const toolSequence = pattern.toolSequence;
   const successPct = Math.round(pattern.successRate * 100);
-  const normalizedGoals = pattern.exampleGoals
-    .filter((goal) => goal.trim().length > 0)
-    .map((goal) => goal.replace(/\s+/g, " ").trim());
-  const exampleGoalsText =
-    normalizedGoals.length > 0
-      ? normalizedGoals.map((g) => `- ${g}`).join("\n")
-      : "- Match a task that follows this workflow.";
-  const primaryGoal = normalizedGoals[0] ?? `follow the ${skillName} workflow`;
-  const shortGoal = primaryGoal.length > 120 ? `${primaryGoal.slice(0, 117).trimEnd()}...` : primaryGoal;
-  const description = `Use when the user asks to ${shortGoal}. Auto-crystallized from repeated workflow evidence.`;
-  const workflowText = toolSequence
-    .map(
-      (tool, i) =>
-        `${i + 1}. Use \`${tool}\` for step ${i + 1} of the bounded workflow, then confirm the result before continuing.`,
-    )
+  const exampleGoalsText = card.provenance.example_goals.length
+    ? card.provenance.example_goals.map((g) => `- ${g.replace(/\n/g, " ")}`).join("\n")
+    : "- (no example goals recorded)";
+  const capturesText = card.captures.length ? card.captures.map((c) => `- ${c}`).join("\n") : "- (none)";
+
+  const stepsText = toolSequence
+    .map((tool, i) => `${i + 1}. Call \`${tool}\` (follow the host tool schema and keep side-effects minimal).`)
     .join("\n");
-  const nearMiss = `Do not use for requests that only discuss ${shortGoal} without asking you to run the workflow.`;
 
-  return `---
-name: ${skillName}
-description: ${description}
-category: crystallized-workflow
-provenance: pattern:${patternId}
----
-
-# ${toTitleCase(skillName)}
+  return `# ${skillName}
 
 > Auto-crystallized from workflow pattern on ${createdAt}.
 > **Do not edit this file manually** — it will be regenerated or overwritten.
 
-## Trigger
+## Description
 
-Use this skill when the request clearly matches the recurring workflow captured by this pattern.
+${card.description}
 
-Positive examples:
+**Source pattern ID:** \`${patternId}\`
+**Evidence hash:** \`${evidenceHash}\`
+**Success rate:** ${successPct}% (${pattern.successCount}/${pattern.totalCount} executions)
+**Average duration:** ${pattern.avgDurationMs}ms
+**Category:** ${card.category}
+**Recommended output:** ${card.recommended_output}
+
+## When to Use
+
 ${exampleGoalsText}
 
-## Scope
+## Captures
 
-This skill is for a bounded, repeatable workflow that follows the recorded tool sequence and validation checks.
+${capturesText}
 
-## When not to use
+## Steps
 
-- ${nearMiss}
-- Do not use for unrelated planning, open-ended explanation requests, or broader tasks that need a different workflow.
-- Do not improvise destructive or credential-handling steps that are not present in this generated skill.
+${stepsText}
 
-## Workflow
+## Tool Sequence
 
-${workflowText}
+\`\`\`
+${toolSequence.join(" → ")}
+\`\`\`
 
-## Verification
+## Quality Checklist
 
-- Confirm each step produced the expected artifact or observable before moving on.
-- Prefer objective checks (files exist, command exit codes, structured output) over subjective judgment.
-- Stop and ask for clarification when validation signals are ambiguous or missing.
+- Confirm the task matches the tool sequence pattern (avoid forcing).
+- Validate inputs and scopes; ask clarifying questions if ambiguous.
+- Prefer read-only / dry-run steps before any write-like tool calls.
+- Stop and escalate when the request implies external side-effects you can't verify.
 
-## Anti-patterns / Known Failures
+## Anti-Patterns
 
-- Do not paste raw transcripts, stack traces, or multi-page logs into follow-up work; summarize as checklist updates.
-- Do not skip verification because a step "probably" succeeded without evidence.
-- Do not broaden scope beyond the captured tool sequence unless the user explicitly expands the task.
+- Do not apply this skill for unrelated questions just because tools overlap.
+- Do not invent missing context (paths, repo, IDs, credentials).
+- Do not execute destructive commands or broad writes without explicit confirmation.
 
-## Examples
+## Notes
 
-- Positive: "${shortGoal}"
-- Negative: "How do I create a GitHub issue?"
-- Edge: "Explain ${shortGoal} without executing the workflow or changing files."
-
-## Provenance
-
-- Source pattern ID: \`${patternId}\`
-- Success rate: ${successPct}% (${pattern.successCount}/${pattern.totalCount} executions)
-- Average duration: ${pattern.avgDurationMs}ms
-- Tool sequence: \`${toolSequence.join(" → ")}\`
+- This skill was crystallized automatically. Review and adjust as needed.
 - Approval was required before this file was written.
+- Stats reflect historical performance; actual results may vary.
 `;
+}
+
+function recommendedOutput(): SkillProposalRecommendedOutput {
+  return "SKILL.md only";
+}
+
+function computeConfidence(pattern: WorkflowPattern): number {
+  const usageFactor = Math.min(1, pattern.totalCount / 10);
+  const conf = pattern.successRate * usageFactor;
+  return Math.max(0, Math.min(1, conf));
+}
+
+function inferCategory(toolSequence: string[]): string {
+  if (toolSequence.some((t) => t.toLowerCase().includes("github"))) return "workflow-automation";
+  if (toolSequence.includes("exec")) return "workflow-automation";
+  return "workflow-automation";
+}
+
+function inferRisks(toolSequence: string[]): string[] {
+  const risks = new Set<string>();
+  if (toolSequence.includes("exec")) risks.add("shell execution / external side-effects");
+  if (toolSequence.includes("write")) risks.add("filesystem writes");
+  if (toolSequence.some((t) => t.toLowerCase().includes("github"))) risks.add("external GitHub writes");
+  if (toolSequence.some((t) => /delete|remove|prune|forget|uninstall/i.test(t))) risks.add("destructive operations");
+  return Array.from(risks);
+}
+
+function inferCaptures(toolSequence: string[]): string[] {
+  const captures: string[] = [];
+  for (const tool of toolSequence) {
+    if (captures.length >= 8) break;
+    switch (tool) {
+      case "read":
+        captures.push("Read relevant files / state");
+        break;
+      case "write":
+        captures.push("Apply edits safely and minimally");
+        break;
+      case "exec":
+        captures.push("Run local commands to validate changes");
+        break;
+      default:
+        captures.push(`Use \`${tool}\` as needed`);
+    }
+  }
+  return captures;
+}
+
+function buildProposalCard(
+  skillName: string,
+  pattern: WorkflowPattern,
+  patternId: string,
+  evidenceHash: string,
+): SkillProposalCard {
+  const successPct = Math.round(pattern.successRate * 100);
+  const category = inferCategory(pattern.toolSequence);
+  const goals = pattern.exampleGoals
+    .map((g) => g.trim().replace(/\s+/g, " "))
+    .filter((g) => g.length > 0)
+    .slice(0, 5);
+  const description = goals[0]?.length
+    ? goals[0]
+    : `Repeated tool sequence (${pattern.toolSequence.slice(0, 4).join(" → ")}${pattern.toolSequence.length > 4 ? " → …" : ""})`;
+  const risks = inferRisks(pattern.toolSequence);
+  const captures = inferCaptures(pattern.toolSequence);
+  const confidence = computeConfidence(pattern);
+
+  return {
+    name: skillName,
+    category,
+    description: `Draft skill for: ${description}`,
+    observed_runs: pattern.totalCount,
+    successful_runs: pattern.successCount,
+    failed_runs: Math.max(0, pattern.totalCount - pattern.successCount),
+    captures,
+    why_useful: `Observed ${pattern.totalCount} runs at ${successPct}% success; high-value repeated workflow with consistent tool usage.`,
+    risks,
+    confidence,
+    recommended_output: recommendedOutput(),
+    provenance: {
+      source: "workflow-pattern",
+      pattern_id: patternId,
+      evidence_hash: evidenceHash,
+      tool_sequence: pattern.toolSequence,
+      example_goals: goals,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -184,11 +258,12 @@ export class SkillCrystallizer {
    * Does NOT write to disk — returns content + proposed path for the approval flow.
    */
   crystallize(input: CrystallizationInput): CrystallizationResult {
-    const { patternId, pattern } = input;
+    const { patternId, pattern, evidenceHash } = input;
     const createdAt = new Date().toISOString().slice(0, 10);
 
     const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
-    const skillContent = buildSkillContent(skillName, pattern, patternId, createdAt);
+    const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
+    const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
 
     // Resolve output directory (expand ~ for home dir)
     const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
@@ -201,6 +276,7 @@ export class SkillCrystallizer {
     return {
       skillName,
       skillContent,
+      proposalCard,
       proposedOutputPath,
       hasScript,
       scriptContent,
