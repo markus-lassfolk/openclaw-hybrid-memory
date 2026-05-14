@@ -247,7 +247,7 @@ export class SkillValidator {
     // Use the shared taxonomy from config/skill-sections.ts so that both
     // SkillValidator and GeneratedSkillValidationService check the same sections
     // (issues #1375, #1408).
-    const frontmatterCategory = frontmatter.present ? frontmatter.keys.get("category") : undefined;
+    const frontmatterCategory = frontmatter.present ? getFrontmatterCategory(frontmatter.keys) : undefined;
     const requiredSections = getSectionTaxonomy(frontmatterCategory);
 
     for (const section of requiredSections) {
@@ -467,6 +467,10 @@ function findPreviousNonEmptyLine(lines: string[], startIndex: number): string |
     return trimmed;
   }
   return null;
+}
+
+function getFrontmatterCategory(keys: Map<string, string>): string | undefined {
+  return keys.get("category") ?? keys.get("categories") ?? keys.get("tags") ?? keys.get("type") ?? keys.get("kind");
 }
 
 function parseFrontmatter(lines: string[]): {

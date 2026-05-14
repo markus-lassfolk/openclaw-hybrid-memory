@@ -66,7 +66,7 @@ interface ValidateGeneratedSkillInput {
   pattern?: WorkflowPattern;
 }
 
-const REQUIRED_FRONTMATTER_FIELDS = ["name", "description", "category"] as const;
+const REQUIRED_FRONTMATTER_FIELDS = ["name", "description"] as const;
 // REQUIRED_SECTIONS removed: section validation is now delegated to SkillValidator which
 // uses the shared alias-aware taxonomy from config/skill-sections.ts (issues #1375, #1408).
 const MAX_SKILL_CHARS = 16_000;
@@ -133,6 +133,10 @@ export function parseSkillFrontmatter(skillContent: string): Record<string, stri
     if (key.length > 0) frontmatter[key] = value;
   }
   return frontmatter;
+}
+
+function getFrontmatterCategory(frontmatter: Record<string, string>): string | undefined {
+  return frontmatter.category ?? frontmatter.categories ?? frontmatter.tags ?? frontmatter.type ?? frontmatter.kind;
 }
 
 export function summarizeSkillProposalValidation(result?: SkillProposalValidationResult): string {
@@ -222,6 +226,9 @@ export class GeneratedSkillValidationService {
           violations.push(`Missing required frontmatter field: ${field}`);
         }
       }
+      if (!getFrontmatterCategory(frontmatter)) {
+        violations.push("Missing required frontmatter field: category");
+      }
       if (frontmatter.name && frontmatter.name !== input.skillName) {
         violations.push(`Frontmatter name '${frontmatter.name}' must match skill name '${input.skillName}'`);
       }
@@ -306,7 +313,8 @@ export class GeneratedSkillValidationService {
         if (entry.description !== frontmatter.description) {
           violations.push("Dry-load description does not match frontmatter description");
         }
-        if (entry.category !== frontmatter.category) {
+        const expectedCategory = getFrontmatterCategory(frontmatter);
+        if (expectedCategory && getFrontmatterCategory(entry) !== expectedCategory) {
           violations.push("Dry-load category does not match frontmatter category");
         }
       }

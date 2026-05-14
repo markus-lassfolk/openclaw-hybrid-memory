@@ -283,12 +283,15 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
               process.exitCode = 1;
               return;
             }
+            const dryRunWouldInstall =
+              result.approvalDecision === "allow" ||
+              (result.approvalDecision === "allow-with-override" && opts.overrideWarnings === true);
             if (opts.json) {
               console.log(
                 JSON.stringify(
                   {
                     dryRun: true,
-                    ok: result.approvalDecision !== "deny",
+                    ok: dryRunWouldInstall,
                     proposalId: id,
                     approvalDecision: result.approvalDecision,
                     overallStatus: result.overallStatus,
@@ -312,7 +315,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
                   2,
                 ),
               );
-              if (result.approvalDecision === "deny") process.exitCode = 1;
+              if (!dryRunWouldInstall) process.exitCode = 2;
               return;
             }
             const icon =
@@ -333,7 +336,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             if (result.approvalDecision === "allow-with-override" && !opts.overrideWarnings) {
               console.log(`  → Add --override-warnings to proceed despite activation warnings`);
             }
-            if (result.approvalDecision === "deny") process.exitCode = 1;
+            if (!dryRunWouldInstall) process.exitCode = 2;
             return;
           }
 

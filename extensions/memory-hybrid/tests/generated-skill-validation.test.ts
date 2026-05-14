@@ -7,6 +7,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import { registerSkillsCommands } from "../cli/skills.js";
+import { CATEGORY_SECTION_TAXONOMIES } from "../config/skill-sections.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
@@ -559,6 +560,7 @@ Bounded CLI release-health review workflow.
       expect(output.outputPath).toBeDefined();
       expect(existsSync(output.outputPath!)).toBe(true);
     } finally {
+      process.exitCode = undefined;
       cStore.close();
     }
   });
@@ -1207,7 +1209,8 @@ Bounded dry-run test workflow.
 
 ## Examples
 - Positive: "Test the dry-run install path for generated skills."
-- Negative: "How do I delete a file?"
+- Negative: "How much does an adult emperor penguin weigh on average?"
+- Edge: "Explain dry-run override handling without executing the workflow or changing files."
 
 ## Provenance
 - Source pattern ID: \`pattern-dry-run\``;
@@ -1252,6 +1255,163 @@ Bounded dry-run test workflow.
       }
     } finally {
       cStore.close();
+    }
+  });
+
+
+  it("skills install --dry-run requires override for allow-with-override proposals", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dry-run-override-"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+
+    try {
+      const skillContent = `---
+name: dry-run-override-skill
+description: Use when the user asks to review dry-run override behavior.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Dry Run Override Skill
+
+## Trigger
+Use this skill when the user asks to review dry-run override behavior or explain dry-run override handling.
+
+## Scope
+Bounded dry-run override verification workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Use \`read\` to inspect the generated skill proposal.
+2. Verify whether override handling matches install behavior.
+
+## Verification
+- Confirm dry-run reports failure without an explicit warning override.
+
+## Anti-patterns / Known Failures
+- Do not report override-required proposals as installable without override.
+
+## Examples
+- Positive: "Review dry-run override handling for generated skills."
+- Negative: "How much does an adult emperor penguin weigh on average?"
+- Edge: "Explain dry-run override handling without executing the workflow or changing files."
+
+## Provenance
+- Source pattern ID: \`pattern-dry-run-override\``;
+
+      const proposal = cStore.create({
+        patternId: "pattern-dry-run-override",
+        evidenceHash: "ev-dry-run-override",
+        skillName: "dry-run-override-skill",
+        skillContent,
+        patternSnapshot: JSON.stringify({
+          toolSequence: ["read"],
+          totalCount: 3,
+          successCount: 3,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 200,
+          exampleGoals: ["Review dry-run override handling for generated skills."],
+        }),
+        status: "validated",
+      });
+
+      const program = new Command("hybrid-mem");
+      program.exitOverride();
+      registerSkillsCommands(program, {
+        crystallizationStore: cStore,
+        factsDb: null,
+        cfg: { crystallization: cfg } as never,
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await program.parseAsync(["skills", "install", proposal.id, "--dry-run", "--json"], { from: "user" });
+      expect(process.exitCode).toBe(2);
+      const withoutOverride = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+        ok?: boolean;
+        approvalDecision?: string;
+      };
+      expect(withoutOverride.approvalDecision).toBe("allow-with-override");
+      expect(withoutOverride.ok).toBe(false);
+
+      logSpy.mockClear();
+      process.exitCode = undefined;
+      await program.parseAsync(["skills", "install", proposal.id, "--dry-run", "--override-warnings", "--json"], {
+        from: "user",
+      });
+      const withOverride = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean };
+      expect(withOverride.ok).toBe(true);
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      process.exitCode = undefined;
+      cStore.close();
+    }
+  });
+
+  it("uses alternate category frontmatter keys for section taxonomy overrides", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-alt-category-taxonomy-"));
+    const service = new GeneratedSkillValidationService();
+    const skillContent = `---
+name: alt-category-taxonomy
+description: Use when validating alternate category metadata keys.
+type: explain-skill
+provenance: test-suite
+---
+
+# Alt Category Taxonomy
+
+## Trigger
+Use this skill when validating alternate category metadata keys.
+
+## Scope
+Bounded alternate-category validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect metadata and section requirements.
+2. Confirm alternate category keys drive taxonomy lookup.
+
+## Verification
+- Confirm missing category-specific sections are reported.
+
+## Anti-patterns / Known Failures
+- Do not ignore accepted category alias keys.
+
+## Examples
+- Positive: "Validate an explain skill with type frontmatter."
+- Negative: "How do I create a calendar event?"
+
+## Provenance
+- Source pattern ID: \`pattern-alt-category-taxonomy\``;
+
+    CATEGORY_SECTION_TAXONOMIES["explain-skill"] = [
+      { id: "custom-required", label: "Custom Required", aliases: ["custom required"] },
+    ];
+
+    try {
+      const validation = service.validate({
+        outputDir: join(tmpDir, "skills"),
+        proposedOutputPath: join(tmpDir, "skills", "alt-category-taxonomy", "SKILL.md"),
+        skillName: "alt-category-taxonomy",
+        skillContent,
+        pattern: {
+          toolSequence: ["read"],
+          totalCount: 3,
+          successCount: 3,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 200,
+          exampleGoals: ["Validate an explain skill with type frontmatter."],
+        },
+      });
+
+      expect(validation.staticValidation.violations).toContain("Missing required section: Custom Required");
+    } finally {
+      delete CATEGORY_SECTION_TAXONOMIES["explain-skill"];
     }
   });
 });
