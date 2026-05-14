@@ -392,8 +392,8 @@ function buildSyntheticActivationCases(
 }
 
 function scoreActivationPrompt(prompt: string, sourceText: string): { matched: boolean } {
-  const promptWords = significantWords(prompt);
-  const sourceWords = significantWords(sourceText);
+  const promptWords = activationMatchTokens(prompt);
+  const sourceWords = activationMatchTokens(sourceText);
   const overlap = [...promptWords].filter((word) => sourceWords.has(word)).length;
   let score = overlap;
   const normalizedPrompt = prompt.toLowerCase();
@@ -412,12 +412,27 @@ function scoreActivationPrompt(prompt: string, sourceText: string): { matched: b
   return { matched: overlap >= minimumOverlap && score >= minimumScore };
 }
 
-function significantWords(text: string): Set<string> {
+/** Tokens for activation overlap; relax length so terse goals (e.g. "fix bug") still match. */
+function activationMatchTokens(text: string): Set<string> {
+  let words = significantWords(text, 3);
+  if (words.size === 0) words = significantWords(text, 2);
+  if (words.size === 0) {
+    words = new Set(
+      text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((word) => word.length >= 2 && !STOP_WORDS.has(word)),
+    );
+  }
+  return words;
+}
+
+function significantWords(text: string, minTokenLength = 4): Set<string> {
   return new Set(
     text
       .toLowerCase()
       .split(/[^a-z0-9]+/)
-      .filter((word) => word.length >= 4 && !STOP_WORDS.has(word)),
+      .filter((word) => word.length >= minTokenLength && !STOP_WORDS.has(word)),
   );
 }
 

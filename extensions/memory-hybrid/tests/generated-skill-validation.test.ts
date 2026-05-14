@@ -28,6 +28,34 @@ describe("GeneratedSkillValidationService", () => {
     }
   });
 
+  it("passes activation eval for terse example goals (short tokens)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-short-goal-"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+    const crystallizer = new SkillCrystallizer(cfg);
+    const service = new GeneratedSkillValidationService();
+    const pattern = {
+      toolSequence: ["exec", "read"],
+      totalCount: 4,
+      successCount: 3,
+      failureCount: 1,
+      successRate: 0.75,
+      avgDurationMs: 800,
+      exampleGoals: ["fix bug", "run CI"],
+    };
+
+    const result = crystallizer.crystallize({ patternId: "short-goal", pattern });
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
+
+    expect(validation.syntheticActivationEval.status).toBe("passed");
+    expect(validation.approvalDecision).not.toBe("deny");
+  });
+
   it("passes static, dry-load, and activation eval for crystallized skills", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
