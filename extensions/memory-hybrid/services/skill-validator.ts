@@ -58,6 +58,10 @@ const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string
   ],
 ];
 
+/** Real-looking emails only; allows example.com, localhost, test.com, example.org placeholders. */
+export const NON_PLACEHOLDER_EMAIL_PATTERN =
+  /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+
 const PRIVATE_CONTEXT_PATTERNS: Array<[name: string, pattern: RegExp, description: string]> = [
   [
     "private-ip",
@@ -81,7 +85,7 @@ const PRIVATE_CONTEXT_PATTERNS: Array<[name: string, pattern: RegExp, descriptio
   ],
   [
     "email-address",
-    /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+    NON_PLACEHOLDER_EMAIL_PATTERN,
     "Non-example email address detected (remove or replace with example.com)",
   ],
 ];

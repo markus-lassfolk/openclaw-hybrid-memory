@@ -71,6 +71,35 @@ describe("GeneratedSkillValidationService", () => {
     expect(validation.approvalDecision).toBe("allow");
   });
 
+  it("allows placeholder example.com emails in crystallized examples", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-example-email-"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+    const crystallizer = new SkillCrystallizer(cfg);
+    const service = new GeneratedSkillValidationService();
+    const pattern = {
+      toolSequence: ["read", "write"],
+      totalCount: 5,
+      successCount: 5,
+      failureCount: 0,
+      successRate: 1,
+      avgDurationMs: 400,
+      exampleGoals: ["Send the weekly summary to ops@example.com after deploy"],
+    };
+
+    const result = crystallizer.crystallize({ patternId: "email-goal", evidenceHash: "ev-mail", pattern });
+    expect(result.skillContent).toContain("ops@example.com");
+
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
+    expect(validation.staticValidation.status).toBe("passed");
+    expect(validation.approvalDecision).toBe("allow");
+  });
+
   it("accepts frontmatter names produced by approval rename sanitization", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-rename-"));
     const service = new GeneratedSkillValidationService();
