@@ -368,6 +368,67 @@ function migrateProcedureScopeColumns(db: DatabaseSync): void {
   );
 }
 
+function migrateGeneratedSkillLifecycleColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(procedures)").all() as Array<{ name: string }>;
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has("skill_state")) {
+    db.exec("ALTER TABLE procedures ADD COLUMN skill_state TEXT NOT NULL DEFAULT 'draft'");
+  }
+  if (!colNames.has("skill_state_reason")) {
+    db.exec("ALTER TABLE procedures ADD COLUMN skill_state_reason TEXT");
+  }
+  if (!colNames.has("skill_version")) {
+    db.exec("ALTER TABLE procedures ADD COLUMN skill_version INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!colNames.has("skill_generated_at")) {
+    db.exec("ALTER TABLE procedures ADD COLUMN skill_generated_at INTEGER");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_state ON procedures(skill_state)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_generated_at ON procedures(skill_generated_at)");
+  db.exec(`
+    UPDATE procedures
+    SET skill_state = 'experimental',
+        skill_generated_at = COALESCE(skill_generated_at, promoted_at, updated_at, created_at)
+    WHERE promoted_to_skill = 1
+      AND skill_path IS NOT NULL
+      AND (skill_state IS NULL OR skill_state = '' OR skill_state = 'draft')
+  `);
+}
+
+function migrateGeneratedSkillTelemetryTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS generated_skill_telemetry (
+      id TEXT PRIMARY KEY,
+      procedure_id TEXT NOT NULL REFERENCES procedures(id) ON DELETE CASCADE,
+      skill_name TEXT NOT NULL,
+      skill_version INTEGER NOT NULL DEFAULT 1,
+      request_hash TEXT,
+      request_summary TEXT,
+      decision TEXT NOT NULL,
+      confidence REAL,
+      reason TEXT,
+      task_outcome TEXT,
+      user_correction INTEGER NOT NULL DEFAULT 0,
+      correction_reason TEXT,
+      false_negative_signal INTEGER NOT NULL DEFAULT 0,
+      caused_rework INTEGER NOT NULL DEFAULT 0,
+      saved_tool_calls INTEGER,
+      saved_time_ms INTEGER,
+      scope TEXT,
+      scope_target TEXT,
+      agent_id TEXT,
+      session_id TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_gst_skill_name ON generated_skill_telemetry(skill_name)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_gst_procedure_id ON generated_skill_telemetry(procedure_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_gst_created_at ON generated_skill_telemetry(created_at DESC)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_gst_decision_created_at ON generated_skill_telemetry(skill_name, decision, created_at DESC)",
+  );
+}
+
 /**
  * Migrate the FTS5 virtual table to include the `tags` and `why` columns.
  * FTS5 virtual tables cannot be altered, so we drop and recreate if tags are absent.
@@ -1178,6 +1239,8 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateReinforcementColumns(db);
   migrateReinforcementColumnsProcedures(db);
   migrateProcedureScopeColumns(db);
+  migrateGeneratedSkillLifecycleColumns(db);
+  migrateGeneratedSkillTelemetryTable(db);
 
   // FTS5 tags support (must run after migrateTagsColumn)
   migrateFtsTagsSupport(db);
