@@ -593,18 +593,20 @@ function desiredLifecycleTransition(
 			reason: `auto-archived after ${policy.archiveAfterUnusedDays} days without any recorded activation`,
 		};
 	}
-	if (currentState !== "demoted" && flags.overTriggering) {
-		return {
-			state: "demoted",
-			reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
-		};
-	}
 	// Allow automatic unblocking of demoted/archived skills when they accumulate
-	// enough clean uses after the demotion reset.
+	// enough clean uses after the demotion reset. Evaluate this before the
+	// overTriggering check so archived skills with high historical FP rates
+	// can transition directly to experimental rather than demoted.
 	if (flags.unblockCandidate) {
 		return {
 			state: "experimental",
 			reason: `auto-unblocked after ${metrics.cleanUsesAfterDemotion} clean activations since demotion`,
+		};
+	}
+	if (currentState !== "demoted" && currentState !== "archived" && flags.overTriggering) {
+		return {
+			state: "demoted",
+			reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
 		};
 	}
 	if (currentState === "experimental" && flags.promotionCandidate) {

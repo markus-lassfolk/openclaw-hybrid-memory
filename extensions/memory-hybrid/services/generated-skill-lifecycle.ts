@@ -13,12 +13,12 @@
  * policies in tests).
  */
 
-import type { DatabaseSync } from "node:sqlite";
 import type {
 	GeneratedSkillLifecycleState,
 	ProcedureEntry,
 } from "../types/memory.js";
 import type { GeneratedSkillTelemetryEntry } from "../types/memory.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import {
 	type GeneratedSkillDoctorReport,
 	type GeneratedSkillLifecyclePolicy,
@@ -41,7 +41,7 @@ export class GeneratedSkillLifecycleService {
 	private readonly policy: GeneratedSkillLifecyclePolicy;
 
 	constructor(
-		private readonly db: DatabaseSync,
+		private readonly factsDb: FactsDB,
 		policy?: Partial<GeneratedSkillLifecyclePolicy>,
 	) {
 		this.policy = {
@@ -60,8 +60,9 @@ export class GeneratedSkillLifecycleService {
 	 */
 	recordTelemetry(
 		input: GeneratedSkillTelemetryRecordInput,
-	): GeneratedSkillTelemetryEntry {
-		return recordGeneratedSkillTelemetry(this.db, input, this.policy);
+	): GeneratedSkillTelemetryEntry | null {
+		if (!this.factsDb.isOpen()) return null;
+		return recordGeneratedSkillTelemetry(this.factsDb.getRawDb(), input, this.policy);
 	}
 
 	/**
@@ -72,8 +73,9 @@ export class GeneratedSkillLifecycleService {
 		activationId: string,
 		correctionReason: string,
 	): GeneratedSkillTelemetryEntry | null {
+		if (!this.factsDb.isOpen()) return null;
 		return markGeneratedSkillTelemetryFalsePositive(
-			this.db,
+			this.factsDb.getRawDb(),
 			activationId,
 			correctionReason,
 			this.policy,
@@ -87,7 +89,8 @@ export class GeneratedSkillLifecycleService {
 		skillName?: string,
 		limit = 50,
 	): GeneratedSkillTelemetryEntry[] {
-		return listGeneratedSkillTelemetry(this.db, skillName, limit);
+		if (!this.factsDb.isOpen()) return [];
+		return listGeneratedSkillTelemetry(this.factsDb.getRawDb(), skillName, limit);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -104,8 +107,9 @@ export class GeneratedSkillLifecycleService {
 		reason: string | null,
 		at?: number,
 	): ProcedureEntry | null {
+		if (!this.factsDb.isOpen()) return null;
 		return setGeneratedSkillLifecycleState(
-			this.db,
+			this.factsDb.getRawDb(),
 			skillName,
 			state,
 			reason,
@@ -117,8 +121,9 @@ export class GeneratedSkillLifecycleService {
 	 * Re-evaluate the lifecycle policy for a skill and apply any pending transition.
 	 */
 	refresh(skillName: string, now?: number): ProcedureEntry | null {
+		if (!this.factsDb.isOpen()) return null;
 		return refreshGeneratedSkillLifecycleState(
-			this.db,
+			this.factsDb.getRawDb(),
 			skillName,
 			this.policy,
 			now,
@@ -129,7 +134,8 @@ export class GeneratedSkillLifecycleService {
 	 * Retrieve the current skill record by name.
 	 */
 	getSkill(skillName: string): ProcedureEntry | null {
-		return getGeneratedSkillByName(this.db, skillName);
+		if (!this.factsDb.isOpen()) return null;
+		return getGeneratedSkillByName(this.factsDb.getRawDb(), skillName);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -143,8 +149,9 @@ export class GeneratedSkillLifecycleService {
 		skillName?: string;
 		recentActivationLimit?: number;
 		now?: number;
-	}): GeneratedSkillTelemetryReport {
-		return buildGeneratedSkillTelemetryReport(this.db, {
+	}): GeneratedSkillTelemetryReport | null {
+		if (!this.factsDb.isOpen()) return null;
+		return buildGeneratedSkillTelemetryReport(this.factsDb.getRawDb(), {
 			...options,
 			policy: this.policy,
 		});
@@ -162,7 +169,8 @@ export class GeneratedSkillLifecycleService {
 		workspaceRoot?: string;
 		fix?: boolean;
 		now?: number;
-	}): GeneratedSkillDoctorReport {
-		return reconcileGeneratedSkillDiskState(this.db, opts);
+	}): GeneratedSkillDoctorReport | null {
+		if (!this.factsDb.isOpen()) return null;
+		return reconcileGeneratedSkillDiskState(this.factsDb.getRawDb(), opts);
 	}
 }
