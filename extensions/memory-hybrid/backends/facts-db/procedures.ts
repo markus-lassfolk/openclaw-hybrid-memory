@@ -953,12 +953,22 @@ export function getProceduresReadyForSkill(
   db: DatabaseSync,
   validationThreshold: number,
   limit = 50,
+  skillTTLDays?: number,
 ): ProcedureEntry[] {
+  const now = Math.floor(Date.now() / 1000);
+  const useTtl = skillTTLDays != null ? 1 : 0;
+  const cutoff = skillTTLDays != null ? now - Math.max(1, Math.floor(skillTTLDays)) * 24 * 60 * 60 : 0;
   const rows = db
     .prepare(
-      `SELECT * FROM procedures WHERE procedure_type = 'positive' AND success_count >= ? AND promoted_to_skill = 0 ORDER BY success_count DESC, last_validated DESC LIMIT ?`,
+      `SELECT * FROM procedures
+        WHERE procedure_type = 'positive'
+          AND success_count >= ?
+          AND promoted_to_skill = 0
+          AND (? = 0 OR COALESCE(last_validated, updated_at, created_at) >= ?)
+        ORDER BY success_count DESC, last_validated DESC
+        LIMIT ?`,
     )
-    .all(validationThreshold, limit) as Array<Record<string, unknown>>;
+    .all(validationThreshold, useTtl, cutoff, limit) as Array<Record<string, unknown>>;
   return rows.map((r) => procedureRowToEntry(db, r));
 }
 

@@ -140,6 +140,28 @@ describe("generated skill telemetry", () => {
     expect(report.rows[0]?.recommendation).toBe("archive");
   });
 
+  it("archives promoted skills after idle time since last selected activation (#1417)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const { id, skillName } = createGeneratedSkill();
+    db.getRawDb()
+      .prepare("UPDATE procedures SET skill_generated_at = ?, promoted_at = ? WHERE id = ?")
+      .run(
+        Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
+        Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000),
+        id,
+      );
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: "one activation",
+      taskOutcome: "success",
+    });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00Z"));
+    db.buildGeneratedSkillTelemetryReport({ skillName });
+    expect(db.getGeneratedSkillByName(skillName)?.skillState).toBe("archived");
+  });
+
   it("accepts procedureId when it matches the promoted skill for the same skill name", () => {
     const { id, skillName } = createGeneratedSkill();
     db.recordGeneratedSkillTelemetry({

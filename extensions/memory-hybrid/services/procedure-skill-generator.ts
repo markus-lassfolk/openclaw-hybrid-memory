@@ -147,7 +147,7 @@ export function generateAutoSkills(
   const policy = parseProcedurePromotionPolicy(resolveBatchPromotionPolicy(options.policy, options.apply));
   const basePath = resolveSkillsPath(options.skillsAutoPath);
   const runId = `procedure-promotion-${Date.now()}`;
-  const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
+  const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun, options.skillTTLDays);
   const paths: string[] = [];
   const decisions: NonNullable<GenerateAutoSkillsResult["decisions"]> = [];
   let skipped = 0;

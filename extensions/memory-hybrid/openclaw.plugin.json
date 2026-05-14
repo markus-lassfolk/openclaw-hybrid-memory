@@ -527,7 +527,7 @@
     },
     "procedures.skillTTLDays": {
       "label": "Skill TTL (days)",
-      "help": "Procedure confidence TTL / revalidation window (default: 30)"
+      "help": "Auto skill generation only includes procedures with activity within this window (uses last_validated, else updated_at, else created_at; default 30)"
     },
     "procedures.skillsAutoPath": {
       "label": "Auto-skills path",
@@ -1488,7 +1488,7 @@
           },
           "skillTTLDays": {
             "type": "number",
-            "description": "Procedure TTL days (default: 30)"
+            "description": "Only procedures with last_validated/updated_at/created_at within this many days are candidates for auto skill generation (default: 30)"
           },
           "skillsAutoPath": {
             "type": "string",

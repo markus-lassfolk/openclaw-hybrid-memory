@@ -402,8 +402,9 @@ function summarizeSkillTelemetry(
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
   const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
-  const archiveCandidate =
-    activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const archiveIdleSeconds = policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const lastActivityAt = lastUsedAt ?? generatedAt;
+  const archiveCandidate = now - lastActivityAt >= archiveIdleSeconds;
   const promotionCandidate =
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
@@ -458,7 +459,7 @@ function desiredLifecycleTransition(
   if (currentState !== "archived" && flags.archiveCandidate) {
     return {
       state: "archived",
-      reason: `auto-archived after ${policy.archiveAfterUnusedDays} days without any recorded activation`,
+      reason: `auto-archived after ${policy.archiveAfterUnusedDays} days without selected-activation activity`,
     };
   }
   if (currentState !== "demoted" && flags.overTriggering) {

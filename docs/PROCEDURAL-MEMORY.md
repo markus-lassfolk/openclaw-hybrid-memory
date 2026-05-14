@@ -26,7 +26,7 @@ All under `plugins.entries["openclaw-hybrid-memory"].config.procedures`:
 | `sessionsDir` | `~/.openclaw/agents/main/sessions` | Directory containing session `.jsonl` files. |
 | `minSteps` | `2` | Minimum tool-call steps to consider a sequence a procedure. |
 | `validationThreshold` | `3` | Success count required before auto-generating a skill. |
-| `skillTTLDays` | `30` | TTL (days) for procedure confidence / revalidation. |
+| `skillTTLDays` | `30` | Auto skill generation only considers positive procedures whose latest activity (`last_validated`, else `updated_at`, else `created_at`) is within this many days. |
 | `skillsAutoPath` | `skills/auto` | Path (relative to workspace or absolute) for auto-generated skills. |
 | `requireApprovalForPromote` | `true` | When true, human should move skills out of `auto/` to promote to permanent. |
 
@@ -73,7 +73,7 @@ openclaw hybrid-mem skills demote moltbook-check --reason "over-triggering"
 ```
 
 Generated skills now start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`
-Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. The lifecycle policy auto-promotes experimental skills to `trusted` after repeated successful uses without correction, auto-demotes when false-positive rate crosses the threshold, and auto-archives never-used skills after the configured window.
+Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. The lifecycle policy auto-promotes experimental skills to `trusted` after repeated successful uses without correction, auto-demotes when false-positive rate crosses the threshold, and auto-archives when there has been no **selected** activation activity for the configured window (using time since the last selected activation, or since skill generation if there were none).
 
 ---
 
