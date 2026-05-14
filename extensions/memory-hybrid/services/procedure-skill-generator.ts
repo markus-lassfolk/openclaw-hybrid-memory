@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
+import type { MemoryEntry, ProcedureEntry } from "../types/memory.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -15,6 +16,7 @@ import {
   createProcedurePromotionItem,
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
+  type ProcedurePromotionEvidence,
   type ProcedurePromotionPolicy,
 } from "./procedure-promotion-policy.js";
 
@@ -53,10 +55,22 @@ function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: Readon
 }
 
 function rebaseDraftSlug(
-  draft: { skillMd: string; recipeJson: string; verificationJson: string; evalsJson: string },
+  draft: {
+    skillMd: string;
+    recipeJson: string;
+    verificationJson: string;
+    evalsJson: string;
+    proposalMetadataJson: string;
+  },
   resolvedSlug: string,
   generatedSkillPath: string,
-): { skillMd: string; recipeJson: string; verificationJson: string; evalsJson: string } {
+): {
+  skillMd: string;
+  recipeJson: string;
+  verificationJson: string;
+  evalsJson: string;
+  proposalMetadataJson: string;
+} {
   const verification = JSON.parse(draft.verificationJson) as {
     skill?: unknown;
     generatedSkillPath?: unknown;
@@ -121,6 +135,7 @@ export function generateAutoSkills(
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
     const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
+    const evidence = collectProcedurePromotionEvidence(factsDb, proc);
     const context = {
       runId,
       mode: dryRun ? ("dry-run" as const) : ("apply" as const),
@@ -134,6 +149,7 @@ export function generateAutoSkills(
       validationThreshold: options.validationThreshold,
       resolvedSlug,
       inRunSkillCandidates,
+      evidence,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     const reservedCandidate = { slug: resolvedSlug, taskPattern: proc.taskPattern };
@@ -293,10 +309,12 @@ export function generateAutoSkillForProcedure(
 
   const item = createProcedurePromotionItem(proc, policy);
   const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
+  const evidence = collectProcedurePromotionEvidence(factsDb, proc);
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
+    evidence,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -352,6 +370,56 @@ export function generateAutoSkillForProcedure(
   };
 }
 
+function collectProcedurePromotionEvidence(factsDb: FactsDB, proc: ProcedureEntry): ProcedurePromotionEvidence {
+  const relatedWords = significantWords(proc.taskPattern);
+  const matchesProcedure = (text: string): boolean => {
+    const words = significantWords(text);
+    const overlap = [...relatedWords].filter((word) => words.has(word)).length;
+    return relatedWords.size < 2 ? overlap >= 1 : overlap >= 2;
+  };
+  const corrections = factsDb.list(250, { source: "self-correction" }).filter((entry) => matchesProcedure(entry.text));
+  const manualWorkflowRequests = factsDb
+    .list(250, { source: "user" })
+    .filter(
+      (entry) =>
+        /\bremember\b[^\n]{0,80}\bworkflow\b/i.test(entry.text) &&
+        (matchesProcedure(entry.text) || (entry.why ? matchesProcedure(entry.why) : false)),
+    );
+  const rulesAndPreferences = [
+    ...factsDb.getByCategory("rule"),
+    ...factsDb.getByCategory("preference"),
+    ...factsDb.getByCategory("pattern"),
+  ].filter((entry) => matchesProcedure(entry.text) || (entry.why ? matchesProcedure(entry.why) : false));
+  const episodes = factsDb.searchEpisodes({ procedureId: proc.id, limit: 50 });
+
+  return {
+    procedureVersions: factsDb.getProcedureVersions(proc.id),
+    procedureFailures: factsDb.getProcedureFailures(proc.id),
+    episodes: episodes.map((episode) => ({
+      id: episode.id,
+      outcome: episode.outcome,
+      sessionId: episode.sessionId ?? undefined,
+    })),
+    userCorrections: corrections.map(toEvidenceFactRef),
+    rulesAndPreferences: rulesAndPreferences.map(toEvidenceFactRef),
+    manualWorkflowRequests: manualWorkflowRequests.map(toEvidenceFactRef),
+  };
+}
+
+function toEvidenceFactRef(entry: MemoryEntry): { id: string; sourceSession?: string | null } {
+  return { id: entry.id, sourceSession: entry.provenanceSession ?? null };
+}
+
+function significantWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .map((word) => word.trim())
+      .filter((word) => word.length >= 4 && !["with", "from", "that", "this", "workflow", "procedure", "report"].includes(word)),
+  );
+}
+
 function resolveBatchPromotionPolicy(policy: string | undefined, apply: boolean | undefined): string | undefined {
   // Backward compatibility: older maintenance callers selected mutation with apply=true
   // before the explicit --policy flag existed. Keep those apply=true calls drafting under
@@ -372,12 +440,14 @@ function writeDraftSkill(
     recipeJson: string;
     verificationJson: string;
     evalsJson: string;
+    proposalMetadataJson: string;
   },
 ): void {
   mkdirSync(join(skillDir, "evals"), { recursive: true });
   writeFileSync(join(skillDir, "SKILL.md"), draft.skillMd, "utf-8");
   writeFileSync(join(skillDir, "recipe.json"), draft.recipeJson, "utf-8");
   writeFileSync(join(skillDir, "verification.json"), draft.verificationJson, "utf-8");
+  writeFileSync(join(skillDir, "proposal-metadata.json"), draft.proposalMetadataJson, "utf-8");
   writeFileSync(join(skillDir, "evals", "evals.json"), draft.evalsJson, "utf-8");
 }
 

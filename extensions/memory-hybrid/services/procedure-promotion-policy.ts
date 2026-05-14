@@ -62,6 +62,56 @@ export interface ProcedurePromotionItemPayload extends Record<string, unknown> {
   skillSlug: string;
 }
 
+export interface ProcedurePromotionEvidence {
+  procedureVersions?: Array<{
+    id: string;
+    versionNumber: number;
+    successCount: number;
+    failureCount: number;
+    avoidanceNotes: string[] | null;
+    createdAt: number;
+  }>;
+  procedureFailures?: Array<{
+    id: string;
+    versionNumber: number;
+    timestamp: number;
+    context: string | null;
+    failedAtStep: number | null;
+  }>;
+  episodes?: Array<{
+    id: string;
+    outcome: "success" | "failure" | "partial" | "unknown";
+    sessionId?: string;
+  }>;
+  userCorrections?: Array<{
+    id: string;
+    sourceSession?: string | null;
+  }>;
+  rulesAndPreferences?: Array<{
+    id: string;
+  }>;
+  manualWorkflowRequests?: Array<{
+    id: string;
+    sourceSession?: string | null;
+  }>;
+}
+
+export interface ProcedureCandidateScoreBreakdown {
+  repeatCount: number;
+  successRate: number;
+  failureSeverity: number;
+  userSignal: number;
+  generality: number;
+  risk: number;
+  activationSpecificity: number;
+  duplicatePenalty: number;
+}
+
+export interface ProcedureCandidateScore {
+  score: number;
+  breakdown: ProcedureCandidateScoreBreakdown;
+}
+
 export type ProcedurePromotionItem = PendingItem<ProcedurePromotionItemPayload> & {
   procedure: ProcedureEntry;
 };
@@ -78,6 +128,7 @@ export interface GeneratedProcedureSkillDraft {
   recipeJson: string;
   verificationJson: string;
   evalsJson: string;
+  proposalMetadataJson: string;
   redactionCount: number;
 }
 
@@ -91,11 +142,22 @@ export interface ProcedurePromotionEvaluation {
 export interface ProcedurePromotionVerification {
   skill: string;
   sourceProcedureIds: string[];
+  sourceVersionIds: string[];
+  sourceSessionIds: string[];
+  sourceEpisodeIds: string[];
+  sourceCorrectionIds: string[];
+  sourceRulePreferenceIds: string[];
+  sourceManualRequestIds: string[];
   sourceSuccessCount: number;
   sourceFailureCount: number;
   sourceSessionCount: number;
   sourceConfidence: number;
   sourceSuccessRate: number | null;
+  riskLevel: "low" | "medium" | "high";
+  candidateScore: number;
+  candidateScoreBreakdown: ProcedureCandidateScoreBreakdown;
+  duplicateHandling: "none" | "merge";
+  validatorScore: number;
   promotionDecision: "approved" | "rejected" | "deferred" | "drafted" | "enabled" | "failed-validation";
   rejectionReasons: ProcedurePromotionReason[];
   generatedSkillPath: string | null;
@@ -131,6 +193,7 @@ export interface ProcedurePromotionPolicyOptions {
   minSuccessRate?: number;
   now?: number;
   resolvedSlug?: string;
+  evidence?: ProcedurePromotionEvidence;
 }
 
 const DEFAULT_MIN_DISTINCT_CONTEXTS = 2;
@@ -199,7 +262,7 @@ export function parseProcedurePromotionPolicy(policy: string | undefined): Proce
 
 export function createProcedurePromotionItem(
   proc: ProcedureEntry,
-  policy: ProcedurePromotionPolicy,
+  _policy: ProcedurePromotionPolicy,
 ): ProcedurePromotionItem {
   const recipe = parseRecipeOrRaw(proc.recipeJson);
   const sourceSessionCount = countDistinctSourceSessions(proc.sourceSessions);
@@ -241,9 +304,17 @@ export function evaluateProcedureForPromotion(
   options: ProcedurePromotionPolicyOptions,
 ): ProcedurePromotionEvaluation {
   const now = options.now ?? Math.floor(Date.now() / 1000);
-  const minDistinctContexts = options.minDistinctContexts ?? DEFAULT_MIN_DISTINCT_CONTEXTS;
+  const evidenceSummary = summarizeProcedureEvidence(item, options.evidence);
+  const riskLevel = determineRiskLevel(item.procedure, item.payload.recipe);
+  const riskValidationBump = riskLevel === "high" ? 2 : riskLevel === "medium" ? 1 : 0;
+  const riskDistinctBump = riskLevel === "high" ? 1 : 0;
+  const minDistinctContexts = (options.minDistinctContexts ?? DEFAULT_MIN_DISTINCT_CONTEXTS) + riskDistinctBump;
   const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
-  const minSuccessRate = options.minSuccessRate ?? DEFAULT_MIN_SUCCESS_RATE;
+  const minSuccessRate = Math.min(
+    0.95,
+    (options.minSuccessRate ?? DEFAULT_MIN_SUCCESS_RATE) + (riskLevel === "high" ? 0.15 : riskLevel === "medium" ? 0.05 : 0),
+  );
+  const requiredSuccessCount = options.validationThreshold + riskValidationBump;
   const proc = item.procedure;
   const gates: ProcedurePromotionGateResult[] = [];
   const recipe = item.payload.recipe;
@@ -252,15 +323,15 @@ export function evaluateProcedureForPromotion(
 
   if (proc.procedureType !== "positive")
     gates.push(reject("negative_or_avoidance_procedure", "procedure is not positive"));
-  if (proc.successCount < options.validationThreshold)
+  if (evidenceSummary.successCount < requiredSuccessCount)
     gates.push(
-      defer("insufficient_success_evidence", `successCount ${proc.successCount} < ${options.validationThreshold}`),
+      defer("insufficient_success_evidence", `successCount ${evidenceSummary.successCount} < ${requiredSuccessCount}`),
     );
-  if (item.payload.sourceSessionCount < minDistinctContexts)
+  if (evidenceSummary.sourceSessionCount < minDistinctContexts)
     gates.push(
       defer(
         "insufficient_distinct_contexts",
-        `distinct source sessions ${item.payload.sourceSessionCount} < ${minDistinctContexts}`,
+        `distinct source sessions ${evidenceSummary.sourceSessionCount} < ${minDistinctContexts}`,
       ),
     );
   if (
@@ -269,8 +340,8 @@ export function evaluateProcedureForPromotion(
     now - proc.lastFailed <= RECENT_FAILURE_WINDOW_SECONDS
   )
     gates.push(defer("recent_failure", "procedure has a recent or newer failure"));
-  if ((item.payload.successRate ?? 1) < minSuccessRate)
-    gates.push(defer("low_success_rate", `successRate ${item.payload.successRate} < ${minSuccessRate}`));
+  if (evidenceSummary.successRate < minSuccessRate)
+    gates.push(defer("low_success_rate", `successRate ${evidenceSummary.successRate} < ${minSuccessRate}`));
   if (proc.confidence < minConfidence)
     gates.push(defer("low_confidence", `confidence ${proc.confidence} < ${minConfidence}`));
   if (!Array.isArray(recipe) || recipe.length === 0)
@@ -287,16 +358,26 @@ export function evaluateProcedureForPromotion(
   if (!hasValidationCheck(recipe, proc.taskPattern))
     gates.push(defer("no_validation_possible", "no objective validation check is present or inferable"));
   const resolvedSkillSlug = options.resolvedSlug ?? item.payload.skillSlug;
-  if (
-    isDuplicateSkill(
-      resolvedSkillSlug,
-      proc.taskPattern,
-      options.skillsAutoPath,
-      options.existingSkillDirs,
-      options.inRunSkillCandidates,
-    )
-  )
+  const similarSkillExists = isDuplicateSkill(
+    resolvedSkillSlug,
+    proc.taskPattern,
+    options.skillsAutoPath,
+    options.existingSkillDirs,
+    options.inRunSkillCandidates,
+  );
+  if (similarSkillExists)
     gates.push(defer("duplicate_existing_skill", "existing or earlier same-run skill appears to cover this trigger"));
+
+  const candidateScoring = scoreProcedureCandidate({
+    successCount: evidenceSummary.successCount,
+    successRate: evidenceSummary.successRate,
+    failureSeverity: evidenceSummary.failureSeverity,
+    userSignal: evidenceSummary.userSignal,
+    generality: Math.min(1, evidenceSummary.sourceSessionCount / 3),
+    riskLevel,
+    activationSpecificity: hasEnoughTaskBoundary(proc.taskPattern) && !looksTooContextSpecific(proc.taskPattern) ? 1 : 0.4,
+    similarSkillExists,
+  });
 
   gates.push(...scanSafety(combinedText));
 
@@ -331,14 +412,28 @@ export function evaluateProcedureForPromotion(
   const eligible = gates.length === 0;
   const finalDraft = eligible ? draft : null;
   const generatedPath = eligible && finalDraft ? join(options.skillsAutoPath, finalDraft.slug) : null;
+  const validatorScore = Number(
+    Math.max(0, Math.min(1, candidateScoring.score * (gates.length === 0 ? 1 : gates.some((g) => g.severity === "reject") ? 0.35 : 0.65))).toFixed(3),
+  );
   const metadata: ProcedurePromotionVerification = {
     skill: resolvedSkillSlug,
     sourceProcedureIds: [proc.id],
-    sourceSuccessCount: proc.successCount,
-    sourceFailureCount: proc.failureCount,
-    sourceSessionCount: item.payload.sourceSessionCount,
+    sourceVersionIds: evidenceSummary.sourceVersionIds,
+    sourceSessionIds: evidenceSummary.sourceSessionIds,
+    sourceEpisodeIds: evidenceSummary.sourceEpisodeIds,
+    sourceCorrectionIds: evidenceSummary.sourceCorrectionIds,
+    sourceRulePreferenceIds: evidenceSummary.sourceRulePreferenceIds,
+    sourceManualRequestIds: evidenceSummary.sourceManualRequestIds,
+    sourceSuccessCount: evidenceSummary.successCount,
+    sourceFailureCount: evidenceSummary.failureCount,
+    sourceSessionCount: evidenceSummary.sourceSessionCount,
     sourceConfidence: proc.confidence,
-    sourceSuccessRate: item.payload.successRate,
+    sourceSuccessRate: evidenceSummary.successRate,
+    riskLevel,
+    candidateScore: candidateScoring.score,
+    candidateScoreBreakdown: candidateScoring.breakdown,
+    duplicateHandling: similarSkillExists ? "merge" : "none",
+    validatorScore,
     promotionDecision: eligible
       ? policy === "auto-safe"
         ? "drafted"
@@ -386,6 +481,14 @@ export function evaluateProcedureForPromotion(
     requiresHumanApproval: policy !== "auto-safe" || !eligible,
     lastVerifiedAt: new Date(now * 1000).toISOString(),
   };
+  if (finalDraft) {
+    finalDraft.verificationJson = `${JSON.stringify(redactAutopilotValue(metadata), null, 2)}\n`;
+    finalDraft.proposalMetadataJson = `${JSON.stringify(
+      redactAutopilotValue(createProposalMetadata(metadata, evidenceSummary)),
+      null,
+      2,
+    )}\n`;
+  }
   return { eligible, gates, draft: finalDraft, metadata };
 }
 
@@ -600,11 +703,31 @@ Leave this generated skill disabled until verification or human approval. To dis
   const verification: ProcedurePromotionVerification = {
     skill: slug,
     sourceProcedureIds: [proc.id],
+    sourceVersionIds: [],
+    sourceSessionIds: [],
+    sourceEpisodeIds: [],
+    sourceCorrectionIds: [],
+    sourceRulePreferenceIds: [],
+    sourceManualRequestIds: [],
     sourceSuccessCount: proc.successCount,
     sourceFailureCount: proc.failureCount,
     sourceSessionCount: item.payload.sourceSessionCount,
     sourceConfidence: proc.confidence,
     sourceSuccessRate: item.payload.successRate,
+    riskLevel: "low",
+    candidateScore: 0,
+    candidateScoreBreakdown: {
+      repeatCount: 0,
+      successRate: 0,
+      failureSeverity: 0,
+      userSignal: 0,
+      generality: 0,
+      risk: 0,
+      activationSpecificity: 0,
+      duplicatePenalty: 1,
+    },
+    duplicateHandling: "none",
+    validatorScore: 0,
     promotionDecision: "drafted",
     rejectionReasons: gates.map((g) => g.reason),
     generatedSkillPath: join(options.skillsAutoPath, slug),
@@ -649,6 +772,7 @@ Leave this generated skill disabled until verification or human approval. To dis
     recipeJson,
     verificationJson: `${JSON.stringify(redactAutopilotValue(verification), null, 2)}\n`,
     evalsJson: `${JSON.stringify(redactAutopilotValue(evals), null, 2)}\n`,
+    proposalMetadataJson: "{}\n",
     redactionCount: redactedTask.redactionCount,
   };
 }
@@ -678,6 +802,167 @@ function computeSuccessRate(proc: ProcedureEntry): number | null {
   if (typeof explicit === "number" && Number.isFinite(explicit) && explicit >= 0) return explicit;
   const total = proc.successCount + proc.failureCount;
   return total > 0 ? proc.successCount / total : null;
+}
+
+function summarizeProcedureEvidence(
+  item: ProcedurePromotionItem,
+  evidence: ProcedurePromotionEvidence | undefined,
+): {
+  successCount: number;
+  failureCount: number;
+  successRate: number;
+  failureSeverity: number;
+  userSignal: number;
+  sourceSessionCount: number;
+  sourceVersionIds: string[];
+  sourceSessionIds: string[];
+  sourceEpisodeIds: string[];
+  sourceCorrectionIds: string[];
+  sourceRulePreferenceIds: string[];
+  sourceManualRequestIds: string[];
+} {
+  const procedureVersions = evidence?.procedureVersions ?? [];
+  const versionSuccesses = procedureVersions.reduce((sum, version) => sum + Math.max(0, version.successCount), 0);
+  const versionFailures = procedureVersions.reduce((sum, version) => sum + Math.max(0, version.failureCount), 0);
+  const successCount = Math.max(item.procedure.successCount, versionSuccesses || item.procedure.successCount);
+  const failureCount = Math.max(item.procedure.failureCount, versionFailures || item.procedure.failureCount);
+  const successRateFromCounts = successCount + failureCount > 0 ? successCount / (successCount + failureCount) : 1;
+  const successRate = Math.max(0, Math.min(1, item.payload.successRate ?? successRateFromCounts));
+
+  const failureRecords = evidence?.procedureFailures ?? [];
+  const failureEpisodes = (evidence?.episodes ?? []).filter((episode) => episode.outcome === "failure").length;
+  const partialEpisodes = (evidence?.episodes ?? []).filter((episode) => episode.outcome === "partial").length;
+  const avoidanceNotes = procedureVersions.reduce(
+    (sum, version) => sum + (Array.isArray(version.avoidanceNotes) ? version.avoidanceNotes.length : 0),
+    0,
+  );
+  const failureSeverity = Math.max(
+    0,
+    Math.min(1, (failureCount * 0.2 + failureRecords.length * 0.1 + failureEpisodes * 0.15 + partialEpisodes * 0.05 + avoidanceNotes * 0.05) / 3),
+  );
+
+  const correctionCount = evidence?.userCorrections?.length ?? 0;
+  const manualRequestCount = evidence?.manualWorkflowRequests?.length ?? 0;
+  const rulesPreferenceCount = evidence?.rulesAndPreferences?.length ?? 0;
+  const userSignal = Math.max(
+    0,
+    Math.min(1, 0.5 + manualRequestCount * 0.15 + rulesPreferenceCount * 0.05 - correctionCount * 0.15 - failureEpisodes * 0.08),
+  );
+
+  const sourceSessionIds = collectDistinctSessionIds(item.procedure.sourceSessions, evidence);
+  return {
+    successCount,
+    failureCount,
+    successRate,
+    failureSeverity,
+    userSignal,
+    sourceSessionCount: sourceSessionIds.length || item.payload.sourceSessionCount,
+    sourceVersionIds: procedureVersions.map((version) => version.id),
+    sourceSessionIds,
+    sourceEpisodeIds: (evidence?.episodes ?? []).map((episode) => episode.id),
+    sourceCorrectionIds: (evidence?.userCorrections ?? []).map((correction) => correction.id),
+    sourceRulePreferenceIds: (evidence?.rulesAndPreferences ?? []).map((entry) => entry.id),
+    sourceManualRequestIds: (evidence?.manualWorkflowRequests ?? []).map((entry) => entry.id),
+  };
+}
+
+function collectDistinctSessionIds(
+  sourceSessions: string | undefined,
+  evidence: ProcedurePromotionEvidence | undefined,
+): string[] {
+  const source = new Set<string>();
+  if (sourceSessions) {
+    for (const session of sourceSessions.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean)) source.add(session);
+  }
+  for (const episode of evidence?.episodes ?? []) {
+    if (typeof episode.sessionId === "string" && episode.sessionId.trim().length > 0) source.add(episode.sessionId.trim());
+  }
+  for (const correction of evidence?.userCorrections ?? []) {
+    if (typeof correction.sourceSession === "string" && correction.sourceSession.trim().length > 0)
+      source.add(correction.sourceSession.trim());
+  }
+  for (const request of evidence?.manualWorkflowRequests ?? []) {
+    if (typeof request.sourceSession === "string" && request.sourceSession.trim().length > 0)
+      source.add(request.sourceSession.trim());
+  }
+  return [...source];
+}
+
+function determineRiskLevel(proc: ProcedureEntry, recipe: unknown): "low" | "medium" | "high" {
+  const combined = `${proc.taskPattern}\n${JSON.stringify(recipe)}`;
+  if (/(?:\brm\s+-[rf]+\b|\bdd\s+if=|\bmkfs\b|\bshred\b|\bdrop\s+table\b|\btruncate\s+table\b|private[_-]?key|token\s*[:=]|password\s*[:=])/i.test(combined))
+    return "high";
+  if (
+    /\b(systemctl|service)\s+(?:start|stop|restart|reload|enable|disable)\b|\b(npm|pnpm|yarn|pip|apt|brew|cargo)\s+(install|add|remove|uninstall|upgrade)\b|\bssh\b|\bscp\b|\brsync\b|\b(curl|wget)\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))/i.test(
+      combined,
+    )
+  )
+    return "medium";
+  return "low";
+}
+
+function scoreProcedureCandidate(input: {
+  successCount: number;
+  successRate: number;
+  failureSeverity: number;
+  userSignal: number;
+  generality: number;
+  riskLevel: "low" | "medium" | "high";
+  activationSpecificity: number;
+  similarSkillExists: boolean;
+}): ProcedureCandidateScore {
+  const repeatCount = Math.min(1, input.successCount / 6);
+  const successRate = Math.max(0, Math.min(1, input.successRate));
+  const failureSeverity = Math.max(0, Math.min(1, input.failureSeverity));
+  const userSignal = Math.max(0, Math.min(1, input.userSignal));
+  const generality = Math.max(0, Math.min(1, input.generality));
+  const risk = input.riskLevel === "high" ? 0.35 : input.riskLevel === "medium" ? 0.65 : 1;
+  const activationSpecificity = Math.max(0, Math.min(1, input.activationSpecificity));
+  const duplicatePenalty = input.similarSkillExists ? 0.5 : 1;
+  const rawScore =
+    repeatCount * 0.2 +
+    successRate * 0.25 +
+    (1 - failureSeverity) * 0.2 +
+    userSignal * 0.1 +
+    generality * 0.1 +
+    risk * 0.05 +
+    activationSpecificity * 0.1;
+  const score = Number(Math.max(0, Math.min(1, rawScore * duplicatePenalty)).toFixed(3));
+  return {
+    score,
+    breakdown: {
+      repeatCount: Number(repeatCount.toFixed(3)),
+      successRate: Number(successRate.toFixed(3)),
+      failureSeverity: Number(failureSeverity.toFixed(3)),
+      userSignal: Number(userSignal.toFixed(3)),
+      generality: Number(generality.toFixed(3)),
+      risk: Number(risk.toFixed(3)),
+      activationSpecificity: Number(activationSpecificity.toFixed(3)),
+      duplicatePenalty: Number(duplicatePenalty.toFixed(3)),
+    },
+  };
+}
+
+function createProposalMetadata(
+  metadata: ProcedurePromotionVerification,
+  evidenceSummary: ReturnType<typeof summarizeProcedureEvidence>,
+): Record<string, unknown> {
+  return {
+    source_procedures: metadata.sourceProcedureIds,
+    source_sessions: metadata.sourceSessionIds,
+    source_episodes: metadata.sourceEpisodeIds,
+    source_versions: metadata.sourceVersionIds,
+    source_corrections: metadata.sourceCorrectionIds,
+    source_rules_preferences: metadata.sourceRulePreferenceIds,
+    source_manual_requests: metadata.sourceManualRequestIds,
+    success_count: evidenceSummary.successCount,
+    failure_count: evidenceSummary.failureCount,
+    risk_level: metadata.riskLevel,
+    validator_score: metadata.validatorScore,
+    candidate_score: metadata.candidateScore,
+    duplicate_handling: metadata.duplicateHandling,
+    last_validated: metadata.lastVerifiedAt,
+  };
 }
 
 function hasEnoughTaskBoundary(task: string): boolean {

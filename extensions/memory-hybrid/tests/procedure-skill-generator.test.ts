@@ -73,8 +73,10 @@ describe("generateAutoSkills", () => {
     expect(result.paths).toHaveLength(1);
     const skillPath = join(skillsDir, "check-moltbook-notifications", "SKILL.md");
     const recipePath = join(skillsDir, "check-moltbook-notifications", "recipe.json");
+    const proposalMetadataPath = join(skillsDir, "check-moltbook-notifications", "proposal-metadata.json");
     expect(existsSync(skillPath)).toBe(true);
     expect(existsSync(recipePath)).toBe(true);
+    expect(existsSync(proposalMetadataPath)).toBe(true);
 
     const skillContent = readFileSync(skillPath, "utf-8");
     expect(skillContent).toContain("Check Moltbook notifications");
@@ -84,6 +86,14 @@ describe("generateAutoSkills", () => {
     const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8"));
     expect(Array.isArray(recipeContent)).toBe(true);
     expect(recipeContent).toHaveLength(3);
+    const proposalMetadata = JSON.parse(readFileSync(proposalMetadataPath, "utf-8"));
+    expect(proposalMetadata).toMatchObject({
+      source_procedures: [proc.id],
+      success_count: expect.any(Number),
+      failure_count: expect.any(Number),
+      risk_level: expect.stringMatching(/^(low|medium|high)$/),
+      validator_score: expect.any(Number),
+    });
 
     const updated = db.getProcedureById(proc.id);
     expect(updated?.promotedToSkill).toBe(1);
