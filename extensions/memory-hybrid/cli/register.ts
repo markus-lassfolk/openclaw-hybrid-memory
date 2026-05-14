@@ -5,6 +5,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -20,6 +21,7 @@ import { registerBenchmarkCommands } from "./benchmark.js";
 import { type DistillContext, registerDistillCommands } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
+import { registerSkillsCommands } from "./skills.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
 import { registerVerifiedCommands } from "./verified.js";
 import { registerStatusCommands } from "./cmd-status.js";
@@ -88,6 +90,7 @@ export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   aliasDb?: AliasDB | null;
+  crystallizationStore?: CrystallizationStore | null;
   versionInfo: {
     pluginVersion: string;
     memoryManagerVersion: string;
@@ -518,6 +521,16 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "register-cli:manage",
+    });
+    throw err;
+  }
+
+  try {
+    registerSkillsCommands(mem, { crystallizationStore: ctx.crystallizationStore ?? null, cfg: ctx.cfg });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:skills",
     });
     throw err;
   }
