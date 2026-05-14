@@ -13,12 +13,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import { GeneratedSkillValidationService, summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
 import { SkillCrystallizer } from "./skill-crystallizer.js";
-import { SkillValidator } from "./skill-validator.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -43,7 +43,7 @@ interface ApproveResult {
 export class CrystallizationProposer {
   private readonly detector: PatternDetector | null;
   private readonly crystallizer: SkillCrystallizer;
-  private readonly validator: SkillValidator;
+  private readonly validator: GeneratedSkillValidationService;
 
   constructor(
     private readonly workflowStore: WorkflowStore | null,
@@ -52,7 +52,7 @@ export class CrystallizationProposer {
   ) {
     this.detector = workflowStore ? new PatternDetector(workflowStore, crystallizationStore, cfg) : null;
     this.crystallizer = new SkillCrystallizer(cfg);
-    this.validator = new SkillValidator();
+    this.validator = new GeneratedSkillValidationService();
   }
 
   // -------------------------------------------------------------------------
@@ -111,11 +111,21 @@ export class CrystallizationProposer {
           pattern: candidate.pattern,
         });
 
-        // Static analysis gate
-        const validation = this.validator.validate(result.skillContent);
+        const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+        const legacy = isLegacyMarkdownCrystallizationProposal(result.skillContent);
+        const gsv = this.validator.validate(
+          {
+            outputDir,
+            proposedOutputPath: result.proposedOutputPath,
+            skillName: result.skillName,
+            skillContent: result.skillContent,
+            pattern: candidate.pattern,
+          },
+          { legacyQueuedCrystallization: legacy },
+        );
         const patternSnapshot = JSON.stringify(candidate.pattern);
 
-        if (!validation.valid) {
+        if (gsv.approvalDecision === "deny") {
           // Record as rejected so we have durable provenance + reason, and suppress immediate regen.
           this.crystallizationStore.create({
             patternId: candidate.patternId,
@@ -129,12 +139,11 @@ export class CrystallizationProposer {
             confidence: result.proposalCard.confidence,
             recommendedOutput: result.proposalCard.recommended_output,
             status: "rejected",
-            rejectionReason: `validator: ${validation.violations.slice(0, 3).join("; ")}`,
+            rejectionReason: `generated-skill-validation: ${summarizeSkillProposalValidation(gsv)}`,
+            validationResult: gsv,
           });
           skipped++;
-          reasons.push(
-            `Rejected '${result.skillName}': failed validation — ${validation.violations.slice(0, 2).join("; ")}`,
-          );
+          reasons.push(`Rejected '${result.skillName}': failed validation — ${summarizeSkillProposalValidation(gsv)}`);
           continue;
         }
 
@@ -157,15 +166,20 @@ export class CrystallizationProposer {
           confidence: result.proposalCard.confidence,
           recommendedOutput: result.proposalCard.recommended_output,
           status: "validated",
+          validationResult: gsv,
         });
 
-        if (autoApprove) {
+        if (autoApprove && gsv.approvalDecision === "allow") {
           const approved = this.crystallizationStore.approve(proposal.id);
           if (approved) {
             const outputPath = this.computeOutputPath(approved.skillName);
             this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approved, outputPath));
             this.crystallizationStore.install(approved.id, outputPath);
           }
+        } else if (autoApprove && gsv.approvalDecision !== "allow") {
+          reasons.push(
+            `Queued '${result.skillName}' (auto-approve skipped; needs override or fixes): ${summarizeSkillProposalValidation(gsv)}`,
+          );
         }
 
         proposed++;
@@ -189,7 +203,8 @@ export class CrystallizationProposer {
 
   approveProposal(
     proposalId: string,
-    overrides?: {
+    opts?: {
+      overrideWarnings?: boolean;
       name?: string;
       category?: string;
       recommendedOutput?: "SKILL.md only";
@@ -215,19 +230,10 @@ export class CrystallizationProposer {
       };
     }
 
-    // Re-validate before writing
-    const validation = this.validator.validate(proposal.skillContent);
-    if (!validation.valid) {
-      return {
-        success: false,
-        message: `Validation failed: ${validation.violations.join("; ")}`,
-      };
-    }
-
-    const desiredName = overrides?.name?.trim() ? overrides.name.trim() : proposal.skillName;
+    const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
     const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
-    const desiredCategory = overrides?.category?.trim() ? overrides.category.trim() : proposal.category;
-    const desiredRecommendedOutput = overrides?.recommendedOutput ?? proposal.recommendedOutput;
+    const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
+    const desiredRecommendedOutput = opts?.recommendedOutput ?? proposal.recommendedOutput;
 
     const { skillContent: rewrittenContent, proposalCardJson: rewrittenCardJson } = this.applyOverridesToDraft(
       proposal,
@@ -237,6 +243,34 @@ export class CrystallizationProposer {
         recommendedOutput: desiredRecommendedOutput,
       },
     );
+
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const proposedOutputPath = this.computeOutputPath(safeName);
+    const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+    const legacy = isLegacyMarkdownCrystallizationProposal(rewrittenContent);
+    const validation = this.validator.validate(
+      {
+        outputDir,
+        proposedOutputPath,
+        skillName: safeName,
+        skillContent: rewrittenContent,
+        pattern,
+      },
+      { legacyQueuedCrystallization: legacy },
+    );
+    this.crystallizationStore.saveValidationResult(proposalId, validation);
+    if (validation.approvalDecision === "deny") {
+      return {
+        success: false,
+        message: `Validation failed: ${summarizeSkillProposalValidation(validation)}`,
+      };
+    }
+    if (validation.approvalDecision === "allow-with-override" && opts?.overrideWarnings !== true) {
+      return {
+        success: false,
+        message: `Validation requires explicit override: ${summarizeSkillProposalValidation(validation)}`,
+      };
+    }
 
     // Approve in DB first (source of truth), then write to disk, then mark installed.
     const updated = this.crystallizationStore.approve(proposalId, {
@@ -320,14 +354,15 @@ export class CrystallizationProposer {
   ): { skillContent: string; proposalCardJson?: string } {
     let skillContent = proposal.skillContent;
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
-      // Update title line only (keep the rest intact and concise).
       skillContent = skillContent.replace(
         new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
         `# ${overrides.skillName}`,
       );
+      skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
       skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
+      skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
     }
     if (overrides.recommendedOutput) {
       skillContent = skillContent.replace(
@@ -390,6 +425,55 @@ export class CrystallizationProposer {
   }
 }
 
+/** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
+function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
+  let body = skillContent;
+  let prefix = "";
+  const commentMatch = body.match(/^<!--[\s\S]*?-->\s*\n*/);
+  if (commentMatch) {
+    prefix = commentMatch[0];
+    body = body.slice(commentMatch[0].length);
+  }
+  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!m) return skillContent;
+  const inner = m[1];
+  const re = new RegExp(`^${escapeRegExp(key)}:\\s*.*$`, "m");
+  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${value}`) : `${key}: ${value}\n${inner}`;
+  const newBlock = `---\n${nextInner}\n---\n`;
+  return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, newBlock);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
+  if (!snapshot?.trim()) return undefined;
+  try {
+    const raw = JSON.parse(snapshot) as unknown;
+    if (!raw || typeof raw !== "object") return undefined;
+    const o = raw as Record<string, unknown>;
+    if (!Array.isArray(o.toolSequence) || !o.toolSequence.every((t) => typeof t === "string")) return undefined;
+    if (
+      typeof o.totalCount !== "number" ||
+      typeof o.successCount !== "number" ||
+      typeof o.failureCount !== "number" ||
+      typeof o.successRate !== "number" ||
+      typeof o.avgDurationMs !== "number"
+    ) {
+      return undefined;
+    }
+    if (!Array.isArray(o.exampleGoals) || !o.exampleGoals.every((g) => typeof g === "string")) return undefined;
+    return o as unknown as WorkflowPattern;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
+function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
+  const lines = skillContent.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i]?.trim() === "") i++;
+  return lines[i]?.trim() !== "---";
 }

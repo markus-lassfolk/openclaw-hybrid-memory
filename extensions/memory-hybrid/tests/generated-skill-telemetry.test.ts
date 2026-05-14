@@ -72,6 +72,8 @@ describe("generated skill telemetry", () => {
     expect(skill?.skillState).toBe("trusted");
     expect(report.rows[0]?.metrics.activationCountPerWeek).toBe(3);
     expect(report.rows[0]?.metrics.successRate).toBe(1);
+    expect(report.rows[0]?.flags.promotionCandidate).toBe(false);
+    expect(report.rows[0]?.recommendation).toBe("observe");
     expect(report.rows[0]?.metrics.savedToolCalls).toBe(3);
     expect(report.rows[0]?.metrics.savedTimeMs).toBe(4000);
     expect(report.rows[0]?.metrics.lastUsedAt).not.toBeNull();

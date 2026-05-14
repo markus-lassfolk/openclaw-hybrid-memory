@@ -5,7 +5,7 @@ import { getEnv } from "../utils/env-manager.js";
  *         SkillValidator, CrystallizationProposer, config parsing.
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -1016,7 +1016,10 @@ describe("CrystallizationProposer.approveProposal", () => {
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBeGreaterThan(0);
 
-    const result = proposer.approveProposal(pending[0].id);
+    let result = proposer.approveProposal(pending[0].id);
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(pending[0].id, { overrideWarnings: true });
+    }
     expect(result.success).toBe(true);
     expect(result.outputPath).toBeDefined();
     expect(existsSync(result.outputPath!)).toBe(true);
@@ -1049,6 +1052,30 @@ describe("CrystallizationProposer.approveProposal", () => {
     const result = proposer.approveProposal(p.id);
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not approvable|not pending/i);
+  });
+
+  it("allows approving a legacy pending proposal without YAML frontmatter when content is safe", () => {
+    const outDir = join(tmpDir, "legacy-approve-out");
+    mkdirSync(outDir, { recursive: true });
+    const p = cStore.create({
+      patternId: "legacy-pattern",
+      evidenceHash: "legacy-evidence",
+      skillName: "legacy-safe-skill",
+      skillContent: `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`,
+      patternSnapshot: "{}",
+    });
+    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: outDir };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    const result = proposer.approveProposal(p.id);
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toBeDefined();
+    if (!result.outputPath) return;
+    expect(existsSync(result.outputPath)).toBe(true);
   });
 });
 

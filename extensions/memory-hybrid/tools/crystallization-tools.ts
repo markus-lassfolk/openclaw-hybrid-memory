@@ -15,6 +15,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
 
 interface CrystallizationToolsContext {
   crystallizationStore: CrystallizationStore;
@@ -154,9 +155,12 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           }
           const outputInfo = p.outputPath ? ` → ${p.outputPath}` : "";
           const rejectInfo = p.rejectionReason ? ` (reason: ${p.rejectionReason})` : "";
+          const validationInfo = p.validationResult
+            ? `\n   Validation: ${summarizeSkillProposalValidation(p.validationResult)}`
+            : "";
           return (
             `${i + 1}. [${p.status.toUpperCase()}] ${p.skillName}${patternStats}${cardSummary}\n` +
-            `   ID: ${p.id}${outputInfo}${rejectInfo}\n` +
+            `   ID: ${p.id}${outputInfo}${rejectInfo}${validationInfo}\n` +
             `   Created: ${p.createdAt}`
           );
         });
@@ -205,18 +209,29 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           description: "Optional output-type override.",
         }),
       ),
+      overrideWarnings: Type.Optional(
+        Type.Boolean({
+          description: "Set true to approve when activation evaluation warns (requires explicit human intent).",
+        }),
+      ),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
-      const { id, name, category, recommended_output } = params as {
+      const { id, name, category, recommended_output, overrideWarnings } = params as {
         id: string;
         name?: string;
         category?: string;
         recommended_output?: "SKILL.md only";
+        overrideWarnings?: boolean;
       };
 
       try {
         const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
-        const result = proposer.approveProposal(id, { name, category, recommendedOutput: recommended_output });
+        const result = proposer.approveProposal(id, {
+          name,
+          category,
+          recommendedOutput: recommended_output,
+          overrideWarnings,
+        });
 
         return {
           content: [

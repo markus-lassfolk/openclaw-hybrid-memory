@@ -4,7 +4,6 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_AUTH_FAILURE_PATTERNS,
   buildCredentialQuery,
   detectAuthFailure,
   extractTarget,

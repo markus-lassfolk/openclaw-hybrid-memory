@@ -407,6 +407,7 @@ function summarizeSkillTelemetry(
   const promotionCandidate =
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
+    proc.skillState !== "trusted" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
     activationCountTotal >= policy.demoteMinSamples &&

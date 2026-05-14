@@ -6,14 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import { hybridConfigSchema, type HybridMemoryConfig } from "../config.js";
+import { type HybridMemoryConfig, hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 import {
   buildPendingReviewDigestReport,
   countPendingReviewBacklogs,
   pendingStorePaths,
   renderPendingReviewDigestMarkdown,
 } from "../services/pending-review-digest.js";
-import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -81,6 +81,35 @@ describe("pending review digest (#1197)", () => {
       skillName: "review-backlog",
       skillContent: "# Skill",
       patternSnapshot: "{}",
+      validationResult: {
+        schemaVersion: 1,
+        validatedAt: "2026-05-07T00:00:00.000Z",
+        overallStatus: "warn",
+        approvalDecision: "allow-with-override",
+        staticValidation: {
+          status: "passed",
+          violations: [],
+          frontmatter: { name: "review-backlog", description: "Review backlog", category: "crystallized-workflow" },
+          safeOutputPath: "/tmp/review-backlog/SKILL.md",
+        },
+        dryLoadValidation: {
+          status: "passed",
+          violations: [],
+          discovered: { name: "review-backlog", description: "Review backlog", category: "crystallized-workflow" },
+        },
+        syntheticActivationEval: {
+          status: "warn",
+          score: 67,
+          cases: {
+            positive: "Review the backlog",
+            negative: "How do I create a GitHub issue?",
+            edge: "Explain the backlog without executing the workflow.",
+          },
+          results: { positiveMatched: true, negativeMatched: false, edgeMatched: true },
+          notes: ["Edge eval looks too broad and would likely over-trigger"],
+        },
+        canarySession: { status: "not-run" },
+      },
     });
     factsDb.upsertProcedure({
       taskPattern: "Review pending procedure",
@@ -108,6 +137,7 @@ describe("pending review digest (#1197)", () => {
     expect(report.procedures.newThisWeek).toBeGreaterThanOrEqual(1);
     expect(report.toolProposals.proposedEntries[0]).toHaveProperty("declineCommand");
     expect(report.crystallization.pendingEntries[0]).toHaveProperty("approveCommand");
+    expect(report.crystallization.pendingEntries[0].validation).toContain("WARN");
 
     const counts = countPendingReviewBacklogs(cfg, factsDb);
     expect(counts).toMatchObject(report.pendingReview);
@@ -140,6 +170,7 @@ describe("pending review digest (#1197)", () => {
     expect(md).toContain("Approve: openclaw hybrid-mem proposals approve");
     expect(md).toContain("Decline: openclaw hybrid-mem proposals reject");
     expect(md).toContain("Defer:");
+    expect(md).toContain("## Crystallization proposals (0)");
 
     persona.close();
     factsDb.close();

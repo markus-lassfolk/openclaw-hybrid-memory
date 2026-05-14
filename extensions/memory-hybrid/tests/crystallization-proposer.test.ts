@@ -71,10 +71,18 @@ afterEach(() => {
 function seedPatterns(seq: string[], count: number, successRate = 1): void {
   const successCount = Math.round(count * successRate);
   for (let i = 0; i < successCount; i++) {
-    wfStore.record({ goal: `deploy app ${i}`, toolSequence: seq, outcome: "success" });
+    wfStore.record({
+      goal: `Deploy production application release ${i}`,
+      toolSequence: seq,
+      outcome: "success",
+    });
   }
   for (let i = successCount; i < count; i++) {
-    wfStore.record({ goal: `deploy app ${i}`, toolSequence: seq, outcome: "failure" });
+    wfStore.record({
+      goal: `Deploy production application release ${i}`,
+      toolSequence: seq,
+      outcome: "failure",
+    });
   }
 }
 
@@ -243,7 +251,10 @@ describe("CrystallizationProposer.approveProposal", () => {
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBeGreaterThanOrEqual(1);
 
-    const result = proposer.approveProposal(pending[0].id);
+    let result = proposer.approveProposal(pending[0].id);
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(pending[0].id, { overrideWarnings: true });
+    }
     expect(result.success).toBe(true);
     expect(result.outputPath).toBeDefined();
     expect(existsSync(result.outputPath!)).toBe(true);
@@ -259,7 +270,17 @@ describe("CrystallizationProposer.approveProposal", () => {
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBeGreaterThanOrEqual(1);
 
-    const result = proposer.approveProposal(pending[0].id, { name: "renamed-skill", category: "workflow-automation" });
+    let result = proposer.approveProposal(pending[0].id, {
+      name: "renamed-skill",
+      category: "workflow-automation",
+    });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(pending[0].id, {
+        name: "renamed-skill",
+        category: "workflow-automation",
+        overrideWarnings: true,
+      });
+    }
     expect(result.success).toBe(true);
     expect(result.outputPath).toContain("renamed-skill");
     const body = readFileSync(result.outputPath!, "utf-8");
