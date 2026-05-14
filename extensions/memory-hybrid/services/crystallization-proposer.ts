@@ -485,12 +485,11 @@ function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: stri
     head += commentMatch[0];
     body = body.slice(commentMatch[0].length);
   }
-  const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---/);
   if (fmMatch) {
     head += fmMatch[0];
     body = body.slice(fmMatch[0].length);
   }
-  body = body.replace(/^\r?\n/, "");
   const h1Line = /^#\s+(?!#)\S.*$/m;
   if (!h1Line.test(body)) {
     return skillContent;
@@ -500,7 +499,22 @@ function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: stri
 
 function formatYamlFrontmatterScalar(value: string): string {
   if (value === "") return '""';
-  if (/^[\w.-]+$/.test(value)) return value;
+  if (/^[\w.-]+$/.test(value)) {
+    const lower = value.toLowerCase();
+    if (
+      lower === "true" ||
+      lower === "false" ||
+      lower === "null" ||
+      lower === "yes" ||
+      lower === "no" ||
+      lower === "on" ||
+      lower === "off" ||
+      /^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/.test(value)
+    ) {
+      return JSON.stringify(value);
+    }
+    return value;
+  }
   return JSON.stringify(value);
 }
 
