@@ -433,7 +433,7 @@ export class CrystallizationStore extends BaseSqliteStore {
     return this.runWithDb("hasPendingOrApprovedForPattern", () => {
       const row = this.liveDb
         .prepare(
-          "SELECT COUNT(*) as n FROM crystallization_proposals WHERE pattern_id = ? AND status IN ('candidate','drafted','validated','approved','installed')",
+          "SELECT COUNT(*) as n FROM crystallization_proposals WHERE pattern_id = ? AND status IN ('candidate','drafted','validated','approved')",
         )
         .get(patternId) as { n: number };
       return row.n > 0;

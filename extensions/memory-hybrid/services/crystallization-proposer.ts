@@ -69,10 +69,18 @@ export class CrystallizationProposer {
    */
   runCycle(opts?: { autoApproveOverride?: boolean }): ProposeResult {
     if (!this.cfg.enabled) {
-      return { proposed: 0, skipped: 0, reasons: ["Crystallization is disabled"] };
+      return {
+        proposed: 0,
+        skipped: 0,
+        reasons: ["Crystallization is disabled"],
+      };
     }
     if (!this.detector) {
-      return { proposed: 0, skipped: 0, reasons: ["Crystallization workflow store is not available"] };
+      return {
+        proposed: 0,
+        skipped: 0,
+        reasons: ["Crystallization workflow store is not available"],
+      };
     }
 
     // Cap at maxCrystallized
@@ -130,6 +138,12 @@ export class CrystallizationProposer {
           continue;
         }
 
+        if (autoApprove && this.crystallizationStore.count("approved") >= this.cfg.maxCrystallized) {
+          skipped++;
+          reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
+          continue;
+        }
+
         // Store as validated proposal (awaiting human approval)
         const proposal = this.crystallizationStore.create({
           patternId: candidate.patternId,
@@ -146,13 +160,6 @@ export class CrystallizationProposer {
         });
 
         if (autoApprove) {
-          // Auto-approve path still requires the same caps and validator already ran above.
-          const currentApprovedCount = this.crystallizationStore.count("approved");
-          if (currentApprovedCount >= this.cfg.maxCrystallized) {
-            skipped++;
-            reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
-            continue;
-          }
           const approved = this.crystallizationStore.approve(proposal.id);
           if (approved) {
             const outputPath = this.computeOutputPath(approved.skillName);
@@ -182,7 +189,11 @@ export class CrystallizationProposer {
 
   approveProposal(
     proposalId: string,
-    overrides?: { name?: string; category?: string; recommendedOutput?: "SKILL.md only" },
+    overrides?: {
+      name?: string;
+      category?: string;
+      recommendedOutput?: "SKILL.md only";
+    },
   ): ApproveResult {
     const proposal = this.crystallizationStore.getById(proposalId);
     if (!proposal) {
@@ -249,7 +260,10 @@ export class CrystallizationProposer {
       this.trySupersedeOlderInstalls(updated.patternId, updated.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, message: `Approved but failed to write skill: ${msg}` };
+      return {
+        success: false,
+        message: `Approved but failed to write skill: ${msg}`,
+      };
     }
 
     return {
@@ -339,7 +353,12 @@ export class CrystallizationProposer {
   }
 
   private injectInstallMetadata(
-    proposal: { id: string; patternId: string; evidenceHash: string; skillContent: string },
+    proposal: {
+      id: string;
+      patternId: string;
+      evidenceHash: string;
+      skillContent: string;
+    },
     outputPath: string,
   ): string {
     const header = `<!-- openclaw:skill-proposal id=${proposal.id} pattern_id=${proposal.patternId} evidence_hash=${proposal.evidenceHash} output_path=${outputPath} -->`;
