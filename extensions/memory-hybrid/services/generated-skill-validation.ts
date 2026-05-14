@@ -483,7 +483,7 @@ function extractSectionByAliases(skillContent: string, headingAliases: string[])
   }
 
   return lines
-    .slice(startLine, endLine + 1)
+    .slice(startLine, endLine)
     .join("\n")
     .trim();
 }
