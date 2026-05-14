@@ -86,7 +86,12 @@ describe("CrystallizationStore.getById", () => {
   });
 
   it("returns proposal by id", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "# c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "# c",
+      patternSnapshot: "{}",
+    });
     const fetched = cStore.getById(p.id);
     expect(fetched?.id).toBe(p.id);
   });
@@ -94,7 +99,12 @@ describe("CrystallizationStore.getById", () => {
 
 describe("CrystallizationStore.getByPatternId", () => {
   it("returns the latest proposal for a pattern", () => {
-    cStore.create({ patternId: "pat1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    cStore.create({
+      patternId: "pat1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     const p = cStore.getByPatternId("pat1");
     expect(p?.patternId).toBe("pat1");
   });
@@ -106,8 +116,18 @@ describe("CrystallizationStore.getByPatternId", () => {
 
 describe("CrystallizationStore.list", () => {
   beforeEach(() => {
-    cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
-    const p2 = cStore.create({ patternId: "p2", skillName: "s2", skillContent: "#c", patternSnapshot: "{}" });
+    cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
+    const p2 = cStore.create({
+      patternId: "p2",
+      skillName: "s2",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     cStore.approve(p2.id, "/path/skill.md");
   });
 
@@ -134,14 +154,24 @@ describe("CrystallizationStore.list", () => {
 
 describe("CrystallizationStore.approve", () => {
   it("transitions pending to approved with outputPath", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     const updated = cStore.approve(p.id, "/out/path/SKILL.md");
     expect(updated?.status).toBe("approved");
     expect(updated?.outputPath).toBe("/out/path/SKILL.md");
   });
 
   it("returns null for non-pending proposal", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     cStore.approve(p.id, "/out");
     expect(cStore.approve(p.id, "/out")).toBeNull();
   });
@@ -149,14 +179,24 @@ describe("CrystallizationStore.approve", () => {
 
 describe("CrystallizationStore.reject", () => {
   it("transitions pending to rejected with reason", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     const updated = cStore.reject(p.id, "Not useful");
     expect(updated?.status).toBe("rejected");
     expect(updated?.rejectionReason).toBe("Not useful");
   });
 
   it("returns null for non-pending", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     cStore.reject(p.id);
     expect(cStore.reject(p.id)).toBeNull();
   });
@@ -168,12 +208,22 @@ describe("CrystallizationStore.hasPendingOrApprovedForPattern", () => {
   });
 
   it("returns true for pending proposal", () => {
-    cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     expect(cStore.hasPendingOrApprovedForPattern("p1")).toBe(true);
   });
 
   it("returns false for rejected proposal", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     cStore.reject(p.id);
     expect(cStore.hasPendingOrApprovedForPattern("p1")).toBe(false);
   });
@@ -182,12 +232,22 @@ describe("CrystallizationStore.hasPendingOrApprovedForPattern", () => {
 describe("CrystallizationStore.count", () => {
   it("counts all proposals", () => {
     expect(cStore.count()).toBe(0);
-    cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     expect(cStore.count()).toBe(1);
   });
 
   it("counts by status", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     cStore.approve(p.id, "/out");
     expect(cStore.count("approved")).toBe(1);
     expect(cStore.count("pending")).toBe(0);
@@ -280,7 +340,11 @@ describe("PatternDetector.detect", () => {
   it("detects candidates meeting thresholds", () => {
     // Insert 3 successful traces with same pattern
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `deploy app ${i}`, toolSequence: ["exec", "exec", "read"], outcome: "success" });
+      wfStore.record({
+        goal: `deploy app ${i}`,
+        toolSequence: ["exec", "exec", "read"],
+        outcome: "success",
+      });
     }
 
     const detector = new PatternDetector(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
@@ -291,7 +355,11 @@ describe("PatternDetector.detect", () => {
 
   it("filters out patterns below minUsageCount", () => {
     // Only 1 trace — below default threshold of 2
-    wfStore.record({ goal: "deploy app", toolSequence: ["exec", "read"], outcome: "success" });
+    wfStore.record({
+      goal: "deploy app",
+      toolSequence: ["exec", "read"],
+      outcome: "success",
+    });
 
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, minUsageCount: 5 };
     const detector = new PatternDetector(wfStore, cStore, cfg);
@@ -303,21 +371,34 @@ describe("PatternDetector.detect", () => {
     wfStore.record({ goal: "g2", toolSequence: ["exec"], outcome: "failure" });
     wfStore.record({ goal: "g3", toolSequence: ["exec"], outcome: "failure" });
 
-    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, minUsageCount: 1, minSuccessRate: 0.8 };
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+      minSuccessRate: 0.8,
+    };
     const detector = new PatternDetector(wfStore, cStore, cfg);
     expect(detector.detect()).toEqual([]);
   });
 
   it("skips patterns already proposed (pending/approved)", () => {
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `g${i}`, toolSequence: ["read", "write"], outcome: "success" });
+      wfStore.record({
+        goal: `g${i}`,
+        toolSequence: ["read", "write"],
+        outcome: "success",
+      });
     }
     const detector = new PatternDetector(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
     const candidates = detector.detect();
     expect(candidates.length).toBeGreaterThan(0);
 
     const patternId = candidates[0].patternId;
-    cStore.create({ patternId, skillName: "existing", skillContent: "#c", patternSnapshot: "{}" });
+    cStore.create({
+      patternId,
+      skillName: "existing",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
 
     // Second detect should skip this pattern
     const candidates2 = detector.detect();
@@ -327,11 +408,19 @@ describe("PatternDetector.detect", () => {
   it("sorts candidates by score descending", () => {
     // High-score pattern: 5 successes
     for (let i = 0; i < 5; i++) {
-      wfStore.record({ goal: `high ${i}`, toolSequence: ["exec", "read", "write"], outcome: "success" });
+      wfStore.record({
+        goal: `high ${i}`,
+        toolSequence: ["exec", "read", "write"],
+        outcome: "success",
+      });
     }
     // Lower-score pattern: 2 successes
     for (let i = 0; i < 2; i++) {
-      wfStore.record({ goal: `low ${i}`, toolSequence: ["read"], outcome: "success" });
+      wfStore.record({
+        goal: `low ${i}`,
+        toolSequence: ["read"],
+        outcome: "success",
+      });
     }
 
     const detector = new PatternDetector(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
@@ -443,7 +532,10 @@ describe("SkillCrystallizer.crystallize", () => {
 
   it("expands ~ in outputDir", () => {
     const homeDir = getEnv("HOME") ?? "/root";
-    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "~/.openclaw/workspace/skills/auto" };
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      outputDir: "~/.openclaw/workspace/skills/auto",
+    };
     const crystallizer = new SkillCrystallizer(cfg);
     const pattern = {
       toolSequence: ["exec"],
@@ -471,9 +563,15 @@ describe("SkillValidator", () => {
   });
 
   function compactValidSkill(
-    extra: { workflow?: string; extraBody?: string; includeRelated?: boolean } = {},
+    extra: {
+      workflow?: string;
+      extraBody?: string;
+      includeRelated?: boolean;
+    } = {},
   ): string {
-    const workflow = extra.workflow ?? "1. Use `read` to load inputs.\n2. Use `exec` only in dry-run mode.\n3. Verify outputs before continuing.";
+    const workflow =
+      extra.workflow ??
+      "1. Use `read` to load inputs.\n2. Use `exec` only in dry-run mode.\n3. Verify outputs before continuing.";
     const includeRelated = extra.includeRelated !== false;
     return `---
 name: test-skill
@@ -601,7 +699,9 @@ ${extra.extraBody ?? ""}`;
     expect(validator.isValid(compactValidSkill())).toBe(true);
     expect(
       validator.isValid(
-        compactValidSkill({ workflow: ["Example:", "```bash", "eval $(bad)", "```"].join("\n") }),
+        compactValidSkill({
+          workflow: ["Example:", "```bash", "eval $(bad)", "```"].join("\n"),
+        }),
       ),
     ).toBe(false);
   });
@@ -626,7 +726,9 @@ ${extra.extraBody ?? ""}`;
   });
 
   it("rejects private IP / host inventory leaks", () => {
-    const content = compactValidSkill({ extraBody: "\nObserved host inventory: 192.168.1.10\n" });
+    const content = compactValidSkill({
+      extraBody: "\nObserved host inventory: 192.168.1.10\n",
+    });
     const result = validator.validate(content);
     expect(result.valid).toBe(false);
     expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
@@ -639,7 +741,11 @@ ${extra.extraBody ?? ""}`;
 
 describe("CrystallizationProposer.runCycle", () => {
   it("returns no candidates when disabled", () => {
-    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, enabled: false, outputDir: tmpDir };
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      enabled: false,
+      outputDir: tmpDir,
+    };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
     const result = proposer.runCycle();
     expect(result.proposed).toBe(0);
@@ -648,7 +754,11 @@ describe("CrystallizationProposer.runCycle", () => {
 
   it("creates proposals for qualifying patterns", () => {
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `deploy app ${i}`, toolSequence: ["exec", "exec", "read"], outcome: "success" });
+      wfStore.record({
+        goal: `deploy app ${i}`,
+        toolSequence: ["exec", "exec", "read"],
+        outcome: "success",
+      });
     }
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: tmpDir };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
@@ -659,7 +769,11 @@ describe("CrystallizationProposer.runCycle", () => {
 
   it("does not re-propose already-proposed patterns", () => {
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `g${i}`, toolSequence: ["read", "memory_store"], outcome: "success" });
+      wfStore.record({
+        goal: `g${i}`,
+        toolSequence: ["read", "memory_store"],
+        outcome: "success",
+      });
     }
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: tmpDir };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
@@ -673,15 +787,28 @@ describe("CrystallizationProposer.runCycle", () => {
   it("stops at maxCrystallized approved limit", () => {
     // Pre-fill with approved proposals up to limit
     for (let i = 0; i < 3; i++) {
-      const p = cStore.create({ patternId: `pat${i}`, skillName: `s${i}`, skillContent: "#c", patternSnapshot: "{}" });
+      const p = cStore.create({
+        patternId: `pat${i}`,
+        skillName: `s${i}`,
+        skillContent: "#c",
+        patternSnapshot: "{}",
+      });
       cStore.approve(p.id, `/out/s${i}/SKILL.md`);
     }
 
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `g${i}`, toolSequence: ["exec"], outcome: "success" });
+      wfStore.record({
+        goal: `g${i}`,
+        toolSequence: ["exec"],
+        outcome: "success",
+      });
     }
 
-    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, maxCrystallized: 3, outputDir: tmpDir };
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      maxCrystallized: 3,
+      outputDir: tmpDir,
+    };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
     const result = proposer.runCycle();
     expect(result.proposed).toBe(0);
@@ -690,10 +817,18 @@ describe("CrystallizationProposer.runCycle", () => {
 
   it("writes skill to disk when autoApprove=true", () => {
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `run tests ${i}`, toolSequence: ["exec", "read"], outcome: "success" });
+      wfStore.record({
+        goal: `run tests ${i}`,
+        toolSequence: ["exec", "read"],
+        outcome: "success",
+      });
     }
     const outputDir = join(tmpDir, "auto-out");
-    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, autoApprove: true, outputDir };
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      autoApprove: true,
+      outputDir,
+    };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
     const result = proposer.runCycle();
 
@@ -708,9 +843,16 @@ describe("CrystallizationProposer.runCycle", () => {
 describe("CrystallizationProposer.approveProposal", () => {
   it("writes skill and transitions to approved", () => {
     for (let i = 0; i < 3; i++) {
-      wfStore.record({ goal: `g${i}`, toolSequence: ["exec", "read"], outcome: "success" });
+      wfStore.record({
+        goal: `g${i}`,
+        toolSequence: ["exec", "read"],
+        outcome: "success",
+      });
     }
-    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: join(tmpDir, "out1") };
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      outputDir: join(tmpDir, "out1"),
+    };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
     proposer.runCycle();
 
@@ -735,7 +877,12 @@ describe("CrystallizationProposer.approveProposal", () => {
   });
 
   it("fails for already-approved proposal", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "# safe\n\n", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "# safe\n\n",
+      patternSnapshot: "{}",
+    });
     cStore.approve(p.id, "/out");
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: tmpDir };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
@@ -747,7 +894,12 @@ describe("CrystallizationProposer.approveProposal", () => {
 
 describe("CrystallizationProposer.rejectProposal", () => {
   it("rejects pending proposal with reason", () => {
-    const p = cStore.create({ patternId: "p1", skillName: "s1", skillContent: "#c", patternSnapshot: "{}" });
+    const p = cStore.create({
+      patternId: "p1",
+      skillName: "s1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: tmpDir };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
     const result = proposer.rejectProposal(p.id, "Too generic");
@@ -773,7 +925,11 @@ describe("CrystallizationProposer.rejectProposal", () => {
 
 describe("parseCrystallizationConfig", () => {
   const BASE_CFG = {
-    embedding: { provider: "openai", apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+    embedding: {
+      provider: "openai",
+      apiKey: "sk-test-key-12345678",
+      model: "text-embedding-3-small",
+    },
   };
 
   it("parses crystallization config from HybridMemoryConfig raw object", async () => {

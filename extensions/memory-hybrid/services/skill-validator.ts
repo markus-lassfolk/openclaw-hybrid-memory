@@ -236,8 +236,16 @@ export class SkillValidator {
     }
 
     const headings = parseH2Headings(lines);
-    const requiredSections: Array<{ id: string; label: string; aliases: string[] }> = [
-      { id: "when", label: "When to Activate", aliases: ["when to activate", "when to use", "trigger"] },
+    const requiredSections: Array<{
+      id: string;
+      label: string;
+      aliases: string[];
+    }> = [
+      {
+        id: "when",
+        label: "When to Activate",
+        aliases: ["when to activate", "when to use", "trigger"],
+      },
       {
         id: "dont",
         label: "Do Not Use When",
@@ -384,10 +392,7 @@ function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: stri
   return out;
 }
 
-function hasHeadingAlias(
-  headings: Array<{ normalized: string }>,
-  aliases: string[],
-): boolean {
+function hasHeadingAlias(headings: Array<{ normalized: string }>, aliases: string[]): boolean {
   const normalizedAliases = aliases.map(normalizeHeading);
   return headings.some((h) => normalizedAliases.includes(h.normalized));
 }
@@ -401,9 +406,7 @@ function extractSectionBody(
   const start = headings.find((h) => normalizedAliases.has(h.normalized));
   if (!start) return null;
   const afterStartIndex = start.line; // 1-based line number; body starts after it
-  const next = headings
-    .filter((h) => h.line > start.line)
-    .sort((a, b) => a.line - b.line)[0];
+  const next = headings.filter((h) => h.line > start.line).sort((a, b) => a.line - b.line)[0];
   const endLine = next ? next.line - 1 : lines.length;
   return lines.slice(afterStartIndex, endLine).join("\n").trim();
 }
@@ -430,7 +433,11 @@ function findPreviousNonEmptyLine(lines: string[], startIndex: number): string |
   return null;
 }
 
-function parseFrontmatter(lines: string[]): { present: boolean; keys: Map<string, string>; endLine: number } {
+function parseFrontmatter(lines: string[]): {
+  present: boolean;
+  keys: Map<string, string>;
+  endLine: number;
+} {
   const keys = new Map<string, string>();
   // Only treat it as frontmatter when it starts the document (after optional leading blank lines).
   let i = 0;

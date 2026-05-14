@@ -81,7 +81,9 @@ function buildSkillContent(skillName: string, pattern: WorkflowPattern, patternI
       ? pattern.exampleGoals.map((g) => `- ${g.replace(/\n/g, " ")}`).join("\n")
       : "- (no example goals recorded)";
 
-  const stepsText = toolSequence.map((tool, i) => `${i + 1}. Use \`${tool}\` only for the bounded task, then verify before continuing.`).join("\n");
+  const stepsText = toolSequence
+    .map((tool, i) => `${i + 1}. Use \`${tool}\` only for the bounded task, then verify before continuing.`)
+    .join("\n");
 
   const antiPatterns =
     pattern.failureCount > 0

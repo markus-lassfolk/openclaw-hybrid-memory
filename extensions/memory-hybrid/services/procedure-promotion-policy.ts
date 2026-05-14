@@ -861,7 +861,11 @@ function buildAntiPatternsForProcedure(proc: ProcedureEntry): string {
     "- Do not poll subagents in a tight loop; yield and wait for push-based completion.",
   ];
 
-  if (evidence.length === 0) return [...generic, "- If this workflow starts failing in practice, record procedure feedback so future drafts include concrete known failures."].join("\n");
+  if (evidence.length === 0)
+    return [
+      ...generic,
+      "- If this workflow starts failing in practice, record procedure feedback so future drafts include concrete known failures.",
+    ].join("\n");
   return [...evidence, ...generic].join("\n");
 }
 
