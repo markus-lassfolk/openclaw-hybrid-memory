@@ -15,6 +15,7 @@
  */
 
 import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
 /** Marker file written as the last step inside an atomic skill directory. */
@@ -29,7 +30,7 @@ export const SKILL_COMPLETE_MARKER = ".openclaw-skill-complete";
  */
 export function atomicWriteFile(targetPath: string, content: string): void {
   const dir = dirname(targetPath);
-  const rand = Math.random().toString(36).slice(2, 10);
+  const rand = randomBytes(8).toString("hex");
   const tmpPath = `${targetPath}.tmp-${process.pid}-${rand}`;
 
   mkdirSync(dir, { recursive: true });
@@ -65,7 +66,7 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  */
 export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): void {
   const parent = dirname(skillDir);
-  const rand = Math.random().toString(36).slice(2, 10);
+  const rand = randomBytes(8).toString("hex");
   const tmpDir = `${skillDir}.tmp-${process.pid}-${rand}`;
   const backupDir = existsSync(skillDir) ? join(parent, `.${basename(skillDir)}.bak-${Date.now()}-${rand}`) : null;
 

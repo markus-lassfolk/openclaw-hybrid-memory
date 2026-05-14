@@ -79,10 +79,7 @@ function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: Readon
   // A directory that exists but lacks the completion marker is an in-progress
   // (or crashed) write — treat it as free so retries reuse the same slug and
   // the atomic write can overwrite the incomplete directory.
-  while (
-    (existsSync(join(basePath, candidate)) && isSkillDirComplete(join(basePath, candidate))) ||
-    reservedSlugs?.has(candidate)
-  ) {
+  while (reservedSlugs?.has(candidate) || isSkillDirComplete(join(basePath, candidate))) {
     n++;
     candidate = `${slug}-${n}`;
   }
