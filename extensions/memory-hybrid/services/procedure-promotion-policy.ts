@@ -536,6 +536,7 @@ function buildProcedureSkillDraft(
     proc.taskPattern,
   )} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
   const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
+  const telemetryRequestSummaryArg = shellQuote(redactedTask.redacted);
   const skillMd = `---
 name: ${slug}
 description: Use when the user asks to ${redactedTask.redacted}. Trigger examples: "${
@@ -592,8 +593,8 @@ Use only the tools implied by the source recipe and only in dry-run/read-only wa
 Leave this generated skill disabled until verification or human approval. To disable, remove it from the enabled skill path or keep it in quarantine/draft storage.
 
 ## Telemetry
-- When this skill is selected, record the activation with \`${telemetryCommand} --decision selected --request-summary "${redactedTask.redacted}" --outcome success\` (or \`failure\` / \`partial\` if the run did not fully succeed).
-- When this skill was considered but skipped, record a near-miss with \`${telemetryCommand} --decision skipped --request-summary "${redactedTask.redacted}" --reason "near-miss summary"\`.
+- When this skill is selected, record the activation with \`${telemetryCommand} --decision selected --request-summary ${telemetryRequestSummaryArg} --outcome success\` (or \`failure\` / \`partial\` if the run did not fully succeed).
+- When this skill was considered but skipped, record a near-miss with \`${telemetryCommand} --decision skipped --request-summary ${telemetryRequestSummaryArg} --reason "near-miss summary"\`.
 - Capture the returned activation id so a later user correction can mark that exact run as a false-positive with \`openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"\`.
 
 ## Examples
@@ -667,6 +668,10 @@ Leave this generated skill disabled until verification or human approval. To dis
     evalsJson: `${JSON.stringify(redactAutopilotValue(evals), null, 2)}\n`,
     redactionCount: redactedTask.redactionCount,
   };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function parseRecipeOrRaw(recipeJson: string): unknown {

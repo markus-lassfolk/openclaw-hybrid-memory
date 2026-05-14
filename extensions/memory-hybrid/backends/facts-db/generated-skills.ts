@@ -103,6 +103,8 @@ export const DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY: GeneratedSkillLifecyclePo
   revisionNearMissThreshold: 3,
 };
 
+const MAX_REQUEST_SUMMARY_LENGTH = 240;
+
 type GeneratedSkillTelemetryRow = {
   id: string;
   procedure_id: string;
@@ -156,7 +158,7 @@ function mapGeneratedSkillTelemetryRow(row: GeneratedSkillTelemetryRow): Generat
 function normalizeSummary(summary: string | null | undefined): string | null {
   if (typeof summary !== "string") return null;
   const normalized = summary.replace(/\s+/g, " ").trim();
-  return normalized.length > 0 ? normalized.slice(0, 240) : null;
+  return normalized.length > 0 ? normalized.slice(0, MAX_REQUEST_SUMMARY_LENGTH) : null;
 }
 
 function requestHashFromInput(requestHash: string | null | undefined, requestSummary: string | null | undefined): string | null {
@@ -245,7 +247,7 @@ export function recordGeneratedSkillTelemetry(
   ).run(
     id,
     proc.id,
-    basename(proc.skillPath ?? input.skillName),
+    proc.skillPath ? basename(proc.skillPath) : input.skillName,
     input.skillVersion ?? proc.skillVersion ?? 1,
     requestHashFromInput(input.requestHash, normalizedSummary),
     normalizedSummary,
@@ -265,7 +267,7 @@ export function recordGeneratedSkillTelemetry(
     input.sessionId ?? null,
     now,
   );
-  refreshGeneratedSkillLifecycleState(db, basename(proc.skillPath ?? input.skillName), policy, now);
+  refreshGeneratedSkillLifecycleState(db, proc.skillPath ? basename(proc.skillPath) : input.skillName, policy, now);
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(id) as GeneratedSkillTelemetryRow,
   );

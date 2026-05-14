@@ -183,7 +183,7 @@ export type ProcedureEntry = {
   /** Latest lifecycle transition reason (manual or policy-driven). */
   skillStateReason?: string | null;
   /** Generated skill version counter. */
-  skillVersion?: number;
+  skillVersion: number;
   /** When the generated skill was first materialized (epoch seconds). */
   skillGeneratedAt?: number | null;
   /** Memory scope (global, user, agent, session). */
