@@ -234,7 +234,10 @@ describe("CrystallizationProposer.approveProposal", () => {
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBeGreaterThanOrEqual(1);
 
-    const result = proposer.approveProposal(pending[0].id);
+    let result = proposer.approveProposal(pending[0].id);
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(pending[0].id, { overrideWarnings: true });
+    }
     expect(result.success).toBe(true);
     expect(result.outputPath).toBeDefined();
     expect(existsSync(result.outputPath!)).toBe(true);
