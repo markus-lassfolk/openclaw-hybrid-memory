@@ -907,7 +907,7 @@ export function parseDigestAutopilotConfig(cfg: Record<string, unknown>): Digest
   }
 
   return {
-    enabled: autopilot?.enabled === true,
+    enabled: parseAutopilotStrictBoolean(autopilot?.enabled, "enabled", false),
     mode,
     schedule,
     maxPersona: parseAutopilotPositiveInt(autopilot?.maxPersona, 20, "maxPersona", 0),

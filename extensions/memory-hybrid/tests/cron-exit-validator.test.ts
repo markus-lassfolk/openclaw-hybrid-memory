@@ -45,7 +45,7 @@ describe("cron-exit-validator", () => {
     });
 
     it("parses extended step= format with status/reason/duration fields", () => {
-      const line = "2024-05-08T02:15:30Z step=extract-daily exit=0 status=ok reason=ok duration_ms=42 extra=ignored";
+      const line = "2024-05-08T02:15:30Z step=extract-daily exit=0 status=ok reason=ok duration_ms=42";
       const result = parseExitLine(line);
       expect(result).toBeTruthy();
       expect(result?.step).toBe("extract-daily");
@@ -53,6 +53,11 @@ describe("cron-exit-validator", () => {
       expect(result?.status).toBe("ok");
       expect(result?.reason).toBe("ok");
       expect(result?.durationMs).toBe(42);
+    });
+
+    it("rejects malformed exit code suffixes and trailing junk", () => {
+      expect(parseExitLine("2024-05-08T02:15:30Z prune exit=0oops")).toBeNull();
+      expect(parseExitLine("2024-05-08T02:15:30Z prune exit=0 extra=ignored")).toBeNull();
     });
   });
 

@@ -80,4 +80,17 @@ describe("digest autopilot config parsing", () => {
       }),
     ).toThrow(/digest\.autopilot\.notifyOnFailure/);
   });
+
+  it("rejects non-boolean digest.autopilot.enabled", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...baseConfig("/tmp/hm-config-enabled-string.db"),
+        digest: {
+          autopilot: {
+            enabled: "true",
+          },
+        },
+      }),
+    ).toThrow(/digest\.autopilot\.enabled/);
+  });
 });

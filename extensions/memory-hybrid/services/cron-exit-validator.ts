@@ -58,7 +58,7 @@ export function parseExitLine(line: string): ExitStep | null {
   // Legacy format: "<ts> <step> exit=<code>"
   // Extended format: "<ts> step=<step> exit=<code> status=<ok|failed|skipped> reason=<reason> duration_ms=<ms>"
   const match = trimmed.match(
-    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+((?:step=)?(\S+))\s+exit=(-?\d+)(?:\s+status=(ok|failed|skipped))?(?:\s+reason=(\S+))?(?:\s+duration_ms=(\d+))?.*$/,
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+((?:step=)?(\S+))\s+exit=(-?\d+)(?:\s+status=(ok|failed|skipped))?(?:\s+reason=(\S+))?(?:\s+duration_ms=(\d+))?\s*$/,
   );
   if (!match) return null;
   const step = normalizeExitStepName(match[2]);
