@@ -403,7 +403,7 @@ export class WorkflowStore extends BaseSqliteStore {
 
       const allRows = this.liveDb
         .prepare(
-          `SELECT goal, tool_sequence, outcome, duration_ms, args_hash
+          `SELECT goal, tool_sequence, outcome, duration_ms
              FROM workflow_traces
             ORDER BY created_at DESC
             LIMIT ?`,
@@ -413,7 +413,6 @@ export class WorkflowStore extends BaseSqliteStore {
         tool_sequence: string;
         outcome: string;
         duration_ms: number;
-        args_hash: string;
       }[];
 
       const clusters: {
