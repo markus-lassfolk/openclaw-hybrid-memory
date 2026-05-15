@@ -426,7 +426,7 @@ export class CrystallizationProposer {
       }
     }
 
-    if (scanned + skipped > messages.length) {
+    if (messages.length >= RESCAN_MESSAGE_LIMIT) {
       messages.push(`Message output truncated after ${RESCAN_MESSAGE_LIMIT} entries`);
     }
 
