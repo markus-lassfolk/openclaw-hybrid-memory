@@ -11,7 +11,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
@@ -46,6 +46,22 @@ export interface RescanInstalledSkillsResult {
   skipped: number;
   errors: string[];
   messages: string[];
+}
+
+const RESCAN_MESSAGE_LIMIT = 100;
+
+function pushLimitedMessage(messages: string[], message: string): void {
+  if (messages.length < RESCAN_MESSAGE_LIMIT) {
+    messages.push(message);
+  }
+}
+
+function outputDirForInstalledSkill(outputPath: string, skillName: string, fallbackOutputDir: string): string {
+  const normalizedOutputPath = resolve(outputPath);
+  const expectedSuffix = `/${skillName}/SKILL.md`;
+  return normalizedOutputPath.endsWith(expectedSuffix)
+    ? normalizedOutputPath.slice(0, -expectedSuffix.length)
+    : fallbackOutputDir;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,18 +365,18 @@ export class CrystallizationProposer {
    * Persists validation via {@link CrystallizationStore.saveValidationResult}; on `deny`, sets status `quarantined`.
    */
   rescanInstalledSkills(): RescanInstalledSkillsResult {
-    const installed = this.crystallizationStore.list({ status: "installed", limit: 500 });
+    const installed = this.crystallizationStore.list({ status: "installed" });
     let scanned = 0;
     let quarantined = 0;
     let skipped = 0;
     const errors: string[] = [];
     const messages: string[] = [];
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const fallbackOutputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
 
     for (const proposal of installed) {
       if (!proposal.outputPath?.trim()) {
         skipped++;
-        messages.push(`Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
+        pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
         continue;
       }
       let skillContent: string;
@@ -376,6 +392,7 @@ export class CrystallizationProposer {
       try {
         const pattern = parsePatternSnapshot(proposal.patternSnapshot);
         const legacy = isLegacyMarkdownCrystallizationProposal(skillContent);
+        const outputDir = outputDirForInstalledSkill(proposal.outputPath, proposal.skillName, fallbackOutputDir);
         const validation = this.validator.validate(
           {
             outputDir,
@@ -393,17 +410,24 @@ export class CrystallizationProposer {
           const updated = this.crystallizationStore.quarantine(proposal.id, reason);
           if (updated) {
             quarantined++;
-            messages.push(`Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+            pushLimitedMessage(
+              messages,
+              `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+            );
           } else {
             errors.push(`${proposal.id}: quarantine update failed`);
           }
         } else {
-          messages.push(`OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+          pushLimitedMessage(messages, `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${proposal.id}: validate failed — ${msg}`);
       }
+    }
+
+    if (scanned + skipped > messages.length) {
+      messages.push(`Message output truncated after ${RESCAN_MESSAGE_LIMIT} entries`);
     }
 
     return { scanned, quarantined, skipped, errors, messages };

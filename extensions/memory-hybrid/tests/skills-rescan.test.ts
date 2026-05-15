@@ -25,14 +25,17 @@ const CFG_BASE: CrystallizationConfig = {
 };
 
 describe("CrystallizationProposer.rescanInstalledSkills", () => {
-  let tmpDir: string;
-  let cStore: CrystallizationStore;
-  let wfStore: WorkflowStore;
+  let tmpDir: string | null = null;
+  let cStore: CrystallizationStore | null = null;
+  let wfStore: WorkflowStore | null = null;
 
   afterEach(() => {
-    wfStore.close();
-    cStore.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+    wfStore?.close();
+    cStore?.close();
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+    wfStore = null;
+    cStore = null;
+    tmpDir = null;
   });
 
   it("quarantines installed proposal when on-disk SKILL.md fails validation", () => {
@@ -41,10 +44,28 @@ describe("CrystallizationProposer.rescanInstalledSkills", () => {
     const skillDir = join(outputDir, "bad-skill");
     mkdirSync(skillDir, { recursive: true });
     const outputPath = join(skillDir, "SKILL.md");
-    writeFileSync(outputPath, "# not a valid generated skill\n", "utf-8");
+    writeFileSync(
+      outputPath,
+      `---
+name: bad-skill
+description: Bad skill with private contact
+---
 
-    cStore = new CrystallizationStore(join(tmpDir, "cp.db"));
-    wfStore = new WorkflowStore(join(tmpDir, "wf.db"));
+# bad-skill
+
+## When to Use
+Use it.
+
+## Instructions
+Contact admin@realdomain.com
+`,
+      "utf-8",
+    );
+
+    const store = new CrystallizationStore(join(tmpDir, "cp.db"));
+    const workflows = new WorkflowStore(join(tmpDir, "wf.db"));
+    cStore = store;
+    wfStore = workflows;
 
     const pattern: WorkflowPattern = {
       toolSequence: ["read", "write"],
@@ -56,7 +77,7 @@ describe("CrystallizationProposer.rescanInstalledSkills", () => {
       exampleGoals: ["Deploy production application release with full verification steps"],
     };
 
-    const p = cStore.create({
+    const p = store.create({
       patternId: "pid1",
       evidenceHash: "ev1",
       skillName: "bad-skill",
@@ -64,17 +85,71 @@ describe("CrystallizationProposer.rescanInstalledSkills", () => {
       patternSnapshot: JSON.stringify(pattern),
       status: "validated",
     });
-    expect(cStore.approve(p.id)).not.toBeNull();
-    cStore.install(p.id, outputPath);
+    expect(store.approve(p.id)).not.toBeNull();
+    store.install(p.id, outputPath);
 
     const cfg: CrystallizationConfig = { ...CFG_BASE, outputDir };
-    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    const proposer = new CrystallizationProposer(workflows, store, cfg);
     const result = proposer.rescanInstalledSkills();
 
     expect(result.scanned).toBe(1);
     expect(result.quarantined).toBe(1);
-    const row = cStore.getById(p.id);
+    const row = store.getById(p.id);
     expect(row?.status).toBe("quarantined");
     expect(row?.rejectionReason ?? "").toMatch(/^stale validation:/);
+  });
+
+  it("validates installed skills against their stored output root after cfg.outputDir changes", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "skills-rescan-root-"));
+    const originalOutputDir = join(tmpDir, "original-skills");
+    const currentOutputDir = join(tmpDir, "current-skills");
+    const skillDir = join(originalOutputDir, "legacy-safe-skill");
+    mkdirSync(skillDir, { recursive: true });
+    const outputPath = join(skillDir, "SKILL.md");
+    writeFileSync(
+      outputPath,
+      `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`,
+      "utf-8",
+    );
+
+    const store = new CrystallizationStore(join(tmpDir, "cp.db"));
+    const workflows = new WorkflowStore(join(tmpDir, "wf.db"));
+    cStore = store;
+    wfStore = workflows;
+
+    const pattern: WorkflowPattern = {
+      toolSequence: ["read", "write"],
+      totalCount: 5,
+      successCount: 5,
+      failureCount: 0,
+      successRate: 1,
+      avgDurationMs: 100,
+      exampleGoals: ["Deploy production application release with full verification steps"],
+    };
+
+    const p = store.create({
+      patternId: "pid-root",
+      evidenceHash: "ev-root",
+      skillName: "legacy-safe-skill",
+      skillContent: "# placeholder",
+      patternSnapshot: JSON.stringify(pattern),
+      status: "validated",
+    });
+    expect(store.approve(p.id)).not.toBeNull();
+    store.install(p.id, outputPath);
+
+    const cfg: CrystallizationConfig = { ...CFG_BASE, outputDir: currentOutputDir };
+    const proposer = new CrystallizationProposer(workflows, store, cfg);
+    const result = proposer.rescanInstalledSkills();
+
+    expect(result.errors).toEqual([]);
+    expect(result.scanned).toBe(1);
+    expect(result.quarantined).toBe(0);
+    expect(store.getById(p.id)?.status).toBe("installed");
   });
 });

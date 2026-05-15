@@ -299,7 +299,13 @@ import {
 } from "./backends/workflow-store.js";
 import { CrystallizationProposer } from "./services/crystallization-proposer.js";
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
-import { PatternDetector, computeEvidenceHash, computePatternId, scorePattern } from "./services/pattern-detector.js";
+import {
+  PatternDetector,
+  computeEvidenceHash,
+  computeLegacyEvidenceHash,
+  computePatternId,
+  scorePattern,
+} from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
 import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
 import { SkillValidator } from "./services/skill-validator.js";
@@ -991,6 +997,7 @@ export const _testing = {
   CrystallizationProposer,
   computePatternId,
   computeEvidenceHash,
+  computeLegacyEvidenceHash,
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,

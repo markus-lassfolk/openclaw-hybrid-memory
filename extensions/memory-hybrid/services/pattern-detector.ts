@@ -43,6 +43,25 @@ export interface ComputeEvidenceHashOptions {
   evidenceCountBucketSize?: number;
 }
 
+function normalizeEvidenceGoals(pattern: WorkflowPattern): string[] {
+  return pattern.exampleGoals
+    .map((g) => g.trim().replace(/\s+/g, " "))
+    .filter((g) => g.length > 0)
+    .slice(0, 5);
+}
+
+/**
+ * Compute the pre-milestone evidence hash used by older stored rejected/quarantined proposals.
+ * Keep this for compatibility so existing human rejections remain suppressed until evidence changes.
+ */
+export function computeLegacyEvidenceHash(pattern: WorkflowPattern): string {
+  const payload = {
+    toolSequence: pattern.toolSequence,
+    exampleGoals: normalizeEvidenceGoals(pattern),
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
+}
+
 /**
  * Compute a stable hash of "evidence" used to generate proposal content.
  * Tool sequence and example goals are exact; usage metrics enter only as coarse buckets
@@ -54,10 +73,7 @@ export function computeEvidenceHash(pattern: WorkflowPattern, opts?: ComputeEvid
   const successRateBucket = Math.round(pattern.successRate * 10) / 10;
   const payload = {
     toolSequence: pattern.toolSequence,
-    exampleGoals: pattern.exampleGoals
-      .map((g) => g.trim().replace(/\s+/g, " "))
-      .filter((g) => g.length > 0)
-      .slice(0, 5),
+    exampleGoals: normalizeEvidenceGoals(pattern),
     totalCountBucket,
     successRateBucket,
   };
@@ -123,12 +139,14 @@ export class PatternDetector {
       const evidenceHash = computeEvidenceHash(pattern, {
         evidenceCountBucketSize: this.cfg.evidenceCountBucketSize,
       });
+      const legacyEvidenceHash = computeLegacyEvidenceHash(pattern);
 
       // Skip if latest rejected proposal was based on the same unchanged evidence.
       // Prevents "spammy" re-proposals after a human rejection unless substantive
-      // inputs (tool sequence / example goals) changed.
+      // inputs (tool sequence / example goals) changed. Legacy hashes are accepted
+      // so pre-milestone rejections are not all re-proposed immediately on upgrade.
       try {
-        if (this.crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash)) {
+        if (this.crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash, legacyEvidenceHash)) {
           continue;
         }
       } catch (err) {

@@ -12,7 +12,6 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
-import { computeEvidenceHash } from "../services/pattern-detector.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import type { WorkflowPattern } from "./workflow-store.js";
 
@@ -219,42 +218,6 @@ export class CrystallizationStore extends BaseSqliteStore {
     this.liveDb.exec(
       "UPDATE crystallization_proposals SET evidence_hash = pattern_id WHERE (evidence_hash IS NULL OR evidence_hash = '') AND pattern_id IS NOT NULL",
     );
-
-    // Recompute evidence_hash for rejected/quarantined proposals to match new format.
-    // After PR #1422, evidence hash includes totalCountBucket and successRateBucket.
-    // Old hashes only had toolSequence and exampleGoals, causing mismatches.
-    this.recomputeEvidenceHashesForRejectedProposals();
-  }
-
-  /**
-   * Recompute evidence hashes for rejected/quarantined proposals using the new hash format.
-   * This ensures that rejection suppression continues to work after the hash format change.
-   */
-  private recomputeEvidenceHashesForRejectedProposals(): void {
-    const rows = this.liveDb
-      .prepare(
-        "SELECT id, pattern_snapshot, evidence_hash FROM crystallization_proposals WHERE status IN ('rejected', 'quarantined') AND pattern_snapshot IS NOT NULL AND pattern_snapshot <> '{}'",
-      )
-      .all() as Array<{ id: string; pattern_snapshot: string; evidence_hash: string | null }>;
-
-    for (const row of rows) {
-      try {
-        const pattern = JSON.parse(row.pattern_snapshot) as WorkflowPattern;
-        // Use default bucket size of 5 (same as config default)
-        const newHash = computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 });
-
-        // Only update if the hash has actually changed
-        if (newHash !== row.evidence_hash) {
-          this.liveDb
-            .prepare("UPDATE crystallization_proposals SET evidence_hash = ? WHERE id = ?")
-            .run(newHash, row.id);
-        }
-      } catch (err) {
-        // If we can't parse the pattern snapshot, skip this row
-        // (the existing hash will remain, which is better than crashing)
-        continue;
-      }
-    }
   }
 
   private expandStatusFilter(status?: CrystallizationStatusFilter): CrystallizationStatus[] | undefined {
@@ -526,7 +489,7 @@ export class CrystallizationStore extends BaseSqliteStore {
    * Rejection / quarantine guard: returns true if the latest proposal for this pattern was rejected
    * or quarantined with the same evidence hash (no meaningful new evidence since suppression).
    */
-  isRejectedWithSameEvidence(patternId: string, evidenceHash: string): boolean {
+  isRejectedWithSameEvidence(patternId: string, evidenceHash: string, legacyEvidenceHash?: string): boolean {
     return this.runWithDb("isRejectedWithSameEvidence", () => {
       const row = this.liveDb
         .prepare(
@@ -534,7 +497,8 @@ export class CrystallizationStore extends BaseSqliteStore {
         )
         .get(patternId) as { status?: string; evidence_hash?: string } | undefined;
       if (!row) return false;
-      const same = (row.evidence_hash ?? "") === evidenceHash;
+      const stored = row.evidence_hash ?? "";
+      const same = stored === evidenceHash || (legacyEvidenceHash !== undefined && stored === legacyEvidenceHash);
       if (!same) return false;
       return row.status === "rejected" || row.status === "quarantined";
     });
