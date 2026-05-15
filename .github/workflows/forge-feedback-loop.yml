@@ -58,6 +58,13 @@ jobs:
                 core.setOutput('skip_reason', 'Ignoring bot-authored issue comment event to avoid feedback loops.');
                 return;
               }
+              const commentBody = String(context.payload.comment?.body ?? '');
+              const isExternalCoderRequest = /<!--\s*maeve-external-coder\b[\s\S]*?-->/i.test(commentBody) || /(?:^|\n)\s*@(cursoragent|copilot)\b/i.test(commentBody);
+              if (isExternalCoderRequest) {
+                core.setOutput('should_skip', 'true');
+                core.setOutput('skip_reason', 'Ignoring external-coder request comment.');
+                return;
+              }
               if (!context.payload.issue?.pull_request) {
                 core.setOutput('should_skip', 'true');
                 core.setOutput('skip_reason', 'Issue comment is not attached to a pull request.');

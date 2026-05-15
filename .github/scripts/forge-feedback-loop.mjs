@@ -9,6 +9,8 @@ const BOT_LOGIN_RE = /\[bot\]$/i;
 const NON_BLOCKING_REVIEW_STATES = new Set(['APPROVED', 'DISMISSED']);
 const PASSING_CONCLUSIONS = new Set(['success', 'skipped', 'neutral']);
 const SELF_CHECK_NAMES = new Set(['Inspect PR blockers and dispatch Forge']);
+const EXTERNAL_CODER_REQUEST_MARKER_RE = /<!--\s*maeve-external-coder\b[\s\S]*?-->/i;
+const EXTERNAL_CODER_MENTION_RE = /(?:^|\n)\s*@(cursoragent|copilot)\b/i;
 
 function normalizeWhitespace(value) {
   return String(value ?? '')
@@ -23,6 +25,11 @@ function truncateText(value, maxChars = DEFAULT_MAX_BODY_CHARS) {
   if (!normalized) return '';
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function isExternalCoderRequestComment(body) {
+  const text = String(body ?? '');
+  return EXTERNAL_CODER_REQUEST_MARKER_RE.test(text) || EXTERNAL_CODER_MENTION_RE.test(text);
 }
 
 function isBotActor(actor) {
@@ -70,6 +77,7 @@ function summarizeIssueComments(issueComments, headCommittedAt) {
     .filter((comment) => {
       if (!comment || typeof comment !== 'object') return false;
       if (isBotActor(comment.user)) return false;
+      if (isExternalCoderRequestComment(comment.body)) return false;
       const body = truncateText(comment.body ?? '');
       if (!body) return false;
       if (cutoffMs == null) return true;
