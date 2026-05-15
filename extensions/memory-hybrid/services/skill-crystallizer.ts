@@ -8,6 +8,7 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
@@ -299,7 +300,7 @@ export class SkillCrystallizer {
 
     // Resolve output directory (expand ~ for home dir)
     const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
+    const proposedOutputPath = resolve(outputDir, skillName, "SKILL.md");
 
     // Generate shell script for exec-only sequences
     const hasScript = isExecOnlySequence(pattern.toolSequence);
