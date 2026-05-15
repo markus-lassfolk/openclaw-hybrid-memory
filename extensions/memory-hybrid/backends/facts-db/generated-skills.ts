@@ -331,8 +331,17 @@ export function setGeneratedSkillLifecycleState(
   state: GeneratedSkillLifecycleState,
   reason: string | null,
   at = Math.floor(Date.now() / 1000),
+  procedureId?: string,
 ): ProcedureEntry | null {
-  const proc = findGeneratedSkillProcedure(db, skillName);
+  let proc: ProcedureEntry | null = null;
+  if (procedureId != null) {
+    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
+      | Record<string, unknown>
+      | undefined;
+    proc = row ? procedureRowToEntry(db, row) : null;
+  } else {
+    proc = findGeneratedSkillProcedure(db, skillName);
+  }
   if (!proc) return null;
   db.prepare(
     `UPDATE procedures
@@ -341,10 +350,20 @@ export function setGeneratedSkillLifecycleState(
             updated_at = ?
       WHERE id = ?`,
   ).run(state, normalizeSummary(reason), at, proc.id);
-  return getGeneratedSkillByName(db, skillName);
+  return getGeneratedSkillByName(db, skillName, procedureId);
 }
 
-export function getGeneratedSkillByName(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+export function getGeneratedSkillByName(
+  db: DatabaseSync,
+  skillName: string,
+  procedureId?: string,
+): ProcedureEntry | null {
+  if (procedureId != null) {
+    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? procedureRowToEntry(db, row) : null;
+  }
   return findGeneratedSkillProcedure(db, skillName);
 }
 
@@ -516,7 +535,7 @@ export function refreshGeneratedSkillLifecycleState(
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
   if (transition == null) return proc;
-  return setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now);
+  return setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now, proc.id);
 }
 
 export function buildGeneratedSkillTelemetryReport(
