@@ -727,6 +727,70 @@ description: Existing legacy skill created before completion markers.
     expect(db.getProcedureById(retry.id)?.promotedToSkill).toBe(1);
   });
 
+  it("preserves a concurrently-created committed skill directory when atomic write refuses overwrite", async () => {
+    vi.resetModules();
+    vi.doMock("../utils/atomic-write.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../utils/atomic-write.js")>();
+      return {
+        ...actual,
+        atomicWriteSkillDir: vi.fn((skillDir: string) => {
+          mkdirSync(skillDir, { recursive: true });
+          writeFileSync(join(skillDir, "SKILL.md"), "# Concurrent Winner\n", "utf-8");
+          writeFileSync(join(skillDir, actual.SKILL_COMPLETE_MARKER), "concurrent-winner", "utf-8");
+          throw new Error(`Refusing to overwrite existing skill directory: ${skillDir}`);
+        }),
+      };
+    });
+
+    try {
+      const { generateAutoSkillForProcedure: generateWithConcurrentCollision } = await import(
+        "../services/procedure-skill-generator.js"
+      );
+      const proc = db.upsertProcedure({
+        taskPattern: "Validate concurrent collision report",
+        recipeJson: JSON.stringify([
+          { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+          {
+            tool: "exec",
+            args: { command: "npm test" },
+            summary: "Run validation test",
+          },
+          { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+        ]),
+        procedureType: "positive",
+        successCount: 3,
+        confidence: 0.9,
+        sourceSessionId: "concurrent-collision-a",
+      });
+      recordDistinctSuccesses(proc.id);
+
+      const result = generateWithConcurrentCollision(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          validationThreshold: 3,
+          skillTTLDays: 30,
+          procedureId: proc.id,
+          apply: true,
+          policy: "auto-safe",
+        },
+        { info: () => {}, warn: () => {} },
+      );
+
+      const skillDir = join(skillsDir, "validate-concurrent-collision-report");
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "write-failed",
+      });
+      expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Concurrent Winner\n");
+      expect(readFileSync(join(skillDir, SKILL_COMPLETE_MARKER), "utf-8")).toBe("concurrent-winner");
+      expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
+    } finally {
+      vi.doUnmock("../utils/atomic-write.js");
+      vi.resetModules();
+    }
+  });
+
   it("rolls back written draft artifacts when markProcedurePromoted fails for single-procedure generation", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate rollback single behavior",

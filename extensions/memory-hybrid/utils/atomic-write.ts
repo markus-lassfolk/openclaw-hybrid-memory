@@ -65,9 +65,10 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  * skill directory. Pass files in the order you want them written. Convention:
  * put `SKILL.md` last so it is the final content file before the marker.
  */
-export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): void {
+export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): { completionMarker: string } {
   const rand = randomBytes(8).toString("hex");
   const tmpDir = `${skillDir}.tmp-${process.pid}-${rand}`;
+  const completionMarker = `${new Date().toISOString()}\nwriteId=${process.pid}-${rand}`;
 
   try {
     if (existsSync(skillDir)) {
@@ -83,10 +84,11 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     }
 
     // Stamp the completion marker as the final write inside the temp dir.
-    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
+    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), completionMarker, "utf-8");
 
     // Atomic promotion: temp dir → final skill dir.
     renameSync(tmpDir, skillDir);
+    return { completionMarker };
   } catch (err) {
     // Clean up temp dir.
     try {

@@ -2,7 +2,7 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
@@ -245,10 +245,10 @@ export function generateAutoSkills(
       continue;
     }
 
-    const skillDirExistedBefore = existsSync(skillDir);
+    let completionMarker: string | null = null;
     try {
       const relativePath = join(options.skillsAutoPath, resolvedSlug);
-      writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
+      completionMarker = writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, relativePath);
@@ -267,7 +267,7 @@ export function generateAutoSkills(
       drafted++;
       logger.info(`procedure-skill-generator: drafted ${skillPath} (enabled=false)`);
     } catch (err) {
-      rollbackDraftSkill(skillDir, skillDirExistedBefore);
+      rollbackDraftSkill(skillDir, completionMarker);
       releaseInRunReservation(reservedSlugs, inRunSkillCandidates, reservedCandidate);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-skill-generator",
@@ -386,12 +386,12 @@ export function generateAutoSkillForProcedure(
     };
   }
 
-  const skillDirExistedBefore = existsSync(skillDir);
+  let completionMarker: string | null = null;
   try {
-    writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
+    completionMarker = writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
     factsDb.markProcedurePromoted(proc.id, relativePath);
   } catch (err) {
-    rollbackDraftSkill(skillDir, skillDirExistedBefore);
+    rollbackDraftSkill(skillDir, completionMarker);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "procedure-skill-generator",
       operation: "promote-write-draft",
@@ -496,17 +496,17 @@ function writeDraftSkill(
     evalsJson: string;
     proposalMetadataJson: string;
   },
-): void {
+): string {
   // Write all sidecar files atomically (temp dir → rename). SKILL.md is
   // written last among content files so it is the final content write before
   // the completion marker.
-  atomicWriteSkillDir(skillDir, {
+  return atomicWriteSkillDir(skillDir, {
     "recipe.json": draft.recipeJson,
     "verification.json": draft.verificationJson,
     "proposal-metadata.json": draft.proposalMetadataJson,
     "evals/evals.json": draft.evalsJson,
     "SKILL.md": draft.skillMd,
-  });
+  }).completionMarker;
 }
 
 function releaseInRunReservation(
@@ -521,12 +521,14 @@ function releaseInRunReservation(
   if (index >= 0) inRunSkillCandidates.splice(index, 1);
 }
 
-function rollbackDraftSkill(skillDir: string, skillDirExistedBefore?: boolean): void {
-  if (!existsSync(skillDir)) return;
-  // Only delete incomplete atomic write artifacts. Do not delete pre-existing
-  // committed skill directories (which have the completion marker) to avoid
-  // destructive TOCTOU races with concurrent skill writes.
-  if (skillDirExistedBefore !== false && isCommittedSkillDir(skillDir)) return;
+function rollbackDraftSkill(skillDir: string, completionMarker: string | null): void {
+  if (!completionMarker || !existsSync(skillDir)) return;
+  try {
+    const markerPath = join(skillDir, SKILL_COMPLETE_MARKER);
+    if (readFileSync(markerPath, "utf-8") !== completionMarker) return;
+  } catch {
+    return;
+  }
   try {
     rmSync(skillDir, { recursive: true, force: true });
   } catch (err) {
