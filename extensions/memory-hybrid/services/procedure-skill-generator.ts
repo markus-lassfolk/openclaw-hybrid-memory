@@ -245,9 +245,9 @@ export function generateAutoSkills(
       continue;
     }
 
+    const skillDirExistedBefore = existsSync(skillDir);
     try {
       const relativePath = join(options.skillsAutoPath, resolvedSlug);
-      const skillDirExistedBefore = existsSync(skillDir);
       writeDraftSkill(skillDir, rebaseDraftSlug(evaluation.draft, resolvedSlug, relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
