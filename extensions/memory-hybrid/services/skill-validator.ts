@@ -19,12 +19,14 @@ import {
   DEFAULT_REQUIRED_SECTIONS,
   MAX_SKILL_LINES,
   getSectionTaxonomy,
+  type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
 export {
   CATEGORY_FRONTMATTER_KEYS,
   DEFAULT_REQUIRED_SECTIONS,
   MAX_SKILL_LINES,
   getSectionTaxonomy,
+  type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
 
 // ---------------------------------------------------------------------------
@@ -201,6 +203,8 @@ const DENY_RULES: DenyRule[] = [
 // ---------------------------------------------------------------------------
 
 export class SkillValidator {
+  constructor(private readonly sectionTaxonomyOverrides?: SectionTaxonomyOverrides) {}
+
   /**
    * Validate generated SKILL.md content for:
    * - security violations (deny rules inside code blocks)
@@ -257,7 +261,7 @@ export class SkillValidator {
     // SkillValidator and GeneratedSkillValidationService check the same sections
     // (issues #1375, #1408).
     const frontmatterCategory = frontmatter.present ? getFrontmatterCategory(frontmatter.keys) : undefined;
-    const requiredSections = getSectionTaxonomy(frontmatterCategory);
+    const requiredSections = getSectionTaxonomy(frontmatterCategory, this.sectionTaxonomyOverrides);
 
     for (const section of requiredSections) {
       if (!hasHeadingAlias(headings, section.aliases)) {

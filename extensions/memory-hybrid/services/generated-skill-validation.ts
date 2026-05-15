@@ -1,19 +1,13 @@
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
-import { CATEGORY_FRONTMATTER_KEYS, DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES } from "../config/skill-sections.js";
+import {
+  CATEGORY_FRONTMATTER_KEYS,
+  DEFAULT_REQUIRED_SECTIONS,
+  MAX_SKILL_LINES,
+  type SectionTaxonomyOverrides,
+} from "../config/skill-sections.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, normalizeHeading, parseH2Headings, SkillValidator } from "./skill-validator.js";
 
@@ -166,7 +160,11 @@ export function detailSkillProposalValidation(result?: SkillProposalValidationRe
 }
 
 export class GeneratedSkillValidationService {
-  private readonly skillValidator = new SkillValidator();
+  private readonly skillValidator: SkillValidator;
+
+  constructor(private readonly sectionTaxonomyOverrides?: SectionTaxonomyOverrides) {
+    this.skillValidator = new SkillValidator(sectionTaxonomyOverrides);
+  }
 
   validate(
     input: ValidateGeneratedSkillInput,
@@ -286,51 +284,26 @@ export class GeneratedSkillValidationService {
     skillName: string,
   ): SkillProposalValidationResult["dryLoadValidation"] {
     const violations: string[] = [];
-    const discovered: Record<string, string> = {};
-    const tempDir = mkdtempSync(join(tmpdir(), "hm-crystallization-dry-load-"));
+    const discovered = parseSkillFrontmatter(skillContent);
 
     try {
-      const workspaceDir = join(tempDir, "workspace");
-      const skillsDir = join(workspaceDir, "skills");
       const normalizedSkillName = normalizeSkillName(skillName);
-      const skillDirName = isApprovalSanitizedSkillName(skillName) ? skillName : normalizedSkillName;
-      const skillDir = join(skillsDir, skillDirName);
-      mkdirSync(skillDir, { recursive: true });
-      const skillPath = join(skillDir, "SKILL.md");
-      writeFileSync(skillPath, skillContent, "utf-8");
-
-      const skillDirStat = lstatSync(skillDir);
-      const skillPathStat = lstatSync(skillPath);
-      if (skillDirStat.isSymbolicLink() || skillPathStat.isSymbolicLink()) {
-        violations.push("Dry-load skill path contains a symlink");
-      }
-      const skillDirReal = realpathSync(skillDir);
-      const skillsDirReal = realpathSync(skillsDir);
-      if (!isWithinDir(skillsDirReal, skillDirReal)) {
-        violations.push("Dry-load skill directory escapes the isolated workspace");
-      }
-
-      const entries = loadDrySkillEntries(skillsDir);
-      const entry = entries.find(
-        (candidate) => candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
-      );
-      if (!entry) {
+      if (!discovered.name || !discovered.description) {
+        violations.push("Dry-load discovery did not return required skill frontmatter");
+      } else if (discovered.name !== skillName && normalizeSkillName(discovered.name) !== normalizedSkillName) {
         violations.push("Dry-load discovery did not return the generated skill");
-      } else {
-        Object.assign(discovered, entry);
-        if (entry.description !== frontmatter.description) {
-          violations.push("Dry-load description does not match frontmatter description");
-        }
-        const expectedCategory = getFrontmatterCategory(frontmatter);
-        if (expectedCategory && getFrontmatterCategory(entry) !== expectedCategory) {
-          violations.push("Dry-load category does not match frontmatter category");
-        }
+      }
+
+      if (discovered.description !== frontmatter.description) {
+        violations.push("Dry-load description does not match frontmatter description");
+      }
+      const expectedCategory = getFrontmatterCategory(frontmatter);
+      if (expectedCategory && getFrontmatterCategory(discovered) !== expectedCategory) {
+        violations.push("Dry-load category does not match frontmatter category");
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       violations.push(`Dry-load validation failed: ${message}`);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
     }
 
     return {
@@ -440,27 +413,6 @@ function isApprovalSanitizedSkillName(value: string): boolean {
 function isWithinDir(rootDir: string, candidatePath: string): boolean {
   const rel = relative(rootDir, candidatePath);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
-  const out: Array<Record<string, string>> = [];
-  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const skillPath = join(skillsDir, entry.name, "SKILL.md");
-    let skillContent = "";
-    try {
-      skillContent = readFileSync(skillPath, "utf-8");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Unable to read dry-load skill '${entry.name}': ${message}`);
-    }
-    const frontmatter = parseSkillFrontmatter(skillContent);
-    if (!frontmatter.name || !frontmatter.description) {
-      throw new Error(`Malformed SKILL.md for ${entry.name}: missing name or description frontmatter`);
-    }
-    out.push(frontmatter);
-  }
-  return out;
 }
 
 /**

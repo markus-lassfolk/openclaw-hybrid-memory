@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -415,6 +415,70 @@ Bounded symlink validation workflow.
 
     expect(validation.staticValidation.status).toBe("failed");
     expect(validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path"))).toBe(true);
+  });
+
+  it("does not create temp directories during dry-load validation by default (issue #1411)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-no-temp-dry-load-"));
+    const service = new GeneratedSkillValidationService();
+    // Avoid touching the filesystem for validation beyond the caller-provided output root.
+    // The old implementation created hm-crystallization-dry-load-* directories here.
+    const tempEntriesBefore = new Set(
+      readdirSync(tmpdir()).filter((name) => name.startsWith("hm-crystallization-dry-load-")),
+    );
+
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "no-temp-dry-load", "SKILL.md"),
+      skillName: "no-temp-dry-load",
+      skillContent: `---
+name: no-temp-dry-load
+description: Use when checking dry-load validation avoids temp directories.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# No Temp Dry Load
+
+## Trigger
+Use this skill when checking dry-load validation avoids temp directories.
+
+## Scope
+Bounded dry-load filesystem validation.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Parse skill metadata in memory.
+2. Confirm no dry-load temp directory is created.
+
+## Verification
+- Confirm validation does not create hm-crystallization-dry-load directories.
+
+## Anti-patterns / Known Failures
+- Do not write generated skill content during validation.
+
+## Examples
+- Check dry-load validation does not create temp directories.
+
+## Provenance
+- Source pattern ID: \`pattern-no-temp-dry-load\``,
+      pattern: {
+        toolSequence: ["read"],
+        totalCount: 3,
+        successCount: 3,
+        failureCount: 0,
+        successRate: 1,
+        avgDurationMs: 200,
+        exampleGoals: ["Check dry-load validation does not create temp directories."],
+      },
+    });
+
+    const tempEntriesAfter = new Set(
+      readdirSync(tmpdir()).filter((name) => name.startsWith("hm-crystallization-dry-load-")),
+    );
+    expect(validation.dryLoadValidation.status).toBe("passed");
+    expect(tempEntriesAfter).toEqual(tempEntriesBefore);
   });
 
   it("requires explicit override for activation warnings during approval", () => {
@@ -1509,6 +1573,66 @@ Bounded preflight validation.
       } finally {
         limitedStore.close();
       }
+    } finally {
+      cStore.close();
+    }
+  });
+
+  it("honors project-level section taxonomy overrides from crystallization config (issue #1408)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-project-taxonomy-"));
+    const cStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    try {
+      const skillContent = `---
+name: project-taxonomy-skill
+description: Use when validating configured project taxonomy overrides.
+category: custom-project-skill
+provenance: test-suite
+---
+
+# Project Taxonomy Skill
+
+## Trigger
+Use this skill when validating configured project taxonomy overrides.
+
+## Workflow
+1. Inspect configured section taxonomy.
+2. Confirm project-level overrides drive validation.
+
+## Examples
+- Validate configured project taxonomy overrides.`;
+      const proposal = cStore.create({
+        patternId: "pattern-project-taxonomy",
+        evidenceHash: "ev-project-taxonomy",
+        skillName: "project-taxonomy-skill",
+        skillContent,
+        patternSnapshot: JSON.stringify({
+          toolSequence: ["read"],
+          totalCount: 3,
+          successCount: 3,
+          failureCount: 0,
+          successRate: 1,
+          avgDurationMs: 200,
+          exampleGoals: ["Validate configured project taxonomy overrides."],
+        }),
+        status: "validated",
+      });
+
+      const proposer = new CrystallizationProposer(null, cStore, {
+        ...BASE_CFG,
+        outputDir: join(tmpDir, "skills"),
+        sectionTaxonomy: {
+          "custom-project-skill": [
+            { id: "trigger", label: "Trigger", aliases: ["trigger"] },
+            { id: "workflow", label: "Workflow", aliases: ["workflow"] },
+            { id: "risk", label: "Risk", aliases: ["risk"] },
+            { id: "examples", label: "Examples", aliases: ["examples"] },
+          ],
+        },
+      });
+
+      const validation = proposer.validateProposal(proposal.id);
+      const sectionViolations = validation?.staticValidation.violations.filter((v) => v.includes("required section"));
+      expect(sectionViolations).toEqual(["Missing required section: Risk"]);
     } finally {
       cStore.close();
     }

@@ -57,7 +57,7 @@ export class CrystallizationProposer {
   ) {
     this.detector = workflowStore ? new PatternDetector(workflowStore, crystallizationStore, cfg) : null;
     this.crystallizer = new SkillCrystallizer(cfg);
-    this.validator = new GeneratedSkillValidationService();
+    this.validator = new GeneratedSkillValidationService(cfg.sectionTaxonomy);
   }
 
   // -------------------------------------------------------------------------

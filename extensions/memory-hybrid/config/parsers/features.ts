@@ -1,5 +1,6 @@
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
 import { pluginLogger } from "../../utils/logger.js";
+import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
 import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type {
@@ -517,6 +518,33 @@ export function parseWorkflowTrackingConfig(cfg: Record<string, unknown>): Workf
   };
 }
 
+function parseSectionTaxonomyOverrides(raw: unknown): SectionTaxonomyOverrides | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: SectionTaxonomyOverrides = {};
+  for (const [category, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue;
+    const sections: SectionDefinition[] = [];
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const section = entry as Record<string, unknown>;
+      const id = typeof section.id === "string" ? section.id.trim() : "";
+      const label = typeof section.label === "string" ? section.label.trim() : "";
+      const aliases = Array.isArray(section.aliases)
+        ? (section.aliases as unknown[])
+            .filter((v): v is string => typeof v === "string")
+            .map((v) => v.trim())
+            .filter(Boolean)
+        : [];
+      if (id.length > 0 && label.length > 0 && aliases.length > 0) {
+        sections.push({ id, label, aliases: [...new Set(aliases)] });
+      }
+    }
+    const normalizedCategory = category.trim();
+    if (normalizedCategory.length > 0 && sections.length > 0) out[normalizedCategory] = sections;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function parseCrystallizationConfig(cfg: Record<string, unknown>): CrystallizationConfig {
   const raw = cfg.crystallization as Record<string, unknown> | undefined;
   return {
@@ -535,6 +563,7 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
       typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0 ? Math.floor(raw.maxCrystallized) : 50,
     pruneUnusedDays:
       typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0 ? Math.floor(raw.pruneUnusedDays) : 30,
+    sectionTaxonomy: parseSectionTaxonomyOverrides(raw?.sectionTaxonomy),
   };
 }
 

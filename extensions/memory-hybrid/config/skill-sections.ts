@@ -35,6 +35,13 @@ export interface SectionDefinition {
   aliases: string[];
 }
 
+/**
+ * Project-level taxonomy override map. Keys are category identifiers; use
+ * `default` to replace the default taxonomy for categories without a specific
+ * override. Each value replaces the inherited taxonomy for that category.
+ */
+export type SectionTaxonomyOverrides = Record<string, SectionDefinition[]>;
+
 // ---------------------------------------------------------------------------
 // Shared line-limit constant (issue #1366)
 // ---------------------------------------------------------------------------
@@ -148,7 +155,16 @@ export const CATEGORY_SECTION_TAXONOMIES: Record<string, SectionDefinition[]> = 
  * Falls back to DEFAULT_REQUIRED_SECTIONS when no category-specific override is
  * registered or when `category` is undefined / empty.
  */
-export function getSectionTaxonomy(category?: string): SectionDefinition[] {
+export function getSectionTaxonomy(
+  category?: string,
+  projectOverrides?: SectionTaxonomyOverrides,
+): SectionDefinition[] {
+  const projectCategoryOverride = category ? projectOverrides?.[category] : undefined;
+  if (projectCategoryOverride && projectCategoryOverride.length > 0) return projectCategoryOverride;
+
+  const projectDefaultOverride = projectOverrides?.default;
+  if (projectDefaultOverride && projectDefaultOverride.length > 0) return projectDefaultOverride;
+
   if (category && CATEGORY_SECTION_TAXONOMIES[category] != null) {
     const override = CATEGORY_SECTION_TAXONOMIES[category];
     if (override.length > 0) return override;
