@@ -13,11 +13,7 @@ import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
-
-/** Escape `%`, `_`, and `\` for SQLite `LIKE ... ESCAPE '\'` literal matching. */
-function escapeLikeLiteralForBackslashEscape(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-}
+import { escapeLikeLiteralForBackslashEscape } from "./facts-db/entity-layer.js";
 
 // ---------------------------------------------------------------------------
 // Public types
