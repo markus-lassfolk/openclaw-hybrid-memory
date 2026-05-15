@@ -463,7 +463,7 @@ function yamlScalarForPatch(value: string): string {
     /^(true|false|null|yes|no|on|off|~)$/i.test(value) ||
     /^[-+]?(\d+|\d*\.\d+)([eE][-+]?\d+)?$/.test(value)
   ) {
-    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}"`;
   }
   return value;
 }
