@@ -41,11 +41,11 @@ function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: stri
   const leadingNewlineMatch = body.match(/^\r?\n/);
   const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
   body = body.replace(/^\r?\n/, "");
-  const h1Line = /^#[ \t]+(?!#)\S.*$/m;
+  const h1Line = /^(#[ \t]+(?!#)\S[^\r\n]*)(\r?)$/m;
   if (!h1Line.test(body)) {
     return skillContent;
   }
-  return head + leadingNewline + body.replace(h1Line, `# ${newTitle}`);
+  return head + leadingNewline + body.replace(h1Line, (_match, _oldLine: string, cr: string) => `# ${newTitle}${cr}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -626,7 +626,7 @@ function stripInlineYamlTrailingComment(fragment: string): string {
 }
 
 function isTopLevelYamlKeyLine(line: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)/.test(line);
+  return /^[A-Za-z_][A-Za-z0-9_-]*:(?:\s|$)/.test(line);
 }
 
 function leadingIndentLen(line: string): number {
@@ -643,7 +643,7 @@ function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe:
   const blockHdr = trimmed.match(/^([|>])(.*)$/);
   if (blockHdr) {
     const afterMarker = (blockHdr[2] ?? "").trim();
-    if (/^([-+]|[1-9][0-9]*)?$/.test(afterMarker)) {
+    if (/^(?:[-+]?([1-9][0-9]*)?|([1-9][0-9]*)?[-+]?)$/.test(afterMarker)) {
       let j = startIdx + 1;
       while (j < lines.length && j - startIdx < MAX_YAML_VALUE_SCAN_LINES) {
         if (isTopLevelYamlKeyLine(lines[j]!)) break;

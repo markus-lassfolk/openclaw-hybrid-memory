@@ -413,6 +413,40 @@ category: cat
     expect(out).not.toContain("  a");
     expect(out).toContain("category: z");
   });
+
+  it("stops block scalar replacement at a top-level key with no inline value", () => {
+    const src = `---
+description: |
+  line one
+  line two
+tags:
+  - keep-me
+category: keep-category
+---
+`;
+    const out = patchOpeningYamlField(src, "description", "short");
+    expect(out).toMatch(/description: short\r?\n/);
+    expect(out).not.toContain("line one");
+    expect(out).toContain("tags:");
+    expect(out).toContain("  - keep-me");
+    expect(out).toContain("category: keep-category");
+  });
+
+  it("recognizes combined YAML block scalar indicators", () => {
+    const src = `---
+description: |2-
+    indented line
+
+category: keep-category
+---
+`;
+    const out = patchOpeningYamlField(src, "description", "short");
+    expect(out).toBe(`---
+description: short
+category: keep-category
+---
+`);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -437,23 +471,31 @@ First gather context then apply changes safely.
 
 ## Examples
 
-Good: user requests a bounded automation sequence.
+- Good: user says, "Run the deployment checklist for this release and report the command output."
 
 ## Provenance
 
 Synthetic fixture for crystallization proposer tests.`;
 
-function skillFixture(skillName: string, h1Title: string): string {
+function skillFixture(skillName: string, h1Title: string, lineBreak = "\n"): string {
   return `---
 name: ${skillName}
 description: Short description for validation.
 category: testing
+source_pattern_id: p-h1
 ---
 
 # ${h1Title}
 
 ${MINIMAL_VALID_SKILL_SECTIONS}
-`;
+## Verification
+
+Run this workflow in a temporary workspace and confirm expected output.
+
+## Anti-patterns / Known Failures
+
+Do not run it for unrelated explain-only prompts.
+`.replace(/\n/g, lineBreak);
 }
 
 describe("CrystallizationProposer.approveProposal — custom H1 on rename", () => {
@@ -475,10 +517,35 @@ describe("CrystallizationProposer.approveProposal — custom H1 on rename", () =
     if (!result.success && /explicit override/i.test(result.message)) {
       result = proposer.approveProposal(proposal.id, { name: "renamed-h1-skill", overrideWarnings: true });
     }
-    expect(result.success).toBe(true);
+    expect(result.success, result.message).toBe(true);
     const written = readFileSync(result.outputPath!, "utf-8");
     expect(written).toMatch(/^#\s+renamed-h1-skill\s*$/m);
     expect(written).not.toContain("# Custom Human Title");
     expect(written).toMatch(/name:\s*renamed-h1-skill/);
+  });
+
+  it("preserves CRLF line endings when replacing the body H1", () => {
+    const outputDir = join(tmpDir, "skills-h1-crlf");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, maxCrystallized: 50 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const proposal = cStore.create({
+      patternId: "p-h1-crlf",
+      evidenceHash: "ev-h1-crlf",
+      skillName: "orig-crlf-skill",
+      skillContent: skillFixture("orig-crlf-skill", "Custom Human Title", "\r\n"),
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let result = proposer.approveProposal(proposal.id, { name: "renamed-crlf-skill" });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(proposal.id, { name: "renamed-crlf-skill", overrideWarnings: true });
+    }
+    expect(result.success, result.message).toBe(true);
+    const written = readFileSync(result.outputPath!, "utf-8");
+    const h1Index = written.indexOf("# renamed-crlf-skill");
+    expect(h1Index).toBeGreaterThanOrEqual(0);
+    expect(written.slice(h1Index, h1Index + "# renamed-crlf-skill\r\n".length)).toBe("# renamed-crlf-skill\r\n");
   });
 });
