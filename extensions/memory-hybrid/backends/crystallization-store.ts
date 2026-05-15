@@ -288,7 +288,9 @@ export class CrystallizationStore extends BaseSqliteStore {
   getByPatternId(patternId: string): CrystallizationProposal | null {
     return this.runWithDb("getByPatternId", () => {
       const row = this.liveDb
-        .prepare("SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT 1")
+        .prepare(
+          "SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        )
         .get(patternId) as Record<string, unknown> | undefined;
       if (!row) return null;
       return this.rowToProposal(row);
@@ -336,7 +338,9 @@ export class CrystallizationStore extends BaseSqliteStore {
     return this.runWithDb("listByPatternId", () => {
       const cap = limit > 0 ? limit : 10_000;
       const rows = this.liveDb
-        .prepare("SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT ?")
+        .prepare(
+          "SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        )
         .all(patternId, cap) as Record<string, unknown>[];
       return rows.map((r) => this.rowToProposal(r));
     });
@@ -489,7 +493,7 @@ export class CrystallizationStore extends BaseSqliteStore {
     return this.runWithDb("isRejectedWithSameEvidence", () => {
       const row = this.liveDb
         .prepare(
-          "SELECT status, evidence_hash FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT 1",
+          "SELECT status, evidence_hash FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
         )
         .get(patternId) as { status?: string; evidence_hash?: string } | undefined;
       if (!row) return false;

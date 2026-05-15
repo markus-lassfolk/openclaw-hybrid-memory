@@ -289,7 +289,7 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(body).toContain("openclaw:skill-proposal");
   });
 
-  it("supersedes an older installed proposal for the same pattern when unrelated rows push past a global list cap", () => {
+  it("supersedes an older installed proposal for the same pattern without depending on global list order", () => {
     const outputDir = join(tmpDir, "skills");
     const cfg: CrystallizationConfig = {
       ...BASE_CFG,
@@ -336,7 +336,8 @@ describe("CrystallizationProposer.approveProposal", () => {
     }
     expect(result.success).toBe(true);
 
-    expect(cStore.list({ limit: 50 }).some((p) => p.id === oldP.id)).toBe(false);
+    // Regression target: superseding must use the pattern-scoped scan instead of
+    // depending on whether unrelated rows push the old proposal out of a global list window.
     expect(cStore.getById(oldP.id)?.status).toBe("superseded");
     expect(cStore.getById(newP.id)?.status).toBe("installed");
   });
