@@ -4,20 +4,12 @@
  * Covers:
  *  - atomicWriteFile: correct write, atomicity on error, temp-file cleanup
  *  - atomicWriteSkillDir: all files present, completion marker written,
- *    subdirectory creation, temp-dir cleanup on error, overwrite of incomplete
- *    existing dir
+ *    subdirectory creation, temp-dir cleanup on error, refusal to overwrite
+ *    existing dirs, and safe relative path validation
  *  - isSkillDirComplete: true only when marker exists
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -186,33 +178,37 @@ describe("atomicWriteSkillDir", () => {
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
 
-  it("overwrites an existing incomplete (no-marker) directory", () => {
+  it("refuses to overwrite an existing incomplete (no-marker) directory", () => {
     const skillDir = join(tmpDir, "my-skill");
-    // Simulate a partially-written dir from a previous crashed write.
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "# Incomplete\n", "utf-8");
-    // No marker → incomplete.
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
 
-    // Should succeed and replace with complete content.
+    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("Refusing to overwrite existing skill directory");
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Incomplete\n");
+    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
+  });
+
+  it("refuses to overwrite a complete directory", () => {
+    const skillDir = join(tmpDir, "my-skill");
     atomicWriteSkillDir(skillDir, DRAFT);
+
+    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
+    expect(() => atomicWriteSkillDir(skillDir, updated)).toThrow("Refusing to overwrite existing skill directory");
 
     expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# My Skill");
     expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
   });
 
-  it("replaces a complete directory when called again with updated content", () => {
-    const skillDir = join(tmpDir, "my-skill");
-    // Write first complete version.
-    atomicWriteSkillDir(skillDir, DRAFT);
-
-    // Overwrite with updated content.
-    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
-    atomicWriteSkillDir(skillDir, updated);
-
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Updated Skill");
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
-  });
+  it.each(["../escape.txt", "/tmp/escape.txt", "nested/../../escape.txt", "", SKILL_COMPLETE_MARKER])(
+    "rejects unsafe relative path %s",
+    (relPath) => {
+      const skillDir = join(tmpDir, "my-skill");
+      expect(() => atomicWriteSkillDir(skillDir, { [relPath]: "bad" })).toThrow("Unsafe skill file path");
+      expect(existsSync(skillDir)).toBe(false);
+      const entries = readdirSync(tmpDir);
+      expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

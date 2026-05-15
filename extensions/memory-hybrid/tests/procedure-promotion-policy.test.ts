@@ -374,6 +374,40 @@ Use for collecting markerless legacy reports.
     expect(evaluation.metadata.duplicateHandling).toBe("merge");
   });
 
+  it("ignores incomplete atomic temp and backup skill directories during duplicate detection", () => {
+    const tempSkillDir = join(skillsDir, "collect-crashed-temp-report.tmp-1234-deadbeef");
+    const backupSkillDir = join(skillsDir, ".collect-crashed-backup-report.bak-1700000000000-deadbeef");
+    for (const dir of [tempSkillDir, backupSkillDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        `---
+name: collect-crashed-temp-report
+description: Use when collecting crashed temp reports.
+---
+
+# Collect Crashed Temp Report
+`,
+        "utf-8",
+      );
+    }
+
+    const proc = addProcedure({
+      taskPattern: "Collect crashed temp report",
+      sourceSessionId: "crashed-temp-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "crashed-temp-b");
+    db.recordProcedureSuccess(proc.id, undefined, "crashed-temp-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
+  });
+
   it("does not report generated skill paths for deferred procedures", () => {
     const proc = addProcedure({
       taskPattern: "Validate deferred low confidence report",

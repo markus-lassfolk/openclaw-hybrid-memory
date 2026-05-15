@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-import { atomicWriteSkillDir } from "../utils/atomic-write.js";
+import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -76,14 +76,22 @@ export type GenerateAutoSkillResult =
 function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-  // Legacy skill directories created before the atomic completion marker rollout
-  // do not contain `.openclaw-skill-complete`. They are still occupied names and
-  // must not be overwritten. Only atomic temp/backup siblings are reusable.
-  while (reservedSlugs?.has(candidate) || existsSync(join(basePath, candidate))) {
+  while (reservedSlugs?.has(candidate) || isCommittedSkillDir(join(basePath, candidate))) {
     n++;
     candidate = `${slug}-${n}`;
   }
   return candidate;
+}
+
+function isCommittedSkillDir(skillDir: string): boolean {
+  if (!existsSync(skillDir)) return false;
+  if (isAtomicSkillWriteArtifact(skillDir) && !existsSync(join(skillDir, SKILL_COMPLETE_MARKER))) return false;
+  return true;
+}
+
+function isAtomicSkillWriteArtifact(skillDir: string): boolean {
+  const entry = skillDir.split(/[\\/]/).pop() ?? "";
+  return /\.tmp-\d+-[a-f0-9]+$/i.test(entry) || /^\..+\.bak-\d+-[a-f0-9]+$/i.test(entry);
 }
 
 function rebaseDraftSlug(

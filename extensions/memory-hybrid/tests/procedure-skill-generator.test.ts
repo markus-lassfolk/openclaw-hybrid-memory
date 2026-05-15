@@ -158,6 +158,48 @@ describe("generateAutoSkills", () => {
     });
   });
 
+  it("ignores incomplete atomic temp and backup directories when resolving slug collisions", () => {
+    const tempDir = join(skillsDir, "validate-crashed-temp-report.tmp-1234-deadbeef");
+    const backupDir = join(skillsDir, ".validate-crashed-temp-report.bak-1700000000000-deadbeef");
+    for (const dir of [tempDir, backupDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "SKILL.md"), "# Incomplete atomic artifact\n", "utf-8");
+    }
+
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate crashed temp report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "crashed-temp-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 1,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    expect(result.paths).toEqual([join(skillsDir, "validate-crashed-temp-report", "SKILL.md")]);
+    expect(existsSync(join(skillsDir, "validate-crashed-temp-report", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(tempDir, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(backupDir, "SKILL.md"))).toBe(true);
+  });
+
   it("preserves legacy skill directories that lack completion markers when resolving slug collisions", () => {
     const legacyDir = join(skillsDir, "validate-markerless-legacy-report");
     mkdirSync(legacyDir, { recursive: true });
