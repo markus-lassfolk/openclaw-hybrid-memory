@@ -126,7 +126,7 @@ function hasWindowsDrivePrefix(skillPath: string): boolean {
 }
 
 function usesWindowsPathSemantics(skillPath: string): boolean {
-  return hasWindowsDrivePrefix(skillPath) || (!isAbsolute(skillPath) && skillPath.includes("\\"));
+  return hasWindowsDrivePrefix(skillPath) || skillPath.includes("\\");
 }
 
 function skillPathBasename(skillPath: string): string {
@@ -572,10 +572,11 @@ function desiredLifecycleTransition(
     };
   }
   // Allow automatic unblocking of demoted/archived skills when they accumulate
-  // enough clean uses after the demotion reset. Evaluate this before the
-  // overTriggering check so archived skills with high historical FP rates
-  // can transition directly to experimental rather than demoted.
-  if (flags.unblockCandidate) {
+  // enough clean uses after the demotion reset AND are not currently overtriggering.
+  // Evaluate this before the overTriggering check so archived skills with high historical
+  // FP rates can transition directly to experimental rather than demoted, but only if
+  // the current post-demotion false-positive rate is acceptable.
+  if (flags.unblockCandidate && !flags.overTriggering) {
     return {
       state: "experimental",
       reason: `auto-unblocked after ${metrics.cleanUsesAfterDemotion} clean activations since demotion`,
