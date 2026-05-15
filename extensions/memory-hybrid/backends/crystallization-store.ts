@@ -13,7 +13,7 @@ import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
-import { readSchemaVersion, writeSchemaVersion } from "./sqlite-schema-meta.js";
+import { readSchemaVersion, runVersionedSchemaMigration } from "./sqlite-schema-meta.js";
 
 /** Increment when adding a new idempotent migration step in `runSchemaMigrations`. */
 export const CRYSTALLIZATION_STORE_SCHEMA_VERSION = 2;
@@ -155,10 +155,10 @@ export class CrystallizationStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_cp_status      ON crystallization_proposals(status);
       CREATE INDEX IF NOT EXISTS idx_cp_pattern_id  ON crystallization_proposals(pattern_id);
       CREATE INDEX IF NOT EXISTS idx_cp_skill_name  ON crystallization_proposals(skill_name);
-      CREATE INDEX IF NOT EXISTS idx_cp_evidence_hash ON crystallization_proposals(evidence_hash);
     `);
 
     this.runSchemaMigrations();
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_cp_evidence_hash ON crystallization_proposals(evidence_hash)");
   }
 
   protected getSubsystemName(): string {
@@ -169,12 +169,13 @@ export class CrystallizationStore extends BaseSqliteStore {
     let v = readSchemaVersion(this.liveDb);
     while (v < CRYSTALLIZATION_STORE_SCHEMA_VERSION) {
       const next = v + 1;
-      if (next === 1) migrateCrystallizationSchemaV1(this.liveDb);
-      else if (next === 2) migrateCrystallizationSchemaV2(this.liveDb);
-      else {
+      if (next === 1) {
+        runVersionedSchemaMigration(this.liveDb, next, () => migrateCrystallizationSchemaV1(this.liveDb));
+      } else if (next === 2) {
+        runVersionedSchemaMigration(this.liveDb, next, () => migrateCrystallizationSchemaV2(this.liveDb));
+      } else {
         throw new Error(`crystallization-store: unsupported schema migration target ${next}`);
       }
-      writeSchemaVersion(this.liveDb, next);
       v = next;
     }
   }

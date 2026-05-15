@@ -24,9 +24,18 @@ export function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(SCHEMA_VERSION_KEY) as
     | { value: string }
     | undefined;
-  if (!row?.value) return 0;
-  const n = Number.parseInt(row.value, 10);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+  if (row === undefined) return 0;
+
+  const raw = row.value.trim();
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid schema_meta ${SCHEMA_VERSION_KEY} value: ${row.value}`);
+  }
+
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(n)) {
+    throw new Error(`Invalid schema_meta ${SCHEMA_VERSION_KEY} value: ${row.value}`);
+  }
+  return n;
 }
 
 export function writeSchemaVersion(db: DatabaseSync, version: number): void {
@@ -35,4 +44,16 @@ export function writeSchemaVersion(db: DatabaseSync, version: number): void {
     `INSERT INTO schema_meta (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(SCHEMA_VERSION_KEY, String(version));
+}
+
+export function runVersionedSchemaMigration(db: DatabaseSync, version: number, migrate: () => void): void {
+  db.exec("BEGIN");
+  try {
+    migrate();
+    writeSchemaVersion(db, version);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }

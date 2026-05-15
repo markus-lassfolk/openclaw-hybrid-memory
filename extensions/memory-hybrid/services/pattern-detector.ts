@@ -28,94 +28,81 @@ interface CrystallizationCandidate {
   score: number;
 }
 
-// ---------------------------------------------------------------------------
-// PatternDetector
-// ---------------------------------------------------------------------------
+export function detectCrystallizationCandidates(
+  workflowStore: WorkflowStore,
+  crystallizationStore: CrystallizationStore,
+  cfg: CrystallizationConfig,
+): CrystallizationCandidate[] {
+  if (!cfg.enabled) return [];
 
-export class PatternDetector {
-  constructor(
-    private readonly workflowStore: WorkflowStore,
-    private readonly crystallizationStore: CrystallizationStore,
-    private readonly cfg: CrystallizationConfig,
-  ) {}
+  let patterns: WorkflowPattern[];
+  try {
+    patterns = workflowStore.getPatterns({
+      minSuccessRate: cfg.minSuccessRate,
+      // Fetch more than needed to allow filtering by usage count
+      limit: 200,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "detect-patterns",
+      subsystem: "pattern-detector",
+    });
+    return [];
+  }
 
-  /**
-   * Detect crystallization candidates from recent workflow patterns.
-   * Applies min usage count and success rate thresholds, skips already-proposed patterns.
-   * Returns candidates sorted by score descending.
-   */
-  detect(): CrystallizationCandidate[] {
-    if (!this.cfg.enabled) return [];
+  const candidates: CrystallizationCandidate[] = [];
 
-    let patterns: WorkflowPattern[];
+  for (const pattern of patterns) {
+    // Must meet minimum usage threshold
+    if (pattern.totalCount < cfg.minUsageCount) continue;
+
+    // Must meet minimum success rate
+    if (pattern.successRate < cfg.minSuccessRate) continue;
+
+    // Must have at least one tool in sequence
+    if (pattern.toolSequence.length === 0) continue;
+
+    const patternId = computePatternId(pattern.toolSequence);
+    const evidenceHash = computeEvidenceHash(pattern);
+
+    // Skip if latest rejected proposal was based on the same unchanged evidence.
+    // Prevents "spammy" re-proposals after a human rejection unless substantive
+    // inputs (tool sequence / example goals) changed.
     try {
-      patterns = this.workflowStore.getPatterns({
-        minSuccessRate: this.cfg.minSuccessRate,
-        // Fetch more than needed to allow filtering by usage count
-        limit: 200,
-      });
+      if (crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash)) {
+        continue;
+      }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "detect-patterns",
+        operation: "check-rejected-evidence",
         subsystem: "pattern-detector",
       });
-      return [];
+      continue;
     }
 
-    const candidates: CrystallizationCandidate[] = [];
-
-    for (const pattern of patterns) {
-      // Must meet minimum usage threshold
-      if (pattern.totalCount < this.cfg.minUsageCount) continue;
-
-      // Must meet minimum success rate
-      if (pattern.successRate < this.cfg.minSuccessRate) continue;
-
-      // Must have at least one tool in sequence
-      if (pattern.toolSequence.length === 0) continue;
-
-      const patternId = computePatternId(pattern.toolSequence);
-      const evidenceHash = computeEvidenceHash(pattern);
-
-      // Skip if latest rejected proposal was based on the same unchanged evidence.
-      // Prevents "spammy" re-proposals after a human rejection unless substantive
-      // inputs (tool sequence / example goals) changed.
-      try {
-        if (this.crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash)) {
-          continue;
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "check-rejected-evidence",
-          subsystem: "pattern-detector",
-        });
+    // Skip if already proposed (pending or approved)
+    try {
+      if (crystallizationStore.hasPendingOrApprovedForPattern(patternId)) {
         continue;
       }
-
-      // Skip if already proposed (pending or approved)
-      try {
-        if (this.crystallizationStore.hasPendingOrApprovedForPattern(patternId)) {
-          continue;
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "check-existing-proposal",
-          subsystem: "pattern-detector",
-        });
-        continue;
-      }
-
-      candidates.push({
-        patternId,
-        evidenceHash,
-        pattern,
-        score: scorePattern(pattern),
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "check-existing-proposal",
+        subsystem: "pattern-detector",
       });
+      continue;
     }
 
-    // Sort by score descending
-    candidates.sort((a, b) => b.score - a.score);
-
-    return candidates;
+    candidates.push({
+      patternId,
+      evidenceHash,
+      pattern,
+      score: scorePattern(pattern),
+    });
   }
+
+  // Sort by score descending
+  candidates.sort((a, b) => b.score - a.score);
+
+  return candidates;
 }

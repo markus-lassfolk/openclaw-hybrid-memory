@@ -6,10 +6,28 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CRYSTALLIZATION_STORE_SCHEMA_VERSION, CrystallizationStore } from "../backends/crystallization-store.js";
 import { SCHEMA_VERSION_KEY, readSchemaVersion } from "../backends/sqlite-schema-meta.js";
 import { WORKFLOW_STORE_SCHEMA_VERSION, WorkflowStore } from "../backends/workflow-store.js";
+
+function captureSqliteExecStatements(fn: () => void): string[] {
+  const statements: string[] = [];
+  const originalExec = DatabaseSync.prototype.exec;
+  const spy = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function execWithCapture(
+    this: DatabaseSync,
+    sql: string,
+  ) {
+    statements.push(sql);
+    return originalExec.call(this, sql);
+  });
+  try {
+    fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return statements;
+}
 
 function readVersionAtPath(dbPath: string): number {
   const db = new DatabaseSync(dbPath);
@@ -64,6 +82,24 @@ describe("CrystallizationStore schema_meta", () => {
     expect(row?.status).toBe("validated");
     expect(row?.evidenceHash).toBe("pat-old");
     store.close();
+
+    const statements = captureSqliteExecStatements(() => {
+      const reopened = new CrystallizationStore(dbPath);
+      reopened.close();
+    });
+    expect(statements.join("\n")).not.toMatch(/ALTER TABLE|UPDATE crystallization_proposals/i);
+  });
+
+  it("throws instead of re-running migrations when schema_version is corrupt", () => {
+    const dbPath = join(tmpDir, "corrupt-version.db");
+    const store = new CrystallizationStore(dbPath);
+    store.close();
+
+    const raw = new DatabaseSync(dbPath);
+    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("not-a-number", SCHEMA_VERSION_KEY);
+    raw.close();
+
+    expect(() => new CrystallizationStore(dbPath)).toThrow(/Invalid schema_meta schema_version value/);
   });
 
   it("re-runs the latest migration when schema_version lags (version bump path)", () => {

@@ -615,6 +615,26 @@ Source procedure id: proc-weather
     }
   });
 
+  it("reports deferred non-draft promotions as staticValidation passed", () => {
+    const proc = addProcedure({
+      taskPattern: "Validate release health report with objective checks",
+      confidence: 0.2,
+      sourceSessionId: "static-validation-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "static-validation-b");
+    db.recordProcedureSuccess(proc.id, undefined, "static-validation-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("low_confidence");
+    expect(evaluation.metadata.promotionDecision).toBe("deferred");
+    expect(evaluation.metadata.staticValidation).toBe("passed");
+  });
+
   it("flags generic context-specific wording without hard-coded personal names", () => {
     const localProcedure = addProcedure({
       taskPattern: "Validate household dashboard report",

@@ -49,11 +49,13 @@ export function resolveWorkspacePath(filePath: string): string {
 
 /**
  * Prefer a path relative to the OpenClaw workspace root for JSON metadata and portability.
+ * Callers that persist the returned value should pass the same explicit workspaceRoot that will be used
+ * by the later consumer; otherwise the default is resolved from OPENCLAW_WORKSPACE at call time.
  * When the resolved path is outside the workspace (or cannot be expressed as a downward relative path),
  * returns a normalized absolute path with forward slashes.
  */
-export function toWorkspaceRelativePath(filePath: string): string {
-  const root = normalize(resolveWorkspaceRoot());
+export function toWorkspaceRelativePath(filePath: string, workspaceRoot = resolveWorkspaceRoot()): string {
+  const root = normalize(workspaceRoot);
   const abs = normalize(isAbsolute(filePath) ? filePath : join(root, filePath));
   const rel = relative(root, abs);
   const posix = rel.split("\\").join("/");

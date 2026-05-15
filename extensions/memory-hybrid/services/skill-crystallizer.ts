@@ -235,41 +235,37 @@ function buildProposalCard(
 }
 
 // ---------------------------------------------------------------------------
-// SkillCrystallizer
+// Crystallization
 // ---------------------------------------------------------------------------
 
-export class SkillCrystallizer {
-  constructor(private readonly cfg: CrystallizationConfig) {}
+/**
+ * Generate a SKILL.md from a crystallization candidate.
+ * Does NOT write to disk — returns content + proposed path for the approval flow.
+ */
+export function crystallizeSkill(input: CrystallizationInput, cfg: CrystallizationConfig): CrystallizationResult {
+  const { patternId, pattern, evidenceHash } = input;
+  const createdAt = new Date().toISOString().slice(0, 10);
 
-  /**
-   * Generate a SKILL.md from a crystallization candidate.
-   * Does NOT write to disk — returns content + proposed path for the approval flow.
-   */
-  crystallize(input: CrystallizationInput): CrystallizationResult {
-    const { patternId, pattern, evidenceHash } = input;
-    const createdAt = new Date().toISOString().slice(0, 10);
+  const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
+  const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
+  const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
 
-    const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
-    const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
-    const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
+  // Resolve output directory (expand ~ for home dir)
+  const outputDir = cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+  const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
 
-    // Resolve output directory (expand ~ for home dir)
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
+  // Generate shell script for exec-only sequences
+  const hasScript = isExecOnlySequence(pattern.toolSequence);
+  const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
 
-    // Generate shell script for exec-only sequences
-    const hasScript = isExecOnlySequence(pattern.toolSequence);
-    const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
-
-    return {
-      skillName,
-      skillContent,
-      proposalCard,
-      proposedOutputPath,
-      hasScript,
-      scriptContent,
-    };
-  }
+  return {
+    skillName,
+    skillContent,
+    proposalCard,
+    proposedOutputPath,
+    hasScript,
+    scriptContent,
+  };
 }
 
 // ---------------------------------------------------------------------------

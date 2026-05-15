@@ -16,7 +16,7 @@ import type { SQLInputValue } from "node:sqlite";
 
 import { capturePluginError } from "../services/error-reporter.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
-import { readSchemaVersion, writeSchemaVersion } from "./sqlite-schema-meta.js";
+import { readSchemaVersion, runVersionedSchemaMigration } from "./sqlite-schema-meta.js";
 
 /** Increment when adding a new idempotent migration step. */
 export const WORKFLOW_STORE_SCHEMA_VERSION = 2;
@@ -200,12 +200,13 @@ export class WorkflowStore extends BaseSqliteStore {
     let v = readSchemaVersion(this.liveDb);
     while (v < WORKFLOW_STORE_SCHEMA_VERSION) {
       const next = v + 1;
-      if (next === 1) migrateWorkflowSchemaV1(this.liveDb);
-      else if (next === 2) migrateWorkflowSchemaV2(this.liveDb);
-      else {
+      if (next === 1) {
+        runVersionedSchemaMigration(this.liveDb, next, () => migrateWorkflowSchemaV1(this.liveDb));
+      } else if (next === 2) {
+        runVersionedSchemaMigration(this.liveDb, next, () => migrateWorkflowSchemaV2(this.liveDb));
+      } else {
         throw new Error(`workflow-store: unsupported schema migration target ${next}`);
       }
-      writeSchemaVersion(this.liveDb, next);
       v = next;
     }
   }

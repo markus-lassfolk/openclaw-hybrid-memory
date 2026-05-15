@@ -2,7 +2,7 @@ import { getEnv } from "../utils/env-manager.js";
 /**
  * Crystallization Proposer — orchestrate the full propose→approve→write pipeline (Issue #208).
  *
- * Combines PatternDetector, SkillCrystallizer, SkillValidator and CrystallizationStore
+ * Combines pattern detection, skill crystallization, SkillValidator and CrystallizationStore
  * into a single entry point for the crystallization workflow.
  *
  * Human approval is always required (autoApprove=false by default).
@@ -21,8 +21,8 @@ import {
   detailSkillProposalValidation,
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
-import { PatternDetector } from "./pattern-detector.js";
-import { SkillCrystallizer } from "./skill-crystallizer.js";
+import { detectCrystallizationCandidates } from "./pattern-detector.js";
+import { crystallizeSkill } from "./skill-crystallizer.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -45,8 +45,6 @@ interface ApproveResult {
 // ---------------------------------------------------------------------------
 
 export class CrystallizationProposer {
-  private readonly detector: PatternDetector | null;
-  private readonly crystallizer: SkillCrystallizer;
   private readonly validator: GeneratedSkillValidationService;
 
   constructor(
@@ -54,8 +52,6 @@ export class CrystallizationProposer {
     private readonly crystallizationStore: CrystallizationStore,
     private readonly cfg: CrystallizationConfig,
   ) {
-    this.detector = workflowStore ? new PatternDetector(workflowStore, crystallizationStore, cfg) : null;
-    this.crystallizer = new SkillCrystallizer(cfg);
     this.validator = new GeneratedSkillValidationService();
   }
 
@@ -79,7 +75,7 @@ export class CrystallizationProposer {
         reasons: ["Crystallization is disabled"],
       };
     }
-    if (!this.detector) {
+    if (!this.workflowStore) {
       return {
         proposed: 0,
         skipped: 0,
@@ -97,7 +93,7 @@ export class CrystallizationProposer {
       };
     }
 
-    const candidates = this.detector.detect();
+    const candidates = detectCrystallizationCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
     if (candidates.length === 0) {
       return { proposed: 0, skipped: 0, reasons: ["No new candidates found"] };
     }
@@ -109,11 +105,14 @@ export class CrystallizationProposer {
 
     for (const candidate of candidates) {
       try {
-        const result = this.crystallizer.crystallize({
-          patternId: candidate.patternId,
-          evidenceHash: candidate.evidenceHash,
-          pattern: candidate.pattern,
-        });
+        const result = crystallizeSkill(
+          {
+            patternId: candidate.patternId,
+            evidenceHash: candidate.evidenceHash,
+            pattern: candidate.pattern,
+          },
+          this.cfg,
+        );
 
         const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
         const legacy = isLegacyMarkdownCrystallizationProposal(result.skillContent);
