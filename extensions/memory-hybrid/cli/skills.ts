@@ -330,6 +330,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--scope-target <id>", "Scope target id")
     .option("--agent-id <id>", "Agent id")
     .option("--session-id <id>", "Session id")
+    .option("--procedure-id <id>", "Procedure id to disambiguate skills with same basename")
     .option("--json", "Emit JSON")
     .action(
       withExit(
@@ -351,6 +352,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
             scopeTarget?: string;
             agentId?: string;
             sessionId?: string;
+            procedureId?: string;
             json?: boolean;
           },
         ) => {
@@ -398,6 +400,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           try {
             const activation = factsDb.recordGeneratedSkillTelemetry({
               skillName,
+              procedureId: opts?.procedureId,
               decision: decision as "selected" | "considered" | "skipped",
               requestSummary: opts?.requestSummary,
               requestHash: opts?.requestHash,

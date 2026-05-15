@@ -454,8 +454,18 @@ ${proposal.skillContent}`;
 /** YAML scalar suitable for single-line `key: value` frontmatter patches. */
 function yamlScalarForPatch(value: string): string {
   if (value.length === 0) return '""';
-  if (!/[\n:#"']|^\s|\s$/.test(value) && value.length < 200) return value;
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  // Check for YAML special characters: newlines, colons, hashes, quotes, flow indicators,
+  // anchors, tags, block scalars, reserved chars, and leading/trailing whitespace.
+  // Also quote if value could be parsed as boolean/null/number.
+  if (
+    /[\n:#"'\[\]{}*&!|>@`]|^\s|\s$/.test(value) ||
+    value.length >= 200 ||
+    /^(true|false|null|yes|no|on|off|~)$/i.test(value) ||
+    /^[-+]?(\d+|\d*\.\d+)([eE][-+]?\d+)?$/.test(value)
+  ) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return value;
 }
 
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
