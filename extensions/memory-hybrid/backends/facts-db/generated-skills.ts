@@ -482,7 +482,7 @@ function desiredLifecycleTransition(
   flags: GeneratedSkillTelemetryFlags,
   metrics: GeneratedSkillTelemetryMetrics,
   policy: GeneratedSkillLifecyclePolicy,
-  proc: ProcedureEntry,
+  riskLevel: "low" | "medium" | "high",
 ): { state: GeneratedSkillLifecycleState; reason: string } | null {
   if (currentState !== "archived" && flags.archiveCandidate) {
     return {
@@ -491,7 +491,6 @@ function desiredLifecycleTransition(
     };
   }
   if (currentState !== "demoted" && flags.overTriggering) {
-    const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
     const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
       riskLevel,
       policy,
@@ -520,9 +519,9 @@ export function refreshGeneratedSkillLifecycleState(
   if (!proc?.skillPath) return null;
   const canonicalSkillName = basename(proc.skillPath);
   const activations = skillTelemetryEntries(db, canonicalSkillName);
-  const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
+  const { metrics, flags, riskLevel } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
-  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, proc);
+  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, riskLevel);
   if (transition == null) return proc;
   return setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now);
 }
