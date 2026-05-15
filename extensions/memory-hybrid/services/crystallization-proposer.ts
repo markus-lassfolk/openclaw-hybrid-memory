@@ -577,6 +577,20 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
 
 function formatYamlFrontmatterScalar(value: string): string {
   if (value === "") return '""';
+  
+  // YAML 1.1 reserved words that must be quoted to be treated as strings
+  const yamlReservedWords = new Set([
+    "true", "false", "True", "False", "TRUE", "FALSE",
+    "yes", "no", "Yes", "No", "YES", "NO",
+    "on", "off", "On", "Off", "ON", "OFF",
+    "null", "Null", "NULL", "~"
+  ]);
+  
+  // Check if value is a reserved word or looks like a number
+  if (yamlReservedWords.has(value) || /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(value)) {
+    return JSON.stringify(value);
+  }
+  
   if (/^[\w.-]+$/.test(value)) return value;
   return JSON.stringify(value);
 }
