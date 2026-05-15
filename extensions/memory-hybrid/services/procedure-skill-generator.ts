@@ -526,7 +526,6 @@ function releaseInRunReservation(
 
 function rollbackDraftSkill(skillDir: string): void {
   if (!existsSync(skillDir)) return;
-  if (isOccupiedSkillDir(skillDir)) return;
   try {
     rmSync(skillDir, { recursive: true, force: true });
   } catch (err) {
