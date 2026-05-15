@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -22,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  SKILL_ATOMIC_TEMP_PREFIX,
   SKILL_COMPLETE_MARKER,
   atomicWriteFile,
   atomicWriteSkillDir,
@@ -186,32 +188,40 @@ describe("atomicWriteSkillDir", () => {
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
 
-  it("overwrites an existing incomplete (no-marker) directory", () => {
+  it("refuses to overwrite an existing incomplete (no-marker) directory with SKILL.md", () => {
     const skillDir = join(tmpDir, "my-skill");
-    // Simulate a partially-written dir from a previous crashed write.
+    // Simulate a legacy/partial final dir. Callers must explicitly decide if it
+    // is safe to clean it; atomicWriteSkillDir itself must never hide it.
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "# Incomplete\n", "utf-8");
-    // No marker → incomplete.
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
 
-    // Should succeed and replace with complete content.
+    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("Atomic skill directory target already exists");
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Incomplete");
+    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
+  });
+
+  it("refuses to replace a complete directory when called again with updated content", () => {
+    const skillDir = join(tmpDir, "my-skill");
     atomicWriteSkillDir(skillDir, DRAFT);
+
+    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
+    expect(() => atomicWriteSkillDir(skillDir, updated)).toThrow("Atomic skill directory target already exists");
 
     expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# My Skill");
     expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
   });
 
-  it("replaces a complete directory when called again with updated content", () => {
+  it("does not hide an existing directory if promotion rename fails", () => {
     const skillDir = join(tmpDir, "my-skill");
-    // Write first complete version.
-    atomicWriteSkillDir(skillDir, DRAFT);
+    const tmpSkillDir = join(tmpDir, `${SKILL_ATOMIC_TEMP_PREFIX}manual`);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Existing\n", "utf-8");
+    mkdirSync(tmpSkillDir, { recursive: true });
 
-    // Overwrite with updated content.
-    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
-    atomicWriteSkillDir(skillDir, updated);
+    expect(() => renameSync(tmpSkillDir, skillDir)).toThrow();
 
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Updated Skill");
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Existing");
+    expect(existsSync(tmpSkillDir)).toBe(true);
   });
 });
 

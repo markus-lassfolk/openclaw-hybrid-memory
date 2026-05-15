@@ -335,6 +335,32 @@ Source procedure id: proc-weather
     expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
   });
 
+  it("ignores leftover atomic temp directories when checking duplicates", () => {
+    const tempSkillDir = join(skillsDir, ".openclaw-skill-tmp-1234-deadbeef");
+    mkdirSync(tempSkillDir, { recursive: true });
+    writeFileSync(
+      join(tempSkillDir, "SKILL.md"),
+      `---
+name: validate-release-health-report-with-objective-checks
+description: Use when the user asks to validate release health report with objective checks.
+---
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({ sourceSessionId: "temp-dir-overlap-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "temp-dir-overlap-b");
+    db.recordProcedureSuccess(proc.id, undefined, "temp-dir-overlap-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
+  });
+
   it("treats legacy skill directories without completion markers as duplicate skills", () => {
     const existingSkillDir = join(skillsDir, "collect-markerless-legacy-report");
     mkdirSync(existingSkillDir, { recursive: true });

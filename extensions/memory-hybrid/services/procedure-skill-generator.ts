@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-import { atomicWriteSkillDir } from "../utils/atomic-write.js";
+import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -78,12 +78,16 @@ function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: Readon
   let n = 0;
   // Legacy skill directories created before the atomic completion marker rollout
   // do not contain `.openclaw-skill-complete`. They are still occupied names and
-  // must not be overwritten. Only atomic temp/backup siblings are reusable.
-  while (reservedSlugs?.has(candidate) || existsSync(join(basePath, candidate))) {
+  // must not be overwritten. Only incomplete atomic drafts are reusable.
+  while (reservedSlugs?.has(candidate) || isOccupiedSkillDir(join(basePath, candidate))) {
     n++;
     candidate = `${slug}-${n}`;
   }
   return candidate;
+}
+
+function isOccupiedSkillDir(skillDir: string): boolean {
+  return existsSync(join(skillDir, SKILL_COMPLETE_MARKER)) || existsSync(join(skillDir, "SKILL.md"));
 }
 
 function rebaseDraftSlug(
@@ -492,6 +496,10 @@ function writeDraftSkill(
     proposalMetadataJson: string;
   },
 ): void {
+  if (existsSync(skillDir) && !isOccupiedSkillDir(skillDir)) {
+    rmSync(skillDir, { recursive: true, force: true });
+  }
+
   // Write all sidecar files atomically (temp dir → rename). SKILL.md is
   // written last among content files so it is the final content write before
   // the completion marker.

@@ -16,10 +16,13 @@
 
 import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 
 /** Marker file written as the last step inside an atomic skill directory. */
 export const SKILL_COMPLETE_MARKER = ".openclaw-skill-complete";
+
+/** Prefix used for hidden sibling directories that are still being written. */
+export const SKILL_ATOMIC_TEMP_PREFIX = ".openclaw-skill-tmp-";
 
 /**
  * Atomically write a single file.
@@ -51,15 +54,15 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  * Atomically write a multi-file skill directory.
  *
  * All files in `files` (keyed by path relative to `skillDir`) are written
- * into a temporary sibling directory `${skillDir}.tmp-${pid}-${rand}`.  A
+ * into a temporary sibling directory `${SKILL_ATOMIC_TEMP_PREFIX}${pid}-${rand}`.  A
  * `.openclaw-skill-complete` marker is written as the very last file.  The
  * temp directory is then atomically renamed to `skillDir`.
  *
- * If `skillDir` already exists it is first moved to a backup directory so
- * that the rename always targets a free path.  On success the backup is
- * removed.  On failure the backup is restored (best-effort) and the temp
- * directory is cleaned up, so `skillDir` is never left in a
- * partially-written state.
+ * If `skillDir` already exists, this helper fails instead of moving the
+ * existing directory aside. That keeps replacement crash-atomic: a process
+ * crash can leave only a hidden temp sibling, never a missing final directory.
+ * Callers that intentionally want to replace an incomplete draft must remove
+ * that incomplete directory before calling this helper.
  *
  * Pass files in the order you want them written.  Convention: put `SKILL.md`
  * last so it is the final content file before the marker.
@@ -67,10 +70,13 @@ export function atomicWriteFile(targetPath: string, content: string): void {
 export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): void {
   const parent = dirname(skillDir);
   const rand = randomBytes(8).toString("hex");
-  const tmpDir = `${skillDir}.tmp-${process.pid}-${rand}`;
-  const backupDir = existsSync(skillDir) ? join(parent, `.${basename(skillDir)}.bak-${Date.now()}-${rand}`) : null;
+  const tmpDir = join(parent, `${SKILL_ATOMIC_TEMP_PREFIX}${process.pid}-${rand}`);
 
   try {
+    if (existsSync(skillDir)) {
+      throw new Error(`Atomic skill directory target already exists: ${skillDir}`);
+    }
+
     // Write every sidecar into the temp directory.
     for (const [relPath, content] of Object.entries(files)) {
       const fullPath = join(tmpDir, relPath);
@@ -81,36 +87,16 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     // Stamp the completion marker as the final write inside the temp dir.
     writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
 
-    // Move existing skill dir out of the way so the rename targets a free path.
-    if (backupDir) renameSync(skillDir, backupDir);
-
-    // Atomic promotion: temp dir → final skill dir.
+    // Atomic promotion: temp dir → final skill dir. This succeeds only when
+    // skillDir does not exist, so crashes never hide an existing final dir.
     renameSync(tmpDir, skillDir);
   } catch (err) {
-    // Best-effort rollback: restore the backup if we moved it.
-    try {
-      if (backupDir && existsSync(backupDir) && !existsSync(skillDir)) {
-        renameSync(backupDir, skillDir);
-      }
-    } catch {
-      // ignore rollback errors; caller will see original error
-    }
-    // Clean up temp dir.
     try {
       if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       // best-effort temp cleanup; swallow to surface original error
     }
     throw err;
-  }
-
-  // Clean up the backup on success.
-  if (backupDir) {
-    try {
-      rmSync(backupDir, { recursive: true, force: true });
-    } catch {
-      // Non-fatal: the skill is already committed to skillDir.
-    }
   }
 }
 

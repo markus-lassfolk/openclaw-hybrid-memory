@@ -13,6 +13,7 @@ import {
   redactAutopilotText,
   redactAutopilotValue,
 } from "./pending-autopilot/index.js";
+import { SKILL_ATOMIC_TEMP_PREFIX } from "../utils/atomic-write.js";
 import { SkillValidator } from "./skill-validator.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v1";
@@ -1107,6 +1108,7 @@ function isDuplicateSkill(
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const entry of safeReadDir(dir)) {
+      if (isAtomicSkillWriteScratchDir(entry)) continue;
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
       // Legacy skill directories may not have the atomic completion marker. If
@@ -1157,6 +1159,10 @@ function defer(reason: ProcedurePromotionReason, detail: string): ProcedurePromo
 
 function fail(reason: ProcedurePromotionReason, detail: string): ProcedurePromotionGateResult {
   return { reason, severity: "fail-validation", detail };
+}
+
+function isAtomicSkillWriteScratchDir(name: string): boolean {
+  return name.startsWith(SKILL_ATOMIC_TEMP_PREFIX) || /^.+\.tmp-\d+-[a-f0-9]+$/i.test(name) || /^\..+\.bak-/.test(name);
 }
 
 function safeReadDir(dir: string): string[] {
