@@ -176,7 +176,7 @@ ${exampleGoalsText}
 `;
 }
 
-function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
+export function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
   const cleanedGoals = exampleGoals
     .map((g) => g.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
     .filter((g) => g.length > 0);
@@ -184,17 +184,19 @@ function buildExamplesText(exampleGoals: string[], skillName: string, toolSequen
   const primaryGoal = cleanedGoals[0] ?? skillName.replace(/[-_]+/g, " ");
   const concreteFallback = `Run the ${toolSequence.join(" → ")} workflow to validate "${primaryGoal}" end-to-end, then report what changed.`;
   const examples = [...concreteGoals];
-  if (examples.length === 0) examples.push(concreteFallback);
   for (const goal of cleanedGoals) {
     if (examples.length >= 5) break;
     if (!examples.includes(goal)) examples.push(goal);
   }
-  return examples
-    .map((g) => {
-      if (ACTION_VERB_PATTERN.test(g)) return `- ${g}`;
-      return `- Run workflow: ${g}`;
-    })
-    .join("\n");
+  if (examples.length === 0) examples.push(concreteFallback);
+  const rendered = examples.slice(0, 5).map((g) => {
+    if (ACTION_VERB_PATTERN.test(g) && g.length >= 18) return `- ${g}`;
+    return `- Run workflow: ${g}`;
+  });
+  if (!rendered.some((line) => ACTION_VERB_PATTERN.test(line) && line.length >= 18)) {
+    rendered.unshift(`- ${concreteFallback}`);
+  }
+  return rendered.slice(0, 5).join("\n");
 }
 
 function recommendedOutput(): SkillProposalRecommendedOutput {
@@ -207,7 +209,7 @@ function computeConfidence(pattern: WorkflowPattern): number {
   return Math.max(0, Math.min(1, conf));
 }
 
-function inferCategory(toolSequence: string[]): string {
+export function inferCategory(toolSequence: string[]): string {
   const tl = toolSequence.map((t) => t.toLowerCase());
   if (tl.some((t) => t.includes("github"))) return "source-control";
   if (tl.includes("exec")) return "shell-automation";

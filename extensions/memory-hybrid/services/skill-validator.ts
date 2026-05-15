@@ -488,7 +488,7 @@ function containsConcreteExample(examplesBody: string): boolean {
     const words = l.split(/\s+/).filter(Boolean);
     if (words.length < 4) return false;
     if (l.length > 15 && l === l.toUpperCase()) return false;
-    if (/\b(?:tbd|todo|placeholder|example here)\b/i.test(l)) return false;
+    if (/\b(?:tbd|todo|placeholder|example here|fill in)\b/i.test(l)) return false;
     return true;
   });
 }

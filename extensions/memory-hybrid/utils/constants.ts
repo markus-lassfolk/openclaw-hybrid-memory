@@ -152,4 +152,4 @@ export function getSessionLogFileSuffix(): string {
  * Centralized to prevent crystallizer-validator desync (#1421).
  */
 export const ACTION_VERB_PATTERN =
-  /\b(?:use|run|create|fix|validate|apply|check|install|deploy|open|read|write|execute|verify|follow)\b/i;
+  /\b(?:use|run|create|fix|validate|apply|check|install|deploy|open|read|write|execute|verify|follow|review|summarize|analyse|analyze)\b/i;

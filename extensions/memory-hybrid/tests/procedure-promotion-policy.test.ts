@@ -710,41 +710,75 @@ Source procedure id: proc-weather
   });
 
   it("detects validation hints nested under args (#1421)", () => {
-    const proc = addProcedure({
-      taskPattern: "Run packaged CLI wrapper integration check",
-      recipeJson: JSON.stringify([
-        { tool: "read", args: { path: "cfg.json" }, summary: "load config" },
-        {
-          tool: "exec",
-          args: { options: { expected: "exit 0" }, command: "npm test" },
-          summary: "run nested gate",
-        },
-      ]),
-      sourceSessionId: "nested-a",
-    });
-    db.recordProcedureSuccess(proc.id, undefined, "nested-b");
-    db.recordProcedureSuccess(proc.id, undefined, "nested-c");
-    const evaluation = evaluateProcedureForPromotion(
-      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
-      parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3 },
-    );
-    expect(evaluation.metadata.rejectionReasons).not.toContain("no_validation_possible");
+    const cases = [
+      { options: { expected: "exit 0" }, command: "npm test" },
+      { params: { assertion: "expect summary output" }, command: "npm test" },
+      { run: { validation: "verify report.json exists" }, command: "npm test" },
+    ];
+
+    for (const [index, args] of cases.entries()) {
+      const proc = addProcedure({
+        taskPattern: `Run packaged CLI wrapper integration check ${index}`,
+        recipeJson: JSON.stringify([
+          { tool: "read", args: { path: "cfg.json" }, summary: "load config" },
+          {
+            tool: "exec",
+            args,
+            summary: "run nested gate",
+          },
+        ]),
+        sourceSessionId: `nested-${index}-a`,
+      });
+      db.recordProcedureSuccess(proc.id, undefined, `nested-${index}-b`);
+      db.recordProcedureSuccess(proc.id, undefined, `nested-${index}-c`);
+      const evaluation = evaluateProcedureForPromotion(
+        createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+        parseProcedurePromotionPolicy("auto-safe"),
+        { skillsAutoPath: skillsDir, validationThreshold: 3 },
+      );
+      expect(evaluation.metadata.rejectionReasons).not.toContain("no_validation_possible");
+    }
   });
 
-  it("defers tasks mentioning our team (#1421)", () => {
+  it("defers context-specific task signals (#1421)", () => {
+    const taskPatterns = [
+      "Sync release notes with our team Slack channel",
+      "Review #team-platform on Slack before publishing",
+      "Validate bastion prod-cluster-01 host access checks",
+      "Analyze arn:aws:iam::123456789012:role/AdminRole permissions",
+    ];
+
+    for (const [index, taskPattern] of taskPatterns.entries()) {
+      const proc = addProcedure({
+        taskPattern,
+        sourceSessionId: `context-specific-${index}-a`,
+      });
+      db.recordProcedureSuccess(proc.id, undefined, `context-specific-${index}-b`);
+      db.recordProcedureSuccess(proc.id, undefined, `context-specific-${index}-c`);
+      const evaluation = evaluateProcedureForPromotion(
+        createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+        parseProcedurePromotionPolicy("auto-safe"),
+        { skillsAutoPath: skillsDir, validationThreshold: 3 },
+      );
+      expect(evaluation.metadata.rejectionReasons).toContain("too_context_specific");
+    }
+  });
+
+  it("ignores unsafe operator context regexes rather than evaluating them", () => {
     const proc = addProcedure({
-      taskPattern: "Sync release notes with our team Slack channel",
-      sourceSessionId: "ourteam-a",
+      taskPattern: `${"a".repeat(200)} reusable release validation check`,
+      sourceSessionId: "unsafe-regex-a",
     });
-    db.recordProcedureSuccess(proc.id, undefined, "ourteam-b");
-    db.recordProcedureSuccess(proc.id, undefined, "ourteam-c");
+    db.recordProcedureSuccess(proc.id, undefined, "unsafe-regex-b");
+    db.recordProcedureSuccess(proc.id, undefined, "unsafe-regex-c");
+
     const evaluation = evaluateProcedureForPromotion(
       createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
       parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["(a+)+b"] },
     );
-    expect(evaluation.metadata.rejectionReasons).toContain("too_context_specific");
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("too_context_specific");
   });
 
   it("blocks private/high-entropy data and redacts generated artifacts", () => {
