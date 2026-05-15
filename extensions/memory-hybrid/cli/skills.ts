@@ -222,7 +222,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
         const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
         const result = proposer.rescanInstalledSkills();
         if (opts.json) {
-          console.log(JSON.stringify({ ok: true, ...result }, null, 2));
+          console.log(JSON.stringify({ ok: result.errors.length === 0, ...result }, null, 2));
           if (result.errors.length > 0) process.exitCode = 1;
           return;
         }
