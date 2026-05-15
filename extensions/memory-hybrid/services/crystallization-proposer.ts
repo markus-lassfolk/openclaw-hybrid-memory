@@ -531,7 +531,7 @@ function stripInlineYamlTrailingComment(fragment: string): string {
 }
 
 function isTopLevelYamlKeyLine(line: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_-]*:\s/.test(line);
+  return /^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)/.test(line);
 }
 
 function leadingIndentLen(line: string): number {
