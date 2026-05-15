@@ -554,7 +554,7 @@ export function buildGeneratedSkillTelemetryReport(
     return proc.skillPath != null && basename(proc.skillPath) === options.skillName;
   });
   for (const proc of procedures) {
-    if (proc.skillPath) refreshGeneratedSkillLifecycleState(db, basename(proc.skillPath), policy, now);
+    if (proc.skillPath) refreshGeneratedSkillLifecycleState(db, basename(proc.skillPath), policy, now, proc.id);
   }
   const rows = listGeneratedSkillProcedures(db)
     .filter((proc) => {
