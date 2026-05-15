@@ -24,14 +24,16 @@ import {
 // Controlled failure injection via vi.mock
 // ---------------------------------------------------------------------------
 
-let simulateRenameFailure = false;
+let failRenameCall: number | null = null;
+let renameCallCount = 0;
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
     renameSync(...args: Parameters<typeof actual.renameSync>) {
-      if (simulateRenameFailure) {
+      renameCallCount += 1;
+      if (failRenameCall === renameCallCount) {
         throw new Error("simulated rename failure");
       }
       return actual.renameSync(...args);
@@ -47,11 +49,13 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "atomic-write-test-"));
-  simulateRenameFailure = false;
+  failRenameCall = null;
+  renameCallCount = 0;
 });
 
 afterEach(() => {
-  simulateRenameFailure = false;
+  failRenameCall = null;
+  renameCallCount = 0;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -97,7 +101,7 @@ describe("atomicWriteFile", () => {
   });
 
   it("removes temp file and re-throws on rename error", () => {
-    simulateRenameFailure = true;
+    failRenameCall = 1;
     const targetPath = join(tmpDir, "output.txt");
     expect(() => atomicWriteFile(targetPath, "content")).toThrow("simulated rename failure");
 
@@ -112,7 +116,7 @@ describe("atomicWriteFile", () => {
     const targetPath = join(tmpDir, "output.txt");
     writeFileSync(targetPath, "original", "utf-8");
 
-    simulateRenameFailure = true;
+    failRenameCall = 1;
     expect(() => atomicWriteFile(targetPath, "new-content")).toThrow();
 
     // Original content must be intact.
@@ -167,13 +171,33 @@ describe("atomicWriteSkillDir", () => {
   });
 
   it("cleans up temp dir and re-throws on rename error", () => {
-    simulateRenameFailure = true;
+    failRenameCall = 1;
     const skillDir = join(tmpDir, "my-skill");
     expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("simulated rename failure");
 
     // Final skill dir must not exist — no partial state survived.
     expect(existsSync(skillDir)).toBe(false);
     // No temp dirs should remain.
+    const entries = readdirSync(tmpDir);
+    expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
+  });
+
+
+  it("restores an existing directory when promotion fails after backup", () => {
+    const skillDir = join(tmpDir, "my-skill");
+    mkdirSync(join(skillDir, "nested"), { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Original Skill\n", "utf-8");
+    writeFileSync(join(skillDir, "nested", "sidecar.txt"), "original sidecar", "utf-8");
+
+    // With an existing directory, atomicWriteSkillDir first renames
+    // skillDir -> backupDir, then tmpDir -> skillDir. Fail the second rename
+    // to exercise rollback after the original directory has been moved.
+    failRenameCall = 2;
+    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("simulated rename failure");
+
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Original Skill\n");
+    expect(readFileSync(join(skillDir, "nested", "sidecar.txt"), "utf-8")).toBe("original sidecar");
+
     const entries = readdirSync(tmpDir);
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
