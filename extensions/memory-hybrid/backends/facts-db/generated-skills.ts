@@ -377,17 +377,22 @@ export function getGeneratedSkillByName(
   return findGeneratedSkillProcedure(db, skillName);
 }
 
-function skillTelemetryEntries(db: DatabaseSync, skillName: string): GeneratedSkillTelemetryEntry[] {
-  return (
-    db
-      .prepare(
-        `SELECT *
-           FROM generated_skill_telemetry
-          WHERE skill_name = ?
-          ORDER BY created_at DESC`,
-      )
-      .all(skillName) as GeneratedSkillTelemetryRow[]
-  ).map(mapGeneratedSkillTelemetryRow);
+function skillTelemetryEntries(
+  db: DatabaseSync,
+  skillName: string,
+  procedureId?: string,
+): GeneratedSkillTelemetryEntry[] {
+  const query = procedureId
+    ? `SELECT *
+         FROM generated_skill_telemetry
+        WHERE skill_name = ? AND procedure_id = ?
+        ORDER BY created_at DESC`
+    : `SELECT *
+         FROM generated_skill_telemetry
+        WHERE skill_name = ?
+        ORDER BY created_at DESC`;
+  const params = procedureId ? [skillName, procedureId] : [skillName];
+  return (db.prepare(query).all(...params) as GeneratedSkillTelemetryRow[]).map(mapGeneratedSkillTelemetryRow);
 }
 
 function summarizeSkillTelemetry(
@@ -540,7 +545,7 @@ export function refreshGeneratedSkillLifecycleState(
   }
   if (!proc?.skillPath) return null;
   const canonicalSkillName = basename(proc.skillPath);
-  const activations = skillTelemetryEntries(db, canonicalSkillName);
+  const activations = skillTelemetryEntries(db, canonicalSkillName, proc.id);
   const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
@@ -573,7 +578,7 @@ export function buildGeneratedSkillTelemetryReport(
     })
     .map((proc) => {
       const skillName = basename(proc.skillPath ?? proc.taskPattern);
-      const activations = skillTelemetryEntries(db, skillName);
+      const activations = skillTelemetryEntries(db, skillName, proc.id);
       const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
       const recommendation = flags.archiveCandidate
         ? "archive"
