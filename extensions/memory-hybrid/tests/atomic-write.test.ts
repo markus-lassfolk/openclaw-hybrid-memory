@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SKILL_ATOMIC_TEMP_PREFIX,
   SKILL_COMPLETE_MARKER,
@@ -29,6 +29,7 @@ import {
   atomicWriteSkillDir,
   isSkillDirComplete,
 } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs, isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 
 // ---------------------------------------------------------------------------
 // Controlled failure injection via vi.mock
@@ -222,6 +223,41 @@ describe("atomicWriteSkillDir", () => {
 
     expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Existing");
     expect(existsSync(tmpSkillDir)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// discoverCompletedSkillDirs
+// ---------------------------------------------------------------------------
+
+describe("discoverCompletedSkillDirs", () => {
+  it("discovers only completed skill directories", () => {
+    atomicWriteSkillDir(join(tmpDir, "complete-skill"), { "SKILL.md": "# Complete\n" });
+
+    const markerlessDir = join(tmpDir, "markerless-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(join(markerlessDir, "SKILL.md"), "# In-progress\n", "utf-8");
+
+    const scratchDir = join(tmpDir, `${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`);
+    mkdirSync(scratchDir, { recursive: true });
+    writeFileSync(join(scratchDir, SKILL_COMPLETE_MARKER), "2024-01-01T00:00:00.000Z", "utf-8");
+    writeFileSync(join(scratchDir, "SKILL.md"), "# Scratch\n", "utf-8");
+
+    expect(discoverCompletedSkillDirs(tmpDir).map((entry) => entry.name)).toEqual(["complete-skill"]);
+  });
+
+  it("treats markerless directories with SKILL.md as in-progress loader candidates", () => {
+    const skillDir = join(tmpDir, "half-written-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Half-written\n", "utf-8");
+
+    expect(discoverCompletedSkillDirs(tmpDir)).toEqual([]);
+  });
+
+  it("identifies atomic scratch directory names", () => {
+    expect(isAtomicSkillWriteScratchDir(`${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`)).toBe(true);
+    expect(isAtomicSkillWriteScratchDir("skill.tmp-1234-deadbeef")).toBe(true);
+    expect(isAtomicSkillWriteScratchDir("normal-skill")).toBe(false);
   });
 });
 

@@ -10,7 +10,8 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
-import { atomicWriteFile } from "../utils/atomic-write.js";
+import { dirname } from "node:path";
+import { atomicWriteSkillDir } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
@@ -436,7 +437,7 @@ ${proposal.skillContent}`;
   }
 
   private writeSkillToDisk(outputPath: string, skillContent: string): void {
-    atomicWriteFile(outputPath, skillContent);
+    atomicWriteSkillDir(dirname(outputPath), { "SKILL.md": skillContent });
   }
 }
 
