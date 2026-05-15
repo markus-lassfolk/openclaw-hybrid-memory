@@ -11,6 +11,8 @@
  * false negatives (allowing dangerous content) are not.
  */
 
+import { ACTION_VERB_PATTERN } from "../utils/constants.js";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -467,8 +469,6 @@ function extractSectionBody(
 }
 
 function containsConcreteExample(examplesBody: string): boolean {
-  const ACTION_RE =
-    /\b(?:use|run|create|fix|validate|apply|check|install|deploy|open|read|write|execute|verify|follow)\b/i;
   const lines = examplesBody.split("\n").map((l) => l.trim());
   const nonEmpty = lines.filter(Boolean);
 
@@ -476,7 +476,7 @@ function containsConcreteExample(examplesBody: string): boolean {
     if (!/^(?:[-*+]|\d+\.)\s+\S/.test(l)) return false;
     if (/\b(?:tbd|todo|placeholder|example here|fill in)\b/i.test(l)) return false;
     if (l.length < 18) return false;
-    if (!ACTION_RE.test(l)) return false;
+    if (!ACTION_VERB_PATTERN.test(l)) return false;
     return true;
   });
   if (listOk) return true;
@@ -484,7 +484,7 @@ function containsConcreteExample(examplesBody: string): boolean {
   return nonEmpty.some((l) => {
     if (/^(?:[-*+]|\d+\.)\s/.test(l)) return false;
     if (l.length < 40) return false;
-    if (!ACTION_RE.test(l)) return false;
+    if (!ACTION_VERB_PATTERN.test(l)) return false;
     const words = l.split(/\s+/).filter(Boolean);
     if (words.length < 4) return false;
     if (l.length > 15 && l === l.toUpperCase()) return false;

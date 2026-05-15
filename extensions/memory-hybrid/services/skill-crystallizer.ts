@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -176,8 +177,6 @@ ${exampleGoalsText}
 }
 
 function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
-  const ACTION_RE =
-    /\b(?:use|run|create|fix|validate|apply|check|install|deploy|open|read|write|execute|verify|follow)\b/i;
   const cleanedGoals = exampleGoals
     .map((g) => g.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
     .filter((g) => g.length > 0);
@@ -192,7 +191,7 @@ function buildExamplesText(exampleGoals: string[], skillName: string, toolSequen
   }
   return examples
     .map((g) => {
-      if (ACTION_RE.test(g)) return `- ${g}`;
+      if (ACTION_VERB_PATTERN.test(g)) return `- ${g}`;
       return `- Run workflow: ${g}`;
     })
     .join("\n");

@@ -162,6 +162,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             const evaluation = evaluateProcedureForPromotion(item, policy, {
               skillsAutoPath: resolvedSkillsAutoPath,
               validationThreshold: cfg.procedures.validationThreshold,
+              contextSpecificTaskPatterns: cfg.procedures.promotionContextSpecificPatterns,
             });
             return {
               ...row,
