@@ -511,7 +511,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         .prepare(
           `UPDATE crystallization_proposals
            SET status = 'superseded', superseded_by = ?, superseded_at = ?, updated_at = ?
-           WHERE id = ? AND status IN ('installed', 'approved')`,
+           WHERE id = ? AND status IN ('installed', 'approved', 'quarantined')`,
         )
         .run(supersededBy, now, now, id);
       if (result.changes === 0) return null;

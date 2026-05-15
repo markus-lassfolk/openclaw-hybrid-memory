@@ -524,7 +524,7 @@ ${proposal.skillContent}`;
         .filter((p) => p.patternId === patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
-        if (p.status === "installed" || p.status === "approved") {
+        if (p.status === "installed" || p.status === "approved" || p.status === "quarantined") {
           this.crystallizationStore.supersede(p.id, supersededBy);
         }
       }
