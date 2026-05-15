@@ -189,15 +189,16 @@ export function buildExamplesText(exampleGoals: string[], skillName: string, too
     if (!examples.includes(goal)) examples.push(goal);
   }
   if (examples.length === 0) examples.push(concreteFallback);
-  let hasNaturallyConcreteExample = false;
+  let hasConcreteExample = false;
   const rendered = examples.slice(0, 5).map((g) => {
     if (ACTION_VERB_PATTERN.test(g) && g.length >= 18) {
-      hasNaturallyConcreteExample = true;
+      hasConcreteExample = true;
       return `- ${g}`;
     }
+    hasConcreteExample = true;
     return `- Run workflow: ${g}`;
   });
-  if (!hasNaturallyConcreteExample) {
+  if (!hasConcreteExample) {
     rendered.unshift(`- ${concreteFallback}`);
   }
   return rendered.slice(0, 5).join("\n");
