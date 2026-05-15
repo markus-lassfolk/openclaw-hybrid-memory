@@ -176,6 +176,8 @@ ${exampleGoalsText}
 }
 
 function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
+  const ACTION_RE =
+    /\b(?:use|run|create|fix|validate|apply|check|install|deploy|open|read|write|execute|verify|follow)\b/i;
   const cleanedGoals = exampleGoals
     .map((g) => g.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
     .filter((g) => g.length > 0);
@@ -188,7 +190,12 @@ function buildExamplesText(exampleGoals: string[], skillName: string, toolSequen
     if (examples.length >= 5) break;
     if (!examples.includes(goal)) examples.push(goal);
   }
-  return examples.map((g) => `- ${g}`).join("\n");
+  return examples
+    .map((g) => {
+      if (ACTION_RE.test(g)) return `- ${g}`;
+      return `- Run workflow: ${g}`;
+    })
+    .join("\n");
 }
 
 function recommendedOutput(): SkillProposalRecommendedOutput {
