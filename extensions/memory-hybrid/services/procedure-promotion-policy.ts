@@ -252,7 +252,7 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
 const PRIVATE_DATA_PATTERNS: RegExp[] = [
   // Loopback (127.x) is intentionally excluded — it reveals nothing about the network topology
   // and causes false positives on health-check examples (Issue #1385).
-  /\b(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+  /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
   /(?:^|[\s"'=:])(?:\/home\/[^\s"']+|\/Users\/[^\s"']+|~\/[^\s"']+)/,
   NON_PLACEHOLDER_EMAIL_PATTERN,
 ];

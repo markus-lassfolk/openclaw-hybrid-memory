@@ -66,7 +66,7 @@ export function buildNonPlaceholderEmailPattern(allowList: string[]): RegExp {
     // No placeholder domains: flag all valid-looking email addresses.
     return /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i;
   }
-  return new RegExp(`\\b[A-Za-z0-9._%+-]+@(?!(?:${escaped})\\b)[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b`, "i");
+  return new RegExp(`\\b[A-Za-z0-9._%+-]+@(?!(?:${escaped})(?![A-Za-z0-9.-]))[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b`, "i");
 }
 
 const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string]> = [
@@ -103,7 +103,7 @@ function buildPrivateContextPatterns(
       "private-ip",
       // Loopback (127.x) is intentionally excluded — it reveals nothing about the network
       // topology and causes noisy false positives on health-check examples (Issue #1385).
-      /\b(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+      /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
       "Private IP / host inventory detected (replace with placeholders)",
     ],
     [
@@ -123,11 +123,7 @@ function buildPrivateContextPatterns(
       /(?:^|[\s"'=:])~\/[^\s"']+/,
       "Tilde home path detected (replace with placeholders; avoid personal paths in skills)",
     ],
-    [
-      "email-address",
-      emailPattern,
-      "Non-example email address detected (remove or replace with example.com)",
-    ],
+    ["email-address", emailPattern, "Non-example email address detected (remove or replace with example.com)"],
   ];
 }
 
@@ -235,9 +231,7 @@ export class SkillValidator {
    *   {@link NON_PLACEHOLDER_EMAIL_PATTERN}. Build with {@link buildNonPlaceholderEmailPattern}.
    */
   constructor(options?: { emailPattern?: RegExp }) {
-    this.privateContextPatterns = buildPrivateContextPatterns(
-      options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN,
-    );
+    this.privateContextPatterns = buildPrivateContextPatterns(options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN);
   }
 
   /**

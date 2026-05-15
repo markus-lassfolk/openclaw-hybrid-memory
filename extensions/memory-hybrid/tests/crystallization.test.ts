@@ -42,6 +42,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
 function makeTmpOutputDir(): string {
@@ -1009,7 +1010,11 @@ ${extra.extraBody ?? ""}`;
 
   it("does not flag custom domain when validator is configured with custom allow-list", () => {
     const customEmailPattern = buildNonPlaceholderEmailPattern([
-      "example.com", "localhost", "test.com", "example.org", "acme-internal.corp",
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+      "acme-internal.corp",
     ]);
     const customValidator = new SkillValidator({ emailPattern: customEmailPattern });
     const content = compactValidSkill({

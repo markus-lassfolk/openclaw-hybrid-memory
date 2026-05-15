@@ -539,7 +539,9 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
     placeholderEmailDomains: (() => {
       const raw_domains = raw?.placeholderEmailDomains;
       if (!Array.isArray(raw_domains)) return [...DEFAULT_PLACEHOLDER_EMAIL_DOMAINS];
-      const valid = raw_domains.filter((d): d is string => typeof d === "string" && d.trim().length > 0).map((d) => d.trim());
+      const valid = raw_domains
+        .filter((d): d is string => typeof d === "string" && d.trim().length > 0)
+        .map((d) => d.trim());
       return valid.length > 0 ? valid : [...DEFAULT_PLACEHOLDER_EMAIL_DOMAINS];
     })(),
   };
