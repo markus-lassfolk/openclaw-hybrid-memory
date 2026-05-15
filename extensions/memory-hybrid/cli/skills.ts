@@ -222,14 +222,18 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           skillName,
           recentActivationLimit: skillName ? 20 : 5,
         });
-        if (opts?.json) {
-          console.log(JSON.stringify(report, null, 2));
-          return;
-        }
         if (!report || report.rows.length === 0) {
+          if (opts?.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
           console.log(
             skillName ? `No generated skill found for ${skillName}.` : "No generated skills have been promoted yet.",
           );
+          return;
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
           return;
         }
         console.log("Generated skill telemetry");
