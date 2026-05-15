@@ -521,6 +521,10 @@ function releaseInRunReservation(
 
 function rollbackDraftSkill(skillDir: string): void {
   if (!existsSync(skillDir)) return;
+  // Only delete incomplete atomic write artifacts. Do not delete pre-existing
+  // committed skill directories (which have the completion marker) to avoid
+  // destructive TOCTOU races with concurrent skill writes.
+  if (isCommittedSkillDir(skillDir)) return;
   try {
     rmSync(skillDir, { recursive: true, force: true });
   } catch (err) {
