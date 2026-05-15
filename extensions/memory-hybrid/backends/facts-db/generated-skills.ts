@@ -498,8 +498,9 @@ function summarizeSkillTelemetry(
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
   const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
+  const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
   const archiveCandidate =
-    activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+    activationCountTotal === 0 && archiveBaselineAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
   const promotionCandidate =
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
@@ -642,9 +643,9 @@ export function buildGeneratedSkillTelemetryReport(
       const activations = skillTelemetryEntries(db, skillName);
       const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
       const currentState = proc.skillState ?? "experimental";
-      
+
       let recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
-      
+
       if (currentState === "uninstalled" || currentState === "rejected") {
         recommendation = "observe";
       } else if (currentState === "archived" && flags.archiveCandidate) {
@@ -662,7 +663,7 @@ export function buildGeneratedSkillTelemetryReport(
       } else {
         recommendation = "observe";
       }
-      
+
       return {
         procedureId: proc.id,
         skillName,
@@ -738,7 +739,7 @@ export function reconcileGeneratedSkillDiskState(
     // Skip terminal rows — they are already correctly modelled and must not be
     // overwritten by disk reconciliation.
     if (proc.skillState === "uninstalled" || proc.skillState === "rejected") continue;
-    
+
     totalChecked++;
 
     // Accept either a SKILL.md file path or the parent directory, but always

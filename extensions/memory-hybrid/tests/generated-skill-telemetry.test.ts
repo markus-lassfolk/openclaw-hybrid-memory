@@ -133,7 +133,7 @@ describe("generated skill telemetry", () => {
     expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
     expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(2);
     expect(report.rows[0]?.flags.overTriggering).toBe(true);
-    expect(report.rows[0]?.recommendation).toBe("demote");
+    expect(report.rows[0]?.recommendation).toBe("observe");
   });
 
   it("archives generated skills that are never used after the configured period", () => {
@@ -154,7 +154,7 @@ describe("generated skill telemetry", () => {
     expect(skill?.skillState).toBe("archived");
     expect(report.rows[0]?.flags.neverUsed).toBe(true);
     expect(report.rows[0]?.flags.archiveCandidate).toBe(true);
-    expect(report.rows[0]?.recommendation).toBe("archive");
+    expect(report.rows[0]?.recommendation).toBe("observe");
   });
 
   it("accepts procedureId when it matches the promoted skill for the same skill name", () => {
@@ -421,6 +421,31 @@ describe("generated skill telemetry", () => {
     await program.parseAsync(["skills", "reject", skillName, "--reason", "bad skill"], { from: "user" });
     expect(errSpy.mock.calls.some((c) => String(c[0]).includes("terminal state 'uninstalled'"))).toBe(true);
     expect(process.exitCode).toBe(1);
+  });
+
+  it("does not archive a newly demoted old skill before the unused window elapses again", () => {
+    vi.useFakeTimers();
+    const generatedAt = Math.floor(new Date("2026-03-01T00:00:00Z").getTime() / 1000);
+    const demotedAt = Math.floor(new Date("2026-05-14T10:00:00Z").getTime() / 1000);
+    vi.setSystemTime(new Date(demotedAt * 1000));
+
+    const { id, skillName } = createGeneratedSkill();
+    db.getRawDb()
+      .prepare("UPDATE procedures SET skill_generated_at = ?, updated_at = ? WHERE id = ?")
+      .run(generatedAt, generatedAt, id);
+
+    db.setGeneratedSkillLifecycleState(skillName, "demoted", "operator demoted for over-triggering", demotedAt);
+
+    const report = db.buildGeneratedSkillTelemetryReport({
+      skillName,
+      now: demotedAt + 60,
+    });
+    const skill = db.getGeneratedSkillByName(skillName);
+
+    expect(skill?.skillState).toBe("demoted");
+    expect(report.rows[0]?.flags.neverUsed).toBe(true);
+    expect(report.rows[0]?.flags.archiveCandidate).toBe(false);
+    expect(report.rows[0]?.recommendation).toBe("observe");
   });
 
   it("auto-unblocks demoted skill after enough clean uses (unblockAfterCleanUses policy)", () => {

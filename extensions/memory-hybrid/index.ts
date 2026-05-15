@@ -307,12 +307,7 @@ import {
   scorePattern,
 } from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
-import {
-  SkillCrystallizer,
-  crystallize,
-  deriveSkillName,
-  isExecOnlySequence,
-} from "./services/skill-crystallizer.js";
+import { SkillCrystallizer, crystallize, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
 import { SkillValidator } from "./services/skill-validator.js";
 import { ToolProposer } from "./services/tool-proposer.js";
 import { VerificationError, VerificationStore, shouldAutoVerify } from "./services/verification-store.js";
