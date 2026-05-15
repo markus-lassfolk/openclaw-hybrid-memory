@@ -243,6 +243,10 @@ describe("procedure promotion policy and adapter", () => {
       db.recordProcedureSuccess(proc.id, undefined, `${prefix}-c`);
     }
 
+    const hydratedFirst = requireProcedure(first.id);
+    const hydratedSecond = requireProcedure(second.id);
+    const readySpy = vi.spyOn(db, "getProceduresReadyForSkill").mockReturnValue([hydratedFirst, hydratedSecond]);
+
     const result = generateAutoSkills(
       db,
       {
@@ -255,6 +259,8 @@ describe("procedure promotion policy and adapter", () => {
       },
       { info: () => {}, warn: () => {} },
     );
+
+    readySpy.mockRestore();
 
     expect(result.dryRun).toBe(true);
     expect(result.summary).toMatchObject({
