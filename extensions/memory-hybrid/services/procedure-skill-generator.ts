@@ -104,10 +104,14 @@ function rebaseDraftSlug(
     skill?: unknown;
     generatedSkillPath?: unknown;
   };
+  const proposalMetadata = JSON.parse(draft.proposalMetadataJson) as {
+    generated_skill_path?: unknown;
+  };
   const originalSlug =
     typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
   verification.skill = resolvedSlug;
   verification.generatedSkillPath = generatedSkillPath;
+  proposalMetadata.generated_skill_path = generatedSkillPath;
 
   const skillMd = draft.skillMd
     .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
@@ -117,6 +121,7 @@ function rebaseDraftSlug(
     ...draft,
     skillMd,
     verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
+    proposalMetadataJson: `${JSON.stringify(proposalMetadata, null, 2)}\n`,
   };
 }
 
