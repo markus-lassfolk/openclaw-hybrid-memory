@@ -137,7 +137,7 @@ function resolveSkillMdPath(skillPath: string, workspaceRoot: string): { dirPath
   const resolvedPath = isAbsoluteSkillPath(skillPath) ? skillPath : join(workspaceRoot, skillPath);
   const usesWindowsSeparators = usesWindowsPathSemantics(resolvedPath);
   const hasSkillMdSuffix = /(?:^|[/\\])SKILL\.md$/u.test(resolvedPath);
-  const dirPath = hasSkillMdSuffix ? resolvedPath.replace(/[/\\]SKILL\.md$/u, "") : resolvedPath;
+  const dirPath = hasSkillMdSuffix ? resolvedPath.replace(/(?:^|[/\\])SKILL\.md$/u, "") : resolvedPath;
   const skillMdPath = hasSkillMdSuffix
     ? resolvedPath
     : usesWindowsSeparators
@@ -654,6 +654,8 @@ export function buildGeneratedSkillTelemetryReport(
         recommendation = "observe";
       } else if (currentState === "demoted" && flags.overTriggering) {
         recommendation = "observe";
+      } else if (flags.unblockCandidate && !flags.overTriggering) {
+        recommendation = "promote";
       } else if (flags.archiveCandidate) {
         recommendation = "archive";
       } else if (flags.overTriggering) {
