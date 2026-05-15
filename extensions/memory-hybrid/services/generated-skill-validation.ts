@@ -26,6 +26,11 @@ export interface SyntheticActivationCases {
   edge: string;
 }
 
+interface SyntheticActivationContext {
+  cases: SyntheticActivationCases;
+  sourceText: string;
+}
+
 export interface SkillProposalValidationResult {
   schemaVersion: 1;
   validatedAt: string;
@@ -339,12 +344,7 @@ export class GeneratedSkillValidationService {
     input: ValidateGeneratedSkillInput,
     frontmatter: Record<string, string>,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
-    const cases = buildSyntheticActivationCases(input, frontmatter);
-    // Support all trigger-section aliases so skills that use ## When to Activate
-    // or ## When to use are also covered (issue #1375).
-    const triggerAliases = DEFAULT_REQUIRED_SECTIONS.find((s) => s.id === "trigger")?.aliases ?? [];
-    const triggerSection = extractSectionByAliases(input.skillContent, triggerAliases);
-    const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
+    const { cases, sourceText } = buildSyntheticActivationContext(input, frontmatter);
     const positive = scoreActivationPrompt(cases.positive, sourceText);
     const negative = scoreActivationPrompt(cases.negative, sourceText);
     const edge = scoreActivationPrompt(cases.edge, sourceText);
@@ -485,33 +485,34 @@ function extractSectionByAliases(skillContent: string, headingAliases: string[])
     }
   }
 
-  return lines
-    .slice(startLine, endLine)
-    .join("\n")
-    .trim();
+  return lines.slice(startLine, endLine).join("\n").trim();
 }
 
-function buildSyntheticActivationCases(
+function buildSyntheticActivationContext(
   input: ValidateGeneratedSkillInput,
   frontmatter: Record<string, string>,
-): SyntheticActivationCases {
+): SyntheticActivationContext {
   const positive =
     input.pattern?.exampleGoals
       .find((goal) => goal.trim().length > 0)
       ?.replace(/\s+/g, " ")
       .trim() ?? `Please use the ${input.skillName} workflow for the matching task.`;
-  // Edge prompt tokens must come from the workflow goal, not frontmatter description (often contains
-  // boilerplate like "auto-crystallized"), or the edge case overlaps the trigger surface by construction.
-  const keywords = [...significantWords(positive)].slice(0, 3);
-  const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
   // Use alias-aware extraction so skills with "## When to Activate" also match (issue #1375).
   const triggerAliases = DEFAULT_REQUIRED_SECTIONS.find((s) => s.id === "trigger")?.aliases ?? [];
   const triggerSection = extractSectionByAliases(input.skillContent, triggerAliases);
   const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
+  // Edge prompt tokens must come from the workflow goal, not frontmatter description (often contains
+  // boilerplate like "auto-crystallized"), or the edge case overlaps the trigger surface by construction.
+  const keywords = [...significantWords(positive)].slice(0, 3);
+  const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
+
   return {
-    positive,
-    negative: pickUnrelatedNegativePrompt(sourceText),
-    edge: `Explain ${edgePhrase} without executing the workflow or changing files.`,
+    cases: {
+      positive,
+      negative: pickUnrelatedNegativePrompt(sourceText),
+      edge: `Explain ${edgePhrase} without executing the workflow or changing files.`,
+    },
+    sourceText,
   };
 }
 

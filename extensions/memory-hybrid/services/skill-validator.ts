@@ -14,8 +14,18 @@
  * config/skill-sections.ts (issues #1375, #1366, #1408).
  */
 
-import { CATEGORY_FRONTMATTER_KEYS, DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
-export { CATEGORY_FRONTMATTER_KEYS, DEFAULT_REQUIRED_SECTIONS, MAX_SKILL_LINES, getSectionTaxonomy } from "../config/skill-sections.js";
+import {
+  CATEGORY_FRONTMATTER_KEYS,
+  DEFAULT_REQUIRED_SECTIONS,
+  MAX_SKILL_LINES,
+  getSectionTaxonomy,
+} from "../config/skill-sections.js";
+export {
+  CATEGORY_FRONTMATTER_KEYS,
+  DEFAULT_REQUIRED_SECTIONS,
+  MAX_SKILL_LINES,
+  getSectionTaxonomy,
+} from "../config/skill-sections.js";
 
 // ---------------------------------------------------------------------------
 // Public types

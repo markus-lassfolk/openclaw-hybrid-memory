@@ -1158,15 +1158,11 @@ Bounded CLI parity verification workflow.
 
       logSpy.mockClear();
 
-      // Run skills install --json with the appropriate flags to match what validate predicted.
-      const installArgs = ["skills", "install", proposal.id, "--json"];
-      if (validateOutput.approvalDecision === "allow-with-override") {
-        installArgs.push("--override-warnings");
-      }
-      await program.parseAsync(installArgs, { from: "user" });
+      // Run plain skills install --json: validate predicts this outcome without an override.
+      await program.parseAsync(["skills", "install", proposal.id, "--json"], { from: "user" });
       const installOutput = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean };
 
-      // Validate must predict the same success/failure outcome as install.
+      // Validate must predict the same success/failure outcome as plain install.
       expect(installOutput.ok).toBe(validateOutput.ok);
     } finally {
       cStore.close();
