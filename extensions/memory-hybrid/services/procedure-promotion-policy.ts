@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
-import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { SKILL_COMPLETE_MARKER, isAtomicWriteArtifact } from "../utils/atomic-write.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -1115,7 +1115,7 @@ function isDuplicateSkill(
       // have the completion marker; legacy markerless final dirs are still
       // occupied names and valid duplicate sources.
       const hasCompletionMarker = existsSync(join(dir, entry, SKILL_COMPLETE_MARKER));
-      if (isAtomicSkillWriteArtifact(entry) && !hasCompletionMarker) continue;
+      if (isAtomicWriteArtifact(entry) && !hasCompletionMarker) continue;
       if (entry === slug) return true;
       const content = safeReadFile(skillPath).toLowerCase();
       if (content.includes(`name: ${slug}`)) return true;
@@ -1161,10 +1161,6 @@ function defer(reason: ProcedurePromotionReason, detail: string): ProcedurePromo
 
 function fail(reason: ProcedurePromotionReason, detail: string): ProcedurePromotionGateResult {
   return { reason, severity: "fail-validation", detail };
-}
-
-function isAtomicSkillWriteArtifact(entry: string): boolean {
-  return /\.tmp-\d+-[a-f0-9]+$/i.test(entry) || /^\..+\.bak-\d+-[a-f0-9]+$/i.test(entry);
 }
 
 function safeReadDir(dir: string): string[] {
