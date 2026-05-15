@@ -283,7 +283,7 @@ export function recordGeneratedSkillTelemetry(
     }
     const skill = input.skillName.trim();
     const path = candidate.skillPath.trim();
-    if (path !== skill && basename(path) !== skill) {
+    if (path !== skill && skillPathBasename(path) !== skill) {
       throw new Error(`Procedure ${input.procedureId} skill_path does not match skill name "${input.skillName}"`);
     }
     proc = candidate;
