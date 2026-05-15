@@ -149,19 +149,24 @@ function rebaseDraftSlug(
   const verification = JSON.parse(draft.verificationJson) as {
     skill?: unknown;
     generatedSkillPath?: unknown;
+    telemetryCommand?: unknown;
   };
   const originalSlug =
     typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
   verification.skill = resolvedSlug;
   verification.generatedSkillPath = generatedSkillPath;
+  verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
 
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
   // its raw slug form (e.g. "# my-skill") so that non-standard headings are also
   // rebased correctly after a slug collision.
   const h1Pattern = new RegExp(`^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`, "m");
+  const originalTelemetryCommand = `openclaw hybrid-mem skills record ${originalSlug}`;
+  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
   const skillMd = draft.skillMd
     .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
-    .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`);
+    .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`)
+    .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
 
   return {
     ...draft,
@@ -296,6 +301,18 @@ export function generateAutoSkills(
     let allocated: AllocatedSkillDir | null = null;
     try {
       allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
+      // Update reservation tracking if allocation resolved to a different slug
+      if (allocated.slug !== resolvedSlug) {
+        reservedSlugs.delete(resolvedSlug);
+        reservedSlugs.add(allocated.slug);
+        const candidateIndex = inRunSkillCandidates.findIndex(
+          (c) => c.slug === resolvedSlug && c.taskPattern === proc.taskPattern,
+        );
+        if (candidateIndex >= 0) {
+          inRunSkillCandidates[candidateIndex] = { slug: allocated.slug, taskPattern: proc.taskPattern };
+        }
+        reservedCandidate.slug = allocated.slug;
+      }
       writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
