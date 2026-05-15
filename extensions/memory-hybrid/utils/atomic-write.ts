@@ -109,7 +109,12 @@ function assertSafeRelativeSkillPath(relPath: string): void {
   }
 
   const normalized = posix.normalize(relPath.replace(/\\/g, "/"));
-  if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+  if (
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized === SKILL_COMPLETE_MARKER
+  ) {
     throw new Error(`Unsafe skill file path: ${relPath}`);
   }
 }
