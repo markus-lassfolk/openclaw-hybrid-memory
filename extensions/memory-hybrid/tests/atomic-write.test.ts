@@ -182,7 +182,6 @@ describe("atomicWriteSkillDir", () => {
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
 
-
   it("restores an existing directory when promotion fails after backup", () => {
     const skillDir = join(tmpDir, "my-skill");
     mkdirSync(join(skillDir, "nested"), { recursive: true });
