@@ -848,6 +848,22 @@ provenance: test-suite
     expect(fm.description).toBe("Use when the user asks to test things.");
   });
 
+  it("parses frontmatter after multiple leading HTML comments", () => {
+    const content = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after an inline closing HTML comment marker", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 --> ${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
   it("returns empty object when content is only an HTML comment with no frontmatter", () => {
     const content = "<!-- openclaw:skill-proposal id=abc123 -->\n# Plain Markdown\n\nNo frontmatter here.";
     const fm = parseSkillFrontmatter(content);

@@ -158,15 +158,25 @@ export function titleCase(slug: string): string {
 }
 
 /**
- * Strip leading HTML comments and BOM from content (used by skill parsers).
- * Repeatedly removes HTML comments at the start of the string until none remain.
+ * Strip leading whitespace plus repeated HTML comment blocks from skill content.
+ *
+ * Skill installers can prepend metadata comments before YAML frontmatter. This
+ * helper keeps parser behavior consistent across generated-skill validation,
+ * legacy crystallization detection, and static skill validation. If a closing
+ * comment marker is followed by content on the same line (for example
+ * `<!-- meta --> ---`), scanning resumes at that content instead of discarding
+ * the whole line.
  */
 export function stripLeadingHtmlComments(content: string): string {
   let body = content.replace(/^\uFEFF/, "");
+
   while (true) {
-    const stripped = body.replace(/^[\s\r\n]*<!--[\s\S]*?-->\s*/, "");
-    if (stripped === body) break;
-    body = stripped;
+    const trimmed = body.replace(/^\s*/, "");
+    if (!trimmed.startsWith("<!--")) return trimmed;
+
+    const closeIndex = trimmed.indexOf("-->");
+    if (closeIndex === -1) return trimmed;
+
+    body = trimmed.slice(closeIndex + 3);
   }
-  return body;
 }

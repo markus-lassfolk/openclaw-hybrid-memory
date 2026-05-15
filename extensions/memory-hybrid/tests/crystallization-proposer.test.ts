@@ -402,7 +402,7 @@ Bounded HTML prefix validation workflow.
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
 
     const htmlComment = `<!-- openclaw:skill-proposal id=test-id pattern_id=html-prefix-pattern evidence_hash=ev-html output_path=${outputDir}/html-prefix-skill/SKILL.md -->`;
-    const contentWithHtmlPrefix = `\uFEFF\n  \n${htmlComment}\n${FULL_SKILL_CONTENT}`;
+    const contentWithHtmlPrefix = `\uFEFF\n\t\n${htmlComment}\n${FULL_SKILL_CONTENT}`;
 
     const proposal = cStore.create({
       patternId: "html-prefix-pattern",
@@ -414,10 +414,36 @@ Bounded HTML prefix validation workflow.
     });
 
     const result = proposer.approveProposal(proposal.id);
-    // After the fix, the skill is NOT treated as legacy, so full validation runs.
-    // A well-formed skill with all sections should approve (possibly with override for minor warnings).
-    expect(result.success === true || /override/i.test(result.message)).toBe(true);
-    // Verify the stored validation result is not the legacy bypass
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toBeDefined();
+
+    // Verify the stored validation result is not the legacy bypass.
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("does not treat skills with multiple leading HTML comments as legacy", () => {
+    const outputDir = join(tmpDir, "multi-html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const contentWithHtmlPrefix = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html-multiple",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id, { overrideWarnings: true });
+    expect(result.success).toBe(true);
+
     const stored = cStore.getById(proposal.id);
     const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
     expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);

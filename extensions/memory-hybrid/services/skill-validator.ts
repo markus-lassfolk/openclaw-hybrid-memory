@@ -11,6 +11,8 @@
  * false negatives (allowing dangerous content) are not.
  */
 
+import { stripLeadingHtmlComments } from "../utils/text.js";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -494,33 +496,13 @@ function parseFrontmatter(lines: string[]): {
   endLine: number;
 } {
   const keys = new Map<string, string>();
-  // Only treat it as frontmatter when it starts the document (after optional leading blank lines).
+  const body = stripLeadingHtmlComments(lines.join("\n"));
+  const bodyLines = body.split("\n");
   let i = 0;
-  while (i < lines.length && lines[i]?.trim() === "") i++;
-  // Skip optional leading HTML comment block(s) (e.g., injected by injectInstallMetadata).
-  while (i < lines.length && lines[i]?.trimStart().startsWith("<!--")) {
-    while (i < lines.length) {
-      const currentLine = lines[i] ?? "";
-      const closePos = currentLine.indexOf("-->");
-      if (closePos !== -1) {
-        // Check if there's non-whitespace content after -->
-        const afterClose = currentLine.slice(closePos + 3).trim();
-        if (afterClose.length > 0) {
-          // Content after -->, we've consumed the comment portion; advance past this line
-          i++;
-          break;
-        }
-        i++; // skip the line with closing -->
-        break;
-      }
-      i++;
-    }
-    while (i < lines.length && lines[i]?.trim() === "") i++;
-  }
-  if (lines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
+  if (bodyLines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
   i++;
-  for (; i < lines.length; i++) {
-    const line = lines[i] ?? "";
+  for (; i < bodyLines.length; i++) {
+    const line = bodyLines[i] ?? "";
     if (line.trim() === "---") return { present: true, keys, endLine: i + 1 };
     const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*(.*)\s*$/);
     if (!match) continue;
