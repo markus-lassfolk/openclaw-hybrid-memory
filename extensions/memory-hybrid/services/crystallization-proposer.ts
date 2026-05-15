@@ -15,6 +15,7 @@ import { dirname, resolve } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -491,7 +492,8 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
-  const lines = skillContent.split("\n");
+  const body = stripLeadingHtmlComments(skillContent);
+  const lines = body.split("\n");
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
   return lines[i]?.trim() !== "---";
