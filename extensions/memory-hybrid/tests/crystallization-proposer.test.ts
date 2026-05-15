@@ -414,6 +414,17 @@ category: cat
     expect(out).toContain("category: z");
   });
 
+  it("preserves CRLF in single-key frontmatter", () => {
+    const src = "---\r\nname: foo\r\n---\r\n\r\n# x\r\n";
+    const out = patchOpeningYamlField(src, "name", "bar");
+    expect(out).toBe("---\r\nname: bar\r\n---\r\n\r\n# x\r\n");
+    // Verify all line endings are CRLF, not just LF
+    const linesWithCrlf = out.split("\r\n");
+    expect(linesWithCrlf).toHaveLength(6);
+    // Ensure no standalone LF (would indicate mixed line endings)
+    expect(out.replace(/\r\n/g, "X").includes("\n")).toBe(false);
+  });
+
   it("stops block scalar replacement at a top-level key with no inline value", () => {
     const src = `---
 description: |

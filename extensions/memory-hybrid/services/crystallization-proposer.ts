@@ -551,7 +551,7 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
   const inner = m[1]!;
-  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : "\n";
+  const innerLineBreak = m[0].includes("\r\n") ? "\r\n" : "\n";
   const lines = inner.split(/\r?\n/);
   const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
   let keyIdx = -1;
