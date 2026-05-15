@@ -357,6 +357,42 @@ describe("WorkflowStore.getPatterns", () => {
     expect(patterns.length).toBeGreaterThan(0);
     expect(ms).toBeLessThan(3000);
   });
+
+  it("clusters similar-but-not-identical sequences without custom argsHash (#1415 bugfix)", () => {
+    // This test verifies the fix for the bug where default argsHash bucketing
+    // prevented Levenshtein clustering of similar sequences
+
+    // Create a fresh store without beforeEach data
+    const freshDir = mkdtempSync(join(tmpdir(), "similarity-test-"));
+    const freshStore = new WorkflowStore(join(freshDir, "test.db"));
+
+    freshStore.record({
+      goal: "test workflow 1",
+      toolSequence: ["read_file", "edit_file", "run_tests"],
+      outcome: "success",
+    });
+    freshStore.record({
+      goal: "test workflow 2",
+      toolSequence: ["read_file", "write_file", "run_tests"],
+      outcome: "success",
+    });
+    freshStore.record({
+      goal: "test workflow 3",
+      toolSequence: ["read_file", "edit_file", "run_tests"],
+      outcome: "success",
+    });
+
+    // With similarity threshold 0.66, these should cluster into 1 pattern
+    // because they differ by only 1 element out of 3 (similarity ~0.667-1.0)
+    const patterns = freshStore.getPatterns({ similarityThreshold: 0.66, minSuccessRate: 0, limit: 10 });
+
+    // Should get 1 cluster containing all 3 sequences
+    expect(patterns.length).toBe(1);
+    expect(patterns[0].totalCount).toBe(3);
+
+    freshStore.close();
+    rmSync(freshDir, { recursive: true, force: true });
+  });
 });
 
 describe("WorkflowStore.prune", () => {

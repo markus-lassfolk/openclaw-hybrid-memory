@@ -408,61 +408,42 @@ export class WorkflowStore extends BaseSqliteStore {
         args_hash: string;
       }[];
 
-      const byHash = new Map<string, typeof allRows>();
-      for (const row of allRows) {
-        const h = row.args_hash || "";
-        const bucket = byHash.get(h);
-        if (bucket) bucket.push(row);
-        else byHash.set(h, [row]);
-      }
-
-      const allClusters: {
+      const clusters: {
         representative: string[];
         goals: string[];
         outcomes: string[];
         durations: number[];
       }[] = [];
 
-      for (const group of byHash.values()) {
-        const clusters: {
-          representative: string[];
-          goals: string[];
-          outcomes: string[];
-          durations: number[];
-        }[] = [];
-
-        for (const row of group) {
-          let seq: string[];
-          try {
-            seq = JSON.parse(row.tool_sequence) as string[];
-          } catch {
-            continue;
-          }
-
-          let found = false;
-          for (const cluster of clusters) {
-            if (sequenceSimilarity(seq, cluster.representative) >= threshold) {
-              cluster.goals.push(row.goal);
-              cluster.outcomes.push(row.outcome);
-              cluster.durations.push(row.duration_ms);
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            clusters.push({
-              representative: seq,
-              goals: [row.goal],
-              outcomes: [row.outcome],
-              durations: [row.duration_ms],
-            });
-          }
+      for (const row of allRows) {
+        let seq: string[];
+        try {
+          seq = JSON.parse(row.tool_sequence) as string[];
+        } catch {
+          continue;
         }
 
-        allClusters.push(...clusters);
+        let found = false;
+        for (const cluster of clusters) {
+          if (sequenceSimilarity(seq, cluster.representative) >= threshold) {
+            cluster.goals.push(row.goal);
+            cluster.outcomes.push(row.outcome);
+            cluster.durations.push(row.duration_ms);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          clusters.push({
+            representative: seq,
+            goals: [row.goal],
+            outcomes: [row.outcome],
+            durations: [row.duration_ms],
+          });
+        }
       }
 
-      const patterns: WorkflowPattern[] = allClusters.map((c) => {
+      const patterns: WorkflowPattern[] = clusters.map((c) => {
         const totalCount = c.outcomes.length;
         const successCount = c.outcomes.filter((o) => o === "success").length;
         const failureCount = c.outcomes.filter((o) => o === "failure").length;
