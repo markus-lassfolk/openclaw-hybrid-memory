@@ -313,6 +313,22 @@ export function crystallize(cfg: CrystallizationConfig, input: CrystallizationIn
 }
 
 // ---------------------------------------------------------------------------
+// Deprecated class wrapper for backward compatibility
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated Use `crystallize` function directly instead.
+ * This class wrapper is retained for backward compatibility only.
+ */
+export class SkillCrystallizer {
+  constructor(private cfg: CrystallizationConfig) {}
+
+  crystallize(input: CrystallizationInput): CrystallizationResult {
+    return crystallize(this.cfg, input);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Shell script builder (exec-only patterns)
 // ---------------------------------------------------------------------------
 

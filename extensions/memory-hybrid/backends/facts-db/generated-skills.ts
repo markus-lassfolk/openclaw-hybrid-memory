@@ -418,11 +418,17 @@ function summarizeSkillTelemetry(
   const weekAgo = now - 7 * 24 * 60 * 60;
 
   // For experimental skills, evaluate only activations since skill_generated_at.
+  // For demoted/archived skills, evaluate only activations since skill_state_changed_at.
   // This prevents pre-reset telemetry from blocking promotion or re-triggering demotion
   // after an operator manually resets or the system auto-unblocks a skill.
   const isExperimental = proc.skillState === "experimental" || proc.skillState === null;
-  const evalWindowStart =
-    isExperimental && proc.skillGeneratedAt !== null && proc.skillGeneratedAt !== undefined ? proc.skillGeneratedAt : 0;
+  const isDemotedOrArchived = proc.skillState === "demoted" || proc.skillState === "archived";
+  let evalWindowStart = 0;
+  if (isExperimental && proc.skillGeneratedAt !== null && proc.skillGeneratedAt !== undefined) {
+    evalWindowStart = proc.skillGeneratedAt;
+  } else if (isDemotedOrArchived && proc.skillStateChangedAt !== null && proc.skillStateChangedAt !== undefined) {
+    evalWindowStart = proc.skillStateChangedAt;
+  }
   const evalActivations = evalWindowStart > 0 ? activations.filter((a) => a.createdAt >= evalWindowStart) : activations;
 
   let activationCountPerWeek = 0;

@@ -149,3 +149,23 @@ export function detectCandidates(
 
   return candidates;
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated class wrapper for backward compatibility
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated Use `detectCandidates` function directly instead.
+ * This class wrapper is retained for backward compatibility only.
+ */
+export class PatternDetector {
+  constructor(
+    private workflowStore: WorkflowStore,
+    private crystallizationStore: CrystallizationStore,
+    private cfg: CrystallizationConfig,
+  ) {}
+
+  detect(): CrystallizationCandidate[] {
+    return detectCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
+  }
+}
