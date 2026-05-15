@@ -7,8 +7,6 @@
 
 import type { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION_KEY = "schema_version";
-
 export function ensureSchemaMetaTable(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -19,38 +17,43 @@ export function ensureSchemaMetaTable(db: DatabaseSync): void {
 }
 
 /** Returns 0 when the table is missing the version row (legacy / fresh before first migration). */
-export function readSchemaVersion(db: DatabaseSync): number {
+export function readSchemaVersion(db: DatabaseSync, namespace: string): number {
   ensureSchemaMetaTable(db);
-  const row = db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(SCHEMA_VERSION_KEY) as
-    | { value: string }
-    | undefined;
+  const key = `${namespace}_schema_version`;
+  const row = db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as { value: string } | undefined;
   if (row === undefined) return 0;
 
   const raw = row.value.trim();
   if (!/^\d+$/.test(raw)) {
-    throw new Error(`Invalid schema_meta ${SCHEMA_VERSION_KEY} value: ${row.value}`);
+    throw new Error(`Invalid schema_meta ${key} value: ${row.value}`);
   }
 
   const n = Number.parseInt(raw, 10);
   if (!Number.isSafeInteger(n)) {
-    throw new Error(`Invalid schema_meta ${SCHEMA_VERSION_KEY} value: ${row.value}`);
+    throw new Error(`Invalid schema_meta ${key} value: ${row.value}`);
   }
   return n;
 }
 
-export function writeSchemaVersion(db: DatabaseSync, version: number): void {
+export function writeSchemaVersion(db: DatabaseSync, namespace: string, version: number): void {
   ensureSchemaMetaTable(db);
+  const key = `${namespace}_schema_version`;
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-  ).run(SCHEMA_VERSION_KEY, String(version));
+  ).run(key, String(version));
 }
 
-export function runVersionedSchemaMigration(db: DatabaseSync, version: number, migrate: () => void): void {
+export function runVersionedSchemaMigration(
+  db: DatabaseSync,
+  namespace: string,
+  version: number,
+  migrate: () => void,
+): void {
   db.exec("BEGIN");
   try {
     migrate();
-    writeSchemaVersion(db, version);
+    writeSchemaVersion(db, namespace, version);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");

@@ -197,13 +197,14 @@ export class WorkflowStore extends BaseSqliteStore {
   }
 
   private runSchemaMigrations(): void {
-    let v = readSchemaVersion(this.liveDb);
+    const namespace = "workflow";
+    let v = readSchemaVersion(this.liveDb, namespace);
     while (v < WORKFLOW_STORE_SCHEMA_VERSION) {
       const next = v + 1;
       if (next === 1) {
-        runVersionedSchemaMigration(this.liveDb, next, () => migrateWorkflowSchemaV1(this.liveDb));
+        runVersionedSchemaMigration(this.liveDb, namespace, next, () => migrateWorkflowSchemaV1(this.liveDb));
       } else if (next === 2) {
-        runVersionedSchemaMigration(this.liveDb, next, () => migrateWorkflowSchemaV2(this.liveDb));
+        runVersionedSchemaMigration(this.liveDb, namespace, next, () => migrateWorkflowSchemaV2(this.liveDb));
       } else {
         throw new Error(`workflow-store: unsupported schema migration target ${next}`);
       }

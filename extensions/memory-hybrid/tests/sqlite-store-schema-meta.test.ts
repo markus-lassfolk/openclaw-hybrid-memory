@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CRYSTALLIZATION_STORE_SCHEMA_VERSION, CrystallizationStore } from "../backends/crystallization-store.js";
-import { SCHEMA_VERSION_KEY, readSchemaVersion } from "../backends/sqlite-schema-meta.js";
+import { readSchemaVersion } from "../backends/sqlite-schema-meta.js";
 import { WORKFLOW_STORE_SCHEMA_VERSION, WorkflowStore } from "../backends/workflow-store.js";
 
 function captureSqliteExecStatements(fn: () => void): string[] {
@@ -29,10 +29,10 @@ function captureSqliteExecStatements(fn: () => void): string[] {
   return statements;
 }
 
-function readVersionAtPath(dbPath: string): number {
+function readVersionAtPath(dbPath: string, namespace: string): number {
   const db = new DatabaseSync(dbPath);
   try {
-    return readSchemaVersion(db);
+    return readSchemaVersion(db, namespace);
   } finally {
     db.close();
   }
@@ -53,7 +53,7 @@ describe("CrystallizationStore schema_meta", () => {
     const dbPath = join(tmpDir, "fresh.db");
     const store = new CrystallizationStore(dbPath);
     store.close();
-    expect(readVersionAtPath(dbPath)).toBe(CRYSTALLIZATION_STORE_SCHEMA_VERSION);
+    expect(readVersionAtPath(dbPath, "crystallization")).toBe(CRYSTALLIZATION_STORE_SCHEMA_VERSION);
   });
 
   it("migrates a legacy database without schema_meta", () => {
@@ -77,7 +77,7 @@ describe("CrystallizationStore schema_meta", () => {
     raw.close();
 
     const store = new CrystallizationStore(dbPath);
-    expect(readVersionAtPath(dbPath)).toBe(CRYSTALLIZATION_STORE_SCHEMA_VERSION);
+    expect(readVersionAtPath(dbPath, "crystallization")).toBe(CRYSTALLIZATION_STORE_SCHEMA_VERSION);
     const row = store.getById("legacy-1");
     expect(row?.status).toBe("validated");
     expect(row?.evidenceHash).toBe("pat-old");
@@ -96,10 +96,10 @@ describe("CrystallizationStore schema_meta", () => {
     store.close();
 
     const raw = new DatabaseSync(dbPath);
-    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("not-a-number", SCHEMA_VERSION_KEY);
+    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("not-a-number", "crystallization_schema_version");
     raw.close();
 
-    expect(() => new CrystallizationStore(dbPath)).toThrow(/Invalid schema_meta schema_version value/);
+    expect(() => new CrystallizationStore(dbPath)).toThrow(/Invalid schema_meta crystallization_schema_version value/);
   });
 
   it("re-runs the latest migration when schema_version lags (version bump path)", () => {
@@ -108,12 +108,12 @@ describe("CrystallizationStore schema_meta", () => {
     store.close();
 
     const raw = new DatabaseSync(dbPath);
-    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("1", SCHEMA_VERSION_KEY);
+    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("1", "crystallization_schema_version");
     raw.exec("DROP INDEX IF EXISTS idx_cp_created_at");
     raw.close();
 
     store = new CrystallizationStore(dbPath);
-    expect(readVersionAtPath(dbPath)).toBe(CRYSTALLIZATION_STORE_SCHEMA_VERSION);
+    expect(readVersionAtPath(dbPath, "crystallization")).toBe(CRYSTALLIZATION_STORE_SCHEMA_VERSION);
 
     const check = new DatabaseSync(dbPath);
     const idx = check
@@ -140,7 +140,7 @@ describe("WorkflowStore schema_meta", () => {
     const dbPath = join(tmpDir, "wf-fresh.db");
     const store = new WorkflowStore(dbPath);
     store.close();
-    expect(readVersionAtPath(dbPath)).toBe(WORKFLOW_STORE_SCHEMA_VERSION);
+    expect(readVersionAtPath(dbPath, "workflow")).toBe(WORKFLOW_STORE_SCHEMA_VERSION);
   });
 
   it("migrates a pre-versioning workflow database", () => {
@@ -163,7 +163,7 @@ describe("WorkflowStore schema_meta", () => {
     raw.close();
 
     const store = new WorkflowStore(dbPath);
-    expect(readVersionAtPath(dbPath)).toBe(WORKFLOW_STORE_SCHEMA_VERSION);
+    expect(readVersionAtPath(dbPath, "workflow")).toBe(WORKFLOW_STORE_SCHEMA_VERSION);
     expect(store.count()).toBe(0);
     store.close();
   });
@@ -174,12 +174,12 @@ describe("WorkflowStore schema_meta", () => {
     store.close();
 
     const raw = new DatabaseSync(dbPath);
-    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("1", SCHEMA_VERSION_KEY);
+    raw.prepare("UPDATE schema_meta SET value = ? WHERE key = ?").run("1", "workflow_schema_version");
     raw.exec("DROP INDEX IF EXISTS idx_wt_created_at");
     raw.close();
 
     store = new WorkflowStore(dbPath);
-    expect(readVersionAtPath(dbPath)).toBe(WORKFLOW_STORE_SCHEMA_VERSION);
+    expect(readVersionAtPath(dbPath, "workflow")).toBe(WORKFLOW_STORE_SCHEMA_VERSION);
     const check = new DatabaseSync(dbPath);
     const idx = check
       .prepare("SELECT 1 as ok FROM sqlite_master WHERE type = 'index' AND name = 'idx_wt_created_at'")

@@ -158,7 +158,6 @@ export class CrystallizationStore extends BaseSqliteStore {
     `);
 
     this.runSchemaMigrations();
-    this.db.exec("CREATE INDEX IF NOT EXISTS idx_cp_evidence_hash ON crystallization_proposals(evidence_hash)");
   }
 
   protected getSubsystemName(): string {
@@ -166,13 +165,14 @@ export class CrystallizationStore extends BaseSqliteStore {
   }
 
   private runSchemaMigrations(): void {
-    let v = readSchemaVersion(this.liveDb);
+    const namespace = "crystallization";
+    let v = readSchemaVersion(this.liveDb, namespace);
     while (v < CRYSTALLIZATION_STORE_SCHEMA_VERSION) {
       const next = v + 1;
       if (next === 1) {
-        runVersionedSchemaMigration(this.liveDb, next, () => migrateCrystallizationSchemaV1(this.liveDb));
+        runVersionedSchemaMigration(this.liveDb, namespace, next, () => migrateCrystallizationSchemaV1(this.liveDb));
       } else if (next === 2) {
-        runVersionedSchemaMigration(this.liveDb, next, () => migrateCrystallizationSchemaV2(this.liveDb));
+        runVersionedSchemaMigration(this.liveDb, namespace, next, () => migrateCrystallizationSchemaV2(this.liveDb));
       } else {
         throw new Error(`crystallization-store: unsupported schema migration target ${next}`);
       }
@@ -539,6 +539,8 @@ function migrateCrystallizationSchemaV1(db: DatabaseSync): void {
   db.exec(
     "UPDATE crystallization_proposals SET evidence_hash = pattern_id WHERE (evidence_hash IS NULL OR evidence_hash = '') AND pattern_id IS NOT NULL",
   );
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_cp_evidence_hash ON crystallization_proposals(evidence_hash)");
 }
 
 function migrateCrystallizationSchemaV2(db: DatabaseSync): void {
