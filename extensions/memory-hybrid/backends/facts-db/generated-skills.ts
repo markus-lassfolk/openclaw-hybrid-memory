@@ -747,15 +747,38 @@ export function refreshGeneratedSkillLifecycleState(
   skillName: string,
   policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
   now = Math.floor(Date.now() / 1000),
-): ProcedureEntry | null {
+): ProcedureEntry | null;
+export function refreshGeneratedSkillLifecycleState(
+  db: DatabaseSync,
+  skillName: string,
+  policy: GeneratedSkillLifecyclePolicy,
+  now: number,
+  returnMetrics: true,
+): { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } | null;
+export function refreshGeneratedSkillLifecycleState(
+  db: DatabaseSync,
+  skillName: string,
+  policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
+  now = Math.floor(Date.now() / 1000),
+  returnMetrics = false,
+):
+  | ProcedureEntry
+  | { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+  | null {
   const proc = findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
   const canonicalSkillName = basename(proc.skillPath);
   const { metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, canonicalSkillName, policy, now);
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
-  if (transition == null) return proc;
-  return setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now);
+  const updatedProc =
+    transition == null
+      ? proc
+      : (setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now) ?? proc);
+  if (returnMetrics) {
+    return { proc: updatedProc, metrics, flags };
+  }
+  return updatedProc;
 }
 
 export function buildGeneratedSkillTelemetryReport(
@@ -777,10 +800,21 @@ export function buildGeneratedSkillTelemetryReport(
   const rows = procedures
     .map((proc) => {
       const skillName = basename(proc.skillPath ?? proc.taskPattern);
-      const procFresh = proc.skillPath
-        ? (refreshGeneratedSkillLifecycleState(db, skillName, policy, now) ?? proc)
-        : proc;
-      const { metrics, flags } = summarizeSkillTelemetryFromRollups(db, procFresh, skillName, policy, now);
+      let procFresh: ProcedureEntry;
+      let metrics: GeneratedSkillTelemetryMetrics;
+      let flags: GeneratedSkillTelemetryFlags;
+      if (proc.skillPath) {
+        const result = refreshGeneratedSkillLifecycleState(db, skillName, policy, now, true);
+        if (result == null) {
+          procFresh = proc;
+          ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
+        } else {
+          ({ proc: procFresh, metrics, flags } = result);
+        }
+      } else {
+        procFresh = proc;
+        ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
+      }
       const recommendation = flags.archiveCandidate
         ? "archive"
         : flags.overTriggering
