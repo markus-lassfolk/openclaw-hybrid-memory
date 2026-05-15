@@ -6,10 +6,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import type {
-  CrystallizationQueueStatusFilter,
-  CrystallizationStore,
-} from "../backends/crystallization-store.js";
+import type { CrystallizationQueueStatusFilter, CrystallizationStore } from "../backends/crystallization-store.js";
 import {
   assertCrystallizationQueueStatusFilter,
   CRYSTALLIZATION_QUEUE_STATUS_FILTERS,
