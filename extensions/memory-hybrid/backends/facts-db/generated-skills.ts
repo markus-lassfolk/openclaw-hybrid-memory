@@ -635,21 +635,34 @@ export function buildGeneratedSkillTelemetryReport(
       const skillName = skillPathBasename(proc.skillPath ?? proc.taskPattern);
       const activations = skillTelemetryEntries(db, skillName);
       const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
-      const recommendation = flags.archiveCandidate
-        ? "archive"
-        : flags.overTriggering
-          ? "demote"
-          : flags.promotionCandidate
-            ? "promote"
-            : flags.revisionCandidate
-              ? "revise"
-              : "observe";
+      const currentState = proc.skillState ?? "experimental";
+      
+      let recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
+      
+      if (currentState === "uninstalled" || currentState === "rejected") {
+        recommendation = "observe";
+      } else if (currentState === "archived" && flags.archiveCandidate) {
+        recommendation = "observe";
+      } else if (currentState === "demoted" && flags.overTriggering) {
+        recommendation = "observe";
+      } else if (flags.archiveCandidate) {
+        recommendation = "archive";
+      } else if (flags.overTriggering) {
+        recommendation = "demote";
+      } else if (flags.promotionCandidate) {
+        recommendation = "promote";
+      } else if (flags.revisionCandidate) {
+        recommendation = "revise";
+      } else {
+        recommendation = "observe";
+      }
+      
       return {
         procedureId: proc.id,
         skillName,
         skillPath: proc.skillPath ?? skillName,
         skillVersion: proc.skillVersion ?? 1,
-        state: proc.skillState ?? "experimental",
+        state: currentState,
         stateReason: proc.skillStateReason ?? null,
         generatedAt: proc.skillGeneratedAt ?? proc.promotedAt ?? null,
         metrics,
@@ -712,12 +725,15 @@ export function reconcileGeneratedSkillDiskState(
   const procedures = listGeneratedSkillProcedures(db);
   const issues: GeneratedSkillDoctorRow[] = [];
   const fixedProcedureIds: string[] = [];
+  let totalChecked = 0;
 
   for (const proc of procedures) {
     if (!proc.skillPath) continue;
     // Skip terminal rows — they are already correctly modelled and must not be
     // overwritten by disk reconciliation.
     if (proc.skillState === "uninstalled" || proc.skillState === "rejected") continue;
+    
+    totalChecked++;
 
     // Accept either a SKILL.md file path or the parent directory, but always
     // require the actual SKILL.md file to exist. A bare directory is not an
@@ -757,7 +773,7 @@ export function reconcileGeneratedSkillDiskState(
 
   return {
     checkedAt: new Date(now * 1000).toISOString(),
-    totalChecked: procedures.length,
+    totalChecked,
     issues,
     fixedCount: fixedProcedureIds.length,
     fixedProcedureIds,
