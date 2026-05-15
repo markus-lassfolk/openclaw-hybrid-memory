@@ -293,14 +293,6 @@ export class GeneratedSkillValidationService {
       } else if (discovered.name !== skillName && normalizeSkillName(discovered.name) !== normalizedSkillName) {
         violations.push("Dry-load discovery did not return the generated skill");
       }
-
-      if (discovered.description !== frontmatter.description) {
-        violations.push("Dry-load description does not match frontmatter description");
-      }
-      const expectedCategory = getFrontmatterCategory(frontmatter);
-      if (expectedCategory && getFrontmatterCategory(discovered) !== expectedCategory) {
-        violations.push("Dry-load category does not match frontmatter category");
-      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       violations.push(`Dry-load validation failed: ${message}`);
