@@ -435,12 +435,13 @@ function migrateGeneratedSkillTelemetryTable(db: DatabaseSync): void {
 /** O(1) telemetry rollups on procedures (#1415 / #1400). */
 function migrateGeneratedSkillTelemetryRollupColumns(db: DatabaseSync): void {
   const cols0 = db.prepare("PRAGMA table_info(procedures)").all() as Array<{ name: string }>;
-  const hadGst = new Set(cols0.map((c) => c.name)).has("gst_sel_total");
   const colNames = new Set(cols0.map((c) => c.name));
+  let addedRollupColumn = false;
   const add = (name: string, ddl: string) => {
     if (!colNames.has(name)) {
       db.exec(ddl);
       colNames.add(name);
+      addedRollupColumn = true;
     }
   };
   add("gst_sel_total", "ALTER TABLE procedures ADD COLUMN gst_sel_total INTEGER NOT NULL DEFAULT 0");
@@ -468,10 +469,10 @@ function migrateGeneratedSkillTelemetryRollupColumns(db: DatabaseSync): void {
   add("gst_saved_time_ms_sum", "ALTER TABLE procedures ADD COLUMN gst_saved_time_ms_sum INTEGER NOT NULL DEFAULT 0");
   add("gst_last_selected_at", "ALTER TABLE procedures ADD COLUMN gst_last_selected_at INTEGER");
 
-  // Idempotent backfill: run if columns were just added (!hadGst) OR if any procedure has
+  // Idempotent backfill: run if any rollup column was added OR if any procedure has
   // telemetry but zero rollups (indicating incomplete backfill from a previous crash).
   const needsBackfill =
-    !hadGst ||
+    addedRollupColumn ||
     (
       db
         .prepare(
@@ -498,8 +499,8 @@ function migrateGeneratedSkillTelemetryRollupColumns(db: DatabaseSync): void {
            gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
            gst_considered_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'considered'),
            gst_skipped_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'skipped'),
-           gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(t.saved_tool_calls), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
-           gst_saved_time_ms_sum = (SELECT COALESCE(SUM(t.saved_time_ms), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
+           gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_tool_calls > 0 THEN t.saved_tool_calls ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
+           gst_saved_time_ms_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_time_ms > 0 THEN t.saved_time_ms ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
            gst_last_selected_at = (SELECT MAX(t.created_at) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected')
      WHERE EXISTS (SELECT 1 FROM generated_skill_telemetry t WHERE t.procedure_id = p.id)
   `);

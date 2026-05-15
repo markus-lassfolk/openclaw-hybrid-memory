@@ -59,6 +59,37 @@ describe("generated skill telemetry", () => {
     expect(m2).toEqual(m1);
   });
 
+  it("keeps positive-only saved rollups consistent after rebuild", () => {
+    const { id, skillName } = createGeneratedSkill();
+
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: "positive savings",
+      taskOutcome: "success",
+      savedToolCalls: 3,
+      savedTimeMs: 1000,
+    });
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: "negative savings ignored",
+      taskOutcome: "success",
+      savedToolCalls: -7,
+      savedTimeMs: -2000,
+    });
+
+    const before = db.buildGeneratedSkillTelemetryReport({ skillName }).rows[0]?.metrics;
+    rebuildGeneratedSkillTelemetryRollupsForProcedure(db.getRawDb(), id);
+    const after = db.buildGeneratedSkillTelemetryReport({ skillName }).rows[0]?.metrics;
+
+    expect(before?.savedToolCalls).toBe(3);
+    expect(before?.savedTimeMs).toBe(1000);
+    expect(after?.savedToolCalls).toBe(3);
+    expect(after?.savedTimeMs).toBe(1000);
+    expect(after).toEqual(before);
+  });
+
   it("promotes experimental skills after repeated successful activations without correction", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));

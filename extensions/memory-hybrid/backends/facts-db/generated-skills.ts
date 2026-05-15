@@ -777,8 +777,9 @@ export function buildGeneratedSkillTelemetryReport(
   const rows = procedures
     .map((proc) => {
       const skillName = basename(proc.skillPath ?? proc.taskPattern);
-      if (proc.skillPath) refreshGeneratedSkillLifecycleState(db, skillName, policy, now);
-      const procFresh = findGeneratedSkillProcedure(db, skillName) ?? proc;
+      const procFresh = proc.skillPath
+        ? (refreshGeneratedSkillLifecycleState(db, skillName, policy, now) ?? proc)
+        : proc;
       const { metrics, flags } = summarizeSkillTelemetryFromRollups(db, procFresh, skillName, policy, now);
       const recommendation = flags.archiveCandidate
         ? "archive"

@@ -162,17 +162,19 @@ export function hashToolSequence(toolSequence: string[]): string {
 export class WorkflowStore extends BaseSqliteStore {
   /**
    * Memoized {@link WorkflowStore.getPatterns} result invalidated on `record` / `prune`.
-   * Keyed by table fingerprint + options (#1415 / #1399).
+   * Keyed by an in-memory mutation counter + options (#1415 / #1399).
    */
   private workflowPatternsMemo: {
-    rowCount: number;
-    newestCreatedAt: string | null;
+    revision: number;
     traceSampleLimit: number;
     similarityThreshold: number;
     minSuccessRate: number;
     resultLimit: number;
     patterns: WorkflowPattern[];
   } | null = null;
+
+  /** Monotonic in-process revision for cheap memo validation without table scans. */
+  private workflowPatternsRevision = 0;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -240,7 +242,7 @@ export class WorkflowStore extends BaseSqliteStore {
           sessionId,
           now,
         );
-      this.workflowPatternsMemo = null;
+      this.invalidateWorkflowPatternsMemo();
     });
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
@@ -379,15 +381,10 @@ export class WorkflowStore extends BaseSqliteStore {
       const traceSampleLimit = options?.traceSampleLimit ?? 2000;
       const minRate = options?.minSuccessRate ?? 0;
       const resultLimit = options?.limit ?? 20;
-      const meta = this.liveDb.prepare("SELECT COUNT(*) as c, MAX(created_at) as m FROM workflow_traces").get() as {
-        c: number;
-        m: string | null;
-      };
       const memo = this.workflowPatternsMemo;
       if (
         memo &&
-        memo.rowCount === meta.c &&
-        memo.newestCreatedAt === meta.m &&
+        memo.revision === this.workflowPatternsRevision &&
         memo.traceSampleLimit === traceSampleLimit &&
         memo.similarityThreshold === threshold &&
         memo.minSuccessRate === minRate &&
@@ -488,8 +485,7 @@ export class WorkflowStore extends BaseSqliteStore {
       filtered.sort((a, b) => b.totalCount - a.totalCount);
       const out = filtered.slice(0, resultLimit);
       this.workflowPatternsMemo = {
-        rowCount: meta.c,
-        newestCreatedAt: meta.m,
+        revision: this.workflowPatternsRevision,
         traceSampleLimit,
         similarityThreshold: threshold,
         minSuccessRate: minRate,
@@ -508,7 +504,7 @@ export class WorkflowStore extends BaseSqliteStore {
     return this.runSqliteOp("prune", () => {
       const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
       const result = this.liveDb.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
-      this.workflowPatternsMemo = null;
+      if (Number(result.changes) > 0) this.invalidateWorkflowPatternsMemo();
       return Number(result.changes);
     });
   }
@@ -527,6 +523,11 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  private invalidateWorkflowPatternsMemo(): void {
+    this.workflowPatternsMemo = null;
+    this.workflowPatternsRevision++;
+  }
 
   private rowToTrace(row: Record<string, unknown>): WorkflowTrace {
     function parseJsonArray(value: unknown, fallback: string[]): string[] {
