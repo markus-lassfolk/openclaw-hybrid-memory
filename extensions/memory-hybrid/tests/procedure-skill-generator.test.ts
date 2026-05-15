@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
@@ -23,6 +23,32 @@ afterEach(() => {
 function recordDistinctSuccesses(procId: string): void {
   db.recordProcedureSuccess(procId, undefined, `${procId}-session-2`);
   db.recordProcedureSuccess(procId, undefined, `${procId}-session-3`);
+}
+
+function collectIdentityKeyFindings(value: unknown, path = "$", findings: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectIdentityKeyFindings(item, `${path}[${index}]`, findings));
+    return findings;
+  }
+  if (!value || typeof value !== "object") return findings;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const childPath = `${path}.${key}`;
+    if (isSlugOrPathIdentityKey(key, childPath)) findings.push(childPath);
+    collectIdentityKeyFindings(child, childPath, findings);
+  }
+  return findings;
+}
+
+function isSlugOrPathIdentityKey(key: string, path: string): boolean {
+  if (key === "path" && /^\$\[\d+\]\.args\.path$/.test(path)) return false;
+  return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
+}
+
+function expectSidecarHasNoStaleIdentity(sidecarPath: string, originalSlug: string, originalPath: string): void {
+  const serialized = readFileSync(sidecarPath, "utf-8");
+  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original slug`).not.toContain(originalSlug);
+  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original path`).not.toContain(originalPath);
+  expect(collectIdentityKeyFindings(JSON.parse(serialized))).toEqual([]);
 }
 
 describe("generateAutoSkills", () => {
@@ -151,32 +177,15 @@ describe("generateAutoSkills", () => {
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
     });
 
-    // Invariant: recipe.json, proposal-metadata.json, and evals/evals.json must NOT
-    // contain slug or path identity fields. If any future addition embeds a slug/path
-    // identity field in these artifacts, it must also be rebased in rebaseDraftSlug.
-    const recipe = JSON.parse(readFileSync(join(collidedDir, "recipe.json"), "utf-8")) as Array<
-      Record<string, unknown>
-    >;
-    expect(Array.isArray(recipe)).toBe(true);
-    // Verify each recipe step carries no slug/path identity keys
-    for (const step of recipe) {
-      expect(step).not.toHaveProperty("skill");
-      expect(step).not.toHaveProperty("generatedSkillPath");
+    const originalSlug = "validate-colliding-release-report";
+    const originalPath = join(skillsDir, originalSlug);
+    for (const sidecarPath of [
+      join(collidedDir, "recipe.json"),
+      join(collidedDir, "proposal-metadata.json"),
+      join(collidedDir, "evals", "evals.json"),
+    ]) {
+      expectSidecarHasNoStaleIdentity(sidecarPath, originalSlug, originalPath);
     }
-
-    const proposalMeta = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    expect(proposalMeta).not.toHaveProperty("skill");
-    expect(proposalMeta).not.toHaveProperty("generatedSkillPath");
-
-    const evalsContent = JSON.parse(readFileSync(join(collidedDir, "evals", "evals.json"), "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    expect(evalsContent).not.toHaveProperty("skill");
-    expect(evalsContent).not.toHaveProperty("generatedSkillPath");
   });
 
   it("dry-run does not write files", () => {
@@ -544,6 +553,56 @@ describe("generateAutoSkills", () => {
       enabled: false,
     });
     expect(existsSync(join(skillsDir, "validate-single-apply-report", "SKILL.md"))).toBe(true);
+  });
+
+  it("retries allocation when a competing writer claims the previewed slug", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate raced draft allocation",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "raced-draft-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const originalGetProcedureVersions = db.getProcedureVersions.bind(db);
+    const versionSpy = vi.spyOn(db, "getProcedureVersions").mockImplementationOnce((procId: string) => {
+      // Simulate another generator creating the directory after this process has
+      // previewed the slug but before it attempts to reserve the write path.
+      mkdirSync(join(skillsDir, "validate-raced-draft-allocation"), { recursive: true });
+      return originalGetProcedureVersions(procId);
+    });
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        apply: true,
+        policy: "auto-safe",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    versionSpy.mockRestore();
+
+    expect(result).toMatchObject({
+      ok: true,
+      relativePath: join(skillsDir, "validate-raced-draft-allocation-1"),
+      skillPath: join(skillsDir, "validate-raced-draft-allocation-1", "SKILL.md"),
+    });
+    expect(existsSync(join(skillsDir, "validate-raced-draft-allocation", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-raced-draft-allocation-1", "SKILL.md"))).toBe(true);
+    expect(readFileSync(join(skillsDir, "validate-raced-draft-allocation-1", "verification.json"), "utf-8")).toContain(
+      '"skill": "validate-raced-draft-allocation-1"',
+    );
   });
 
   it("does not count deferred procedures as generated dry-run paths", () => {
