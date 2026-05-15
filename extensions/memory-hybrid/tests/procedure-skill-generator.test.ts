@@ -586,8 +586,10 @@ describe("generateAutoSkills", () => {
     });
     recordDistinctSuccesses(retry.id);
 
-    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementationOnce(() => {
-      throw new Error("mark failed");
+    const originalMarkProcedurePromoted = db.markProcedurePromoted.bind(db);
+    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementation((id, skillPath) => {
+      if (id === proc.id) throw new Error("mark failed");
+      return originalMarkProcedurePromoted(id, skillPath);
     });
 
     const result = generateAutoSkills(
