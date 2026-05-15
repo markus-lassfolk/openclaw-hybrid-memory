@@ -184,9 +184,9 @@ function generatedSkillRows(db: DatabaseSync): Array<Record<string, unknown>> {
     .all() as Array<Record<string, unknown>>;
 }
 
-function findGeneratedSkillProcedure(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+function findGeneratedSkillProcedureMatches(db: DatabaseSync, skillName: string): ProcedureEntry[] {
   const trimmed = skillName.trim();
-  if (trimmed.length === 0) return null;
+  if (trimmed.length === 0) return [];
   const matches: ProcedureEntry[] = [];
   for (const row of generatedSkillRows(db)) {
     const proc = procedureRowToEntry(db, row);
@@ -194,6 +194,16 @@ function findGeneratedSkillProcedure(db: DatabaseSync, skillName: string): Proce
     const path = proc.skillPath.trim();
     if (path === trimmed || basename(path) === trimmed) matches.push(proc);
   }
+  return matches;
+}
+
+function findGeneratedSkillProcedure(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+  return findGeneratedSkillProcedureMatches(db, skillName)[0] ?? null;
+}
+
+function findGeneratedSkillProcedureStrict(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+  const trimmed = skillName.trim();
+  const matches = findGeneratedSkillProcedureMatches(db, trimmed);
   if (matches.length === 0) return null;
   if (matches.length > 1) {
     throw new Error(
@@ -256,7 +266,7 @@ export function recordGeneratedSkillTelemetry(
     }
     proc = candidate;
   } else {
-    proc = findGeneratedSkillProcedure(db, input.skillName);
+    proc = findGeneratedSkillProcedureStrict(db, input.skillName);
   }
   if (!proc) throw new Error(`Generated skill not found: ${input.skillName}`);
   const now = input.createdAt ?? Math.floor(Date.now() / 1000);

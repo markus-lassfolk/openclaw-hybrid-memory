@@ -294,4 +294,31 @@ describe("generated skill telemetry", () => {
     });
     expect(telemetry.procedureId).toBe(procB.id);
   });
+
+  it("keeps lookup-only generated skill callers tolerant when promoted procedures share basename", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const procA = db.upsertProcedure({
+      taskPattern: "Alpha basename collision lookup",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "session-a",
+    });
+    db.markProcedurePromoted(procA.id, "skills/auto/foo");
+    const procB = db.upsertProcedure({
+      taskPattern: "Beta basename collision lookup",
+      recipeJson: JSON.stringify([{ tool: "read", args: {}, summary: "Read" }]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "session-b",
+    });
+    db.markProcedurePromoted(procB.id, "skills/custom/foo");
+
+    expect(() => db.getGeneratedSkillByName("foo")).not.toThrow();
+    expect(() => db.setGeneratedSkillLifecycleState("foo", "demoted", "manual demotion")).not.toThrow();
+    expect(() => db.refreshGeneratedSkillLifecycleState("foo")).not.toThrow();
+  });
 });
