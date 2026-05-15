@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
-import { NON_PLACEHOLDER_EMAIL_PATTERN, PEM_PRIVATE_KEY_PATTERN, SkillValidator } from "./skill-validator.js";
+import { NON_PLACEHOLDER_EMAIL_PATTERN, PEM_PRIVATE_KEY_PATTERN, PRIVATE_IP_PATTERN, SkillValidator } from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
 export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";
@@ -153,7 +153,7 @@ export function detailSkillProposalValidation(result?: SkillProposalValidationRe
  * Build the secret/private-data pattern list for GSV.
  * Accepts an email pattern so operators can supply a custom allow-list (Issue #1383).
  * PEM detector is case-insensitive and uses the shared constant (Issue #1382).
- * Loopback (127.x) is intentionally excluded from private-IP matching (Issue #1385).
+ * Private IP pattern uses the shared constant to prevent drift across validators.
  */
 function buildSecretOrPrivatePatterns(emailPattern: RegExp): RegExp[] {
   return [
@@ -161,7 +161,7 @@ function buildSecretOrPrivatePatterns(emailPattern: RegExp): RegExp[] {
     /gh[pousr]_[a-z0-9_]{20,}/i,
     PEM_PRIVATE_KEY_PATTERN,
     emailPattern,
-    /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+    PRIVATE_IP_PATTERN,
     /\/(?:Users|home)\/[^\s/]+/i,
   ];
 }

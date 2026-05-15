@@ -48,6 +48,15 @@ interface DenyRule {
  */
 export const PEM_PRIVATE_KEY_PATTERN = /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY[A-Za-z0-9 ]*-----/i;
 
+/**
+ * Private IP address pattern (RFC 1918 ranges).
+ * Shared with generated-skill-validation.ts and procedure-promotion-policy.ts.
+ * Matches: 10.x.x.x, 172.16-31.x.x, 192.168.x.x (four-octet private IPs).
+ * Loopback (127.x) is intentionally excluded — it reveals nothing about network topology
+ * and causes noisy false positives on health-check examples (Issue #1385).
+ */
+export const PRIVATE_IP_PATTERN = /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/;
+
 /** Default placeholder email domains used by {@link buildNonPlaceholderEmailPattern}. */
 export const DEFAULT_PLACEHOLDER_EMAIL_DOMAINS = ["example.com", "localhost", "test.com", "example.org"];
 
@@ -101,9 +110,7 @@ function buildPrivateContextPatterns(
   return [
     [
       "private-ip",
-      // Loopback (127.x) is intentionally excluded — it reveals nothing about the network
-      // topology and causes noisy false positives on health-check examples (Issue #1385).
-      /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+      PRIVATE_IP_PATTERN,
       "Private IP / host inventory detected (replace with placeholders)",
     ],
     [
