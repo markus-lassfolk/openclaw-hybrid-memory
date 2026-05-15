@@ -745,8 +745,8 @@ function desiredLifecycleTransition(
 export function refreshGeneratedSkillLifecycleState(
   db: DatabaseSync,
   skillName: string,
-  policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
-  now = Math.floor(Date.now() / 1000),
+  policy?: GeneratedSkillLifecyclePolicy,
+  now?: number,
 ): ProcedureEntry | null;
 export function refreshGeneratedSkillLifecycleState(
   db: DatabaseSync,

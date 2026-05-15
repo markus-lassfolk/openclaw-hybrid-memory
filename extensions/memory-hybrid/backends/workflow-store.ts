@@ -173,6 +173,14 @@ export class WorkflowStore extends BaseSqliteStore {
     patterns: WorkflowPattern[];
   } | null = null;
 
+  private static clonePatterns(patterns: WorkflowPattern[]): WorkflowPattern[] {
+    return patterns.map((pattern) => ({
+      ...pattern,
+      toolSequence: [...pattern.toolSequence],
+      exampleGoals: [...pattern.exampleGoals],
+    }));
+  }
+
   /** Monotonic in-process revision for cheap memo validation without table scans. */
   private workflowPatternsRevision = 0;
 
@@ -390,7 +398,7 @@ export class WorkflowStore extends BaseSqliteStore {
         memo.minSuccessRate === minRate &&
         memo.resultLimit === resultLimit
       ) {
-        return memo.patterns;
+        return WorkflowStore.clonePatterns(memo.patterns);
       }
 
       const allRows = this.liveDb
@@ -471,9 +479,9 @@ export class WorkflowStore extends BaseSqliteStore {
         similarityThreshold: threshold,
         minSuccessRate: minRate,
         resultLimit,
-        patterns: out,
+        patterns: WorkflowStore.clonePatterns(out),
       };
-      return out;
+      return WorkflowStore.clonePatterns(out);
     });
   }
 

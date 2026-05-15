@@ -333,6 +333,23 @@ describe("WorkflowStore.getPatterns", () => {
     expect(patterns.length).toBeLessThanOrEqual(1);
   });
 
+  it("returns defensive copies for memoized pattern arrays", () => {
+    const first = store.getPatterns();
+    expect(first.length).toBeGreaterThan(0);
+
+    first.length = 0;
+
+    const second = store.getPatterns();
+    expect(second.length).toBeGreaterThan(0);
+
+    second[0].toolSequence.push("mutated-tool");
+    second[0].exampleGoals.push("mutated-goal");
+
+    const third = store.getPatterns();
+    expect(third[0].toolSequence).not.toContain("mutated-tool");
+    expect(third[0].exampleGoals).not.toContain("mutated-goal");
+  });
+
   it("reopens and returns results when native DB handle was unexpectedly closed", () => {
     const db = (store as any).db as import("node:sqlite").DatabaseSync;
     db.close();
