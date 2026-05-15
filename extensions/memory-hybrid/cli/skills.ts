@@ -6,8 +6,10 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import type { CrystallizationStatus } from "../backends/crystallization-store.js";
-import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type {
+  CrystallizationQueueStatusFilter,
+  CrystallizationStore,
+} from "../backends/crystallization-store.js";
 import {
   assertCrystallizationQueueStatusFilter,
   CRYSTALLIZATION_QUEUE_STATUS_FILTERS,
@@ -86,8 +88,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       withExit(async (opts: { status?: string; limit?: string; json?: boolean }) => {
         const store = requireStore(ctx);
         const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
-        const status =
-          (opts.status as CrystallizationStatus | "pending" | "approved" | "rejected" | undefined) ?? undefined;
+        const status = (opts.status as CrystallizationQueueStatusFilter | undefined) ?? undefined;
         let proposals;
         try {
           assertCrystallizationQueueStatusFilter(opts.status);
