@@ -108,11 +108,7 @@ function buildPrivateContextPatterns(
   emailPattern: RegExp,
 ): Array<[name: string, pattern: RegExp, description: string]> {
   return [
-    [
-      "private-ip",
-      PRIVATE_IP_PATTERN,
-      "Private IP / host inventory detected (replace with placeholders)",
-    ],
+    ["private-ip", PRIVATE_IP_PATTERN, "Private IP / host inventory detected (replace with placeholders)"],
     [
       "home-path-linux",
       /(?:^|[\s"'=:])\/home\/(?!user\/|runner\/|ubuntu\/)[^\s"'/:]+\/[^\s"']+/,

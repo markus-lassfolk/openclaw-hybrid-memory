@@ -13,7 +13,12 @@ import {
   redactAutopilotText,
   redactAutopilotValue,
 } from "./pending-autopilot/index.js";
-import { NON_PLACEHOLDER_EMAIL_PATTERN, PEM_PRIVATE_KEY_PATTERN, PRIVATE_IP_PATTERN, SkillValidator } from "./skill-validator.js";
+import {
+  NON_PLACEHOLDER_EMAIL_PATTERN,
+  PEM_PRIVATE_KEY_PATTERN,
+  PRIVATE_IP_PATTERN,
+  SkillValidator,
+} from "./skill-validator.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v1";
 
