@@ -158,7 +158,7 @@ Bounded release-health review workflow.
 
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
-    expect(validation.approvalDecision).toBe("allow-with-override");
+    expect(validation.approvalDecision).toBe("allow");
   });
 
   it("passes static, dry-load, and activation eval for crystallized skills", () => {

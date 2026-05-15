@@ -775,7 +775,7 @@ Source procedure id: proc-weather
     const evaluation = evaluateProcedureForPromotion(
       createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
       parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["(a+)+b"] },
+      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["a{1,3}?b"] },
     );
 
     expect(evaluation.metadata.rejectionReasons).not.toContain("too_context_specific");

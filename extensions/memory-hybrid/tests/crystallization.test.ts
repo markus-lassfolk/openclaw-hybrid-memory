@@ -603,7 +603,7 @@ describe("SkillCrystallizer.crystallize", () => {
       "exec",
     ]);
 
-    expect(text.split("\n")[0]).toMatch(/^- Run workflow: nightly release health checks/);
+    expect(text.split("\n")[0]).toMatch(/^- nightly release health checks/);
     expect(text).not.toContain("- - Run");
   });
 
