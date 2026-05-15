@@ -418,7 +418,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
               agentId: opts?.agentId,
               sessionId: opts?.sessionId,
             });
-            const skill = factsDb.getGeneratedSkillByName(skillName);
+            const skill = factsDb.getGeneratedSkillByName(skillName, activation.procedureId);
             if (opts?.json) {
               console.log(JSON.stringify({ activation, skill }, null, 2));
               return;
