@@ -312,19 +312,6 @@ export function crystallize(cfg: CrystallizationConfig, input: CrystallizationIn
   };
 }
 
-/**
- * @deprecated Use the free function `crystallize(cfg, input)` instead.
- * Kept for backward compatibility; will be removed in a future release.
- */
-export class SkillCrystallizer {
-  constructor(private readonly cfg: CrystallizationConfig) {}
-
-  /** @deprecated Use `crystallize(cfg, input)` instead. */
-  crystallize(input: CrystallizationInput): CrystallizationResult {
-    return crystallize(this.cfg, input);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Shell script builder (exec-only patterns)
 // ---------------------------------------------------------------------------

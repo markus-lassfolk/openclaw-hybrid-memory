@@ -11,6 +11,7 @@ import type { CrystallizationStatus } from "../backends/crystallization-store.js
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import { GeneratedSkillLifecycleService } from "../services/generated-skill-lifecycle.js";
 import { SkillValidator } from "../services/skill-validator.js";
 import type { Chainable } from "./shared.js";
 import { relativeTime, withExit } from "./shared.js";
@@ -210,13 +211,14 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
 }
 
 function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: FactsDB): void {
+  const lifecycle = new GeneratedSkillLifecycleService(factsDb);
   skills
     .command("telemetry [skillName]")
     .description("Report generated skill activation telemetry and lifecycle recommendations")
     .option("--json", "Emit JSON")
     .action(
       withExit(async (skillName?: string, opts?: { json?: boolean }) => {
-        const report = factsDb.buildGeneratedSkillTelemetryReport({
+        const report = lifecycle.buildReport({
           skillName,
           recentActivationLimit: skillName ? 20 : 5,
         });
@@ -224,7 +226,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           console.log(JSON.stringify(report, null, 2));
           return;
         }
-        if (report.rows.length === 0) {
+        if (!report || report.rows.length === 0) {
           console.log(
             skillName ? `No generated skill found for ${skillName}.` : "No generated skills have been promoted yet.",
           );
@@ -343,7 +345,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
             return;
           }
           try {
-            const activation = factsDb.recordGeneratedSkillTelemetry({
+            const activation = lifecycle.recordTelemetry({
               skillName,
               decision: decision as "selected" | "considered" | "skipped",
               requestSummary: opts?.requestSummary,
@@ -362,7 +364,12 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
               agentId: opts?.agentId,
               sessionId: opts?.sessionId,
             });
-            const skill = factsDb.getGeneratedSkillByName(skillName);
+            if (!activation) {
+              console.error("error: facts DB is not open");
+              process.exitCode = 1;
+              return;
+            }
+            const skill = lifecycle.getSkill(skillName);
             if (opts?.json) {
               console.log(JSON.stringify({ activation, skill }, null, 2));
               return;
@@ -385,16 +392,13 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--json", "Emit JSON")
     .action(
       withExit(async (activationId: string, opts?: { reason?: string; json?: boolean }) => {
-        const activation = factsDb.markGeneratedSkillTelemetryFalsePositive(
-          activationId,
-          opts?.reason ?? "user correction",
-        );
+        const activation = lifecycle.markFalsePositive(activationId, opts?.reason ?? "user correction");
         if (!activation) {
           console.error(`error: activation not found: ${activationId}`);
           process.exitCode = 1;
           return;
         }
-        const skill = factsDb.getGeneratedSkillByName(activation.skillName);
+        const skill = lifecycle.getSkill(activation.skillName);
         if (opts?.json) {
           console.log(JSON.stringify({ activation, skill }, null, 2));
           return;
@@ -412,11 +416,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--json", "Emit JSON")
     .action(
       withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
-        const updated = factsDb.setGeneratedSkillLifecycleState(
-          skillName,
-          "demoted",
-          opts?.reason ?? "manual demotion",
-        );
+        const updated = lifecycle.setState(skillName, "demoted", opts?.reason ?? "manual demotion");
         if (!updated) {
           console.error(`error: generated skill not found: ${skillName}`);
           process.exitCode = 1;
@@ -439,24 +439,24 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--json", "Emit JSON")
     .action(
       withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
-        const current = factsDb.getGeneratedSkillByName(skillName);
+        const current = lifecycle.getSkill(skillName);
         if (!current) {
           console.error(`error: generated skill not found: ${skillName}`);
           process.exitCode = 1;
           return;
         }
-        if (current.skillState !== "demoted" && current.skillState !== "archived") {
+        if (
+          current.skillState !== "demoted" &&
+          current.skillState !== "archived" &&
+          current.skillState !== "uninstalled"
+        ) {
           console.error(
-            `error: skill '${skillName}' is in state '${current.skillState ?? "experimental"}' — only demoted or archived skills can be reset`,
+            `error: skill '${skillName}' is in state '${current.skillState ?? "experimental"}' — only demoted, archived, or uninstalled skills can be reset`,
           );
           process.exitCode = 1;
           return;
         }
-        const updated = factsDb.setGeneratedSkillLifecycleState(
-          skillName,
-          "experimental",
-          opts?.reason ?? "manual reset",
-        );
+        const updated = lifecycle.setState(skillName, "experimental", opts?.reason ?? "manual reset");
         if (!updated) {
           console.error(`error: generated skill not found: ${skillName}`);
           process.exitCode = 1;
@@ -477,11 +477,20 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--json", "Emit JSON")
     .action(
       withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
-        const updated = factsDb.setGeneratedSkillLifecycleState(
-          skillName,
-          "rejected",
-          opts?.reason ?? "manual rejection",
-        );
+        const current = lifecycle.getSkill(skillName);
+        if (!current) {
+          console.error(`error: generated skill not found: ${skillName}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (current.skillState === "rejected" || current.skillState === "uninstalled") {
+          console.error(
+            `error: skill '${skillName}' is in terminal state '${current.skillState}' — only installed, non-terminal skills can be rejected`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        const updated = lifecycle.setState(skillName, "rejected", opts?.reason ?? "manual rejection");
         if (!updated) {
           console.error(`error: generated skill not found: ${skillName}`);
           process.exitCode = 1;
@@ -506,17 +515,20 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { fix?: boolean; workspace?: string; json?: boolean }) => {
-        const report = factsDb.reconcileGeneratedSkillDiskState({
+        const report = lifecycle.reconcileDiskState({
           fix: opts?.fix === true,
           workspaceRoot: opts?.workspace,
         });
+        if (!report) {
+          console.error("error: facts DB is not open");
+          process.exitCode = 1;
+          return;
+        }
         if (opts?.json) {
           console.log(JSON.stringify(report, null, 2));
           return;
         }
-        console.log(
-          `Skills doctor: checked ${report.totalChecked} generated skill(s) at ${report.checkedAt}`,
-        );
+        console.log(`Skills doctor: checked ${report.totalChecked} generated skill(s) at ${report.checkedAt}`);
         if (report.issues.length === 0) {
           console.log("✓ All generated skills found on disk.");
           return;
@@ -530,7 +542,10 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
         if (!opts?.fix) {
           console.log("\nRun with --fix to mark these as uninstalled in the DB.");
         } else {
-          console.log("\nMarked missing skills as uninstalled.");
+          console.log(`\nMarked ${report.fixedCount} missing skill(s) as uninstalled.`);
+          for (const issue of report.issues.filter((row) => row.fixed)) {
+            console.log(`  fixed: ${issue.skillName} (${issue.procedureId})`);
+          }
         }
       }),
     );

@@ -149,20 +149,3 @@ export function detectCandidates(
 
   return candidates;
 }
-
-/**
- * @deprecated Use the free function `detectCandidates(workflowStore, crystallizationStore, cfg)` instead.
- * Kept for backward compatibility; will be removed in a future release.
- */
-export class PatternDetector {
-  constructor(
-    private readonly workflowStore: WorkflowStore,
-    private readonly crystallizationStore: CrystallizationStore,
-    private readonly cfg: CrystallizationConfig,
-  ) {}
-
-  /** @deprecated Use `detectCandidates(workflowStore, crystallizationStore, cfg)` instead. */
-  detect(): CrystallizationCandidate[] {
-    return detectCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
-  }
-}
