@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { effectiveDemoteThresholdsForRisk } from "../backends/facts-db/generated-skills.js";
 import { registerSkillsCommands } from "../cli/skills.js";
 
 let tmpDir: string;
@@ -119,6 +120,27 @@ describe("generated skill telemetry", () => {
     expect(report.rows[0]?.flags.overTriggering).toBe(true);
     expect(report.rows[0]?.recommendation).toBe("demote");
     expect(report.rows[0]?.riskLevel).toBe("low");
+  });
+
+  it("clamps risk-adjusted demote false-positive thresholds into the valid rate range", () => {
+    expect(
+      effectiveDemoteThresholdsForRisk("low", {
+        promoteAfterSuccessfulUses: 3,
+        demoteFalsePositiveRate: 0.98,
+        demoteMinSamples: 3,
+        archiveAfterUnusedDays: 30,
+        revisionNearMissThreshold: 3,
+      }).falsePositiveRate,
+    ).toBe(1);
+    expect(
+      effectiveDemoteThresholdsForRisk("high", {
+        promoteAfterSuccessfulUses: 3,
+        demoteFalsePositiveRate: 0.05,
+        demoteMinSamples: 3,
+        archiveAfterUnusedDays: 30,
+        revisionNearMissThreshold: 3,
+      }).falsePositiveRate,
+    ).toBe(0.1);
   });
 
   it("demotes high-risk generated skills earlier than low-risk under the same false-positive pressure", () => {

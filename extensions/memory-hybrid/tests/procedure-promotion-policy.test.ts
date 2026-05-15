@@ -12,6 +12,7 @@ import {
   parseProcedurePromotionPolicy,
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
@@ -1105,6 +1106,19 @@ Source procedure id: proc-weather
       expect(uncappedWouldDiffer.metadata.candidateScoreBreakdown.userSignal).toBe(
         capped.metadata.candidateScoreBreakdown.userSignal,
       );
+    });
+
+    it("classifies risk with the same command variants covered by safety scanning", () => {
+      const base = requireProcedure(addProcedure({ taskPattern: "Validate procedure risk classifier variants" }).id);
+      const mediumRecipes = [
+        JSON.stringify([{ tool: "exec", args: { command: "fetch https://api.example.com -X POST" } }]),
+        JSON.stringify([{ tool: "exec", args: { command: "pip3 install example-package" } }]),
+        JSON.stringify([{ tool: "exec", args: { command: "apt-get upgrade example-package" } }]),
+      ];
+
+      for (const recipeJson of mediumRecipes) {
+        expect(determineRiskLevel(base, parseRecipeOrRaw(recipeJson))).toBe("medium");
+      }
     });
 
     it("ranks low-risk candidates above high-risk with otherwise similar promotion evidence", () => {

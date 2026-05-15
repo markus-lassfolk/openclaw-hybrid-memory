@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
+import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -808,14 +809,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function parseRecipeOrRaw(recipeJson: string): unknown {
-  try {
-    return JSON.parse(recipeJson);
-  } catch {
-    return { malformed: true, raw: recipeJson };
-  }
-}
-
 function countDistinctSourceSessions(raw: string | undefined): number {
   const tokens = parseSourceSessionTokenList(raw);
   if (tokens.length === 0) return 1;
@@ -955,27 +948,6 @@ function collectDistinctSessionIds(
       source.add(episode.sessionId.trim());
   }
   return [...source];
-}
-
-/**
- * Heuristic risk tier for procedure text + recipe (used for promotion gates, scoring, and lifecycle demotion).
- * Aligns with destructive / network / install patterns in `scanSafety` and promotion scoring.
- */
-export function determineRiskLevel(proc: ProcedureEntry, recipe: unknown): "low" | "medium" | "high" {
-  const combined = `${proc.taskPattern}\n${JSON.stringify(recipe)}`;
-  if (
-    /(?:\brm\s+-[rf]+\b|\bdd\s+if=|\bmkfs\b|\bshred\b|\bdrop\s+table\b|\btruncate\s+table\b)|(?:\bprivate[_-]?key\b|\b(?:token|password)\b)\s*[:=]/i.test(
-      combined,
-    )
-  )
-    return "high";
-  if (
-    /\b(systemctl|service)\s+(?:start|stop|restart|reload|enable|disable)\b|\b(npm|pnpm|yarn|pip|apt|brew|cargo)\s+(install|add|remove|uninstall|upgrade)\b|\bssh\b|\bscp\b|\brsync\b|\b(curl|wget)\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))/i.test(
-      combined,
-    )
-  )
-    return "medium";
-  return "low";
 }
 
 /**

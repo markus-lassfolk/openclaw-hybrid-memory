@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { determineRiskLevel } from "../../services/procedure-promotion-policy.js";
+import { determineRiskLevel, parseRecipeOrRaw } from "../../utils/procedure-risk.js";
 import type {
   GeneratedSkillLifecycleState,
   GeneratedSkillTelemetryDecision,
@@ -132,14 +132,6 @@ type GeneratedSkillTelemetryRow = {
   created_at: number;
 };
 
-function parseProcedureRecipeJson(recipeJson: string): unknown {
-  try {
-    return JSON.parse(recipeJson) as unknown;
-  } catch {
-    return { malformed: true, raw: recipeJson };
-  }
-}
-
 /**
  * Demote thresholds mirror promotion risk bumps: higher-risk generated skills need **stricter** false-positive
  * evidence to stay trusted (lower FP rate threshold, fewer minimum activations); low-risk skills use a slightly
@@ -152,7 +144,7 @@ export function effectiveDemoteThresholdsForRisk(
   const fpAdjust = riskLevel === "high" ? -0.1 : riskLevel === "medium" ? -0.05 : 0.05;
   const minSamplesAdjust = riskLevel === "high" ? -1 : 0;
   return {
-    falsePositiveRate: Math.max(0.1, policy.demoteFalsePositiveRate + fpAdjust),
+    falsePositiveRate: Math.min(1, Math.max(0.1, policy.demoteFalsePositiveRate + fpAdjust)),
     minSamples: Math.max(1, policy.demoteMinSamples + minSamplesAdjust),
   };
 }
@@ -433,7 +425,7 @@ function summarizeSkillTelemetry(
   const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
   const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
-  const riskLevel = determineRiskLevel(proc, parseProcedureRecipeJson(proc.recipeJson));
+  const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
   const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
     riskLevel,
     policy,
@@ -499,7 +491,7 @@ function desiredLifecycleTransition(
     };
   }
   if (currentState !== "demoted" && flags.overTriggering) {
-    const riskLevel = determineRiskLevel(proc, parseProcedureRecipeJson(proc.recipeJson));
+    const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
     const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
       riskLevel,
       policy,
