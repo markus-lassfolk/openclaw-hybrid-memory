@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -416,6 +416,113 @@ Bounded symlink validation workflow.
 
     expect(validation.staticValidation.status).toBe("failed");
     expect(validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path"))).toBe(true);
+  });
+
+  // Regression tests for canonical outputDir path equivalence (Issue #1373)
+  const CANONICAL_SKILL_CONTENT = `---
+name: canonical-path-skill
+description: Use when the user asks to test canonical path equivalence.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Canonical Path Skill
+
+## Trigger
+Use this skill for canonical path equivalence testing.
+
+## Scope
+Bounded canonical path workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Resolve output path canonically.
+2. Compare resolved forms for equivalence.
+
+## Verification
+- Confirm output paths stay inside the skills directory.
+
+## Anti-patterns / Known Failures
+- Do not compare raw path strings without resolving first.
+
+## Examples
+- Validate canonical path equivalence for generated skills.
+
+## Provenance
+- Source pattern ID: \`pattern-canonical\``;
+
+  it("accepts outputDir with a trailing slash (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-trailing-slash-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Trailing separator form — must be accepted as equivalent
+    const outputDirWithSlash = `${canonicalOutputDir}${sep}`;
+    const validation = service.validate({
+      outputDir: outputDirWithSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "Trailing-slash outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("accepts outputDir prefixed with ./ (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dot-slash-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Insert a "." segment in the middle: /tmp/xxx/./skills — resolves to /tmp/xxx/skills
+    const outputDirDotSlash = `${tmpDir}${sep}.${sep}skills`;
+    const validation = service.validate({
+      outputDir: outputDirDotSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "./ prefixed outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("accepts outputDir with redundant separators (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-redundant-sep-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Redundant-separator form — must be accepted as equivalent
+    const outputDirDoubleSlash = `${dirname(canonicalOutputDir)}${sep}${sep}${basename(canonicalOutputDir)}`;
+    const validation = service.validate({
+      outputDir: outputDirDoubleSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "Redundant-separator outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("rejects proposedOutputPath that escapes the outputDir (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-escape-"));
+    const service = new GeneratedSkillValidationService();
+    const outputDir = join(tmpDir, "skills");
+    // Path traversal attempt: escapes the outputDir
+    const escapingPath = join(outputDir, "..", "canonical-path-skill", "SKILL.md");
+    const validation = service.validate({
+      outputDir,
+      proposedOutputPath: escapingPath,
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path")),
+      "Path traversal escaping outputDir must be rejected",
+    ).toBe(true);
   });
 
   it("requires explicit override for activation warnings during approval", () => {

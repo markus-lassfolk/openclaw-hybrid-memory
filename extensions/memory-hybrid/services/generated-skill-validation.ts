@@ -232,7 +232,7 @@ export class GeneratedSkillValidationService {
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
     const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
-    const proposedOutputPath = resolve(input.proposedOutputPath);
+    const proposedOutputPath = input.proposedOutputPath;
 
     if (input.skillContent.length > MAX_SKILL_CHARS) {
       violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);
@@ -419,7 +419,8 @@ function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, ski
   const outputRoot = resolve(outputDir);
   const skillDir = resolve(outputRoot, skillName);
   const expected = resolve(skillDir, "SKILL.md");
-  if (proposedOutputPath !== expected || !isWithinDir(outputRoot, dirname(proposedOutputPath))) return false;
+  const resolvedProposed = resolve(proposedOutputPath);
+  if (resolvedProposed !== expected || !isWithinDir(outputRoot, dirname(resolvedProposed))) return false;
 
   return existingSkillPathIsSafe(outputRoot, skillDir, expected);
 }

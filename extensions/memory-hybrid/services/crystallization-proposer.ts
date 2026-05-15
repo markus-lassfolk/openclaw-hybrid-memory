@@ -11,7 +11,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
@@ -347,7 +347,7 @@ export class CrystallizationProposer {
 
   private computeOutputPath(skillName: string): string {
     const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    return `${outputDir}/${skillName}/SKILL.md`;
+    return resolve(outputDir, skillName, "SKILL.md");
   }
 
   private applyOverridesToDraft(
