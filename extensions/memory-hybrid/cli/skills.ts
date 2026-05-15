@@ -223,13 +223,13 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
         const result = proposer.rescanInstalledSkills();
         if (opts.json) {
           console.log(JSON.stringify({ ok: result.errors.length === 0, ...result }, null, 2));
-          if (result.errors.length > 0) process.exitCode = 1;
+          if (result.errors.length > 0) process.exitCode = 2;
           return;
         }
         console.log(`Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`);
         for (const line of result.messages) console.log(`  ${line}`);
         for (const line of result.errors) console.error(`  error: ${line}`);
-        if (result.errors.length > 0) process.exitCode = 1;
+        if (result.errors.length > 0) process.exitCode = 2;
       }),
     );
 }
