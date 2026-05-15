@@ -209,6 +209,30 @@ describe("CrystallizationProposer.runCycle — autoApprove=true", () => {
     expect(skillPath).toBeDefined();
     expect(existsSync(skillPath!)).toBe(true);
   });
+
+  it("does not persist auto-approve candidates after maxCrystallized is reached mid-cycle", () => {
+    const outputDir = join(tmpDir, "skills-capped");
+    const cfg: CrystallizationConfig = {
+      ...BASE_CFG,
+      outputDir,
+      autoApprove: true,
+      minUsageCount: 2,
+      minSuccessRate: 0.5,
+      maxCrystallized: 1,
+    };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    seedPatterns(["exec", "read", "write"], 3, 1);
+    seedPatterns(["read", "edit", "exec"], 3, 1);
+
+    const result = proposer.runCycle();
+
+    expect(result.proposed).toBe(1);
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result.reasons.some((reason) => /maxCrystallized limit reached/i.test(reason))).toBe(true);
+    expect(cStore.count("approved")).toBe(1);
+    expect(cStore.list({ status: "pending" })).toHaveLength(0);
+    expect(cStore.list()).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -288,6 +312,54 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(body).toContain("# renamed-skill");
     expect(body).toContain("**Category:** workflow-automation");
     expect(body).toContain("openclaw:skill-proposal");
+  });
+
+  it("enforces maxCrystallized when approvals interleave", () => {
+    const outputDir = join(tmpDir, "skills-race");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false, maxCrystallized: 1 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const first = cStore.create({
+      patternId: "race-pattern-1",
+      evidenceHash: "race-ev-1",
+      skillName: "race-skill-1",
+      skillContent:
+        "# Race Skill One\n\nThis is a test skill file with adequate content for validation purposes and interleaving approval checks.",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    const second = cStore.create({
+      patternId: "race-pattern-2",
+      evidenceHash: "race-ev-2",
+      skillName: "race-skill-2",
+      skillContent:
+        "# Race Skill Two\n\nThis is a test skill file with adequate content for validation purposes and interleaving approval checks.",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let nestedResult: ReturnType<CrystallizationProposer["approveProposal"]> | null = null;
+    const originalApproveWithinCap = cStore.approveWithinCap.bind(cStore);
+    let injected = false;
+    const interleavingApproveWithinCap: CrystallizationStore["approveWithinCap"] = (id, maxCrystallized, opts) => {
+      if (!injected && id === first.id) {
+        injected = true;
+        nestedResult = proposer.approveProposal(second.id, { overrideWarnings: true });
+      }
+      return originalApproveWithinCap(id, maxCrystallized, opts);
+    };
+    cStore.approveWithinCap = interleavingApproveWithinCap;
+
+    try {
+      const firstResult = proposer.approveProposal(first.id, { overrideWarnings: true });
+      expect(nestedResult).not.toBeNull();
+      const results = [firstResult, nestedResult!];
+      expect(results.filter((r) => r.success)).toHaveLength(1);
+      expect(results.filter((r) => !r.success)[0]?.message).toMatch(/maxCrystallized/i);
+      expect(cStore.count("approved")).toBe(1);
+    } finally {
+      cStore.approveWithinCap = originalApproveWithinCap;
+    }
   });
 
   it("returns success=false when maxCrystallized is 0", () => {
