@@ -53,7 +53,6 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "", // will be set in beforeEach
   maxCrystallized: 50,
   pruneUnusedDays: 30,
-  evidenceCountBucketSize: 5,
 };
 
 beforeEach(() => {
