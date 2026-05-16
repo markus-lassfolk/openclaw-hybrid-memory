@@ -196,7 +196,6 @@ export class CrystallizationStore extends BaseSqliteStore {
       v = next;
     }
   }
-  }
 
   private expandStatusFilter(status?: CrystallizationStatusFilter): CrystallizationStatus[] | undefined {
     if (!status) return undefined;
