@@ -24,6 +24,7 @@ const {
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
+  buildNonPlaceholderEmailPattern,
 } = _testing as any;
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
 function makeTmpOutputDir(): string {
@@ -445,6 +447,25 @@ describe("scorePattern", () => {
       toolSequence: [],
     };
     expect(scorePattern(pattern)).toBe(0);
+  });
+});
+
+describe("WorkflowStore.getPatterns memo (#1415)", () => {
+  it("returns identical JSON for repeated calls until a new trace is recorded", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: `stable-${i}`,
+        toolSequence: ["t1", "t2"],
+        outcome: "success",
+        argsHash: "memo-bucket",
+      });
+    }
+    const a = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    const b = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    expect(JSON.stringify(a)).toEqual(JSON.stringify(b));
+    wfStore.record({ goal: "bump", toolSequence: ["z"], outcome: "success" });
+    const c = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    expect(c.length).toBeGreaterThan(0);
   });
 });
 
@@ -999,6 +1020,139 @@ ${extra.extraBody ?? ""}`;
     expect(result.valid).toBe(false);
     expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Issue #1382 — PEM private-key regex must be case-insensitive
+  // -------------------------------------------------------------------------
+
+  it("rejects all-lowercase PEM private-key marker", () => {
+    const content = compactValidSkill({
+      extraBody: "\n-----begin private key-----\nMIIEvgIBADANBg==\n-----end private key-----\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-key-block"))).toBe(true);
+  });
+
+  it("rejects mixed-case PEM private-key marker", () => {
+    const content = compactValidSkill({
+      extraBody: "\n-----BEGIN Rsa Private Key-----\nMIIEvgIBADANBg==\n-----END Rsa Private Key-----\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-key-block"))).toBe(true);
+  });
+
+  it("rejects PGP PRIVATE KEY BLOCK marker", () => {
+    const content = compactValidSkill({
+      extraBody: "\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQIEBxyz\n-----END PGP PRIVATE KEY BLOCK-----\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-key-block"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #1384 — tilde-home-path must also catch dotfile paths like ~/.ssh
+  // -------------------------------------------------------------------------
+
+  it("rejects ~/.ssh dotfile paths", () => {
+    const content = compactValidSkill({
+      extraBody: "\nKey location: ~/.ssh/id_rsa\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  it("rejects ~/.aws dotfile paths", () => {
+    const content = compactValidSkill({
+      extraBody: "\nCredentials at ~/.aws/credentials\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  it("rejects ~/.gnupg dotfile paths", () => {
+    const content = compactValidSkill({
+      extraBody: "\nKey ring: ~/.gnupg/secring.gpg\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  it("still rejects non-dotfile tilde paths like ~/projects/foo", () => {
+    const content = compactValidSkill({
+      extraBody: "\nDocument: ~/projects/aws-creds.txt\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #1385 — loopback (127.x) must NOT be flagged as private-ip
+  // -------------------------------------------------------------------------
+
+  it("does not flag loopback address 127.0.0.1 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nHealth-check URL: http://127.0.0.1:8080/health\n",
+    });
+    const result = validator.validate(content);
+    // Only check that private-ip violation is not present (other violations may exist)
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(false);
+  });
+
+  it("still flags RFC1918 address 192.168.1.10 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nDatabase host: 192.168.1.10\n",
+    });
+    const result = validator.validate(content);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
+  });
+
+  it("still flags RFC1918 address 10.0.0.1 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nInternal service: 10.0.0.1\n",
+    });
+    const result = validator.validate(content);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #1383 — custom placeholder-email allow-list via constructor
+  // -------------------------------------------------------------------------
+
+  it("uses default allow-list when no emailPattern provided", () => {
+    const content = compactValidSkill({
+      extraBody: "\nContact: ops@example.com\n",
+    });
+    expect(validator.validate(content).violations.some((v: string) => v.includes("email-address"))).toBe(false);
+  });
+
+  it("flags real-looking email addresses with default allow-list", () => {
+    const content = compactValidSkill({
+      extraBody: "\nContact: admin@acme-internal.corp\n",
+    });
+    expect(validator.validate(content).violations.some((v: string) => v.includes("email-address"))).toBe(true);
+  });
+
+  it("does not flag custom domain when validator is configured with custom allow-list", () => {
+    const customEmailPattern = buildNonPlaceholderEmailPattern([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+      "acme-internal.corp",
+    ]);
+    const customValidator = new SkillValidator({ emailPattern: customEmailPattern });
+    const content = compactValidSkill({
+      extraBody: "\nContact: team@acme-internal.corp\n",
+    });
+    expect(customValidator.validate(content).violations.some((v: string) => v.includes("email-address"))).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -1274,5 +1428,43 @@ describe("parseCrystallizationConfig", () => {
       crystallization: { minSuccessRate: 2.5 },
     });
     expect(cfg.crystallization.minSuccessRate).toBe(0.7); // falls back to default
+  });
+
+  // Issue #1383 — configurable placeholder email allow-list
+
+  it("parses custom placeholderEmailDomains from config", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CFG,
+      crystallization: {
+        placeholderEmailDomains: ["example.com", "company.test"],
+      },
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual(["example.com", "company.test"]);
+  });
+
+  it("defaults placeholderEmailDomains to standard four when omitted", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+    ]);
+  });
+
+  it("falls back to default placeholderEmailDomains when an empty array is provided", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CFG,
+      crystallization: { placeholderEmailDomains: [] },
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+    ]);
   });
 });

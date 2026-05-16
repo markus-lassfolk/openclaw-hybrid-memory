@@ -957,7 +957,7 @@ export function getProceduresReadyForSkill(
 ): ProcedureEntry[] {
   const rows = db
     .prepare(
-      `SELECT * FROM procedures WHERE procedure_type = 'positive' AND success_count >= ? AND promoted_to_skill = 0 ORDER BY success_count DESC, last_validated DESC LIMIT ?`,
+      `SELECT * FROM procedures WHERE procedure_type = 'positive' AND success_count >= ? AND promoted_to_skill = 0 ORDER BY success_count DESC, last_validated DESC, created_at ASC, rowid ASC LIMIT ?`,
     )
     .all(validationThreshold, limit) as Array<Record<string, unknown>>;
   return rows.map((r) => procedureRowToEntry(db, r));
