@@ -82,6 +82,7 @@ export function detectCandidates(
   try {
     patterns = workflowStore.getPatterns({
       minSuccessRate: cfg.minSuccessRate,
+      traceSampleLimit: 6000,
       // Fetch more than needed to allow filtering by usage count
       limit: 200,
     });
