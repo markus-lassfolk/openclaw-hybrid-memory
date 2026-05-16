@@ -238,8 +238,14 @@ export class GeneratedSkillValidationService {
     if (input.skillContent.length > MAX_SKILL_CHARS) {
       violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);
     }
-    if (input.skillContent.split(/\r?\n/).length > MAX_SKILL_LINES) {
-      violations.push(`Skill exceeds ${MAX_SKILL_LINES} lines`);
+    // Line-count check: Only perform this check for legacy proposals. For non-legacy proposals,
+    // SkillValidator will perform this check on the normalized content (with stripped comments)
+    // to maintain a single source of truth and avoid duplicate violations (issue #1366).
+    if (legacy) {
+      const normalizedContent = stripLeadingHtmlComments(input.skillContent);
+      if (normalizedContent.split(/\r?\n/).length > MAX_SKILL_LINES) {
+        violations.push(`Skill exceeds ${MAX_SKILL_LINES} lines`);
+      }
     }
     if (!legacy) {
       for (const field of REQUIRED_FRONTMATTER_FIELDS) {
