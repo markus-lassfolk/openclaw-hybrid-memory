@@ -578,11 +578,7 @@ function skillTelemetryRecentEntries(
           ORDER BY created_at DESC
           LIMIT ?`;
   const params = procedureId ? [skillName, procedureId, limit] : [skillName, limit];
-  return (
-    db
-      .prepare(query)
-      .all(...params) as GeneratedSkillTelemetryRow[]
-  ).map(mapGeneratedSkillTelemetryRow);
+  return (db.prepare(query).all(...params) as GeneratedSkillTelemetryRow[]).map(mapGeneratedSkillTelemetryRow);
 }
 
 type RawTelemetryCounts = {
@@ -852,8 +848,7 @@ export function refreshGeneratedSkillLifecycleState(
   | { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
   | null {
   const returnMetrics = returnMetricsOrProcedureId === true;
-  const resolvedProcedureId =
-    typeof returnMetricsOrProcedureId === "string" ? returnMetricsOrProcedureId : procedureId;
+  const resolvedProcedureId = typeof returnMetricsOrProcedureId === "string" ? returnMetricsOrProcedureId : procedureId;
   const proc =
     resolvedProcedureId != null
       ? findProcedureById(db, resolvedProcedureId)
