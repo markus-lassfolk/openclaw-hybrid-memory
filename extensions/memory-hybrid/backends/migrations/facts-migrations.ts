@@ -397,6 +397,12 @@ function migrateGeneratedSkillLifecycleColumns(db: DatabaseSync): void {
       AND skill_path IS NOT NULL
       AND (skill_state IS NULL OR skill_state = '' OR skill_state = 'draft')
   `);
+  db.exec(`
+    UPDATE procedures
+    SET skill_state_changed_at = COALESCE(updated_at, created_at)
+    WHERE skill_state IN ('demoted', 'archived')
+      AND skill_state_changed_at IS NULL
+  `);
 }
 
 function migrateGeneratedSkillTelemetryTable(db: DatabaseSync): void {
