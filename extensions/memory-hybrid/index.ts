@@ -307,7 +307,7 @@ import {
 } from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
 import { crystallizeSkill, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
-import { SkillValidator } from "./services/skill-validator.js";
+import { SkillValidator, buildNonPlaceholderEmailPattern } from "./services/skill-validator.js";
 import { ToolProposer } from "./services/tool-proposer.js";
 import { VerificationError, VerificationStore, shouldAutoVerify } from "./services/verification-store.js";
 import { WorkflowTracker } from "./services/workflow-tracker.js";
@@ -993,6 +993,7 @@ export const _testing = {
   detectCrystallizationCandidates,
   crystallizeSkill,
   SkillValidator,
+  buildNonPlaceholderEmailPattern,
   CrystallizationProposer,
   computePatternId,
   computeEvidenceHash,

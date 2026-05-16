@@ -2,11 +2,12 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
+import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -76,11 +77,18 @@ export type GenerateAutoSkillResult =
 function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-  while (existsSync(join(basePath, candidate)) || reservedSlugs?.has(candidate)) {
+  // Legacy skill directories created before the atomic completion marker rollout
+  // do not contain `.openclaw-skill-complete`. They are still occupied names and
+  // must not be overwritten. Only incomplete atomic drafts are reusable.
+  while (reservedSlugs?.has(candidate) || isOccupiedSkillDir(join(basePath, candidate))) {
     n++;
     candidate = `${slug}-${n}`;
   }
   return candidate;
+}
+
+function isOccupiedSkillDir(skillDir: string): boolean {
+  return existsSync(join(skillDir, SKILL_COMPLETE_MARKER)) || existsSync(join(skillDir, "SKILL.md"));
 }
 
 type AllocatedSkillDir = {
@@ -190,6 +198,8 @@ type GenerateAutoSkillsOptions = {
   policy?: string;
   /** Same-run draft slugs/task patterns for duplicate detection (single-procedure promote / custom orchestration). */
   inRunSkillCandidates?: readonly ProcedurePromotionDuplicateCandidate[];
+  /** When true, duplicate-skill detection re-reads every SKILL.md (bypass mtime cache). */
+  bypassDuplicateSkillCache?: boolean;
 };
 
 /**
@@ -237,6 +247,7 @@ export function generateAutoSkills(
       resolvedSlug,
       inRunSkillCandidates: [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
       evidence,
+      bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     const reservedCandidate = {
@@ -426,6 +437,7 @@ export function generateAutoSkillForProcedure(
     resolvedSlug,
     evidence,
     inRunSkillCandidates: options.inRunSkillCandidates ?? [],
+    bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -571,12 +583,16 @@ function writeDraftSkill(
     proposalMetadataJson: string;
   },
 ): void {
-  mkdirSync(join(skillDir, "evals"), { recursive: false });
-  writeFileSync(join(skillDir, "SKILL.md"), draft.skillMd, "utf-8");
-  writeFileSync(join(skillDir, "recipe.json"), draft.recipeJson, "utf-8");
-  writeFileSync(join(skillDir, "verification.json"), draft.verificationJson, "utf-8");
-  writeFileSync(join(skillDir, "proposal-metadata.json"), draft.proposalMetadataJson, "utf-8");
-  writeFileSync(join(skillDir, "evals", "evals.json"), draft.evalsJson, "utf-8");
+  // Write all sidecar files atomically (temp dir → rename). SKILL.md is
+  // written last among content files so it is the final content write before
+  // the completion marker.
+  atomicWriteSkillDir(skillDir, {
+    "recipe.json": draft.recipeJson,
+    "verification.json": draft.verificationJson,
+    "proposal-metadata.json": draft.proposalMetadataJson,
+    "evals/evals.json": draft.evalsJson,
+    "SKILL.md": draft.skillMd,
+  });
 }
 
 function releaseInRunReservation(
