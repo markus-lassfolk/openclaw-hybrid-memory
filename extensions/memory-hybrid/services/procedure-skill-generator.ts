@@ -2,11 +2,17 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
+import {
+  SKILL_COMPLETE_MARKER,
+  atomicWriteSkillDir,
+  isAtomicWriteArtifact,
+  isSkillDirComplete,
+} from "../utils/atomic-write.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -75,49 +81,78 @@ export type GenerateAutoSkillResult =
 function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-  while (existsSync(join(basePath, candidate)) || reservedSlugs?.has(candidate)) {
+  while (reservedSlugs?.has(candidate) || isCommittedSkillDir(join(basePath, candidate))) {
     n++;
     candidate = `${slug}-${n}`;
   }
   return candidate;
 }
 
-type AllocatedSkillDir = {
+function isCommittedSkillDir(skillDir: string): boolean {
+  if (!existsSync(skillDir)) return false;
+  if (isAtomicWriteArtifact(skillDir) && !isSkillDirComplete(skillDir)) return false;
+  return true;
+}
+
+type WrittenDraftSkill = {
   slug: string;
   skillDir: string;
   relativePath: string;
+  completionMarker: string;
 };
 
 /**
- * Atomically reserve a draft skill directory. `ensureUniqueSlug` is only a preview
- * used for policy evaluation; this function is the write-time source of truth so
- * concurrent generators cannot select and overwrite the same path.
+ * Atomically write a draft skill directory, retrying with a suffixed slug when
+ * an incomplete directory appears between slug preview and final promotion.
  */
-function allocateDraftSkillDir(basePath: string, skillsAutoPath: string, slug: string): AllocatedSkillDir {
+function writeAllocatedDraftSkill(
+  basePath: string,
+  skillsAutoPath: string,
+  slug: string,
+  draft: {
+    skillMd: string;
+    recipeJson: string;
+    verificationJson: string;
+    evalsJson: string;
+    proposalMetadataJson: string;
+  },
+): WrittenDraftSkill {
   mkdirSync(basePath, { recursive: true });
   let n = 0;
-  while (true) {
+  const MAX_RETRIES = 1000;
+  while (n < MAX_RETRIES) {
     const candidate = n === 0 ? slug : `${slug}-${n}`;
     const skillDir = join(basePath, candidate);
+    const relativePath = join(skillsAutoPath, candidate);
     try {
-      mkdirSync(skillDir, { recursive: false });
-      return {
-        slug: candidate,
-        skillDir,
-        relativePath: join(skillsAutoPath, candidate),
-      };
+      const completionMarker = writeDraftSkill(skillDir, rebaseDraftSlug(draft, candidate, relativePath));
+      return { slug: candidate, skillDir, relativePath, completionMarker };
     } catch (err) {
-      if (isPathExistsError(err)) {
+      if (isRetryableWriteCollision(err, skillDir)) {
         n++;
         continue;
       }
       throw err;
     }
   }
+  throw new Error(`Failed to allocate draft skill after ${MAX_RETRIES} attempts: all slug candidates collided`);
+}
+
+function isRetryableWriteCollision(err: unknown, skillDir: string): boolean {
+  if (!existsSync(skillDir)) return false;
+  if (isPathExistsError(err)) return true;
+  if (isNotEmptyError(err)) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes(`Refusing to overwrite existing skill directory: ${skillDir}`)) return true;
+  return false;
 }
 
 function isPathExistsError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "EEXIST";
+}
+
+function isNotEmptyError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "ENOTEMPTY";
 }
 
 /**
@@ -187,6 +222,8 @@ type GenerateAutoSkillsOptions = {
   dryRun?: boolean;
   apply?: boolean;
   policy?: string;
+  /** When true, duplicate-skill detection re-reads every SKILL.md (bypass mtime cache). */
+  bypassDuplicateSkillCache?: boolean;
 };
 
 /**
@@ -234,6 +271,7 @@ export function generateAutoSkills(
       resolvedSlug,
       inRunSkillCandidates,
       evidence,
+      bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     const reservedCandidate = {
@@ -298,9 +336,9 @@ export function generateAutoSkills(
       continue;
     }
 
-    let allocated: AllocatedSkillDir | null = null;
+    let allocated: WrittenDraftSkill | null = null;
     try {
-      allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
+      allocated = writeAllocatedDraftSkill(basePath, options.skillsAutoPath, item.payload.skillSlug, evaluation.draft);
       // Update reservation tracking if allocation resolved to a different slug
       if (allocated.slug !== resolvedSlug) {
         reservedSlugs.delete(resolvedSlug);
@@ -313,7 +351,6 @@ export function generateAutoSkills(
         }
         reservedCandidate.slug = allocated.slug;
       }
-      writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
@@ -333,7 +370,7 @@ export function generateAutoSkills(
       drafted++;
       logger.info(`procedure-skill-generator: drafted ${allocatedSkillPath} (enabled=false)`);
     } catch (err) {
-      rollbackDraftSkill(allocated?.skillDir ?? skillDir);
+      rollbackDraftSkill(allocated?.skillDir ?? skillDir, allocated?.completionMarker ?? null);
       releaseInRunReservation(reservedSlugs, inRunSkillCandidates, reservedCandidate);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-skill-generator",
@@ -422,6 +459,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
+    bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -454,13 +492,12 @@ export function generateAutoSkillForProcedure(
     };
   }
 
-  let allocated: AllocatedSkillDir | null = null;
+  let allocated: WrittenDraftSkill | null = null;
   try {
-    allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
-    writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
+    allocated = writeAllocatedDraftSkill(basePath, options.skillsAutoPath, item.payload.skillSlug, evaluation.draft);
     factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
   } catch (err) {
-    rollbackDraftSkill(allocated?.skillDir ?? skillDir);
+    rollbackDraftSkill(allocated?.skillDir ?? skillDir, allocated?.completionMarker ?? null);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "procedure-skill-generator",
       operation: "promote-write-draft",
@@ -566,13 +603,17 @@ function writeDraftSkill(
     evalsJson: string;
     proposalMetadataJson: string;
   },
-): void {
-  mkdirSync(join(skillDir, "evals"), { recursive: false });
-  writeFileSync(join(skillDir, "SKILL.md"), draft.skillMd, "utf-8");
-  writeFileSync(join(skillDir, "recipe.json"), draft.recipeJson, "utf-8");
-  writeFileSync(join(skillDir, "verification.json"), draft.verificationJson, "utf-8");
-  writeFileSync(join(skillDir, "proposal-metadata.json"), draft.proposalMetadataJson, "utf-8");
-  writeFileSync(join(skillDir, "evals", "evals.json"), draft.evalsJson, "utf-8");
+): string {
+  // Write all sidecar files atomically (temp dir → rename). SKILL.md is
+  // written last among content files so it is the final content write before
+  // the completion marker.
+  return atomicWriteSkillDir(skillDir, {
+    "recipe.json": draft.recipeJson,
+    "verification.json": draft.verificationJson,
+    "proposal-metadata.json": draft.proposalMetadataJson,
+    "evals/evals.json": draft.evalsJson,
+    "SKILL.md": draft.skillMd,
+  }).completionMarker;
 }
 
 function releaseInRunReservation(
@@ -587,8 +628,14 @@ function releaseInRunReservation(
   if (index >= 0) inRunSkillCandidates.splice(index, 1);
 }
 
-function rollbackDraftSkill(skillDir: string): void {
-  if (!existsSync(skillDir)) return;
+function rollbackDraftSkill(skillDir: string, completionMarker: string | null): void {
+  if (!completionMarker || !existsSync(skillDir)) return;
+  try {
+    const markerPath = join(skillDir, SKILL_COMPLETE_MARKER);
+    if (readFileSync(markerPath, "utf-8") !== completionMarker) return;
+  } catch {
+    return;
+  }
   try {
     rmSync(skillDir, { recursive: true, force: true });
   } catch (err) {

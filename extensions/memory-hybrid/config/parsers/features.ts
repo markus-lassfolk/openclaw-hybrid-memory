@@ -1,4 +1,5 @@
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
+import { DEFAULT_PLACEHOLDER_EMAIL_DOMAINS } from "../../services/skill-validator.js";
 import { pluginLogger } from "../../utils/logger.js";
 import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
 import type { PersonaProposalsConfig } from "../types/agents.js";
@@ -564,6 +565,14 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
     pruneUnusedDays:
       typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0 ? Math.floor(raw.pruneUnusedDays) : 30,
     sectionTaxonomy: parseSectionTaxonomyOverrides(raw?.sectionTaxonomy),
+    placeholderEmailDomains: (() => {
+      const raw_domains = raw?.placeholderEmailDomains;
+      if (!Array.isArray(raw_domains)) return [...DEFAULT_PLACEHOLDER_EMAIL_DOMAINS];
+      const valid = raw_domains
+        .filter((d): d is string => typeof d === "string" && d.trim().length > 0)
+        .map((d) => d.trim());
+      return valid.length > 0 ? valid : [...DEFAULT_PLACEHOLDER_EMAIL_DOMAINS];
+    })(),
   };
 }
 

@@ -588,6 +588,10 @@
       "label": "Crystallization (skill proposals)",
       "help": "Generate AgentSkill SKILL.md proposals from workflow patterns. Default: false."
     },
+    "crystallization.placeholderEmailDomains": {
+      "label": "Placeholder Email Domains",
+      "help": "Email domains treated as safe placeholders during skill validation. Extend with your organisation's internal placeholder domains (e.g. 'company.test') so they are not flagged as real addresses. Default: ['example.com', 'localhost', 'test.com', 'example.org']."
+    },
     "multiAgent.orchestratorId": {
       "label": "Orchestrator Agent ID",
       "placeholder": "main",
@@ -1848,6 +1852,13 @@
               }
             },
             "description": "Project-level SKILL.md required-section taxonomy overrides keyed by category; use 'default' for the fallback taxonomy. Each configured array replaces the inherited list."
+          },
+          "placeholderEmailDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
           }
         },
         "description": "Auto-generate SKILL.md from repeated patterns"

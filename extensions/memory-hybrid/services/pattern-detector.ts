@@ -85,6 +85,7 @@ export class PatternDetector {
     try {
       patterns = this.workflowStore.getPatterns({
         minSuccessRate: this.cfg.minSuccessRate,
+        traceSampleLimit: 6000,
         // Fetch more than needed to allow filtering by usage count
         limit: 200,
       });

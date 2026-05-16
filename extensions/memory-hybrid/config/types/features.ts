@@ -199,11 +199,11 @@ export type CrystallizationConfig = {
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
   /**
-   * Optional project-level SKILL.md section taxonomy overrides, keyed by category.
-   * Use `default` to replace the default taxonomy for all categories without a
-   * category-specific override. Each configured array replaces the inherited list.
+   * Email domains treated as safe placeholders during skill validation (Issue #1383).
+   * Extend this list with your organisation's internal placeholder domains so they are
+   * not flagged as real addresses. Default: ["example.com", "localhost", "test.com", "example.org"].
    */
-  sectionTaxonomy?: SectionTaxonomyOverrides;
+  placeholderEmailDomains: string[];
 };
 
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
