@@ -64,11 +64,12 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  * Pass files in the order you want them written.  Convention: put `SKILL.md`
  * last so it is the final content file before the marker.
  */
-export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): void {
+export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): { completionMarker: string } {
   const parent = dirname(skillDir);
   const rand = randomBytes(8).toString("hex");
   const tmpDir = `${skillDir}.tmp-${process.pid}-${rand}`;
   const backupDir = existsSync(skillDir) ? join(parent, `.${basename(skillDir)}.bak-${Date.now()}-${rand}`) : null;
+  const completionMarker = `${new Date().toISOString()}\nwriteId=${process.pid}-${rand}`;
 
   try {
     // Write every sidecar into the temp directory.
@@ -79,13 +80,16 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     }
 
     // Stamp the completion marker as the final write inside the temp dir.
-    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
+    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), completionMarker, "utf-8");
+
 
     // Move existing skill dir out of the way so the rename targets a free path.
     if (backupDir) renameSync(skillDir, backupDir);
 
+
     // Atomic promotion: temp dir → final skill dir.
     renameSync(tmpDir, skillDir);
+    return { completionMarker };
   } catch (err) {
     // Best-effort rollback: restore the backup if we moved it.
     try {
@@ -107,7 +111,7 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
   // Clean up the backup on success.
   if (backupDir) {
     try {
-      rmSync(backupDir, { recursive: true, force: true });
+      rmSync(backupDir!, { recursive: true, force: true });
     } catch {
       // Non-fatal: the skill is already committed to skillDir.
     }
@@ -120,4 +124,15 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
  */
 export function isSkillDirComplete(skillDir: string): boolean {
   return existsSync(join(skillDir, SKILL_COMPLETE_MARKER));
+}
+
+/**
+ * Returns `true` when the given path appears to be a temporary or backup
+ * artifact created by atomic write operations (e.g., `skill.tmp-1234-abc` or
+ * `.skill.bak-5678-def`). These directories should be ignored when listing
+ * committed skills unless they contain the completion marker.
+ */
+export function isAtomicWriteArtifact(pathOrEntry: string): boolean {
+  const entry = pathOrEntry.split(/[\\/]/).pop() ?? "";
+  return /\.tmp-\d+-[a-f0-9]+$/i.test(entry) || /^\..+\.bak-\d+-[a-f0-9]+$/i.test(entry);
 }

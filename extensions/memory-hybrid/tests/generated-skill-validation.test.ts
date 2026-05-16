@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -9,8 +9,9 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { registerSkillsCommands } from "../cli/skills.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
-import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
+import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
+import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
 
 const BASE_CFG: CrystallizationConfig = {
   enabled: true,
@@ -20,6 +21,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
 
@@ -416,6 +418,113 @@ Bounded symlink validation workflow.
     expect(validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path"))).toBe(true);
   });
 
+  // Regression tests for canonical outputDir path equivalence (Issue #1373)
+  const CANONICAL_SKILL_CONTENT = `---
+name: canonical-path-skill
+description: Use when the user asks to test canonical path equivalence.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Canonical Path Skill
+
+## Trigger
+Use this skill for canonical path equivalence testing.
+
+## Scope
+Bounded canonical path workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Resolve output path canonically.
+2. Compare resolved forms for equivalence.
+
+## Verification
+- Confirm output paths stay inside the skills directory.
+
+## Anti-patterns / Known Failures
+- Do not compare raw path strings without resolving first.
+
+## Examples
+- Validate canonical path equivalence for generated skills.
+
+## Provenance
+- Source pattern ID: \`pattern-canonical\``;
+
+  it("accepts outputDir with a trailing slash (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-trailing-slash-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Trailing separator form — must be accepted as equivalent
+    const outputDirWithSlash = `${canonicalOutputDir}${sep}`;
+    const validation = service.validate({
+      outputDir: outputDirWithSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "Trailing-slash outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("accepts outputDir prefixed with ./ (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dot-slash-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Insert a "." segment in the middle: /tmp/xxx/./skills — resolves to /tmp/xxx/skills
+    const outputDirDotSlash = `${tmpDir}${sep}.${sep}skills`;
+    const validation = service.validate({
+      outputDir: outputDirDotSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "./ prefixed outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("accepts outputDir with redundant separators (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-redundant-sep-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Redundant-separator form — must be accepted as equivalent
+    const outputDirDoubleSlash = `${dirname(canonicalOutputDir)}${sep}${sep}${basename(canonicalOutputDir)}`;
+    const validation = service.validate({
+      outputDir: outputDirDoubleSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "Redundant-separator outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("rejects proposedOutputPath that escapes the outputDir (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-escape-"));
+    const service = new GeneratedSkillValidationService();
+    const outputDir = join(tmpDir, "skills");
+    // Path traversal attempt: escapes the outputDir
+    const escapingPath = join(outputDir, "..", "canonical-path-skill", "SKILL.md");
+    const validation = service.validate({
+      outputDir,
+      proposedOutputPath: escapingPath,
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path")),
+      "Path traversal escaping outputDir must be rejected",
+    ).toBe(true);
+  });
+
   it("requires explicit override for activation warnings during approval", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-override-"));
     const validationService = new GeneratedSkillValidationService();
@@ -801,5 +910,206 @@ Bounded metadata installation workflow.
       wfStore.close();
       cStore.close();
     }
+  });
+});
+
+// ============================================================================
+// Issue #1383 — custom placeholder-email allow-list
+// ============================================================================
+describe("GeneratedSkillValidationService — custom placeholderEmailDomains", () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags an internal-placeholder email address with the default allow-list", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-default-"));
+    const skillContent = makeMinimalSkill("custom-domain-test", "team@company.internal");
+    const defaultPattern = buildNonPlaceholderEmailPattern(["example.com", "localhost", "test.com", "example.org"]);
+    expect(defaultPattern.test(skillContent)).toBe(true);
+    expect(defaultPattern.test(makeMinimalSkill("custom-domain-test", "team@EXAMPLE.COM"))).toBe(false);
+  });
+
+  it("does not flag custom placeholder domain when configured with extended allow-list", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-extended-"));
+    const customEmailPattern = buildNonPlaceholderEmailPattern([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+      "company.internal",
+    ]);
+    const service = new GeneratedSkillValidationService({ emailPattern: customEmailPattern });
+    const cfg: CrystallizationConfig = {
+      ...BASE_CFG,
+      outputDir: join(tmpDir, "skills"),
+      placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org", "company.internal"],
+    };
+    const crystallizer = new SkillCrystallizer(cfg);
+    const pattern = {
+      toolSequence: ["read", "write"],
+      totalCount: 5,
+      successCount: 5,
+      failureCount: 0,
+      successRate: 1,
+      avgDurationMs: 400,
+      exampleGoals: ["Send the weekly summary to ops@company.internal after deploy"],
+    };
+    const result = crystallizer.crystallize({ patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern });
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
+    const emailViolations = validation.staticValidation.violations.filter(
+      (v) => v.includes("email") || v.includes("company.internal"),
+    );
+    expect(emailViolations).toHaveLength(0);
+  });
+
+  it("parseCrystallizationConfig picks up custom placeholderEmailDomains", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "openai",
+        apiKey: "sk-test-key-12345678",
+        model: "text-embedding-3-small",
+      },
+      crystallization: {
+        placeholderEmailDomains: ["example.com", "company.internal"],
+      },
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual(["example.com", "company.internal"]);
+  });
+
+  it("parseCrystallizationConfig defaults to standard domains when field is omitted", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        provider: "openai",
+        apiKey: "sk-test-key-12345678",
+        model: "text-embedding-3-small",
+      },
+      mode: "minimal",
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeMinimalSkill(skillName: string, emailInContent: string): string {
+  return `---
+name: ${skillName}
+description: Minimal skill for email pattern tests.
+category: test
+provenance: test-suite
+---
+
+# ${skillName}
+
+## Trigger
+- Use this skill for email-pattern validation tests.
+
+## Scope
+- Bounded to test fixtures.
+
+## When not to use
+- When no email validation is needed.
+
+## Workflow
+1. Contact: ${emailInContent}
+2. Verify output.
+
+## Examples
+- Good: "Test the email pattern validation."
+
+## Provenance
+- Generated for email-pattern tests.
+`;
+}
+
+// ---------------------------------------------------------------------------
+// parseSkillFrontmatter — HTML comment prefix (Issue #1363)
+// ---------------------------------------------------------------------------
+
+describe("parseSkillFrontmatter — HTML comment prefix", () => {
+  const FRONTMATTER_BODY = `---
+name: test-skill
+description: Use when the user asks to test things.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Test Skill
+`;
+
+  it("parses frontmatter from content that starts with --- (baseline)", () => {
+    const fm = parseSkillFrontmatter(FRONTMATTER_BODY);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+    expect(fm.category).toBe("crystallized-workflow");
+    expect(fm.provenance).toBe("test-suite");
+  });
+
+  it("parses frontmatter when a single-line HTML comment precedes ---", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 pattern_id=p1 evidence_hash=eh1 output_path=/skills/test-skill/SKILL.md -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter when BOM and whitespace precede an HTML comment", () => {
+    const content = `\uFEFF\n  \t\n<!-- openclaw:skill-proposal id=abc123 -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter when a multi-line HTML comment precedes ---", () => {
+    const content = `<!-- openclaw:skill-proposal\n  id=abc123\n  pattern_id=p1\n-->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after multiple leading HTML comments", () => {
+    const content = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after an inline closing HTML comment marker", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 --> ${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("returns empty object when content is only an HTML comment with no frontmatter", () => {
+    const content = "<!-- openclaw:skill-proposal id=abc123 -->\n# Plain Markdown\n\nNo frontmatter here.";
+    const fm = parseSkillFrontmatter(content);
+    expect(fm).toEqual({});
+  });
+
+  it("returns empty object for plain markdown with no frontmatter and no HTML comment", () => {
+    const fm = parseSkillFrontmatter("# Plain Markdown\n\nNo frontmatter here.");
+    expect(fm).toEqual({});
   });
 });

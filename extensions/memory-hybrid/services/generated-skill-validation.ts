@@ -13,8 +13,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
-import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
+import {
+  NON_PLACEHOLDER_EMAIL_PATTERN,
+  PEM_PRIVATE_KEY_PATTERN,
+  PRIVATE_IP_PATTERN,
+  SkillValidator,
+} from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
 export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";
@@ -25,6 +31,8 @@ export interface SyntheticActivationCases {
   edge: string;
 }
 
+export type SkillFrontmatter = Record<string, string | undefined>;
+
 export interface SkillProposalValidationResult {
   schemaVersion: 1;
   validatedAt: string;
@@ -33,7 +41,7 @@ export interface SkillProposalValidationResult {
   staticValidation: {
     status: ValidationStageStatus;
     violations: string[];
-    frontmatter: Record<string, string>;
+    frontmatter: SkillFrontmatter;
     safeOutputPath: string;
   };
   dryLoadValidation: {
@@ -80,14 +88,6 @@ const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
 const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
 const EXPLANATION_PATTERN = /\b(?:explain|describe|summarize|review)\b/;
 const NEGATION_PATTERN = /\b(?:without|do not|don't|avoid)\b/;
-const SECRET_OR_PRIVATE_PATTERNS = [
-  /sk-[a-z0-9]{20,}/i,
-  /gh[pousr]_[a-z0-9_]{20,}/i,
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  NON_PLACEHOLDER_EMAIL_PATTERN,
-  /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/,
-  /\/(?:Users|home)\/[^\s/]+/i,
-];
 const STOP_WORDS = new Set([
   "about",
   "after",
@@ -120,10 +120,11 @@ const STOP_WORDS = new Set([
   "without",
 ]);
 
-export function parseSkillFrontmatter(skillContent: string): Record<string, string> {
-  const match = skillContent.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
+  const body = stripLeadingHtmlComments(skillContent);
+  const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
-  const frontmatter: Record<string, string> = {};
+  const frontmatter: SkillFrontmatter = {};
   for (const rawLine of match[1].split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
@@ -157,8 +158,36 @@ export function detailSkillProposalValidation(result?: SkillProposalValidationRe
   return `${summarizeSkillProposalValidation(result)}; violations: ${details.slice(0, 8).join("; ")}`;
 }
 
+/**
+ * Build the secret/private-data pattern list for GSV.
+ * Accepts an email pattern so operators can supply a custom allow-list (Issue #1383).
+ * PEM detector is case-insensitive and uses the shared constant (Issue #1382).
+ * Private IP pattern uses the shared constant to prevent drift across validators.
+ */
+function buildSecretOrPrivatePatterns(emailPattern: RegExp): RegExp[] {
+  return [
+    /sk-[a-z0-9]{20,}/i,
+    /gh[pousr]_[a-z0-9_]{20,}/i,
+    PEM_PRIVATE_KEY_PATTERN,
+    emailPattern,
+    PRIVATE_IP_PATTERN,
+    /\/(?:Users|home)\/[^\s/]+/i,
+  ];
+}
+
 export class GeneratedSkillValidationService {
-  private readonly skillValidator = new SkillValidator();
+  private readonly skillValidator: SkillValidator;
+  private readonly secretOrPrivatePatterns: RegExp[];
+
+  /**
+   * @param options.emailPattern - custom non-placeholder email regex; defaults to
+   *   {@link NON_PLACEHOLDER_EMAIL_PATTERN}. Build with {@link buildNonPlaceholderEmailPattern}.
+   */
+  constructor(options?: { emailPattern?: RegExp }) {
+    const emailPattern = options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN;
+    this.skillValidator = new SkillValidator({ emailPattern });
+    this.secretOrPrivatePatterns = buildSecretOrPrivatePatterns(emailPattern);
+  }
 
   validate(
     input: ValidateGeneratedSkillInput,
@@ -207,12 +236,12 @@ export class GeneratedSkillValidationService {
 
   private validateStatic(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     legacy: boolean,
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
     const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
-    const proposedOutputPath = resolve(input.proposedOutputPath);
+    const proposedOutputPath = input.proposedOutputPath;
 
     if (input.skillContent.length > MAX_SKILL_CHARS) {
       violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);
@@ -250,7 +279,7 @@ export class GeneratedSkillValidationService {
     if (!isCanonicalSkillPath(input.outputDir, proposedOutputPath, input.skillName)) {
       violations.push(`Unsafe proposed output path: ${input.proposedOutputPath}`);
     }
-    for (const pattern of SECRET_OR_PRIVATE_PATTERNS) {
+    for (const pattern of this.secretOrPrivatePatterns) {
       if (pattern.test(input.skillContent)) {
         violations.push(`Secret/private-data pattern detected: ${pattern}`);
       }
@@ -273,7 +302,7 @@ export class GeneratedSkillValidationService {
 
   private validateDryLoad(
     skillContent: string,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     skillName: string,
   ): SkillProposalValidationResult["dryLoadValidation"] {
     const violations: string[] = [];
@@ -303,7 +332,9 @@ export class GeneratedSkillValidationService {
 
       const entries = loadDrySkillEntries(skillsDir);
       const entry = entries.find(
-        (candidate) => candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
+        (candidate) =>
+          candidate.name === skillName ||
+          (candidate.name ? normalizeSkillName(candidate.name) === normalizedSkillName : false),
       );
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
@@ -332,7 +363,7 @@ export class GeneratedSkillValidationService {
 
   private evaluateActivation(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
     const cases = buildSyntheticActivationCases(input, frontmatter);
     const triggerSection = extractSection(input.skillContent, "Trigger");
@@ -399,7 +430,8 @@ function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, ski
   const outputRoot = resolve(outputDir);
   const skillDir = resolve(outputRoot, skillName);
   const expected = resolve(skillDir, "SKILL.md");
-  if (proposedOutputPath !== expected || !isWithinDir(outputRoot, dirname(proposedOutputPath))) return false;
+  const resolvedProposed = resolve(proposedOutputPath);
+  if (resolvedProposed !== expected || !isWithinDir(outputRoot, dirname(resolvedProposed))) return false;
 
   return existingSkillPathIsSafe(outputRoot, skillDir, expected);
 }
@@ -433,8 +465,8 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
-  const out: Array<Record<string, string>> = [];
+function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
+  const out: SkillFrontmatter[] = [];
   for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const skillPath = join(skillsDir, entry.name, "SKILL.md");
@@ -463,7 +495,7 @@ function extractSection(skillContent: string, heading: string): string {
 
 function buildSyntheticActivationCases(
   input: ValidateGeneratedSkillInput,
-  frontmatter: Record<string, string>,
+  frontmatter: SkillFrontmatter,
 ): SyntheticActivationCases {
   const positive =
     input.pattern?.exampleGoals

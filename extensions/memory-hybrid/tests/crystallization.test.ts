@@ -7,6 +7,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
@@ -23,6 +24,7 @@ const {
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
+  buildNonPlaceholderEmailPattern,
 } = _testing as any;
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
 function makeTmpOutputDir(): string {
@@ -183,6 +186,103 @@ describe("CrystallizationStore.approve", () => {
     });
     cStore.approve(p.id);
     expect(cStore.approve(p.id)).toBeNull();
+  });
+});
+
+describe("CrystallizationStore migration", () => {
+  it("dedupes installed rows using normalized timestamps across mixed formats", () => {
+    cStore.close();
+    const dbPath = join(tmpDir, "mixed-format-crystallization.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE crystallization_proposals (
+        id TEXT PRIMARY KEY,
+        pattern_id TEXT NOT NULL,
+        evidence_hash TEXT,
+        skill_name TEXT NOT NULL,
+        skill_content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        pattern_snapshot TEXT NOT NULL DEFAULT '{}',
+        output_path TEXT,
+        installed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    const insert = db.prepare(`
+      INSERT INTO crystallization_proposals
+        (id, pattern_id, evidence_hash, skill_name, skill_content, status, pattern_snapshot, output_path, installed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'installed', '{}', ?, ?, ?, ?)
+    `);
+    insert.run(
+      "older-iso",
+      "mixed-pattern",
+      "ev-old",
+      "older-skill",
+      "# old",
+      "/out/old/SKILL.md",
+      "2026-05-14T23:00:00.000Z",
+      "2026-05-14T23:00:00.000Z",
+      "2026-05-14T23:00:00.000Z",
+    );
+    insert.run(
+      "newer-sqlite",
+      "mixed-pattern",
+      "ev-new",
+      "newer-skill",
+      "# new",
+      "/out/new/SKILL.md",
+      "2026-05-14 23:30:00",
+      "2026-05-14 23:30:00",
+      "2026-05-14 23:30:00",
+    );
+    db.close();
+
+    cStore = new CrystallizationStore(dbPath);
+
+    expect(cStore.getById("newer-sqlite")?.status).toBe("installed");
+    expect(cStore.getById("older-iso")?.status).toBe("superseded");
+    expect(cStore.getById("older-iso")?.supersededBy).toBe("newer-sqlite");
+  });
+});
+
+describe("CrystallizationStore.install", () => {
+  it("keeps at most one installed proposal per pattern by superseding older installs", () => {
+    const first = cStore.create({
+      patternId: "pattern-shared",
+      evidenceHash: "ev1",
+      skillName: "skill-1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    const second = cStore.create({
+      patternId: "pattern-shared",
+      evidenceHash: "ev2",
+      skillName: "skill-2",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    cStore.approve(first.id);
+    cStore.install(first.id, "/out/skill-1/SKILL.md");
+    cStore.approve(second.id);
+    cStore.install(second.id, "/out/skill-2/SKILL.md");
+
+    const updatedFirst = cStore.getById(first.id);
+    const updatedSecond = cStore.getById(second.id);
+    expect(updatedFirst?.status).toBe("superseded");
+    expect(updatedFirst?.supersededBy).toBe(second.id);
+    expect(updatedSecond?.status).toBe("installed");
+
+    const installedForPattern = cStore
+      .list()
+      .filter(
+        (p: { patternId: string; status: string }) => p.patternId === "pattern-shared" && p.status === "installed",
+      );
+    expect(installedForPattern).toHaveLength(1);
+    expect(installedForPattern[0]?.id).toBe(second.id);
   });
 });
 
@@ -347,6 +447,25 @@ describe("scorePattern", () => {
       toolSequence: [],
     };
     expect(scorePattern(pattern)).toBe(0);
+  });
+});
+
+describe("WorkflowStore.getPatterns memo (#1415)", () => {
+  it("returns identical JSON for repeated calls until a new trace is recorded", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: `stable-${i}`,
+        toolSequence: ["t1", "t2"],
+        outcome: "success",
+        argsHash: "memo-bucket",
+      });
+    }
+    const a = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    const b = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    expect(JSON.stringify(a)).toEqual(JSON.stringify(b));
+    wfStore.record({ goal: "bump", toolSequence: ["z"], outcome: "success" });
+    const c = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    expect(c.length).toBeGreaterThan(0);
   });
 });
 
@@ -887,6 +1006,139 @@ ${extra.extraBody ?? ""}`;
     expect(result.valid).toBe(false);
     expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Issue #1382 — PEM private-key regex must be case-insensitive
+  // -------------------------------------------------------------------------
+
+  it("rejects all-lowercase PEM private-key marker", () => {
+    const content = compactValidSkill({
+      extraBody: "\n-----begin private key-----\nMIIEvgIBADANBg==\n-----end private key-----\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-key-block"))).toBe(true);
+  });
+
+  it("rejects mixed-case PEM private-key marker", () => {
+    const content = compactValidSkill({
+      extraBody: "\n-----BEGIN Rsa Private Key-----\nMIIEvgIBADANBg==\n-----END Rsa Private Key-----\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-key-block"))).toBe(true);
+  });
+
+  it("rejects PGP PRIVATE KEY BLOCK marker", () => {
+    const content = compactValidSkill({
+      extraBody: "\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQIEBxyz\n-----END PGP PRIVATE KEY BLOCK-----\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("private-key-block"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #1384 — tilde-home-path must also catch dotfile paths like ~/.ssh
+  // -------------------------------------------------------------------------
+
+  it("rejects ~/.ssh dotfile paths", () => {
+    const content = compactValidSkill({
+      extraBody: "\nKey location: ~/.ssh/id_rsa\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  it("rejects ~/.aws dotfile paths", () => {
+    const content = compactValidSkill({
+      extraBody: "\nCredentials at ~/.aws/credentials\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  it("rejects ~/.gnupg dotfile paths", () => {
+    const content = compactValidSkill({
+      extraBody: "\nKey ring: ~/.gnupg/secring.gpg\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  it("still rejects non-dotfile tilde paths like ~/projects/foo", () => {
+    const content = compactValidSkill({
+      extraBody: "\nDocument: ~/projects/aws-creds.txt\n",
+    });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("tilde-home-path"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #1385 — loopback (127.x) must NOT be flagged as private-ip
+  // -------------------------------------------------------------------------
+
+  it("does not flag loopback address 127.0.0.1 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nHealth-check URL: http://127.0.0.1:8080/health\n",
+    });
+    const result = validator.validate(content);
+    // Only check that private-ip violation is not present (other violations may exist)
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(false);
+  });
+
+  it("still flags RFC1918 address 192.168.1.10 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nDatabase host: 192.168.1.10\n",
+    });
+    const result = validator.validate(content);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
+  });
+
+  it("still flags RFC1918 address 10.0.0.1 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nInternal service: 10.0.0.1\n",
+    });
+    const result = validator.validate(content);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #1383 — custom placeholder-email allow-list via constructor
+  // -------------------------------------------------------------------------
+
+  it("uses default allow-list when no emailPattern provided", () => {
+    const content = compactValidSkill({
+      extraBody: "\nContact: ops@example.com\n",
+    });
+    expect(validator.validate(content).violations.some((v: string) => v.includes("email-address"))).toBe(false);
+  });
+
+  it("flags real-looking email addresses with default allow-list", () => {
+    const content = compactValidSkill({
+      extraBody: "\nContact: admin@acme-internal.corp\n",
+    });
+    expect(validator.validate(content).violations.some((v: string) => v.includes("email-address"))).toBe(true);
+  });
+
+  it("does not flag custom domain when validator is configured with custom allow-list", () => {
+    const customEmailPattern = buildNonPlaceholderEmailPattern([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+      "acme-internal.corp",
+    ]);
+    const customValidator = new SkillValidator({ emailPattern: customEmailPattern });
+    const content = compactValidSkill({
+      extraBody: "\nContact: team@acme-internal.corp\n",
+    });
+    expect(customValidator.validate(content).violations.some((v: string) => v.includes("email-address"))).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -1162,5 +1414,43 @@ describe("parseCrystallizationConfig", () => {
       crystallization: { minSuccessRate: 2.5 },
     });
     expect(cfg.crystallization.minSuccessRate).toBe(0.7); // falls back to default
+  });
+
+  // Issue #1383 — configurable placeholder email allow-list
+
+  it("parses custom placeholderEmailDomains from config", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CFG,
+      crystallization: {
+        placeholderEmailDomains: ["example.com", "company.test"],
+      },
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual(["example.com", "company.test"]);
+  });
+
+  it("defaults placeholderEmailDomains to standard four when omitted", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+    ]);
+  });
+
+  it("falls back to default placeholderEmailDomains when an empty array is provided", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const cfg = hybridConfigSchema.parse({
+      ...BASE_CFG,
+      crystallization: { placeholderEmailDomains: [] },
+    });
+    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
+      "example.com",
+      "localhost",
+      "test.com",
+      "example.org",
+    ]);
   });
 });

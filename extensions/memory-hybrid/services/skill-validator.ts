@@ -11,6 +11,8 @@
  * false negatives (allowing dangerous content) are not.
  */
 
+import { stripLeadingHtmlComments } from "../utils/text.js";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -39,8 +41,47 @@ interface DenyRule {
   description: string;
 }
 
+/**
+ * Case-insensitive PEM private-key block detector.
+ * Shared with generated-skill-validation.ts and procedure-promotion-policy.ts (Issue #1382).
+ * Character class includes digits and allows trailing words (e.g. "BLOCK" in PGP markers).
+ * Matches: -----BEGIN PRIVATE KEY-----, -----BEGIN RSA PRIVATE KEY-----,
+ *          -----BEGIN PGP PRIVATE KEY BLOCK-----, -----begin private key-----, etc.
+ */
+export const PEM_PRIVATE_KEY_PATTERN = /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY[A-Za-z0-9 ]*-----/i;
+
+/**
+ * Private IP address pattern (RFC 1918 ranges).
+ * Shared with generated-skill-validation.ts and procedure-promotion-policy.ts.
+ * Matches: 10.x.x.x, 172.16-31.x.x, 192.168.x.x (four-octet private IPs).
+ * Loopback (127.x) is intentionally excluded — it reveals nothing about network topology
+ * and causes noisy false positives on health-check examples (Issue #1385).
+ */
+export const PRIVATE_IP_PATTERN = /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/;
+
+/** Default placeholder email domains used by {@link buildNonPlaceholderEmailPattern}. */
+export const DEFAULT_PLACEHOLDER_EMAIL_DOMAINS = ["example.com", "localhost", "test.com", "example.org"];
+
+/**
+ * Build a regex that matches real-looking email addresses while excluding placeholder domains.
+ * Domain entries are regex-escaped so arbitrary strings are safe to pass.
+ * If the allow-list is empty, returns a pattern that flags all valid-looking email addresses.
+ * @param allowList - domains to treat as safe placeholders (default: {@link DEFAULT_PLACEHOLDER_EMAIL_DOMAINS})
+ */
+export function buildNonPlaceholderEmailPattern(allowList: string[]): RegExp {
+  const escaped = allowList
+    .filter((d) => d.length > 0)
+    .map((d) => d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  if (escaped.length === 0) {
+    // No placeholder domains: flag all valid-looking email addresses.
+    return /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i;
+  }
+  return new RegExp(`\\b[A-Za-z0-9._%+-]+@(?!(?:${escaped})(?![A-Za-z0-9.-]))[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b`, "i");
+}
+
 const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string]> = [
-  ["private-key-block", /-----BEGIN [A-Z ]*PRIVATE KEY-----/, "Private key block detected"],
+  ["private-key-block", PEM_PRIVATE_KEY_PATTERN, "Private key block detected"],
   [
     "bearer-token",
     /\bBearer\s+[A-Za-z0-9._~+/-]+=*/i,
@@ -59,36 +100,37 @@ const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string
 ];
 
 /** Real-looking emails only; allows example.com, localhost, test.com, example.org placeholders. */
-export const NON_PLACEHOLDER_EMAIL_PATTERN =
-  /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+export const NON_PLACEHOLDER_EMAIL_PATTERN = buildNonPlaceholderEmailPattern(DEFAULT_PLACEHOLDER_EMAIL_DOMAINS);
 
-const PRIVATE_CONTEXT_PATTERNS: Array<[name: string, pattern: RegExp, description: string]> = [
-  [
-    "private-ip",
-    /\b(?:10\.|127\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
-    "Private IP / host inventory detected (replace with placeholders)",
-  ],
-  [
-    "home-path-linux",
-    /(?:^|[\s"'=:])\/home\/(?!user\/|runner\/|ubuntu\/)[^\s"'/:]+\/[^\s"']+/,
-    "User-specific /home/... path detected (replace with placeholders)",
-  ],
-  [
-    "home-path-macos",
-    /(?:^|[\s"'=:])\/Users\/(?!user\/|runner\/)[^\s"'/:]+\/[^\s"']+/,
-    "User-specific /Users/... path detected (replace with placeholders)",
-  ],
-  [
-    "tilde-home-path",
-    /(?:^|[\s"'=:])~\/(?!\.)[^\s"']+/,
-    "Tilde home path detected (replace with placeholders; avoid personal paths in skills)",
-  ],
-  [
-    "email-address",
-    NON_PLACEHOLDER_EMAIL_PATTERN,
-    "Non-example email address detected (remove or replace with example.com)",
-  ],
-];
+/**
+ * Build the private-context pattern list. Accepts an optional email pattern override so that
+ * operators can supply a custom placeholder-domain allow-list (Issue #1383).
+ */
+function buildPrivateContextPatterns(
+  emailPattern: RegExp,
+): Array<[name: string, pattern: RegExp, description: string]> {
+  return [
+    ["private-ip", PRIVATE_IP_PATTERN, "Private IP / host inventory detected (replace with placeholders)"],
+    [
+      "home-path-linux",
+      /(?:^|[\s"'=:])\/home\/(?!user\/|runner\/|ubuntu\/)[^\s"'/:]+\/[^\s"']+/,
+      "User-specific /home/... path detected (replace with placeholders)",
+    ],
+    [
+      "home-path-macos",
+      /(?:^|[\s"'=:])\/Users\/(?!user\/|runner\/)[^\s"'/:]+\/[^\s"']+/,
+      "User-specific /Users/... path detected (replace with placeholders)",
+    ],
+    [
+      "tilde-home-path",
+      // Negative lookahead (?!\.) has been removed — dotfile paths (e.g. ~/.ssh, ~/.aws)
+      // are the most sensitive and must be flagged, not excluded (Issue #1384).
+      /(?:^|[\s"'=:])~\/[^\s"']+/,
+      "Tilde home path detected (replace with placeholders; avoid personal paths in skills)",
+    ],
+    ["email-address", emailPattern, "Non-example email address detected (remove or replace with example.com)"],
+  ];
+}
 
 const DENY_RULES: DenyRule[] = [
   // Shell execution
@@ -187,6 +229,16 @@ const DENY_RULES: DenyRule[] = [
 // ---------------------------------------------------------------------------
 
 export class SkillValidator {
+  private readonly privateContextPatterns: Array<[name: string, pattern: RegExp, description: string]>;
+
+  /**
+   * @param options.emailPattern - custom non-placeholder email regex; defaults to
+   *   {@link NON_PLACEHOLDER_EMAIL_PATTERN}. Build with {@link buildNonPlaceholderEmailPattern}.
+   */
+  constructor(options?: { emailPattern?: RegExp }) {
+    this.privateContextPatterns = buildPrivateContextPatterns(options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN);
+  }
+
   /**
    * Validate generated SKILL.md content for:
    * - security violations (deny rules inside code blocks)
@@ -211,7 +263,7 @@ export class SkillValidator {
     }
 
     // Reject private context that should not be embedded into reusable skills.
-    for (const [name, pattern, desc] of PRIVATE_CONTEXT_PATTERNS) {
+    for (const [name, pattern, desc] of this.privateContextPatterns) {
       if (pattern.test(skillContent)) {
         violations.push(`[${name}] ${desc}`);
       }
@@ -494,14 +546,16 @@ function parseFrontmatter(lines: string[]): {
   endLine: number;
 } {
   const keys = new Map<string, string>();
-  // Only treat it as frontmatter when it starts the document (after optional leading blank lines).
+  const originalContent = lines.join("\n");
+  const body = stripLeadingHtmlComments(originalContent);
+  const bodyLines = body.split("\n");
+  const strippedLineCount = originalContent.split("\n").length - bodyLines.length;
   let i = 0;
-  while (i < lines.length && lines[i]?.trim() === "") i++;
-  if (lines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
+  if (bodyLines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
   i++;
-  for (; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (line.trim() === "---") return { present: true, keys, endLine: i + 1 };
+  for (; i < bodyLines.length; i++) {
+    const line = bodyLines[i] ?? "";
+    if (line.trim() === "---") return { present: true, keys, endLine: i + 1 + strippedLineCount };
     const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*(.*)\s*$/);
     if (!match) continue;
     const key = match[1].toLowerCase();
