@@ -38,6 +38,35 @@ function isEmptyDir(dir: string): boolean {
 }
 
 /**
+ * Validates that a relative path is safe for use within a skill directory.
+ * Rejects paths that:
+ *  - contain null bytes
+ *  - are absolute (POSIX or Windows)
+ *  - attempt parent directory traversal (..)
+ *  - are empty
+ *  - collide with the completion marker name
+ *
+ * Throws an error if the path is unsafe.
+ */
+function assertSafeRelativeSkillPath(relPath: string): void {
+  if (relPath.includes("\0")) {
+    throw new Error(`Unsafe path: contains null byte: ${relPath}`);
+  }
+  if (relPath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(relPath)) {
+    throw new Error(`Unsafe path: absolute path not allowed: ${relPath}`);
+  }
+  if (relPath.includes("..")) {
+    throw new Error(`Unsafe path: parent directory traversal not allowed: ${relPath}`);
+  }
+  if (relPath.trim().length === 0) {
+    throw new Error(`Unsafe path: empty path not allowed`);
+  }
+  if (relPath === SKILL_COMPLETE_MARKER || basename(relPath) === SKILL_COMPLETE_MARKER) {
+    throw new Error(`Unsafe path: collision with completion marker: ${relPath}`);
+  }
+}
+
+/**
  * Atomically write a single file.
  *
  * Writes content to `${targetPath}.tmp-${pid}-${rand}` then renames it to
@@ -93,6 +122,7 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
 
     // Write every sidecar into the temp directory.
     for (const [relPath, content] of Object.entries(files)) {
+      assertSafeRelativeSkillPath(relPath);
       const fullPath = join(tmpDir, relPath);
       mkdirSync(dirname(fullPath), { recursive: true });
       writeFileSync(fullPath, content, "utf-8");

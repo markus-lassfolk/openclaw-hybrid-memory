@@ -249,13 +249,13 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{\[\]]+/i,
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/i,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY[A-Za-z0-9 ]*-----/i,
 ];
 
 const PRIVATE_DATA_PATTERNS: RegExp[] = [
-  /\b(?:10\.|127\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+  /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
   /(?:^|[\s"'=:])(?:\/home\/[^\s"']+|\/Users\/[^\s"']+|~\/[^\s"']+)/,
-  /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+  /\b[A-Za-z0-9._%+-]+@(?!(?:example\.com|localhost|test\.com|example\.org)(?![A-Za-z0-9.-]))[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i,
 ];
 
 export function parseProcedurePromotionPolicy(policy: string | undefined): ProcedurePromotionPolicy {
