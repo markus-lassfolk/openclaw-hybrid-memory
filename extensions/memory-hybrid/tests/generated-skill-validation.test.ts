@@ -12,6 +12,7 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
+import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 
