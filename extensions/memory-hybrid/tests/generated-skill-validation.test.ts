@@ -12,7 +12,8 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
-import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 
 const BASE_CFG: CrystallizationConfig = {
   enabled: true,
@@ -193,6 +194,55 @@ Bounded release-health review workflow.
     expect(validation.syntheticActivationEval.status).toBe("passed");
     expect(validation.approvalDecision).toBe("allow");
     expect(validation.syntheticActivationEval.score).toBeGreaterThanOrEqual(100 / 3);
+  });
+
+  it("dry-load discovery skips markerless skill directories as in-progress", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-markerless-dry-load-"));
+    const skillsDir = join(tmpDir, "skills");
+    const markerlessDir = join(skillsDir, "half-written-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(
+      join(markerlessDir, "SKILL.md"),
+      `---
+name: half-written-skill
+description: This markerless skill must be treated as in-progress.
+---
+`,
+      "utf-8",
+    );
+
+    expect(discoverCompletedSkillDirs(skillsDir)).toEqual([]);
+  });
+
+  it("dry-load discovery includes only skills with the completion marker", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-complete-dry-load-"));
+    const skillsDir = join(tmpDir, "skills");
+    const completedDir = join(skillsDir, "complete-skill");
+    mkdirSync(completedDir, { recursive: true });
+    writeFileSync(
+      join(completedDir, "SKILL.md"),
+      `---
+name: complete-skill
+description: This skill has a completion marker.
+---
+`,
+      "utf-8",
+    );
+    writeFileSync(join(completedDir, SKILL_COMPLETE_MARKER), "2024-01-01T00:00:00.000Z", "utf-8");
+
+    const markerlessDir = join(skillsDir, "half-written-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(
+      join(markerlessDir, "SKILL.md"),
+      `---
+name: half-written-skill
+description: This markerless skill must be treated as in-progress.
+---
+`,
+      "utf-8",
+    );
+
+    expect(discoverCompletedSkillDirs(skillsDir).map((entry) => entry.name)).toEqual(["complete-skill"]);
   });
 
   it("uses a deterministic fallback negative prompt when canned prompts overlap the skill surface", () => {
@@ -608,7 +658,8 @@ Bounded CLI release-health review workflow.
       const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean; outputPath?: string };
       expect(output.ok).toBe(true);
       expect(output.outputPath).toBeDefined();
-      expect(existsSync(String(output.outputPath))).toBe(true);
+      if (!output.outputPath) return;
+      expect(existsSync(output.outputPath)).toBe(true);
     } finally {
       process.exitCode = undefined;
       cStore.close();

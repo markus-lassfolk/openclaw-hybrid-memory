@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
-import { isAtomicWriteArtifact, isSkillDirComplete } from "../utils/atomic-write.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -14,12 +13,8 @@ import {
   redactAutopilotText,
   redactAutopilotValue,
 } from "./pending-autopilot/index.js";
-import {
-  NON_PLACEHOLDER_EMAIL_PATTERN,
-  PEM_PRIVATE_KEY_PATTERN,
-  PRIVATE_IP_PATTERN,
-  SkillValidator,
-} from "./skill-validator.js";
+import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
+import { SkillValidator } from "./skill-validator.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v1";
 
@@ -254,13 +249,13 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{\[\]]+/i,
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/i,
-  PEM_PRIVATE_KEY_PATTERN,
+  /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY[A-Za-z0-9 ]*-----/i,
 ];
 
 const PRIVATE_DATA_PATTERNS: RegExp[] = [
-  PRIVATE_IP_PATTERN,
+  /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
   /(?:^|[\s"'=:])(?:\/home\/[^\s"']+|\/Users\/[^\s"']+|~\/[^\s"']+)/,
-  NON_PLACEHOLDER_EMAIL_PATTERN,
+  /\b[A-Za-z0-9._%+-]+@(?!(?:example\.com|localhost|test\.com|example\.org)(?![A-Za-z0-9.-]))[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i,
 ];
 
 export function parseProcedurePromotionPolicy(policy: string | undefined): ProcedurePromotionPolicy {
@@ -1177,13 +1172,12 @@ function isDuplicateSkill(
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const entry of safeReadDir(dir)) {
+      if (isAtomicSkillWriteScratchDir(entry)) continue;
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
-      // Atomic writer crash leftovers can contain a SKILL.md for the final slug
-      // but are not committed skills. Ignore temp/backup siblings unless they
-      // have the completion marker; legacy markerless final dirs are still
-      // occupied names and valid duplicate sources.
-      if (isAtomicWriteArtifact(entry) && !isSkillDirComplete(join(dir, entry))) continue;
+      // Legacy skill directories may not have the atomic completion marker. If
+      // they contain SKILL.md, treat them as valid duplicates so marker rollout
+      // never overwrites or re-promotes existing skills.
       if (entry === slug) return true;
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;
