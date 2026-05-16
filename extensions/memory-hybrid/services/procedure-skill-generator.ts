@@ -123,12 +123,11 @@ function writeAllocatedDraftSkill(
     const candidate = n === 0 ? slug : `${slug}-${n}`;
     const skillDir = join(basePath, candidate);
     const relativePath = join(skillsAutoPath, candidate);
-    const existedBeforeWrite = existsSync(skillDir);
     try {
       const completionMarker = writeDraftSkill(skillDir, rebaseDraftSlug(draft, candidate, relativePath));
       return { slug: candidate, skillDir, relativePath, completionMarker };
     } catch (err) {
-      if (isRetryableWriteCollision(err, skillDir, existedBeforeWrite)) {
+      if (isRetryableWriteCollision(err, skillDir)) {
         n++;
         continue;
       }
@@ -137,11 +136,12 @@ function writeAllocatedDraftSkill(
   }
 }
 
-function isRetryableWriteCollision(err: unknown, skillDir: string, existedBeforeWrite: boolean): boolean {
-  if (!existedBeforeWrite || !existsSync(skillDir)) return false;
+function isRetryableWriteCollision(err: unknown, skillDir: string): boolean {
+  if (!existsSync(skillDir)) return false;
   if (isPathExistsError(err)) return true;
   const message = err instanceof Error ? err.message : String(err);
-  return message.includes(`Refusing to overwrite existing skill directory: ${skillDir}`);
+  if (message.includes(`Refusing to overwrite existing skill directory: ${skillDir}`)) return true;
+  return false;
 }
 
 function isPathExistsError(err: unknown): boolean {
