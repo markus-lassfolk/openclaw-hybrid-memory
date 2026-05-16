@@ -333,6 +333,23 @@ describe("WorkflowStore.getPatterns", () => {
     expect(patterns.length).toBeLessThanOrEqual(1);
   });
 
+  it("returns defensive copies for memoized pattern arrays", () => {
+    const first = store.getPatterns();
+    expect(first.length).toBeGreaterThan(0);
+
+    first.length = 0;
+
+    const second = store.getPatterns();
+    expect(second.length).toBeGreaterThan(0);
+
+    second[0].toolSequence.push("mutated-tool");
+    second[0].exampleGoals.push("mutated-goal");
+
+    const third = store.getPatterns();
+    expect(third[0].toolSequence).not.toContain("mutated-tool");
+    expect(third[0].exampleGoals).not.toContain("mutated-goal");
+  });
+
   it("reopens and returns results when native DB handle was unexpectedly closed", () => {
     const db = (store as any).db as import("node:sqlite").DatabaseSync;
     db.close();
@@ -340,6 +357,58 @@ describe("WorkflowStore.getPatterns", () => {
     expect(() => store.getPatterns()).not.toThrow();
     const patterns = store.getPatterns();
     expect(Array.isArray(patterns)).toBe(true);
+  });
+
+  it("getPatterns stays within a few seconds for hundreds of traces using sampling (#1415)", () => {
+    for (let i = 0; i < 400; i++) {
+      store.record({
+        goal: `goal-${i}`,
+        toolSequence: ["alpha", "beta"],
+        outcome: i % 6 === 0 ? "failure" : "success",
+        argsHash: "perf-bucket",
+      });
+    }
+    const t0 = performance.now();
+    const patterns = store.getPatterns({ minSuccessRate: 0, limit: 30, traceSampleLimit: 2000 });
+    const ms = performance.now() - t0;
+    expect(patterns.length).toBeGreaterThan(0);
+    expect(ms).toBeLessThan(3000);
+  });
+
+  it("clusters similar-but-not-identical sequences without custom argsHash (#1415 bugfix)", () => {
+    // This test verifies the fix for the bug where default argsHash bucketing
+    // prevented Levenshtein clustering of similar sequences
+
+    // Create a fresh store without beforeEach data
+    const freshDir = mkdtempSync(join(tmpdir(), "similarity-test-"));
+    const freshStore = new WorkflowStore(join(freshDir, "test.db"));
+
+    freshStore.record({
+      goal: "test workflow 1",
+      toolSequence: ["read_file", "edit_file", "run_tests"],
+      outcome: "success",
+    });
+    freshStore.record({
+      goal: "test workflow 2",
+      toolSequence: ["read_file", "write_file", "run_tests"],
+      outcome: "success",
+    });
+    freshStore.record({
+      goal: "test workflow 3",
+      toolSequence: ["read_file", "edit_file", "run_tests"],
+      outcome: "success",
+    });
+
+    // With similarity threshold 0.66, these should cluster into 1 pattern
+    // because they differ by only 1 element out of 3 (similarity ~0.667-1.0)
+    const patterns = freshStore.getPatterns({ similarityThreshold: 0.66, minSuccessRate: 0, limit: 10 });
+
+    // Should get 1 cluster containing all 3 sequences
+    expect(patterns.length).toBe(1);
+    expect(patterns[0].totalCount).toBe(3);
+
+    freshStore.close();
+    rmSync(freshDir, { recursive: true, force: true });
   });
 });
 
