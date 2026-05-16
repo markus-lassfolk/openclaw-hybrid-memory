@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { rebuildGeneratedSkillTelemetryRollupsForProcedure } from "../backends/facts-db/generated-skills.js";
 import { registerSkillsCommands } from "../cli/skills.js";
 
 let tmpDir: string;
@@ -39,6 +40,56 @@ function createGeneratedSkill(taskPattern = "Validate release health report"): {
 }
 
 describe("generated skill telemetry", () => {
+  it("rollup counters stay consistent with a full rebuild (#1415 / #1400)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const { id, skillName } = createGeneratedSkill();
+    for (let i = 0; i < 4; i++) {
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "selected",
+        requestSummary: `req-${i}`,
+        taskOutcome: "success",
+      });
+    }
+    const m1 = db.buildGeneratedSkillTelemetryReport({ skillName }).rows[0]?.metrics;
+    rebuildGeneratedSkillTelemetryRollupsForProcedure(db.getRawDb(), id);
+    const m2 = db.buildGeneratedSkillTelemetryReport({ skillName }).rows[0]?.metrics;
+    expect(m1?.activationCountTotal).toBe(4);
+    expect(m2).toEqual(m1);
+  });
+
+  it("keeps positive-only saved rollups consistent after rebuild", () => {
+    const { id, skillName } = createGeneratedSkill();
+
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: "positive savings",
+      taskOutcome: "success",
+      savedToolCalls: 3,
+      savedTimeMs: 1000,
+    });
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: "negative savings ignored",
+      taskOutcome: "success",
+      savedToolCalls: -7,
+      savedTimeMs: -2000,
+    });
+
+    const before = db.buildGeneratedSkillTelemetryReport({ skillName }).rows[0]?.metrics;
+    rebuildGeneratedSkillTelemetryRollupsForProcedure(db.getRawDb(), id);
+    const after = db.buildGeneratedSkillTelemetryReport({ skillName }).rows[0]?.metrics;
+
+    expect(before?.savedToolCalls).toBe(3);
+    expect(before?.savedTimeMs).toBe(1000);
+    expect(after?.savedToolCalls).toBe(3);
+    expect(after?.savedTimeMs).toBe(1000);
+    expect(after).toEqual(before);
+  });
+
   it("promotes experimental skills after repeated successful activations without correction", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));

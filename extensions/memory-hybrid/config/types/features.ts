@@ -197,6 +197,12 @@ export type CrystallizationConfig = {
   maxCrystallized: number;
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
+  /**
+   * Email domains treated as safe placeholders during skill validation (Issue #1383).
+   * Extend this list with your organisation's internal placeholder domains so they are
+   * not flagged as real addresses. Default: ["example.com", "localhost", "test.com", "example.org"].
+   */
+  placeholderEmailDomains: string[];
 };
 
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
