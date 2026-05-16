@@ -575,10 +575,6 @@ function writeDraftSkill(
     proposalMetadataJson: string;
   },
 ): void {
-  if (existsSync(skillDir) && !isOccupiedSkillDir(skillDir)) {
-    rmSync(skillDir, { recursive: true, force: true });
-  }
-
   // Write all sidecar files atomically (temp dir → rename). SKILL.md is
   // written last among content files so it is the final content write before
   // the completion marker.

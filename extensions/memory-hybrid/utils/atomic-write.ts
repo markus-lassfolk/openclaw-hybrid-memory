@@ -14,7 +14,7 @@
  * The marker name is exported so loaders can skip in-progress directories.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync, readdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 
@@ -23,6 +23,19 @@ export const SKILL_COMPLETE_MARKER = ".openclaw-skill-complete";
 
 /** Prefix used for hidden sibling directories that are still being written. */
 export const SKILL_ATOMIC_TEMP_PREFIX = ".openclaw-skill-tmp-";
+
+/**
+ * Returns `true` when `dir` exists and contains no entries (empty directory).
+ */
+function isEmptyDir(dir: string): boolean {
+  if (!existsSync(dir)) return false;
+  try {
+    const entries = readdirSync(dir);
+    return entries.length === 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Atomically write a single file.
@@ -58,11 +71,12 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  * `.openclaw-skill-complete` marker is written as the very last file.  The
  * temp directory is then atomically renamed to `skillDir`.
  *
- * If `skillDir` already exists, this helper fails instead of moving the
- * existing directory aside. That keeps replacement crash-atomic: a process
- * crash can leave only a hidden temp sibling, never a missing final directory.
- * Callers that intentionally want to replace an incomplete draft must remove
- * that incomplete directory before calling this helper.
+ * If `skillDir` already exists and is non-empty, this helper fails instead of
+ * moving the existing directory aside. That keeps replacement crash-atomic: a
+ * process crash can leave only a hidden temp sibling, never a missing final
+ * directory. Empty directories (e.g. from `allocateDraftSkillDir` reservation
+ * locks) are allowed and will be atomically replaced by the rename, preserving
+ * the allocation lock throughout the write operation.
  *
  * Pass files in the order you want them written.  Convention: put `SKILL.md`
  * last so it is the final content file before the marker.
@@ -73,7 +87,7 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
   const tmpDir = join(parent, `${SKILL_ATOMIC_TEMP_PREFIX}${process.pid}-${rand}`);
 
   try {
-    if (existsSync(skillDir)) {
+    if (existsSync(skillDir) && !isEmptyDir(skillDir)) {
       throw new Error(`Atomic skill directory target already exists: ${skillDir}`);
     }
 
@@ -87,8 +101,8 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     // Stamp the completion marker as the final write inside the temp dir.
     writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
 
-    // Atomic promotion: temp dir → final skill dir. This succeeds only when
-    // skillDir does not exist, so crashes never hide an existing final dir.
+    // Atomic promotion: temp dir → final skill dir. On POSIX, renameSync
+    // atomically replaces empty directories, preserving the allocation lock.
     renameSync(tmpDir, skillDir);
   } catch (err) {
     try {
