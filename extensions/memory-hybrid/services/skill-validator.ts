@@ -14,6 +14,7 @@
  * config/skill-sections.ts (issues #1375, #1366, #1408).
  */
 
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import {
   CATEGORY_FRONTMATTER_KEYS,
   DEFAULT_REQUIRED_SECTIONS,
@@ -509,14 +510,16 @@ function parseFrontmatter(lines: string[]): {
   endLine: number;
 } {
   const keys = new Map<string, string>();
-  // Only treat it as frontmatter when it starts the document (after optional leading blank lines).
+  const originalContent = lines.join("\n");
+  const body = stripLeadingHtmlComments(originalContent);
+  const bodyLines = body.split("\n");
+  const strippedLineCount = originalContent.split("\n").length - bodyLines.length;
   let i = 0;
-  while (i < lines.length && lines[i]?.trim() === "") i++;
-  if (lines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
+  if (bodyLines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
   i++;
-  for (; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (line.trim() === "---") return { present: true, keys, endLine: i + 1 };
+  for (; i < bodyLines.length; i++) {
+    const line = bodyLines[i] ?? "";
+    if (line.trim() === "---") return { present: true, keys, endLine: i + 1 + strippedLineCount };
     const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*(.*)\s*$/);
     if (!match) continue;
     const key = match[1].toLowerCase();

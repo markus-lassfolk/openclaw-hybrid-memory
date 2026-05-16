@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import {
   CATEGORY_FRONTMATTER_KEYS,
@@ -8,6 +19,7 @@ import {
   MAX_SKILL_LINES,
   type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, normalizeHeading, parseH2Headings, SkillValidator } from "./skill-validator.js";
 
@@ -19,6 +31,8 @@ export interface SyntheticActivationCases {
   negative: string;
   edge: string;
 }
+
+export type SkillFrontmatter = Record<string, string | undefined>;
 
 interface SyntheticActivationContext {
   cases: SyntheticActivationCases;
@@ -33,7 +47,7 @@ export interface SkillProposalValidationResult {
   staticValidation: {
     status: ValidationStageStatus;
     violations: string[];
-    frontmatter: Record<string, string>;
+    frontmatter: SkillFrontmatter;
     safeOutputPath: string;
   };
   dryLoadValidation: {
@@ -115,10 +129,11 @@ const STOP_WORDS = new Set([
   "without",
 ]);
 
-export function parseSkillFrontmatter(skillContent: string): Record<string, string> {
-  const match = skillContent.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
+  const body = stripLeadingHtmlComments(skillContent);
+  const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
-  const frontmatter: Record<string, string> = {};
+  const frontmatter: SkillFrontmatter = {};
   for (const rawLine of match[1].split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
@@ -134,7 +149,7 @@ export function parseSkillFrontmatter(skillContent: string): Record<string, stri
   return frontmatter;
 }
 
-function getFrontmatterCategory(frontmatter: Record<string, string>): string | undefined {
+function getFrontmatterCategory(frontmatter: SkillFrontmatter): string | undefined {
   for (const key of CATEGORY_FRONTMATTER_KEYS) {
     if (frontmatter[key]) return frontmatter[key];
   }
@@ -213,7 +228,7 @@ export class GeneratedSkillValidationService {
 
   private validateStatic(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     legacy: boolean,
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
@@ -280,22 +295,56 @@ export class GeneratedSkillValidationService {
 
   private validateDryLoad(
     skillContent: string,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     skillName: string,
   ): SkillProposalValidationResult["dryLoadValidation"] {
     const violations: string[] = [];
-    const discovered = parseSkillFrontmatter(skillContent);
+    const discovered: Record<string, string> = {};
+    const tempDir = mkdtempSync(join(tmpdir(), "hm-crystallization-dry-load-"));
 
     try {
+      const workspaceDir = join(tempDir, "workspace");
+      const skillsDir = join(workspaceDir, "skills");
       const normalizedSkillName = normalizeSkillName(skillName);
-      if (!discovered.name || !discovered.description) {
-        violations.push("Dry-load discovery did not return required skill frontmatter");
-      } else if (discovered.name !== skillName && normalizeSkillName(discovered.name) !== normalizedSkillName) {
+      const skillDirName = isApprovalSanitizedSkillName(skillName) ? skillName : normalizedSkillName;
+      const skillDir = join(skillsDir, skillDirName);
+      mkdirSync(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      writeFileSync(skillPath, skillContent, "utf-8");
+
+      const skillDirStat = lstatSync(skillDir);
+      const skillPathStat = lstatSync(skillPath);
+      if (skillDirStat.isSymbolicLink() || skillPathStat.isSymbolicLink()) {
+        violations.push("Dry-load skill path contains a symlink");
+      }
+      const skillDirReal = realpathSync(skillDir);
+      const skillsDirReal = realpathSync(skillsDir);
+      if (!isWithinDir(skillsDirReal, skillDirReal)) {
+        violations.push("Dry-load skill directory escapes the isolated workspace");
+      }
+
+      const entries = loadDrySkillEntries(skillsDir);
+      const entry = entries.find(
+        (candidate) =>
+          candidate.name === skillName ||
+          (candidate.name ? normalizeSkillName(candidate.name) === normalizedSkillName : false),
+      );
+      if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
+      } else {
+        Object.assign(discovered, Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== undefined)));
+        if (entry.description !== frontmatter.description) {
+          violations.push("Dry-load description does not match frontmatter description");
+        }
+        if (getFrontmatterCategory(entry) !== getFrontmatterCategory(frontmatter)) {
+          violations.push("Dry-load category does not match frontmatter category");
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       violations.push(`Dry-load validation failed: ${message}`);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
 
     return {
@@ -307,7 +356,7 @@ export class GeneratedSkillValidationService {
 
   private evaluateActivation(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
     const { cases, sourceText } = buildSyntheticActivationContext(input, frontmatter);
     const positive = scoreActivationPrompt(cases.positive, sourceText);
@@ -373,7 +422,8 @@ function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, ski
   const outputRoot = resolve(outputDir);
   const skillDir = resolve(outputRoot, skillName);
   const expected = resolve(skillDir, "SKILL.md");
-  if (proposedOutputPath !== expected || !isWithinDir(outputRoot, dirname(proposedOutputPath))) return false;
+  const resolvedProposed = resolve(proposedOutputPath);
+  if (resolvedProposed !== expected || !isWithinDir(outputRoot, dirname(resolvedProposed))) return false;
 
   return existingSkillPathIsSafe(outputRoot, skillDir, expected);
 }
@@ -407,6 +457,27 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
+  const out: SkillFrontmatter[] = [];
+  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const skillPath = join(skillsDir, entry.name, "SKILL.md");
+    let skillContent = "";
+    try {
+      skillContent = readFileSync(skillPath, "utf-8");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Unable to read dry-load skill '${entry.name}': ${message}`);
+    }
+    const frontmatter = parseSkillFrontmatter(skillContent);
+    if (!frontmatter.name || !frontmatter.description || !getFrontmatterCategory(frontmatter)) {
+      throw new Error(`Malformed SKILL.md for ${entry.name}: missing name, description, or category frontmatter`);
+    }
+    out.push(frontmatter);
+  }
+  return out;
+}
+
 /**
  * Return the body for the first matching H2 section using the same punctuation/case
  * normalization as SkillValidator's shared taxonomy checks, respecting fenced code blocks.
@@ -434,7 +505,7 @@ function extractSectionByAliases(skillContent: string, headingAliases: string[])
 
 function buildSyntheticActivationContext(
   input: ValidateGeneratedSkillInput,
-  frontmatter: Record<string, string>,
+  frontmatter: SkillFrontmatter,
 ): SyntheticActivationContext {
   const positive =
     input.pattern?.exampleGoals

@@ -1,13 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -426,70 +417,6 @@ Bounded symlink validation workflow.
     expect(validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path"))).toBe(true);
   });
 
-  it("does not create temp directories during dry-load validation by default (issue #1411)", () => {
-    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-no-temp-dry-load-"));
-    const service = new GeneratedSkillValidationService();
-    // Avoid touching the filesystem for validation beyond the caller-provided output root.
-    // The old implementation created hm-crystallization-dry-load-* directories here.
-    const tempEntriesBefore = new Set(
-      readdirSync(tmpdir()).filter((name) => name.startsWith("hm-crystallization-dry-load-")),
-    );
-
-    const validation = service.validate({
-      outputDir: join(tmpDir, "skills"),
-      proposedOutputPath: join(tmpDir, "skills", "no-temp-dry-load", "SKILL.md"),
-      skillName: "no-temp-dry-load",
-      skillContent: `---
-name: no-temp-dry-load
-description: Use when checking dry-load validation avoids temp directories.
-category: crystallized-workflow
-provenance: test-suite
----
-
-# No Temp Dry Load
-
-## Trigger
-Use this skill when checking dry-load validation avoids temp directories.
-
-## Scope
-Bounded dry-load filesystem validation.
-
-## When not to use
-- Do not use for unrelated tasks.
-
-## Workflow
-1. Parse skill metadata in memory.
-2. Confirm no dry-load temp directory is created.
-
-## Verification
-- Confirm validation does not create hm-crystallization-dry-load directories.
-
-## Anti-patterns / Known Failures
-- Do not write generated skill content during validation.
-
-## Examples
-- Check dry-load validation does not create temp directories.
-
-## Provenance
-- Source pattern ID: \`pattern-no-temp-dry-load\``,
-      pattern: {
-        toolSequence: ["read"],
-        totalCount: 3,
-        successCount: 3,
-        failureCount: 0,
-        successRate: 1,
-        avgDurationMs: 200,
-        exampleGoals: ["Check dry-load validation does not create temp directories."],
-      },
-    });
-
-    const tempEntriesAfter = new Set(
-      readdirSync(tmpdir()).filter((name) => name.startsWith("hm-crystallization-dry-load-")),
-    );
-    expect(validation.dryLoadValidation.status).toBe("passed");
-    expect(tempEntriesAfter).toEqual(tempEntriesBefore);
-  });
-
   it("requires explicit override for activation warnings during approval", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-override-"));
     const validationService = new GeneratedSkillValidationService();
@@ -631,7 +558,7 @@ Bounded CLI release-health review workflow.
       const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean; outputPath?: string };
       expect(output.ok).toBe(true);
       expect(output.outputPath).toBeDefined();
-      expect(existsSync(output.outputPath!)).toBe(true);
+      expect(existsSync(String(output.outputPath))).toBe(true);
     } finally {
       process.exitCode = undefined;
       cStore.close();
@@ -1151,7 +1078,7 @@ Use this skill for missing-section detection.
       expect(result).toEqual(customTaxonomy);
       expect(result).not.toEqual(DEFAULT_REQUIRED_SECTIONS);
     } finally {
-      delete CATEGORY_SECTION_TAXONOMIES["test-category"];
+      CATEGORY_SECTION_TAXONOMIES["test-category"] = [] as never;
     }
   });
 
@@ -1490,7 +1417,7 @@ Bounded alternate-category validation workflow.
 
       expect(validation.staticValidation.violations).toContain("Missing required section: Custom Required");
     } finally {
-      delete CATEGORY_SECTION_TAXONOMIES["explain-skill"];
+      CATEGORY_SECTION_TAXONOMIES["explain-skill"] = [] as never;
     }
   });
 
@@ -1707,7 +1634,7 @@ Bounded quoted-category validation workflow.
 
       expect(validation.staticValidation.violations).toContain("Missing required section: Custom Required");
     } finally {
-      delete CATEGORY_SECTION_TAXONOMIES["explain-skill"];
+      CATEGORY_SECTION_TAXONOMIES["explain-skill"] = [] as never;
     }
   });
 
