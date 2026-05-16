@@ -1142,4 +1142,38 @@ description: Use when collecting crashed temp reports.
 
     expect(evaluation.metadata.rejectionReasons).toContain("private_data_risk");
   });
+
+  it("does not flag three-octet version string 10.20.30 as private_data_risk", () => {
+    const proc = addProcedure({
+      taskPattern: "Run release workflow with dependency version check",
+      recipeJson: JSON.stringify([
+        {
+          tool: "exec",
+          args: { command: "echo dependency version 10.20.30" },
+          summary: "Log dependency version string",
+        },
+        {
+          tool: "exec",
+          args: { command: "npm test" },
+          summary: "Run test suite",
+        },
+        {
+          tool: "read",
+          args: { path: "report.json" },
+          summary: "Verify report",
+        },
+      ]),
+      sourceSessionId: "version-string-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "version-string-b");
+    db.recordProcedureSuccess(proc.id, undefined, "version-string-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("private_data_risk");
+  });
 });
