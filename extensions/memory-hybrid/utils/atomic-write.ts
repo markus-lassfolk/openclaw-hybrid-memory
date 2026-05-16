@@ -103,6 +103,11 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
 
     // Atomic promotion: temp dir → final skill dir. On POSIX, renameSync
     // atomically replaces empty directories, preserving the allocation lock.
+    // On Windows, renameSync fails if the target exists (even when empty), so
+    // we remove the empty reservation directory first.
+    if (process.platform === "win32" && existsSync(skillDir) && isEmptyDir(skillDir)) {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
     renameSync(tmpDir, skillDir);
   } catch (err) {
     try {
