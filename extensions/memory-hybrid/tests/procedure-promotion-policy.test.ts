@@ -13,6 +13,7 @@ import {
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import type { ProcedureEntry } from "../types/memory.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 let tmpDir: string;
@@ -271,6 +272,7 @@ describe("procedure promotion policy and adapter", () => {
   it("compares duplicate skills against task-specific sections instead of template boilerplate", () => {
     const existingSkillDir = join(skillsDir, "collect-weather-sensor-status");
     mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(join(existingSkillDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
     writeFileSync(
       join(existingSkillDir, "SKILL.md"),
       `---
@@ -331,6 +333,79 @@ Source procedure id: proc-weather
 
     expect(distinctEval.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
     expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+  });
+
+  it("treats legacy skill directories without completion markers as duplicate skills", () => {
+    const existingSkillDir = join(skillsDir, "collect-markerless-legacy-report");
+    mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(
+      join(existingSkillDir, "SKILL.md"),
+      `---
+name: collect-markerless-legacy-report
+description: Use when collecting markerless legacy reports.
+---
+
+# Collect Markerless Legacy Report
+
+## Trigger
+Use for collecting markerless legacy reports.
+
+## Workflow
+1. Read status.json.
+2. Verify report output exists.
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({
+      taskPattern: "Collect markerless legacy report",
+      sourceSessionId: "markerless-legacy-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "markerless-legacy-b");
+    db.recordProcedureSuccess(proc.id, undefined, "markerless-legacy-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+    expect(evaluation.metadata.duplicateHandling).toBe("merge");
+  });
+
+  it("ignores incomplete atomic temp and backup skill directories during duplicate detection", () => {
+    const tempSkillDir = join(skillsDir, "collect-crashed-temp-report.tmp-1234-deadbeef");
+    const backupSkillDir = join(skillsDir, ".collect-crashed-backup-report.bak-1700000000000-deadbeef");
+    for (const dir of [tempSkillDir, backupSkillDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        `---
+name: collect-crashed-temp-report
+description: Use when collecting crashed temp reports.
+---
+
+# Collect Crashed Temp Report
+`,
+        "utf-8",
+      );
+    }
+
+    const proc = addProcedure({
+      taskPattern: "Collect crashed temp report",
+      sourceSessionId: "crashed-temp-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "crashed-temp-b");
+    db.recordProcedureSuccess(proc.id, undefined, "crashed-temp-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
   });
 
   it("does not report generated skill paths for deferred procedures", () => {

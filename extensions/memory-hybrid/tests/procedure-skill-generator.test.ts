@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 
 let tmpDir: string;
 let db: FactsDB;
@@ -138,6 +139,11 @@ describe("generateAutoSkills", () => {
 
   it("keeps collision-adjusted draft metadata aligned with the output directory", () => {
     mkdirSync(join(skillsDir, "validate-colliding-release-report"), { recursive: true });
+    writeFileSync(
+      join(skillsDir, "validate-colliding-release-report", SKILL_COMPLETE_MARKER),
+      new Date().toISOString(),
+      "utf-8",
+    );
     const proc = db.upsertProcedure({
       taskPattern: "Validate colliding release report",
       recipeJson: JSON.stringify([
@@ -186,6 +192,99 @@ describe("generateAutoSkills", () => {
     ]) {
       expectSidecarHasNoStaleIdentity(sidecarPath, originalSlug, originalPath);
     }
+  });
+
+  it("ignores incomplete atomic temp and backup directories when resolving slug collisions", () => {
+    const tempDir = join(skillsDir, "validate-crashed-temp-report.tmp-1234-deadbeef");
+    const backupDir = join(skillsDir, ".validate-crashed-temp-report.bak-1700000000000-deadbeef");
+    for (const dir of [tempDir, backupDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "SKILL.md"), "# Incomplete atomic artifact\n", "utf-8");
+    }
+
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate crashed temp report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "crashed-temp-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 1,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    expect(result.paths).toEqual([join(skillsDir, "validate-crashed-temp-report", "SKILL.md")]);
+    expect(existsSync(join(skillsDir, "validate-crashed-temp-report", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(tempDir, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(backupDir, "SKILL.md"))).toBe(true);
+  });
+
+  it("preserves legacy skill directories that lack completion markers when resolving slug collisions", () => {
+    const legacyDir = join(skillsDir, "validate-markerless-legacy-report");
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(
+      join(legacyDir, "SKILL.md"),
+      `---
+name: unrelated-legacy-skill
+description: Existing legacy skill created before completion markers.
+---
+
+# Unrelated Legacy Skill
+
+## Workflow
+1. Keep this legacy skill untouched.
+`,
+      "utf-8",
+    );
+
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate markerless legacy report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "legacy-markerless-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 1,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    expect(result.paths).toEqual([join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md")]);
+    expect(readFileSync(join(legacyDir, "SKILL.md"), "utf-8")).toContain("unrelated-legacy-skill");
+    expect(existsSync(join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md"))).toBe(true);
   });
 
   it("dry-run does not write files", () => {
@@ -766,6 +865,70 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior-1"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
     expect(db.getProcedureById(retry.id)?.promotedToSkill).toBe(1);
+  });
+
+  it("preserves a concurrently-created committed skill directory when atomic write refuses overwrite", async () => {
+    vi.resetModules();
+    vi.doMock("../utils/atomic-write.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../utils/atomic-write.js")>();
+      return {
+        ...actual,
+        atomicWriteSkillDir: vi.fn((skillDir: string) => {
+          mkdirSync(skillDir, { recursive: true });
+          writeFileSync(join(skillDir, "SKILL.md"), "# Concurrent Winner\n", "utf-8");
+          writeFileSync(join(skillDir, actual.SKILL_COMPLETE_MARKER), "concurrent-winner", "utf-8");
+          throw new Error(`Refusing to overwrite existing skill directory: ${skillDir}`);
+        }),
+      };
+    });
+
+    try {
+      const { generateAutoSkillForProcedure: generateWithConcurrentCollision } = await import(
+        "../services/procedure-skill-generator.js"
+      );
+      const proc = db.upsertProcedure({
+        taskPattern: "Validate concurrent collision report",
+        recipeJson: JSON.stringify([
+          { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+          {
+            tool: "exec",
+            args: { command: "npm test" },
+            summary: "Run validation test",
+          },
+          { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+        ]),
+        procedureType: "positive",
+        successCount: 3,
+        confidence: 0.9,
+        sourceSessionId: "concurrent-collision-a",
+      });
+      recordDistinctSuccesses(proc.id);
+
+      const result = generateWithConcurrentCollision(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          validationThreshold: 3,
+          skillTTLDays: 30,
+          procedureId: proc.id,
+          apply: true,
+          policy: "auto-safe",
+        },
+        { info: () => {}, warn: () => {} },
+      );
+
+      const skillDir = join(skillsDir, "validate-concurrent-collision-report");
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "write-failed",
+      });
+      expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Concurrent Winner\n");
+      expect(readFileSync(join(skillDir, SKILL_COMPLETE_MARKER), "utf-8")).toBe("concurrent-winner");
+      expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
+    } finally {
+      vi.doUnmock("../utils/atomic-write.js");
+      vi.resetModules();
+    }
   });
 
   it("rolls back written draft artifacts when markProcedurePromoted fails for single-procedure generation", () => {
