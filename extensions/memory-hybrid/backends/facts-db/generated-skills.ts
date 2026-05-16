@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { basename, isAbsolute, join, win32 } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type {
@@ -95,7 +95,7 @@ export type GeneratedSkillTelemetryReportRow = {
   generatedAt: number | null;
   metrics: GeneratedSkillTelemetryMetrics;
   flags: GeneratedSkillTelemetryFlags;
-  recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
+  recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
   recentActivations: GeneratedSkillTelemetryEntry[];
 };
 
@@ -646,16 +646,18 @@ export function buildGeneratedSkillTelemetryReport(
       const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
       const currentState = proc.skillState ?? "experimental";
 
-      let recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
+      let recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
 
       if (currentState === "uninstalled" || currentState === "rejected") {
         recommendation = "observe";
+      } else if (currentState === "experimental" && proc.skillStateReason?.startsWith("auto-unblocked")) {
+        recommendation = "unblock";
       } else if (currentState === "archived" && flags.archiveCandidate) {
         recommendation = "observe";
       } else if (currentState === "demoted" && flags.overTriggering) {
         recommendation = "observe";
       } else if (flags.unblockCandidate && !flags.overTriggering) {
-        recommendation = "promote";
+        recommendation = "unblock";
       } else if (flags.archiveCandidate) {
         recommendation = "archive";
       } else if (flags.overTriggering) {
@@ -700,9 +702,11 @@ export type GeneratedSkillDoctorRow = {
   skillName: string;
   skillPath: string;
   state: GeneratedSkillLifecycleState;
-  issue: "missing_on_disk";
+  issue: "missing_on_disk" | "stat_error";
   resolvedAbsolutePath: string;
   fixed: boolean;
+  errorCode?: string;
+  errorMessage?: string;
 };
 
 export type GeneratedSkillDoctorReport = {
@@ -710,6 +714,7 @@ export type GeneratedSkillDoctorReport = {
   totalChecked: number;
   issues: GeneratedSkillDoctorRow[];
   fixedCount: number;
+  failedFixCount: number;
   fixedProcedureIds: string[];
 };
 
@@ -751,35 +756,49 @@ export function reconcileGeneratedSkillDiskState(
     // installed generated skill.
     const { dirPath, skillMdPath } = resolveSkillMdPath(proc.skillPath, workspaceRoot);
 
-    const exists = existsSync(skillMdPath);
-    if (!exists) {
-      // Derive skill name from the directory component of the path (not the raw skill_path
-      // which might include a SKILL.md suffix or be a full directory path).
-      const skillName = skillPathBasename(dirPath);
-      let fixed = false;
-      if (fix) {
-        // Use the full skill_path for the lookup so findGeneratedSkillProcedure
-        // matches on exact path regardless of basename edge cases.
-        const updated = setGeneratedSkillLifecycleState(
-          db,
-          proc.skillPath,
-          "uninstalled",
-          "operator-confirmed doctor --fix: skill file no longer exists on disk",
-          now,
-        );
-        fixed = updated?.skillState === "uninstalled";
-        if (fixed) fixedProcedureIds.push(proc.id);
-      }
-      issues.push({
-        procedureId: proc.id,
-        skillName,
-        skillPath: proc.skillPath,
-        state: proc.skillState ?? "experimental",
-        issue: "missing_on_disk",
-        resolvedAbsolutePath: skillMdPath,
-        fixed,
-      });
+    let statError: unknown;
+    let missing = false;
+    try {
+      missing = !statSync(skillMdPath).isFile();
+    } catch (err) {
+      statError = err;
+      missing = true;
     }
+    if (!missing) continue;
+
+    // Derive skill name from the directory component of the path (not the raw skill_path
+    // which might include a SKILL.md suffix or be a full directory path).
+    const skillName = skillPathBasename(dirPath);
+    const errorCode =
+      typeof statError === "object" && statError !== null && "code" in statError
+        ? String((statError as { code?: unknown }).code)
+        : undefined;
+    const isMissingOnDisk = !statError || errorCode === "ENOENT";
+    let fixed = false;
+    if (fix && isMissingOnDisk) {
+      // Use the full skill_path for the lookup so findGeneratedSkillProcedure
+      // matches on exact path regardless of basename edge cases.
+      const updated = setGeneratedSkillLifecycleState(
+        db,
+        proc.skillPath,
+        "uninstalled",
+        "operator-confirmed doctor --fix: skill file no longer exists on disk",
+        now,
+      );
+      fixed = updated?.skillState === "uninstalled";
+      if (fixed) fixedProcedureIds.push(proc.id);
+    }
+    issues.push({
+      procedureId: proc.id,
+      skillName,
+      skillPath: proc.skillPath,
+      state: proc.skillState ?? "experimental",
+      issue: isMissingOnDisk ? "missing_on_disk" : "stat_error",
+      resolvedAbsolutePath: skillMdPath,
+      fixed,
+      ...(errorCode ? { errorCode } : {}),
+      ...(statError instanceof Error ? { errorMessage: statError.message } : {}),
+    });
   }
 
   return {
@@ -787,6 +806,7 @@ export function reconcileGeneratedSkillDiskState(
     totalChecked,
     issues,
     fixedCount: fixedProcedureIds.length,
+    failedFixCount: issues.filter((issue) => !issue.fixed).length,
     fixedProcedureIds,
   };
 }

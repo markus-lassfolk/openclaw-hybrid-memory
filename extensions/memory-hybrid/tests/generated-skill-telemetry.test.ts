@@ -448,6 +448,31 @@ describe("generated skill telemetry", () => {
     expect(report.rows[0]?.recommendation).toBe("observe");
   });
 
+  it("reports unblock rather than promote while a demoted skill is eligible for reset", () => {
+    vi.useFakeTimers();
+    const now = Math.floor(new Date("2026-05-14T10:00:00Z").getTime() / 1000);
+    vi.setSystemTime(new Date(now * 1000));
+
+    const { skillName } = createGeneratedSkill("Skill ready for unblock recommendation");
+    db.setGeneratedSkillLifecycleState(skillName, "demoted", "prior false positives", now);
+
+    for (let i = 0; i < 5; i++) {
+      db.getRawDb()
+        .prepare(
+          `INSERT INTO generated_skill_telemetry (id, procedure_id, skill_name, decision, task_outcome, user_correction, created_at)
+           VALUES (?, (SELECT id FROM procedures WHERE skill_path LIKE ?), ?, 'selected', 'success', 0, ?)`,
+        )
+        .run(`manual-clean-${i}`, `%${skillName}`, skillName, now + 3600 + i);
+    }
+
+    const report = db.buildGeneratedSkillTelemetryReport({ skillName, now: now + 7200 });
+    const skill = db.getGeneratedSkillByName(skillName);
+
+    expect(skill?.skillState).toBe("experimental");
+    expect(skill?.skillStateReason).toContain("auto-unblocked");
+    expect(report.rows[0]?.recommendation).toBe("unblock");
+  });
+
   it("auto-unblocks demoted skill after enough clean uses (unblockAfterCleanUses policy)", () => {
     vi.useFakeTimers();
     const now = Math.floor(new Date("2026-05-14T10:00:00Z").getTime() / 1000);
@@ -566,6 +591,30 @@ describe("skills doctor — disk reconciler", () => {
     expect(report.issues[0]?.fixed).toBe(true);
   });
 
+  it("does not mark stat errors as uninstalled in fix mode", () => {
+    const { skillName } = createGeneratedSkill("Skill path with stat error");
+    const proc = db.getGeneratedSkillByName(skillName);
+    expect(proc).not.toBeNull();
+    if (!proc) throw new Error("expected generated skill procedure");
+
+    const filePath = join(tmpDir, "not-a-directory");
+    writeFileSync(filePath, "not a directory");
+    db.getRawDb().prepare("UPDATE procedures SET skill_path = ? WHERE id = ?").run(filePath, proc.id);
+
+    const report = db.reconcileGeneratedSkillDiskState({
+      workspaceRoot: tmpDir,
+      fix: true,
+    });
+    const issueForThisSkill = report.issues.find((i) => i.skillName === "not-a-directory");
+    const updated = db.getGeneratedSkillByName(skillName);
+
+    expect(issueForThisSkill?.issue).toBe("stat_error");
+    expect(issueForThisSkill?.fixed).toBe(false);
+    expect(report.fixedCount).toBe(0);
+    expect(report.failedFixCount).toBeGreaterThan(0);
+    expect(updated?.skillState).not.toBe("uninstalled");
+  });
+
   it("skips already-uninstalled rows", () => {
     const { skillName } = createGeneratedSkill("Already uninstalled skill");
     db.setGeneratedSkillLifecycleState(skillName, "uninstalled", "manually uninstalled");
@@ -613,5 +662,36 @@ describe("skills doctor — disk reconciler", () => {
     };
     expect(result.totalChecked).toBeGreaterThan(0);
     expect(result.issues?.some((i) => i.issue === "missing_on_disk")).toBe(true);
+  });
+
+  it("skills doctor CLI exits 2 when --fix leaves stat errors unfixed", async () => {
+    const { skillName } = createGeneratedSkill("Doctor partial stat error");
+    const proc = db.getGeneratedSkillByName(skillName);
+    expect(proc).not.toBeNull();
+    if (!proc) throw new Error("expected generated skill procedure");
+
+    const filePath = join(tmpDir, "doctor-not-a-directory");
+    writeFileSync(filePath, "not a directory");
+    db.getRawDb().prepare("UPDATE procedures SET skill_path = ? WHERE id = ?").run(filePath, proc.id);
+
+    process.argv = ["node", "vitest", "hybrid-mem"];
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerSkillsCommands(program, {
+      factsDb: db,
+      crystallizationStore: null,
+      cfg: {} as never,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await program.parseAsync(["skills", "doctor", "--workspace", tmpDir, "--fix", "--json"], { from: "user" });
+    const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      failedFixCount?: number;
+      issues?: Array<{ issue: string; fixed: boolean }>;
+    };
+
+    expect(result.failedFixCount).toBeGreaterThan(0);
+    expect(result.issues?.some((i) => i.issue === "stat_error" && !i.fixed)).toBe(true);
+    expect(process.exitCode).toBe(2);
   });
 });

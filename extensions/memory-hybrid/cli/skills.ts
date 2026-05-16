@@ -528,6 +528,9 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           process.exitCode = 1;
           return;
         }
+        if (opts?.fix && report.failedFixCount > 0) {
+          process.exitCode = 2;
+        }
         if (opts?.json) {
           console.log(JSON.stringify(report, null, 2));
           return;
@@ -549,6 +552,9 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           console.log(`\nMarked ${report.fixedCount} missing skill(s) as uninstalled.`);
           for (const issue of report.issues.filter((row) => row.fixed)) {
             console.log(`  fixed: ${issue.skillName} (${issue.procedureId})`);
+          }
+          if (report.failedFixCount > 0) {
+            console.error(`\nerror: ${report.failedFixCount} missing skill(s) could not be marked uninstalled.`);
           }
         }
       }),
