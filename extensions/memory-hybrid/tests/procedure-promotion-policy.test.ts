@@ -374,8 +374,6 @@ Use for collecting markerless legacy reports.
     expect(evaluation.metadata.duplicateHandling).toBe("merge");
   });
 
-<<<<<<< HEAD
-=======
   it("ignores incomplete atomic temp and backup skill directories during duplicate detection", () => {
     const tempSkillDir = join(skillsDir, "collect-crashed-temp-report.tmp-1234-deadbeef");
     const backupSkillDir = join(skillsDir, ".collect-crashed-backup-report.bak-1700000000000-deadbeef");
@@ -410,7 +408,6 @@ description: Use when collecting crashed temp reports.
     expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
   });
 
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
   it("does not report generated skill paths for deferred procedures", () => {
     const proc = addProcedure({
       taskPattern: "Validate deferred low confidence report",
