@@ -527,6 +527,87 @@ function skillTelemetryRecentEntries(
   ).map(mapGeneratedSkillTelemetryRow);
 }
 
+type RawTelemetryCounts = {
+  activationCountPerWeek: number;
+  activationCountTotal: number;
+  nearMissCount: number;
+  falsePositiveSignals: number;
+  falseNegativeSignals: number;
+  repeatedCorrectionCount: number;
+  lastUsedAt: number | null;
+  successCount: number;
+  failureCount: number;
+  partialCount: number;
+  unknownCount: number;
+  successfulUsesWithoutCorrection: number;
+  consideredCount: number;
+  skippedCount: number;
+  savedToolCalls: number;
+  savedTimeMs: number;
+};
+
+function deriveMetricsAndFlags(
+  counts: RawTelemetryCounts,
+  proc: ProcedureEntry,
+  policy: GeneratedSkillLifecyclePolicy,
+  now: number,
+): { metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } {
+  const knownOutcomeTotal = counts.successCount + counts.failureCount + counts.partialCount + counts.unknownCount;
+  const successRate = knownOutcomeTotal > 0 ? counts.successCount / knownOutcomeTotal : null;
+  const failureRate = knownOutcomeTotal > 0 ? counts.failureCount / knownOutcomeTotal : null;
+  const partialRate = knownOutcomeTotal > 0 ? counts.partialCount / knownOutcomeTotal : null;
+  const unknownRate = knownOutcomeTotal > 0 ? counts.unknownCount / knownOutcomeTotal : null;
+  const falsePositiveRate =
+    counts.activationCountTotal > 0 ? counts.falsePositiveSignals / counts.activationCountTotal : null;
+  const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
+  const archiveCandidate =
+    counts.activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const promotionCandidate =
+    proc.skillState !== "demoted" &&
+    proc.skillState !== "archived" &&
+    proc.skillState !== "trusted" &&
+    counts.successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
+  const overTriggering =
+    counts.activationCountTotal >= policy.demoteMinSamples &&
+    falsePositiveRate != null &&
+    falsePositiveRate >= policy.demoteFalsePositiveRate;
+  const revisionCandidate =
+    counts.nearMissCount >= policy.revisionNearMissThreshold && counts.skippedCount >= counts.consideredCount;
+
+  return {
+    metrics: {
+      activationCountPerWeek: counts.activationCountPerWeek,
+      activationCountTotal: counts.activationCountTotal,
+      nearMissCount: counts.nearMissCount,
+      falsePositiveSignals: counts.falsePositiveSignals,
+      falseNegativeSignals: counts.falseNegativeSignals,
+      repeatedCorrectionCount: counts.repeatedCorrectionCount,
+      lastUsedAt: counts.lastUsedAt,
+      successCount: counts.successCount,
+      failureCount: counts.failureCount,
+      partialCount: counts.partialCount,
+      unknownCount: counts.unknownCount,
+      successRate,
+      failureRate,
+      partialRate,
+      unknownRate,
+      successfulUsesWithoutCorrection: counts.successfulUsesWithoutCorrection,
+      consideredCount: counts.consideredCount,
+      skippedCount: counts.skippedCount,
+      savedToolCalls: counts.savedToolCalls,
+      savedTimeMs: counts.savedTimeMs,
+      falsePositiveRate,
+    },
+    flags: {
+      promotionCandidate,
+      overTriggering,
+      revisionCandidate,
+      neverUsed: counts.activationCountTotal === 0,
+      archiveCandidate,
+    },
+  };
+}
+
 function summarizeSkillTelemetry(
   proc: ProcedureEntry,
   activations: GeneratedSkillTelemetryEntry[],
@@ -580,28 +661,8 @@ function summarizeSkillTelemetry(
     if (activation.userCorrection) repeatedCorrectionCount++;
   }
 
-  const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
-  const successRate = knownOutcomeTotal > 0 ? successCount / knownOutcomeTotal : null;
-  const failureRate = knownOutcomeTotal > 0 ? failureCount / knownOutcomeTotal : null;
-  const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
-  const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
-  const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
-  const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
-  const archiveCandidate =
-    activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
-  const promotionCandidate =
-    proc.skillState !== "demoted" &&
-    proc.skillState !== "archived" &&
-    proc.skillState !== "trusted" &&
-    successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
-  const overTriggering =
-    activationCountTotal >= policy.demoteMinSamples &&
-    falsePositiveRate != null &&
-    falsePositiveRate >= policy.demoteFalsePositiveRate;
-  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
-
-  return {
-    metrics: {
+  return deriveMetricsAndFlags(
+    {
       activationCountPerWeek,
       activationCountTotal,
       nearMissCount,
@@ -613,25 +674,16 @@ function summarizeSkillTelemetry(
       failureCount,
       partialCount,
       unknownCount,
-      successRate,
-      failureRate,
-      partialRate,
-      unknownRate,
       successfulUsesWithoutCorrection,
       consideredCount,
       skippedCount,
       savedToolCalls,
       savedTimeMs,
-      falsePositiveRate,
     },
-    flags: {
-      promotionCandidate,
-      overTriggering,
-      revisionCandidate,
-      neverUsed: activationCountTotal === 0,
-      archiveCandidate,
-    },
-  };
+    proc,
+    policy,
+    now,
+  );
 }
 
 function summarizeSkillTelemetryFromRollups(
@@ -663,28 +715,8 @@ function summarizeSkillTelemetryFromRollups(
   const savedToolCalls = r.gst_saved_tool_calls_sum;
   const savedTimeMs = r.gst_saved_time_ms_sum;
 
-  const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
-  const successRate = knownOutcomeTotal > 0 ? successCount / knownOutcomeTotal : null;
-  const failureRate = knownOutcomeTotal > 0 ? failureCount / knownOutcomeTotal : null;
-  const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
-  const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
-  const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
-  const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
-  const archiveCandidate =
-    activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
-  const promotionCandidate =
-    proc.skillState !== "demoted" &&
-    proc.skillState !== "archived" &&
-    proc.skillState !== "trusted" &&
-    successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
-  const overTriggering =
-    activationCountTotal >= policy.demoteMinSamples &&
-    falsePositiveRate != null &&
-    falsePositiveRate >= policy.demoteFalsePositiveRate;
-  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
-
-  return {
-    metrics: {
+  return deriveMetricsAndFlags(
+    {
       activationCountPerWeek,
       activationCountTotal,
       nearMissCount,
@@ -696,25 +728,16 @@ function summarizeSkillTelemetryFromRollups(
       failureCount,
       partialCount,
       unknownCount,
-      successRate,
-      failureRate,
-      partialRate,
-      unknownRate,
       successfulUsesWithoutCorrection,
       consideredCount,
       skippedCount,
       savedToolCalls,
       savedTimeMs,
-      falsePositiveRate,
     },
-    flags: {
-      promotionCandidate,
-      overTriggering,
-      revisionCandidate,
-      neverUsed: activationCountTotal === 0,
-      archiveCandidate,
-    },
-  };
+    proc,
+    policy,
+    now,
+  );
 }
 
 function desiredLifecycleTransition(
