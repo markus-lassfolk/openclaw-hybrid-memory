@@ -237,7 +237,7 @@ type ExtractProceduresOptions = {
 };
 
 /** Calculate word overlap ratio between two task patterns (0.0 to 1.0). */
-function taskSimilarity(pattern1: string, pattern2: string): number {
+export function taskSimilarity(pattern1: string, pattern2: string): number {
   const words1 = new Set(
     pattern1
       .toLowerCase()
@@ -252,8 +252,11 @@ function taskSimilarity(pattern1: string, pattern2: string): number {
   );
   if (words1.size === 0 || words2.size === 0) return 0;
   const intersection = new Set([...words1].filter((w) => words2.has(w)));
-  return intersection.size / Math.min(words1.size, words2.size);
+  const union = new Set([...words1, ...words2]);
+  return intersection.size / Math.max(1, union.size);
 }
+
+const PROCEDURE_MERGE_SIMILARITY_THRESHOLD = 0.35;
 
 /**
  * Read session JSONL files (from directory or explicit paths), parse tool sequences,
@@ -330,7 +333,7 @@ export async function extractProceduresFromSessions(
     }
 
     const existing = factsDb.findProcedureByTaskPattern(parsed.taskIntent, 1)[0];
-    if (existing && taskSimilarity(existing.taskPattern, parsed.taskIntent) >= 0.5) {
+    if (existing && taskSimilarity(existing.taskPattern, parsed.taskIntent) >= PROCEDURE_MERGE_SIMILARITY_THRESHOLD) {
       let recorded = false;
       if (parsed.success) {
         recorded = factsDb.recordProcedureSuccess(existing.id, recipeJson, sessionId);

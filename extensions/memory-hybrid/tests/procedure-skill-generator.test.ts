@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { getEnv, setEnv } from "../utils/env-manager.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 
 let tmpDir: string;
 let db: FactsDB;
@@ -24,6 +25,32 @@ afterEach(() => {
 function recordDistinctSuccesses(procId: string): void {
   db.recordProcedureSuccess(procId, undefined, `${procId}-session-2`);
   db.recordProcedureSuccess(procId, undefined, `${procId}-session-3`);
+}
+
+function collectIdentityKeyFindings(value: unknown, path = "$", findings: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectIdentityKeyFindings(item, `${path}[${index}]`, findings));
+    return findings;
+  }
+  if (!value || typeof value !== "object") return findings;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const childPath = `${path}.${key}`;
+    if (isSlugOrPathIdentityKey(key, childPath)) findings.push(childPath);
+    collectIdentityKeyFindings(child, childPath, findings);
+  }
+  return findings;
+}
+
+function isSlugOrPathIdentityKey(key: string, path: string): boolean {
+  if (key === "path" && /^\$\[\d+\]\.args\.path$/.test(path)) return false;
+  return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
+}
+
+function expectSidecarHasNoStaleIdentity(sidecarPath: string, originalSlug: string, originalPath: string): void {
+  const serialized = readFileSync(sidecarPath, "utf-8");
+  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original slug`).not.toContain(originalSlug);
+  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original path`).not.toContain(originalPath);
+  expect(collectIdentityKeyFindings(JSON.parse(serialized))).toEqual([]);
 }
 
 describe("generateAutoSkills", () => {
@@ -122,6 +149,11 @@ describe("generateAutoSkills", () => {
 
   it("keeps collision-adjusted draft metadata aligned with the output directory", () => {
     mkdirSync(join(skillsDir, "validate-colliding-release-report"), { recursive: true });
+    writeFileSync(
+      join(skillsDir, "validate-colliding-release-report", SKILL_COMPLETE_MARKER),
+      new Date().toISOString(),
+      "utf-8",
+    );
     const proc = db.upsertProcedure({
       taskPattern: "Validate colliding release report",
       recipeJson: JSON.stringify([
@@ -162,6 +194,67 @@ describe("generateAutoSkills", () => {
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
     });
     expect(proposalMetadata.generated_skill_path).toBe(join(skillsDir, "validate-colliding-release-report-1"));
+
+    const originalSlug = "validate-colliding-release-report";
+    const originalPath = join(skillsDir, originalSlug);
+    for (const sidecarPath of [
+      join(collidedDir, "recipe.json"),
+      join(collidedDir, "proposal-metadata.json"),
+      join(collidedDir, "evals", "evals.json"),
+    ]) {
+      expectSidecarHasNoStaleIdentity(sidecarPath, originalSlug, originalPath);
+    }
+  });
+
+  it("preserves legacy skill directories that lack completion markers when resolving slug collisions", () => {
+    const legacyDir = join(skillsDir, "validate-markerless-legacy-report");
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(
+      join(legacyDir, "SKILL.md"),
+      `---
+name: unrelated-legacy-skill
+description: Existing legacy skill created before completion markers.
+---
+
+# Unrelated Legacy Skill
+
+## Workflow
+1. Keep this legacy skill untouched.
+`,
+      "utf-8",
+    );
+
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate markerless legacy report",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "legacy-markerless-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 1,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    expect(result.paths).toEqual([join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md")]);
+    expect(readFileSync(join(legacyDir, "SKILL.md"), "utf-8")).toContain("unrelated-legacy-skill");
+    expect(existsSync(join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md"))).toBe(true);
   });
 
   it("dry-run does not write files", () => {
@@ -399,6 +492,60 @@ describe("generateAutoSkills", () => {
     expect(existsSync(join(skillsDir, "validate-explicit-draft-policy-report", "SKILL.md"))).toBe(false);
   });
 
+  it("draft-only batch: deferred procedures do not consume slug reservations for later entries", () => {
+    // Two procedures with identical task patterns → same base slug.
+    // Under draft-only policy both defer and neither should inflate the other's resolved slug.
+    const recipeJson = JSON.stringify([
+      { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+      { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+      { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+    ]);
+    const procA = db.upsertProcedure({
+      id: "deferred-slug-res-a",
+      taskPattern: "Validate deferred slug reservation",
+      recipeJson,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "deferred-slug-res-a1",
+    });
+    recordDistinctSuccesses(procA.id);
+    const procB = db.upsertProcedure({
+      id: "deferred-slug-res-b",
+      taskPattern: "Validate deferred slug reservation",
+      recipeJson,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "deferred-slug-res-b1",
+    });
+    recordDistinctSuccesses(procB.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "draft-only",
+        maxPerRun: 2,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.summary).toMatchObject({ deferred: 2, drafted: 0 });
+    expect(result.generated).toBe(0);
+    // No skill file should be written for either procedure
+    expect(existsSync(join(skillsDir, "validate-deferred-slug-reservation", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-deferred-slug-reservation-1", "SKILL.md"))).toBe(false);
+    // Neither decision should have a slug-inflated (-1 suffix) skillPath caused by
+    // the other deferred procedure spuriously reserving the base slug.
+    const deferredDecisions = (result.decisions ?? []).filter((d) => d.action === "deferred-for-human");
+    expect(deferredDecisions).toHaveLength(2);
+    expect(deferredDecisions.every((d) => !d.skillPath?.endsWith("-1"))).toBe(true);
+  });
+
   it("single procedure dry-run under default draft-only policy requires human approval and writes nothing", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single procedure report",
@@ -475,6 +622,56 @@ describe("generateAutoSkills", () => {
       enabled: false,
     });
     expect(existsSync(join(skillsDir, "validate-single-apply-report", "SKILL.md"))).toBe(true);
+  });
+
+  it("retries allocation when a competing writer claims the previewed slug", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate raced draft allocation",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "raced-draft-a1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const originalGetProcedureVersions = db.getProcedureVersions.bind(db);
+    const versionSpy = vi.spyOn(db, "getProcedureVersions").mockImplementationOnce((procId: string) => {
+      // Simulate another generator creating the directory after this process has
+      // previewed the slug but before it attempts to reserve the write path.
+      mkdirSync(join(skillsDir, "validate-raced-draft-allocation"), { recursive: true });
+      return originalGetProcedureVersions(procId);
+    });
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        apply: true,
+        policy: "auto-safe",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    versionSpy.mockRestore();
+
+    expect(result).toMatchObject({
+      ok: true,
+      relativePath: join(skillsDir, "validate-raced-draft-allocation-1"),
+      skillPath: join(skillsDir, "validate-raced-draft-allocation-1", "SKILL.md"),
+    });
+    expect(existsSync(join(skillsDir, "validate-raced-draft-allocation", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(skillsDir, "validate-raced-draft-allocation-1", "SKILL.md"))).toBe(true);
+    expect(readFileSync(join(skillsDir, "validate-raced-draft-allocation-1", "verification.json"), "utf-8")).toContain(
+      '"skill": "validate-raced-draft-allocation-1"',
+    );
   });
 
   it("does not count deferred procedures as generated dry-run paths", () => {

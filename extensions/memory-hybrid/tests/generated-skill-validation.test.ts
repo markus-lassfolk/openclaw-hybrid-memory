@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -9,8 +9,10 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { registerSkillsCommands } from "../cli/skills.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
-import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
+import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 
 const BASE_CFG: CrystallizationConfig = {
   enabled: true,
@@ -20,6 +22,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
 
@@ -190,6 +193,55 @@ Bounded release-health review workflow.
     expect(validation.syntheticActivationEval.status).toBe("passed");
     expect(validation.approvalDecision).toBe("allow");
     expect(validation.syntheticActivationEval.score).toBeGreaterThanOrEqual(100 / 3);
+  });
+
+  it("dry-load discovery skips markerless skill directories as in-progress", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-markerless-dry-load-"));
+    const skillsDir = join(tmpDir, "skills");
+    const markerlessDir = join(skillsDir, "half-written-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(
+      join(markerlessDir, "SKILL.md"),
+      `---
+name: half-written-skill
+description: This markerless skill must be treated as in-progress.
+---
+`,
+      "utf-8",
+    );
+
+    expect(discoverCompletedSkillDirs(skillsDir)).toEqual([]);
+  });
+
+  it("dry-load discovery includes only skills with the completion marker", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-complete-dry-load-"));
+    const skillsDir = join(tmpDir, "skills");
+    const completedDir = join(skillsDir, "complete-skill");
+    mkdirSync(completedDir, { recursive: true });
+    writeFileSync(
+      join(completedDir, "SKILL.md"),
+      `---
+name: complete-skill
+description: This skill has a completion marker.
+---
+`,
+      "utf-8",
+    );
+    writeFileSync(join(completedDir, SKILL_COMPLETE_MARKER), "2024-01-01T00:00:00.000Z", "utf-8");
+
+    const markerlessDir = join(skillsDir, "half-written-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(
+      join(markerlessDir, "SKILL.md"),
+      `---
+name: half-written-skill
+description: This markerless skill must be treated as in-progress.
+---
+`,
+      "utf-8",
+    );
+
+    expect(discoverCompletedSkillDirs(skillsDir).map((entry) => entry.name)).toEqual(["complete-skill"]);
   });
 
   it("uses a deterministic fallback negative prompt when canned prompts overlap the skill surface", () => {
@@ -416,6 +468,113 @@ Bounded symlink validation workflow.
     expect(validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path"))).toBe(true);
   });
 
+  // Regression tests for canonical outputDir path equivalence (Issue #1373)
+  const CANONICAL_SKILL_CONTENT = `---
+name: canonical-path-skill
+description: Use when the user asks to test canonical path equivalence.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Canonical Path Skill
+
+## Trigger
+Use this skill for canonical path equivalence testing.
+
+## Scope
+Bounded canonical path workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Resolve output path canonically.
+2. Compare resolved forms for equivalence.
+
+## Verification
+- Confirm output paths stay inside the skills directory.
+
+## Anti-patterns / Known Failures
+- Do not compare raw path strings without resolving first.
+
+## Examples
+- Validate canonical path equivalence for generated skills.
+
+## Provenance
+- Source pattern ID: \`pattern-canonical\``;
+
+  it("accepts outputDir with a trailing slash (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-trailing-slash-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Trailing separator form — must be accepted as equivalent
+    const outputDirWithSlash = `${canonicalOutputDir}${sep}`;
+    const validation = service.validate({
+      outputDir: outputDirWithSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "Trailing-slash outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("accepts outputDir prefixed with ./ (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-dot-slash-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Insert a "." segment in the middle: /tmp/xxx/./skills — resolves to /tmp/xxx/skills
+    const outputDirDotSlash = `${tmpDir}${sep}.${sep}skills`;
+    const validation = service.validate({
+      outputDir: outputDirDotSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "./ prefixed outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("accepts outputDir with redundant separators (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-redundant-sep-"));
+    const service = new GeneratedSkillValidationService();
+    const canonicalOutputDir = join(tmpDir, "skills");
+    // Redundant-separator form — must be accepted as equivalent
+    const outputDirDoubleSlash = `${dirname(canonicalOutputDir)}${sep}${sep}${basename(canonicalOutputDir)}`;
+    const validation = service.validate({
+      outputDir: outputDirDoubleSlash,
+      proposedOutputPath: join(canonicalOutputDir, "canonical-path-skill", "SKILL.md"),
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.filter((v) => v.includes("Unsafe proposed output path")),
+      "Redundant-separator outputDir should not trigger path safety rejection",
+    ).toHaveLength(0);
+  });
+
+  it("rejects proposedOutputPath that escapes the outputDir (canonical path equivalence)", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-escape-"));
+    const service = new GeneratedSkillValidationService();
+    const outputDir = join(tmpDir, "skills");
+    // Path traversal attempt: escapes the outputDir
+    const escapingPath = join(outputDir, "..", "canonical-path-skill", "SKILL.md");
+    const validation = service.validate({
+      outputDir,
+      proposedOutputPath: escapingPath,
+      skillName: "canonical-path-skill",
+      skillContent: CANONICAL_SKILL_CONTENT,
+    });
+    expect(
+      validation.staticValidation.violations.some((v) => v.includes("Unsafe proposed output path")),
+      "Path traversal escaping outputDir must be rejected",
+    ).toBe(true);
+  });
+
   it("requires explicit override for activation warnings during approval", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-override-"));
     const validationService = new GeneratedSkillValidationService();
@@ -557,7 +716,8 @@ Bounded CLI release-health review workflow.
       const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean; outputPath?: string };
       expect(output.ok).toBe(true);
       expect(output.outputPath).toBeDefined();
-      expect(existsSync(output.outputPath!)).toBe(true);
+      if (!output.outputPath) return;
+      expect(existsSync(output.outputPath)).toBe(true);
     } finally {
       cStore.close();
     }
@@ -801,5 +961,77 @@ Bounded metadata installation workflow.
       wfStore.close();
       cStore.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseSkillFrontmatter — HTML comment prefix (Issue #1363)
+// ---------------------------------------------------------------------------
+
+describe("parseSkillFrontmatter — HTML comment prefix", () => {
+  const FRONTMATTER_BODY = `---
+name: test-skill
+description: Use when the user asks to test things.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Test Skill
+`;
+
+  it("parses frontmatter from content that starts with --- (baseline)", () => {
+    const fm = parseSkillFrontmatter(FRONTMATTER_BODY);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+    expect(fm.category).toBe("crystallized-workflow");
+    expect(fm.provenance).toBe("test-suite");
+  });
+
+  it("parses frontmatter when a single-line HTML comment precedes ---", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 pattern_id=p1 evidence_hash=eh1 output_path=/skills/test-skill/SKILL.md -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter when BOM and whitespace precede an HTML comment", () => {
+    const content = `\uFEFF\n  \t\n<!-- openclaw:skill-proposal id=abc123 -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter when a multi-line HTML comment precedes ---", () => {
+    const content = `<!-- openclaw:skill-proposal\n  id=abc123\n  pattern_id=p1\n-->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after multiple leading HTML comments", () => {
+    const content = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after an inline closing HTML comment marker", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 --> ${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("returns empty object when content is only an HTML comment with no frontmatter", () => {
+    const content = "<!-- openclaw:skill-proposal id=abc123 -->\n# Plain Markdown\n\nNo frontmatter here.";
+    const fm = parseSkillFrontmatter(content);
+    expect(fm).toEqual({});
+  });
+
+  it("returns empty object for plain markdown with no frontmatter and no HTML comment", () => {
+    const fm = parseSkillFrontmatter("# Plain Markdown\n\nNo frontmatter here.");
+    expect(fm).toEqual({});
   });
 });
