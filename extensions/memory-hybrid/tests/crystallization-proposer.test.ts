@@ -53,6 +53,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "", // will be set in beforeEach
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
 beforeEach(() => {
@@ -208,6 +209,30 @@ describe("CrystallizationProposer.runCycle — autoApprove=true", () => {
     expect(skillPath).toBeDefined();
     expect(existsSync(skillPath!)).toBe(true);
   });
+
+  it("does not persist auto-approve candidates after maxCrystallized is reached mid-cycle", () => {
+    const outputDir = join(tmpDir, "skills-capped");
+    const cfg: CrystallizationConfig = {
+      ...BASE_CFG,
+      outputDir,
+      autoApprove: true,
+      minUsageCount: 2,
+      minSuccessRate: 0.5,
+      maxCrystallized: 1,
+    };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    seedPatterns(["exec", "read", "write"], 3, 1);
+    seedPatterns(["read", "edit", "exec"], 3, 1);
+
+    const result = proposer.runCycle();
+
+    expect(result.proposed).toBe(1);
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result.reasons.some((reason) => /maxCrystallized limit reached/i.test(reason))).toBe(true);
+    expect(cStore.count("approved")).toBe(1);
+    expect(cStore.list({ status: "pending" })).toHaveLength(0);
+    expect(cStore.list()).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,6 +314,54 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(body).toContain("openclaw:skill-proposal");
   });
 
+  it("enforces maxCrystallized when approvals interleave", () => {
+    const outputDir = join(tmpDir, "skills-race");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false, maxCrystallized: 1 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const first = cStore.create({
+      patternId: "race-pattern-1",
+      evidenceHash: "race-ev-1",
+      skillName: "race-skill-1",
+      skillContent:
+        "# Race Skill One\n\nThis is a test skill file with adequate content for validation purposes and interleaving approval checks.",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    const second = cStore.create({
+      patternId: "race-pattern-2",
+      evidenceHash: "race-ev-2",
+      skillName: "race-skill-2",
+      skillContent:
+        "# Race Skill Two\n\nThis is a test skill file with adequate content for validation purposes and interleaving approval checks.",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let nestedResult: ReturnType<CrystallizationProposer["approveProposal"]> | null = null;
+    const originalApproveWithinCap = cStore.approveWithinCap.bind(cStore);
+    let injected = false;
+    const interleavingApproveWithinCap: CrystallizationStore["approveWithinCap"] = (id, maxCrystallized, opts) => {
+      if (!injected && id === first.id) {
+        injected = true;
+        nestedResult = proposer.approveProposal(second.id, { overrideWarnings: true });
+      }
+      return originalApproveWithinCap(id, maxCrystallized, opts);
+    };
+    cStore.approveWithinCap = interleavingApproveWithinCap;
+
+    try {
+      const firstResult = proposer.approveProposal(first.id, { overrideWarnings: true });
+      expect(nestedResult).not.toBeNull();
+      const results = [firstResult, nestedResult!];
+      expect(results.filter((r) => r.success)).toHaveLength(1);
+      expect(results.filter((r) => !r.success)[0]?.message).toMatch(/maxCrystallized/i);
+      expect(cStore.count("approved")).toBe(1);
+    } finally {
+      cStore.approveWithinCap = originalApproveWithinCap;
+    }
+  });
+
   it("returns success=false when maxCrystallized is 0", () => {
     // Manually create a pending proposal
     const proposal = cStore.create({
@@ -353,5 +426,128 @@ describe("CrystallizationProposer.rejectProposal", () => {
     const result = proposer.rejectProposal(proposal.id);
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not rejectable|not pending/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLegacyMarkdownCrystallizationProposal — HTML comment prefix (Issue #1362)
+// ---------------------------------------------------------------------------
+
+describe("CrystallizationProposer — legacy detection with HTML comment prefix", () => {
+  const FULL_SKILL_CONTENT = `---
+name: html-prefix-skill
+description: Use when the user asks to validate HTML-prefixed skills.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Html-Prefix-Skill
+
+## Trigger
+Use this skill when the user asks to validate HTML-prefixed skills.
+
+## Scope
+Bounded HTML prefix validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the HTML comment prefix.
+2. Validate the YAML frontmatter.
+
+## Verification
+- Confirm frontmatter fields are correctly parsed.
+
+## Anti-patterns / Known Failures
+- Do not treat injected metadata comments as content.
+
+## Examples
+- Validate an HTML-prefixed crystallized skill for correct frontmatter parsing.
+
+## Provenance
+- Source pattern ID: \`html-prefix-pattern\`
+`;
+
+  it("does not treat an HTML-prefixed YAML-frontmatter skill as legacy (approves successfully)", () => {
+    const outputDir = join(tmpDir, "html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const htmlComment = `<!-- openclaw:skill-proposal id=test-id pattern_id=html-prefix-pattern evidence_hash=ev-html output_path=${outputDir}/html-prefix-skill/SKILL.md -->`;
+    const contentWithHtmlPrefix = `\uFEFF\n\t\n${htmlComment}\n${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id);
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toBeDefined();
+
+    // Verify the stored validation result is not the legacy bypass.
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("does not treat skills with multiple leading HTML comments as legacy", () => {
+    const outputDir = join(tmpDir, "multi-html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const contentWithHtmlPrefix = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html-multiple",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id, { overrideWarnings: true });
+    expect(result.success).toBe(true);
+
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("still treats a plain markdown skill without frontmatter as legacy", () => {
+    const outputDir = join(tmpDir, "legacy-markdown-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const legacyContent = `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`;
+
+    const proposal = cStore.create({
+      patternId: "legacy-pattern",
+      evidenceHash: "ev-legacy",
+      skillName: "legacy-skill",
+      skillContent: legacyContent,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id);
+    // Legacy proposals without frontmatter are approved via the legacy bypass path.
+    expect(result.success).toBe(true);
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.some((n: string) => n.includes("legacy crystallization"))).toBe(true);
   });
 });
