@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
 
@@ -26,6 +27,8 @@ export interface SyntheticActivationCases {
   edge: string;
 }
 
+export type SkillFrontmatter = Record<string, string | undefined>;
+
 export interface SkillProposalValidationResult {
   schemaVersion: 1;
   validatedAt: string;
@@ -34,7 +37,7 @@ export interface SkillProposalValidationResult {
   staticValidation: {
     status: ValidationStageStatus;
     violations: string[];
-    frontmatter: Record<string, string>;
+    frontmatter: SkillFrontmatter;
     safeOutputPath: string;
   };
   dryLoadValidation: {
@@ -121,10 +124,11 @@ const STOP_WORDS = new Set([
   "without",
 ]);
 
-export function parseSkillFrontmatter(skillContent: string): Record<string, string> {
-  const match = skillContent.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
+  const body = stripLeadingHtmlComments(skillContent);
+  const match = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return {};
-  const frontmatter: Record<string, string> = {};
+  const frontmatter: SkillFrontmatter = {};
   for (const rawLine of match[1].split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
@@ -208,12 +212,12 @@ export class GeneratedSkillValidationService {
 
   private validateStatic(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     legacy: boolean,
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
     const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
-    const proposedOutputPath = resolve(input.proposedOutputPath);
+    const proposedOutputPath = input.proposedOutputPath;
 
     if (input.skillContent.length > MAX_SKILL_CHARS) {
       violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);
@@ -274,7 +278,7 @@ export class GeneratedSkillValidationService {
 
   private validateDryLoad(
     skillContent: string,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
     skillName: string,
   ): SkillProposalValidationResult["dryLoadValidation"] {
     const violations: string[] = [];
@@ -305,7 +309,9 @@ export class GeneratedSkillValidationService {
 
       const entries = loadDrySkillEntries(skillsDir);
       const entry = entries.find(
-        (candidate) => candidate.name === skillName || normalizeSkillName(candidate.name) === normalizedSkillName,
+        (candidate) =>
+          candidate.name === skillName ||
+          (candidate.name ? normalizeSkillName(candidate.name) === normalizedSkillName : false),
       );
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
@@ -334,7 +340,7 @@ export class GeneratedSkillValidationService {
 
   private evaluateActivation(
     input: ValidateGeneratedSkillInput,
-    frontmatter: Record<string, string>,
+    frontmatter: SkillFrontmatter,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
     const cases = buildSyntheticActivationCases(input, frontmatter);
     const triggerSection = extractSection(input.skillContent, "Trigger");
@@ -401,7 +407,8 @@ function isCanonicalSkillPath(outputDir: string, proposedOutputPath: string, ski
   const outputRoot = resolve(outputDir);
   const skillDir = resolve(outputRoot, skillName);
   const expected = resolve(skillDir, "SKILL.md");
-  if (proposedOutputPath !== expected || !isWithinDir(outputRoot, dirname(proposedOutputPath))) return false;
+  const resolvedProposed = resolve(proposedOutputPath);
+  if (resolvedProposed !== expected || !isWithinDir(outputRoot, dirname(resolvedProposed))) return false;
 
   return existingSkillPathIsSafe(outputRoot, skillDir, expected);
 }
@@ -435,8 +442,8 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function loadDrySkillEntries(skillsDir: string): Array<Record<string, string>> {
-  const out: Array<Record<string, string>> = [];
+function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
+  const out: SkillFrontmatter[] = [];
   for (const entry of discoverCompletedSkillDirs(skillsDir)) {
     const skillPath = entry.skillPath;
     let skillContent = "";
@@ -464,7 +471,7 @@ function extractSection(skillContent: string, heading: string): string {
 
 function buildSyntheticActivationCases(
   input: ValidateGeneratedSkillInput,
-  frontmatter: Record<string, string>,
+  frontmatter: SkillFrontmatter,
 ): SyntheticActivationCases {
   const positive =
     input.pattern?.exampleGoals

@@ -10,10 +10,12 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -150,14 +152,7 @@ export class CrystallizationProposer {
           continue;
         }
 
-        if (autoApprove && this.crystallizationStore.count("approved") >= this.cfg.maxCrystallized) {
-          skipped++;
-          reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
-          continue;
-        }
-
-        // Store as validated proposal (awaiting human approval)
-        const proposal = this.crystallizationStore.create({
+        const proposalInput = {
           patternId: candidate.patternId,
           evidenceHash: candidate.evidenceHash,
           skillName: result.skillName,
@@ -168,18 +163,29 @@ export class CrystallizationProposer {
           description: result.proposalCard.description,
           confidence: result.proposalCard.confidence,
           recommendedOutput: result.proposalCard.recommended_output,
-          status: "validated",
+          status: "validated" as const,
           validationResult: gsv,
-        });
+        };
 
         if (autoApprove && gsv.approvalDecision === "allow") {
-          const approved = this.crystallizationStore.approve(proposal.id);
-          if (approved) {
-            const outputPath = this.computeOutputPath(approved.skillName);
-            this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approved, outputPath));
-            this.crystallizationStore.install(approved.id, outputPath);
+          const approval = this.crystallizationStore.createApprovedWithinCap(proposalInput, this.cfg.maxCrystallized);
+          if (approval.kind === "limit-reached") {
+            skipped++;
+            reasons.push(`Skipped '${result.skillName}': maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
+            continue;
           }
-        } else if (autoApprove && gsv.approvalDecision !== "allow") {
+
+          const outputPath = this.computeOutputPath(approval.proposal.skillName);
+          this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approval.proposal, outputPath));
+          this.crystallizationStore.install(approval.proposal.id, outputPath);
+          proposed++;
+          continue;
+        }
+
+        // Store as validated proposal (awaiting human approval)
+        this.crystallizationStore.create(proposalInput);
+
+        if (autoApprove && gsv.approvalDecision !== "allow") {
           reasons.push(
             `Queued '${result.skillName}' (auto-approve skipped; needs override or fixes): ${summarizeSkillProposalValidation(gsv)}`,
           );
@@ -221,15 +227,6 @@ export class CrystallizationProposer {
       return {
         success: false,
         message: `Proposal '${proposalId}' is not approvable (status: ${proposal.status})`,
-      };
-    }
-
-    // Check maxCrystallized limit before approving
-    const approvedCount = this.crystallizationStore.count("approved");
-    if (approvedCount >= this.cfg.maxCrystallized) {
-      return {
-        success: false,
-        message: `maxCrystallized limit reached (${this.cfg.maxCrystallized})`,
       };
     }
 
@@ -276,16 +273,23 @@ export class CrystallizationProposer {
     }
 
     // Approve in DB first (source of truth), then write to disk, then mark installed.
-    const updated = this.crystallizationStore.approve(proposalId, {
+    const approval = this.crystallizationStore.approveWithinCap(proposalId, this.cfg.maxCrystallized, {
       skillName: safeName,
       skillContent: rewrittenContent,
       category: desiredCategory,
       recommendedOutput: desiredRecommendedOutput,
       proposalCardJson: rewrittenCardJson,
     });
-    if (!updated) {
+    if (approval.kind === "limit-reached") {
+      return {
+        success: false,
+        message: `maxCrystallized limit reached (${this.cfg.maxCrystallized})`,
+      };
+    }
+    if (approval.kind !== "approved") {
       return { success: false, message: "Failed to update proposal status" };
     }
+    const updated = approval.proposal;
 
     const outputPath = this.computeOutputPath(updated.skillName);
 
@@ -341,7 +345,7 @@ export class CrystallizationProposer {
 
   private computeOutputPath(skillName: string): string {
     const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    return `${outputDir}/${skillName}/SKILL.md`;
+    return resolve(outputDir, skillName, "SKILL.md");
   }
 
   private applyOverridesToDraft(
@@ -487,7 +491,8 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
-  const lines = skillContent.split("\n");
+  const body = stripLeadingHtmlComments(skillContent);
+  const lines = body.split("\n");
   let i = 0;
   while (i < lines.length && lines[i]?.trim() === "") i++;
   return lines[i]?.trim() !== "---";
