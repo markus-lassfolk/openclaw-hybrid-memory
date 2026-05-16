@@ -82,10 +82,8 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     // Stamp the completion marker as the final write inside the temp dir.
     writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), completionMarker, "utf-8");
 
-
     // Move existing skill dir out of the way so the rename targets a free path.
     if (backupDir) renameSync(skillDir, backupDir);
-
 
     // Atomic promotion: temp dir → final skill dir.
     renameSync(tmpDir, skillDir);
