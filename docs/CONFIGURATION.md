@@ -707,7 +707,8 @@ Workflow crystallization analyses tool-sequence patterns and generates pending *
     "autoApprove": false,
     "outputDir": "~/.openclaw/workspace/skills/auto",
     "maxCrystallized": 50,
-    "pruneUnusedDays": 30
+    "pruneUnusedDays": 30,
+    "placeholderEmailDomains": ["example.com", "localhost", "test.com", "example.org"]
   }
 }
 ```
@@ -721,6 +722,7 @@ Workflow crystallization analyses tool-sequence patterns and generates pending *
 | `outputDir` | `~/.openclaw/workspace/skills/auto` | Directory for approved SKILL.md files |
 | `maxCrystallized` | `50` | Max number of crystallized skills to keep |
 | `pruneUnusedDays` | `30` | Prune proposals unused for this many days |
+| `placeholderEmailDomains` | `["example.com","localhost","test.com","example.org"]` | Email domains treated as safe placeholders during skill validation. Extend with your organisation's internal placeholder domains (e.g. `"company.test"`) so they are not flagged as real addresses. |
 
 **Agent tools:** `memory_crystallize`, `memory_crystallize_list`, `memory_crystallize_approve`, `memory_crystallize_reject`.
 

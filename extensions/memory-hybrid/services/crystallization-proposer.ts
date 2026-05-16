@@ -24,6 +24,7 @@ import {
 } from "./generated-skill-validation.js";
 import { PatternDetector } from "./pattern-detector.js";
 import { SkillCrystallizer } from "./skill-crystallizer.js";
+import { buildNonPlaceholderEmailPattern } from "./skill-validator.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -57,7 +58,11 @@ export class CrystallizationProposer {
   ) {
     this.detector = workflowStore ? new PatternDetector(workflowStore, crystallizationStore, cfg) : null;
     this.crystallizer = new SkillCrystallizer(cfg);
-    this.validator = new GeneratedSkillValidationService();
+    this.validator = new GeneratedSkillValidationService(
+      cfg.placeholderEmailDomains?.length
+        ? { emailPattern: buildNonPlaceholderEmailPattern(cfg.placeholderEmailDomains) }
+        : undefined,
+    );
   }
 
   // -------------------------------------------------------------------------
