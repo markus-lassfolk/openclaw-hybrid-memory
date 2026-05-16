@@ -253,9 +253,6 @@ export class GeneratedSkillValidationService {
           violations.push(`Missing required frontmatter field: ${field}`);
         }
       }
-      if (!getFrontmatterCategory(frontmatter)) {
-        violations.push("Missing required frontmatter field: category");
-      }
       if (frontmatter.name && frontmatter.name !== input.skillName) {
         violations.push(`Frontmatter name '${frontmatter.name}' must match skill name '${input.skillName}'`);
       }
