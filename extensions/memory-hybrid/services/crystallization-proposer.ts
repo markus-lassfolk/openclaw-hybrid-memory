@@ -374,7 +374,7 @@ export class CrystallizationProposer {
     }
     if (overrides.category) {
       skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, () => `**Category:** ${overrides.category}`);
-      skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
+      skillContent = patchOpeningYamlField(skillContent, "category", yamlScalarForPatch(overrides.category));
     }
     if (overrides.description) {
       skillContent = skillContent.replace(/^\*\*Description:\*\* .+$/m, () => `**Description:** ${overrides.description}`);
