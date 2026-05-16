@@ -16,7 +16,7 @@ export interface DiscoveredSkillDir {
  * atomic skill writes. These are never valid loader candidates.
  */
 export function isAtomicSkillWriteScratchDir(name: string): boolean {
-  return name.startsWith(SKILL_ATOMIC_TEMP_PREFIX) || /^.+\.tmp-\d+-[a-f0-9]+$/i.test(name) || /^\..+\.bak-/.test(name);
+  return name.startsWith(SKILL_ATOMIC_TEMP_PREFIX) || /^\..+\.bak-/.test(name);
 }
 
 /**

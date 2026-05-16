@@ -256,8 +256,9 @@ describe("discoverCompletedSkillDirs", () => {
 
   it("identifies atomic scratch directory names", () => {
     expect(isAtomicSkillWriteScratchDir(`${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`)).toBe(true);
-    expect(isAtomicSkillWriteScratchDir("skill.tmp-1234-deadbeef")).toBe(true);
+    expect(isAtomicSkillWriteScratchDir(".some-skill.bak-1234")).toBe(true);
     expect(isAtomicSkillWriteScratchDir("normal-skill")).toBe(false);
+    expect(isAtomicSkillWriteScratchDir("skill.tmp-1234-deadbeef")).toBe(false);
   });
 });
 

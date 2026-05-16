@@ -104,11 +104,31 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     // Atomic promotion: temp dir → final skill dir. On POSIX, renameSync
     // atomically replaces empty directories, preserving the allocation lock.
     // On Windows, renameSync fails if the target exists (even when empty), so
-    // we remove the empty reservation directory first.
+    // we move the reservation aside, rename the temp dir, then clean up. This
+    // maintains crash-safety: if we crash after moving the reservation but before
+    // rename completes, the reservation survives as a .bak directory.
+    let reservationBackup: string | null = null;
     if (process.platform === "win32" && existsSync(skillDir) && isEmptyDir(skillDir)) {
-      rmSync(skillDir, { recursive: true, force: true });
+      reservationBackup = `${skillDir}.bak-${process.pid}-${randomBytes(4).toString("hex")}`;
+      renameSync(skillDir, reservationBackup);
     }
-    renameSync(tmpDir, skillDir);
+    try {
+      renameSync(tmpDir, skillDir);
+      // Success: remove the reservation backup if we made one.
+      if (reservationBackup && existsSync(reservationBackup)) {
+        rmSync(reservationBackup, { recursive: true, force: true });
+      }
+    } catch (err) {
+      // Restore the reservation lock if rename failed.
+      if (reservationBackup && existsSync(reservationBackup)) {
+        try {
+          renameSync(reservationBackup, skillDir);
+        } catch {
+          // best-effort restoration
+        }
+      }
+      throw err;
+    }
   } catch (err) {
     try {
       if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
