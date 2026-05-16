@@ -287,57 +287,6 @@ description: Existing legacy skill created before completion markers.
     expect(existsSync(join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md"))).toBe(true);
   });
 
-  it("preserves legacy skill directories that lack completion markers when resolving slug collisions", () => {
-    const legacyDir = join(skillsDir, "validate-markerless-legacy-report");
-    mkdirSync(legacyDir, { recursive: true });
-    writeFileSync(
-      join(legacyDir, "SKILL.md"),
-      `---
-name: unrelated-legacy-skill
-description: Existing legacy skill created before completion markers.
----
-
-# Unrelated Legacy Skill
-
-## Workflow
-1. Keep this legacy skill untouched.
-`,
-      "utf-8",
-    );
-
-    const proc = db.upsertProcedure({
-      taskPattern: "Validate markerless legacy report",
-      recipeJson: JSON.stringify([
-        { tool: "read", args: { path: "status.json" }, summary: "Check status input" },
-        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
-        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
-      ]),
-      procedureType: "positive",
-      successCount: 3,
-      confidence: 0.9,
-      sourceSessionId: "legacy-markerless-a1",
-    });
-    recordDistinctSuccesses(proc.id);
-
-    const result = generateAutoSkills(
-      db,
-      {
-        skillsAutoPath: skillsDir,
-        validationThreshold: 3,
-        skillTTLDays: 30,
-        apply: true,
-        policy: "auto-safe",
-        maxPerRun: 1,
-      },
-      { info: () => {}, warn: () => {} },
-    );
-
-    expect(result.generated).toBe(1);
-    expect(result.paths).toEqual([join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md")]);
-    expect(readFileSync(join(legacyDir, "SKILL.md"), "utf-8")).toContain("unrelated-legacy-skill");
-    expect(existsSync(join(skillsDir, "validate-markerless-legacy-report-1", "SKILL.md"))).toBe(true);
-  });
-
   it("dry-run does not write files", () => {
     db.upsertProcedure({
       taskPattern: "Dry run procedure",

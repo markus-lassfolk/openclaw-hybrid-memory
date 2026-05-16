@@ -2,25 +2,17 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-<<<<<<< HEAD
-import { existsSync, rmSync } from "node:fs";
-=======
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-<<<<<<< HEAD
-import { atomicWriteSkillDir } from "../utils/atomic-write.js";
-=======
 import {
   SKILL_COMPLETE_MARKER,
   atomicWriteSkillDir,
   isAtomicWriteArtifact,
   isSkillDirComplete,
 } from "../utils/atomic-write.js";
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
 import { resolveWorkspacePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -89,14 +81,7 @@ export type GenerateAutoSkillResult =
 function ensureUniqueSlug(basePath: string, slug: string, reservedSlugs?: ReadonlySet<string>): string {
   let candidate = slug;
   let n = 0;
-<<<<<<< HEAD
-  // Legacy skill directories created before the atomic completion marker rollout
-  // do not contain `.openclaw-skill-complete`. They are still occupied names and
-  // must not be overwritten. Only atomic temp/backup siblings are reusable.
-  while (reservedSlugs?.has(candidate) || existsSync(join(basePath, candidate))) {
-=======
   while (reservedSlugs?.has(candidate) || isCommittedSkillDir(join(basePath, candidate))) {
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
     n++;
     candidate = `${slug}-${n}`;
   }
@@ -618,29 +603,17 @@ function writeDraftSkill(
     evalsJson: string;
     proposalMetadataJson: string;
   },
-<<<<<<< HEAD
-): void {
-  // Write all sidecar files atomically (temp dir → rename). SKILL.md is
-  // written last among content files so it is the final content write before
-  // the completion marker.
-  atomicWriteSkillDir(skillDir, {
-=======
 ): string {
   // Write all sidecar files atomically (temp dir → rename). SKILL.md is
   // written last among content files so it is the final content write before
   // the completion marker.
   return atomicWriteSkillDir(skillDir, {
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
     "recipe.json": draft.recipeJson,
     "verification.json": draft.verificationJson,
     "proposal-metadata.json": draft.proposalMetadataJson,
     "evals/evals.json": draft.evalsJson,
     "SKILL.md": draft.skillMd,
-<<<<<<< HEAD
-  });
-=======
   }).completionMarker;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
 }
 
 function releaseInRunReservation(
