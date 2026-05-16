@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
+import { isAtomicWriteArtifact, isSkillDirComplete } from "../utils/atomic-write.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -1178,6 +1179,11 @@ function isDuplicateSkill(
     for (const entry of safeReadDir(dir)) {
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
+      // Atomic writer crash leftovers can contain a SKILL.md for the final slug
+      // but are not committed skills. Ignore temp/backup siblings unless they
+      // have the completion marker; legacy markerless final dirs are still
+      // occupied names and valid duplicate sources.
+      if (isAtomicWriteArtifact(entry) && !isSkillDirComplete(join(dir, entry))) continue;
       if (entry === slug) return true;
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;

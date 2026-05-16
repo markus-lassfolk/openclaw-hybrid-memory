@@ -9,9 +9,9 @@ import { getEnv } from "../utils/env-manager.js";
  * When autoApprove=true the proposer immediately writes the skill to disk.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
@@ -440,8 +440,7 @@ ${proposal.skillContent}`;
   }
 
   private writeSkillToDisk(outputPath: string, skillContent: string): void {
-    mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, skillContent, "utf-8");
+    atomicWriteFile(outputPath, skillContent);
   }
 }
 
