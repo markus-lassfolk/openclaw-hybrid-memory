@@ -4,8 +4,8 @@
  * Thin orchestrator that delegates to specialized command modules.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -14,18 +14,17 @@ import { filterByScope, type mergeResults } from "../services/merge-results.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
 import type { ScopeFilter } from "../types/memory.js";
-import { parseSourceDate } from "../utils/dates.js";
 import { PLUGIN_ID } from "../utils/constants.js";
+import { parseSourceDate } from "../utils/dates.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
+import { registerStatusCommands } from "./cmd-status.js";
+import { type UserFriendlyContext, registerUserFriendlyCommands } from "./cmd-user-friendly.js";
 import { type DistillContext, registerDistillCommands } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
-import { registerVerifiedCommands } from "./verified.js";
-import { registerStatusCommands } from "./cmd-status.js";
-import { type UserFriendlyContext, registerUserFriendlyCommands } from "./cmd-user-friendly.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
   BackfillCliResult,
@@ -54,6 +53,7 @@ import type {
   UpgradeCliResult,
   VerifyCliSink,
 } from "./types.js";
+import { registerVerifiedCommands } from "./verified.js";
 import { type VerifyContext, registerVerifyCommands } from "./verify.js";
 
 export type {
@@ -134,6 +134,7 @@ export type HybridMemCliContext = {
     max?: number;
     policy?: string;
     json?: boolean;
+    bypassDuplicateSkillCache?: boolean;
   }) => Promise<GenerateAutoSkillsResult>;
   runSkillsSuggest: (opts: {
     dryRun?: boolean;

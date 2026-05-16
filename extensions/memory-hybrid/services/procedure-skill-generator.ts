@@ -187,6 +187,8 @@ type GenerateAutoSkillsOptions = {
   dryRun?: boolean;
   apply?: boolean;
   policy?: string;
+  /** When true, duplicate-skill detection re-reads every SKILL.md (bypass mtime cache). */
+  bypassDuplicateSkillCache?: boolean;
 };
 
 /**
@@ -234,6 +236,7 @@ export function generateAutoSkills(
       resolvedSlug,
       inRunSkillCandidates,
       evidence,
+      bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     const reservedCandidate = {
@@ -422,6 +425,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
+    bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
