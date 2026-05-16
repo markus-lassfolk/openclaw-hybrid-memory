@@ -706,6 +706,27 @@ describe("SkillCrystallizer.crystallize", () => {
     expect(result.proposedOutputPath).toContain(homeDir);
     expect(result.proposedOutputPath).not.toContain("~");
   });
+
+  it("generates absolute proposedOutputPath even with relative outputDir", () => {
+    const { isAbsolute } = require("node:path");
+    const cfg = {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      outputDir: "skills/auto",
+    };
+
+    const pattern = {
+      toolSequence: ["exec"],
+      totalCount: 3,
+      successCount: 3,
+      failureCount: 0,
+      successRate: 1.0,
+      avgDurationMs: 0,
+      exampleGoals: ["test"],
+    };
+    const result = crystallize(cfg, { patternId: "t2", pattern });
+    expect(isAbsolute(result.proposedOutputPath)).toBe(true);
+    expect(result.proposedOutputPath).toContain("SKILL.md");
+  });
 });
 
 // ============================================================================

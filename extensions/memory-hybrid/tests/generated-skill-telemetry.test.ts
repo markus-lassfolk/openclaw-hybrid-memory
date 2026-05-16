@@ -504,6 +504,47 @@ describe("generated skill telemetry", () => {
     expect(skill?.skillState).toBe("experimental");
     expect(skill?.skillStateReason).toContain("auto-unblocked");
   });
+
+  it("reports unblock recommendation distinctly from promotion", () => {
+    vi.useFakeTimers();
+    const now = Math.floor(new Date("2026-05-14T10:00:00Z").getTime() / 1000);
+    vi.setSystemTime(new Date(now * 1000));
+
+    const { id, skillName } = createGeneratedSkill("Skill ready for unblock report");
+    db.setGeneratedSkillLifecycleState(skillName, "demoted", "prior false positives", now);
+
+    const afterDemotion = now + 3600;
+    db.getRawDb().prepare("UPDATE procedures SET skill_state_changed_at = ? WHERE id = ?").run(now, id);
+    db.getRawDb()
+      .prepare(
+        `CREATE TRIGGER block_unblock_transition
+         BEFORE UPDATE OF skill_state ON procedures
+         WHEN NEW.skill_state = 'experimental'
+         BEGIN
+           SELECT RAISE(IGNORE);
+         END`,
+      )
+      .run();
+    // Insert telemetry directly so the automatic lifecycle refresh does not consume
+    // the pending unblock before the operator report can display its recommendation.
+    for (let i = 0; i < 5; i++) {
+      db.getRawDb()
+        .prepare(
+          `INSERT INTO generated_skill_telemetry (
+            id, procedure_id, skill_name, skill_version, decision, task_outcome, user_correction, caused_rework, created_at
+          ) VALUES (?, ?, ?, ?, 'selected', 'success', 0, 0, ?)`,
+        )
+        .run(`telemetry-unblock-${i}`, id, skillName, 1, afterDemotion + i);
+    }
+
+    const report = db.buildGeneratedSkillTelemetryReport({
+      skillName,
+      now: afterDemotion + 20,
+    });
+
+    expect(report.rows[0]?.flags.unblockCandidate).toBe(true);
+    expect(report.rows[0]?.recommendation).toBe("unblock");
+  });
 });
 
 describe("skills doctor — disk reconciler", () => {
@@ -686,11 +727,17 @@ describe("skills doctor — disk reconciler", () => {
 
     await program.parseAsync(["skills", "doctor", "--workspace", tmpDir, "--fix", "--json"], { from: "user" });
     const result = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      fixedCount?: number;
+      failedCount?: number;
       failedFixCount?: number;
+      exitCode?: number;
       issues?: Array<{ issue: string; fixed: boolean }>;
     };
 
+    expect(result.fixedCount).toBe(0);
+    expect(result.failedCount).toBeGreaterThan(0);
     expect(result.failedFixCount).toBeGreaterThan(0);
+    expect(result.exitCode).toBe(2);
     expect(result.issues?.some((i) => i.issue === "stat_error" && !i.fixed)).toBe(true);
     expect(process.exitCode).toBe(2);
   });
