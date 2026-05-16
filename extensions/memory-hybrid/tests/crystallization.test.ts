@@ -179,6 +179,41 @@ describe("CrystallizationStore.list", () => {
   });
 });
 
+describe("CrystallizationStore.listByPatternId", () => {
+  it("returns only rows for the given pattern_id", () => {
+    cStore.create({
+      patternId: "alpha",
+      evidenceHash: "e1",
+      skillName: "a1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
+    cStore.create({
+      patternId: "beta",
+      evidenceHash: "e2",
+      skillName: "b1",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+    });
+    const alpha = cStore.listByPatternId("alpha");
+    expect(alpha).toHaveLength(1);
+    expect(alpha[0].patternId).toBe("alpha");
+  });
+
+  it("respects limit", () => {
+    for (let i = 0; i < 5; i++) {
+      cStore.create({
+        patternId: "many",
+        evidenceHash: `e${i}`,
+        skillName: `s${i}`,
+        skillContent: "#c",
+        patternSnapshot: "{}",
+      });
+    }
+    expect(cStore.listByPatternId("many", 2)).toHaveLength(2);
+  });
+});
+
 describe("CrystallizationStore.approve", () => {
   it("transitions drafted/validated to approved", () => {
     const p = cStore.create({

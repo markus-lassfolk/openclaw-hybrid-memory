@@ -465,10 +465,7 @@ export class CrystallizationProposer {
   ): { skillContent: string; proposalCardJson?: string } {
     let skillContent = proposal.skillContent;
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
-      skillContent = skillContent.replace(
-        new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
-        `# ${overrides.skillName}`,
-      );
+      skillContent = replaceFirstBodyH1AfterFrontmatter(skillContent, overrides.skillName);
       skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
@@ -528,9 +525,7 @@ ${proposal.skillContent}`;
 
   private trySupersedeOlderInstalls(patternId: string, supersededBy: string): void {
     try {
-      const existing = this.crystallizationStore
-        .list({ skillName: undefined, limit: 50 })
-        .filter((p) => p.patternId === patternId);
+      const existing = this.crystallizationStore.listByPatternId(patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
         if (p.status === "installed" || p.status === "approved" || p.status === "quarantined") {
@@ -547,22 +542,140 @@ ${proposal.skillContent}`;
   }
 }
 
+/** Max lines scanned inside frontmatter when locating a multiline YAML value (bounded behavior). */
+const MAX_YAML_VALUE_SCAN_LINES = 512;
+
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
-function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
-  let body = skillContent;
-  let prefix = "";
-  const commentMatch = body.match(/^<!--[\s\S]*?-->\s*\n*/);
-  if (commentMatch) {
-    prefix = commentMatch[0];
-    body = body.slice(commentMatch[0].length);
-  }
-  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+export function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
+  const body = stripLeadingHtmlComments(skillContent);
+  const prefix = skillContent.slice(0, skillContent.length - body.length);
+  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
-  const inner = m[1];
-  const re = new RegExp(`^${escapeRegExp(key)}:\\s*.*$`, "m");
-  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${value}`) : `${key}: ${value}\n${inner}`;
-  const newBlock = `---\n${nextInner}\n---\n`;
-  return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, newBlock);
+  const inner = m[1]!;
+  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : "\n";
+  const lines = inner.split(/\r?\n/);
+  const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
+  let keyIdx = -1;
+  const scanCap = Math.min(lines.length, MAX_YAML_VALUE_SCAN_LINES);
+  for (let i = 0; i < scanCap; i++) {
+    if (keyLineRe.test(lines[i]!)) {
+      keyIdx = i;
+      break;
+    }
+  }
+  const yamlScalar = formatYamlFrontmatterScalar(value);
+  let nextLines: string[];
+  if (keyIdx < 0) {
+    nextLines = [`${key}: ${yamlScalar}`, ...lines];
+  } else {
+    const endExclusive = endIndexForYamlValueBlock(lines, keyIdx, keyLineRe);
+    nextLines = [...lines.slice(0, keyIdx), `${key}: ${yamlScalar}`, ...lines.slice(endExclusive)];
+  }
+  const nextInner = nextLines.join(innerLineBreak);
+  const newBlock = `---${innerLineBreak}${nextInner}${innerLineBreak}---${innerLineBreak}`;
+  return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, newBlock);
+}
+
+/** When renaming, replace the first Markdown ATX H1 in the body (after frontmatter), if any. */
+function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: string): string {
+  let body = stripLeadingHtmlComments(skillContent);
+  const commentsLength = skillContent.length - body.length;
+  let head = skillContent.slice(0, commentsLength);
+  const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---/);
+  if (fmMatch) {
+    head += fmMatch[0];
+    body = body.slice(fmMatch[0].length);
+  }
+  const h1Line = /^#\s+(?!#)\S.*$/m;
+  if (!h1Line.test(body)) {
+    return skillContent;
+  }
+  return head + body.replace(h1Line, `# ${newTitle}`);
+}
+
+function formatYamlFrontmatterScalar(value: string): string {
+  if (value === "") return '""';
+  if (/^[\w.-]+$/.test(value)) {
+    const lower = value.toLowerCase();
+    if (
+      lower === "true" ||
+      lower === "false" ||
+      lower === "null" ||
+      lower === "yes" ||
+      lower === "no" ||
+      lower === "on" ||
+      lower === "off" ||
+      /^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/.test(value)
+    ) {
+      return JSON.stringify(value);
+    }
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function stripInlineYamlTrailingComment(fragment: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment[i]!;
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+    else if (ch === "#" && !inSingle && !inDouble) return fragment.slice(0, i).trimEnd();
+  }
+  return fragment.trimEnd();
+}
+
+function isTopLevelYamlKeyLine(line: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)/.test(line);
+}
+
+function leadingIndentLen(line: string): number {
+  const m = /^([ \t]*)/.exec(line);
+  return m ? m[1]!.length : 0;
+}
+
+function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe: RegExp): number {
+  const line = lines[startIdx]!;
+  const km = keyLineRe.exec(line);
+  if (!km) return startIdx + 1;
+  const afterColon = km[1] ?? "";
+  const trimmed = stripInlineYamlTrailingComment(afterColon).trim();
+  const blockHdr = trimmed.match(/^([|>])(.*)$/);
+  if (blockHdr) {
+    const afterMarker = (blockHdr[2] ?? "").trim();
+    if (/^([-+]|[1-9][0-9]*)?$/.test(afterMarker)) {
+      let j = startIdx + 1;
+      while (j < lines.length && j - startIdx < MAX_YAML_VALUE_SCAN_LINES) {
+        if (isTopLevelYamlKeyLine(lines[j]!)) break;
+        j++;
+      }
+      return j;
+    }
+  }
+  const keyIndent = leadingIndentLen(line);
+  let j = startIdx + 1;
+  while (j < lines.length && j - startIdx < MAX_YAML_VALUE_SCAN_LINES) {
+    const L = lines[j]!;
+    if (isTopLevelYamlKeyLine(L)) break;
+    if (L.trim() === "") {
+      let k = j + 1;
+      while (k < lines.length && lines[k]!.trim() === "") k++;
+      if (k >= lines.length) return j;
+      if (isTopLevelYamlKeyLine(lines[k]!)) break;
+      if (leadingIndentLen(lines[k]!) > keyIndent) {
+        j++;
+        continue;
+      }
+      break;
+    }
+    if (leadingIndentLen(L) > keyIndent) {
+      j++;
+      continue;
+    }
+    break;
+  }
+  return j;
 }
 
 function escapeRegExp(value: string): string {
