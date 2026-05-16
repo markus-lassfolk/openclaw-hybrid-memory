@@ -427,6 +427,84 @@ function migrateGeneratedSkillTelemetryTable(db: DatabaseSync): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_gst_decision_created_at ON generated_skill_telemetry(skill_name, decision, created_at DESC)",
   );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_gst_skill_name_created_at ON generated_skill_telemetry(skill_name, created_at DESC)",
+  );
+}
+
+/** O(1) telemetry rollups on procedures (#1415 / #1400). */
+function migrateGeneratedSkillTelemetryRollupColumns(db: DatabaseSync): void {
+  const cols0 = db.prepare("PRAGMA table_info(procedures)").all() as Array<{ name: string }>;
+  const colNames = new Set(cols0.map((c) => c.name));
+  let addedRollupColumn = false;
+  const add = (name: string, ddl: string) => {
+    if (!colNames.has(name)) {
+      db.exec(ddl);
+      colNames.add(name);
+      addedRollupColumn = true;
+    }
+  };
+  add("gst_sel_total", "ALTER TABLE procedures ADD COLUMN gst_sel_total INTEGER NOT NULL DEFAULT 0");
+  add("gst_near_miss_total", "ALTER TABLE procedures ADD COLUMN gst_near_miss_total INTEGER NOT NULL DEFAULT 0");
+  add("gst_fp_signals_total", "ALTER TABLE procedures ADD COLUMN gst_fp_signals_total INTEGER NOT NULL DEFAULT 0");
+  add("gst_fn_signals_total", "ALTER TABLE procedures ADD COLUMN gst_fn_signals_total INTEGER NOT NULL DEFAULT 0");
+  add(
+    "gst_user_correction_total",
+    "ALTER TABLE procedures ADD COLUMN gst_user_correction_total INTEGER NOT NULL DEFAULT 0",
+  );
+  add("gst_outcome_success", "ALTER TABLE procedures ADD COLUMN gst_outcome_success INTEGER NOT NULL DEFAULT 0");
+  add("gst_outcome_failure", "ALTER TABLE procedures ADD COLUMN gst_outcome_failure INTEGER NOT NULL DEFAULT 0");
+  add("gst_outcome_partial", "ALTER TABLE procedures ADD COLUMN gst_outcome_partial INTEGER NOT NULL DEFAULT 0");
+  add("gst_outcome_unknown", "ALTER TABLE procedures ADD COLUMN gst_outcome_unknown INTEGER NOT NULL DEFAULT 0");
+  add(
+    "gst_success_clear_total",
+    "ALTER TABLE procedures ADD COLUMN gst_success_clear_total INTEGER NOT NULL DEFAULT 0",
+  );
+  add("gst_considered_total", "ALTER TABLE procedures ADD COLUMN gst_considered_total INTEGER NOT NULL DEFAULT 0");
+  add("gst_skipped_total", "ALTER TABLE procedures ADD COLUMN gst_skipped_total INTEGER NOT NULL DEFAULT 0");
+  add(
+    "gst_saved_tool_calls_sum",
+    "ALTER TABLE procedures ADD COLUMN gst_saved_tool_calls_sum INTEGER NOT NULL DEFAULT 0",
+  );
+  add("gst_saved_time_ms_sum", "ALTER TABLE procedures ADD COLUMN gst_saved_time_ms_sum INTEGER NOT NULL DEFAULT 0");
+  add("gst_last_selected_at", "ALTER TABLE procedures ADD COLUMN gst_last_selected_at INTEGER");
+
+  // Idempotent backfill: run if any rollup column was added OR if any procedure has
+  // telemetry but zero rollups (indicating incomplete backfill from a previous crash).
+  const needsBackfill =
+    addedRollupColumn ||
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM procedures p
+         WHERE EXISTS (SELECT 1 FROM generated_skill_telemetry t WHERE t.procedure_id = p.id)
+           AND p.gst_sel_total = 0
+           AND p.gst_near_miss_total = 0`,
+        )
+        .get() as { c: number }
+    ).c > 0;
+
+  if (needsBackfill) {
+    db.exec(`
+    UPDATE procedures AS p
+       SET gst_sel_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected'),
+           gst_near_miss_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision != 'selected'),
+           gst_fp_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.user_correction = 1 OR t.caused_rework = 1)),
+           gst_fn_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.false_negative_signal = 1),
+           gst_user_correction_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.user_correction = 1),
+           gst_outcome_success = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success'),
+           gst_outcome_failure = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'failure'),
+           gst_outcome_partial = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'partial'),
+           gst_outcome_unknown = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.task_outcome IS NULL OR t.task_outcome = '' OR t.task_outcome NOT IN ('success','failure','partial'))),
+           gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
+           gst_considered_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'considered'),
+           gst_skipped_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'skipped'),
+           gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_tool_calls > 0 THEN t.saved_tool_calls ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
+           gst_saved_time_ms_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_time_ms > 0 THEN t.saved_time_ms ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
+           gst_last_selected_at = (SELECT MAX(t.created_at) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected')
+     WHERE EXISTS (SELECT 1 FROM generated_skill_telemetry t WHERE t.procedure_id = p.id)
+  `);
+  }
 }
 
 /**
@@ -1241,6 +1319,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateProcedureScopeColumns(db);
   migrateGeneratedSkillLifecycleColumns(db);
   migrateGeneratedSkillTelemetryTable(db);
+  migrateGeneratedSkillTelemetryRollupColumns(db);
 
   // FTS5 tags support (must run after migrateTagsColumn)
   migrateFtsTagsSupport(db);
