@@ -368,22 +368,22 @@ export class CrystallizationProposer {
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
       skillContent = skillContent.replace(
         new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
-        `# ${overrides.skillName}`,
+        () => `# ${overrides.skillName}`,
       );
       skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
-      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
+      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, () => `**Category:** ${overrides.category}`);
       skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
     }
     if (overrides.description) {
-      skillContent = skillContent.replace(/^\*\*Description:\*\* .+$/m, `**Description:** ${overrides.description}`);
+      skillContent = skillContent.replace(/^\*\*Description:\*\* .+$/m, () => `**Description:** ${overrides.description}`);
       skillContent = patchOpeningYamlField(skillContent, "description", yamlScalarForPatch(overrides.description));
     }
     if (overrides.recommendedOutput) {
       skillContent = skillContent.replace(
         /^\*\*Recommended output:\*\* .+$/m,
-        `**Recommended output:** ${overrides.recommendedOutput}`,
+        () => `**Recommended output:** ${overrides.recommendedOutput}`,
       );
     }
 
@@ -484,7 +484,7 @@ function patchOpeningYamlField(skillContent: string, key: string, value: string)
   if (!m) return skillContent;
   const inner = m[1];
   const re = new RegExp(`^${escapeRegExp(key)}:\\s*.*$`, "m");
-  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${value}`) : `${key}: ${value}\n${inner}`;
+  const nextInner = re.test(inner) ? inner.replace(re, () => `${key}: ${value}`) : `${key}: ${value}\n${inner}`;
   const newBlock = `---\n${nextInner}\n---\n`;
   return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, newBlock);
 }
