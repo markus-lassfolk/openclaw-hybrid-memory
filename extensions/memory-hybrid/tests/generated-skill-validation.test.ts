@@ -22,6 +22,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
 
