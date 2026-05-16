@@ -727,6 +727,7 @@ function summarizeSkillTelemetryFromRollups(
   canonicalSkillName: string,
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
+  computeRepeatedCorrections = false,
 ): { metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } {
   const r = readTelemetryRollup(db, proc.id);
   if (!r) {
@@ -739,7 +740,9 @@ function summarizeSkillTelemetryFromRollups(
   const falsePositiveSignals = r.gst_fp_signals_total;
   const falseNegativeSignals = r.gst_fn_signals_total;
   const correctionCount = r.gst_user_correction_total;
-  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(skillTelemetryEntries(db, canonicalSkillName), now);
+  const repeatedCorrectionCount = computeRepeatedCorrections
+    ? countRepeatedUserCorrectionBuckets(skillTelemetryEntries(db, canonicalSkillName), now)
+    : 0;
   const lastUsedAt = r.gst_last_selected_at;
   const successCount = r.gst_outcome_success;
   const failureCount = r.gst_outcome_failure;
@@ -830,7 +833,7 @@ export function refreshGeneratedSkillLifecycleState(
   const proc = findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
   const canonicalSkillName = basename(proc.skillPath);
-  const { metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, canonicalSkillName, policy, now);
+  const { metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, canonicalSkillName, policy, now, returnMetrics);
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
   const updatedProc =
@@ -869,13 +872,13 @@ export function buildGeneratedSkillTelemetryReport(
         const result = refreshGeneratedSkillLifecycleState(db, skillName, policy, now, true);
         if (result == null) {
           procFresh = proc;
-          ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
+          ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now, true));
         } else {
           ({ proc: procFresh, metrics, flags } = result);
         }
       } else {
         procFresh = proc;
-        ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
+        ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now, true));
       }
       const recommendation = flags.archiveCandidate
         ? "archive"
