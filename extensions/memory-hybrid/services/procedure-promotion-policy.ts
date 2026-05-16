@@ -13,7 +13,12 @@ import {
   redactAutopilotText,
   redactAutopilotValue,
 } from "./pending-autopilot/index.js";
-import { SkillValidator } from "./skill-validator.js";
+import {
+  NON_PLACEHOLDER_EMAIL_PATTERN,
+  PEM_PRIVATE_KEY_PATTERN,
+  PRIVATE_IP_PATTERN,
+  SkillValidator,
+} from "./skill-validator.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v1";
 
@@ -248,13 +253,13 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{\[\]]+/i,
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/i,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  PEM_PRIVATE_KEY_PATTERN,
 ];
 
 const PRIVATE_DATA_PATTERNS: RegExp[] = [
-  /\b(?:10\.|127\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+  PRIVATE_IP_PATTERN,
   /(?:^|[\s"'=:])(?:\/home\/[^\s"']+|\/Users\/[^\s"']+|~\/[^\s"']+)/,
-  /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+  NON_PLACEHOLDER_EMAIL_PATTERN,
 ];
 
 export function parseProcedurePromotionPolicy(policy: string | undefined): ProcedurePromotionPolicy {
