@@ -8,6 +8,7 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
