@@ -10,7 +10,7 @@ import { registerSkillsCommands } from "../cli/skills.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
-import { SkillCrystallizer } from "../services/skill-crystallizer.js";
+import { crystallizeSkill } from "../services/skill-crystallizer.js";
 
 const BASE_CFG: CrystallizationConfig = {
   enabled: true,
@@ -60,8 +60,8 @@ describe("GeneratedSkillValidationService", () => {
     const exampleLines =
       examplesSection?.[1]
         .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.startsWith("- ")) ?? [];
+        .map((line: string) => line.trim())
+        .filter((line: string) => line.startsWith("- ")) ?? [];
 
     expect(
       exampleLines.some((line) => line.length >= MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS),

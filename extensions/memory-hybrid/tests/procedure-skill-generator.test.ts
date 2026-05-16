@@ -44,12 +44,7 @@ function isSlugOrPathIdentityKey(key: string, path: string): boolean {
   return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
 }
 
-function collectExactValueFindings(
-  value: unknown,
-  target: string,
-  path = "$",
-  findings: string[] = [],
-): string[] {
+function collectExactValueFindings(value: unknown, target: string, path = "$", findings: string[] = []): string[] {
   if (Array.isArray(value)) {
     value.forEach((item, index) => collectExactValueFindings(item, target, `${path}[${index}]`, findings));
     return findings;
