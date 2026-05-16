@@ -16,7 +16,7 @@
 
 import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync, readdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /** Marker file written as the last step inside an atomic skill directory. */
 export const SKILL_COMPLETE_MARKER = ".openclaw-skill-complete";
@@ -109,7 +109,7 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
     // rename completes, the reservation survives as a .bak directory.
     let reservationBackup: string | null = null;
     if (process.platform === "win32" && existsSync(skillDir) && isEmptyDir(skillDir)) {
-      reservationBackup = `${skillDir}.bak-${process.pid}-${randomBytes(4).toString("hex")}`;
+      reservationBackup = join(parent, `.${basename(skillDir)}.bak-${process.pid}-${randomBytes(4).toString("hex")}`);
       renameSync(skillDir, reservationBackup);
     }
     try {
