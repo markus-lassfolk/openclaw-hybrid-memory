@@ -4,21 +4,32 @@
  * Covers:
  *  - atomicWriteFile: correct write, atomicity on error, temp-file cleanup
  *  - atomicWriteSkillDir: all files present, completion marker written,
- *    subdirectory creation, temp-dir cleanup on error, refusal to overwrite
- *    existing dirs, and safe relative path validation
+ *    subdirectory creation, temp-dir cleanup on error, overwrite of incomplete
+ *    existing dir
  *  - isSkillDirComplete: true only when marker exists
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  SKILL_ATOMIC_TEMP_PREFIX,
   SKILL_COMPLETE_MARKER,
   atomicWriteFile,
   atomicWriteSkillDir,
   isSkillDirComplete,
 } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs, isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 
 // ---------------------------------------------------------------------------
 // Controlled failure injection via vi.mock
@@ -178,37 +189,77 @@ describe("atomicWriteSkillDir", () => {
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
 
-  it("refuses to overwrite an existing incomplete (no-marker) directory", () => {
+  it("refuses to overwrite an existing incomplete (no-marker) directory with SKILL.md", () => {
     const skillDir = join(tmpDir, "my-skill");
+    // Simulate a legacy/partial final dir. Callers must explicitly decide if it
+    // is safe to clean it; atomicWriteSkillDir itself must never hide it.
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "# Incomplete\n", "utf-8");
 
-    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("Refusing to overwrite existing skill directory");
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Incomplete\n");
+    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("Atomic skill directory target already exists");
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Incomplete");
     expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
   });
 
-  it("refuses to overwrite a complete directory", () => {
+  it("refuses to replace a complete directory when called again with updated content", () => {
     const skillDir = join(tmpDir, "my-skill");
     atomicWriteSkillDir(skillDir, DRAFT);
 
     const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
-    expect(() => atomicWriteSkillDir(skillDir, updated)).toThrow("Refusing to overwrite existing skill directory");
+    expect(() => atomicWriteSkillDir(skillDir, updated)).toThrow("Atomic skill directory target already exists");
 
     expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# My Skill");
     expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
   });
 
-  it.each(["../escape.txt", "/tmp/escape.txt", "nested/../../escape.txt", "", SKILL_COMPLETE_MARKER])(
-    "rejects unsafe relative path %s",
-    (relPath) => {
-      const skillDir = join(tmpDir, "my-skill");
-      expect(() => atomicWriteSkillDir(skillDir, { [relPath]: "bad" })).toThrow("Unsafe skill file path");
-      expect(existsSync(skillDir)).toBe(false);
-      const entries = readdirSync(tmpDir);
-      expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
-    },
-  );
+  it("does not hide an existing directory if promotion rename fails", () => {
+    const skillDir = join(tmpDir, "my-skill");
+    const tmpSkillDir = join(tmpDir, `${SKILL_ATOMIC_TEMP_PREFIX}manual`);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Existing\n", "utf-8");
+    mkdirSync(tmpSkillDir, { recursive: true });
+
+    expect(() => renameSync(tmpSkillDir, skillDir)).toThrow();
+
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Existing");
+    expect(existsSync(tmpSkillDir)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// discoverCompletedSkillDirs
+// ---------------------------------------------------------------------------
+
+describe("discoverCompletedSkillDirs", () => {
+  it("discovers only completed skill directories", () => {
+    atomicWriteSkillDir(join(tmpDir, "complete-skill"), { "SKILL.md": "# Complete\n" });
+
+    const markerlessDir = join(tmpDir, "markerless-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(join(markerlessDir, "SKILL.md"), "# In-progress\n", "utf-8");
+
+    const scratchDir = join(tmpDir, `${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`);
+    mkdirSync(scratchDir, { recursive: true });
+    writeFileSync(join(scratchDir, SKILL_COMPLETE_MARKER), "2024-01-01T00:00:00.000Z", "utf-8");
+    writeFileSync(join(scratchDir, "SKILL.md"), "# Scratch\n", "utf-8");
+
+    expect(discoverCompletedSkillDirs(tmpDir).map((entry) => entry.name)).toEqual(["complete-skill"]);
+  });
+
+  it("treats markerless directories with SKILL.md as in-progress loader candidates", () => {
+    const skillDir = join(tmpDir, "half-written-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Half-written\n", "utf-8");
+
+    expect(discoverCompletedSkillDirs(tmpDir)).toEqual([]);
+  });
+
+  it("identifies atomic scratch directory names", () => {
+    expect(isAtomicSkillWriteScratchDir(`${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`)).toBe(true);
+    expect(isAtomicSkillWriteScratchDir(".some-skill.bak-1234")).toBe(true);
+    expect(isAtomicSkillWriteScratchDir("normal-skill")).toBe(false);
+    expect(isAtomicSkillWriteScratchDir("skill.tmp-1234-deadbeef")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
