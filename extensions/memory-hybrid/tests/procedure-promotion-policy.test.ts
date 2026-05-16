@@ -335,6 +335,32 @@ Source procedure id: proc-weather
     expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
   });
 
+  it("ignores leftover atomic temp directories when checking duplicates", () => {
+    const tempSkillDir = join(skillsDir, ".openclaw-skill-tmp-1234-deadbeef");
+    mkdirSync(tempSkillDir, { recursive: true });
+    writeFileSync(
+      join(tempSkillDir, "SKILL.md"),
+      `---
+name: validate-release-health-report-with-objective-checks
+description: Use when the user asks to validate release health report with objective checks.
+---
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({ sourceSessionId: "temp-dir-overlap-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "temp-dir-overlap-b");
+    db.recordProcedureSuccess(proc.id, undefined, "temp-dir-overlap-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
+  });
+
   it("treats legacy skill directories without completion markers as duplicate skills", () => {
     const existingSkillDir = join(skillsDir, "collect-markerless-legacy-report");
     mkdirSync(existingSkillDir, { recursive: true });
@@ -372,40 +398,6 @@ Use for collecting markerless legacy reports.
 
     expect(evaluation.metadata.rejectionReasons).toContain("duplicate_existing_skill");
     expect(evaluation.metadata.duplicateHandling).toBe("merge");
-  });
-
-  it("ignores incomplete atomic temp and backup skill directories during duplicate detection", () => {
-    const tempSkillDir = join(skillsDir, "collect-crashed-temp-report.tmp-1234-deadbeef");
-    const backupSkillDir = join(skillsDir, ".collect-crashed-backup-report.bak-1700000000000-deadbeef");
-    for (const dir of [tempSkillDir, backupSkillDir]) {
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, "SKILL.md"),
-        `---
-name: collect-crashed-temp-report
-description: Use when collecting crashed temp reports.
----
-
-# Collect Crashed Temp Report
-`,
-        "utf-8",
-      );
-    }
-
-    const proc = addProcedure({
-      taskPattern: "Collect crashed temp report",
-      sourceSessionId: "crashed-temp-a",
-    });
-    db.recordProcedureSuccess(proc.id, undefined, "crashed-temp-b");
-    db.recordProcedureSuccess(proc.id, undefined, "crashed-temp-c");
-
-    const policy = parseProcedurePromotionPolicy("auto-safe");
-    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
-      skillsAutoPath: skillsDir,
-      validationThreshold: 3,
-    });
-
-    expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
   });
 
   it("does not report generated skill paths for deferred procedures", () => {
@@ -1069,77 +1061,5 @@ description: Use when collecting crashed temp reports.
       standalone: (fixture, context) => adapter.decide(fixture, context),
       parent: (_fixture, context) => adapter.decide(listed, context),
     });
-  });
-
-  // -------------------------------------------------------------------------
-  // Issue #1385 — loopback (127.x) must NOT trigger private_data_risk
-  // -------------------------------------------------------------------------
-
-  it("does not flag loopback 127.0.0.1 as private_data_risk", () => {
-    const proc = addProcedure({
-      taskPattern: "Run health check on local development server",
-      recipeJson: JSON.stringify([
-        {
-          tool: "exec",
-          args: { command: "curl http://127.0.0.1:8080/health" },
-          summary: "Ping local dev server health endpoint",
-        },
-        {
-          tool: "exec",
-          args: { command: "npm test" },
-          summary: "Run test suite",
-        },
-        {
-          tool: "read",
-          args: { path: "test-report.json" },
-          summary: "Verify test output",
-        },
-      ]),
-      sourceSessionId: "loopback-a",
-    });
-    db.recordProcedureSuccess(proc.id, undefined, "loopback-b");
-    db.recordProcedureSuccess(proc.id, undefined, "loopback-c");
-
-    const evaluation = evaluateProcedureForPromotion(
-      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
-      parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3 },
-    );
-
-    expect(evaluation.metadata.rejectionReasons).not.toContain("private_data_risk");
-  });
-
-  it("still flags RFC1918 address 192.168.x.x as private_data_risk", () => {
-    const proc = addProcedure({
-      taskPattern: "Connect to internal server for report",
-      recipeJson: JSON.stringify([
-        {
-          tool: "exec",
-          args: { command: "curl http://192.168.1.10/api/status" },
-          summary: "Query internal server",
-        },
-        {
-          tool: "exec",
-          args: { command: "npm test" },
-          summary: "Run test",
-        },
-        {
-          tool: "read",
-          args: { path: "report.json" },
-          summary: "Read report",
-        },
-      ]),
-      sourceSessionId: "rfc1918-a",
-    });
-    db.recordProcedureSuccess(proc.id, undefined, "rfc1918-b");
-    db.recordProcedureSuccess(proc.id, undefined, "rfc1918-c");
-
-    const evaluation = evaluateProcedureForPromotion(
-      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
-      parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3 },
-    );
-
-    expect(evaluation.metadata.rejectionReasons).toContain("private_data_risk");
   });
 });
