@@ -9,7 +9,7 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { registerSkillsCommands } from "../cli/skills.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
-import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
+import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
 import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
 
@@ -916,7 +916,6 @@ Bounded metadata installation workflow.
 // ============================================================================
 // Issue #1383 — custom placeholder-email allow-list
 // ============================================================================
-
 describe("GeneratedSkillValidationService — custom placeholderEmailDomains", () => {
   let tmpDir: string;
 
@@ -1042,3 +1041,75 @@ provenance: test-suite
 - Generated for email-pattern tests.
 `;
 }
+
+// ---------------------------------------------------------------------------
+// parseSkillFrontmatter — HTML comment prefix (Issue #1363)
+// ---------------------------------------------------------------------------
+
+describe("parseSkillFrontmatter — HTML comment prefix", () => {
+  const FRONTMATTER_BODY = `---
+name: test-skill
+description: Use when the user asks to test things.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Test Skill
+`;
+
+  it("parses frontmatter from content that starts with --- (baseline)", () => {
+    const fm = parseSkillFrontmatter(FRONTMATTER_BODY);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+    expect(fm.category).toBe("crystallized-workflow");
+    expect(fm.provenance).toBe("test-suite");
+  });
+
+  it("parses frontmatter when a single-line HTML comment precedes ---", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 pattern_id=p1 evidence_hash=eh1 output_path=/skills/test-skill/SKILL.md -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter when BOM and whitespace precede an HTML comment", () => {
+    const content = `\uFEFF\n  \t\n<!-- openclaw:skill-proposal id=abc123 -->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter when a multi-line HTML comment precedes ---", () => {
+    const content = `<!-- openclaw:skill-proposal\n  id=abc123\n  pattern_id=p1\n-->\n${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after multiple leading HTML comments", () => {
+    const content = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("parses frontmatter after an inline closing HTML comment marker", () => {
+    const content = `<!-- openclaw:skill-proposal id=abc123 --> ${FRONTMATTER_BODY}`;
+    const fm = parseSkillFrontmatter(content);
+    expect(fm.name).toBe("test-skill");
+    expect(fm.description).toBe("Use when the user asks to test things.");
+  });
+
+  it("returns empty object when content is only an HTML comment with no frontmatter", () => {
+    const content = "<!-- openclaw:skill-proposal id=abc123 -->\n# Plain Markdown\n\nNo frontmatter here.";
+    const fm = parseSkillFrontmatter(content);
+    expect(fm).toEqual({});
+  });
+
+  it("returns empty object for plain markdown with no frontmatter and no HTML comment", () => {
+    const fm = parseSkillFrontmatter("# Plain Markdown\n\nNo frontmatter here.");
+    expect(fm).toEqual({});
+  });
+});

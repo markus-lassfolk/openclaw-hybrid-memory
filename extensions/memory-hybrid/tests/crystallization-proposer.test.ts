@@ -428,3 +428,126 @@ describe("CrystallizationProposer.rejectProposal", () => {
     expect(result.message).toMatch(/not rejectable|not pending/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// isLegacyMarkdownCrystallizationProposal — HTML comment prefix (Issue #1362)
+// ---------------------------------------------------------------------------
+
+describe("CrystallizationProposer — legacy detection with HTML comment prefix", () => {
+  const FULL_SKILL_CONTENT = `---
+name: html-prefix-skill
+description: Use when the user asks to validate HTML-prefixed skills.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Html-Prefix-Skill
+
+## Trigger
+Use this skill when the user asks to validate HTML-prefixed skills.
+
+## Scope
+Bounded HTML prefix validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the HTML comment prefix.
+2. Validate the YAML frontmatter.
+
+## Verification
+- Confirm frontmatter fields are correctly parsed.
+
+## Anti-patterns / Known Failures
+- Do not treat injected metadata comments as content.
+
+## Examples
+- Validate an HTML-prefixed crystallized skill for correct frontmatter parsing.
+
+## Provenance
+- Source pattern ID: \`html-prefix-pattern\`
+`;
+
+  it("does not treat an HTML-prefixed YAML-frontmatter skill as legacy (approves successfully)", () => {
+    const outputDir = join(tmpDir, "html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const htmlComment = `<!-- openclaw:skill-proposal id=test-id pattern_id=html-prefix-pattern evidence_hash=ev-html output_path=${outputDir}/html-prefix-skill/SKILL.md -->`;
+    const contentWithHtmlPrefix = `\uFEFF\n\t\n${htmlComment}\n${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id);
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toBeDefined();
+
+    // Verify the stored validation result is not the legacy bypass.
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("does not treat skills with multiple leading HTML comments as legacy", () => {
+    const outputDir = join(tmpDir, "multi-html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const contentWithHtmlPrefix = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html-multiple",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id, { overrideWarnings: true });
+    expect(result.success).toBe(true);
+
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("still treats a plain markdown skill without frontmatter as legacy", () => {
+    const outputDir = join(tmpDir, "legacy-markdown-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const legacyContent = `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`;
+
+    const proposal = cStore.create({
+      patternId: "legacy-pattern",
+      evidenceHash: "ev-legacy",
+      skillName: "legacy-skill",
+      skillContent: legacyContent,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id);
+    // Legacy proposals without frontmatter are approved via the legacy bypass path.
+    expect(result.success).toBe(true);
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.some((n: string) => n.includes("legacy crystallization"))).toBe(true);
+  });
+});
