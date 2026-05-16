@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
@@ -14,6 +14,7 @@ import {
   redactAutopilotText,
   redactAutopilotValue,
 } from "./pending-autopilot/index.js";
+import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 import { SkillValidator } from "./skill-validator.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v2";
@@ -198,6 +199,8 @@ export interface ProcedurePromotionPolicyOptions {
   now?: number;
   resolvedSlug?: string;
   evidence?: ProcedurePromotionEvidence;
+  /** When true, re-read every SKILL.md from disk for duplicate detection (ignore mtime cache). */
+  bypassDuplicateSkillCache?: boolean;
 }
 
 const DEFAULT_MIN_DISTINCT_CONTEXTS = 2;
@@ -247,13 +250,13 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{\[\]]+/i,
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/i,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY[A-Za-z0-9 ]*-----/i,
 ];
 
 const PRIVATE_DATA_PATTERNS: RegExp[] = [
-  /\b(?:10\.|127\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
+  /\b(?:10\.\d{1,3}\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\b/,
   /(?:^|[\s"'=:])(?:\/home\/[^\s"']+|\/Users\/[^\s"']+|~\/[^\s"']+)/,
-  /\b[A-Za-z0-9._%+-]+@(?!example\.com|localhost|test\.com|example\.org)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+  /\b[A-Za-z0-9._%+-]+@(?!(?:example\.com|localhost|test\.com|example\.org)(?![A-Za-z0-9.-]))[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i,
 ];
 
 export function parseProcedurePromotionPolicy(policy: string | undefined): ProcedurePromotionPolicy {
@@ -369,6 +372,7 @@ export function evaluateProcedureForPromotion(
     options.skillsAutoPath,
     options.existingSkillDirs,
     options.inRunSkillCandidates,
+    options.bypassDuplicateSkillCache === true,
   );
   if (similarSkillExists)
     gates.push(defer("duplicate_existing_skill", "existing or earlier same-run skill appears to cover this trigger"));
@@ -1081,12 +1085,73 @@ function hasValidationCheck(recipe: unknown, _task: string): boolean {
     return explicitValidationPattern.test(`${fields}\n${argFields}`);
   });
 }
+
+/** Minimal LRU cache with max-size cap for skill MD digest cache. */
+class LRUCache<K, V> {
+  private readonly cache: Map<K, V>;
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.cache = new Map();
+    this.capacity = Math.max(1, capacity);
+  }
+
+  get(key: K): V | undefined {
+    if (!this.cache.has(key)) return undefined;
+    const value = this.cache.get(key)!;
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.capacity) {
+      const oldest = this.cache.keys().next().value as K;
+      this.cache.delete(oldest);
+    }
+    this.cache.set(key, value);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
+const skillMdDuplicateDigestCache = new LRUCache<string, { mtimeMs: number; lower: string }>(500);
+
+/** Clears the SKILL.md mtime cache used by duplicate-skill detection (for tests and --bypass-skill-duplicate-cache). */
+export function clearProcedurePromotionDuplicateSkillCache(): void {
+  skillMdDuplicateDigestCache.clear();
+}
+
+function readSkillMdLowerCached(skillPath: string, bypassCache: boolean): string | null {
+  if (bypassCache) {
+    const raw = safeReadFile(skillPath);
+    return raw ? raw.toLowerCase() : null;
+  }
+  try {
+    const mtimeMs = Math.trunc(statSync(skillPath).mtimeMs);
+    const hit = skillMdDuplicateDigestCache.get(skillPath);
+    if (hit && hit.mtimeMs === mtimeMs) return hit.lower;
+    const raw = safeReadFile(skillPath);
+    if (!raw) return null;
+    const lower = raw.toLowerCase();
+    skillMdDuplicateDigestCache.set(skillPath, { mtimeMs, lower });
+    return lower;
+  } catch {
+    return null;
+  }
+}
+
 function isDuplicateSkill(
   slug: string,
   task: string,
   skillsAutoPath: string,
   extraDirs: string[] = [],
   inRunCandidates: readonly ProcedurePromotionDuplicateCandidate[] = [],
+  bypassDiskCache = false,
 ): boolean {
   const dirs = [skillsAutoPath, ...extraDirs];
   const taskWords = significantWords(task);
@@ -1099,10 +1164,15 @@ function isDuplicateSkill(
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const entry of safeReadDir(dir)) {
+      if (isAtomicSkillWriteScratchDir(entry)) continue;
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
+      // Legacy skill directories may not have the atomic completion marker. If
+      // they contain SKILL.md, treat them as valid duplicates so marker rollout
+      // never overwrites or re-promotes existing skills.
       if (entry === slug) return true;
-      const content = safeReadFile(skillPath).toLowerCase();
+      const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
+      if (!content) continue;
       if (content.includes(`name: ${slug}`)) return true;
       const taskContent = extractTaskContentFromSkill(content);
       const contentWords = significantWords(taskContent);
