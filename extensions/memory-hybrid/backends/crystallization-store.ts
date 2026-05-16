@@ -14,7 +14,6 @@ import type { SQLInputValue } from "node:sqlite";
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
-import type { WorkflowPattern } from "./workflow-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types

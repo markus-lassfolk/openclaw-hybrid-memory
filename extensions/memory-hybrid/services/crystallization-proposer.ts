@@ -59,7 +59,7 @@ function pushLimitedMessage(messages: string[], message: string): void {
 
 function outputDirForInstalledSkill(outputPath: string, skillName: string, fallbackOutputDir: string): string {
   const normalizedOutputPath = resolve(outputPath);
-  const expectedSuffix = `/${skillName}/SKILL.md`;
+  const expectedSuffix = resolve(`/${skillName}/SKILL.md`);
   return normalizedOutputPath.endsWith(expectedSuffix)
     ? normalizedOutputPath.slice(0, -expectedSuffix.length)
     : fallbackOutputDir;
