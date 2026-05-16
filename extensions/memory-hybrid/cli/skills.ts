@@ -6,9 +6,9 @@
  * - hybrid-mem skills telemetry | record | correct | demote (when FactsDB is available)
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
 import type { CrystallizationStatus } from "../backends/crystallization-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillLifecycleService } from "../services/generated-skill-lifecycle.js";
@@ -528,8 +528,13 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           process.exitCode = 1;
           return;
         }
+        if (opts?.fix && report.fixedCount < report.issues.length) {
+          process.exitCode = 2;
+        }
+        const failedCount = report.issues.length - report.fixedCount;
+        const outputReport = { ...report, failedCount, exitCode: process.exitCode ?? 0 };
         if (opts?.json) {
-          console.log(JSON.stringify(report, null, 2));
+          console.log(JSON.stringify(outputReport, null, 2));
           return;
         }
         console.log(`Skills doctor: checked ${report.totalChecked} generated skill(s) at ${report.checkedAt}`);
@@ -549,6 +554,9 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           console.log(`\nMarked ${report.fixedCount} missing skill(s) as uninstalled.`);
           for (const issue of report.issues.filter((row) => row.fixed)) {
             console.log(`  fixed: ${issue.skillName} (${issue.procedureId})`);
+          }
+          if (failedCount > 0) {
+            console.log(`  failed: ${failedCount} skill(s) could not be marked uninstalled.`);
           }
         }
       }),

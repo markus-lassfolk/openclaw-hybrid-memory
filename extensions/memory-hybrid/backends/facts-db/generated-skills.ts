@@ -95,7 +95,7 @@ export type GeneratedSkillTelemetryReportRow = {
   generatedAt: number | null;
   metrics: GeneratedSkillTelemetryMetrics;
   flags: GeneratedSkillTelemetryFlags;
-  recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
+  recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
   recentActivations: GeneratedSkillTelemetryEntry[];
 };
 
@@ -646,7 +646,7 @@ export function buildGeneratedSkillTelemetryReport(
       const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
       const currentState = proc.skillState ?? "experimental";
 
-      let recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
+      let recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
 
       if (currentState === "uninstalled" || currentState === "rejected") {
         recommendation = "observe";
@@ -655,7 +655,7 @@ export function buildGeneratedSkillTelemetryReport(
       } else if (currentState === "demoted" && flags.overTriggering) {
         recommendation = "observe";
       } else if (flags.unblockCandidate && !flags.overTriggering) {
-        recommendation = "promote";
+        recommendation = "unblock";
       } else if (flags.archiveCandidate) {
         recommendation = "archive";
       } else if (flags.overTriggering) {
