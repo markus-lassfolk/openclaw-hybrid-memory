@@ -54,6 +54,7 @@ const BASE_CFG: CrystallizationConfig = {
   maxCrystallized: 50,
   pruneUnusedDays: 30,
   evidenceCountBucketSize: 5,
+  placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
 beforeEach(() => {

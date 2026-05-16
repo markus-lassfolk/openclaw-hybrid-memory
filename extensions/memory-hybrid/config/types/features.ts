@@ -202,6 +202,12 @@ export type CrystallizationConfig = {
    * Uses `floor(totalCount / m) * m`; `successRate` is rounded to one decimal in the hash payload.
    */
   evidenceCountBucketSize: number;
+  /**
+   * Email domains treated as safe placeholders during skill validation (Issue #1383).
+   * Extend this list with your organisation's internal placeholder domains so they are
+   * not flagged as real addresses. Default: ["example.com", "localhost", "test.com", "example.org"].
+   */
+  placeholderEmailDomains: string[];
 };
 
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
