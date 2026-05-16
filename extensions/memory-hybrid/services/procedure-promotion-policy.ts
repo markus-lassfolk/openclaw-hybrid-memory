@@ -1179,17 +1179,11 @@ function isDuplicateSkill(
     for (const entry of safeReadDir(dir)) {
       const skillPath = join(dir, entry, "SKILL.md");
       if (!existsSync(skillPath)) continue;
-<<<<<<< HEAD
-      // Legacy skill directories may not have the atomic completion marker. If
-      // they contain SKILL.md, treat them as valid duplicates so marker rollout
-      // never overwrites or re-promotes existing skills.
-=======
       // Atomic writer crash leftovers can contain a SKILL.md for the final slug
       // but are not committed skills. Ignore temp/backup siblings unless they
       // have the completion marker; legacy markerless final dirs are still
       // occupied names and valid duplicate sources.
       if (isAtomicWriteArtifact(entry) && !isSkillDirComplete(join(dir, entry))) continue;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
       if (entry === slug) return true;
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;
