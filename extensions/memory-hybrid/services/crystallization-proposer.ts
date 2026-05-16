@@ -27,17 +27,26 @@ import { SkillCrystallizer } from "./skill-crystallizer.js";
 
 /** When renaming, replace the first Markdown ATX H1 in the body (after frontmatter), if any. */
 function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: string): string {
-  let body = skillContent;
-  let head = "";
-  const commentMatch = body.match(/^<!--[\s\S]*?-->\s*\r?\n*/);
-  if (commentMatch) {
-    head += commentMatch[0];
-    body = body.slice(commentMatch[0].length);
-  }
+  const stripped = stripLeadingHtmlComments(skillContent);
+  const head = skillContent.slice(0, skillContent.length - stripped.length);
+  let body = stripped;
   const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
   if (fmMatch) {
-    head += fmMatch[0];
-    body = body.slice(fmMatch[0].length);
+    const frontmatter = fmMatch[0];
+    body = body.slice(frontmatter.length);
+    const leadingNewlineMatch = body.match(/^\r?\n/);
+    const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
+    body = body.replace(/^\r?\n/, "");
+    const h1Line = /^(#[ \t]+(?!#)\S[^\r\n]*)(\r?)$/m;
+    if (!h1Line.test(body)) {
+      return skillContent;
+    }
+    return (
+      head +
+      frontmatter +
+      leadingNewline +
+      body.replace(h1Line, (_match, _oldLine: string, cr: string) => `# ${newTitle}${cr}`)
+    );
   }
   const leadingNewlineMatch = body.match(/^\r?\n/);
   const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
