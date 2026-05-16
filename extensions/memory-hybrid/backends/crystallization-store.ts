@@ -684,6 +684,38 @@ function migrateCrystallizationSchemaV1(db: DatabaseSync): void {
   );
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_cp_evidence_hash ON crystallization_proposals(evidence_hash)");
+
+  const duplicates = db
+    .prepare(
+      "SELECT pattern_id FROM crystallization_proposals WHERE status = 'installed' GROUP BY pattern_id HAVING COUNT(*) > 1",
+    )
+    .all() as Array<{ pattern_id: string }>;
+  for (const row of duplicates) {
+    const installedRows = db
+      .prepare(
+        `SELECT id
+           FROM crystallization_proposals
+          WHERE pattern_id = ? AND status = 'installed'
+          ORDER BY normalizedCrystallizationTimestamp(installed_at, created_at) DESC,
+                   normalizedCrystallizationTimestamp(updated_at, created_at) DESC,
+                   normalizedCrystallizationTimestamp(created_at, NULL) DESC,
+                   id DESC`,
+      )
+      .all(row.pattern_id) as Array<{ id: string }>;
+    const keepId = installedRows[0]?.id;
+    if (!keepId) continue;
+    db.prepare(
+      `UPDATE crystallization_proposals
+          SET status = 'superseded',
+              superseded_by = ?,
+              superseded_at = COALESCE(superseded_at, datetime('now')),
+              updated_at = datetime('now')
+        WHERE pattern_id = ? AND status = 'installed' AND id <> ?`,
+    ).run(keepId, row.pattern_id, keepId);
+  }
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_one_installed_per_pattern ON crystallization_proposals(pattern_id) WHERE status = 'installed'",
+  );
 }
 
 function migrateCrystallizationSchemaV2(db: DatabaseSync): void {

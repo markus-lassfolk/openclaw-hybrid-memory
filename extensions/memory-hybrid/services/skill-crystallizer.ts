@@ -253,7 +253,7 @@ export function crystallizeSkill(input: CrystallizationInput, cfg: Crystallizati
 
   // Resolve output directory (expand ~ for home dir)
   const outputDir = cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-  const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
+  const proposedOutputPath = resolve(outputDir, skillName, "SKILL.md");
 
   // Generate shell script for exec-only sequences
   const hasScript = isExecOnlySequence(pattern.toolSequence);
