@@ -4,13 +4,8 @@
  * Covers:
  *  - atomicWriteFile: correct write, atomicity on error, temp-file cleanup
  *  - atomicWriteSkillDir: all files present, completion marker written,
-<<<<<<< HEAD
- *    subdirectory creation, temp-dir cleanup on error, overwrite of incomplete
- *    existing dir
-=======
  *    subdirectory creation, temp-dir cleanup on error, refusal to overwrite
  *    existing dirs, and safe relative path validation
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
  *  - isSkillDirComplete: true only when marker exists
  */
 
@@ -29,24 +24,14 @@ import {
 // Controlled failure injection via vi.mock
 // ---------------------------------------------------------------------------
 
-<<<<<<< HEAD
-let failRenameCall: number | null = null;
-let renameCallCount = 0;
-=======
 let simulateRenameFailure = false;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
     renameSync(...args: Parameters<typeof actual.renameSync>) {
-<<<<<<< HEAD
-      renameCallCount += 1;
-      if (failRenameCall === renameCallCount) {
-=======
       if (simulateRenameFailure) {
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
         throw new Error("simulated rename failure");
       }
       return actual.renameSync(...args);
@@ -62,21 +47,11 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "atomic-write-test-"));
-<<<<<<< HEAD
-  failRenameCall = null;
-  renameCallCount = 0;
-});
-
-afterEach(() => {
-  failRenameCall = null;
-  renameCallCount = 0;
-=======
   simulateRenameFailure = false;
 });
 
 afterEach(() => {
   simulateRenameFailure = false;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -122,11 +97,7 @@ describe("atomicWriteFile", () => {
   });
 
   it("removes temp file and re-throws on rename error", () => {
-<<<<<<< HEAD
-    failRenameCall = 1;
-=======
     simulateRenameFailure = true;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
     const targetPath = join(tmpDir, "output.txt");
     expect(() => atomicWriteFile(targetPath, "content")).toThrow("simulated rename failure");
 
@@ -141,11 +112,7 @@ describe("atomicWriteFile", () => {
     const targetPath = join(tmpDir, "output.txt");
     writeFileSync(targetPath, "original", "utf-8");
 
-<<<<<<< HEAD
-    failRenameCall = 1;
-=======
     simulateRenameFailure = true;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
     expect(() => atomicWriteFile(targetPath, "new-content")).toThrow();
 
     // Original content must be intact.
@@ -200,11 +167,7 @@ describe("atomicWriteSkillDir", () => {
   });
 
   it("cleans up temp dir and re-throws on rename error", () => {
-<<<<<<< HEAD
-    failRenameCall = 1;
-=======
     simulateRenameFailure = true;
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
     const skillDir = join(tmpDir, "my-skill");
     expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("simulated rename failure");
 
@@ -215,38 +178,6 @@ describe("atomicWriteSkillDir", () => {
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
 
-<<<<<<< HEAD
-  it("restores an existing directory when promotion fails after backup", () => {
-    const skillDir = join(tmpDir, "my-skill");
-    mkdirSync(join(skillDir, "nested"), { recursive: true });
-    writeFileSync(join(skillDir, "SKILL.md"), "# Original Skill\n", "utf-8");
-    writeFileSync(join(skillDir, "nested", "sidecar.txt"), "original sidecar", "utf-8");
-
-    // With an existing directory, atomicWriteSkillDir first renames
-    // skillDir -> backupDir, then tmpDir -> skillDir. Fail the second rename
-    // to exercise rollback after the original directory has been moved.
-    failRenameCall = 2;
-    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("simulated rename failure");
-
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Original Skill\n");
-    expect(readFileSync(join(skillDir, "nested", "sidecar.txt"), "utf-8")).toBe("original sidecar");
-
-    const entries = readdirSync(tmpDir);
-    expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
-  });
-
-  it("overwrites an existing incomplete (no-marker) directory", () => {
-    const skillDir = join(tmpDir, "my-skill");
-    // Simulate a partially-written dir from a previous crashed write.
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, "SKILL.md"), "# Incomplete\n", "utf-8");
-    // No marker → incomplete.
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
-
-    // Should succeed and replace with complete content.
-    atomicWriteSkillDir(skillDir, DRAFT);
-
-=======
   it("refuses to overwrite an existing incomplete (no-marker) directory", () => {
     const skillDir = join(tmpDir, "my-skill");
     mkdirSync(skillDir, { recursive: true });
@@ -264,25 +195,10 @@ describe("atomicWriteSkillDir", () => {
     const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
     expect(() => atomicWriteSkillDir(skillDir, updated)).toThrow("Refusing to overwrite existing skill directory");
 
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
     expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# My Skill");
     expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
   });
 
-<<<<<<< HEAD
-  it("replaces a complete directory when called again with updated content", () => {
-    const skillDir = join(tmpDir, "my-skill");
-    // Write first complete version.
-    atomicWriteSkillDir(skillDir, DRAFT);
-
-    // Overwrite with updated content.
-    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
-    atomicWriteSkillDir(skillDir, updated);
-
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Updated Skill");
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
-  });
-=======
   it.each(["../escape.txt", "/tmp/escape.txt", "nested/../../escape.txt", "", SKILL_COMPLETE_MARKER])(
     "rejects unsafe relative path %s",
     (relPath) => {
@@ -293,7 +209,6 @@ describe("atomicWriteSkillDir", () => {
       expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
     },
   );
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
 });
 
 // ---------------------------------------------------------------------------
