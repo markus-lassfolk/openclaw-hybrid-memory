@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -13,9 +12,16 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
-import { NON_PLACEHOLDER_EMAIL_PATTERN, SkillValidator } from "./skill-validator.js";
+import {
+  NON_PLACEHOLDER_EMAIL_PATTERN,
+  PEM_PRIVATE_KEY_PATTERN,
+  PRIVATE_IP_PATTERN,
+  SkillValidator,
+} from "./skill-validator.js";
 
 export type ValidationStageStatus = "passed" | "warn" | "failed";
 export type ProposalApprovalDecision = "allow" | "allow-with-override" | "deny";
@@ -83,14 +89,6 @@ const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
 const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
 const NEGATION_PATTERN = /\b(?:without|do not|don't|avoid)\b/;
 const EXPLANATION_PATTERN = /\b(?:explain|describe)\b/;
-const SECRET_OR_PRIVATE_PATTERNS = [
-  /sk-[a-z0-9]{20,}/i,
-  /gh[pousr]_[a-z0-9_]{20,}/i,
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  NON_PLACEHOLDER_EMAIL_PATTERN,
-  /\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/,
-  /\/(?:Users|home)\/[^\s/]+/i,
-];
 const STOP_WORDS = new Set([
   "about",
   "after",
@@ -161,8 +159,36 @@ export function detailSkillProposalValidation(result?: SkillProposalValidationRe
   return `${summarizeSkillProposalValidation(result)}; violations: ${details.slice(0, 8).join("; ")}`;
 }
 
+/**
+ * Build the secret/private-data pattern list for GSV.
+ * Accepts an email pattern so operators can supply a custom allow-list (Issue #1383).
+ * PEM detector is case-insensitive and uses the shared constant (Issue #1382).
+ * Private IP pattern uses the shared constant to prevent drift across validators.
+ */
+function buildSecretOrPrivatePatterns(emailPattern: RegExp): RegExp[] {
+  return [
+    /sk-[a-z0-9]{20,}/i,
+    /gh[pousr]_[a-z0-9_]{20,}/i,
+    PEM_PRIVATE_KEY_PATTERN,
+    emailPattern,
+    PRIVATE_IP_PATTERN,
+    /\/(?:Users|home)\/[^\s/]+/i,
+  ];
+}
+
 export class GeneratedSkillValidationService {
-  private readonly skillValidator = new SkillValidator();
+  private readonly skillValidator: SkillValidator;
+  private readonly secretOrPrivatePatterns: RegExp[];
+
+  /**
+   * @param options.emailPattern - custom non-placeholder email regex; defaults to
+   *   {@link NON_PLACEHOLDER_EMAIL_PATTERN}. Build with {@link buildNonPlaceholderEmailPattern}.
+   */
+  constructor(options?: { emailPattern?: RegExp }) {
+    const emailPattern = options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN;
+    this.skillValidator = new SkillValidator({ emailPattern });
+    this.secretOrPrivatePatterns = buildSecretOrPrivatePatterns(emailPattern);
+  }
 
   validate(
     input: ValidateGeneratedSkillInput,
@@ -254,7 +280,7 @@ export class GeneratedSkillValidationService {
     if (!isCanonicalSkillPath(input.outputDir, proposedOutputPath, input.skillName)) {
       violations.push(`Unsafe proposed output path: ${input.proposedOutputPath}`);
     }
-    for (const pattern of SECRET_OR_PRIVATE_PATTERNS) {
+    for (const pattern of this.secretOrPrivatePatterns) {
       if (pattern.test(input.skillContent)) {
         violations.push(`Secret/private-data pattern detected: ${pattern}`);
       }
@@ -293,6 +319,7 @@ export class GeneratedSkillValidationService {
       mkdirSync(skillDir, { recursive: true });
       const skillPath = join(skillDir, "SKILL.md");
       writeFileSync(skillPath, skillContent, "utf-8");
+      writeFileSync(join(skillDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
 
       const skillDirStat = lstatSync(skillDir);
       const skillPathStat = lstatSync(skillPath);
@@ -442,9 +469,8 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
 
 function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
   const out: SkillFrontmatter[] = [];
-  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const skillPath = join(skillsDir, entry.name, "SKILL.md");
+  for (const entry of discoverCompletedSkillDirs(skillsDir)) {
+    const skillPath = entry.skillPath;
     let skillContent = "";
     try {
       skillContent = readFileSync(skillPath, "utf-8");

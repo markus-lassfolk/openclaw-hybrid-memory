@@ -214,6 +214,7 @@ export async function runGenerateAutoSkillsForCli(
     max?: number;
     policy?: string;
     json?: boolean;
+    bypassDuplicateSkillCache?: boolean;
   },
 ): Promise<GenerateAutoSkillsResult> {
   const { factsDb, cfg, logger } = ctx;
@@ -231,6 +232,7 @@ export async function runGenerateAutoSkillsForCli(
         maxPerRun: opts.max,
         policy: opts.policy,
         promotionContextSpecificPatterns: cfg.procedures.promotionContextSpecificPatterns,
+        bypassDuplicateSkillCache: opts.bypassDuplicateSkillCache,
       },
       { info, warn },
     );

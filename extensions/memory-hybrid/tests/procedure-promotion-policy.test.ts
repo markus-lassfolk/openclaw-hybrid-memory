@@ -13,6 +13,7 @@ import {
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import type { ProcedureEntry } from "../types/memory.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 let tmpDir: string;
@@ -271,6 +272,7 @@ describe("procedure promotion policy and adapter", () => {
   it("compares duplicate skills against task-specific sections instead of template boilerplate", () => {
     const existingSkillDir = join(skillsDir, "collect-weather-sensor-status");
     mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(join(existingSkillDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
     writeFileSync(
       join(existingSkillDir, "SKILL.md"),
       `---
@@ -331,6 +333,71 @@ Source procedure id: proc-weather
 
     expect(distinctEval.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
     expect(duplicateEval.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+  });
+
+  it("ignores leftover atomic temp directories when checking duplicates", () => {
+    const tempSkillDir = join(skillsDir, ".openclaw-skill-tmp-1234-deadbeef");
+    mkdirSync(tempSkillDir, { recursive: true });
+    writeFileSync(
+      join(tempSkillDir, "SKILL.md"),
+      `---
+name: validate-release-health-report-with-objective-checks
+description: Use when the user asks to validate release health report with objective checks.
+---
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({ sourceSessionId: "temp-dir-overlap-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "temp-dir-overlap-b");
+    db.recordProcedureSuccess(proc.id, undefined, "temp-dir-overlap-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).not.toContain("duplicate_existing_skill");
+  });
+
+  it("treats legacy skill directories without completion markers as duplicate skills", () => {
+    const existingSkillDir = join(skillsDir, "collect-markerless-legacy-report");
+    mkdirSync(existingSkillDir, { recursive: true });
+    writeFileSync(
+      join(existingSkillDir, "SKILL.md"),
+      `---
+name: collect-markerless-legacy-report
+description: Use when collecting markerless legacy reports.
+---
+
+# Collect Markerless Legacy Report
+
+## Trigger
+Use for collecting markerless legacy reports.
+
+## Workflow
+1. Read status.json.
+2. Verify report output exists.
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({
+      taskPattern: "Collect markerless legacy report",
+      sourceSessionId: "markerless-legacy-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "markerless-legacy-b");
+    db.recordProcedureSuccess(proc.id, undefined, "markerless-legacy-c");
+
+    const policy = parseProcedurePromotionPolicy("auto-safe");
+    const evaluation = evaluateProcedureForPromotion(createProcedurePromotionItem(proc, policy), policy, {
+      skillsAutoPath: skillsDir,
+      validationThreshold: 3,
+    });
+
+    expect(evaluation.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+    expect(evaluation.metadata.duplicateHandling).toBe("merge");
   });
 
   it("does not report generated skill paths for deferred procedures", () => {
