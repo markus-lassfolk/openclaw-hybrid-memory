@@ -304,7 +304,7 @@ jobs:
           # peerDependency range). `--foreground-scripts` surfaces postinstall
           # errors; `--ignore-scripts=false` ensures the postinstall rebuild
           # actually runs so we exercise the same path real users hit.
-          npm install "$TARBALL_PATH" 'openclaw@>=2026.5.0 <2027' \
+          npm install "$TARBALL_PATH" 'openclaw@2026.5.12' \
             --foreground-scripts --ignore-scripts=false
       - name: Assert no @duckflux/core ETARGET path in tree (issue #1172)
         run: |
