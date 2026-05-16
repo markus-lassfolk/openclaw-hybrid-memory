@@ -273,7 +273,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             const result = proposer.validateProposal(id, {
               name: opts.name,
               category: opts.category,
-              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : undefined,
+              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
             });
             if (!result) {
               console.error(`Proposal '${id}' not found`);
