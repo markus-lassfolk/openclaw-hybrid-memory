@@ -213,6 +213,13 @@ function findGeneratedSkillProcedureStrict(db: DatabaseSync, skillName: string):
   return matches[0] ?? null;
 }
 
+function findProcedureById(db: DatabaseSync, procedureId: string): ProcedureEntry | null {
+  const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? procedureRowToEntry(db, row) : null;
+}
+
 export function listGeneratedSkillProcedures(db: DatabaseSync): ProcedureEntry[] {
   return generatedSkillRows(db).map((row) => procedureRowToEntry(db, row));
 }
@@ -250,10 +257,7 @@ export function recordGeneratedSkillTelemetry(
 ): GeneratedSkillTelemetryEntry {
   let proc: ProcedureEntry | null = null;
   if (input.procedureId != null) {
-    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(input.procedureId) as
-      | Record<string, unknown>
-      | undefined;
-    const candidate = row ? procedureRowToEntry(db, row) : null;
+    const candidate = findProcedureById(db, input.procedureId);
     if (!candidate) throw new Error(`Procedure not found for telemetry: ${input.procedureId}`);
     if (candidate.promotedToSkill !== 1 || !candidate.skillPath?.trim()) {
       throw new Error(`Procedure ${input.procedureId} is not a promoted generated skill`);
@@ -345,10 +349,7 @@ export function setGeneratedSkillLifecycleState(
 ): ProcedureEntry | null {
   let proc: ProcedureEntry | null = null;
   if (procedureId != null) {
-    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
-      | Record<string, unknown>
-      | undefined;
-    proc = row ? procedureRowToEntry(db, row) : null;
+    proc = findProcedureById(db, procedureId);
   } else {
     proc = findGeneratedSkillProcedure(db, skillName);
   }
@@ -369,10 +370,7 @@ export function getGeneratedSkillByName(
   procedureId?: string,
 ): ProcedureEntry | null {
   if (procedureId != null) {
-    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? procedureRowToEntry(db, row) : null;
+    return findProcedureById(db, procedureId);
   }
   return findGeneratedSkillProcedure(db, skillName);
 }
@@ -536,10 +534,7 @@ export function refreshGeneratedSkillLifecycleState(
 ): ProcedureEntry | null {
   let proc: ProcedureEntry | null = null;
   if (procedureId != null) {
-    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
-      | Record<string, unknown>
-      | undefined;
-    proc = row ? procedureRowToEntry(db, row) : null;
+    proc = findProcedureById(db, procedureId);
   } else {
     proc = findGeneratedSkillProcedure(db, skillName);
   }
