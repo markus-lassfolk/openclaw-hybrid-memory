@@ -552,8 +552,10 @@ function summarizeSkillTelemetry(
   let savedTimeMs = 0;
 
   for (const activation of activations) {
-    savedToolCalls += activation.savedToolCalls ?? 0;
-    savedTimeMs += activation.savedTimeMs ?? 0;
+    const calls = activation.savedToolCalls ?? 0;
+    const timeMs = activation.savedTimeMs ?? 0;
+    savedToolCalls += calls > 0 ? calls : 0;
+    savedTimeMs += timeMs > 0 ? timeMs : 0;
     if (activation.decision === "selected") {
       activationCountTotal++;
       if (activation.createdAt >= weekAgo) activationCountPerWeek++;
