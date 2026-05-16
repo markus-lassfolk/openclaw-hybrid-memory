@@ -1859,7 +1859,6 @@
               "type": "string"
             }
           }
-          }
         },
         "description": "Auto-generate SKILL.md from repeated patterns"
       },

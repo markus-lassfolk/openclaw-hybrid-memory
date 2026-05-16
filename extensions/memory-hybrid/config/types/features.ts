@@ -198,6 +198,8 @@ export type CrystallizationConfig = {
   maxCrystallized: number;
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
+  /** Project-level SKILL.md section taxonomy overrides keyed by category. */
+  sectionTaxonomy?: SectionTaxonomyOverrides;
   /**
    * Email domains treated as safe placeholders during skill validation (Issue #1383).
    * Extend this list with your organisation's internal placeholder domains so they are
