@@ -819,7 +819,12 @@ export function refreshGeneratedSkillLifecycleState(
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
   returnMetrics: true,
-): { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } | null;
+): {
+  proc: ProcedureEntry;
+  metrics: GeneratedSkillTelemetryMetrics;
+  flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
+} | null;
 export function refreshGeneratedSkillLifecycleState(
   db: DatabaseSync,
   skillName: string,
@@ -828,18 +833,17 @@ export function refreshGeneratedSkillLifecycleState(
   returnMetrics = false,
 ):
   | ProcedureEntry
-  | { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+  | {
+      proc: ProcedureEntry;
+      metrics: GeneratedSkillTelemetryMetrics;
+      flags: GeneratedSkillTelemetryFlags;
+      riskLevel: "low" | "medium" | "high";
+    }
   | null {
   const proc = findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
   const canonicalSkillName = basename(proc.skillPath);
-  const { metrics, flags, riskLevel } = summarizeSkillTelemetryFromRollups(
-    db,
-    proc,
-    canonicalSkillName,
-    policy,
-    now,
-  );
+  const { metrics, flags, riskLevel } = summarizeSkillTelemetryFromRollups(db, proc, canonicalSkillName, policy, now);
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, riskLevel);
   const updatedProc =
@@ -847,7 +851,7 @@ export function refreshGeneratedSkillLifecycleState(
       ? proc
       : (setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now) ?? proc);
   if (returnMetrics) {
-    return { proc: updatedProc, metrics, flags };
+    return { proc: updatedProc, metrics, flags, riskLevel };
   }
   return updatedProc;
 }
@@ -881,8 +885,7 @@ export function buildGeneratedSkillTelemetryReport(
           procFresh = proc;
           ({ metrics, flags, riskLevel } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
         } else {
-          ({ proc: procFresh, metrics, flags } = result);
-          ({ riskLevel } = summarizeSkillTelemetryFromRollups(db, procFresh, skillName, policy, now));
+          ({ proc: procFresh, metrics, flags, riskLevel } = result);
         }
       } else {
         procFresh = proc;
