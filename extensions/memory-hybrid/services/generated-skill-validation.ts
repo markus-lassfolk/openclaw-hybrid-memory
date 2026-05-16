@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -13,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
 import {
@@ -318,6 +319,7 @@ export class GeneratedSkillValidationService {
       mkdirSync(skillDir, { recursive: true });
       const skillPath = join(skillDir, "SKILL.md");
       writeFileSync(skillPath, skillContent, "utf-8");
+      writeFileSync(join(skillDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
 
       const skillDirStat = lstatSync(skillDir);
       const skillPathStat = lstatSync(skillPath);
@@ -467,9 +469,8 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
 
 function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
   const out: SkillFrontmatter[] = [];
-  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const skillPath = join(skillsDir, entry.name, "SKILL.md");
+  for (const entry of discoverCompletedSkillDirs(skillsDir)) {
+    const skillPath = entry.skillPath;
     let skillContent = "";
     try {
       skillContent = readFileSync(skillPath, "utf-8");

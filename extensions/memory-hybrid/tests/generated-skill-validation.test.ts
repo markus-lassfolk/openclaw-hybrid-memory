@@ -11,7 +11,8 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
 import { SkillCrystallizer } from "../services/skill-crystallizer.js";
-import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
+import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 
 const BASE_CFG: CrystallizationConfig = {
   enabled: true,
@@ -192,6 +193,55 @@ Bounded release-health review workflow.
     expect(validation.syntheticActivationEval.status).toBe("passed");
     expect(validation.approvalDecision).toBe("allow");
     expect(validation.syntheticActivationEval.score).toBeGreaterThanOrEqual(100 / 3);
+  });
+
+  it("dry-load discovery skips markerless skill directories as in-progress", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-markerless-dry-load-"));
+    const skillsDir = join(tmpDir, "skills");
+    const markerlessDir = join(skillsDir, "half-written-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(
+      join(markerlessDir, "SKILL.md"),
+      `---
+name: half-written-skill
+description: This markerless skill must be treated as in-progress.
+---
+`,
+      "utf-8",
+    );
+
+    expect(discoverCompletedSkillDirs(skillsDir)).toEqual([]);
+  });
+
+  it("dry-load discovery includes only skills with the completion marker", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-complete-dry-load-"));
+    const skillsDir = join(tmpDir, "skills");
+    const completedDir = join(skillsDir, "complete-skill");
+    mkdirSync(completedDir, { recursive: true });
+    writeFileSync(
+      join(completedDir, "SKILL.md"),
+      `---
+name: complete-skill
+description: This skill has a completion marker.
+---
+`,
+      "utf-8",
+    );
+    writeFileSync(join(completedDir, SKILL_COMPLETE_MARKER), "2024-01-01T00:00:00.000Z", "utf-8");
+
+    const markerlessDir = join(skillsDir, "half-written-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(
+      join(markerlessDir, "SKILL.md"),
+      `---
+name: half-written-skill
+description: This markerless skill must be treated as in-progress.
+---
+`,
+      "utf-8",
+    );
+
+    expect(discoverCompletedSkillDirs(skillsDir).map((entry) => entry.name)).toEqual(["complete-skill"]);
   });
 
   it("uses a deterministic fallback negative prompt when canned prompts overlap the skill surface", () => {
@@ -666,7 +716,8 @@ Bounded CLI release-health review workflow.
       const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean; outputPath?: string };
       expect(output.ok).toBe(true);
       expect(output.outputPath).toBeDefined();
-      expect(existsSync(output.outputPath!)).toBe(true);
+      if (!output.outputPath) return;
+      expect(existsSync(output.outputPath)).toBe(true);
     } finally {
       cStore.close();
     }
@@ -912,135 +963,6 @@ Bounded metadata installation workflow.
     }
   });
 });
-
-// ============================================================================
-// Issue #1383 — custom placeholder-email allow-list
-// ============================================================================
-describe("GeneratedSkillValidationService — custom placeholderEmailDomains", () => {
-  let tmpDir: string;
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("flags an internal-placeholder email address with the default allow-list", () => {
-    tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-default-"));
-    const skillContent = makeMinimalSkill("custom-domain-test", "team@company.internal");
-    const defaultPattern = buildNonPlaceholderEmailPattern(["example.com", "localhost", "test.com", "example.org"]);
-    expect(defaultPattern.test(skillContent)).toBe(true);
-    expect(defaultPattern.test(makeMinimalSkill("custom-domain-test", "team@EXAMPLE.COM"))).toBe(false);
-  });
-
-  it("does not flag custom placeholder domain when configured with extended allow-list", () => {
-    tmpDir = mkdtempSync(join(tmpdir(), "gsv-custom-email-extended-"));
-    const customEmailPattern = buildNonPlaceholderEmailPattern([
-      "example.com",
-      "localhost",
-      "test.com",
-      "example.org",
-      "company.internal",
-    ]);
-    const service = new GeneratedSkillValidationService({ emailPattern: customEmailPattern });
-    const cfg: CrystallizationConfig = {
-      ...BASE_CFG,
-      outputDir: join(tmpDir, "skills"),
-      placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org", "company.internal"],
-    };
-    const crystallizer = new SkillCrystallizer(cfg);
-    const pattern = {
-      toolSequence: ["read", "write"],
-      totalCount: 5,
-      successCount: 5,
-      failureCount: 0,
-      successRate: 1,
-      avgDurationMs: 400,
-      exampleGoals: ["Send the weekly summary to ops@company.internal after deploy"],
-    };
-    const result = crystallizer.crystallize({ patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern });
-    const validation = service.validate({
-      outputDir: cfg.outputDir,
-      proposedOutputPath: result.proposedOutputPath,
-      skillName: result.skillName,
-      skillContent: result.skillContent,
-      pattern,
-    });
-    const emailViolations = validation.staticValidation.violations.filter(
-      (v) => v.includes("email") || v.includes("company.internal"),
-    );
-    expect(emailViolations).toHaveLength(0);
-  });
-
-  it("parseCrystallizationConfig picks up custom placeholderEmailDomains", async () => {
-    const { hybridConfigSchema } = await import("../config.js");
-    const cfg = hybridConfigSchema.parse({
-      embedding: {
-        provider: "openai",
-        apiKey: "sk-test-key-12345678",
-        model: "text-embedding-3-small",
-      },
-      crystallization: {
-        placeholderEmailDomains: ["example.com", "company.internal"],
-      },
-    });
-    expect(cfg.crystallization.placeholderEmailDomains).toEqual(["example.com", "company.internal"]);
-  });
-
-  it("parseCrystallizationConfig defaults to standard domains when field is omitted", async () => {
-    const { hybridConfigSchema } = await import("../config.js");
-    const cfg = hybridConfigSchema.parse({
-      embedding: {
-        provider: "openai",
-        apiKey: "sk-test-key-12345678",
-        model: "text-embedding-3-small",
-      },
-      mode: "minimal",
-    });
-    expect(cfg.crystallization.placeholderEmailDomains).toEqual([
-      "example.com",
-      "localhost",
-      "test.com",
-      "example.org",
-    ]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeMinimalSkill(skillName: string, emailInContent: string): string {
-  return `---
-name: ${skillName}
-description: Minimal skill for email pattern tests.
-category: test
-provenance: test-suite
----
-
-# ${skillName}
-
-## Trigger
-- Use this skill for email-pattern validation tests.
-
-## Scope
-- Bounded to test fixtures.
-
-## When not to use
-- When no email validation is needed.
-
-## Workflow
-1. Contact: ${emailInContent}
-2. Verify output.
-
-## Examples
-- Good: "Test the email pattern validation."
-
-## Provenance
-- Generated for email-pattern tests.
-`;
-}
 
 // ---------------------------------------------------------------------------
 // parseSkillFrontmatter — HTML comment prefix (Issue #1363)

@@ -9,31 +9,40 @@
  *  - isSkillDirComplete: true only when marker exists
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  SKILL_ATOMIC_TEMP_PREFIX,
   SKILL_COMPLETE_MARKER,
   atomicWriteFile,
   atomicWriteSkillDir,
   isSkillDirComplete,
 } from "../utils/atomic-write.js";
+import { discoverCompletedSkillDirs, isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 
 // ---------------------------------------------------------------------------
 // Controlled failure injection via vi.mock
 // ---------------------------------------------------------------------------
 
-let failRenameCall: number | null = null;
-let renameCallCount = 0;
+let simulateRenameFailure = false;
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
     renameSync(...args: Parameters<typeof actual.renameSync>) {
-      renameCallCount += 1;
-      if (failRenameCall === renameCallCount) {
+      if (simulateRenameFailure) {
         throw new Error("simulated rename failure");
       }
       return actual.renameSync(...args);
@@ -49,13 +58,11 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "atomic-write-test-"));
-  failRenameCall = null;
-  renameCallCount = 0;
+  simulateRenameFailure = false;
 });
 
 afterEach(() => {
-  failRenameCall = null;
-  renameCallCount = 0;
+  simulateRenameFailure = false;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -101,7 +108,7 @@ describe("atomicWriteFile", () => {
   });
 
   it("removes temp file and re-throws on rename error", () => {
-    failRenameCall = 1;
+    simulateRenameFailure = true;
     const targetPath = join(tmpDir, "output.txt");
     expect(() => atomicWriteFile(targetPath, "content")).toThrow("simulated rename failure");
 
@@ -116,7 +123,7 @@ describe("atomicWriteFile", () => {
     const targetPath = join(tmpDir, "output.txt");
     writeFileSync(targetPath, "original", "utf-8");
 
-    failRenameCall = 1;
+    simulateRenameFailure = true;
     expect(() => atomicWriteFile(targetPath, "new-content")).toThrow();
 
     // Original content must be intact.
@@ -171,7 +178,7 @@ describe("atomicWriteSkillDir", () => {
   });
 
   it("cleans up temp dir and re-throws on rename error", () => {
-    failRenameCall = 1;
+    simulateRenameFailure = true;
     const skillDir = join(tmpDir, "my-skill");
     expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("simulated rename failure");
 
@@ -182,51 +189,76 @@ describe("atomicWriteSkillDir", () => {
     expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
   });
 
-  it("restores an existing directory when promotion fails after backup", () => {
+  it("refuses to overwrite an existing incomplete (no-marker) directory with SKILL.md", () => {
     const skillDir = join(tmpDir, "my-skill");
-    mkdirSync(join(skillDir, "nested"), { recursive: true });
-    writeFileSync(join(skillDir, "SKILL.md"), "# Original Skill\n", "utf-8");
-    writeFileSync(join(skillDir, "nested", "sidecar.txt"), "original sidecar", "utf-8");
-
-    // With an existing directory, atomicWriteSkillDir first renames
-    // skillDir -> backupDir, then tmpDir -> skillDir. Fail the second rename
-    // to exercise rollback after the original directory has been moved.
-    failRenameCall = 2;
-    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("simulated rename failure");
-
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toBe("# Original Skill\n");
-    expect(readFileSync(join(skillDir, "nested", "sidecar.txt"), "utf-8")).toBe("original sidecar");
-
-    const entries = readdirSync(tmpDir);
-    expect(entries.every((e) => !e.includes(".tmp-"))).toBe(true);
-  });
-
-  it("overwrites an existing incomplete (no-marker) directory", () => {
-    const skillDir = join(tmpDir, "my-skill");
-    // Simulate a partially-written dir from a previous crashed write.
+    // Simulate a legacy/partial final dir. Callers must explicitly decide if it
+    // is safe to clean it; atomicWriteSkillDir itself must never hide it.
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "# Incomplete\n", "utf-8");
-    // No marker → incomplete.
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
 
-    // Should succeed and replace with complete content.
+    expect(() => atomicWriteSkillDir(skillDir, DRAFT)).toThrow("Atomic skill directory target already exists");
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Incomplete");
+    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(false);
+  });
+
+  it("refuses to replace a complete directory when called again with updated content", () => {
+    const skillDir = join(tmpDir, "my-skill");
     atomicWriteSkillDir(skillDir, DRAFT);
+
+    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
+    expect(() => atomicWriteSkillDir(skillDir, updated)).toThrow("Atomic skill directory target already exists");
 
     expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# My Skill");
     expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
   });
 
-  it("replaces a complete directory when called again with updated content", () => {
+  it("does not hide an existing directory if promotion rename fails", () => {
     const skillDir = join(tmpDir, "my-skill");
-    // Write first complete version.
-    atomicWriteSkillDir(skillDir, DRAFT);
+    const tmpSkillDir = join(tmpDir, `${SKILL_ATOMIC_TEMP_PREFIX}manual`);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Existing\n", "utf-8");
+    mkdirSync(tmpSkillDir, { recursive: true });
 
-    // Overwrite with updated content.
-    const updated = { ...DRAFT, "SKILL.md": "# Updated Skill\n" };
-    atomicWriteSkillDir(skillDir, updated);
+    expect(() => renameSync(tmpSkillDir, skillDir)).toThrow();
 
-    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Updated Skill");
-    expect(existsSync(join(skillDir, SKILL_COMPLETE_MARKER))).toBe(true);
+    expect(readFileSync(join(skillDir, "SKILL.md"), "utf-8")).toContain("# Existing");
+    expect(existsSync(tmpSkillDir)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// discoverCompletedSkillDirs
+// ---------------------------------------------------------------------------
+
+describe("discoverCompletedSkillDirs", () => {
+  it("discovers only completed skill directories", () => {
+    atomicWriteSkillDir(join(tmpDir, "complete-skill"), { "SKILL.md": "# Complete\n" });
+
+    const markerlessDir = join(tmpDir, "markerless-skill");
+    mkdirSync(markerlessDir, { recursive: true });
+    writeFileSync(join(markerlessDir, "SKILL.md"), "# In-progress\n", "utf-8");
+
+    const scratchDir = join(tmpDir, `${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`);
+    mkdirSync(scratchDir, { recursive: true });
+    writeFileSync(join(scratchDir, SKILL_COMPLETE_MARKER), "2024-01-01T00:00:00.000Z", "utf-8");
+    writeFileSync(join(scratchDir, "SKILL.md"), "# Scratch\n", "utf-8");
+
+    expect(discoverCompletedSkillDirs(tmpDir).map((entry) => entry.name)).toEqual(["complete-skill"]);
+  });
+
+  it("treats markerless directories with SKILL.md as in-progress loader candidates", () => {
+    const skillDir = join(tmpDir, "half-written-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Half-written\n", "utf-8");
+
+    expect(discoverCompletedSkillDirs(tmpDir)).toEqual([]);
+  });
+
+  it("identifies atomic scratch directory names", () => {
+    expect(isAtomicSkillWriteScratchDir(`${SKILL_ATOMIC_TEMP_PREFIX}1234-deadbeef`)).toBe(true);
+    expect(isAtomicSkillWriteScratchDir(".some-skill.bak-1234")).toBe(true);
+    expect(isAtomicSkillWriteScratchDir("normal-skill")).toBe(false);
+    expect(isAtomicSkillWriteScratchDir("skill.tmp-1234-deadbeef")).toBe(false);
   });
 });
 

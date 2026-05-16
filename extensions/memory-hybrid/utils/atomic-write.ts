@@ -14,12 +14,57 @@
  * The marker name is exported so loaders can skip in-progress directories.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync, readdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
 /** Marker file written as the last step inside an atomic skill directory. */
 export const SKILL_COMPLETE_MARKER = ".openclaw-skill-complete";
+
+/** Prefix used for hidden sibling directories that are still being written. */
+export const SKILL_ATOMIC_TEMP_PREFIX = ".openclaw-skill-tmp-";
+
+/**
+ * Returns `true` when `dir` exists and contains no entries (empty directory).
+ */
+function isEmptyDir(dir: string): boolean {
+  if (!existsSync(dir)) return false;
+  try {
+    const entries = readdirSync(dir);
+    return entries.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates that a relative path is safe for use within a skill directory.
+ * Rejects paths that:
+ *  - contain null bytes
+ *  - are absolute (POSIX or Windows)
+ *  - attempt parent directory traversal (..)
+ *  - are empty
+ *  - collide with the completion marker name
+ *
+ * Throws an error if the path is unsafe.
+ */
+function assertSafeRelativeSkillPath(relPath: string): void {
+  if (relPath.includes("\0")) {
+    throw new Error(`Unsafe path: contains null byte: ${relPath}`);
+  }
+  if (relPath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(relPath)) {
+    throw new Error(`Unsafe path: absolute path not allowed: ${relPath}`);
+  }
+  if (relPath.includes("..")) {
+    throw new Error(`Unsafe path: parent directory traversal not allowed: ${relPath}`);
+  }
+  if (relPath.trim().length === 0) {
+    throw new Error(`Unsafe path: empty path not allowed`);
+  }
+  if (relPath === SKILL_COMPLETE_MARKER || basename(relPath) === SKILL_COMPLETE_MARKER) {
+    throw new Error(`Unsafe path: collision with completion marker: ${relPath}`);
+  }
+}
 
 /**
  * Atomically write a single file.
@@ -51,68 +96,76 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  * Atomically write a multi-file skill directory.
  *
  * All files in `files` (keyed by path relative to `skillDir`) are written
- * into a temporary sibling directory `${skillDir}.tmp-${pid}-${rand}`.  A
+ * into a temporary sibling directory `${SKILL_ATOMIC_TEMP_PREFIX}${pid}-${rand}`.  A
  * `.openclaw-skill-complete` marker is written as the very last file.  The
  * temp directory is then atomically renamed to `skillDir`.
  *
- * If `skillDir` already exists it is first moved to a backup directory so
- * that the rename always targets a free path.  On success the backup is
- * removed.  On failure the backup is restored (best-effort) and the temp
- * directory is cleaned up, so `skillDir` is never left in a
- * partially-written state.
+ * If `skillDir` already exists and is non-empty, this helper fails instead of
+ * moving the existing directory aside. That keeps replacement crash-atomic: a
+ * process crash can leave only a hidden temp sibling, never a missing final
+ * directory. Empty directories (e.g. from `allocateDraftSkillDir` reservation
+ * locks) are allowed and will be atomically replaced by the rename, preserving
+ * the allocation lock throughout the write operation.
  *
  * Pass files in the order you want them written.  Convention: put `SKILL.md`
  * last so it is the final content file before the marker.
  */
-export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): { completionMarker: string } {
+export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): void {
   const parent = dirname(skillDir);
   const rand = randomBytes(8).toString("hex");
-  const tmpDir = `${skillDir}.tmp-${process.pid}-${rand}`;
-  const backupDir = existsSync(skillDir) ? join(parent, `.${basename(skillDir)}.bak-${Date.now()}-${rand}`) : null;
-  const completionMarker = `${new Date().toISOString()}\nwriteId=${process.pid}-${rand}`;
+  const tmpDir = join(parent, `${SKILL_ATOMIC_TEMP_PREFIX}${process.pid}-${rand}`);
 
   try {
+    if (existsSync(skillDir) && !isEmptyDir(skillDir)) {
+      throw new Error(`Atomic skill directory target already exists: ${skillDir}`);
+    }
+
     // Write every sidecar into the temp directory.
     for (const [relPath, content] of Object.entries(files)) {
+      assertSafeRelativeSkillPath(relPath);
       const fullPath = join(tmpDir, relPath);
       mkdirSync(dirname(fullPath), { recursive: true });
       writeFileSync(fullPath, content, "utf-8");
     }
 
     // Stamp the completion marker as the final write inside the temp dir.
-    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), completionMarker, "utf-8");
+    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
 
-    // Move existing skill dir out of the way so the rename targets a free path.
-    if (backupDir) renameSync(skillDir, backupDir);
-
-    // Atomic promotion: temp dir → final skill dir.
-    renameSync(tmpDir, skillDir);
-    return { completionMarker };
-  } catch (err) {
-    // Best-effort rollback: restore the backup if we moved it.
-    try {
-      if (backupDir && existsSync(backupDir) && !existsSync(skillDir)) {
-        renameSync(backupDir, skillDir);
-      }
-    } catch {
-      // ignore rollback errors; caller will see original error
+    // Atomic promotion: temp dir → final skill dir. On POSIX, renameSync
+    // atomically replaces empty directories, preserving the allocation lock.
+    // On Windows, renameSync fails if the target exists (even when empty), so
+    // we move the reservation aside, rename the temp dir, then clean up. This
+    // maintains crash-safety: if we crash after moving the reservation but before
+    // rename completes, the reservation survives as a .bak directory.
+    let reservationBackup: string | null = null;
+    if (process.platform === "win32" && existsSync(skillDir) && isEmptyDir(skillDir)) {
+      reservationBackup = join(parent, `.${basename(skillDir)}.bak-${process.pid}-${randomBytes(4).toString("hex")}`);
+      renameSync(skillDir, reservationBackup);
     }
-    // Clean up temp dir.
+    try {
+      renameSync(tmpDir, skillDir);
+      // Success: remove the reservation backup if we made one.
+      if (reservationBackup && existsSync(reservationBackup)) {
+        rmSync(reservationBackup, { recursive: true, force: true });
+      }
+    } catch (err) {
+      // Restore the reservation lock if rename failed.
+      if (reservationBackup && existsSync(reservationBackup)) {
+        try {
+          renameSync(reservationBackup, skillDir);
+        } catch {
+          // best-effort restoration
+        }
+      }
+      throw err;
+    }
+  } catch (err) {
     try {
       if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       // best-effort temp cleanup; swallow to surface original error
     }
     throw err;
-  }
-
-  // Clean up the backup on success.
-  if (backupDir) {
-    try {
-      rmSync(backupDir!, { recursive: true, force: true });
-    } catch {
-      // Non-fatal: the skill is already committed to skillDir.
-    }
   }
 }
 
@@ -122,15 +175,4 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
  */
 export function isSkillDirComplete(skillDir: string): boolean {
   return existsSync(join(skillDir, SKILL_COMPLETE_MARKER));
-}
-
-/**
- * Returns `true` when the given path appears to be a temporary or backup
- * artifact created by atomic write operations (e.g., `skill.tmp-1234-abc` or
- * `.skill.bak-5678-def`). These directories should be ignored when listing
- * committed skills unless they contain the completion marker.
- */
-export function isAtomicWriteArtifact(pathOrEntry: string): boolean {
-  const entry = pathOrEntry.split(/[\\/]/).pop() ?? "";
-  return /\.tmp-\d+-[a-f0-9]+$/i.test(entry) || /^\..+\.bak-\d+-[a-f0-9]+$/i.test(entry);
 }
