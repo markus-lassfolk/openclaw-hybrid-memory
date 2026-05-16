@@ -10,10 +10,7 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
-<<<<<<< HEAD
-=======
 import { resolve } from "node:path";
->>>>>>> 5559ffdd9080c7f473e1947364b62fac0d71f599
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
