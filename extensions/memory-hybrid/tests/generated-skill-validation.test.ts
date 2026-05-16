@@ -307,6 +307,54 @@ assistant: here is the full log
     expect(validation.staticValidation.violations.some((v) => v.includes("transcript"))).toBe(true);
   });
 
+  it("reports missing category as a static frontmatter violation without dry-load exceptions", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-missing-category-"));
+    const service = new GeneratedSkillValidationService();
+    const skillContent = `---
+name: missing-category-skill
+description: Use when validating missing category handling.
+provenance: test-suite
+---
+
+# Missing Category Skill
+
+## Trigger
+Use this skill when validating missing category handling.
+
+## Scope
+Bounded missing-category validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Validate frontmatter requirements.
+2. Confirm dry-load does not throw generic errors.
+
+## Verification
+- Confirm missing category is reported as a static validator violation.
+
+## Anti-patterns / Known Failures
+- Do not treat missing category as a dry-load exception.
+
+## Examples
+- Validate missing category handling in generated skill validation.
+
+## Provenance
+- Source pattern ID: \`pattern-missing-category\``;
+
+    const validation = service.validate({
+      outputDir: join(tmpDir, "skills"),
+      proposedOutputPath: join(tmpDir, "skills", "missing-category-skill", "SKILL.md"),
+      skillName: "missing-category-skill",
+      skillContent,
+    });
+
+    expect(validation.staticValidation.status).toBe("failed");
+    expect(validation.staticValidation.violations.some((v) => v.includes("required category"))).toBe(true);
+    expect(validation.dryLoadValidation.violations.some((v) => v.includes("Dry-load validation failed"))).toBe(false);
+  });
+
   it("extracts trigger sections through the next markdown heading for activation eval", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-section-extract-"));
     const service = new GeneratedSkillValidationService();

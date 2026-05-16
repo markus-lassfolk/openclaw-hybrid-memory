@@ -473,8 +473,8 @@ function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
       throw new Error(`Unable to read dry-load skill '${entry.name}': ${message}`);
     }
     const frontmatter = parseSkillFrontmatter(skillContent);
-    if (!frontmatter.name || !frontmatter.description || !getFrontmatterCategory(frontmatter)) {
-      throw new Error(`Malformed SKILL.md for ${entry.name}: missing name, description, or category frontmatter`);
+    if (!frontmatter.name || !frontmatter.description) {
+      throw new Error(`Malformed SKILL.md for ${entry.name}: missing name or description frontmatter`);
     }
     out.push(frontmatter);
   }
