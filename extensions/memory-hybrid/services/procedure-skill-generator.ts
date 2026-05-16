@@ -119,7 +119,8 @@ function writeAllocatedDraftSkill(
 ): WrittenDraftSkill {
   mkdirSync(basePath, { recursive: true });
   let n = 0;
-  while (true) {
+  const MAX_RETRIES = 1000;
+  while (n < MAX_RETRIES) {
     const candidate = n === 0 ? slug : `${slug}-${n}`;
     const skillDir = join(basePath, candidate);
     const relativePath = join(skillsAutoPath, candidate);
@@ -134,11 +135,13 @@ function writeAllocatedDraftSkill(
       throw err;
     }
   }
+  throw new Error(`Failed to allocate draft skill after ${MAX_RETRIES} attempts: all slug candidates collided`);
 }
 
 function isRetryableWriteCollision(err: unknown, skillDir: string): boolean {
   if (!existsSync(skillDir)) return false;
   if (isPathExistsError(err)) return true;
+  if (isNotEmptyError(err)) return true;
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes(`Refusing to overwrite existing skill directory: ${skillDir}`)) return true;
   return false;
@@ -146,6 +149,10 @@ function isRetryableWriteCollision(err: unknown, skillDir: string): boolean {
 
 function isPathExistsError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "EEXIST";
+}
+
+function isNotEmptyError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "ENOTEMPTY";
 }
 
 /**
