@@ -214,7 +214,8 @@ export class SkillValidator {
    */
   validate(skillContent: string): ValidationResult {
     const violations: string[] = [];
-    const lines = skillContent.split("\n");
+    const normalizedSkillContent = stripLeadingHtmlComments(skillContent);
+    const lines = normalizedSkillContent.split("\n");
 
     if (lines.length > MAX_SKILL_LINES) {
       violations.push(
