@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
-import { SKILL_COMPLETE_MARKER, isAtomicWriteArtifact, isSkillDirComplete } from "../utils/atomic-write.js";
+import { isAtomicWriteArtifact, isSkillDirComplete } from "../utils/atomic-write.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
