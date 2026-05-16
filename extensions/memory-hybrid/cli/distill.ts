@@ -36,6 +36,7 @@ export type DistillContext = {
     max?: number;
     policy?: string;
     json?: boolean;
+    bypassDuplicateSkillCache?: boolean;
   }) => Promise<GenerateAutoSkillsResult>;
   runDistill: (
     opts: {
@@ -291,6 +292,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       "Promotion policy: draft-only, manual, auto-safe (default: dry-run draft-only; non-dry-run/apply defaults to auto-safe for legacy maintenance callers)",
     )
     .option("--json", "Emit structured JSON summary")
+    .option("--bypass-skill-duplicate-cache", "Re-read every SKILL.md for duplicate detection (ignore mtime cache)")
     .option("-v, --verbose", "Log each decision and generated skill path")
     .action(
       withExit(
@@ -302,6 +304,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             max?: string;
             policy?: string;
             json?: boolean;
+            bypassSkillDuplicateCache?: boolean;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -319,6 +322,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             policy: opts.policy,
             json: opts.json,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            bypassDuplicateSkillCache: opts.bypassSkillDuplicateCache === true,
           });
           if (opts.json) {
             console.log(JSON.stringify(result, null, 2));

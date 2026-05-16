@@ -154,6 +154,25 @@ describe("FactsDB procedures table", () => {
     expect(ready.map((p) => p.id)).toEqual([freshViaUpdatedAt.id]);
   });
 
+  it("getProceduresReadyForSkill uses deterministic insertion order for equal validation scores", () => {
+    const first = db.upsertProcedure({
+      taskPattern: "First equal score",
+      recipeJson: "[]",
+      procedureType: "positive",
+      successCount: 3,
+      lastValidated: 123,
+    });
+    const second = db.upsertProcedure({
+      taskPattern: "Second equal score",
+      recipeJson: "[]",
+      procedureType: "positive",
+      successCount: 3,
+      lastValidated: 123,
+    });
+    const ready = db.getProceduresReadyForSkill(3, 2);
+    expect(ready.map((p) => p.id)).toEqual([first.id, second.id]);
+  });
+
   it("markProcedurePromoted sets promoted_to_skill and skill_path", () => {
     const created = db.upsertProcedure({
       taskPattern: "Promote me",
