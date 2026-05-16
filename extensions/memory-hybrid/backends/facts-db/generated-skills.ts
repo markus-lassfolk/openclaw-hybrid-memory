@@ -422,7 +422,7 @@ function summarizeSkillTelemetry(
   // This prevents pre-reset telemetry from blocking promotion or re-triggering demotion
   // after an operator manually resets or the system auto-unblocks a skill.
   const isExperimentalOrTrusted =
-    proc.skillState === "experimental" || proc.skillState === "trusted" || proc.skillState === null;
+    proc.skillState === "experimental" || proc.skillState === "trusted" || proc.skillState === "draft";
   const isDemotedOrArchived = proc.skillState === "demoted" || proc.skillState === "archived";
   let evalWindowStart = 0;
   if (isExperimentalOrTrusted && proc.skillGeneratedAt !== null && proc.skillGeneratedAt !== undefined) {
@@ -806,7 +806,7 @@ export function reconcileGeneratedSkillDiskState(
     totalChecked,
     issues,
     fixedCount: fixedProcedureIds.length,
-    failedFixCount: issues.filter((issue) => !issue.fixed).length,
+    failedFixCount: fix ? issues.filter((issue) => !issue.fixed).length : 0,
     fixedProcedureIds,
   };
 }

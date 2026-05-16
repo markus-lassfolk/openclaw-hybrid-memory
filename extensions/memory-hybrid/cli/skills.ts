@@ -528,7 +528,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           process.exitCode = 1;
           return;
         }
-        const failedCount = report.failedFixCount ?? report.issues.length - report.fixedCount;
+        const failedCount = report.failedFixCount;
         if (opts?.fix && failedCount > 0) {
           process.exitCode = 2;
         }
