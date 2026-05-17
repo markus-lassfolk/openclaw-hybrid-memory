@@ -26,11 +26,13 @@ import {
   type GeneratedSkillLifecyclePolicy,
   type GeneratedSkillTelemetryRecordInput,
   type GeneratedSkillTelemetryReport,
+  type GeneratedSkillDoctorReport,
   buildGeneratedSkillTelemetryReport as buildGeneratedSkillTelemetryReportImpl,
   getGeneratedSkillByName as getGeneratedSkillByNameImpl,
   listGeneratedSkillProcedures as listGeneratedSkillProceduresImpl,
   listGeneratedSkillTelemetry as listGeneratedSkillTelemetryImpl,
   markGeneratedSkillTelemetryFalsePositive as markGeneratedSkillTelemetryFalsePositiveImpl,
+  reconcileGeneratedSkillDiskState as reconcileGeneratedSkillDiskStateImpl,
   recordGeneratedSkillTelemetry as recordGeneratedSkillTelemetryImpl,
   refreshGeneratedSkillLifecycleState as refreshGeneratedSkillLifecycleStateImpl,
   setGeneratedSkillLifecycleState as setGeneratedSkillLifecycleStateImpl,
@@ -678,5 +680,13 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     now?: number;
   }): GeneratedSkillTelemetryReport {
     return buildGeneratedSkillTelemetryReportImpl(this.liveDb, options);
+  }
+
+  reconcileGeneratedSkillDiskState(opts?: {
+    workspaceRoot?: string;
+    fix?: boolean;
+    now?: number;
+  }): GeneratedSkillDoctorReport {
+    return reconcileGeneratedSkillDiskStateImpl(this.liveDb, opts);
   }
 }

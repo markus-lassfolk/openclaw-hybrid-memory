@@ -241,6 +241,7 @@ export function procedureRowToEntry(db: DatabaseSync, row: Record<string, unknow
     skillStateReason: (row.skill_state_reason as string) ?? null,
     skillVersion: (row.skill_version as number) ?? 1,
     skillGeneratedAt: (row.skill_generated_at as number) ?? null,
+    skillStateChangedAt: (row.skill_state_changed_at as number) ?? null,
     scope: (row.scope as string) ?? "global",
     scopeTarget: (row.scope_target as string) ?? null,
   };

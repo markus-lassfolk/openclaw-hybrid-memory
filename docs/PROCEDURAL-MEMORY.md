@@ -70,10 +70,23 @@ Generated skills live under `skills/auto/` (or your `procedures.skillsAutoPath`)
 openclaw hybrid-mem skills telemetry
 openclaw hybrid-mem skills telemetry moltbook-check
 openclaw hybrid-mem skills demote moltbook-check --reason "over-triggering"
+openclaw hybrid-mem skills reset moltbook-check --reason "agent prompt updated; false positives were stale"
+openclaw hybrid-mem skills reject moltbook-check --reason "superseded by skill-xyz"
+openclaw hybrid-mem skills doctor                 # scan for skills missing on disk
+openclaw hybrid-mem skills doctor --fix           # mark missing skills as uninstalled
 ```
 
-Generated skills now start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`
-Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. The lifecycle policy auto-promotes experimental skills to `trusted` after repeated successful uses without correction, auto-demotes when false-positive rate crosses the threshold, and auto-archives when there has been no **selected** activation activity for the configured window (using time since the last selected activation, or since skill generation if there were none).
+Generated skills start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`.
+
+Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. The lifecycle policy:
+- **Auto-promotes** experimental skills to `trusted` after repeated successful uses without correction.
+- **Auto-demotes** when false-positive rate crosses the threshold.
+- **Auto-archives** skills after the configured idle window has passed since the last **selected** activation (or since skill generation when there have been no selections).
+- **Auto-unblocks** demoted skills back to `experimental` after enough clean uses (configurable via `unblockAfterCleanUses`).
+
+When a skill is reset from `demoted` back to `experimental` (manually or automatically), the evaluation window resets so pre-demotion signals don't block the recovery.
+
+See [SKILL-PIPELINES.md](./SKILL-PIPELINES.md) for the full pipeline architecture and operator playbooks.
 
 ---
 
