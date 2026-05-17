@@ -10,7 +10,7 @@ import { registerSkillsCommands } from "../cli/skills.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
-import { SkillCrystallizer } from "../services/skill-crystallizer.js";
+import { crystallize } from "../services/skill-crystallizer.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 
@@ -40,7 +40,7 @@ describe("GeneratedSkillValidationService", () => {
   it("passes activation eval for terse example goals (short tokens)", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-short-goal-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
-    const crystallizer = new SkillCrystallizer(cfg);
+
     const service = new GeneratedSkillValidationService();
     const pattern = {
       toolSequence: ["exec", "read"],
@@ -52,7 +52,7 @@ describe("GeneratedSkillValidationService", () => {
       exampleGoals: ["fix bug", "run CI"],
     };
 
-    const result = crystallizer.crystallize({ patternId: "short-goal", evidenceHash: "ev-short", pattern });
+    const result = crystallize(cfg, { patternId: "short-goal", evidenceHash: "ev-short", pattern });
     const validation = service.validate({
       outputDir: cfg.outputDir,
       proposedOutputPath: result.proposedOutputPath,
@@ -81,7 +81,7 @@ describe("GeneratedSkillValidationService", () => {
   it("allows placeholder example.com emails in crystallized examples", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-example-email-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
-    const crystallizer = new SkillCrystallizer(cfg);
+
     const service = new GeneratedSkillValidationService();
     const pattern = {
       toolSequence: ["read", "write"],
@@ -93,7 +93,7 @@ describe("GeneratedSkillValidationService", () => {
       exampleGoals: ["Send the weekly summary to ops@example.com after deploy"],
     };
 
-    const result = crystallizer.crystallize({ patternId: "email-goal", evidenceHash: "ev-mail", pattern });
+    const result = crystallize(cfg, { patternId: "email-goal", evidenceHash: "ev-mail", pattern });
     expect(result.skillContent).toContain("ops@example.com");
 
     const validation = service.validate({
@@ -168,7 +168,7 @@ Bounded release-health review workflow.
   it("passes static, dry-load, and activation eval for crystallized skills", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
-    const crystallizer = new SkillCrystallizer(cfg);
+
     const service = new GeneratedSkillValidationService();
     const pattern = {
       toolSequence: ["exec", "read", "memory_store"],
@@ -180,7 +180,7 @@ Bounded release-health review workflow.
       exampleGoals: ["Deploy the app and capture the release notes"],
     };
 
-    const result = crystallizer.crystallize({ patternId: "abc123", evidenceHash: "ev-abc", pattern });
+    const result = crystallize(cfg, { patternId: "abc123", evidenceHash: "ev-abc", pattern });
     const validation = service.validate({
       outputDir: cfg.outputDir,
       proposedOutputPath: result.proposedOutputPath,

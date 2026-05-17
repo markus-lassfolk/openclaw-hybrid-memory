@@ -90,98 +90,114 @@ export function scorePattern(pattern: WorkflowPattern): number {
 }
 
 // ---------------------------------------------------------------------------
-// PatternDetector
+// PatternDetector — exported as a free function (no class wrapper needed)
 // ---------------------------------------------------------------------------
 
-export class PatternDetector {
-  constructor(
-    private readonly workflowStore: WorkflowStore,
-    private readonly crystallizationStore: CrystallizationStore,
-    private readonly cfg: CrystallizationConfig,
-  ) {}
+/**
+ * Detect crystallization candidates from recent workflow patterns.
+ * Applies min usage count and success rate thresholds, skips already-proposed patterns.
+ * Returns candidates sorted by score descending.
+ */
+export function detectCandidates(
+  workflowStore: WorkflowStore,
+  crystallizationStore: CrystallizationStore,
+  cfg: CrystallizationConfig,
+): CrystallizationCandidate[] {
+  if (!cfg.enabled) return [];
 
-  /**
-   * Detect crystallization candidates from recent workflow patterns.
-   * Applies min usage count and success rate thresholds, skips already-proposed patterns.
-   * Returns candidates sorted by score descending.
-   */
-  detect(): CrystallizationCandidate[] {
-    if (!this.cfg.enabled) return [];
+  let patterns: WorkflowPattern[];
+  try {
+    patterns = workflowStore.getPatterns({
+      minSuccessRate: cfg.minSuccessRate,
+      traceSampleLimit: 6000,
+      // Fetch more than needed to allow filtering by usage count
+      limit: 200,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "detect-patterns",
+      subsystem: "pattern-detector",
+    });
+    return [];
+  }
 
-    let patterns: WorkflowPattern[];
+  const candidates: CrystallizationCandidate[] = [];
+
+  for (const pattern of patterns) {
+    // Must meet minimum usage threshold
+    if (pattern.totalCount < cfg.minUsageCount) continue;
+
+    // Must meet minimum success rate
+    if (pattern.successRate < cfg.minSuccessRate) continue;
+
+    // Must have at least one tool in sequence
+    if (pattern.toolSequence.length === 0) continue;
+
+    const patternId = computePatternId(pattern.toolSequence);
+    const evidenceHash = computeEvidenceHash(pattern, {
+      evidenceCountBucketSize: cfg.evidenceCountBucketSize,
+    });
+    const legacyEvidenceHash = computeLegacyEvidenceHash(pattern);
+
+    // Skip if latest rejected/quarantined proposal was based on the same unchanged evidence.
+    // Prevents "spammy" re-proposals after a human rejection unless substantive
+    // inputs (tool sequence / example goals) changed. Legacy hashes are accepted
+    // so pre-milestone rejections are not all re-proposed immediately on upgrade.
     try {
-      patterns = this.workflowStore.getPatterns({
-        minSuccessRate: this.cfg.minSuccessRate,
-        traceSampleLimit: 6000,
-        // Fetch more than needed to allow filtering by usage count
-        limit: 200,
-      });
+      if (crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash, legacyEvidenceHash)) {
+        continue;
+      }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "detect-patterns",
+        operation: "check-rejected-evidence",
         subsystem: "pattern-detector",
       });
-      return [];
+      continue;
     }
 
-    const candidates: CrystallizationCandidate[] = [];
-
-    for (const pattern of patterns) {
-      // Must meet minimum usage threshold
-      if (pattern.totalCount < this.cfg.minUsageCount) continue;
-
-      // Must meet minimum success rate
-      if (pattern.successRate < this.cfg.minSuccessRate) continue;
-
-      // Must have at least one tool in sequence
-      if (pattern.toolSequence.length === 0) continue;
-
-      const patternId = computePatternId(pattern.toolSequence);
-      const evidenceHash = computeEvidenceHash(pattern, {
-        evidenceCountBucketSize: this.cfg.evidenceCountBucketSize,
-      });
-      const legacyEvidenceHash = computeLegacyEvidenceHash(pattern);
-
-      // Skip if latest rejected proposal was based on the same unchanged evidence.
-      // Prevents "spammy" re-proposals after a human rejection unless substantive
-      // inputs (tool sequence / example goals) changed. Legacy hashes are accepted
-      // so pre-milestone rejections are not all re-proposed immediately on upgrade.
-      try {
-        if (this.crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash, legacyEvidenceHash)) {
-          continue;
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "check-rejected-evidence",
-          subsystem: "pattern-detector",
-        });
+    // Skip if already proposed (pending or approved)
+    try {
+      if (crystallizationStore.hasPendingOrApprovedForPattern(patternId)) {
         continue;
       }
-
-      // Skip if already proposed (pending or approved)
-      try {
-        if (this.crystallizationStore.hasPendingOrApprovedForPattern(patternId)) {
-          continue;
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "check-existing-proposal",
-          subsystem: "pattern-detector",
-        });
-        continue;
-      }
-
-      candidates.push({
-        patternId,
-        evidenceHash,
-        pattern,
-        score: scorePattern(pattern),
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "check-existing-proposal",
+        subsystem: "pattern-detector",
       });
+      continue;
     }
 
-    // Sort by score descending
-    candidates.sort((a, b) => b.score - a.score);
+    candidates.push({
+      patternId,
+      evidenceHash,
+      pattern,
+      score: scorePattern(pattern),
+    });
+  }
 
-    return candidates;
+  // Sort by score descending
+  candidates.sort((a, b) => b.score - a.score);
+
+  return candidates;
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated class wrapper for backward compatibility
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated Use `detectCandidates` function directly instead.
+ * This class wrapper is retained for backward compatibility only.
+ */
+export class PatternDetector {
+  constructor(
+    private workflowStore: WorkflowStore,
+    private crystallizationStore: CrystallizationStore,
+    private cfg: CrystallizationConfig,
+  ) {}
+
+  detect(): CrystallizationCandidate[] {
+    return detectCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
   }
 }

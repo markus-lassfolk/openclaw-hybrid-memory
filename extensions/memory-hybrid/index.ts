@@ -304,10 +304,11 @@ import {
   computeEvidenceHash,
   computeLegacyEvidenceHash,
   computePatternId,
+  detectCandidates,
   scorePattern,
 } from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
-import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
+import { SkillCrystallizer, crystallize, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
 import { SkillValidator, buildNonPlaceholderEmailPattern } from "./services/skill-validator.js";
 import { ToolProposer } from "./services/tool-proposer.js";
 import { VerificationError, VerificationStore, shouldAutoVerify } from "./services/verification-store.js";
@@ -992,7 +993,9 @@ export const _testing = {
   // Workflow crystallization (Issue #208)
   CrystallizationStore,
   PatternDetector,
+  detectCandidates,
   SkillCrystallizer,
+  crystallize,
   SkillValidator,
   buildNonPlaceholderEmailPattern,
   CrystallizationProposer,
