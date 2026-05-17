@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { toWorkspaceRelativePath } from "../utils/path.js";
+import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
 import { slugifyForSkill, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
@@ -17,7 +18,7 @@ import {
 import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 import { SkillValidator } from "./skill-validator.js";
 
-export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v1";
+export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v2";
 
 export const PROCEDURE_PROMOTION_POLICIES = ["draft-only", "manual", "auto-safe"] as const;
 export type ProcedurePromotionPolicy = (typeof PROCEDURE_PROMOTION_POLICIES)[number];
@@ -813,14 +814,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function parseRecipeOrRaw(recipeJson: string): unknown {
-  try {
-    return JSON.parse(recipeJson);
-  } catch {
-    return { malformed: true, raw: recipeJson };
-  }
-}
-
 function countDistinctSourceSessions(raw: string | undefined): number {
   const tokens = parseSourceSessionTokenList(raw);
   if (tokens.length === 0) return 1;
@@ -911,13 +904,24 @@ function summarizeProcedureEvidence(
   const correctionCount = evidence?.userCorrections?.length ?? 0;
   const manualRequestCount = evidence?.manualWorkflowRequests?.length ?? 0;
   const rulesPreferenceCount = evidence?.rulesAndPreferences?.length ?? 0;
-  const userSignal = Math.max(
-    0,
+  /**
+   * User-signal score (documented in docs/PROCEDURAL-MEMORY.md):
+   * - Baseline **0** in raw space: absence of evidence is not treated as a positive prior.
+   * - Manual workflow requests **+0.28** each; corrections **−0.32** each (asymmetric so “one request + one correction”
+   *   nets slightly negative and never ties “no signal”, which stays at 0 raw).
+   * - Rules/preferences: **+0.1** per signal, **capped at 5** signals so repeated rules cannot dominate.
+   * - Failure episodes (user-signal slice): **−0.15** each (distinct from failureSeverity in the main score).
+   * Raw is clamped to **[-1, 1]**, then remapped to **[0, 1]** via `(raw + 1) / 2` for the additive candidate term.
+   */
+  const cappedRulesForSignal = Math.min(rulesPreferenceCount, 5);
+  const userSignalRaw = Math.max(
+    -1,
     Math.min(
       1,
-      0.5 + manualRequestCount * 0.15 + rulesPreferenceCount * 0.05 - correctionCount * 0.15 - failureEpisodes * 0.08,
+      manualRequestCount * 0.28 + cappedRulesForSignal * 0.1 - correctionCount * 0.32 - failureEpisodes * 0.15,
     ),
   );
+  const userSignal = (userSignalRaw + 1) / 2;
 
   const sourceSessionIds = collectDistinctSessionIds(item.procedure.sourceSessions, evidence);
   return {
@@ -951,23 +955,11 @@ function collectDistinctSessionIds(
   return [...source];
 }
 
-function determineRiskLevel(proc: ProcedureEntry, recipe: unknown): "low" | "medium" | "high" {
-  const combined = `${proc.taskPattern}\n${JSON.stringify(recipe)}`;
-  if (
-    /(?:\brm\s+-[rf]+\b|\bdd\s+if=|\bmkfs\b|\bshred\b|\bdrop\s+table\b|\btruncate\s+table\b)|(?:\bprivate[_-]?key\b|\b(?:token|password)\b)\s*[:=]/i.test(
-      combined,
-    )
-  )
-    return "high";
-  if (
-    /\b(systemctl|service)\s+(?:start|stop|restart|reload|enable|disable)\b|\b(npm|pnpm|yarn|pip|apt|brew|cargo)\s+(install|add|remove|uninstall|upgrade)\b|\bssh\b|\bscp\b|\brsync\b|\b(curl|wget)\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))/i.test(
-      combined,
-    )
-  )
-    return "medium";
-  return "low";
-}
-
+/**
+ * Procedure candidate score: evidence terms form a **base** in [0, ~1]; **risk is a multiplier** on that base
+ * (high ≈ 0.35×, medium ≈ 0.65×, low 1×) so materially different risk at the same evidence changes ordering.
+ * Weights are documented in docs/PROCEDURAL-MEMORY.md.
+ */
 function scoreProcedureCandidate(input: {
   successCount: number;
   successRate: number;
@@ -983,18 +975,18 @@ function scoreProcedureCandidate(input: {
   const failureSeverity = Math.max(0, Math.min(1, input.failureSeverity));
   const userSignal = Math.max(0, Math.min(1, input.userSignal));
   const generality = Math.max(0, Math.min(1, input.generality));
-  const risk = input.riskLevel === "high" ? 0.35 : input.riskLevel === "medium" ? 0.65 : 1;
+  const riskMultiplier = input.riskLevel === "high" ? 0.35 : input.riskLevel === "medium" ? 0.65 : 1;
   const activationSpecificity = Math.max(0, Math.min(1, input.activationSpecificity));
   const duplicatePenalty = input.similarSkillExists ? 0.5 : 1;
-  const rawScore =
-    repeatCount * 0.2 +
-    successRate * 0.25 +
+  const baseScore =
+    repeatCount * 0.25 +
+    successRate * 0.3 +
     (1 - failureSeverity) * 0.2 +
     userSignal * 0.1 +
     generality * 0.1 +
-    risk * 0.05 +
-    activationSpecificity * 0.1;
-  const score = Number(Math.max(0, Math.min(1, rawScore * duplicatePenalty)).toFixed(3));
+    activationSpecificity * 0.05;
+  const rawScore = baseScore * riskMultiplier * duplicatePenalty;
+  const score = Number(Math.max(0, Math.min(1, rawScore)).toFixed(3));
   return {
     score,
     breakdown: {
@@ -1003,7 +995,7 @@ function scoreProcedureCandidate(input: {
       failureSeverity: Number(failureSeverity.toFixed(3)),
       userSignal: Number(userSignal.toFixed(3)),
       generality: Number(generality.toFixed(3)),
-      risk: Number(risk.toFixed(3)),
+      risk: Number(riskMultiplier.toFixed(3)),
       activationSpecificity: Number(activationSpecificity.toFixed(3)),
       duplicatePenalty: Number(duplicatePenalty.toFixed(3)),
     },
