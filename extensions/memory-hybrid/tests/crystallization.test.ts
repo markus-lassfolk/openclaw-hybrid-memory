@@ -818,6 +818,9 @@ provenance: test-suite
 ## When to Activate
 - "Validate a bounded workflow with objective checks."
 
+## Scope
+Bounded validation workflow.
+
 ## Do Not Use When
 - The task requires destructive changes or credential access.
 

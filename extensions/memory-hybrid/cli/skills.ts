@@ -13,6 +13,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillLifecycleService } from "../services/generated-skill-lifecycle.js";
 import { SkillValidator } from "../services/skill-validator.js";
+import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
 import type { Chainable } from "./shared.js";
 import { relativeTime, withExit } from "./shared.js";
 
@@ -144,11 +145,15 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     );
 
   (skills.command("validate") as ArgumentChainable)
-    .description("Run the static validator against the draft SKILL.md content")
+    .description(
+      "Run the full GSV validation pipeline (static + dry-load + activation) against the draft SKILL.md " +
+        "— same validator as 'skills install'.  Use --legacy for a quick static-only check.",
+    )
     .argument("<id>", "Proposal id")
+    .option("--legacy", "Run only the fast SkillValidator (static checks only — skips dry-load and activation eval)")
     .option("--json", "Print JSON")
     .action(
-      withExit(async (id: string, opts: { json?: boolean }) => {
+      withExit(async (id: string, opts: { legacy?: boolean; json?: boolean }) => {
         const store = requireStore(ctx);
         const proposal = store.getById(id);
         if (!proposal) {
@@ -156,17 +161,86 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           process.exitCode = 1;
           return;
         }
-        const validator = new SkillValidator();
-        const result = validator.validate(proposal.skillContent);
-        if (opts.json) {
-          console.log(JSON.stringify({ ok: result.valid, proposalId: id, violations: result.violations }, null, 2));
-        } else if (result.valid) {
-          console.log(`✓ Valid (${id})`);
-        } else {
-          console.log(`✗ Invalid (${id})`);
-          for (const v of result.violations) console.log(`  - ${v}`);
+
+        if (opts.legacy) {
+          // Cheap path: run only SkillValidator (static checks without dry-load/activation).
+          const validator = new SkillValidator(ctx.cfg.crystallization.sectionTaxonomy);
+          const result = validator.validate(proposal.skillContent);
+          if (opts.json) {
+            console.log(
+              JSON.stringify(
+                { ok: result.valid, proposalId: id, mode: "legacy", violations: result.violations },
+                null,
+                2,
+              ),
+            );
+          } else if (result.valid) {
+            console.log(`✓ Valid (${id}) [legacy — static only]`);
+          } else {
+            console.log(`✗ Invalid (${id}) [legacy — static only]`);
+            for (const v of result.violations) console.log(`  - ${v}`);
+          }
+          if (!result.valid) process.exitCode = 2;
+          return;
         }
-        if (!result.valid) process.exitCode = 2;
+
+        // Full GSV pipeline — same validator path used by 'skills install' (issue #1402).
+        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+        const result = proposer.validateProposal(id);
+        if (!result) {
+          console.error(`Proposal '${id}' not found`);
+          process.exitCode = 1;
+          return;
+        }
+
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                ok: result.approvalDecision === "allow",
+                proposalId: id,
+                approvalDecision: result.approvalDecision,
+                overallStatus: result.overallStatus,
+                staticValidation: {
+                  status: result.staticValidation.status,
+                  violations: result.staticValidation.violations,
+                },
+                dryLoadValidation: {
+                  status: result.dryLoadValidation.status,
+                  violations: result.dryLoadValidation.violations,
+                },
+                syntheticActivationEval: {
+                  status: result.syntheticActivationEval.status,
+                  score: result.syntheticActivationEval.score,
+                  notes: result.syntheticActivationEval.notes,
+                },
+                summary: summarizeSkillProposalValidation(result),
+              },
+              null,
+              2,
+            ),
+          );
+        } else {
+          const icon =
+            result.approvalDecision === "deny" ? "✗" : result.approvalDecision === "allow-with-override" ? "⚠" : "✓";
+          console.log(`${icon} ${result.approvalDecision.toUpperCase()} (${id})`);
+          console.log(`  static:     ${result.staticValidation.status}`);
+          console.log(`  dry-load:   ${result.dryLoadValidation.status}`);
+          console.log(
+            `  activation: ${result.syntheticActivationEval.status} (score: ${result.syntheticActivationEval.score})`,
+          );
+          const allViolations = [
+            ...result.staticValidation.violations.map((v) => `[static] ${v}`),
+            ...result.dryLoadValidation.violations.map((v) => `[dry-load] ${v}`),
+            ...result.syntheticActivationEval.notes.map((v) => `[activation] ${v}`),
+          ];
+          for (const v of allViolations) console.log(`  - ${v}`);
+          if (result.approvalDecision === "allow-with-override") {
+            console.log(`  → Use --override-warnings with 'skills install ${id}' to bypass activation warnings`);
+          }
+        }
+
+        if (result.approvalDecision !== "allow") process.exitCode = 2;
       }),
     );
 
@@ -177,6 +251,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     .option("--category <category>", "Category override")
     .option("--recommended-output <type>", "Output type override (currently: 'SKILL.md only')", "SKILL.md only")
     .option("--override-warnings", "Approve proposals with activation warnings (explicit operator override)")
+    .option("--dry-run", "Preview validation and output path without writing SKILL.md to disk")
     .option("--json", "Print JSON")
     .action(
       withExit(
@@ -187,10 +262,82 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             category?: string;
             recommendedOutput?: string;
             overrideWarnings?: boolean;
+            dryRun?: boolean;
             json?: boolean;
           },
         ) => {
           const store = requireStore(ctx);
+
+          if (opts.dryRun) {
+            // Dry-run: run the full GSV pipeline but do NOT write to disk.
+            const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+            const result = proposer.validateProposal(id, {
+              name: opts.name,
+              category: opts.category,
+              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+            });
+            if (!result) {
+              console.error(`Proposal '${id}' not found`);
+              process.exitCode = 1;
+              return;
+            }
+            const dryRunWouldInstall =
+              result.approvalDecision === "allow" ||
+              (result.approvalDecision === "allow-with-override" && opts.overrideWarnings === true);
+            if (opts.json) {
+              console.log(
+                JSON.stringify(
+                  {
+                    dryRun: true,
+                    ok: dryRunWouldInstall,
+                    proposalId: id,
+                    approvalDecision: result.approvalDecision,
+                    overallStatus: result.overallStatus,
+                    staticValidation: {
+                      status: result.staticValidation.status,
+                      violations: result.staticValidation.violations,
+                      outputPath: result.staticValidation.safeOutputPath,
+                    },
+                    dryLoadValidation: {
+                      status: result.dryLoadValidation.status,
+                      violations: result.dryLoadValidation.violations,
+                    },
+                    syntheticActivationEval: {
+                      status: result.syntheticActivationEval.status,
+                      score: result.syntheticActivationEval.score,
+                      notes: result.syntheticActivationEval.notes,
+                    },
+                    summary: summarizeSkillProposalValidation(result),
+                  },
+                  null,
+                  2,
+                ),
+              );
+              if (!dryRunWouldInstall) process.exitCode = 2;
+              return;
+            }
+            const icon =
+              result.approvalDecision === "deny" ? "✗" : result.approvalDecision === "allow-with-override" ? "⚠" : "✓";
+            console.log(`[dry-run] ${icon} ${result.approvalDecision.toUpperCase()} (${id})`);
+            console.log(`  would write to: ${result.staticValidation.safeOutputPath}`);
+            console.log(`  static:         ${result.staticValidation.status}`);
+            console.log(`  dry-load:       ${result.dryLoadValidation.status}`);
+            console.log(
+              `  activation:     ${result.syntheticActivationEval.status} (score: ${result.syntheticActivationEval.score})`,
+            );
+            const dryViolations = [
+              ...result.staticValidation.violations.map((v) => `[static] ${v}`),
+              ...result.dryLoadValidation.violations.map((v) => `[dry-load] ${v}`),
+              ...result.syntheticActivationEval.notes.map((v) => `[activation] ${v}`),
+            ];
+            for (const v of dryViolations) console.log(`  - ${v}`);
+            if (result.approvalDecision === "allow-with-override" && !opts.overrideWarnings) {
+              console.log(`  → Add --override-warnings to proceed despite activation warnings`);
+            }
+            if (!dryRunWouldInstall) process.exitCode = 2;
+            return;
+          }
+
           const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
           const result = proposer.approveProposal(id, {
             name: opts.name,
