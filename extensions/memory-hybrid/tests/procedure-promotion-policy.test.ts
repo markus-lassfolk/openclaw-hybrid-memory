@@ -618,6 +618,16 @@ Use for collecting markerless legacy reports.
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-second-session`);
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-third-session`);
     }
+    // recordProcedureSuccess updates last_validated = now; refresh lastFailed for the
+    // recent_failure case so it remains more recent than lastValidated.
+    const rfCase = cases[1]; // recent_failure
+    db.upsertProcedure({
+      id: rfCase.proc.id,
+      taskPattern: rfCase.proc.taskPattern,
+      recipeJson: rfCase.proc.recipeJson,
+      procedureType: "positive",
+      lastFailed: Math.floor(Date.now() / 1000),
+    });
 
     // Existing skill collision.
     const dup = addProcedure({
