@@ -321,8 +321,7 @@ export function applyDedupe(
     if (!ctx.suppressVectorFallbackWarning) {
       // Caller asked for vector dedupe but supplied neither candidates nor an embedding.
       // (Write-time vector cosine requires caller-supplied `vectorCandidates` because `applyDedupe` is synchronous.)
-      const message =
-        `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe. (Hint: plumb vector neighbour candidates into FactsDB.store(..., { vectorCandidates }) to enable synchronous cosine checks.)`;
+      const message = `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe. (Hint: plumb vector neighbour candidates into FactsDB.store(..., { vectorCandidates }) to enable synchronous cosine checks.)`;
       const keyBase = (ctx.warnOnceKey?.trim() || profile.sourcePattern).slice(0, 80);
       const warnKey = `store-dedupe-vector-fallback:${keyBase}:${profile.vectorThreshold}`;
       if (ctx.warnOnce) {

@@ -983,7 +983,8 @@ ${p.suggestedChange}`.toLowerCase();
     if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
     if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
     return "medium";
-  }if (
+  }
+  if (
     /\b(identit(?:y|ies)|personalit(?:y|ies)|voice|tone|privacy|security|external|group chat|user preferences?|profile|personal facts?|memory rules?)\b/.test(
       text,
     )

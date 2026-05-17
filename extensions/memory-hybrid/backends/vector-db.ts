@@ -968,8 +968,7 @@ export class VectorDB {
           );
         } catch (rollbackErr) {
           rollbackFailed = true;
-          const rollbackMessage =
-            `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state! Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'. SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
+          const rollbackMessage = `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state! Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'. SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
           this.logWarn(rollbackMessage);
           throw new Error(rollbackMessage);
         }
