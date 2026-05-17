@@ -364,7 +364,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             const result = proposer.validateProposal(id, {
               name: opts.name,
               category: opts.category,
-              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : undefined,
             });
             if (!result) {
               console.error(`Proposal '${id}' not found`);
@@ -433,7 +433,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             name: opts.name,
             category: opts.category,
             description: opts.description,
-            recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+            recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : undefined,
             overrideWarnings: opts.overrideWarnings === true,
           });
           if (opts.json) {
