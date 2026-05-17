@@ -15,7 +15,7 @@ import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { stripLeadingHtmlComments } from "../utils/text.js";
+import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -437,10 +437,11 @@ export class CrystallizationProposer {
   ): { skillContent: string; proposalCardJson?: string } {
     let skillContent = proposal.skillContent;
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
-      skillContent = skillContent.replace(
-        new RegExp(`^#\\s+${escapeRegExp(proposal.skillName)}\\s*$`, "m"),
-        `# ${overrides.skillName}`,
+      const h1Pattern = new RegExp(
+        `^#\\s+(?:${escapeRegExp(titleCase(proposal.skillName))}|${escapeRegExp(proposal.skillName)})\\s*$`,
+        "m",
       );
+      skillContent = skillContent.replace(h1Pattern, `# ${overrides.skillName}`);
       skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
