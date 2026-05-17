@@ -56,6 +56,12 @@ export type GeneratedSkillTelemetryMetrics = {
   nearMissCount: number;
   falsePositiveSignals: number;
   falseNegativeSignals: number;
+  /** Activations with `user_correction` set (explicit user pushback). */
+  correctionCount: number;
+  /**
+   * Count of distinct `request_hash` values (non-null) in the last 30 days that have
+   * at least two user-correction activations for this skill.
+   */
   repeatedCorrectionCount: number;
   lastUsedAt: number | null;
   successCount: number;
@@ -71,6 +77,7 @@ export type GeneratedSkillTelemetryMetrics = {
   skippedCount: number;
   savedToolCalls: number;
   savedTimeMs: number;
+  /** `falsePositiveSignals / (activationCountTotal + nearMissCount)` when there is any exposure. */
   falsePositiveRate: number | null;
   /** Successful activations without correction since the last demotion reset (for unblock tracking). */
   cleanUsesAfterDemotion: number;
@@ -281,14 +288,14 @@ export function rebuildGeneratedSkillTelemetryRollupsForProcedure(db: DatabaseSy
     `UPDATE procedures AS p
        SET gst_sel_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected'),
            gst_near_miss_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision != 'selected'),
-           gst_fp_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.user_correction = 1 OR t.caused_rework = 1)),
+           gst_fp_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND (t.user_correction = 1 OR t.caused_rework = 1)),
            gst_fn_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.false_negative_signal = 1),
            gst_user_correction_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.user_correction = 1),
            gst_outcome_success = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success'),
            gst_outcome_failure = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'failure'),
            gst_outcome_partial = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'partial'),
             gst_outcome_unknown = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.task_outcome IS NULL OR t.task_outcome = '' OR t.task_outcome NOT IN ('success','failure','partial'))),
-           gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
+            gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
            gst_considered_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'considered'),
            gst_skipped_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'skipped'),
            gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_tool_calls > 0 THEN t.saved_tool_calls ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
@@ -492,6 +499,12 @@ export function recordGeneratedSkillTelemetry(
     proc = findGeneratedSkillProcedureStrict(db, input.skillName);
   }
   if (!proc) throw new Error(`Generated skill not found: ${input.skillName}`);
+  if (input.userCorrection === true) {
+    const normalizedCorrectionReason = normalizeSummary(input.correctionReason);
+    if (!normalizedCorrectionReason) {
+      throw new Error("user correction telemetry requires a non-empty correctionReason");
+    }
+  }
   const now = input.createdAt ?? Math.floor(Date.now() / 1000);
   const normalizedSummary = normalizeSummary(input.requestSummary);
   const id = randomUUID();
@@ -535,6 +548,24 @@ export function recordGeneratedSkillTelemetry(
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(id) as GeneratedSkillTelemetryRow,
   );
+}
+
+const REPEATED_CORRECTION_WINDOW_SEC = 30 * 24 * 60 * 60;
+
+function countRepeatedUserCorrectionBuckets(activations: GeneratedSkillTelemetryEntry[], now: number): number {
+  const windowStart = now - REPEATED_CORRECTION_WINDOW_SEC;
+  const byHash = new Map<string, number>();
+  for (const activation of activations) {
+    if (!activation.userCorrection || activation.createdAt < windowStart) continue;
+    const hash = activation.requestHash;
+    if (typeof hash !== "string" || hash.length === 0) continue;
+    byHash.set(hash, (byHash.get(hash) ?? 0) + 1);
+  }
+  let repeatedBuckets = 0;
+  for (const count of byHash.values()) {
+    if (count >= 2) repeatedBuckets++;
+  }
+  return repeatedBuckets;
 }
 
 export function markGeneratedSkillTelemetryFalsePositive(
@@ -661,6 +692,7 @@ type RawTelemetryCounts = {
   nearMissCount: number;
   falsePositiveSignals: number;
   falseNegativeSignals: number;
+  correctionCount: number;
   repeatedCorrectionCount: number;
   lastUsedAt: number | null;
   successCount: number;
@@ -686,8 +718,13 @@ function deriveMetricsAndFlags(
   const failureRate = knownOutcomeTotal > 0 ? counts.failureCount / knownOutcomeTotal : null;
   const partialRate = knownOutcomeTotal > 0 ? counts.partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? counts.unknownCount / knownOutcomeTotal : null;
-  const falsePositiveRate =
-    counts.activationCountTotal > 0 ? counts.falsePositiveSignals / counts.activationCountTotal : null;
+  const exposureTotal = counts.activationCountTotal + counts.nearMissCount;
+  const falsePositiveRate = exposureTotal > 0 ? counts.falsePositiveSignals / exposureTotal : null;
+  const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
+  const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+    riskLevel,
+    policy,
+  );
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
   const archiveCandidate =
@@ -700,9 +737,7 @@ function deriveMetricsAndFlags(
     proc.skillState !== "rejected" &&
     counts.successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
-    counts.activationCountTotal >= policy.demoteMinSamples &&
-    falsePositiveRate != null &&
-    falsePositiveRate >= policy.demoteFalsePositiveRate;
+    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate =
     counts.nearMissCount >= policy.revisionNearMissThreshold && counts.skippedCount >= counts.consideredCount;
   const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
@@ -718,6 +753,7 @@ function deriveMetricsAndFlags(
       nearMissCount: counts.nearMissCount,
       falsePositiveSignals: counts.falsePositiveSignals,
       falseNegativeSignals: counts.falseNegativeSignals,
+      correctionCount: counts.correctionCount,
       repeatedCorrectionCount: counts.repeatedCorrectionCount,
       lastUsedAt: counts.lastUsedAt,
       successCount: counts.successCount,
@@ -779,7 +815,7 @@ function summarizeSkillTelemetry(
   let nearMissCount = 0;
   let falsePositiveSignals = 0;
   let falseNegativeSignals = 0;
-  let repeatedCorrectionCount = 0;
+  let correctionCount = 0;
   let lastUsedAt: number | null = null;
   let successCount = 0;
   let failureCount = 0;
@@ -806,11 +842,12 @@ function summarizeSkillTelemetry(
     const timeMs = activation.savedTimeMs ?? 0;
     savedToolCalls += calls > 0 ? calls : 0;
     savedTimeMs += timeMs > 0 ? timeMs : 0;
+    if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
+    if (activation.userCorrection) correctionCount++;
     if (activation.decision === "selected") {
       activationCountTotal++;
       if (activation.createdAt >= weekAgo) activationCountPerWeek++;
       lastUsedAt = lastUsedAt == null ? activation.createdAt : Math.max(lastUsedAt, activation.createdAt);
-      if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
       if (activation.taskOutcome === "success") {
         successCount++;
         if (!activation.userCorrection) {
@@ -833,15 +870,16 @@ function summarizeSkillTelemetry(
       if (activation.decision === "skipped") skippedCount++;
     }
     if (activation.falseNegativeSignal) falseNegativeSignals++;
-    if (activation.userCorrection) repeatedCorrectionCount++;
   }
+  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(evalActivations, now);
 
   const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
   const successRate = knownOutcomeTotal > 0 ? successCount / knownOutcomeTotal : null;
   const failureRate = knownOutcomeTotal > 0 ? failureCount / knownOutcomeTotal : null;
   const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
-  const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
+  const exposureTotal = activationCountTotal + nearMissCount;
+  const falsePositiveRate = exposureTotal > 0 ? falsePositiveSignals / exposureTotal : null;
   const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
   const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
     riskLevel,
@@ -859,7 +897,7 @@ function summarizeSkillTelemetry(
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
-    activationCountTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
+    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
   const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
   const unblockCandidate =
@@ -874,6 +912,7 @@ function summarizeSkillTelemetry(
       nearMissCount,
       falsePositiveSignals,
       falseNegativeSignals,
+      correctionCount,
       repeatedCorrectionCount,
       lastUsedAt,
       successCount,
@@ -925,7 +964,7 @@ function summarizeSkillTelemetryFromRollups(
   const nearMissCount = r.gst_near_miss_total;
   const falsePositiveSignals = r.gst_fp_signals_total;
   const falseNegativeSignals = r.gst_fn_signals_total;
-  const repeatedCorrectionCount = r.gst_user_correction_total;
+  const correctionCount = r.gst_user_correction_total;
   const lastUsedAt = r.gst_last_selected_at;
   const successCount = r.gst_outcome_success;
   const failureCount = r.gst_outcome_failure;
@@ -936,6 +975,10 @@ function summarizeSkillTelemetryFromRollups(
   const skippedCount = r.gst_skipped_total;
   const savedToolCalls = r.gst_saved_tool_calls_sum;
   const savedTimeMs = r.gst_saved_time_ms_sum;
+  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(
+    skillTelemetryEntries(db, canonicalSkillName, proc.id),
+    now,
+  );
   const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
   const summary = deriveMetricsAndFlags(
     {
@@ -944,6 +987,7 @@ function summarizeSkillTelemetryFromRollups(
       nearMissCount,
       falsePositiveSignals,
       falseNegativeSignals,
+      correctionCount,
       repeatedCorrectionCount,
       lastUsedAt,
       successCount,
