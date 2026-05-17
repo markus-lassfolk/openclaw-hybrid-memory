@@ -11,10 +11,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import {
-  CrystallizationProposer,
-  outputDirForInstalledSkill,
-} from "../services/crystallization-proposer.js";
+import { CrystallizationProposer, outputDirForInstalledSkill } from "../services/crystallization-proposer.js";
 
 const CFG_BASE: CrystallizationConfig = {
   enabled: true,
@@ -164,11 +161,7 @@ Bounded narrative body without YAML.
 
 describe("outputDirForInstalledSkill", () => {
   it("returns correct parent dir for a normal deeply-nested skill path", () => {
-    const result = outputDirForInstalledSkill(
-      "/home/user/skills/my-skill/SKILL.md",
-      "my-skill",
-      "/fallback",
-    );
+    const result = outputDirForInstalledSkill("/home/user/skills/my-skill/SKILL.md", "my-skill", "/fallback");
     expect(result).toBe("/home/user/skills");
   });
 
@@ -179,21 +172,13 @@ describe("outputDirForInstalledSkill", () => {
   });
 
   it("returns fallbackOutputDir when suffix does not match skillName", () => {
-    const result = outputDirForInstalledSkill(
-      "/home/user/skills/other-skill/SKILL.md",
-      "my-skill",
-      "/fallback",
-    );
+    const result = outputDirForInstalledSkill("/home/user/skills/other-skill/SKILL.md", "my-skill", "/fallback");
     expect(result).toBe("/fallback");
   });
 
   it("normalizes absolute paths before suffix matching", () => {
     const cwd = process.cwd();
-    const result = outputDirForInstalledSkill(
-      `${cwd}/my-skill/SKILL.md`,
-      "my-skill",
-      "/fallback",
-    );
+    const result = outputDirForInstalledSkill(`${cwd}/my-skill/SKILL.md`, "my-skill", "/fallback");
     expect(result).toBe(cwd);
   });
 });

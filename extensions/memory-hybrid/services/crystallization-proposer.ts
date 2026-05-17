@@ -68,11 +68,7 @@ function pushLimitedMessage(messages: string[], message: string): void {
  *
  * @internal exported for unit testing only
  */
-export function outputDirForInstalledSkill(
-  outputPath: string,
-  skillName: string,
-  fallbackOutputDir: string,
-): string {
+export function outputDirForInstalledSkill(outputPath: string, skillName: string, fallbackOutputDir: string): string {
   const normalizedOutputPath = resolve(outputPath);
   const expectedSuffix = resolve(`/${skillName}/SKILL.md`);
   if (!normalizedOutputPath.endsWith(expectedSuffix)) {
