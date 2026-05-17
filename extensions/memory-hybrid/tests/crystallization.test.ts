@@ -1098,6 +1098,22 @@ ${extra.extraBody ?? ""}`;
     expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(true);
   });
 
+  it("does not flag three-octet version string like 10.20.30 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nRequires dependency version 10.20.30 or later.\n",
+    });
+    const result = validator.validate(content);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(false);
+  });
+
+  it("does not flag v-prefixed version string like v10.20.30 as private-ip", () => {
+    const content = compactValidSkill({
+      extraBody: "\nCompatible with v10.20.30 toolchain.\n",
+    });
+    const result = validator.validate(content);
+    expect(result.violations.some((v: string) => v.includes("private-ip"))).toBe(false);
+  });
+
   // -------------------------------------------------------------------------
   // Issue #1383 — custom placeholder-email allow-list via constructor
   // -------------------------------------------------------------------------
