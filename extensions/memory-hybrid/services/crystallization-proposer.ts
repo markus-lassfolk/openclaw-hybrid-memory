@@ -33,23 +33,12 @@ function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: stri
   const stripped = stripLeadingHtmlComments(skillContent);
   const head = skillContent.slice(0, skillContent.length - stripped.length);
   let body = stripped;
+  let prefix = head;
   const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
   if (fmMatch) {
     const frontmatter = fmMatch[0];
+    prefix += frontmatter;
     body = body.slice(frontmatter.length);
-    const leadingNewlineMatch = body.match(/^\r?\n/);
-    const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
-    body = body.replace(/^\r?\n/, "");
-    const h1Line = /^(#[ \t]+(?!#)\S[^\r\n]*)(\r?)$/m;
-    if (!h1Line.test(body)) {
-      return skillContent;
-    }
-    return (
-      head +
-      frontmatter +
-      leadingNewline +
-      body.replace(h1Line, (_match, _oldLine: string, cr: string) => `# ${newTitle}${cr}`)
-    );
   }
   const leadingNewlineMatch = body.match(/^\r?\n/);
   const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
@@ -58,7 +47,7 @@ function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: stri
   if (!h1Line.test(body)) {
     return skillContent;
   }
-  return head + leadingNewline + body.replace(h1Line, (_match, _oldLine: string, cr: string) => `# ${newTitle}${cr}`);
+  return prefix + leadingNewline + body.replace(h1Line, (_match, _oldLine: string, cr: string) => `# ${newTitle}${cr}`);
 }
 
 // ---------------------------------------------------------------------------
