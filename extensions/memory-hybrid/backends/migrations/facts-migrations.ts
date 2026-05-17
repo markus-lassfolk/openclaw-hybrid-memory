@@ -383,8 +383,12 @@ function migrateGeneratedSkillLifecycleColumns(db: DatabaseSync): void {
   if (!colNames.has("skill_generated_at")) {
     db.exec("ALTER TABLE procedures ADD COLUMN skill_generated_at INTEGER");
   }
+  if (!colNames.has("skill_state_changed_at")) {
+    db.exec("ALTER TABLE procedures ADD COLUMN skill_state_changed_at INTEGER");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_state ON procedures(skill_state)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_generated_at ON procedures(skill_generated_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_skill_state_changed_at ON procedures(skill_state_changed_at)");
   db.exec(`
     UPDATE procedures
     SET skill_state = 'experimental',
@@ -392,6 +396,12 @@ function migrateGeneratedSkillLifecycleColumns(db: DatabaseSync): void {
     WHERE promoted_to_skill = 1
       AND skill_path IS NOT NULL
       AND (skill_state IS NULL OR skill_state = '' OR skill_state = 'draft')
+  `);
+  db.exec(`
+    UPDATE procedures
+    SET skill_state_changed_at = COALESCE(updated_at, created_at)
+    WHERE skill_state IN ('demoted', 'archived')
+      AND skill_state_changed_at IS NULL
   `);
 }
 
