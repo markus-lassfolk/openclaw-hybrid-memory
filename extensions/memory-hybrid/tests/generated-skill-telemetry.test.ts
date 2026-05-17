@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { rebuildGeneratedSkillTelemetryRollupsForProcedure } from "../backends/facts-db/generated-skills.js";
+import {
+  effectiveDemoteThresholdsForRisk,
+  rebuildGeneratedSkillTelemetryRollupsForProcedure,
+} from "../backends/facts-db/generated-skills.js";
 import { registerSkillsCommands } from "../cli/skills.js";
 
 let tmpDir: string;
@@ -168,6 +171,7 @@ describe("generated skill telemetry", () => {
       requestSummary: "another unrelated request",
       taskOutcome: "failure",
       userCorrection: true,
+      correctionReason: "unrelated to task",
     });
     db.recordGeneratedSkillTelemetry({
       skillName,
@@ -182,9 +186,94 @@ describe("generated skill telemetry", () => {
 
     expect(skill?.skillState).toBe("demoted");
     expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
-    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(2);
+    expect(report.rows[0]?.metrics.correctionCount).toBe(2);
+    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(0);
     expect(report.rows[0]?.flags.overTriggering).toBe(true);
     expect(report.rows[0]?.recommendation).toBe("observe");
+  });
+
+  it("clamps risk-adjusted demote false-positive thresholds into the valid rate range", () => {
+    expect(
+      effectiveDemoteThresholdsForRisk("low", {
+        promoteAfterSuccessfulUses: 3,
+        demoteFalsePositiveRate: 0.98,
+        demoteMinSamples: 3,
+        archiveAfterUnusedDays: 30,
+        revisionNearMissThreshold: 3,
+        unblockAfterCleanUses: 5,
+      }).falsePositiveRate,
+    ).toBe(1);
+    expect(
+      effectiveDemoteThresholdsForRisk("high", {
+        promoteAfterSuccessfulUses: 3,
+        demoteFalsePositiveRate: 0.05,
+        demoteMinSamples: 3,
+        archiveAfterUnusedDays: 30,
+        revisionNearMissThreshold: 3,
+        unblockAfterCleanUses: 5,
+      }).falsePositiveRate,
+    ).toBe(0.1);
+  });
+
+  it("demotes high-risk generated skills earlier than low-risk under the same false-positive pressure", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const safeRecipe = JSON.stringify([
+      { tool: "read", args: { path: "status.json" }, summary: "Read status" },
+      { tool: "exec", args: { command: "npm test" }, summary: "Run validation" },
+    ]);
+    const destructiveRecipe = JSON.stringify([
+      { tool: "exec", args: { command: "rm -rf /tmp/x" }, summary: "delete" },
+      { tool: "exec", args: { command: "echo verify" }, summary: "verify" },
+    ]);
+
+    const highProc = db.upsertProcedure({
+      taskPattern: "Validate high risk telemetry demote workflow",
+      recipeJson: destructiveRecipe,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "hr-1",
+    });
+    const highSkill = "high-risk-fp-test";
+    db.markProcedurePromoted(highProc.id, `skills/auto/${highSkill}`);
+
+    const lowProc = db.upsertProcedure({
+      taskPattern: "Validate low risk telemetry demote comparison workflow",
+      recipeJson: safeRecipe,
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "lr-1",
+    });
+    const lowSkill = "low-risk-fp-test";
+    db.markProcedurePromoted(lowProc.id, `skills/auto/${lowSkill}`);
+
+    for (const skillName of [highSkill, lowSkill]) {
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "selected",
+        requestSummary: "first unrelated activation",
+        taskOutcome: "success",
+        userCorrection: true,
+        correctionReason: "unrelated to request",
+      });
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "selected",
+        requestSummary: "second unrelated activation",
+        taskOutcome: "success",
+        causedRework: true,
+      });
+    }
+
+    const report = db.buildGeneratedSkillTelemetryReport();
+    const highRow = report.rows.find((r) => r.skillName === highSkill);
+    const lowRow = report.rows.find((r) => r.skillName === lowSkill);
+    expect(highRow?.riskLevel).toBe("high");
+    expect(lowRow?.riskLevel).toBe("low");
+    expect(db.getGeneratedSkillByName(highSkill)?.skillState).toBe("demoted");
+    expect(db.getGeneratedSkillByName(lowSkill)?.skillState).not.toBe("demoted");
   });
 
   it("archives generated skills that are never used after the configured period", () => {
@@ -312,6 +401,101 @@ describe("generated skill telemetry", () => {
     expect(demoted.skillStateReason).toContain("over-triggering");
   });
 
+  it("counts considered/skipped user corrections toward false-positive rate (#1416)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const { skillName } = createGeneratedSkill();
+    for (let i = 0; i < 3; i++) {
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "considered",
+        requestSummary: `near-miss-${i}`,
+        userCorrection: true,
+        correctionReason: "should not have been offered",
+      });
+    }
+    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+    expect(report.rows[0]?.metrics.activationCountTotal).toBe(0);
+    expect(report.rows[0]?.metrics.nearMissCount).toBe(3);
+    expect(report.rows[0]?.metrics.falsePositiveSignals).toBe(3);
+    expect(report.rows[0]?.metrics.correctionCount).toBe(3);
+    expect(report.rows[0]?.metrics.falsePositiveRate).toBe(1);
+    expect(report.rows[0]?.flags.overTriggering).toBe(true);
+  });
+
+  it("tracks repeated user corrections on the same request hash within 30 days (#1416)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
+    const { skillName } = createGeneratedSkill();
+    const summary = "same request context for repeat";
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: summary,
+      taskOutcome: "success",
+      userCorrection: true,
+      correctionReason: "first",
+    });
+    db.recordGeneratedSkillTelemetry({
+      skillName,
+      decision: "selected",
+      requestSummary: summary,
+      taskOutcome: "failure",
+      userCorrection: true,
+      correctionReason: "second",
+    });
+    const report = db.buildGeneratedSkillTelemetryReport({ skillName });
+    expect(report.rows[0]?.metrics.correctionCount).toBe(2);
+    expect(report.rows[0]?.metrics.repeatedCorrectionCount).toBe(1);
+  });
+
+  it("CLI record rejects --user-correction without --reason (#1416)", async () => {
+    const { skillName } = createGeneratedSkill();
+    process.argv = ["node", "vitest", "hybrid-mem"];
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await program.parseAsync(["skills", "record", skillName, "--decision", "selected", "--user-correction", "--json"], {
+      from: "user",
+    });
+    expect(process.exitCode).toBe(1);
+    expect(String(errSpy.mock.calls[0]?.[0] ?? "")).toMatch(/user-correction requires/i);
+  });
+
+  it("rejects telemetry record with user correction but no correctionReason", () => {
+    const { skillName } = createGeneratedSkill();
+    expect(() =>
+      db.recordGeneratedSkillTelemetry({
+        skillName,
+        decision: "selected",
+        requestSummary: "x",
+        userCorrection: true,
+      }),
+    ).toThrow(/correctionReason/i);
+  });
+
+  it("CLI record maps --false-positive to caused rework without user correction (#1416)", async () => {
+    const { skillName } = createGeneratedSkill();
+    process.argv = ["node", "vitest", "hybrid-mem"];
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerSkillsCommands(program, { factsDb: db, crystallizationStore: null, cfg: {} as never });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await program.parseAsync(
+      ["skills", "record", skillName, "--decision", "considered", "--false-positive", "--json"],
+      { from: "user" },
+    );
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      activation?: { userCorrection?: boolean; causedRework?: boolean; correctionReason?: string | null };
+    };
+    expect(payload.activation?.userCorrection).toBe(false);
+    expect(payload.activation?.causedRework).toBe(true);
+    expect(payload.activation?.correctionReason).toBeFalsy();
+  });
+
   it("round-trip: experimental → demoted → experimental → trusted", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T12:00:00Z"));
@@ -324,6 +508,7 @@ describe("generated skill telemetry", () => {
       decision: "selected",
       taskOutcome: "failure",
       userCorrection: true,
+      correctionReason: "first correction",
     });
     vi.advanceTimersByTime(60_000);
     db.recordGeneratedSkillTelemetry({
@@ -331,6 +516,7 @@ describe("generated skill telemetry", () => {
       decision: "selected",
       taskOutcome: "failure",
       userCorrection: true,
+      correctionReason: "second correction",
     });
     vi.advanceTimersByTime(60_000);
     db.recordGeneratedSkillTelemetry({

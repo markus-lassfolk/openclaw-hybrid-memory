@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { basename, isAbsolute, join, win32 } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { determineRiskLevel, parseRecipeOrRaw } from "../../utils/procedure-risk.js";
 import type {
   GeneratedSkillLifecycleState,
   GeneratedSkillTelemetryDecision,
@@ -55,6 +56,12 @@ export type GeneratedSkillTelemetryMetrics = {
   nearMissCount: number;
   falsePositiveSignals: number;
   falseNegativeSignals: number;
+  /** Activations with `user_correction` set (explicit user pushback). */
+  correctionCount: number;
+  /**
+   * Count of distinct `request_hash` values (non-null) in the last 30 days that have
+   * at least two user-correction activations for this skill.
+   */
   repeatedCorrectionCount: number;
   lastUsedAt: number | null;
   successCount: number;
@@ -70,6 +77,7 @@ export type GeneratedSkillTelemetryMetrics = {
   skippedCount: number;
   savedToolCalls: number;
   savedTimeMs: number;
+  /** `falsePositiveSignals / (activationCountTotal + nearMissCount)` when there is any exposure. */
   falsePositiveRate: number | null;
   /** Successful activations without correction since the last demotion reset (for unblock tracking). */
   cleanUsesAfterDemotion: number;
@@ -90,6 +98,7 @@ export type GeneratedSkillTelemetryReportRow = {
   skillName: string;
   skillPath: string;
   skillVersion: number;
+  riskLevel: "low" | "medium" | "high";
   state: GeneratedSkillLifecycleState;
   stateReason: string | null;
   generatedAt: number | null;
@@ -116,6 +125,18 @@ export const DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY: GeneratedSkillLifecyclePo
 };
 
 const MAX_REQUEST_SUMMARY_LENGTH = 240;
+
+export function effectiveDemoteThresholdsForRisk(
+  riskLevel: "low" | "medium" | "high",
+  policy: GeneratedSkillLifecyclePolicy,
+): { falsePositiveRate: number; minSamples: number } {
+  const fpAdjust = riskLevel === "high" ? -0.1 : riskLevel === "medium" ? -0.05 : 0.05;
+  const minSamplesAdjust = riskLevel === "high" ? -1 : 0;
+  return {
+    falsePositiveRate: Math.min(1, Math.max(0.1, policy.demoteFalsePositiveRate + fpAdjust)),
+    minSamples: Math.max(1, policy.demoteMinSamples + minSamplesAdjust),
+  };
+}
 
 function isAbsoluteSkillPath(skillPath: string): boolean {
   return isAbsolute(skillPath) || win32.isAbsolute(skillPath);
@@ -218,13 +239,13 @@ export function rebuildGeneratedSkillTelemetryRollupsForProcedure(db: DatabaseSy
     `UPDATE procedures AS p
        SET gst_sel_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected'),
            gst_near_miss_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision != 'selected'),
-           gst_fp_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.user_correction = 1 OR t.caused_rework = 1)),
+           gst_fp_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND (t.user_correction = 1 OR t.caused_rework = 1)),
            gst_fn_signals_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.false_negative_signal = 1),
            gst_user_correction_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.user_correction = 1),
            gst_outcome_success = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success'),
            gst_outcome_failure = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'failure'),
            gst_outcome_partial = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'partial'),
-           gst_outcome_unknown = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.task_outcome IS NULL OR t.task_outcome NOT IN ('success','failure','partial'))),
+           gst_outcome_unknown = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.task_outcome IS NULL OR t.task_outcome = '' OR t.task_outcome NOT IN ('success','failure','partial'))),
            gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
            gst_considered_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'considered'),
            gst_skipped_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'skipped'),
@@ -312,6 +333,12 @@ export function recordGeneratedSkillTelemetry(
     proc = candidate;
   }
   if (!proc) throw new Error(`Generated skill not found: ${input.skillName}`);
+  if (input.userCorrection === true) {
+    const normalizedCorrectionReason = normalizeSummary(input.correctionReason);
+    if (!normalizedCorrectionReason) {
+      throw new Error("user correction telemetry requires a non-empty correctionReason");
+    }
+  }
   const now = input.createdAt ?? Math.floor(Date.now() / 1000);
   const normalizedSummary = normalizeSummary(input.requestSummary);
   const id = randomUUID();
@@ -353,6 +380,24 @@ export function recordGeneratedSkillTelemetry(
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(id) as GeneratedSkillTelemetryRow,
   );
+}
+
+const REPEATED_CORRECTION_WINDOW_SEC = 30 * 24 * 60 * 60;
+
+function countRepeatedUserCorrectionBuckets(activations: GeneratedSkillTelemetryEntry[], now: number): number {
+  const windowStart = now - REPEATED_CORRECTION_WINDOW_SEC;
+  const byHash = new Map<string, number>();
+  for (const activation of activations) {
+    if (!activation.userCorrection || activation.createdAt < windowStart) continue;
+    const hash = activation.requestHash;
+    if (typeof hash !== "string" || hash.length === 0) continue;
+    byHash.set(hash, (byHash.get(hash) ?? 0) + 1);
+  }
+  let repeatedBuckets = 0;
+  for (const count of byHash.values()) {
+    if (count >= 2) repeatedBuckets++;
+  }
+  return repeatedBuckets;
 }
 
 export function markGeneratedSkillTelemetryFalsePositive(
@@ -457,6 +502,7 @@ function summarizeSkillTelemetry(
 ): {
   metrics: GeneratedSkillTelemetryMetrics;
   flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
 } {
   const weekAgo = now - 7 * 24 * 60 * 60;
 
@@ -480,7 +526,7 @@ function summarizeSkillTelemetry(
   let nearMissCount = 0;
   let falsePositiveSignals = 0;
   let falseNegativeSignals = 0;
-  let repeatedCorrectionCount = 0;
+  let correctionCount = 0;
   let lastUsedAt: number | null = null;
   let successCount = 0;
   let failureCount = 0;
@@ -507,11 +553,12 @@ function summarizeSkillTelemetry(
     const timeMs = activation.savedTimeMs ?? 0;
     savedToolCalls += calls > 0 ? calls : 0;
     savedTimeMs += timeMs > 0 ? timeMs : 0;
+    if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
+    if (activation.userCorrection) correctionCount++;
     if (activation.decision === "selected") {
       activationCountTotal++;
       if (activation.createdAt >= weekAgo) activationCountPerWeek++;
       lastUsedAt = lastUsedAt == null ? activation.createdAt : Math.max(lastUsedAt, activation.createdAt);
-      if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
       if (activation.taskOutcome === "success") {
         successCount++;
         if (!activation.userCorrection) {
@@ -534,15 +581,21 @@ function summarizeSkillTelemetry(
       if (activation.decision === "skipped") skippedCount++;
     }
     if (activation.falseNegativeSignal) falseNegativeSignals++;
-    if (activation.userCorrection) repeatedCorrectionCount++;
   }
+  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(evalActivations, now);
 
   const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
   const successRate = knownOutcomeTotal > 0 ? successCount / knownOutcomeTotal : null;
   const failureRate = knownOutcomeTotal > 0 ? failureCount / knownOutcomeTotal : null;
   const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
-  const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
+  const exposureTotal = activationCountTotal + nearMissCount;
+  const falsePositiveRate = exposureTotal > 0 ? falsePositiveSignals / exposureTotal : null;
+  const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
+  const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+    riskLevel,
+    policy,
+  );
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
   const archiveCandidate =
@@ -555,9 +608,7 @@ function summarizeSkillTelemetry(
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
-    activationCountTotal >= policy.demoteMinSamples &&
-    falsePositiveRate != null &&
-    falsePositiveRate >= policy.demoteFalsePositiveRate;
+    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
   const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
   const unblockCandidate =
@@ -572,6 +623,7 @@ function summarizeSkillTelemetry(
       nearMissCount,
       falsePositiveSignals,
       falseNegativeSignals,
+      correctionCount,
       repeatedCorrectionCount,
       lastUsedAt,
       successCount,
@@ -598,6 +650,7 @@ function summarizeSkillTelemetry(
       archiveCandidate,
       unblockCandidate,
     },
+    riskLevel,
   };
 }
 
@@ -606,6 +659,7 @@ function desiredLifecycleTransition(
   flags: GeneratedSkillTelemetryFlags,
   metrics: GeneratedSkillTelemetryMetrics,
   policy: GeneratedSkillLifecyclePolicy,
+  riskLevel: "low" | "medium" | "high",
 ): { state: GeneratedSkillLifecycleState; reason: string } | null {
   // Uninstalled and rejected are terminal — no automatic transitions out.
   if (currentState === "uninstalled" || currentState === "rejected") return null;
@@ -628,9 +682,13 @@ function desiredLifecycleTransition(
     };
   }
   if (currentState !== "demoted" && currentState !== "archived" && flags.overTriggering) {
+    const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+      riskLevel,
+      policy,
+    );
     return {
       state: "demoted",
-      reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
+      reason: `auto-demoted (${riskLevel} risk): FP rate ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}% reached threshold ${Math.round(demoteFpRate * 100)}% over ${demoteMinSamples}+ activations`,
     };
   }
   if (currentState === "experimental" && flags.promotionCandidate) {
@@ -654,7 +712,12 @@ export function refreshGeneratedSkillLifecycleState(
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
   returnMetrics: true,
-): { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } | null;
+): {
+  proc: ProcedureEntry;
+  metrics: GeneratedSkillTelemetryMetrics;
+  flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
+} | null;
 export function refreshGeneratedSkillLifecycleState(
   db: DatabaseSync,
   skillName: string,
@@ -663,21 +726,26 @@ export function refreshGeneratedSkillLifecycleState(
   returnMetrics = false,
 ):
   | ProcedureEntry
-  | { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+  | {
+      proc: ProcedureEntry;
+      metrics: GeneratedSkillTelemetryMetrics;
+      flags: GeneratedSkillTelemetryFlags;
+      riskLevel: "low" | "medium" | "high";
+    }
   | null {
   const proc = findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
   const canonicalSkillName = skillPathBasename(proc.skillPath);
   const activations = skillTelemetryEntries(db, canonicalSkillName);
-  const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
+  const { metrics, flags, riskLevel } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
-  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
+  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, riskLevel);
   const updatedProc =
     transition == null
       ? proc
       : (setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now) ?? proc);
   if (returnMetrics) {
-    return { proc: updatedProc, metrics, flags };
+    return { proc: updatedProc, metrics, flags, riskLevel };
   }
   return updatedProc;
 }
@@ -703,7 +771,12 @@ export function buildGeneratedSkillTelemetryReport(
   });
   const refreshResults = new Map<
     string,
-    { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+    {
+      proc: ProcedureEntry;
+      metrics: GeneratedSkillTelemetryMetrics;
+      flags: GeneratedSkillTelemetryFlags;
+      riskLevel: "low" | "medium" | "high";
+    }
   >();
   for (const proc of procedures) {
     if (proc.skillPath) {
@@ -722,14 +795,17 @@ export function buildGeneratedSkillTelemetryReport(
       const cachedResult = refreshResults.get(skillName);
       let metrics: GeneratedSkillTelemetryMetrics;
       let flags: GeneratedSkillTelemetryFlags;
+      let riskLevel: "low" | "medium" | "high";
       if (cachedResult) {
         metrics = cachedResult.metrics;
         flags = cachedResult.flags;
+        riskLevel = cachedResult.riskLevel;
       } else {
         const activations = skillTelemetryEntries(db, skillName);
         const summary = summarizeSkillTelemetry(proc, activations, policy, now);
         metrics = summary.metrics;
         flags = summary.flags;
+        riskLevel = summary.riskLevel;
       }
       const currentState = proc.skillState ?? "experimental";
 
@@ -762,6 +838,7 @@ export function buildGeneratedSkillTelemetryReport(
         skillName,
         skillPath: proc.skillPath ?? skillName,
         skillVersion: proc.skillVersion ?? 1,
+        riskLevel,
         state: currentState,
         stateReason: proc.skillStateReason ?? null,
         generatedAt: proc.skillGeneratedAt ?? proc.promotedAt ?? null,
