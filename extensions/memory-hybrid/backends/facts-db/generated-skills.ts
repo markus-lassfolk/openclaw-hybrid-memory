@@ -567,7 +567,7 @@ function summarizeSkillTelemetry(
     }
     if (activation.falseNegativeSignal) falseNegativeSignals++;
   }
-  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(activations, now);
+  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(evalActivations, now);
 
   const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
   const successRate = knownOutcomeTotal > 0 ? successCount / knownOutcomeTotal : null;
