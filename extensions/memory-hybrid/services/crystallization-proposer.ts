@@ -60,12 +60,25 @@ function pushLimitedMessage(messages: string[], message: string): void {
   }
 }
 
-function outputDirForInstalledSkill(outputPath: string, skillName: string, fallbackOutputDir: string): string {
+/**
+ * Derive the root output directory from an installed skill's absolute path.
+ * Falls back to `fallbackOutputDir` when the path does not match the expected
+ * `/<skillName>/SKILL.md` suffix.  Returns `"/"` (never `""`) when the skill
+ * is installed directly under filesystem root (e.g. `/my-skill/SKILL.md`).
+ *
+ * @internal exported for unit testing only
+ */
+export function outputDirForInstalledSkill(
+  outputPath: string,
+  skillName: string,
+  fallbackOutputDir: string,
+): string {
   const normalizedOutputPath = resolve(outputPath);
   const expectedSuffix = resolve(`/${skillName}/SKILL.md`);
-  return normalizedOutputPath.endsWith(expectedSuffix)
-    ? normalizedOutputPath.slice(0, -expectedSuffix.length)
-    : fallbackOutputDir;
+  if (!normalizedOutputPath.endsWith(expectedSuffix)) {
+    return fallbackOutputDir;
+  }
+  return normalizedOutputPath.slice(0, -expectedSuffix.length) || "/";
 }
 
 // ---------------------------------------------------------------------------
