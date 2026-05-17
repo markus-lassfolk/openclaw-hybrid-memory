@@ -591,7 +591,7 @@ function isTopLevelYamlKeyLine(line: string): boolean {
 
 function leadingIndentLen(line: string): number {
   const m = /^([ \t]*)/.exec(line);
-  return m ? m[1]?.length : 0;
+  return m ? m[1]!.length : 0;
 }
 
 function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe: RegExp): number {

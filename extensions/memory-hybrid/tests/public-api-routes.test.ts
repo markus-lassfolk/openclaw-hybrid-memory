@@ -37,7 +37,7 @@ describe("registerPublicApiRoutes", () => {
   });
 
   afterEach(() => {
-    if (prevWorkspace === undefined) process.env.OPENCLAW_WORKSPACE = undefined;
+    if (prevWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
     else process.env.OPENCLAW_WORKSPACE = prevWorkspace;
     rmSync(tmp, { recursive: true, force: true });
   });
