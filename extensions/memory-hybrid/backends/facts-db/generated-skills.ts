@@ -606,8 +606,7 @@ function summarizeSkillTelemetry(
     proc.skillState !== "uninstalled" &&
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
-  const archiveCandidate =
-    !promotionCandidate && now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const archiveCandidate = !promotionCandidate && now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
   const overTriggering =
     exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
