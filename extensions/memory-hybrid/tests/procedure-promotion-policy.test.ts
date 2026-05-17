@@ -843,10 +843,27 @@ Use for collecting markerless legacy reports.
     const evaluation = evaluateProcedureForPromotion(
       createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
       parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["a{1,3}?b"] },
+      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["(a+)*"] },
     );
 
     expect(evaluation.metadata.rejectionReasons).not.toContain("too_context_specific");
+  });
+
+  it("accepts safe lazy quantifiers in context-specific patterns", () => {
+    const proc = addProcedure({
+      taskPattern: `${"a".repeat(200)} reusable release validation check`,
+      sourceSessionId: "safe-lazy-a",
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "safe-lazy-b");
+    db.recordProcedureSuccess(proc.id, undefined, "safe-lazy-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["a{1,3}?b"] },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("too_context_specific");
   });
 
   it("blocks private/high-entropy data and redacts generated artifacts", () => {
