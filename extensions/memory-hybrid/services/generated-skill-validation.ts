@@ -12,6 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
+import {
+  CATEGORY_FRONTMATTER_KEYS,
+  DEFAULT_REQUIRED_SECTIONS,
+  MAX_SKILL_LINES,
+  type SectionTaxonomyOverrides,
+} from "../config/skill-sections.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
@@ -20,6 +26,8 @@ import {
   NON_PLACEHOLDER_EMAIL_PATTERN,
   PEM_PRIVATE_KEY_PATTERN,
   PRIVATE_IP_PATTERN,
+  normalizeHeading,
+  parseH2Headings,
   SkillValidator,
 } from "./skill-validator.js";
 
@@ -33,6 +41,11 @@ export interface SyntheticActivationCases {
 }
 
 export type SkillFrontmatter = Record<string, string | undefined>;
+
+interface SyntheticActivationContext {
+  cases: SyntheticActivationCases;
+  sourceText: string;
+}
 
 export interface SkillProposalValidationResult {
   schemaVersion: 1;
@@ -74,17 +87,12 @@ interface ValidateGeneratedSkillInput {
   pattern?: WorkflowPattern;
 }
 
-const REQUIRED_FRONTMATTER_FIELDS = ["name", "description", "category"] as const;
-const REQUIRED_SECTIONS = [
-  "## Trigger",
-  "## Scope",
-  "## When not to use",
-  "## Workflow",
-  "## Examples",
-  "## Provenance",
-] as const;
+const REQUIRED_FRONTMATTER_FIELDS = ["name", "description"] as const;
+// REQUIRED_SECTIONS removed: section validation is now delegated to SkillValidator which
+// uses the shared alias-aware taxonomy from config/skill-sections.ts (issues #1375, #1408).
 const MAX_SKILL_CHARS = 16_000;
-const MAX_SKILL_LINES = 320;
+// MAX_SKILL_LINES is imported from config/skill-sections.ts — the single source of truth
+// shared with SkillValidator (issue #1366).
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
 const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
 const EXPLANATION_PATTERN = /\b(?:explain|describe|summarize|review)\b/;
@@ -141,6 +149,13 @@ export function parseSkillFrontmatter(skillContent: string): SkillFrontmatter {
   return frontmatter;
 }
 
+function getFrontmatterCategory(frontmatter: SkillFrontmatter): string | undefined {
+  for (const key of CATEGORY_FRONTMATTER_KEYS) {
+    if (frontmatter[key]) return frontmatter[key];
+  }
+  return undefined;
+}
+
 export function summarizeSkillProposalValidation(result?: SkillProposalValidationResult): string {
   if (!result) return "not validated";
   const status = result.overallStatus.toUpperCase();
@@ -183,10 +198,11 @@ export class GeneratedSkillValidationService {
   /**
    * @param options.emailPattern - custom non-placeholder email regex; defaults to
    *   {@link NON_PLACEHOLDER_EMAIL_PATTERN}. Build with {@link buildNonPlaceholderEmailPattern}.
+   * @param sectionTaxonomyOverrides - optional per-category section taxonomy overrides (Issue #1408).
    */
-  constructor(options?: { emailPattern?: RegExp }) {
+  constructor(options?: { emailPattern?: RegExp }, sectionTaxonomyOverrides?: SectionTaxonomyOverrides) {
     const emailPattern = options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN;
-    this.skillValidator = new SkillValidator({ emailPattern });
+    this.skillValidator = new SkillValidator({ emailPattern, sectionTaxonomyOverrides });
     this.secretOrPrivatePatterns = buildSecretOrPrivatePatterns(emailPattern);
   }
 
@@ -242,13 +258,19 @@ export class GeneratedSkillValidationService {
   ): SkillProposalValidationResult["staticValidation"] {
     const violations: string[] = [];
     const safeOutputPath = resolve(input.outputDir, input.skillName, "SKILL.md");
-    const proposedOutputPath = input.proposedOutputPath;
+    const proposedOutputPath = resolve(input.proposedOutputPath);
 
     if (input.skillContent.length > MAX_SKILL_CHARS) {
       violations.push(`Skill exceeds ${MAX_SKILL_CHARS} characters`);
     }
-    if (input.skillContent.split(/\r?\n/).length > MAX_SKILL_LINES) {
-      violations.push(`Skill exceeds ${MAX_SKILL_LINES} lines`);
+    // Line-count check: Only perform this check for legacy proposals. For non-legacy proposals,
+    // SkillValidator will perform this check on the normalized content (with stripped comments)
+    // to maintain a single source of truth and avoid duplicate violations (issue #1366).
+    if (legacy) {
+      const normalizedContent = stripLeadingHtmlComments(input.skillContent);
+      if (normalizedContent.split(/\r?\n/).length > MAX_SKILL_LINES) {
+        violations.push(`Skill exceeds ${MAX_SKILL_LINES} lines`);
+      }
     }
     if (!legacy) {
       for (const field of REQUIRED_FRONTMATTER_FIELDS) {
@@ -265,11 +287,9 @@ export class GeneratedSkillValidationService {
       if ((frontmatter.description ?? "").length > 280) {
         violations.push("Frontmatter description exceeds 280 characters");
       }
-      for (const section of REQUIRED_SECTIONS) {
-        if (!input.skillContent.includes(section)) {
-          violations.push(`Missing required section: ${section}`);
-        }
-      }
+      // NOTE: Required-section checks have been removed from this method.
+      // They are now performed by SkillValidator (called below) using the alias-aware
+      // taxonomy from config/skill-sections.ts (issues #1375, #1366, #1408).
       const transcriptLineCount = input.skillContent
         .split(/\r?\n/)
         .filter((line) => TRANSCRIPT_LINE_RE.test(line.trim()) || TIMESTAMP_LINE_RE.test(line.trim())).length;
@@ -341,11 +361,11 @@ export class GeneratedSkillValidationService {
       if (!entry) {
         violations.push("Dry-load discovery did not return the generated skill");
       } else {
-        Object.assign(discovered, entry);
+        Object.assign(discovered, Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== undefined)));
         if (entry.description !== frontmatter.description) {
           violations.push("Dry-load description does not match frontmatter description");
         }
-        if (entry.category !== frontmatter.category) {
+        if (getFrontmatterCategory(entry) !== getFrontmatterCategory(frontmatter)) {
           violations.push("Dry-load category does not match frontmatter category");
         }
       }
@@ -367,9 +387,7 @@ export class GeneratedSkillValidationService {
     input: ValidateGeneratedSkillInput,
     frontmatter: SkillFrontmatter,
   ): SkillProposalValidationResult["syntheticActivationEval"] {
-    const cases = buildSyntheticActivationCases(input, frontmatter);
-    const triggerSection = extractSection(input.skillContent, "Trigger");
-    const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
+    const { cases, sourceText } = buildSyntheticActivationContext(input, frontmatter);
     const positive = scoreActivationPrompt(cases.positive, sourceText);
     const negative = scoreActivationPrompt(cases.negative, sourceText);
     const edge = scoreActivationPrompt(cases.edge, sourceText);
@@ -408,7 +426,8 @@ function legacyIgnorableSkillValidatorViolation(violation: string): boolean {
     normalized.includes("log-dump-guard") ||
     normalized.includes("tool-blob-guard") ||
     normalized.includes("codeblock-") ||
-    normalized.includes("exceeds 300 lines")
+    // Matches both the old "exceeds 300 lines" message and the current shared constant.
+    normalized.includes(`exceeds ${MAX_SKILL_LINES} lines`)
   );
 }
 
@@ -487,32 +506,56 @@ function loadDrySkillEntries(skillsDir: string): SkillFrontmatter[] {
   return out;
 }
 
-function extractSection(skillContent: string, heading: string): string {
-  const match = skillContent.match(
-    new RegExp(`(?:^|\\r?\\n)##\\s*${escapeRegExp(heading)}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s+|$)`, "i"),
-  );
-  return match?.[1]?.trim() ?? "";
+/**
+ * Return the body for the first matching H2 section using the same punctuation/case
+ * normalization as SkillValidator's shared taxonomy checks, respecting fenced code blocks.
+ */
+function extractSectionByAliases(skillContent: string, headingAliases: string[]): string {
+  const normalizedAliases = new Set(headingAliases.map(normalizeHeading));
+  const lines = skillContent.split(/\r?\n/);
+  const headings = parseH2Headings(lines);
+
+  const matchingHeading = headings.find((h) => normalizedAliases.has(h.normalized));
+  if (!matchingHeading) return "";
+
+  const startLine = matchingHeading.line;
+  let endLine = lines.length;
+
+  for (const heading of headings) {
+    if (heading.line > startLine) {
+      endLine = heading.line - 1;
+      break;
+    }
+  }
+
+  return lines.slice(startLine, endLine).join("\n").trim();
 }
 
-function buildSyntheticActivationCases(
+function buildSyntheticActivationContext(
   input: ValidateGeneratedSkillInput,
   frontmatter: SkillFrontmatter,
-): SyntheticActivationCases {
+): SyntheticActivationContext {
   const positive =
     input.pattern?.exampleGoals
       .find((goal) => goal.trim().length > 0)
       ?.replace(/\s+/g, " ")
       .trim() ?? `Please use the ${input.skillName} workflow for the matching task.`;
+  // Use alias-aware extraction so skills with "## When to Activate" also match (issue #1375).
+  const triggerAliases = DEFAULT_REQUIRED_SECTIONS.find((s) => s.id === "trigger")?.aliases ?? [];
+  const triggerSection = extractSectionByAliases(input.skillContent, triggerAliases);
+  const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
   // Edge prompt tokens must come from the workflow goal, not frontmatter description (often contains
   // boilerplate like "auto-crystallized"), or the edge case overlaps the trigger surface by construction.
   const keywords = [...significantWords(positive)].slice(0, 3);
   const edgePhrase = keywords.length > 0 ? keywords.join(" ") : input.skillName.replace(/-/g, " ");
-  const triggerSection = extractSection(input.skillContent, "Trigger");
-  const sourceText = `${input.skillName}\n${frontmatter.description ?? ""}\n${triggerSection}`;
+
   return {
-    positive,
-    negative: pickUnrelatedNegativePrompt(sourceText),
-    edge: `Explain ${edgePhrase} without executing the workflow or changing files.`,
+    cases: {
+      positive,
+      negative: pickUnrelatedNegativePrompt(sourceText),
+      edge: `Explain ${edgePhrase} without executing the workflow or changing files.`,
+    },
+    sourceText,
   };
 }
 
@@ -572,8 +615,4 @@ function significantWords(text: string, minTokenLength = 4): Set<string> {
       .split(/[^a-z0-9]+/)
       .filter((word) => word.length >= minTokenLength && !STOP_WORDS.has(word)),
   );
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
