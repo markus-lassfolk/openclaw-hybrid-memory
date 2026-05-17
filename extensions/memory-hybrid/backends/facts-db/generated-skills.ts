@@ -599,7 +599,6 @@ function summarizeSkillTelemetry(
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
   const lastActivityAt = lastUsedAt ?? archiveBaselineAt;
-  const archiveCandidate = now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
   const promotionCandidate =
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
@@ -607,6 +606,8 @@ function summarizeSkillTelemetry(
     proc.skillState !== "uninstalled" &&
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
+  const archiveCandidate =
+    !promotionCandidate && now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
   const overTriggering =
     exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
