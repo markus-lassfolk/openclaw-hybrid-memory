@@ -78,13 +78,22 @@ openclaw hybrid-mem skills doctor --fix           # mark missing skills as unins
 
 Generated skills start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`.
 
-Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. The lifecycle policy:
+Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. Each row also includes a heuristic `riskLevel` (`low` | `medium` | `high`) derived from task pattern + recipe content. The lifecycle policy:
 - **Auto-promotes** experimental skills to `trusted` after repeated successful uses without correction.
-- **Auto-demotes** when false-positive rate crosses the threshold.
+- **Auto-demotes** when false-positive rate crosses a **risk-adjusted** threshold (high-risk demotes sooner, low-risk uses a slightly higher FP bar).
 - **Auto-archives** never-used skills after the configured window.
 - **Auto-unblocks** demoted skills back to `experimental` after enough clean uses (configurable via `unblockAfterCleanUses`).
 
 When a skill is reset from `demoted` back to `experimental` (manually or automatically), the evaluation window resets so pre-demotion signals don't block the recovery.
+
+### Procedure candidate score, user signal, and risk (#1414)
+
+When ranking promotion candidates and generating verification telemetry:
+
+- **User signal** uses a 0 raw baseline, clamps to `[-1,1]`, then remaps to `[0,1]` for additive scoring.
+- **Rules/preferences** contribution is capped so repeated rules cannot dominate the signal.
+- **Risk** is applied as a multiplicative score factor (high ≈ `0.35x`, medium ≈ `0.65x`, low `1x`) rather than a small additive nudge.
+- Generated-skill demotion uses the same risk tier via `effectiveDemoteThresholdsForRisk`.
 
 See [SKILL-PIPELINES.md](./SKILL-PIPELINES.md) for the full pipeline architecture and operator playbooks.
 
