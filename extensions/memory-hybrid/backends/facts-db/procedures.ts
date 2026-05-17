@@ -966,7 +966,7 @@ export function getProceduresReadyForSkill(
           AND success_count >= ?
           AND promoted_to_skill = 0
           AND (? = 0 OR COALESCE(last_validated, updated_at, created_at) >= ?)
-        ORDER BY success_count DESC, COALESCE(last_validated, updated_at, created_at) DESC, id ASC
+        ORDER BY success_count DESC, COALESCE(last_validated, updated_at, created_at) DESC, rowid ASC
         LIMIT ?`,
     )
     .all(validationThreshold, useTtl, cutoff, limit) as Array<Record<string, unknown>>;

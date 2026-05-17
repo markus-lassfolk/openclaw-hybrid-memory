@@ -449,7 +449,6 @@ function skillTelemetryRecentEntries(
   ).map(mapGeneratedSkillTelemetryRow);
 }
 
-
 function summarizeSkillTelemetry(
   proc: ProcedureEntry,
   activations: GeneratedSkillTelemetryEntry[],
