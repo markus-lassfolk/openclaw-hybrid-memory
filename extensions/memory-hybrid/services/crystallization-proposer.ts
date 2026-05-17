@@ -20,6 +20,7 @@ import { stripLeadingHtmlComments } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
+  type SkillProposalValidationResult,
   detailSkillProposalValidation,
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
@@ -83,6 +84,7 @@ export class CrystallizationProposer {
       cfg.placeholderEmailDomains?.length
         ? { emailPattern: buildNonPlaceholderEmailPattern(cfg.placeholderEmailDomains) }
         : undefined,
+      cfg.sectionTaxonomy,
     );
   }
 
@@ -230,6 +232,75 @@ export class CrystallizationProposer {
     }
 
     return { proposed, skipped, reasons };
+  }
+
+  // -------------------------------------------------------------------------
+  // validateProposal — dry-run the full GSV pipeline without writing to disk
+  // -------------------------------------------------------------------------
+
+  /**
+   * Run the exact same validation pipeline used by `approveProposal` (static checks +
+   * dry-load filesystem verification + synthetic activation eval) WITHOUT writing
+   * anything to disk.  This makes `skills validate <id>` produce the same outcome
+   * prediction as `skills install <id>` would (issue #1402).
+   *
+   * A `null` WorkflowStore is fine here — this method only uses the validator and the
+   * crystallization store; the workflow-store-backed pattern detector is not involved.
+   *
+   * @param proposalId - The crystallization proposal to validate.
+   * @param opts.name - Rename the skill before validation (mirrors the install --name flag).
+   * @param opts.category - Override the category before validation.
+   * @param opts.recommendedOutput - Override the recommended-output field.
+   * @returns Full validation result, or `null` when the proposal ID is not found.
+   *          A "deny" approval decision means install would have failed; "allow-with-override"
+   *          means install would require --override-warnings; "allow" means install succeeds.
+   */
+  validateProposal(
+    proposalId: string,
+    opts?: {
+      name?: string;
+      category?: string;
+      recommendedOutput?: "SKILL.md only";
+    },
+  ): SkillProposalValidationResult | null {
+    const proposal = this.crystallizationStore.getById(proposalId);
+    if (!proposal) return null;
+
+    if (proposal.status !== "validated" && proposal.status !== "drafted") {
+      return failedProposalValidation(`Proposal '${proposalId}' is not approvable (status: ${proposal.status})`);
+    }
+
+    const approvedCount = this.crystallizationStore.count("approved");
+    if (approvedCount >= this.cfg.maxCrystallized) {
+      return failedProposalValidation(`maxCrystallized limit reached (${this.cfg.maxCrystallized})`);
+    }
+
+    const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
+    const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
+    const desiredRecommendedOutput = opts?.recommendedOutput ?? proposal.recommendedOutput;
+
+    const { skillContent: rewrittenContent } = this.applyOverridesToDraft(proposal, {
+      skillName: safeName,
+      category: desiredCategory,
+      recommendedOutput: desiredRecommendedOutput,
+    });
+
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const proposedOutputPath = this.computeOutputPath(safeName);
+    const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+    const legacy = isLegacyMarkdownCrystallizationProposal(rewrittenContent);
+
+    return this.validator.validate(
+      {
+        outputDir,
+        proposedOutputPath,
+        skillName: safeName,
+        skillContent: rewrittenContent,
+        pattern,
+      },
+      { legacyQueuedCrystallization: legacy },
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -702,6 +773,43 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 }
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
+
+function failedProposalValidation(message: string): SkillProposalValidationResult {
+  return {
+    schemaVersion: 1,
+    validatedAt: new Date().toISOString(),
+    overallStatus: "failed",
+    approvalDecision: "deny",
+    staticValidation: {
+      status: "failed",
+      violations: [message],
+      frontmatter: {},
+      safeOutputPath: "",
+    },
+    dryLoadValidation: {
+      status: "failed",
+      violations: ["Skipped — pre-flight check failed"],
+      discovered: {},
+    },
+    syntheticActivationEval: {
+      status: "failed",
+      score: 0,
+      cases: {
+        positive: "",
+        negative: "",
+        edge: "",
+      },
+      results: {
+        positiveMatched: false,
+        negativeMatched: false,
+        edgeMatched: false,
+      },
+      notes: ["Skipped — pre-flight check failed"],
+    },
+    canarySession: { status: "not-run" },
+  };
+}
+
 function isLegacyMarkdownCrystallizationProposal(skillContent: string): boolean {
   const body = stripLeadingHtmlComments(skillContent);
   const lines = body.split("\n");

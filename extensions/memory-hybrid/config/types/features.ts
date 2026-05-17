@@ -1,3 +1,4 @@
+import type { SectionTaxonomyOverrides } from "../skill-sections.js";
 /** Entity extraction hygiene: stop words for structured/NER entity fields. */
 export type EntityExtractionConfig = {
   /** Additional entity labels to suppress, merged with DEFAULT_ENTITY_STOP_WORDS (#1190). */
@@ -197,6 +198,8 @@ export type CrystallizationConfig = {
   maxCrystallized: number;
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
+  /** Project-level SKILL.md section taxonomy overrides keyed by category. */
+  sectionTaxonomy?: SectionTaxonomyOverrides;
   /**
    * Bucket width for `totalCount` in evidence hashing (default: 5).
    * Uses `floor(totalCount / m) * m`; `successRate` is rounded to one decimal in the hash payload.
