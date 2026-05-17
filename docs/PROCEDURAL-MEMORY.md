@@ -70,20 +70,32 @@ Generated skills live under `skills/auto/` (or your `procedures.skillsAutoPath`)
 openclaw hybrid-mem skills telemetry
 openclaw hybrid-mem skills telemetry moltbook-check
 openclaw hybrid-mem skills demote moltbook-check --reason "over-triggering"
+openclaw hybrid-mem skills reset moltbook-check --reason "agent prompt updated; false positives were stale"
+openclaw hybrid-mem skills reject moltbook-check --reason "superseded by skill-xyz"
+openclaw hybrid-mem skills doctor                 # scan for skills missing on disk
+openclaw hybrid-mem skills doctor --fix           # mark missing skills as uninstalled
 ```
 
-Generated skills now start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`
-Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. Each report row includes a heuristic **`riskLevel`** (`low` | `medium` | `high`) derived from the same classifier as procedure promotion (task pattern + `recipe_json`). The lifecycle policy auto-promotes experimental skills to `trusted` after repeated successful uses without correction, auto-demotes when false-positive rate crosses a **risk-adjusted** threshold (higher-risk skills demote sooner; low-risk skills use a slightly higher FP bar to reduce noisy demotions), and auto-archives never-used skills after the configured window.
+Generated skills start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`.
+
+Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. Each row also includes a heuristic `riskLevel` (`low` | `medium` | `high`) derived from task pattern + recipe content. The lifecycle policy:
+- **Auto-promotes** experimental skills to `trusted` after repeated successful uses without correction.
+- **Auto-demotes** when false-positive rate crosses a **risk-adjusted** threshold (high-risk demotes sooner, low-risk uses a slightly higher FP bar).
+- **Auto-archives** never-used skills after the configured window.
+- **Auto-unblocks** demoted skills back to `experimental` after enough clean uses (configurable via `unblockAfterCleanUses`).
+
+When a skill is reset from `demoted` back to `experimental` (manually or automatically), the evaluation window resets so pre-demotion signals don't block the recovery.
 
 ### Procedure candidate score, user signal, and risk (#1414)
 
-When ranking promotion candidates and populating `verification.json`:
+When ranking promotion candidates and generating verification telemetry:
 
-- **User signal** uses a **0 baseline** in raw space (no evidence is not treated as a positive prior). Manual workflow requests, rules/preferences (capped so repeated rules cannot dominate), user corrections, and failure episodes contribute with documented weights; the raw value is clamped to `[-1, 1]` and remapped to `[0, 1]` for the additive score term so “no signal” and “one manual + one correction” do not spuriously tie.
-- **Risk** is applied as a **multiplier** on the evidence base score (not a 5% additive nudge): high-risk ≈ **0.35×**, medium ≈ **0.65×**, low **1×**, so two procedures with the same evidence but different risk tiers order consistently.
-- **Promote gates** already require extra successes / distinct contexts / success-rate headroom for higher-risk procedures; **demote gates** now apply symmetric adjustments from the same `riskLevel` (stricter for high/medium, slightly looser FP bar for low).
+- **User signal** uses a 0 raw baseline, clamps to `[-1,1]`, then remaps to `[0,1]` for additive scoring.
+- **Rules/preferences** contribution is capped so repeated rules cannot dominate the signal.
+- **Risk** is applied as a multiplicative score factor (high ≈ `0.35x`, medium ≈ `0.65x`, low `1x`) rather than a small additive nudge.
+- Generated-skill demotion uses the same risk tier via `effectiveDemoteThresholdsForRisk`.
 
-Implementation: `extensions/memory-hybrid/services/procedure-promotion-policy.ts` (scoring + `determineRiskLevel`), `extensions/memory-hybrid/backends/facts-db/generated-skills.ts` (telemetry rollup + `effectiveDemoteThresholdsForRisk`).
+See [SKILL-PIPELINES.md](./SKILL-PIPELINES.md) for the full pipeline architecture and operator playbooks.
 
 ---
 
