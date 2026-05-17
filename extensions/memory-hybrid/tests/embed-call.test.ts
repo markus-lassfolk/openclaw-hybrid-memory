@@ -101,7 +101,7 @@ describe("embed-call", () => {
       vi.advanceTimersByTime(EMBED_CALL_TIMEOUT_MS - 100);
 
       // Resolve the promise
-      resolver!("just-in-time");
+      resolver?.("just-in-time");
 
       const result = await resultPromise;
       expect(result).toBe("just-in-time");

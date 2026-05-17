@@ -65,7 +65,7 @@ function buildSkillContent(
   const antiPatterns =
     pattern.failureCount > 0
       ? `- Do not assume the pattern always succeeds (${pattern.failureCount} recorded failures). Add a verification gate and record feedback on failure.\n- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.`
-      : `- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not treat tool sequencing as sufficient; always include verification and failure handling.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.`;
+      : "- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not treat tool sequencing as sufficient; always include verification and failure handling.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.";
 
   const desc = card.description.replace(/\s+/g, " ").trim().slice(0, 260);
   const primaryGoal =

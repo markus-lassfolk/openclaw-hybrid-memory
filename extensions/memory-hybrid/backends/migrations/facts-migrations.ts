@@ -1437,7 +1437,7 @@ function migrateStorageGrowthHistoryTable(db: DatabaseSync): void {
       fact_count INTEGER NOT NULL
     );
   `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_storage_growth_recorded ON storage_growth_history(recorded_at DESC)`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_storage_growth_recorded ON storage_growth_history(recorded_at DESC)");
 }
 
 /** Track completion of NER/contact-org enrichment per fact (avoids re-LLM when zero entities). */

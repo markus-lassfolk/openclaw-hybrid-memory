@@ -123,9 +123,7 @@ export function createSafeRegisterHttpRoute(
     const normalized = normalizeRoutePath(rawPath);
     if (normalized === null) {
       const message =
-        `${source}: refusing to register HTTP route with invalid path ` +
-        `(received ${JSON.stringify(rawPath)}). ` +
-        "Path must be a non-empty string starting with '/'.";
+        `${source}: refusing to register HTTP route with invalid path (received ${JSON.stringify(rawPath)}). Path must be a non-empty string starting with '/'.`;
       (logger.error ?? logger.warn).call(logger, message);
       return;
     }

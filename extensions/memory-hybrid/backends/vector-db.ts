@@ -186,8 +186,7 @@ export class VectorDB {
   private setDegradedState(reason: string): void {
     if (!this.degradedState.active || this.degradedState.reason !== reason) {
       this.logWarn(
-        `memory-hybrid: VectorDB degraded mode entered (reason=${reason}). ` +
-          "Vector operations will fall back to safe no-op/empty defaults until recovery.",
+        `memory-hybrid: VectorDB degraded mode entered (reason=${reason}). Vector operations will fall back to safe no-op/empty defaults until recovery.`,
       );
     }
     this.degradedState = {
@@ -970,9 +969,7 @@ export class VectorDB {
         } catch (rollbackErr) {
           rollbackFailed = true;
           const rollbackMessage =
-            `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state!` +
-            ` Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'.` +
-            ` SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
+            `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state! Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'. SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
           this.logWarn(rollbackMessage);
           throw new Error(rollbackMessage);
         }
@@ -1027,7 +1024,7 @@ export class VectorDB {
       }
     }
 
-    this.logWarn(`memory-hybrid: shadow table swap completed successfully`);
+    this.logWarn("memory-hybrid: shadow table swap completed successfully");
   }
 
   /**

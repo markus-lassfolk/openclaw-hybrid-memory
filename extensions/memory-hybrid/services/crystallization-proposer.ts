@@ -518,18 +518,38 @@ ${proposal.skillContent}`;
   }
 }
 
+/** Max lines scanned inside frontmatter when locating a multiline YAML value (bounded behavior). */
+const MAX_YAML_VALUE_SCAN_LINES = 512;
+
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
 function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
   const body = stripLeadingHtmlComments(skillContent);
   const prefix = skillContent.slice(0, skillContent.length - body.length);
-  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
-  const inner = m[1];
-  const re = new RegExp(`^${escapeRegExp(key)}:\\s*.*$`, "m");
+  const inner = m[1]!;
+  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : "\n";
+  const lines = inner.split(/\r?\n/);
+  const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
+  let keyIdx = -1;
+  const scanCap = Math.min(lines.length, MAX_YAML_VALUE_SCAN_LINES);
+  for (let i = 0; i < scanCap; i++) {
+    if (keyLineRe.test(lines[i]!)) {
+      keyIdx = i;
+      break;
+    }
+  }
   const yamlScalar = formatYamlFrontmatterScalar(value);
-  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${yamlScalar}`) : `${key}: ${yamlScalar}\n${inner}`;
-  const newBlock = `---\n${nextInner}\n---\n`;
-  return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, newBlock);
+  let nextLines: string[];
+  if (keyIdx < 0) {
+    nextLines = [`${key}: ${yamlScalar}`, ...lines];
+  } else {
+    const endExclusive = endIndexForYamlValueBlock(lines, keyIdx, keyLineRe);
+    nextLines = [...lines.slice(0, keyIdx), `${key}: ${yamlScalar}`, ...lines.slice(endExclusive)];
+  }
+  const nextInner = nextLines.join(innerLineBreak);
+  const newBlock = `---${innerLineBreak}${nextInner}${innerLineBreak}---${innerLineBreak}`;
+  return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, newBlock);
 }
 
 function formatYamlFrontmatterScalar(value: string): string {
@@ -551,6 +571,70 @@ function formatYamlFrontmatterScalar(value: string): string {
     return value;
   }
   return JSON.stringify(value);
+}
+
+function stripInlineYamlTrailingComment(fragment: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment[i]!;
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+    else if (ch === "#" && !inSingle && !inDouble) return fragment.slice(0, i).trimEnd();
+  }
+  return fragment.trimEnd();
+}
+
+function isTopLevelYamlKeyLine(line: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)/.test(line);
+}
+
+function leadingIndentLen(line: string): number {
+  const m = /^([ \t]*)/.exec(line);
+  return m ? m[1]?.length : 0;
+}
+
+function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe: RegExp): number {
+  const line = lines[startIdx]!;
+  const km = keyLineRe.exec(line);
+  if (!km) return startIdx + 1;
+  const afterColon = km[1] ?? "";
+  const trimmed = stripInlineYamlTrailingComment(afterColon).trim();
+  const blockHdr = trimmed.match(/^([|>])(.*)$/);
+  if (blockHdr) {
+    const afterMarker = (blockHdr[2] ?? "").trim();
+    if (/^([-+]|[1-9][0-9]*)?$/.test(afterMarker)) {
+      let j = startIdx + 1;
+      while (j < lines.length && j - startIdx < MAX_YAML_VALUE_SCAN_LINES) {
+        if (isTopLevelYamlKeyLine(lines[j]!)) break;
+        j++;
+      }
+      return j;
+    }
+  }
+  const keyIndent = leadingIndentLen(line);
+  let j = startIdx + 1;
+  while (j < lines.length && j - startIdx < MAX_YAML_VALUE_SCAN_LINES) {
+    const L = lines[j]!;
+    if (isTopLevelYamlKeyLine(L)) break;
+    if (L.trim() === "") {
+      let k = j + 1;
+      while (k < lines.length && lines[k]?.trim() === "") k++;
+      if (k >= lines.length) return j;
+      if (isTopLevelYamlKeyLine(lines[k]!)) break;
+      if (leadingIndentLen(lines[k]!) > keyIndent) {
+        j++;
+        continue;
+      }
+      break;
+    }
+    if (leadingIndentLen(L) > keyIndent) {
+      j++;
+      continue;
+    }
+    break;
+  }
+  return j;
 }
 
 function escapeRegExp(value: string): string {

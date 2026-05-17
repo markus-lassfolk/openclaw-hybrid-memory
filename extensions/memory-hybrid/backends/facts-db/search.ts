@@ -119,7 +119,7 @@ export function searchFacts(
   let ftsLimit = Math.max(limit * 10, 100);
   const maxFtsLimit = Math.min(100_000, Math.max(limit * 500, 2000));
   const ftsStmt = db.prepare(
-    `SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`,
+    "SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit",
   );
 
   let rows: Array<Record<string, unknown>> = [];
@@ -477,7 +477,7 @@ export function getCandidateIdsByStructuredFilters(
   // Handle verified_facts JOIN for verificationTier
   if (filters.verificationTier) {
     conditions.push(
-      `id IN (SELECT fact_id FROM verified_facts WHERE tier = ? AND (next_verification IS NULL OR next_verification > ?))`,
+      "id IN (SELECT fact_id FROM verified_facts WHERE tier = ? AND (next_verification IS NULL OR next_verification > ?))",
     );
     params.push(filters.verificationTier, nowSec);
   }
@@ -488,7 +488,7 @@ export function getCandidateIdsByStructuredFilters(
   try {
     const rows = db.prepare(sql).all(...finalParams) as Array<{ id: string }>;
     return rows.map((r) => r.id);
-  } catch (err) {
+  } catch (_err) {
     // Graceful degradation — malformed filter never blocks retrieval
     return [];
   }

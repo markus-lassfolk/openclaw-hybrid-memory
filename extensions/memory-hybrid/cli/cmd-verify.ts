@@ -588,7 +588,7 @@ export async function runVerifyForCli(
           `${FAIL} Lance memories table: schema not valid for vector search (missing vector column or on-disk dimension mismatch).`,
         );
         log(
-          `  Fix: Set embedding.model / embedding.dimensions to match the table you need, enable vector.autoRepair=true to rebuild the empty table, or remove the LanceDB directory and restart. Then run: openclaw hybrid-mem re-index`,
+          "  Fix: Set embedding.model / embedding.dimensions to match the table you need, enable vector.autoRepair=true to rebuild the empty table, or remove the LanceDB directory and restart. Then run: openclaw hybrid-mem re-index",
         );
         issues.push("LanceDB memories table schema invalid for vectors (dimension mismatch or missing column)");
         fixes.push(
@@ -613,14 +613,14 @@ export async function runVerifyForCli(
             `${FAIL} Embedding ↔ Lance: MISMATCH — API returned ${probeLen} dimensions but LanceDB expects ${lanceDims}-dim vectors. Semantic search will return no results until fixed.`,
           );
           log(
-            `  What to do: (1) Set embedding.model to the model you want as primary (same output size as your index).`,
+            "  What to do: (1) Set embedding.model to the model you want as primary (same output size as your index).",
           );
-          log(`  (2) Set embedding.dimensions to that size if it differs from the catalog default.`);
+          log("  (2) Set embedding.dimensions to that size if it differs from the catalog default.");
           log(
             `  (3) If you use a provider chain, set embedding.preferredProviders so only providers with the same vector size are listed (e.g. ["openai"] only).`,
           );
           log(
-            `  (4) Run: openclaw hybrid-mem re-index — rebuilds vectors from SQLite with the current embedding config.`,
+            "  (4) Run: openclaw hybrid-mem re-index — rebuilds vectors from SQLite with the current embedding config.",
           );
           issues.push(
             `Embedding dimension mismatch: API probe ${probeLen} vs Lance index ${lanceDims} (provider.dimensions=${providerDims})`,
@@ -778,7 +778,7 @@ export async function runVerifyForCli(
   }
   if (distillMainRequestedHeavy) {
     warnings.push(
-      `distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance in cmd-distill.ts). Use --model to override for a single run if needed.`,
+      "distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance in cmd-distill.ts). Use --model to override for a single run if needed.",
     );
   }
   const extractionFirst =
@@ -931,7 +931,7 @@ export async function runVerifyForCli(
     if (provider === "anthropic") {
       baseURL = baseURL.replace(/\/+$/, "");
       if (!baseURL.endsWith("/v1")) {
-        baseURL = baseURL + "/v1";
+        baseURL = `${baseURL}/v1`;
       }
     }
     const opts: {
@@ -1909,7 +1909,7 @@ export async function runVerifyForCli(
               }
               log(`  → Deleted ${deleted} orphan vector(s) from LanceDB${failed > 0 ? ` (${failed} failed)` : ""}.`);
             } else {
-              log(`  → Run with --fix to delete these orphan vectors from LanceDB.`);
+              log("  → Run with --fix to delete these orphan vectors from LanceDB.");
             }
             issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
           }
@@ -1954,7 +1954,7 @@ export async function runVerifyForCli(
                 `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,
               );
             } else {
-              log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
+              log("  → Re-run the plugin or use the re-index command to rebuild missing vectors.");
             }
             issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
           }
@@ -2006,7 +2006,7 @@ export async function runVerifyForCli(
               `Corrected ${result.corrected} false-OK cron run ledger entr${result.corrected === 1 ? "y" : "ies"}`,
             );
           } else {
-            log(`  → Run with --fix to correct ledger entries`);
+            log("  → Run with --fix to correct ledger entries");
             issues.push(`${result.falseOk} cron run(s) incorrectly recorded as OK despite validation failures`);
             allOk = false;
           }

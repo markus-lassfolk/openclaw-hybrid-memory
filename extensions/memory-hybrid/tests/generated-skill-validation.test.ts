@@ -948,7 +948,7 @@ Bounded metadata installation workflow.
         avgDurationMs: 400,
         exampleGoals: ["Send the weekly summary to ops@company.internal after deploy"],
       };
-      const result = crystallize(cfg, { patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern });
+      const result = crystallizeSkill({ patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern }, cfg);
       const validation = service.validate({
         outputDir: cfg.outputDir,
         proposedOutputPath: result.proposedOutputPath,
