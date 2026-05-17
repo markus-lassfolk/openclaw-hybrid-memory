@@ -191,7 +191,9 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
 
         if (opts.legacy) {
           // Cheap path: run only SkillValidator (static checks without dry-load/activation).
-          const validator = new SkillValidator(ctx.cfg.crystallization.sectionTaxonomy);
+          const validator = new SkillValidator({
+            sectionTaxonomyOverrides: ctx.cfg.crystallization.sectionTaxonomy,
+          });
           const result = validator.validate(proposal.skillContent);
           if (opts.json) {
             console.log(
