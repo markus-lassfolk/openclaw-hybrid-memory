@@ -299,10 +299,17 @@ import {
 } from "./backends/workflow-store.js";
 import { CrystallizationProposer } from "./services/crystallization-proposer.js";
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
-import { PatternDetector, computeEvidenceHash, computePatternId, scorePattern } from "./services/pattern-detector.js";
+import {
+  PatternDetector,
+  computeEvidenceHash,
+  computePatternId,
+  detectCandidates,
+  scorePattern,
+} from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
 import {
   SkillCrystallizer,
+  crystallize,
   buildExamplesText,
   deriveSkillName,
   inferCategory,
@@ -992,7 +999,9 @@ export const _testing = {
   // Workflow crystallization (Issue #208)
   CrystallizationStore,
   PatternDetector,
+  detectCandidates,
   SkillCrystallizer,
+  crystallize,
   SkillValidator,
   buildNonPlaceholderEmailPattern,
   CrystallizationProposer,

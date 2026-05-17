@@ -110,7 +110,7 @@ function buildSkillContent(
   const antiPatterns =
     pattern.failureCount > 0
       ? `- Do not assume the pattern always succeeds (${pattern.failureCount} recorded failures). Add a verification gate and record feedback on failure.\n- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.`
-      : `- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not treat tool sequencing as sufficient; always include verification and failure handling.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to \`main\`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.`;
+      : "- Do not paste raw logs or tool-call blobs into this skill; summarize as workflow phases and checklists.\n- Do not broaden scope beyond the example goals; ask for clarification on near-miss tasks.\n- Do not treat tool sequencing as sufficient; always include verification and failure handling.\n- Do not claim implementation work is complete unless a PR exists or the change is merged to `main`.\n- Do not poll subagents in a tight loop; yield and wait for push-based completion.";
 
   const desc = card.description.replace(/\s+/g, " ").trim().slice(0, 260);
   const primaryGoal =
@@ -296,40 +296,52 @@ function buildProposalCard(
 }
 
 // ---------------------------------------------------------------------------
-// SkillCrystallizer
+// SkillCrystallizer — exported as a free function (no class wrapper needed)
 // ---------------------------------------------------------------------------
 
+/**
+ * Generate a SKILL.md from a crystallization candidate.
+ * Does NOT write to disk — returns content + proposed path for the approval flow.
+ */
+export function crystallize(cfg: CrystallizationConfig, input: CrystallizationInput): CrystallizationResult {
+  const { patternId, pattern, evidenceHash } = input;
+  const createdAt = new Date().toISOString().slice(0, 10);
+
+  const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
+  const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
+  const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
+
+  // Resolve output directory (expand ~ for home dir)
+  const outputDir = cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+  const proposedOutputPath = resolve(outputDir, skillName, "SKILL.md");
+
+  // Generate shell script for exec-only sequences
+  const hasScript = isExecOnlySequence(pattern.toolSequence);
+  const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
+
+  return {
+    skillName,
+    skillContent,
+    proposalCard,
+    proposedOutputPath,
+    hasScript,
+    scriptContent,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated class wrapper for backward compatibility
+// ---------------------------------------------------------------------------
+
+/**
+ * @deprecated Use `crystallize` function directly instead.
+ * This class wrapper is retained for backward compatibility only.
+ */
 export class SkillCrystallizer {
-  constructor(private readonly cfg: CrystallizationConfig) {}
+  constructor(private cfg: CrystallizationConfig) {}
 
-  /**
-   * Generate a SKILL.md from a crystallization candidate.
-   * Does NOT write to disk — returns content + proposed path for the approval flow.
-   */
   crystallize(input: CrystallizationInput): CrystallizationResult {
-    const { patternId, pattern, evidenceHash } = input;
-    const createdAt = new Date().toISOString().slice(0, 10);
-
-    const skillName = deriveSkillName(pattern.exampleGoals, pattern.toolSequence, patternId);
-    const proposalCard = buildProposalCard(skillName, pattern, patternId, evidenceHash);
-    const skillContent = buildSkillContent(skillName, pattern, patternId, evidenceHash, createdAt, proposalCard);
-
-    // Resolve output directory (expand ~ for home dir)
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
-    const proposedOutputPath = resolve(outputDir, skillName, "SKILL.md");
-
-    // Generate shell script for exec-only sequences
-    const hasScript = isExecOnlySequence(pattern.toolSequence);
-    const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
-
-    return {
-      skillName,
-      skillContent,
-      proposalCard,
-      proposedOutputPath,
-      hasScript,
-      scriptContent,
-    };
+    return crystallize(this.cfg, input);
   }
 }
 
