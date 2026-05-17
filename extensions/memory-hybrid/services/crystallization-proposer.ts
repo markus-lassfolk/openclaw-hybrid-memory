@@ -448,13 +448,8 @@ ${proposal.skillContent}`;
 
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
 function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
-  let body = skillContent;
-  let prefix = "";
-  const commentMatch = body.match(/^<!--[\s\S]*?-->\s*\n*/);
-  if (commentMatch) {
-    prefix = commentMatch[0];
-    body = body.slice(commentMatch[0].length);
-  }
+  const body = stripLeadingHtmlComments(skillContent);
+  const prefix = skillContent.slice(0, skillContent.length - body.length);
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!m) return skillContent;
   const inner = m[1];
