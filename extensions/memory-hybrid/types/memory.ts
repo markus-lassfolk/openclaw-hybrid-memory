@@ -114,7 +114,15 @@ export type ProcedureStep = {
   summary?: string;
 };
 
-export const GENERATED_SKILL_LIFECYCLE_STATES = ["draft", "experimental", "trusted", "demoted", "archived"] as const;
+export const GENERATED_SKILL_LIFECYCLE_STATES = [
+  "draft",
+  "experimental",
+  "trusted",
+  "demoted",
+  "archived",
+  "uninstalled",
+  "rejected",
+] as const;
 export type GeneratedSkillLifecycleState = (typeof GENERATED_SKILL_LIFECYCLE_STATES)[number];
 
 export const GENERATED_SKILL_TELEMETRY_DECISIONS = ["selected", "considered", "skipped"] as const;
@@ -180,6 +188,8 @@ export type ProcedureEntry = {
   skillVersion: number;
   /** When the generated skill was first materialized (epoch seconds). */
   skillGeneratedAt?: number | null;
+  /** When the skill_state last changed (epoch seconds). */
+  skillStateChangedAt?: number | null;
   /** Memory scope (global, user, agent, session). */
   scope?: string;
   /** Scope target (userId, agentId, or sessionId). */
