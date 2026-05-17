@@ -1832,6 +1832,27 @@
           "pruneUnusedDays": {
             "type": "number"
           },
+          "sectionTaxonomy": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "label", "aliases"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "label": { "type": "string" },
+                  "aliases": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1
+                  }
+                }
+              }
+            },
+            "description": "Project-level SKILL.md required-section taxonomy overrides keyed by category; use 'default' for the fallback taxonomy. Each configured array replaces the inherited list."
+          },
           "placeholderEmailDomains": {
             "type": "array",
             "items": {

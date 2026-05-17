@@ -9,9 +9,26 @@
  *
  * The validator is intentionally conservative: false positives are acceptable,
  * false negatives (allowing dangerous content) are not.
+ *
+ * Required section taxonomy is shared with GeneratedSkillValidationService via
+ * config/skill-sections.ts (issues #1375, #1366, #1408).
  */
 
 import { stripLeadingHtmlComments } from "../utils/text.js";
+import {
+  CATEGORY_FRONTMATTER_KEYS,
+  DEFAULT_REQUIRED_SECTIONS,
+  MAX_SKILL_LINES,
+  getSectionTaxonomy,
+  type SectionTaxonomyOverrides,
+} from "../config/skill-sections.js";
+export {
+  CATEGORY_FRONTMATTER_KEYS,
+  DEFAULT_REQUIRED_SECTIONS,
+  MAX_SKILL_LINES,
+  getSectionTaxonomy,
+  type SectionTaxonomyOverrides,
+} from "../config/skill-sections.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -25,8 +42,6 @@ interface ValidationResult {
 // ---------------------------------------------------------------------------
 // Rule definitions
 // ---------------------------------------------------------------------------
-
-const MAX_SKILL_LINES = 300;
 const MAX_FENCED_BLOCK_LINES = 80;
 const MAX_TRANSCRIPT_LIKE_RATIO = 0.4;
 const MAX_TOOL_BLOB_LINES = 40;
@@ -230,13 +245,17 @@ const DENY_RULES: DenyRule[] = [
 
 export class SkillValidator {
   private readonly privateContextPatterns: Array<[name: string, pattern: RegExp, description: string]>;
+  private readonly sectionTaxonomyOverrides?: SectionTaxonomyOverrides;
 
   /**
    * @param options.emailPattern - custom non-placeholder email regex; defaults to
    *   {@link NON_PLACEHOLDER_EMAIL_PATTERN}. Build with {@link buildNonPlaceholderEmailPattern}.
+   * @param options.sectionTaxonomyOverrides - optional per-category section taxonomy overrides
+   *   (passed through from CrystallizationProposer; Issue #1408).
    */
-  constructor(options?: { emailPattern?: RegExp }) {
+  constructor(options?: { emailPattern?: RegExp; sectionTaxonomyOverrides?: SectionTaxonomyOverrides }) {
     this.privateContextPatterns = buildPrivateContextPatterns(options?.emailPattern ?? NON_PLACEHOLDER_EMAIL_PATTERN);
+    this.sectionTaxonomyOverrides = options?.sectionTaxonomyOverrides;
   }
 
   /**
@@ -247,7 +266,8 @@ export class SkillValidator {
    */
   validate(skillContent: string): ValidationResult {
     const violations: string[] = [];
-    const lines = skillContent.split("\n");
+    const normalizedSkillContent = stripLeadingHtmlComments(skillContent);
+    const lines = normalizedSkillContent.split("\n");
 
     if (lines.length > MAX_SKILL_LINES) {
       violations.push(
@@ -278,8 +298,7 @@ export class SkillValidator {
       for (const req of ["name", "description"] as const) {
         if (!keys.has(req)) violations.push(`Frontmatter missing required field: ${req}`);
       }
-      const hasCategory =
-        keys.has("category") || keys.has("categories") || keys.has("tags") || keys.has("type") || keys.has("kind");
+      const hasCategory = CATEGORY_FRONTMATTER_KEYS.some((key) => keys.has(key));
       if (!hasCategory) violations.push("Frontmatter missing required category (or equivalent: tags/type/kind).");
       const hasProvenance =
         keys.has("provenance") ||
@@ -292,34 +311,11 @@ export class SkillValidator {
     }
 
     const headings = parseH2Headings(lines);
-    const requiredSections: Array<{
-      id: string;
-      label: string;
-      aliases: string[];
-    }> = [
-      {
-        id: "when",
-        label: "When to Activate",
-        aliases: ["when to activate", "when to use", "trigger"],
-      },
-      {
-        id: "dont",
-        label: "Do Not Use When",
-        aliases: ["do not use when", "when not to use", "do not use", "anti-activation conditions"],
-      },
-      { id: "workflow", label: "Workflow", aliases: ["workflow", "steps"] },
-      {
-        id: "verify",
-        label: "Verification / Quality Checklist",
-        aliases: ["verification", "quality checklist", "validation"],
-      },
-      {
-        id: "anti",
-        label: "Anti-patterns / Known Failures",
-        aliases: ["anti-patterns / known failures", "anti-patterns", "known failures"],
-      },
-      { id: "examples", label: "Examples", aliases: ["examples"] },
-    ];
+    // Use the shared taxonomy from config/skill-sections.ts so that both
+    // SkillValidator and GeneratedSkillValidationService check the same sections
+    // (issues #1375, #1408).
+    const frontmatterCategory = frontmatter.present ? getFrontmatterCategory(frontmatter.keys) : undefined;
+    const requiredSections = getSectionTaxonomy(frontmatterCategory, this.sectionTaxonomyOverrides);
 
     for (const section of requiredSections) {
       if (!hasHeadingAlias(headings, section.aliases)) {
@@ -453,7 +449,7 @@ export class SkillValidator {
 // Markdown helpers (lightweight, intentionally conservative)
 // ---------------------------------------------------------------------------
 
-function normalizeHeading(value: string): string {
+export function normalizeHeading(value: string): string {
   return value
     .trim()
     .toLowerCase()
@@ -461,7 +457,7 @@ function normalizeHeading(value: string): string {
     .replace(/\s+/g, " ");
 }
 
-function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: string; line: number }> {
+export function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: string; line: number }> {
   const out: Array<{ raw: string; normalized: string; line: number }> = [];
   let inFence = false;
   let fenceChar: "`" | "~" | null = null;
@@ -499,7 +495,7 @@ function parseH2Headings(lines: string[]): Array<{ raw: string; normalized: stri
   return out;
 }
 
-function hasHeadingAlias(headings: Array<{ normalized: string }>, aliases: string[]): boolean {
+export function hasHeadingAlias(headings: Array<{ normalized: string }>, aliases: string[]): boolean {
   const normalizedAliases = aliases.map(normalizeHeading);
   return headings.some((h) => normalizedAliases.includes(h.normalized));
 }
@@ -538,6 +534,27 @@ function findPreviousNonEmptyLine(lines: string[], startIndex: number): string |
     return trimmed;
   }
   return null;
+}
+
+function unquoteFrontmatterValue(value: string | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length >= 2) {
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return trimmed.slice(1, -1).trim();
+    }
+  }
+  return trimmed;
+}
+
+function getFrontmatterCategory(keys: Map<string, string>): string | undefined {
+  for (const key of CATEGORY_FRONTMATTER_KEYS) {
+    const value = keys.get(key);
+    if (value) return unquoteFrontmatterValue(value);
+  }
+  return undefined;
 }
 
 function parseFrontmatter(lines: string[]): {
