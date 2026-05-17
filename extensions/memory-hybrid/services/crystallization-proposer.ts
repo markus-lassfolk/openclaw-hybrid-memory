@@ -429,9 +429,7 @@ ${proposal.skillContent}`;
 
   private trySupersedeOlderInstalls(patternId: string, supersededBy: string): void {
     try {
-      const existing = this.crystallizationStore
-        .list({ skillName: undefined, limit: 50 })
-        .filter((p) => p.patternId === patternId);
+      const existing = this.crystallizationStore.listByPatternId(patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
         if (p.status === "installed" || p.status === "approved") {
@@ -461,9 +459,31 @@ function patchOpeningYamlField(skillContent: string, key: string, value: string)
   if (!m) return skillContent;
   const inner = m[1];
   const re = new RegExp(`^${escapeRegExp(key)}:\\s*.*$`, "m");
-  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${value}`) : `${key}: ${value}\n${inner}`;
+  const yamlScalar = formatYamlFrontmatterScalar(value);
+  const nextInner = re.test(inner) ? inner.replace(re, `${key}: ${yamlScalar}`) : `${key}: ${yamlScalar}\n${inner}`;
   const newBlock = `---\n${nextInner}\n---\n`;
   return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, newBlock);
+}
+
+function formatYamlFrontmatterScalar(value: string): string {
+  if (value === "") return '""';
+  if (/^[\w.-]+$/.test(value)) {
+    const lower = value.toLowerCase();
+    if (
+      lower === "true" ||
+      lower === "false" ||
+      lower === "null" ||
+      lower === "yes" ||
+      lower === "no" ||
+      lower === "on" ||
+      lower === "off" ||
+      /^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/.test(value)
+    ) {
+      return JSON.stringify(value);
+    }
+    return value;
+  }
+  return JSON.stringify(value);
 }
 
 function escapeRegExp(value: string): string {
