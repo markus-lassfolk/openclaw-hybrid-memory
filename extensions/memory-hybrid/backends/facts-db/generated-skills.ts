@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { statSync } from "node:fs";
+import { basename, isAbsolute, join, win32 } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type {
   GeneratedSkillLifecycleState,
@@ -9,6 +10,7 @@ import type {
   MemoryScope,
   ProcedureEntry,
 } from "../../types/memory.js";
+import { getEnv } from "../../utils/env-manager.js";
 import { procedureRowToEntry } from "./procedures.js";
 
 export type GeneratedSkillLifecyclePolicy = {
@@ -17,6 +19,11 @@ export type GeneratedSkillLifecyclePolicy = {
   demoteMinSamples: number;
   archiveAfterUnusedDays: number;
   revisionNearMissThreshold: number;
+  /**
+   * Number of successful activations without correction required to automatically
+   * unblock a demoted skill back to experimental. 0 = no automatic unblocking.
+   */
+  unblockAfterCleanUses: number;
 };
 
 export type GeneratedSkillTelemetryRecordInput = {
@@ -64,6 +71,8 @@ export type GeneratedSkillTelemetryMetrics = {
   savedToolCalls: number;
   savedTimeMs: number;
   falsePositiveRate: number | null;
+  /** Successful activations without correction since the last demotion reset (for unblock tracking). */
+  cleanUsesAfterDemotion: number;
 };
 
 export type GeneratedSkillTelemetryFlags = {
@@ -72,6 +81,8 @@ export type GeneratedSkillTelemetryFlags = {
   revisionCandidate: boolean;
   neverUsed: boolean;
   archiveCandidate: boolean;
+  /** True when a demoted/archived skill has enough clean uses to be unblocked back to experimental. */
+  unblockCandidate: boolean;
 };
 
 export type GeneratedSkillTelemetryReportRow = {
@@ -84,7 +95,7 @@ export type GeneratedSkillTelemetryReportRow = {
   generatedAt: number | null;
   metrics: GeneratedSkillTelemetryMetrics;
   flags: GeneratedSkillTelemetryFlags;
-  recommendation: "promote" | "demote" | "archive" | "revise" | "observe";
+  recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
   recentActivations: GeneratedSkillTelemetryEntry[];
 };
 
@@ -101,9 +112,39 @@ export const DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY: GeneratedSkillLifecyclePo
   demoteMinSamples: 3,
   archiveAfterUnusedDays: 30,
   revisionNearMissThreshold: 3,
+  unblockAfterCleanUses: 5,
 };
 
 const MAX_REQUEST_SUMMARY_LENGTH = 240;
+
+function isAbsoluteSkillPath(skillPath: string): boolean {
+  return isAbsolute(skillPath) || win32.isAbsolute(skillPath);
+}
+
+function hasWindowsDrivePrefix(skillPath: string): boolean {
+  return /^[A-Za-z]:[/\\]/u.test(skillPath);
+}
+
+function usesWindowsPathSemantics(skillPath: string): boolean {
+  return hasWindowsDrivePrefix(skillPath) || skillPath.includes("\\");
+}
+
+function skillPathBasename(skillPath: string): string {
+  return usesWindowsPathSemantics(skillPath) ? win32.basename(skillPath) : basename(skillPath);
+}
+
+function resolveSkillMdPath(skillPath: string, workspaceRoot: string): { dirPath: string; skillMdPath: string } {
+  const resolvedPath = isAbsoluteSkillPath(skillPath) ? skillPath : join(workspaceRoot, skillPath);
+  const usesWindowsSeparators = usesWindowsPathSemantics(resolvedPath);
+  const hasSkillMdSuffix = /(?:^|[/\\])SKILL\.md$/u.test(resolvedPath);
+  const dirPath = hasSkillMdSuffix ? resolvedPath.replace(/(?:^|[/\\])SKILL\.md$/u, "") : resolvedPath;
+  const skillMdPath = hasSkillMdSuffix
+    ? resolvedPath
+    : usesWindowsSeparators
+      ? win32.join(dirPath, "SKILL.md")
+      : join(dirPath, "SKILL.md");
+  return { dirPath, skillMdPath };
+}
 
 type GeneratedSkillTelemetryRow = {
   id: string;
@@ -266,13 +307,17 @@ function applyTelemetryRollupDelta(
   if (input.decision === "selected") {
     dSel = 1;
     if (input.userCorrection === true || input.causedRework === true) dFp = 1;
-    const o = input.taskOutcome;
-    if (o === "success") {
+    const outcome = input.taskOutcome;
+    if (outcome === "success") {
       dSucc = 1;
       if (input.userCorrection !== true) dClear = 1;
-    } else if (o === "failure") dFail = 1;
-    else if (o === "partial") dPart = 1;
-    else dUnk = 1;
+    } else if (outcome === "failure") {
+      dFail = 1;
+    } else if (outcome === "partial") {
+      dPart = 1;
+    } else {
+      dUnk = 1;
+    }
   } else {
     dNear = 1;
     if (input.decision === "considered") dConsidered = 1;
@@ -280,9 +325,9 @@ function applyTelemetryRollupDelta(
   }
   if (input.falseNegativeSignal === true) dFn = 1;
   if (input.userCorrection === true) dUserCorr = 1;
-  const sc = savedCalls > 0 ? savedCalls : 0;
-  const st = savedTimeMs > 0 ? savedTimeMs : 0;
-  const lastBump = input.decision === "selected" ? nowSec : 0;
+  const positiveSavedCalls = savedCalls > 0 ? savedCalls : 0;
+  const positiveSavedTimeMs = savedTimeMs > 0 ? savedTimeMs : 0;
+  const lastSelectedAt = input.decision === "selected" ? nowSec : 0;
   db.prepare(
     `UPDATE procedures SET
        gst_sel_total = gst_sel_total + ?,
@@ -314,10 +359,10 @@ function applyTelemetryRollupDelta(
     dClear,
     dConsidered,
     dSkipped,
-    sc,
-    st,
-    lastBump,
-    lastBump,
+    positiveSavedCalls,
+    positiveSavedTimeMs,
+    lastSelectedAt,
+    lastSelectedAt,
     procedureId,
   );
 }
@@ -353,7 +398,7 @@ function findGeneratedSkillProcedureMatches(db: DatabaseSync, skillName: string)
     const proc = procedureRowToEntry(db, row);
     if (!proc.skillPath?.trim()) continue;
     const path = proc.skillPath.trim();
-    if (path === trimmed || basename(path) === trimmed) matches.push(proc);
+    if (path === trimmed || skillPathBasename(path) === trimmed) matches.push(proc);
   }
   return matches;
 }
@@ -425,8 +470,7 @@ export function recordGeneratedSkillTelemetry(
     }
     const skill = input.skillName.trim();
     const path = candidate.skillPath.trim();
-    const canonicalName = basename(path);
-    if (skill !== path && skill !== canonicalName) {
+    if (path !== skill && skillPathBasename(path) !== skill) {
       throw new Error(`Procedure ${input.procedureId} skill_path does not match skill name "${input.skillName}"`);
     }
     proc = candidate;
@@ -446,7 +490,7 @@ export function recordGeneratedSkillTelemetry(
   ).run(
     id,
     proc.id,
-    proc.skillPath ? basename(proc.skillPath) : input.skillName,
+    proc.skillPath ? skillPathBasename(proc.skillPath) : input.skillName,
     input.skillVersion ?? proc.skillVersion ?? 1,
     requestHashFromInput(input.requestHash, normalizedSummary),
     normalizedSummary,
@@ -469,7 +513,7 @@ export function recordGeneratedSkillTelemetry(
   applyTelemetryRollupDelta(db, proc.id, input, input.savedToolCalls ?? 0, input.savedTimeMs ?? 0, now);
   refreshGeneratedSkillLifecycleState(
     db,
-    proc.skillPath ? basename(proc.skillPath) : input.skillName,
+    proc.skillPath ? skillPathBasename(proc.skillPath) : input.skillName,
     policy,
     now,
     proc.id,
@@ -517,13 +561,29 @@ export function setGeneratedSkillLifecycleState(
     proc = findGeneratedSkillProcedure(db, skillName);
   }
   if (!proc) return null;
-  db.prepare(
-    `UPDATE procedures
-        SET skill_state = ?,
-            skill_state_reason = ?,
-            updated_at = ?
-      WHERE id = ?`,
-  ).run(state, normalizeSummary(reason), at, proc.id);
+  if (state === "experimental") {
+    // When a skill is reset/unblocked back to experimental, update skill_generated_at to mark
+    // the new evaluation window start. This prevents pre-reset telemetry from counting against
+    // the skill's overTriggering and promotionCandidate evaluations.
+    db.prepare(
+      `UPDATE procedures
+         SET skill_state = ?,
+             skill_state_reason = ?,
+             skill_generated_at = ?,
+             skill_state_changed_at = ?,
+             updated_at = ?
+       WHERE id = ?`,
+    ).run(state, normalizeSummary(reason), at, at, at, proc.id);
+  } else {
+    db.prepare(
+      `UPDATE procedures
+         SET skill_state = ?,
+             skill_state_reason = ?,
+             skill_state_changed_at = ?,
+             updated_at = ?
+        WHERE id = ?`,
+    ).run(state, normalizeSummary(reason), at, at, proc.id);
+  }
   return getGeneratedSkillByName(db, skillName, procedureId);
 }
 
@@ -598,6 +658,7 @@ type RawTelemetryCounts = {
   skippedCount: number;
   savedToolCalls: number;
   savedTimeMs: number;
+  cleanUsesAfterDemotion: number;
 };
 
 function deriveMetricsAndFlags(
@@ -614,12 +675,15 @@ function deriveMetricsAndFlags(
   const falsePositiveRate =
     counts.activationCountTotal > 0 ? counts.falsePositiveSignals / counts.activationCountTotal : null;
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
+  const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
   const archiveCandidate =
-    counts.activationCountTotal === 0 && generatedAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+    counts.activationCountTotal === 0 && archiveBaselineAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
   const promotionCandidate =
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
     proc.skillState !== "trusted" &&
+    proc.skillState !== "uninstalled" &&
+    proc.skillState !== "rejected" &&
     counts.successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
     counts.activationCountTotal >= policy.demoteMinSamples &&
@@ -627,6 +691,11 @@ function deriveMetricsAndFlags(
     falsePositiveRate >= policy.demoteFalsePositiveRate;
   const revisionCandidate =
     counts.nearMissCount >= policy.revisionNearMissThreshold && counts.skippedCount >= counts.consideredCount;
+  const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
+  const unblockCandidate =
+    unblockAfterCleanUses > 0 &&
+    (proc.skillState === "demoted" || proc.skillState === "archived") &&
+    counts.cleanUsesAfterDemotion >= unblockAfterCleanUses;
 
   return {
     metrics: {
@@ -651,6 +720,7 @@ function deriveMetricsAndFlags(
       savedToolCalls: counts.savedToolCalls,
       savedTimeMs: counts.savedTimeMs,
       falsePositiveRate,
+      cleanUsesAfterDemotion: counts.cleanUsesAfterDemotion,
     },
     flags: {
       promotionCandidate,
@@ -658,6 +728,7 @@ function deriveMetricsAndFlags(
       revisionCandidate,
       neverUsed: counts.activationCountTotal === 0,
       archiveCandidate,
+      unblockCandidate,
     },
   };
 }
@@ -667,8 +738,27 @@ function summarizeSkillTelemetry(
   activations: GeneratedSkillTelemetryEntry[],
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
-): { metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } {
+): {
+  metrics: GeneratedSkillTelemetryMetrics;
+  flags: GeneratedSkillTelemetryFlags;
+} {
   const weekAgo = now - 7 * 24 * 60 * 60;
+
+  // For experimental and trusted skills, evaluate only activations since skill_generated_at.
+  // For demoted/archived skills, evaluate only activations since skill_state_changed_at.
+  // This prevents pre-reset telemetry from blocking promotion or re-triggering demotion
+  // after an operator manually resets or the system auto-unblocks a skill.
+  const isExperimentalOrTrusted =
+    proc.skillState === "experimental" || proc.skillState === "trusted" || proc.skillState === "draft";
+  const isDemotedOrArchived = proc.skillState === "demoted" || proc.skillState === "archived";
+  let evalWindowStart = 0;
+  if (isExperimentalOrTrusted && proc.skillGeneratedAt !== null && proc.skillGeneratedAt !== undefined) {
+    evalWindowStart = proc.skillGeneratedAt;
+  } else if (isDemotedOrArchived && proc.skillStateChangedAt !== null && proc.skillStateChangedAt !== undefined) {
+    evalWindowStart = proc.skillStateChangedAt;
+  }
+  const evalActivations = evalWindowStart > 0 ? activations.filter((a) => a.createdAt >= evalWindowStart) : activations;
+
   let activationCountPerWeek = 0;
   let activationCountTotal = 0;
   let nearMissCount = 0;
@@ -686,7 +776,17 @@ function summarizeSkillTelemetry(
   let savedToolCalls = 0;
   let savedTimeMs = 0;
 
-  for (const activation of activations) {
+  // For unblock tracking: count clean (uncorrected) successful activations since the
+  // most recent demotion/archive state change. Use skill_state_changed_at as the
+  // reset baseline — it tracks state transitions exclusively and is not affected by
+  // other procedure updates (e.g., upsertProcedure).
+  const demotedOrArchivedAt =
+    proc.skillState === "demoted" || proc.skillState === "archived"
+      ? (proc.skillStateChangedAt ?? proc.updatedAt ?? 0)
+      : null;
+  let cleanUsesAfterDemotion = 0;
+
+  for (const activation of evalActivations) {
     const calls = activation.savedToolCalls ?? 0;
     const timeMs = activation.savedTimeMs ?? 0;
     savedToolCalls += calls > 0 ? calls : 0;
@@ -698,7 +798,13 @@ function summarizeSkillTelemetry(
       if (activation.userCorrection || activation.causedRework) falsePositiveSignals++;
       if (activation.taskOutcome === "success") {
         successCount++;
-        if (!activation.userCorrection) successfulUsesWithoutCorrection++;
+        if (!activation.userCorrection) {
+          successfulUsesWithoutCorrection++;
+          // Count clean uses recorded after a demotion reset
+          if (demotedOrArchivedAt != null && activation.createdAt > demotedOrArchivedAt) {
+            cleanUsesAfterDemotion++;
+          }
+        }
       } else if (activation.taskOutcome === "failure") {
         failureCount++;
       } else if (activation.taskOutcome === "partial") {
@@ -715,8 +821,36 @@ function summarizeSkillTelemetry(
     if (activation.userCorrection) repeatedCorrectionCount++;
   }
 
-  return deriveMetricsAndFlags(
-    {
+  const knownOutcomeTotal = successCount + failureCount + partialCount + unknownCount;
+  const successRate = knownOutcomeTotal > 0 ? successCount / knownOutcomeTotal : null;
+  const failureRate = knownOutcomeTotal > 0 ? failureCount / knownOutcomeTotal : null;
+  const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
+  const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
+  const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
+  const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
+  const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
+  const archiveCandidate =
+    activationCountTotal === 0 && archiveBaselineAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const promotionCandidate =
+    proc.skillState !== "demoted" &&
+    proc.skillState !== "archived" &&
+    proc.skillState !== "trusted" &&
+    proc.skillState !== "uninstalled" &&
+    proc.skillState !== "rejected" &&
+    successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
+  const overTriggering =
+    activationCountTotal >= policy.demoteMinSamples &&
+    falsePositiveRate != null &&
+    falsePositiveRate >= policy.demoteFalsePositiveRate;
+  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
+  const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
+  const unblockCandidate =
+    unblockAfterCleanUses > 0 &&
+    (proc.skillState === "demoted" || proc.skillState === "archived") &&
+    cleanUsesAfterDemotion >= unblockAfterCleanUses;
+
+  return {
+    metrics: {
       activationCountPerWeek,
       activationCountTotal,
       nearMissCount,
@@ -728,16 +862,27 @@ function summarizeSkillTelemetry(
       failureCount,
       partialCount,
       unknownCount,
+      successRate,
+      failureRate,
+      partialRate,
+      unknownRate,
       successfulUsesWithoutCorrection,
       consideredCount,
       skippedCount,
       savedToolCalls,
       savedTimeMs,
+      falsePositiveRate,
+      cleanUsesAfterDemotion,
     },
-    proc,
-    policy,
-    now,
-  );
+    flags: {
+      promotionCandidate,
+      overTriggering,
+      revisionCandidate,
+      neverUsed: activationCountTotal === 0,
+      archiveCandidate,
+      unblockCandidate,
+    },
+  };
 }
 
 function summarizeSkillTelemetryFromRollups(
@@ -800,13 +945,27 @@ function desiredLifecycleTransition(
   metrics: GeneratedSkillTelemetryMetrics,
   policy: GeneratedSkillLifecyclePolicy,
 ): { state: GeneratedSkillLifecycleState; reason: string } | null {
+  // Uninstalled and rejected are terminal — no automatic transitions out.
+  if (currentState === "uninstalled" || currentState === "rejected") return null;
+
   if (currentState !== "archived" && flags.archiveCandidate) {
     return {
       state: "archived",
       reason: `auto-archived after ${policy.archiveAfterUnusedDays} days without any recorded activation`,
     };
   }
-  if (currentState !== "demoted" && flags.overTriggering) {
+  // Allow automatic unblocking of demoted/archived skills when they accumulate
+  // enough clean uses after the demotion reset AND are not currently overtriggering.
+  // Evaluate this before the overTriggering check so archived skills with high historical
+  // FP rates can transition directly to experimental rather than demoted, but only if
+  // the current post-demotion false-positive rate is acceptable.
+  if (flags.unblockCandidate && !flags.overTriggering) {
+    return {
+      state: "experimental",
+      reason: `auto-unblocked after ${metrics.cleanUsesAfterDemotion} clean activations since demotion`,
+    };
+  }
+  if (currentState !== "demoted" && currentState !== "archived" && flags.overTriggering) {
     return {
       state: "demoted",
       reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
@@ -854,8 +1013,9 @@ export function refreshGeneratedSkillLifecycleState(
       ? findProcedureById(db, resolvedProcedureId)
       : findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
-  const canonicalSkillName = basename(proc.skillPath);
-  const { metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, canonicalSkillName, policy, now);
+  const canonicalSkillName = skillPathBasename(proc.skillPath);
+  const activations = skillTelemetryEntries(db, canonicalSkillName, proc.id);
+  const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
   const updatedProc =
@@ -878,48 +1038,89 @@ export function buildGeneratedSkillTelemetryReport(
     now?: number;
   },
 ): GeneratedSkillTelemetryReport {
-  const policy = { ...DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY, ...(options?.policy ?? {}) };
+  const policy = {
+    ...DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
+    ...(options?.policy ?? {}),
+  };
   const now = options?.now ?? Math.floor(Date.now() / 1000);
   const recentLimit = options?.recentActivationLimit ?? 10;
   const procedures = listGeneratedSkillProcedures(db).filter((proc) => {
     if (!options?.skillName) return true;
-    return proc.skillPath != null && basename(proc.skillPath) === options.skillName;
+    return proc.skillPath != null && skillPathBasename(proc.skillPath) === options.skillName;
   });
-  const rows = procedures
+  const refreshResults = new Map<
+    string,
+    { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+  >();
+  for (const proc of procedures) {
+    if (proc.skillPath) {
+      const skillName = skillPathBasename(proc.skillPath);
+      const result = refreshGeneratedSkillLifecycleState(db, skillName, policy, now, true, proc.id);
+      if (result) refreshResults.set(proc.id, result);
+    }
+  }
+  const rows = listGeneratedSkillProcedures(db)
+    .filter((proc) => {
+      if (!options?.skillName) return true;
+      return proc.skillPath != null && skillPathBasename(proc.skillPath) === options.skillName;
+    })
     .map((proc) => {
-      const skillName = basename(proc.skillPath ?? proc.taskPattern);
-      let procFresh: ProcedureEntry;
+      const skillName = skillPathBasename(proc.skillPath ?? proc.taskPattern);
+      let procFresh: ProcedureEntry = proc;
       let metrics: GeneratedSkillTelemetryMetrics;
       let flags: GeneratedSkillTelemetryFlags;
       if (proc.skillPath) {
         const result = refreshGeneratedSkillLifecycleState(db, skillName, policy, now, true, proc.id);
         if (result == null) {
-          procFresh = proc;
           ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
         } else {
           ({ proc: procFresh, metrics, flags } = result);
         }
       } else {
-        procFresh = proc;
-        ({ metrics, flags } = summarizeSkillTelemetryFromRollups(db, proc, skillName, policy, now));
+        const cachedResult = refreshResults.get(proc.id);
+        if (cachedResult) {
+          ({ proc: procFresh, metrics, flags } = cachedResult);
+        } else {
+          const activations = skillTelemetryEntries(db, skillName, proc.id);
+          const summary = summarizeSkillTelemetry(proc, activations, policy, now);
+          metrics = summary.metrics;
+          flags = summary.flags;
+        }
       }
-      const recommendation = flags.archiveCandidate
-        ? "archive"
-        : flags.overTriggering
-          ? "demote"
-          : flags.promotionCandidate
-            ? "promote"
-            : flags.revisionCandidate
-              ? "revise"
-              : "observe";
+      const currentState = procFresh.skillState ?? "experimental";
+      const stateReason = procFresh.skillStateReason ?? null;
+      const generatedAt = procFresh.skillGeneratedAt ?? procFresh.promotedAt ?? null;
+      let recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
+
+      if (currentState === "uninstalled" || currentState === "rejected") {
+        recommendation = "observe";
+      } else if (currentState === "experimental" && stateReason?.startsWith("auto-unblocked")) {
+        recommendation = "unblock";
+      } else if (currentState === "archived" && flags.archiveCandidate) {
+        recommendation = "observe";
+      } else if (currentState === "demoted" && flags.overTriggering) {
+        recommendation = "observe";
+      } else if (flags.unblockCandidate && !flags.overTriggering) {
+        recommendation = "unblock";
+      } else if (flags.archiveCandidate) {
+        recommendation = "archive";
+      } else if (flags.overTriggering) {
+        recommendation = "demote";
+      } else if (flags.promotionCandidate) {
+        recommendation = "promote";
+      } else if (flags.revisionCandidate) {
+        recommendation = "revise";
+      } else {
+        recommendation = "observe";
+      }
       return {
         procedureId: procFresh.id,
         skillName,
         skillPath: procFresh.skillPath ?? skillName,
         skillVersion: procFresh.skillVersion ?? 1,
-        state: procFresh.skillState ?? "experimental",
-        stateReason: procFresh.skillStateReason ?? null,
-        generatedAt: procFresh.skillGeneratedAt ?? procFresh.promotedAt ?? null,
+        state: currentState,
+        stateReason,
+        generatedAt,
         metrics,
         flags,
         recommendation,
@@ -932,5 +1133,123 @@ export function buildGeneratedSkillTelemetryReport(
     policy,
     totalSkills: rows.length,
     rows,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Disk reconciler (#1391) — detect DB rows whose skill file no longer exists
+// ---------------------------------------------------------------------------
+
+export type GeneratedSkillDoctorRow = {
+  procedureId: string;
+  skillName: string;
+  skillPath: string;
+  state: GeneratedSkillLifecycleState;
+  issue: "missing_on_disk" | "stat_error";
+  resolvedAbsolutePath: string;
+  fixed: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+export type GeneratedSkillDoctorReport = {
+  checkedAt: string;
+  totalChecked: number;
+  issues: GeneratedSkillDoctorRow[];
+  fixedCount: number;
+  failedFixCount: number;
+  fixedProcedureIds: string[];
+};
+
+/**
+ * Reconcile the DB's generated-skill records against disk.
+ *
+ * For each procedure row that is marked promoted (`promoted_to_skill = 1`) and has a
+ * `skill_path`, this function requires the resolved `SKILL.md` file to exist on disk.
+ * Rows whose SKILL.md is missing are reported as `"missing_on_disk"` and, when `fix` is
+ * true, non-terminal rows are transitioned to the `"uninstalled"` state. Rejected rows
+ * remain rejected because that terminal operator decision must not be overwritten by
+ * disk reconciliation.
+ *
+ * @param workspaceRoot  Absolute path used to resolve relative skill paths. Defaults to `OPENCLAW_WORKSPACE` env var, then `process.cwd()`.
+ * @param fix            When true, update missing rows to `uninstalled` in the DB.
+ */
+export function reconcileGeneratedSkillDiskState(
+  db: DatabaseSync,
+  opts: { workspaceRoot?: string; fix?: boolean; now?: number } = {},
+): GeneratedSkillDoctorReport {
+  const workspaceRoot = opts.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const fix = opts.fix ?? false;
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const procedures = listGeneratedSkillProcedures(db);
+  const issues: GeneratedSkillDoctorRow[] = [];
+  const fixedProcedureIds: string[] = [];
+  let totalChecked = 0;
+
+  for (const proc of procedures) {
+    if (!proc.skillPath) continue;
+    // Skip terminal rows — they are already correctly modelled and must not be
+    // overwritten by disk reconciliation.
+    if (proc.skillState === "uninstalled" || proc.skillState === "rejected") continue;
+
+    totalChecked++;
+
+    // Accept either a SKILL.md file path or the parent directory, but always
+    // require the actual SKILL.md file to exist. A bare directory is not an
+    // installed generated skill.
+    const { dirPath, skillMdPath } = resolveSkillMdPath(proc.skillPath, workspaceRoot);
+
+    let statError: unknown;
+    let missing = false;
+    try {
+      missing = !statSync(skillMdPath).isFile();
+    } catch (err) {
+      statError = err;
+      missing = true;
+    }
+    if (!missing) continue;
+
+    // Derive skill name from the directory component of the path (not the raw skill_path
+    // which might include a SKILL.md suffix or be a full directory path).
+    const skillName = skillPathBasename(dirPath);
+    const errorCode =
+      typeof statError === "object" && statError !== null && "code" in statError
+        ? String((statError as { code?: unknown }).code)
+        : undefined;
+    const isMissingOnDisk = !statError || errorCode === "ENOENT";
+    let fixed = false;
+    if (fix && isMissingOnDisk) {
+      // Use the full skill_path for the lookup so findGeneratedSkillProcedure
+      // matches on exact path regardless of basename edge cases.
+      const updated = setGeneratedSkillLifecycleState(
+        db,
+        proc.skillPath,
+        "uninstalled",
+        "operator-confirmed doctor --fix: skill file no longer exists on disk",
+        now,
+      );
+      fixed = updated?.skillState === "uninstalled";
+      if (fixed) fixedProcedureIds.push(proc.id);
+    }
+    issues.push({
+      procedureId: proc.id,
+      skillName,
+      skillPath: proc.skillPath,
+      state: proc.skillState ?? "experimental",
+      issue: isMissingOnDisk ? "missing_on_disk" : "stat_error",
+      resolvedAbsolutePath: skillMdPath,
+      fixed,
+      ...(errorCode ? { errorCode } : {}),
+      ...(statError instanceof Error ? { errorMessage: statError.message } : {}),
+    });
+  }
+
+  return {
+    checkedAt: new Date(now * 1000).toISOString(),
+    totalChecked,
+    issues,
+    fixedCount: fixedProcedureIds.length,
+    failedFixCount: fix ? issues.filter((issue) => !issue.fixed).length : 0,
+    fixedProcedureIds,
   };
 }
