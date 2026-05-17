@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { basename, isAbsolute, join, win32 } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { determineRiskLevel, parseRecipeOrRaw } from "../../utils/procedure-risk.js";
 import type {
   GeneratedSkillLifecycleState,
   GeneratedSkillTelemetryDecision,
@@ -90,6 +91,7 @@ export type GeneratedSkillTelemetryReportRow = {
   skillName: string;
   skillPath: string;
   skillVersion: number;
+  riskLevel: "low" | "medium" | "high";
   state: GeneratedSkillLifecycleState;
   stateReason: string | null;
   generatedAt: number | null;
@@ -116,6 +118,18 @@ export const DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY: GeneratedSkillLifecyclePo
 };
 
 const MAX_REQUEST_SUMMARY_LENGTH = 240;
+
+export function effectiveDemoteThresholdsForRisk(
+  riskLevel: "low" | "medium" | "high",
+  policy: GeneratedSkillLifecyclePolicy,
+): { falsePositiveRate: number; minSamples: number } {
+  const fpAdjust = riskLevel === "high" ? -0.1 : riskLevel === "medium" ? -0.05 : 0.05;
+  const minSamplesAdjust = riskLevel === "high" ? -1 : 0;
+  return {
+    falsePositiveRate: Math.min(1, Math.max(0.1, policy.demoteFalsePositiveRate + fpAdjust)),
+    minSamples: Math.max(1, policy.demoteMinSamples + minSamplesAdjust),
+  };
+}
 
 function isAbsoluteSkillPath(skillPath: string): boolean {
   return isAbsolute(skillPath) || win32.isAbsolute(skillPath);
@@ -457,6 +471,7 @@ function summarizeSkillTelemetry(
 ): {
   metrics: GeneratedSkillTelemetryMetrics;
   flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
 } {
   const weekAgo = now - 7 * 24 * 60 * 60;
 
@@ -543,6 +558,11 @@ function summarizeSkillTelemetry(
   const partialRate = knownOutcomeTotal > 0 ? partialCount / knownOutcomeTotal : null;
   const unknownRate = knownOutcomeTotal > 0 ? unknownCount / knownOutcomeTotal : null;
   const falsePositiveRate = activationCountTotal > 0 ? falsePositiveSignals / activationCountTotal : null;
+  const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
+  const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+    riskLevel,
+    policy,
+  );
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
   const lastActivityAt = lastUsedAt ?? archiveBaselineAt;
@@ -555,9 +575,7 @@ function summarizeSkillTelemetry(
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
   const overTriggering =
-    activationCountTotal >= policy.demoteMinSamples &&
-    falsePositiveRate != null &&
-    falsePositiveRate >= policy.demoteFalsePositiveRate;
+    activationCountTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
   const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
   const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
   const unblockCandidate =
@@ -598,6 +616,7 @@ function summarizeSkillTelemetry(
       archiveCandidate,
       unblockCandidate,
     },
+    riskLevel,
   };
 }
 
@@ -606,6 +625,7 @@ function desiredLifecycleTransition(
   flags: GeneratedSkillTelemetryFlags,
   metrics: GeneratedSkillTelemetryMetrics,
   policy: GeneratedSkillLifecyclePolicy,
+  riskLevel: "low" | "medium" | "high",
 ): { state: GeneratedSkillLifecycleState; reason: string } | null {
   // Uninstalled and rejected are terminal — no automatic transitions out.
   if (currentState === "uninstalled" || currentState === "rejected") return null;
@@ -628,9 +648,13 @@ function desiredLifecycleTransition(
     };
   }
   if (currentState !== "demoted" && currentState !== "archived" && flags.overTriggering) {
+    const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+      riskLevel,
+      policy,
+    );
     return {
       state: "demoted",
-      reason: `auto-demoted after false-positive rate reached ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}%`,
+      reason: `auto-demoted (${riskLevel} risk): FP rate ${Math.round((metrics.falsePositiveRate ?? 0) * 100)}% reached threshold ${Math.round(demoteFpRate * 100)}% over ${demoteMinSamples}+ activations`,
     };
   }
   if (currentState === "experimental" && flags.promotionCandidate) {
@@ -654,7 +678,12 @@ export function refreshGeneratedSkillLifecycleState(
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
   returnMetrics: true,
-): { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } | null;
+): {
+  proc: ProcedureEntry;
+  metrics: GeneratedSkillTelemetryMetrics;
+  flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
+} | null;
 export function refreshGeneratedSkillLifecycleState(
   db: DatabaseSync,
   skillName: string,
@@ -663,21 +692,26 @@ export function refreshGeneratedSkillLifecycleState(
   returnMetrics = false,
 ):
   | ProcedureEntry
-  | { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+  | {
+      proc: ProcedureEntry;
+      metrics: GeneratedSkillTelemetryMetrics;
+      flags: GeneratedSkillTelemetryFlags;
+      riskLevel: "low" | "medium" | "high";
+    }
   | null {
   const proc = findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
   const canonicalSkillName = skillPathBasename(proc.skillPath);
   const activations = skillTelemetryEntries(db, canonicalSkillName);
-  const { metrics, flags } = summarizeSkillTelemetry(proc, activations, policy, now);
+  const { metrics, flags, riskLevel } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
-  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy);
+  const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, riskLevel);
   const updatedProc =
     transition == null
       ? proc
       : (setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now) ?? proc);
   if (returnMetrics) {
-    return { proc: updatedProc, metrics, flags };
+    return { proc: updatedProc, metrics, flags, riskLevel };
   }
   return updatedProc;
 }
@@ -703,7 +737,12 @@ export function buildGeneratedSkillTelemetryReport(
   });
   const refreshResults = new Map<
     string,
-    { proc: ProcedureEntry; metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags }
+    {
+      proc: ProcedureEntry;
+      metrics: GeneratedSkillTelemetryMetrics;
+      flags: GeneratedSkillTelemetryFlags;
+      riskLevel: "low" | "medium" | "high";
+    }
   >();
   for (const proc of procedures) {
     if (proc.skillPath) {
@@ -722,14 +761,17 @@ export function buildGeneratedSkillTelemetryReport(
       const cachedResult = refreshResults.get(skillName);
       let metrics: GeneratedSkillTelemetryMetrics;
       let flags: GeneratedSkillTelemetryFlags;
+      let riskLevel: "low" | "medium" | "high";
       if (cachedResult) {
         metrics = cachedResult.metrics;
         flags = cachedResult.flags;
+        riskLevel = cachedResult.riskLevel;
       } else {
         const activations = skillTelemetryEntries(db, skillName);
         const summary = summarizeSkillTelemetry(proc, activations, policy, now);
         metrics = summary.metrics;
         flags = summary.flags;
+        riskLevel = summary.riskLevel;
       }
       const currentState = proc.skillState ?? "experimental";
 
@@ -762,6 +804,7 @@ export function buildGeneratedSkillTelemetryReport(
         skillName,
         skillPath: proc.skillPath ?? skillName,
         skillVersion: proc.skillVersion ?? 1,
+        riskLevel,
         state: currentState,
         stateReason: proc.skillStateReason ?? null,
         generatedAt: proc.skillGeneratedAt ?? proc.promotedAt ?? null,
