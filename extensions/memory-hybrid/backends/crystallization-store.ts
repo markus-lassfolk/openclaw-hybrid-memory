@@ -701,7 +701,6 @@ export class CrystallizationStore extends BaseSqliteStore {
       }
       if (status) {
         const statuses = this.expandStatusFilter(status as CrystallizationStatusFilter);
-        if (!statuses || statuses.length === 0) return 0;
         const row = this.liveDb
           .prepare(
             `SELECT COUNT(*) as n FROM crystallization_proposals WHERE status IN (${statuses.map(() => "?").join(",")})`,
