@@ -534,9 +534,7 @@ ${proposal.skillContent}`;
 
   private trySupersedeOlderInstalls(patternId: string, supersededBy: string): void {
     try {
-      const existing = this.crystallizationStore
-        .list({ skillName: undefined, limit: 50 })
-        .filter((p) => p.patternId === patternId);
+      const existing = this.crystallizationStore.listByPatternId(patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
         if (p.status === "installed" || p.status === "approved") {
@@ -558,17 +556,12 @@ const MAX_YAML_VALUE_SCAN_LINES = 512;
 
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
 export function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
-  let body = skillContent;
-  let prefix = "";
-  const commentMatch = body.match(/^<!--[\s\S]*?-->\s*\r?\n*/);
-  if (commentMatch) {
-    prefix = commentMatch[0];
-    body = body.slice(commentMatch[0].length);
-  }
+  const body = stripLeadingHtmlComments(skillContent);
+  const prefix = skillContent.slice(0, skillContent.length - body.length);
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
   const inner = m[1]!;
-  const innerLineBreak = m[0].includes("\r\n") ? "\r\n" : "\n";
+  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : "\n";
   const lines = inner.split(/\r?\n/);
   const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
   let keyIdx = -1;

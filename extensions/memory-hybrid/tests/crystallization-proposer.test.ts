@@ -290,6 +290,58 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(body).toContain("openclaw:skill-proposal");
   });
 
+  it("supersedes an older installed proposal for the same pattern without depending on global list order", () => {
+    const outputDir = join(tmpDir, "skills");
+    const cfg: CrystallizationConfig = {
+      ...BASE_CFG,
+      outputDir,
+      maxCrystallized: 200,
+      autoApprove: false,
+    };
+    const adequate = "This is a test skill file with adequate content for validation purposes.";
+    const oldP = cStore.create({
+      patternId: "p-shared-target",
+      evidenceHash: "ev-old",
+      skillName: "shared-target-v1",
+      skillContent: `# shared-target-v1\n\n${adequate}`,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    cStore.approve(oldP.id);
+    cStore.install(oldP.id, join(outputDir, "shared-target-v1", "SKILL.md"));
+
+    for (let i = 0; i < 60; i++) {
+      cStore.create({
+        patternId: `noise-pattern-${i}`,
+        evidenceHash: `noise-ev-${i}`,
+        skillName: `noise-skill-${i}`,
+        skillContent: "#c\n",
+        patternSnapshot: "{}",
+        status: "rejected",
+      });
+    }
+
+    const newP = cStore.create({
+      patternId: "p-shared-target",
+      evidenceHash: "ev-new",
+      skillName: "shared-target-v2",
+      skillContent: `# shared-target-v2\n\n${adequate}`,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    let result = proposer.approveProposal(newP.id);
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(newP.id, { overrideWarnings: true });
+    }
+    expect(result.success).toBe(true);
+
+    // Regression target: superseding must use the pattern-scoped scan instead of
+    // depending on whether unrelated rows push the old proposal out of a global list window.
+    expect(cStore.getById(oldP.id)?.status).toBe("superseded");
+    expect(cStore.getById(newP.id)?.status).toBe("installed");
+  });
   it("returns success=false when maxCrystallized is 0", () => {
     // Manually create a pending proposal
     const proposal = cStore.create({
