@@ -10,7 +10,7 @@ import { registerSkillsCommands } from "../cli/skills.js";
 import { CATEGORY_SECTION_TAXONOMIES } from "../config/skill-sections.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
-import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
+import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
 import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
 import { crystallize } from "../services/skill-crystallizer.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
