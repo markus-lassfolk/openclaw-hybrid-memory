@@ -716,6 +716,7 @@ Bounded CLI release-health review workflow.
       const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean; outputPath?: string };
       expect(output.ok).toBe(true);
       expect(output.outputPath).toBeDefined();
+      if (!output.outputPath) throw new Error("expected outputPath from skills install");
       expect(existsSync(output.outputPath)).toBe(true);
     } finally {
       cStore.close();
