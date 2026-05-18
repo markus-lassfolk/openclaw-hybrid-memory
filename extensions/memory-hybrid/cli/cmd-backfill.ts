@@ -366,7 +366,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       scannedSessions++;
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
-      if (!firstSessionParseError) firstSessionParseError = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err);
+      if (!firstSessionParseError) firstSessionParseError = `Failed to parse session file ${fp}: ${message}`;
     }
   }
   if (firstSessionParseError) {
@@ -374,7 +375,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       reinforcement: [],
       correction: [],
       sessionsScanned: scannedSessions,
-      error: firstSessionParseError,
+      error: `${firstSessionParseError}; discarded extracted messages from ${scannedSessions} successfully scanned session file(s).`,
     };
   }
   const unmatched = allTexts.filter((text) => {
