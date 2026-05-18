@@ -46,7 +46,8 @@ import { resolveTierPreferenceWithSources } from "../../utils/llm-selection.js";
 import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../../utils/logger.js";
 import { versionInfo } from "../../versionInfo.js";
 
-import { createHybridMemCliContext, buildCliContextServices } from "./cli-services.js";
+import { buildCliContextServices } from "./cli-services.js";
+import { createHybridMemCliContext } from "./register-help.js";
 import type { RegisterHybridMemCliWithApiOptions } from "./register-full.js";
 export function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },

@@ -47,11 +47,8 @@ import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../../uti
 import { versionInfo } from "../../versionInfo.js";
 
 import { HYBRID_MEM_CLI_ROOT_DESCRIPTOR } from "./help-text.js";
-import {
-  buildCliContextServices,
-  createHybridMemCliContext,
-  type HybridMemCliRegistrationContext,
-} from "./cli-services.js";
+import { buildCliContextServices, type HybridMemCliRegistrationContext } from "./cli-services.js";
+import { createHybridMemCliContext } from "./register-help.js";
 import { registerCliWithHelp } from "./register-cli-with-help.js";
 export type RegisterHybridMemCliWithApiOptions = {
   /**

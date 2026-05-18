@@ -154,7 +154,7 @@ export interface HybridMemCliRegistrationContext {
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
-function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
+export function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
   const {
     factsDb,
     vectorDb,

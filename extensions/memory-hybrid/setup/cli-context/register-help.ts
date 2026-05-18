@@ -47,7 +47,7 @@ import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../../uti
 import { versionInfo } from "../../versionInfo.js";
 
 import { HYBRID_MEM_CLI_ROOT_DESCRIPTOR } from "./help-text.js";
-import { buildCliContextServices, createHybridMemCliContext } from "./cli-services.js";
+import { buildCliContextServices } from "./cli-services.js";
 import { registerCliWithHelp } from "./register-cli-with-help.js";
 /**
  * Help-only CLI wiring for `openclaw hybrid-mem --help` (and subcommand help).
@@ -507,7 +507,7 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
  * Build the full CLI context passed to registerHybridMemCli.
  * Uses handlers from cli/handlers.ts and services for reflection/consolidation/export etc.
  */
-function createHybridMemCliContext(
+export function createHybridMemCliContext(
   handlerCtx: HandlerContext,
   api: ClawdbotPluginApi,
   services: CliContextServices,
