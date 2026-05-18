@@ -35,7 +35,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import { CrystallizationProposer, patchOpeningYamlField } from "../services/crystallization-proposer.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -342,7 +342,6 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(cStore.getById(oldP.id)?.status).toBe("superseded");
     expect(cStore.getById(newP.id)?.status).toBe("installed");
   });
-
   it("returns success=false when maxCrystallized is 0", () => {
     // Manually create a pending proposal
     const proposal = cStore.create({
@@ -407,5 +406,332 @@ describe("CrystallizationProposer.rejectProposal", () => {
     const result = proposer.rejectProposal(proposal.id);
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not rejectable|not pending/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// patchOpeningYamlField — multiline YAML (Issue #1427)
+// ---------------------------------------------------------------------------
+
+describe("patchOpeningYamlField", () => {
+  it("replaces a literal block scalar (|) through the next top-level key", () => {
+    const src = `---
+description: |
+  line one
+  line two
+category: keep-me
+---
+
+# Title
+`;
+    const out = patchOpeningYamlField(src, "description", "short");
+    expect(out).toMatch(/description: short\r?\n/);
+    expect(out).not.toContain("line one");
+    expect(out).toContain("category: keep-me");
+  });
+
+  it("replaces a folded block scalar (>) through the next top-level key", () => {
+    const src = `---
+notes: >
+  folded a
+  folded b
+name: keep-name
+---
+`;
+    const out = patchOpeningYamlField(src, "notes", "x");
+    expect(out).toMatch(/notes: x\r?\n/);
+    expect(out).not.toContain("folded a");
+    expect(out).toContain("name: keep-name");
+  });
+
+  it("replaces plain multiline values with indented continuation lines", () => {
+    const src = `---
+title: first line
+  second line
+category: cat
+---
+`;
+    const out = patchOpeningYamlField(src, "title", "single");
+    expect(out).toMatch(/title: single\r?\n/);
+    expect(out).not.toContain("second line");
+    expect(out).toContain("category: cat");
+  });
+
+  it("preserves CRLF inside frontmatter when present", () => {
+    const src = "---\r\ndescription: |\r\n  a\r\n  b\r\ncategory: z\r\n---\r\n\r\n# x\r\n";
+    const out = patchOpeningYamlField(src, "description", "n");
+    expect(out).toContain("\r\n");
+    expect(out).toMatch(/description: n\r\n/);
+    expect(out).not.toContain("  a");
+    expect(out).toContain("category: z");
+  });
+
+  it("preserves CRLF in single-key frontmatter", () => {
+    const src = "---\r\nname: foo\r\n---\r\n\r\n# x\r\n";
+    const out = patchOpeningYamlField(src, "name", "bar");
+    expect(out).toBe("---\r\nname: bar\r\n---\r\n\r\n# x\r\n");
+    // Verify all line endings are CRLF, not just LF
+    const linesWithCrlf = out.split("\r\n");
+    expect(linesWithCrlf).toHaveLength(6);
+    // Ensure no standalone LF (would indicate mixed line endings)
+    expect(out.replace(/\r\n/g, "X").includes("\n")).toBe(false);
+  });
+
+  it("stops block scalar replacement at a top-level key with no inline value", () => {
+    const src = `---
+description: |
+  line one
+  line two
+tags:
+  - keep-me
+category: keep-category
+---
+`;
+    const out = patchOpeningYamlField(src, "description", "short");
+    expect(out).toMatch(/description: short\r?\n/);
+    expect(out).not.toContain("line one");
+    expect(out).toContain("tags:");
+    expect(out).toContain("  - keep-me");
+    expect(out).toContain("category: keep-category");
+  });
+
+  it("recognizes combined YAML block scalar indicators", () => {
+    const src = `---
+description: |2-
+    indented line
+
+category: keep-category
+---
+`;
+    const out = patchOpeningYamlField(src, "description", "short");
+    expect(out).toBe(`---
+description: short
+category: keep-category
+---
+`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// approveProposal — H1 override when renaming (Issue #1427)
+// ---------------------------------------------------------------------------
+
+const MINIMAL_VALID_SKILL_SECTIONS = `## Trigger
+
+Positive: user asks to run a minimal workflow for deployment tasks without explain-only fluff.
+
+## Scope
+
+Covers only scripted steps described in workflow.
+
+## When not to use
+
+Avoid when credentials or secrets appear in goals.
+
+## Workflow
+
+First gather context then apply changes safely.
+
+## Examples
+
+- Good: user says, "Run the deployment checklist for this release and report the command output."
+
+## Provenance
+
+Synthetic fixture for crystallization proposer tests.`;
+
+function skillFixture(skillName: string, h1Title: string, lineBreak = "\n"): string {
+  return `---
+name: ${skillName}
+description: Short description for validation.
+category: testing
+source_pattern_id: p-h1
+---
+
+# ${h1Title}
+
+${MINIMAL_VALID_SKILL_SECTIONS}
+## Verification
+
+Run this workflow in a temporary workspace and confirm expected output.
+
+## Anti-patterns / Known Failures
+
+Do not run it for unrelated explain-only prompts.
+`.replace(/\n/g, lineBreak);
+}
+
+describe("CrystallizationProposer.approveProposal — custom H1 on rename", () => {
+  it("replaces the first body H1 when it differs from the proposal skill name", () => {
+    const outputDir = join(tmpDir, "skills-h1");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, maxCrystallized: 50 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const proposal = cStore.create({
+      patternId: "p-h1",
+      evidenceHash: "ev-h1",
+      skillName: "orig-skill-name",
+      skillContent: skillFixture("orig-skill-name", "Custom Human Title"),
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let result = proposer.approveProposal(proposal.id, { name: "renamed-h1-skill" });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(proposal.id, { name: "renamed-h1-skill", overrideWarnings: true });
+    }
+    expect(result.success, result.message).toBe(true);
+    const written = readFileSync(result.outputPath!, "utf-8");
+    expect(written).toMatch(/^#\s+renamed-h1-skill\s*$/m);
+    expect(written).not.toContain("# Custom Human Title");
+    expect(written).toMatch(/name:\s*renamed-h1-skill/);
+  });
+
+  it("preserves CRLF line endings when replacing the body H1", () => {
+    const outputDir = join(tmpDir, "skills-h1-crlf");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, maxCrystallized: 50 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const proposal = cStore.create({
+      patternId: "p-h1-crlf",
+      evidenceHash: "ev-h1-crlf",
+      skillName: "orig-crlf-skill",
+      skillContent: skillFixture("orig-crlf-skill", "Custom Human Title", "\r\n"),
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    let result = proposer.approveProposal(proposal.id, { name: "renamed-crlf-skill" });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(proposal.id, { name: "renamed-crlf-skill", overrideWarnings: true });
+    }
+    expect(result.success, result.message).toBe(true);
+    const written = readFileSync(result.outputPath!, "utf-8");
+    const h1Index = written.indexOf("# renamed-crlf-skill");
+    expect(h1Index).toBeGreaterThanOrEqual(0);
+    expect(written.slice(h1Index, h1Index + "# renamed-crlf-skill\r\n".length)).toBe("# renamed-crlf-skill\r\n");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLegacyMarkdownCrystallizationProposal — HTML comment prefix (Issue #1362)
+// ---------------------------------------------------------------------------
+
+describe("CrystallizationProposer — legacy detection with HTML comment prefix", () => {
+  const FULL_SKILL_CONTENT = `---
+name: html-prefix-skill
+description: Use when the user asks to validate HTML-prefixed skills.
+category: crystallized-workflow
+provenance: test-suite
+---
+
+# Html-Prefix-Skill
+
+## Trigger
+Use this skill when the user asks to validate HTML-prefixed skills.
+
+## Scope
+Bounded HTML prefix validation workflow.
+
+## When not to use
+- Do not use for unrelated tasks.
+
+## Workflow
+1. Inspect the HTML comment prefix.
+2. Validate the YAML frontmatter.
+
+## Verification
+- Confirm frontmatter fields are correctly parsed.
+
+## Anti-patterns / Known Failures
+- Do not treat injected metadata comments as content.
+
+## Examples
+- Validate an HTML-prefixed crystallized skill for correct frontmatter parsing.
+
+## Provenance
+- Source pattern ID: \`html-prefix-pattern\`
+`;
+
+  it("does not treat an HTML-prefixed YAML-frontmatter skill as legacy (approves successfully)", () => {
+    const outputDir = join(tmpDir, "html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const htmlComment = `<!-- openclaw:skill-proposal id=test-id pattern_id=html-prefix-pattern evidence_hash=ev-html output_path=${outputDir}/html-prefix-skill/SKILL.md -->`;
+    const contentWithHtmlPrefix = `\uFEFF\n\t\n${htmlComment}\n${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id);
+    expect(result.success).toBe(true);
+    expect(result.outputPath).toBeDefined();
+
+    // Verify the stored validation result is not the legacy bypass.
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("does not treat skills with multiple leading HTML comments as legacy", () => {
+    const outputDir = join(tmpDir, "multi-html-prefix-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const contentWithHtmlPrefix = `<!-- first metadata wrapper -->
+<!-- second metadata wrapper -->
+${FULL_SKILL_CONTENT}`;
+
+    const proposal = cStore.create({
+      patternId: "html-prefix-pattern",
+      evidenceHash: "ev-html-multiple",
+      skillName: "html-prefix-skill",
+      skillContent: contentWithHtmlPrefix,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id, { overrideWarnings: true });
+    expect(result.success).toBe(true);
+
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.every((n: string) => !n.includes("legacy crystallization"))).toBe(true);
+  });
+
+  it("still treats a plain markdown skill without frontmatter as legacy", () => {
+    const outputDir = join(tmpDir, "legacy-markdown-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, autoApprove: false };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    const legacyContent = `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`;
+
+    const proposal = cStore.create({
+      patternId: "legacy-pattern",
+      evidenceHash: "ev-legacy",
+      skillName: "legacy-skill",
+      skillContent: legacyContent,
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const result = proposer.approveProposal(proposal.id);
+    // Legacy proposals without frontmatter are approved via the legacy bypass path.
+    expect(result.success).toBe(true);
+    const stored = cStore.getById(proposal.id);
+    const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
+    expect(activationNotes.some((n: string) => n.includes("legacy crystallization"))).toBe(true);
   });
 });
