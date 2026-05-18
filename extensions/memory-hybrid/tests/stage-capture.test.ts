@@ -1,6 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runCaptureStage } from "../lifecycle/stage-capture.js";
 import type { LifecycleContext, SessionState } from "../lifecycle/types.js";
+
+// ---------------------------------------------------------------------------
+// Mock atomicWriteFile so credential auto-detect tests don't touch the FS.
+// ---------------------------------------------------------------------------
+
+const atomicWriteFileMock = vi.fn();
+
+vi.mock("../utils/atomic-write.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/atomic-write.js")>();
+  return {
+    ...actual,
+    atomicWriteFile: (...args: Parameters<typeof actual.atomicWriteFile>) => atomicWriteFileMock(...args),
+  };
+});
+
+// ---------------------------------------------------------------------------
+// Mock detectCredentialPatterns so we can inject patterns without real content.
+// ---------------------------------------------------------------------------
+
+const detectCredentialPatternsMock = vi.fn().mockReturnValue([]);
+
+vi.mock("../services/auto-capture.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/auto-capture.js")>();
+  return {
+    ...actual,
+    detectCredentialPatterns: (...args: Parameters<typeof actual.detectCredentialPatterns>) =>
+      detectCredentialPatternsMock(...args),
+  };
+});
 
 function makeApi(messageChannel?: string) {
   return {
@@ -83,6 +112,11 @@ function makeSessionState(): SessionState {
 }
 
 describe("runCaptureStage", () => {
+  beforeEach(() => {
+    atomicWriteFileMock.mockReset();
+    detectCredentialPatternsMock.mockReturnValue([]);
+  });
+
   it("skips auto-capture for cron/system sessions", async () => {
     const api = makeApi("system");
     const { ctx, store } = makeContext();
@@ -128,5 +162,114 @@ describe("runCaptureStage", () => {
         extractionConfidence: 1,
       }),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Credential auto-detect: atomicity of pendingPath write (Issue #1498).
+  // -------------------------------------------------------------------------
+
+  it("writes credential hints atomically via atomicWriteFile when patterns are detected", async () => {
+    detectCredentialPatternsMock.mockReturnValue([{ hint: "OPENAI_API_KEY" }, { hint: "GITHUB_TOKEN" }]);
+
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoDetect: true },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [{ role: "assistant", content: "Here is your key: sk-abc123" }],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(atomicWriteFileMock).toHaveBeenCalledOnce();
+    const [calledPath, calledContent] = atomicWriteFileMock.mock.calls[0] as [string, string];
+    expect(calledPath).toMatch(/credentials-pending\.json$/);
+    const parsed = JSON.parse(calledContent) as { hints: string[]; at: number };
+    expect(parsed.hints).toEqual(["OPENAI_API_KEY", "GITHUB_TOKEN"]);
+    expect(typeof parsed.at).toBe("number");
+    expect(api.logger.info).toHaveBeenCalledWith(expect.stringContaining("credential patterns detected"));
+  });
+
+  it("does not call atomicWriteFile when no credential patterns are detected", async () => {
+    detectCredentialPatternsMock.mockReturnValue([]);
+
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoDetect: true },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [{ role: "assistant", content: "No secrets here." }],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(atomicWriteFileMock).not.toHaveBeenCalled();
+  });
+
+  it("catches and logs atomicWriteFile failures without crashing the stage", async () => {
+    detectCredentialPatternsMock.mockReturnValue([{ hint: "SECRET_TOKEN" }]);
+    atomicWriteFileMock.mockImplementation(() => {
+      throw new Error("simulated write failure");
+    });
+
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoDetect: true },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    // Must not throw — error is absorbed by the try/catch in stage-capture.
+    await expect(
+      runCaptureStage(
+        {
+          success: true,
+          messages: [{ role: "assistant", content: "sk-secret-value" }],
+        },
+        api as never,
+        ctx,
+        sessionState,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("credential auto-detect failed"));
   });
 });
