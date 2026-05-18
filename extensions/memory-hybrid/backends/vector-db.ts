@@ -1591,6 +1591,7 @@ export class VectorDB {
       if (!this.lanceDbAvailable && this.lanceInitFailed) return false;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
+      // Same early-exit as search(): schema was already reported invalid at startup.
       if (!this.schemaValid) return false;
       // Dimension pre-check: silently return false (no duplicate) if the query vector
       // dim doesn't match the table dim. Prevents LanceDB "No vector column found to

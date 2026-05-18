@@ -859,12 +859,9 @@ describe("VectorDB init-timeout recovery (issue #1495)", () => {
 
   it("permanent connect failure (lanceInitFailed=true) skips ensureInitialized()", async () => {
     const db = new VectorDB("/tmp/test-lance-perm-fail", DIM);
-    const internals = db as unknown as {
-      lanceDbAvailable: boolean;
-      lanceInitFailed: boolean;
-    };
-    internals.lanceDbAvailable = false;
-    internals.lanceInitFailed = true;
+    // Simulate a permanent connect failure: lanceDbAvailable=false, lanceInitFailed=true.
+    setTimeoutDegradedState(db);
+    (db as unknown as { lanceInitFailed: boolean }).lanceInitFailed = true;
 
     const ensureSpy = vi
       .spyOn(db as unknown as { ensureInitialized: () => Promise<void> }, "ensureInitialized")
