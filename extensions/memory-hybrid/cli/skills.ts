@@ -416,7 +416,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
             `- ${row.skillName} state=${row.state} activations/week=${row.metrics.activationCountPerWeek} near-miss=${row.metrics.nearMissCount} false+=${row.metrics.falsePositiveSignals} false-=${row.metrics.falseNegativeSignals} lastUsed=${row.metrics.lastUsedAt ? relativeTime(row.metrics.lastUsedAt * 1000) : "never"} recommendation=${row.recommendation}`,
           );
           console.log(
-            `  outcomes: success=${formatRate(row.metrics.successRate)} failure=${formatRate(row.metrics.failureRate)} partial=${formatRate(row.metrics.partialRate)} corrections=${row.metrics.repeatedCorrectionCount} generatedAt=${formatIso(row.generatedAt)}`,
+            `  outcomes: success=${formatRate(row.metrics.successRate)} failure=${formatRate(row.metrics.failureRate)} partial=${formatRate(row.metrics.partialRate)} userCorrections=${row.metrics.correctionCount} repeatedRequestCorrections=${row.metrics.repeatedCorrectionCount} generatedAt=${formatIso(row.generatedAt)}`,
           );
           if (row.stateReason) console.log(`  stateReason: ${row.stateReason}`);
           if (row.flags.overTriggering || row.flags.archiveCandidate || row.flags.revisionCandidate) {
@@ -446,9 +446,16 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--request-summary <summary>", "Redacted request summary")
     .option("--request-hash <hash>", "Optional request hash override")
     .option("--confidence <value>", "Selection confidence (0-1)")
-    .option("--reason <reason>", "Why the skill was selected or skipped")
+    .option(
+      "--reason <reason>",
+      "Why the skill was selected or skipped (or correction explanation when using --user-correction)",
+    )
     .option("--outcome <outcome>", "success, failure, partial, or unknown")
-    .option("--false-positive", "Mark this activation as immediately corrected/rejected")
+    .option(
+      "--false-positive",
+      "Operator false-positive signal (sets caused rework; does not record a user correction)",
+    )
+    .option("--user-correction", "Explicit user correction (requires non-empty --reason as correction explanation)")
     .option("--false-negative", "Mark this near-miss as a false-negative signal")
     .option("--caused-rework", "Mark this activation as having caused rework")
     .option("--saved-tool-calls <n>", "Estimate tool calls saved")
@@ -470,6 +477,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
             reason?: string;
             outcome?: string;
             falsePositive?: boolean;
+            userCorrection?: boolean;
             falseNegative?: boolean;
             causedRework?: boolean;
             savedToolCalls?: string;
@@ -522,6 +530,17 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
             process.exitCode = 1;
             return;
           }
+          const userCorrection = opts?.userCorrection === true;
+          const operatorFalsePositive = opts?.falsePositive === true;
+          if (userCorrection) {
+            const r = (opts?.reason ?? "").trim();
+            if (!r) {
+              console.error("error: --user-correction requires a non-empty --reason (correction explanation)");
+              process.exitCode = 1;
+              return;
+            }
+          }
+          const causedRework = opts?.causedRework === true || operatorFalsePositive;
           try {
             const activation = lifecycle.recordTelemetry({
               skillName,
@@ -529,12 +548,12 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
               requestSummary: opts?.requestSummary,
               requestHash: opts?.requestHash,
               confidence,
-              reason: opts?.reason,
+              reason: userCorrection ? undefined : opts?.reason,
               taskOutcome: outcome as "success" | "failure" | "partial" | "unknown" | undefined,
-              userCorrection: opts?.falsePositive,
-              correctionReason: opts?.falsePositive ? (opts.reason ?? "user rejected skill") : undefined,
+              userCorrection,
+              correctionReason: userCorrection ? opts?.reason?.trim() : undefined,
               falseNegativeSignal: opts?.falseNegative,
-              causedRework: opts?.causedRework,
+              causedRework,
               savedToolCalls,
               savedTimeMs,
               scope: opts?.scope as "global" | "user" | "agent" | "session" | undefined,

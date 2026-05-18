@@ -628,16 +628,16 @@ export class CrystallizationStore extends BaseSqliteStore {
   }
 
   /** Mark an installed proposal as quarantined (failed re-validation of on-disk SKILL.md). */
-  quarantine(id: string, reason: string): CrystallizationProposal | null {
+  quarantine(id: string, reason?: string): CrystallizationProposal | null {
     return this.runWithDb("quarantine", () => {
       const now = new Date().toISOString();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
-         SET status = 'quarantined', rejection_reason = ?, updated_at = ?
-         WHERE id = ? AND status = 'installed'`,
+           SET status = 'quarantined', rejection_reason = ?, updated_at = ?
+           WHERE id = ? AND status = 'installed'`,
         )
-        .run(reason, now, id);
+        .run(reason ?? null, now, id);
       if (result.changes === 0) return null;
       return this.getByIdInternal(id);
     });
