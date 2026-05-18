@@ -8,3 +8,4 @@ export function isHybridMemHelpInvocation(argv: string[]): boolean {
     if (a === "--help" || a === "-h") return true;
   }
   return false;
+}
