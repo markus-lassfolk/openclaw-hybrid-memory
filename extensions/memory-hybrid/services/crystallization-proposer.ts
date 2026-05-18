@@ -9,6 +9,7 @@ import { getEnv } from "../utils/env-manager.js";
  * When autoApprove=true the proposer immediately writes the skill to disk.
  */
 
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { atomicWriteFile } from "../utils/atomic-write.js";
@@ -27,6 +28,28 @@ import { detectCandidates } from "./pattern-detector.js";
 import { crystallize } from "./skill-crystallizer.js";
 import { buildNonPlaceholderEmailPattern } from "./skill-validator.js";
 
+/** When renaming, replace the first Markdown ATX H1 in the body (after frontmatter), if any. */
+function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: string): string {
+  const stripped = stripLeadingHtmlComments(skillContent);
+  const head = skillContent.slice(0, skillContent.length - stripped.length);
+  let body = stripped;
+  let prefix = head;
+  const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (fmMatch) {
+    const frontmatter = fmMatch[0];
+    prefix += frontmatter;
+    body = body.slice(frontmatter.length);
+  }
+  const leadingNewlineMatch = body.match(/^\r?\n/);
+  const leadingNewline = leadingNewlineMatch ? leadingNewlineMatch[0] : "";
+  body = body.replace(/^\r?\n/, "");
+  const h1Line = /^(#[ \t]+(?!#)\S[^\r\n]*)(\r?)$/m;
+  if (!h1Line.test(body)) {
+    return skillContent;
+  }
+  return prefix + leadingNewline + body.replace(h1Line, (_match, _oldLine: string, cr: string) => `# ${newTitle}${cr}`);
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -41,6 +64,14 @@ interface ApproveResult {
   success: boolean;
   outputPath?: string;
   message: string;
+}
+
+export interface RescanInstalledSkillsResult {
+  scanned: number;
+  quarantined: number;
+  skipped: number;
+  errors: string[];
+  messages: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +445,71 @@ export class CrystallizationProposer {
     return { success: true, message: `Proposal '${proposalId}' rejected` };
   }
 
+  /**
+   * Re-validate on-disk SKILL.md for every installed proposal (operator / cron hygiene).
+   * Persists validation via {@link CrystallizationStore.saveValidationResult}; on `deny`, sets status `quarantined`.
+   */
+  rescanInstalledSkills(): RescanInstalledSkillsResult {
+    const installed = this.crystallizationStore.list({ status: "installed", limit: 500 });
+    let scanned = 0;
+    let quarantined = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const messages: string[] = [];
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+
+    for (const proposal of installed) {
+      if (!proposal.outputPath?.trim()) {
+        skipped++;
+        messages.push(`Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
+        continue;
+      }
+      let skillContent: string;
+      try {
+        skillContent = readFileSync(proposal.outputPath, "utf-8");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${proposal.id}: read failed — ${msg}`);
+        continue;
+      }
+
+      scanned++;
+      try {
+        const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+        const legacy = isLegacyMarkdownCrystallizationProposal(skillContent);
+        const validation = this.validator.validate(
+          {
+            outputDir,
+            proposedOutputPath: proposal.outputPath,
+            skillName: proposal.skillName,
+            skillContent,
+            pattern,
+          },
+          { legacyQueuedCrystallization: legacy },
+        );
+        this.crystallizationStore.saveValidationResult(proposal.id, validation);
+        if (validation.approvalDecision === "deny") {
+          const detail = detailSkillProposalValidation(validation);
+          const reason = `stale validation: ${detail}`;
+          const updated = this.crystallizationStore.quarantine(proposal.id, reason);
+          if (updated) {
+            quarantined++;
+            messages.push(`Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+          } else {
+            errors.push(`${proposal.id}: quarantine update failed`);
+          }
+        } else {
+          messages.push(`OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${proposal.id}: validate failed — ${msg}`);
+      }
+    }
+
+    return { scanned, quarantined, skipped, errors, messages };
+  }
+
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
@@ -533,7 +629,7 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
   const inner = m[1]!;
-  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : "\n";
+  const innerLineBreak = m[0].includes("\r\n") ? "\r\n" : "\n";
   const lines = inner.split(/\r?\n/);
   const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
   let keyIdx = -1;
@@ -557,41 +653,41 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
   return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, newBlock);
 }
 
-/** When renaming, replace the first Markdown ATX H1 in the body (after frontmatter), if any. */
-function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: string): string {
-  let body = stripLeadingHtmlComments(skillContent);
-  const commentsLength = skillContent.length - body.length;
-  let head = skillContent.slice(0, commentsLength);
-  const fmMatch = body.match(/^---\r?\n[\s\S]*?\r?\n---/);
-  if (fmMatch) {
-    head += fmMatch[0];
-    body = body.slice(fmMatch[0].length);
-  }
-  const h1Line = /^#\s+(?!#)\S.*$/m;
-  if (!h1Line.test(body)) {
-    return skillContent;
-  }
-  return head + body.replace(h1Line, `# ${newTitle}`);
-}
-
 function formatYamlFrontmatterScalar(value: string): string {
   if (value === "") return '""';
-  if (/^[\w.-]+$/.test(value)) {
-    const lower = value.toLowerCase();
-    if (
-      lower === "true" ||
-      lower === "false" ||
-      lower === "null" ||
-      lower === "yes" ||
-      lower === "no" ||
-      lower === "on" ||
-      lower === "off" ||
-      /^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/.test(value)
-    ) {
-      return JSON.stringify(value);
-    }
-    return value;
+
+  // YAML 1.1 reserved words that must be quoted to be treated as strings
+  const yamlReservedWords = new Set([
+    "true",
+    "false",
+    "True",
+    "False",
+    "TRUE",
+    "FALSE",
+    "yes",
+    "no",
+    "Yes",
+    "No",
+    "YES",
+    "NO",
+    "on",
+    "off",
+    "On",
+    "Off",
+    "ON",
+    "OFF",
+    "null",
+    "Null",
+    "NULL",
+    "~",
+  ]);
+
+  // Check if value is a reserved word or looks like a number
+  if (yamlReservedWords.has(value) || /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(value)) {
+    return JSON.stringify(value);
   }
+
+  if (/^[\w.-]+$/.test(value)) return value;
   return JSON.stringify(value);
 }
 
@@ -608,7 +704,7 @@ function stripInlineYamlTrailingComment(fragment: string): string {
 }
 
 function isTopLevelYamlKeyLine(line: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)/.test(line);
+  return /^[A-Za-z_][A-Za-z0-9_-]*:(?:\s|$)/.test(line);
 }
 
 function leadingIndentLen(line: string): number {
@@ -625,7 +721,7 @@ function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe:
   const blockHdr = trimmed.match(/^([|>])(.*)$/);
   if (blockHdr) {
     const afterMarker = (blockHdr[2] ?? "").trim();
-    if (/^([-+]|[1-9][0-9]*)?$/.test(afterMarker)) {
+    if (/^(?:[-+]?([1-9][0-9]*)?|([1-9][0-9]*)?[-+]?)$/.test(afterMarker)) {
       let j = startIdx + 1;
       while (j < lines.length && j - startIdx < MAX_YAML_VALUE_SCAN_LINES) {
         if (isTopLevelYamlKeyLine(lines[j]!)) break;
