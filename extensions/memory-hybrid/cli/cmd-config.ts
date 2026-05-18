@@ -335,10 +335,10 @@ export function runConfigViewForCli(
     const extractionModel =
       extractionResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), extractionTier);
     log(`  extract-reinforcement: distill.extractionModelTier=${extractionTier} (primary=${extractionModel})`);
-    log(`  extract-directives: regex only (no LLM)`);
+    log("  extract-directives: regex only (no LLM)");
     const reflectResolved = resolveReflectionModelAndFallbacks(cfg, "default");
     log(`  reflect/reflect-rules/reflect-meta: llm.default (primary=${reflectResolved.defaultModel})`);
-    log(`  dream-cycle: llm.default (or nightlyCycle.model override)`);
+    log("  dream-cycle: llm.default (or nightlyCycle.model override)");
     const selfCorrectionResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
     const selfCorrectionModel =
       selfCorrectionResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");

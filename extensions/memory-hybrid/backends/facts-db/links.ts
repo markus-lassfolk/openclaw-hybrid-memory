@@ -167,7 +167,7 @@ export function getConnectedFactIds(
   let denormDegreeStmt: ReturnType<DatabaseSync["prepare"]> | null = null;
   try {
     denormDegreeStmt = db.prepare(
-      `SELECT COALESCE(out_degree, 0) + COALESCE(in_degree, 0) AS degree FROM facts WHERE id = ? LIMIT 1`,
+      "SELECT COALESCE(out_degree, 0) + COALESCE(in_degree, 0) AS degree FROM facts WHERE id = ? LIMIT 1",
     );
   } catch {
     denormDegreeStmt = null;

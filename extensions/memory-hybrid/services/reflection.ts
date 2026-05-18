@@ -361,9 +361,7 @@ export async function loadReflectionDedupeCorpusVectors(
       if (shouldLog) {
         lastProgressAt = Date.now();
         logger.info(
-          `${logPrefix} — dedupe corpus progress: batch ${batchNumber}/${Math.max(1, totalBatches)}, ${processed}/${effectiveFacts.length} processed, ${remainingSlice} remaining this run` +
-            (capDeferred > 0 ? ` (${capDeferred} row(s) capped for next run)` : "") +
-            `; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, 429s=${total429s}, throttle=${throttleDelayMs}ms, non-null ${ok}; elapsed=${elapsedMs}ms (${elapsedS}s)`,
+          `${logPrefix} — dedupe corpus progress: batch ${batchNumber}/${Math.max(1, totalBatches)}, ${processed}/${effectiveFacts.length} processed, ${remainingSlice} remaining this run${capDeferred > 0 ? ` (${capDeferred} row(s) capped for next run)` : ""}; batch=${batchMs}ms (Lance ${batchLance}, API ${batchApi}, persisted ${batchPersisted}, persistFailures ${batchPersistFailures}, embedFailures ${batchEmbedFailures}, mismatchSkips ${batchMismatchSkips}); totals: Lance ${lanceHits} (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), API ${apiEmbeds}, persisted ${apiPersisted}, persistFailures ${apiPersistFailures}, embedFailures ${embedFailures}, 429s=${total429s}, throttle=${throttleDelayMs}ms, non-null ${ok}; elapsed=${elapsedMs}ms (${elapsedS}s)`,
         );
       }
 
@@ -384,8 +382,7 @@ export async function loadReflectionDedupeCorpusVectors(
       const elapsedS = ((Date.now() - startMs) / 1000).toFixed(1);
       const deferredCap = facts.length - effectiveFacts.length;
       logger.info(
-        `${logPrefix} — dedupe corpus: completed ${Math.max(1, totalBatches)} batch(es), ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${total429s} embedding rate-limit event(s), throttle=${throttleDelayMs}ms, ${ok}/${facts.length} non-null for cosine check (elapsed: ${elapsedS}s)` +
-          (deferredCap > 0 ? `; ${deferredCap} row(s) deferred to next run (per-run cap)` : ""),
+        `${logPrefix} — dedupe corpus: completed ${Math.max(1, totalBatches)} batch(es), ${lanceHits} vector(s) reused from Lance index (model-ok ${lanceModelOkHits}, missing ${lanceModelMissingHits}, mismatch-skips ${lanceModelMismatchSkips}), ${apiEmbeds} row(s) hydrated via embedding API (${embedAttemptsThisRun} attempt(s)), ${apiPersisted} persisted to Lance (${apiPersistFailures} persist failure(s)), ${embedFailures} embed failure(s), ${total429s} embedding rate-limit event(s), throttle=${throttleDelayMs}ms, ${ok}/${facts.length} non-null for cosine check (elapsed: ${elapsedS}s)${deferredCap > 0 ? `; ${deferredCap} row(s) deferred to next run (per-run cap)` : ""}`,
       );
     }
     return result;

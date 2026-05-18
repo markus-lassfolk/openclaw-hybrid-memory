@@ -147,7 +147,7 @@ error: unknown command 'bar'
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
       const logPath = join(tmpDir, "test.log");
-      writeFileSync(exitPath, `2024-05-08T02:01:00Z audit-health exit=2\n`);
+      writeFileSync(exitPath, "2024-05-08T02:01:00Z audit-health exit=2\n");
       writeFileSync(
         logPath,
         [
@@ -187,7 +187,7 @@ error: unknown command 'bar'
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
       const logPath = join(tmpDir, "test.log");
-      writeFileSync(exitPath, `2024-05-08T02:01:00Z audit-health exit=2\n`);
+      writeFileSync(exitPath, "2024-05-08T02:01:00Z audit-health exit=2\n");
       writeFileSync(
         logPath,
         [

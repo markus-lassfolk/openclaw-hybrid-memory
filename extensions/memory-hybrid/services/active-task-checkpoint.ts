@@ -194,7 +194,7 @@ function isTerminalCheckpointStatus(status: string): boolean {
 
 function normalizeCheckpointInput(
   input: ActiveTaskCheckpointInput,
-  now: Date,
+  _now: Date,
 ): {
   normalized?: NormalizedCheckpointInput;
   errors: ActiveTaskCheckpointError[];

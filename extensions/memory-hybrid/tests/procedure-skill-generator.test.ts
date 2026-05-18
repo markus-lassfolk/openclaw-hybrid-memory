@@ -45,11 +45,33 @@ function isSlugOrPathIdentityKey(key: string, path: string): boolean {
   return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
 }
 
+function collectExactValueFindings(value: unknown, target: string, path = "$", findings: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectExactValueFindings(item, target, `${path}[${index}]`, findings));
+    return findings;
+  }
+  if (!value || typeof value !== "object") {
+    if (value === target) findings.push(path);
+    return findings;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    collectExactValueFindings(child, target, `${path}.${key}`, findings);
+  }
+  return findings;
+}
+
 function expectSidecarHasNoStaleIdentity(sidecarPath: string, originalSlug: string, originalPath: string): void {
   const serialized = readFileSync(sidecarPath, "utf-8");
-  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original slug`).not.toContain(originalSlug);
-  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original path`).not.toContain(originalPath);
-  expect(collectIdentityKeyFindings(JSON.parse(serialized))).toEqual([]);
+  const parsed = JSON.parse(serialized);
+  expect(
+    collectExactValueFindings(parsed, originalSlug),
+    `${relative(tmpDir, sidecarPath)} must not preserve original slug value`,
+  ).toEqual([]);
+  expect(
+    collectExactValueFindings(parsed, originalPath),
+    `${relative(tmpDir, sidecarPath)} must not preserve original path value`,
+  ).toEqual([]);
+  expect(collectIdentityKeyFindings(parsed)).toEqual([]);
 }
 
 describe("generateAutoSkills", () => {

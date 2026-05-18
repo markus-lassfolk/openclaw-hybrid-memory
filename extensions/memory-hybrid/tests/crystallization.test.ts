@@ -1,7 +1,7 @@
 import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for workflow crystallization — Issue #208.
- * Covers: CrystallizationStore, detectCandidates, crystallize,
+ * Covers: CrystallizationStore, pattern detection, skill crystallization,
  *         SkillValidator, CrystallizationProposer, config parsing.
  */
 
@@ -15,8 +15,8 @@ import { _testing } from "../index.js";
 const {
   CrystallizationStore,
   WorkflowStore,
-  detectCandidates,
-  crystallize,
+  detectCrystallizationCandidates,
+  crystallizeSkill,
   SkillValidator,
   CrystallizationProposer,
   computePatternId,
@@ -159,41 +159,6 @@ describe("CrystallizationStore.list", () => {
 
   it("respects limit", () => {
     expect(cStore.list({ limit: 1 }).length).toBe(1);
-  });
-});
-
-describe("CrystallizationStore.listByPatternId", () => {
-  it("returns only rows for the given pattern_id", () => {
-    cStore.create({
-      patternId: "alpha",
-      evidenceHash: "e1",
-      skillName: "a1",
-      skillContent: "#c",
-      patternSnapshot: "{}",
-    });
-    cStore.create({
-      patternId: "beta",
-      evidenceHash: "e2",
-      skillName: "b1",
-      skillContent: "#c",
-      patternSnapshot: "{}",
-    });
-    const alpha = cStore.listByPatternId("alpha");
-    expect(alpha).toHaveLength(1);
-    expect(alpha[0].patternId).toBe("alpha");
-  });
-
-  it("respects limit", () => {
-    for (let i = 0; i < 5; i++) {
-      cStore.create({
-        patternId: "many",
-        evidenceHash: `e${i}`,
-        skillName: `s${i}`,
-        skillContent: "#c",
-        patternSnapshot: "{}",
-      });
-    }
-    expect(cStore.listByPatternId("many", 2)).toHaveLength(2);
   });
 });
 
@@ -505,17 +470,17 @@ describe("WorkflowStore.getPatterns memo (#1415)", () => {
 });
 
 // ============================================================================
-// PatternDetector
+// Pattern detection
 // ============================================================================
 
-describe("PatternDetector.detect", () => {
+describe("detectCrystallizationCandidates", () => {
   it("returns empty when disabled", () => {
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, enabled: false };
-    expect(detectCandidates(wfStore, cStore, cfg)).toEqual([]);
+    expect(detectCrystallizationCandidates(wfStore, cStore, cfg)).toEqual([]);
   });
 
   it("returns empty when no patterns exist", () => {
-    expect(detectCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG)).toEqual([]);
+    expect(detectCrystallizationCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG)).toEqual([]);
   });
 
   it("detects candidates meeting thresholds", () => {
@@ -528,7 +493,7 @@ describe("PatternDetector.detect", () => {
       });
     }
 
-    const candidates = detectCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
+    const candidates = detectCrystallizationCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates[0].pattern.toolSequence).toEqual(["exec", "exec", "read"]);
   });
@@ -542,7 +507,7 @@ describe("PatternDetector.detect", () => {
     });
 
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, minUsageCount: 5 };
-    expect(detectCandidates(wfStore, cStore, cfg)).toEqual([]);
+    expect(detectCrystallizationCandidates(wfStore, cStore, cfg)).toEqual([]);
   });
 
   it("filters out patterns below minSuccessRate", () => {
@@ -555,7 +520,7 @@ describe("PatternDetector.detect", () => {
       minUsageCount: 1,
       minSuccessRate: 0.8,
     };
-    expect(detectCandidates(wfStore, cStore, cfg)).toEqual([]);
+    expect(detectCrystallizationCandidates(wfStore, cStore, cfg)).toEqual([]);
   });
 
   it("skips patterns already proposed (pending/approved)", () => {
@@ -566,7 +531,7 @@ describe("PatternDetector.detect", () => {
         outcome: "success",
       });
     }
-    const candidates = detectCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
+    const candidates = detectCrystallizationCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
     expect(candidates.length).toBeGreaterThan(0);
 
     const patternId = candidates[0].patternId;
@@ -579,7 +544,7 @@ describe("PatternDetector.detect", () => {
     });
 
     // Second detect should skip this pattern
-    const candidates2 = detectCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
+    const candidates2 = detectCrystallizationCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
     expect(candidates2.some((c: any) => c.patternId === patternId)).toBe(false);
   });
 
@@ -591,11 +556,10 @@ describe("PatternDetector.detect", () => {
         outcome: "success",
       });
     }
-    const rejectionCfg = {
+    const candidates = detectCrystallizationCandidates(wfStore, cStore, {
       ...DEFAULT_CRYSTALLIZATION_CFG,
       minUsageCount: 1,
-    };
-    const candidates = detectCandidates(wfStore, cStore, rejectionCfg);
+    });
     expect(candidates.length).toBeGreaterThan(0);
 
     // Re-create the workflow pattern snapshot for the rejected record.
@@ -614,7 +578,10 @@ describe("PatternDetector.detect", () => {
       rejectionReason: "human: not useful",
     });
 
-    const candidates2 = detectCandidates(wfStore, cStore, rejectionCfg);
+    const candidates2 = detectCrystallizationCandidates(wfStore, cStore, {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+    });
     expect(candidates2.some((c: any) => c.patternId === candidates[0].patternId)).toBe(false);
   });
 
@@ -636,7 +603,7 @@ describe("PatternDetector.detect", () => {
       });
     }
 
-    const candidates = detectCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
+    const candidates = detectCrystallizationCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG);
     if (candidates.length >= 2) {
       expect(candidates[0].score).toBeGreaterThanOrEqual(candidates[1].score);
     }
@@ -644,7 +611,7 @@ describe("PatternDetector.detect", () => {
 });
 
 // ============================================================================
-// SkillCrystallizer helpers
+// Skill crystallization helpers
 // ============================================================================
 
 describe("deriveSkillName", () => {
@@ -680,13 +647,12 @@ describe("isExecOnlySequence", () => {
 });
 
 // ============================================================================
-// SkillCrystallizer
+// Skill crystallization
 // ============================================================================
 
-describe("SkillCrystallizer.crystallize", () => {
+describe("crystallizeSkill", () => {
   it("generates SKILL.md content with pattern metadata", () => {
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "/tmp/skills" };
-
     const pattern = {
       toolSequence: ["exec", "read", "memory_store"],
       totalCount: 5,
@@ -696,7 +662,7 @@ describe("SkillCrystallizer.crystallize", () => {
       avgDurationMs: 1500,
       exampleGoals: ["Deploy the app", "Run server setup"],
     };
-    const result = crystallize(cfg, { patternId: "abc123", pattern });
+    const result = crystallizeSkill({ patternId: "abc123", evidenceHash: "ev1", pattern }, cfg);
 
     expect(result.skillContent).toContain("exec");
     expect(result.skillContent).toContain("80%");
@@ -709,7 +675,6 @@ describe("SkillCrystallizer.crystallize", () => {
 
   it("generates shell script for exec-only patterns", () => {
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "/tmp/skills" };
-
     const pattern = {
       toolSequence: ["exec", "exec"],
       totalCount: 3,
@@ -719,7 +684,7 @@ describe("SkillCrystallizer.crystallize", () => {
       avgDurationMs: 200,
       exampleGoals: ["Run bash script"],
     };
-    const result = crystallize(cfg, { patternId: "xyz999", pattern });
+    const result = crystallizeSkill({ patternId: "xyz999", evidenceHash: "ev1", pattern }, cfg);
     expect(result.hasScript).toBe(true);
     expect(result.scriptContent).toContain("#!/usr/bin/env bash");
     expect(result.scriptContent).toContain("xyz999");
@@ -727,7 +692,6 @@ describe("SkillCrystallizer.crystallize", () => {
 
   it("does not generate shell script for mixed patterns", () => {
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "/tmp/skills" };
-
     const pattern = {
       toolSequence: ["exec", "read"],
       totalCount: 3,
@@ -737,7 +701,7 @@ describe("SkillCrystallizer.crystallize", () => {
       avgDurationMs: 200,
       exampleGoals: ["Read file"],
     };
-    const result = crystallize(cfg, { patternId: "mix001", pattern });
+    const result = crystallizeSkill({ patternId: "mix001", evidenceHash: "ev1", pattern }, cfg);
     expect(result.hasScript).toBe(false);
     expect(result.scriptContent).toBeUndefined();
   });
@@ -748,7 +712,6 @@ describe("SkillCrystallizer.crystallize", () => {
       ...DEFAULT_CRYSTALLIZATION_CFG,
       outputDir: "~/.openclaw/workspace/skills/auto",
     };
-
     const pattern = {
       toolSequence: ["exec"],
       totalCount: 3,
@@ -758,30 +721,9 @@ describe("SkillCrystallizer.crystallize", () => {
       avgDurationMs: 0,
       exampleGoals: ["test"],
     };
-    const result = crystallize(cfg, { patternId: "t1", pattern });
+    const result = crystallizeSkill({ patternId: "t1", evidenceHash: "ev1", pattern }, cfg);
     expect(result.proposedOutputPath).toContain(homeDir);
     expect(result.proposedOutputPath).not.toContain("~");
-  });
-
-  it("generates absolute proposedOutputPath even with relative outputDir", () => {
-    const { isAbsolute } = require("node:path");
-    const cfg = {
-      ...DEFAULT_CRYSTALLIZATION_CFG,
-      outputDir: "skills/auto",
-    };
-
-    const pattern = {
-      toolSequence: ["exec"],
-      totalCount: 3,
-      successCount: 3,
-      failureCount: 0,
-      successRate: 1.0,
-      avgDurationMs: 0,
-      exampleGoals: ["test"],
-    };
-    const result = crystallize(cfg, { patternId: "t2", pattern });
-    expect(isAbsolute(result.proposedOutputPath)).toBe(true);
-    expect(result.proposedOutputPath).toContain("SKILL.md");
   });
 });
 

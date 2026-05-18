@@ -436,7 +436,7 @@ describe("re-index aborted mid-migration leaves main table intact", () => {
 
     // Simulate abort after 50 facts by making embedBatch throw after 2 batches
     let batchCount = 0;
-    const embedBatchSpy = vi.spyOn(embeddings, "embedBatch").mockImplementation(async (texts: string[]) => {
+    const _embedBatchSpy = vi.spyOn(embeddings, "embedBatch").mockImplementation(async (texts: string[]) => {
       batchCount++;
       if (batchCount > 2) {
         // Simulate VectorDB close

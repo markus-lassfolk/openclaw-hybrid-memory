@@ -72,6 +72,46 @@ describe("procedure-extractor", () => {
       expect(result?.sessionId).toBe("session-1");
     });
 
+    it("marks success false when an earlier tool fails even if a later tool succeeds", () => {
+      const lines = [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Run two-step check" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "tool_use", id: "t1", name: "web_fetch", input: {} },
+              { type: "tool_use", id: "t2", name: "read", input: { path: "out.txt" } },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "tool",
+            content: [{ type: "tool_result", tool_use_id: "t1", content: "Error: timeout" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "tool",
+            content: [{ type: "tool_result", tool_use_id: "t2", content: "ok" }],
+          },
+        }),
+      ];
+      const result = parseSessionJsonl(lines.join("\n"), "s-recover") as ParsedSession | null;
+      expect(result).not.toBeNull();
+      expect(result?.success).toBe(false);
+      expect(result?.errorMessage).toContain("timeout");
+    });
+
     it("marks success false when tool result contains error", () => {
       const lines = [
         JSON.stringify({

@@ -59,7 +59,7 @@ function assertSafeRelativeSkillPath(relPath: string): void {
     throw new Error(`Unsafe path: parent directory traversal not allowed: ${relPath}`);
   }
   if (relPath.trim().length === 0) {
-    throw new Error(`Unsafe path: empty path not allowed`);
+    throw new Error("Unsafe path: empty path not allowed");
   }
   if (relPath === SKILL_COMPLETE_MARKER || basename(relPath) === SKILL_COMPLETE_MARKER) {
     throw new Error(`Unsafe path: collision with completion marker: ${relPath}`);
