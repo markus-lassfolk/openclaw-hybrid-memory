@@ -357,18 +357,24 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   const reinforcementRegex = getReinforcementSignalRegex();
   const correctionRegex = getCorrectionSignalRegex();
   const allTexts: string[] = [];
+  let scannedSessions = 0;
+  let firstSessionParseError: string | null = null;
   for (const { path: fp } of sessionFiles) {
+    scannedSessions++;
     try {
       allTexts.push(...extractUserMessageTextsFromSessionJsonl(fp));
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
-      return {
-        reinforcement: [],
-        correction: [],
-        sessionsScanned: sessionFiles.length,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      if (!firstSessionParseError) firstSessionParseError = err instanceof Error ? err.message : String(err);
     }
+  }
+  if (firstSessionParseError) {
+    return {
+      reinforcement: [],
+      correction: [],
+      sessionsScanned: scannedSessions,
+      error: firstSessionParseError,
+    };
   }
   const unmatched = allTexts.filter((text) => {
     return !reinforcementRegex.test(text) && !correctionRegex.test(text);
