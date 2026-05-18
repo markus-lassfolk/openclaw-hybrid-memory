@@ -83,7 +83,10 @@ async function loadOnnxRuntime(): Promise<OnnxRuntime> {
     const runtime = await Promise.race([
       onnxRuntimeLoader(),
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new OnnxRuntimeLoadTimeoutError(ONNX_RUNTIME_LOAD_TIMEOUT_MS)), ONNX_RUNTIME_LOAD_TIMEOUT_MS);
+        timeoutId = setTimeout(
+          () => reject(new OnnxRuntimeLoadTimeoutError(ONNX_RUNTIME_LOAD_TIMEOUT_MS)),
+          ONNX_RUNTIME_LOAD_TIMEOUT_MS,
+        );
       }),
     ]);
     if (timeoutId) {
