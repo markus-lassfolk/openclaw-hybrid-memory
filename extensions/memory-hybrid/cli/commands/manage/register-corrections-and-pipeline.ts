@@ -6,6 +6,7 @@
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
+import { createConfigOutputSink } from "../../config-output-sink.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -323,10 +324,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           }
           // Determine format: --json takes precedence, then --format, default to text
           const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
-          runConfigView(
-            { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
-            { format: format as "text" | "json" },
-          );
+          runConfigView(createConfigOutputSink(format), { format: format as "text" | "json" });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
@@ -343,10 +341,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .action(
       withExit(async () => {
         try {
-          runConfigView(
-            { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
-            { format: "json", featuresOnly: true },
-          );
+          runConfigView(createConfigOutputSink("json"), { format: "json", featuresOnly: true });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
