@@ -92,6 +92,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
             Type.Literal("drafted"),
             Type.Literal("validated"),
             Type.Literal("installed"),
+            Type.Literal("quarantined"),
             Type.Literal("superseded"),
             Type.Literal("ready"),
             Type.Literal("needs-override"),
