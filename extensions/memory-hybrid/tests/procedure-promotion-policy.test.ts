@@ -1010,6 +1010,7 @@ Use for collecting markerless legacy reports.
     );
 
     expect(evaluation.metadata.rejectionReasons).toContain("no_validation_possible");
+    expect(evaluation.metadata.staticValidation).toBe("passed");
     expect(decision.action).toBe("deferred-for-human");
     expect(decision.reasonCode).toBe("policy-threshold-not-met");
   });
