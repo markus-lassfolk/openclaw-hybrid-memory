@@ -23,7 +23,7 @@ describe("legacy crystallization evidence hashes", () => {
     expect(computeLegacyEvidenceHash(pattern)).not.toBe(computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 }));
   });
 
-  it("treats stored legacy rejected hashes as unchanged evidence", () => {
+  it("allows re-proposal when metrics cross milestones despite legacy hash", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-evidence-hash-"));
     const store = new CrystallizationStore(join(dir, "cp.db"));
     try {
@@ -38,13 +38,11 @@ describe("legacy crystallization evidence hashes", () => {
         rejectionReason: "human: not useful",
       });
 
+      // Legacy hash stored, but new evidence hash includes metrics
+      // Should return false (not rejected with same evidence) because hashes don't match
       expect(
-        store.isRejectedWithSameEvidence(
-          patternId,
-          computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 }),
-          computeLegacyEvidenceHash(pattern),
-        ),
-      ).toBe(true);
+        store.isRejectedWithSameEvidence(patternId, computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 })),
+      ).toBe(false);
     } finally {
       store.close();
       rmSync(dir, { recursive: true, force: true });

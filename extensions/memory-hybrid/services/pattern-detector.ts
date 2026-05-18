@@ -137,14 +137,12 @@ export function detectCandidates(
     const evidenceHash = computeEvidenceHash(pattern, {
       evidenceCountBucketSize: cfg.evidenceCountBucketSize,
     });
-    const legacyEvidenceHash = computeLegacyEvidenceHash(pattern);
 
     // Skip if latest rejected/quarantined proposal was based on the same unchanged evidence.
     // Prevents "spammy" re-proposals after a human rejection unless substantive
-    // inputs (tool sequence / example goals) changed. Legacy hashes are accepted
-    // so pre-milestone rejections are not all re-proposed immediately on upgrade.
+    // inputs (tool sequence / example goals / metric milestones) changed.
     try {
-      if (crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash, legacyEvidenceHash)) {
+      if (crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash)) {
         continue;
       }
     } catch (err) {

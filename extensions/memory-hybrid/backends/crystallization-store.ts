@@ -683,7 +683,7 @@ export class CrystallizationStore extends BaseSqliteStore {
    * Rejection / quarantine guard: returns true if the latest proposal for this pattern was rejected
    * or quarantined with the same evidence hash (no meaningful new evidence since suppression).
    */
-  isRejectedWithSameEvidence(patternId: string, evidenceHash: string, legacyEvidenceHash?: string): boolean {
+  isRejectedWithSameEvidence(patternId: string, evidenceHash: string): boolean {
     return this.runWithDb("isRejectedWithSameEvidence", () => {
       const row = this.liveDb
         .prepare(
@@ -692,7 +692,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         .get(patternId) as { status?: string; evidence_hash?: string } | undefined;
       if (!row) return false;
       const stored = row.evidence_hash ?? "";
-      const same = stored === evidenceHash || (legacyEvidenceHash !== undefined && stored === legacyEvidenceHash);
+      const same = stored === evidenceHash;
       if (!same) return false;
       return row.status === "rejected" || row.status === "quarantined";
     });
