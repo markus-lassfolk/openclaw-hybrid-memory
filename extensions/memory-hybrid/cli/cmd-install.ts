@@ -137,7 +137,22 @@ export function installHybridMemoryWorkspaceSkill(opts: {
   try {
     mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
     const destDir = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR);
-    cpSync(srcDir, destDir, { recursive: true });
+    const tmpDir = join(
+      workspaceRoot,
+      "skills",
+      `.${HYBRID_MEMORY_SKILL_DIR}-tmp-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`,
+    );
+    try {
+      cpSync(srcDir, tmpDir, { recursive: true });
+      renameSync(tmpDir, destDir);
+    } catch (copyErr) {
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore temp-cleanup failure */
+      }
+      throw copyErr;
+    }
     return { path: dest };
   } catch (err) {
     return { path: dest, error: String(err) };
@@ -200,7 +215,22 @@ export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
   try {
     mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
     const srcDir = bundledHybridMemorySkillDir(opts.pluginRootDir);
-    cpSync(srcDir, destDir, { recursive: true });
+    const tmpDir = join(
+      workspaceRoot,
+      "skills",
+      `.${HYBRID_MEMORY_SKILL_DIR}-tmp-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`,
+    );
+    try {
+      cpSync(srcDir, tmpDir, { recursive: true });
+      renameSync(tmpDir, destDir);
+    } catch (copyErr) {
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore temp-cleanup failure */
+      }
+      throw copyErr;
+    }
     return { path: dest, deployed: true };
   } catch (err) {
     return { path: dest, deployed: false, skippedReason: String(err) };
