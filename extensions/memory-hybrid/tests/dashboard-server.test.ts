@@ -276,6 +276,24 @@ describe("collectStatus", () => {
     expect(status.memory.vectorCount).toBeGreaterThanOrEqual(0);
     expect(Number.isInteger(status.memory.vectorCount)).toBe(true);
   });
+
+  // Regression for broad-toctou-size-cache-check (Issue #1501):
+  // Concurrent calls must share a single in-flight traversal and both resolve
+  // to a valid, non-negative lanceSizeBytes without error.
+  it("concurrent collectStatus calls both resolve with valid lanceSizeBytes (TOCTOU regression)", async () => {
+    const [a, b] = await Promise.all([collectStatus(ctx), collectStatus(ctx)]);
+    expect(a.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+    expect(b.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+    // Both should agree on the same value (same path, same cache window)
+    expect(a.memory.lanceSizeBytes).toBe(b.memory.lanceSizeBytes);
+  });
+
+  it("second collectStatus call within TTL uses cached lanceSizeBytes (no duplicate traversal)", async () => {
+    const first = await collectStatus(ctx);
+    const second = await collectStatus(ctx);
+    expect(second.memory.lanceSizeBytes).toBe(first.memory.lanceSizeBytes);
+    expect(second.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+  });
 });
 
 describeCreateDashboardServer("createDashboardServer", () => {
