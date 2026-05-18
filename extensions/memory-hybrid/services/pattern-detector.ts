@@ -10,7 +10,12 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
-import { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
+import {
+  computeEvidenceHash,
+  computeLegacyEvidenceHash,
+  computePatternId,
+  scorePattern,
+} from "./pattern-detector-hash.js";
 
 export {
   computeEvidenceHash,
@@ -81,12 +86,16 @@ export function detectCrystallizationCandidates(
     const evidenceHash = computeEvidenceHash(pattern, {
       evidenceCountBucketSize: cfg.evidenceCountBucketSize,
     });
+    const legacyEvidenceHash = computeLegacyEvidenceHash(pattern);
 
     // Skip if latest rejected/quarantined proposal was based on the same unchanged evidence.
     // Prevents "spammy" re-proposals after a human rejection unless substantive
     // inputs (tool sequence / example goals / metric milestones) changed.
     try {
-      if (crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash)) {
+      if (
+        crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash) ||
+        crystallizationStore.isRejectedWithSameEvidence(patternId, legacyEvidenceHash)
+      ) {
         continue;
       }
     } catch (err) {

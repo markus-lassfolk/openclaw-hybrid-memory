@@ -21,6 +21,7 @@ const {
   CrystallizationProposer,
   computePatternId,
   computeEvidenceHash,
+  computeLegacyEvidenceHash,
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
@@ -589,6 +590,41 @@ describe("detectCrystallizationCandidates", () => {
       patternId: candidates[0].patternId,
       evidenceHash,
       skillName: "rejected-skill",
+      skillContent: "# rejected",
+      patternSnapshot: JSON.stringify(pattern),
+      status: "rejected",
+      rejectionReason: "human: not useful",
+    });
+
+    const candidates2 = detectCrystallizationCandidates(wfStore, cStore, {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+    });
+    expect(candidates2.some((c: any) => c.patternId === candidates[0].patternId)).toBe(false);
+  });
+
+  it("skips patterns rejected with legacy unchanged evidence hashes", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: "legacy " + i,
+        toolSequence: ["exec", "write"],
+        outcome: "success",
+      });
+    }
+    const candidates = detectCrystallizationCandidates(wfStore, cStore, {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+    });
+    expect(candidates.length).toBeGreaterThan(0);
+
+    const patterns = wfStore.getPatterns({ minSuccessRate: 0, limit: 10 });
+    const pattern =
+      patterns.find((p: any) => computePatternId(p.toolSequence) === candidates[0].patternId) ?? patterns[0];
+
+    cStore.create({
+      patternId: candidates[0].patternId,
+      evidenceHash: computeLegacyEvidenceHash(pattern),
+      skillName: "legacy-rejected-skill",
       skillContent: "# rejected",
       patternSnapshot: JSON.stringify(pattern),
       status: "rejected",
