@@ -313,6 +313,7 @@ describe("pre-finalization guard", () => {
     });
     // The entity belongs to another session; this session has no checkpoint obligation.
     expect(result.action).toBe("allow");
+    expect(result.checkpoint.missingFields).toHaveLength(0);
     expect(result.checkpoint.missingFields).not.toContain("related_session");
   });
 

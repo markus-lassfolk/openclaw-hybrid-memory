@@ -573,6 +573,10 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
 
   const missing =
     result.checkpoint.missingFields.length > 0 ? result.checkpoint.missingFields.join(", ") : "project checkpoint";
+  // "advisory" (block action) is intentionally softer in wording than "warning" because
+  // agent_end is fail-open in OpenClaw core — the guard cannot actually block finalization.
+  // Using "advisory" avoids the misleading "blocking finalization" + "handler failed" log pair
+  // described in issue #1479 Fix D.  "warning" (warn action) is for weak-signal turns.
   const mode = result.action === "block" ? "advisory" : "warning";
   const conditionalHints: string[] = [];
   if (result.checkpoint.missingFields.includes("wake_link")) {
