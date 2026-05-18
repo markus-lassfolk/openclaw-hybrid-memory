@@ -11,8 +11,8 @@ import { CATEGORY_SECTION_TAXONOMIES } from "../config/skill-sections.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
+import { crystallizeSkill } from "../services/skill-crystallizer.js";
 import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
-import { crystallize } from "../services/skill-crystallizer.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 
@@ -42,7 +42,6 @@ describe("GeneratedSkillValidationService", () => {
   it("passes activation eval for terse example goals (short tokens)", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-short-goal-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
-
     const service = new GeneratedSkillValidationService();
     const pattern = {
       toolSequence: ["exec", "read"],
@@ -54,7 +53,7 @@ describe("GeneratedSkillValidationService", () => {
       exampleGoals: ["fix bug", "run CI"],
     };
 
-    const result = crystallize(cfg, { patternId: "short-goal", evidenceHash: "ev-short", pattern });
+    const result = crystallizeSkill({ patternId: "short-goal", evidenceHash: "ev-short", pattern }, cfg);
     const validation = service.validate({
       outputDir: cfg.outputDir,
       proposedOutputPath: result.proposedOutputPath,
@@ -67,8 +66,8 @@ describe("GeneratedSkillValidationService", () => {
     const exampleLines =
       examplesSection?.[1]
         .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.startsWith("- ")) ?? [];
+        .map((line: string) => line.trim())
+        .filter((line: string) => line.startsWith("- ")) ?? [];
 
     expect(
       exampleLines.some((line) => line.length >= MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS),
@@ -83,7 +82,6 @@ describe("GeneratedSkillValidationService", () => {
   it("allows placeholder example.com emails in crystallized examples", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-example-email-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
-
     const service = new GeneratedSkillValidationService();
     const pattern = {
       toolSequence: ["read", "write"],
@@ -95,7 +93,7 @@ describe("GeneratedSkillValidationService", () => {
       exampleGoals: ["Send the weekly summary to ops@example.com after deploy"],
     };
 
-    const result = crystallize(cfg, { patternId: "email-goal", evidenceHash: "ev-mail", pattern });
+    const result = crystallizeSkill({ patternId: "email-goal", evidenceHash: "ev-mail", pattern }, cfg);
     expect(result.skillContent).toContain("ops@example.com");
 
     const validation = service.validate({
@@ -170,7 +168,6 @@ Bounded release-health review workflow.
   it("passes static, dry-load, and activation eval for crystallized skills", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-"));
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
-
     const service = new GeneratedSkillValidationService();
     const pattern = {
       toolSequence: ["exec", "read", "memory_store"],
@@ -182,7 +179,7 @@ Bounded release-health review workflow.
       exampleGoals: ["Deploy the app and capture the release notes"],
     };
 
-    const result = crystallize(cfg, { patternId: "abc123", evidenceHash: "ev-abc", pattern });
+    const result = crystallizeSkill({ patternId: "abc123", evidenceHash: "ev-abc", pattern }, cfg);
     const validation = service.validate({
       outputDir: cfg.outputDir,
       proposedOutputPath: result.proposedOutputPath,
@@ -952,7 +949,7 @@ Bounded metadata installation workflow.
         avgDurationMs: 400,
         exampleGoals: ["Send the weekly summary to ops@company.internal after deploy"],
       };
-      const result = crystallize(cfg, { patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern });
+      const result = crystallizeSkill({ patternId: "custom-domain-goal", evidenceHash: "ev-custom", pattern }, cfg);
       const validation = service.validate({
         outputDir: cfg.outputDir,
         proposedOutputPath: result.proposedOutputPath,

@@ -202,12 +202,12 @@ describe("memory tools embedding registry wiring", () => {
     const tool = api.getTool("memory_add_edict");
     expect(tool).toBeTruthy();
 
-    const blocked = await tool!.execute("tc-1", { text: "verified fact" });
+    const blocked = await tool?.execute("tc-1", { text: "verified fact" });
     expect(blocked).toMatchObject({ details: { error: "forbidden", reason: "edict_write_disabled" } });
     expect(addEdict).not.toHaveBeenCalled();
 
     vi.stubEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL", "true");
-    const allowed = await tool!.execute("tc-2", { text: "verified fact", source: "human:markus" });
+    const allowed = await tool?.execute("tc-2", { text: "verified fact", source: "human:markus" });
     expect(allowed).toMatchObject({ details: { edict: { id: "edict-1" } } });
     expect(addEdict).toHaveBeenCalledTimes(1);
   });

@@ -6,11 +6,13 @@
  * Deduplication: skips patterns that already have a pending/approved proposal.
  */
 
-import { createHash } from "node:crypto";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
+
+export { computeEvidenceHash, computeLegacyEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -27,69 +29,6 @@ interface CrystallizationCandidate {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Compute a stable string id for a WorkflowPattern based on its tool sequence.
- * Uses SHA-256 truncated to 16 hex chars.
- */
-export function computePatternId(toolSequence: string[]): string {
-  return createHash("sha256").update(JSON.stringify(toolSequence)).digest("hex").slice(0, 16);
-}
-
-export interface ComputeEvidenceHashOptions {
-  /** Bucket width for totalCount (default 5). Must be >= 1. */
-  evidenceCountBucketSize?: number;
-}
-
-function normalizeEvidenceGoals(pattern: WorkflowPattern): string[] {
-  return pattern.exampleGoals
-    .map((g) => g.trim().replace(/\s+/g, " "))
-    .filter((g) => g.length > 0)
-    .slice(0, 5);
-}
-
-/**
- * Compute the pre-milestone evidence hash used by older stored rejected/quarantined proposals.
- * Keep this for compatibility so existing human rejections remain suppressed until evidence changes.
- */
-export function computeLegacyEvidenceHash(pattern: WorkflowPattern): string {
-  const payload = {
-    toolSequence: pattern.toolSequence,
-    exampleGoals: normalizeEvidenceGoals(pattern),
-  };
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
-}
-
-/**
- * Compute a stable hash of "evidence" used to generate proposal content.
- * Tool sequence and example goals are exact; usage metrics enter only as coarse buckets
- * so small drift does not churn the hash while milestone-scale changes do.
- */
-export function computeEvidenceHash(pattern: WorkflowPattern, opts?: ComputeEvidenceHashOptions): string {
-  const m = Math.max(1, Math.floor(opts?.evidenceCountBucketSize ?? 5));
-  const totalCountBucket = Math.floor(pattern.totalCount / m) * m;
-  const successRateBucket = Math.round(pattern.successRate * 10) / 10;
-  const payload = {
-    toolSequence: pattern.toolSequence,
-    exampleGoals: normalizeEvidenceGoals(pattern),
-    totalCountBucket,
-    successRateBucket,
-  };
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
-}
-
-/**
- * Score a pattern for crystallization priority.
- * Formula: usageCount × successRate
- * Both components are bounded and well-defined.
- */
-export function scorePattern(pattern: WorkflowPattern): number {
-  return pattern.totalCount * pattern.successRate;
-}
-
-// ---------------------------------------------------------------------------
 // PatternDetector — exported as a free function (no class wrapper needed)
 // ---------------------------------------------------------------------------
 
@@ -98,7 +37,7 @@ export function scorePattern(pattern: WorkflowPattern): number {
  * Applies min usage count and success rate thresholds, skips already-proposed patterns.
  * Returns candidates sorted by score descending.
  */
-export function detectCandidates(
+export function detectCrystallizationCandidates(
   workflowStore: WorkflowStore,
   crystallizationStore: CrystallizationStore,
   cfg: CrystallizationConfig,
@@ -178,24 +117,4 @@ export function detectCandidates(
   candidates.sort((a, b) => b.score - a.score);
 
   return candidates;
-}
-
-// ---------------------------------------------------------------------------
-// Deprecated class wrapper for backward compatibility
-// ---------------------------------------------------------------------------
-
-/**
- * @deprecated Use `detectCandidates` function directly instead.
- * This class wrapper is retained for backward compatibility only.
- */
-export class PatternDetector {
-  constructor(
-    private workflowStore: WorkflowStore,
-    private crystallizationStore: CrystallizationStore,
-    private cfg: CrystallizationConfig,
-  ) {}
-
-  detect(): CrystallizationCandidate[] {
-    return detectCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
-  }
 }

@@ -153,9 +153,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   let abortReason: string | undefined;
 
   log.info(
-    `memory-hybrid: embedding-migration: starting — ${total} facts, ` +
-      `model=${embeddings.modelName}, batchSize=${batchSize}` +
-      (targetTableName ? `, targetTable=${targetTableName}` : ""),
+    `memory-hybrid: embedding-migration: starting — ${total} facts, model=${embeddings.modelName}, batchSize=${batchSize}${targetTableName ? `, targetTable=${targetTableName}` : ""}`,
   );
 
   let currentGeneration = vectorDb.getCloseGeneration();
@@ -170,11 +168,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     offset = Math.floor(checkpointState.offset);
     if (!targetTableName) {
       log.warn(
-        `memory-hybrid: embedding-migration: ⚠ resuming direct-mode migration from checkpoint offset ${offset}/${total}. ` +
-          `Facts before offset ${offset} already have new model vectors; facts from offset ${offset} onward still have old model vectors. ` +
-          `The vector table is in a MIXED-MODEL state until migration completes. ` +
-          `Semantic search quality is degraded during this window. ` +
-          `Re-running with --shadow-table is recommended for large migrations to avoid this split.`,
+        `memory-hybrid: embedding-migration: ⚠ resuming direct-mode migration from checkpoint offset ${offset}/${total}. Facts before offset ${offset} already have new model vectors; facts from offset ${offset} onward still have old model vectors. The vector table is in a MIXED-MODEL state until migration completes. Semantic search quality is degraded during this window. Re-running with --shadow-table is recommended for large migrations to avoid this split.`,
       );
     } else {
       log.info(`memory-hybrid: embedding-migration: resuming from checkpoint offset ${offset}/${total}`);
@@ -230,8 +224,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
         aborted = true;
         abortReason = "VectorDB reconnected but LanceDB is unavailable (degraded mode)";
         log.warn(
-          `memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — ${abortReason}; ` +
-            `subsequent writes would be silent no-ops`,
+          `memory-hybrid: embedding-migration: aborted at ${migrated + skipped}/${total} — ${abortReason}; subsequent writes would be silent no-ops`,
         );
         break;
       }
@@ -485,10 +478,7 @@ export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions)
     // `result.aborted` and the partial counts.
     if (result.aborted) {
       log.warn(
-        `memory-hybrid: embedding-migration: maintenance run aborted — meta not updated. ` +
-          `${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors ` +
-          `(processed ${result.processed}/${result.total}). ` +
-          `Re-run maintenance or re-index to complete.`,
+        `memory-hybrid: embedding-migration: maintenance run aborted — meta not updated. ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors (processed ${result.processed}/${result.total}). Re-run maintenance or re-index to complete.`,
       );
       return { changed: true, migrated: true, result };
     }

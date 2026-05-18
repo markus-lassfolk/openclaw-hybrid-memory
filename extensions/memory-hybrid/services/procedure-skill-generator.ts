@@ -8,11 +8,12 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
-import { resolveWorkspacePath } from "../utils/path.js";
+import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
+  type ProcedurePromotionDuplicateCandidate,
   type ProcedurePromotionEvidence,
   type ProcedurePromotionPolicy,
   createProcedurePromotionDecision,
@@ -112,7 +113,7 @@ function allocateDraftSkillDir(basePath: string, skillsAutoPath: string, slug: s
       return {
         slug: candidate,
         skillDir,
-        relativePath: join(skillsAutoPath, candidate),
+        relativePath: toWorkspaceRelativePath(join(skillsAutoPath, candidate)),
       };
     } catch (err) {
       if (isPathExistsError(err)) {
@@ -159,10 +160,14 @@ function rebaseDraftSlug(
     generatedSkillPath?: unknown;
     telemetryCommand?: unknown;
   };
+  const proposalMetadata = JSON.parse(draft.proposalMetadataJson) as {
+    generated_skill_path?: unknown;
+  };
   const originalSlug =
     typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
   verification.skill = resolvedSlug;
   verification.generatedSkillPath = generatedSkillPath;
+  proposalMetadata.generated_skill_path = generatedSkillPath;
   verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
 
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
@@ -180,6 +185,7 @@ function rebaseDraftSlug(
     ...draft,
     skillMd,
     verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
+    proposalMetadataJson: `${JSON.stringify(proposalMetadata, null, 2)}\n`,
   };
 }
 
@@ -195,6 +201,8 @@ type GenerateAutoSkillsOptions = {
   dryRun?: boolean;
   apply?: boolean;
   policy?: string;
+  /** Same-run draft slugs/task patterns for duplicate detection (single-procedure promote / custom orchestration). */
+  inRunSkillCandidates?: readonly ProcedurePromotionDuplicateCandidate[];
   /** When true, duplicate-skill detection re-reads every SKILL.md (bypass mtime cache). */
   bypassDuplicateSkillCache?: boolean;
 };
@@ -242,7 +250,7 @@ export function generateAutoSkills(
       skillsAutoPath: basePath,
       validationThreshold: options.validationThreshold,
       resolvedSlug,
-      inRunSkillCandidates,
+      inRunSkillCandidates: [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
       evidence,
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     });
@@ -433,6 +441,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
+    inRunSkillCandidates: options.inRunSkillCandidates ?? [],
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
@@ -452,7 +461,7 @@ export function generateAutoSkillForProcedure(
 
   const skillDir = join(basePath, resolvedSlug);
   const skillPath = join(skillDir, "SKILL.md");
-  const relativePath = join(options.skillsAutoPath, resolvedSlug);
+  const relativePath = toWorkspaceRelativePath(join(options.skillsAutoPath, resolvedSlug));
 
   if (dryRun) {
     logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);

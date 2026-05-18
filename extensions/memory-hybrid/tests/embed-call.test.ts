@@ -90,7 +90,7 @@ describe("embed-call", () => {
     });
 
     it("should handle promise that resolves at boundary", async () => {
-      let resolver: (value: string) => void;
+      let resolver!: (value: string) => void;
       const promise = new Promise<string>((resolve) => {
         resolver = resolve;
       });
@@ -101,7 +101,7 @@ describe("embed-call", () => {
       vi.advanceTimersByTime(EMBED_CALL_TIMEOUT_MS - 100);
 
       // Resolve the promise
-      resolver!("just-in-time");
+      resolver("just-in-time");
 
       const result = await resultPromise;
       expect(result).toBe("just-in-time");

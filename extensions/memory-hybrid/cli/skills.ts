@@ -335,7 +335,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             ];
             for (const v of dryViolations) console.log(`  - ${v}`);
             if (result.approvalDecision === "allow-with-override" && !opts.overrideWarnings) {
-              console.log(`  → Add --override-warnings to proceed despite activation warnings`);
+              console.log("  → Add --override-warnings to proceed despite activation warnings");
             }
             if (!dryRunWouldInstall) process.exitCode = 2;
             return;

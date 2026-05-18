@@ -95,7 +95,7 @@ export function readExitLedger(exitPath: string): ExitStep[] {
     }
 
     return steps;
-  } catch (err) {
+  } catch (_err) {
     return [];
   }
 }

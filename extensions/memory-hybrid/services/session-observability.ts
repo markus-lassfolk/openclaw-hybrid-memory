@@ -220,7 +220,7 @@ export async function buildSessionObservabilityReport(
     // NOTE: eventLog.getSessionEvents or equivalent — check available methods
     // We query via factsDb since episodes table is accessible there
     // Only include events in the session window (24h lookback by default)
-    const sinceMs = now - 24 * 3600 * 1000;
+    const _sinceMs = now - 24 * 3600 * 1000;
     try {
       // episodes are stored in facts DB; we use factsDb to retrieve them
       const episodes =

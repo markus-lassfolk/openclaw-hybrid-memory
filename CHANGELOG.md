@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 <!-- Add changes here until the next version cut. -->
 
+### Changed
+
+- **Procedural memory / skill promotion:** `staticValidation` now reflects only the generated-skill static/recipe validation gate; unrelated defer/reject gates such as low confidence, vague triggers, noisy traces, or external side-effect approval requirements no longer mark `staticValidation` as failed.
+- **Procedural extraction:** session success aggregation is now any-failure-wins, so re-scanning historical JSONL can reduce workflow/procedure success rates when a later successful tool call followed an earlier failure in the same session.
+
 ---
 
 ## [2026.5.101] - 2026-05-10
