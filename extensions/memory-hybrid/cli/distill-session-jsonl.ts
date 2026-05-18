@@ -14,7 +14,7 @@ export function extractTextFromSessionJsonl(filePath: string): string {
         type?: string;
         message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
       };
-      if (!obj || typeof obj !== "object") continue;
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
       if (obj.type !== "message" || !obj.message) continue;
       const msg = obj.message;
       if (msg.role !== "user" && msg.role !== "assistant") continue;
