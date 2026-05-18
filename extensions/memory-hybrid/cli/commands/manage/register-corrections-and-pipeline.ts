@@ -324,7 +324,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           }
           // Determine format: --json takes precedence, then --format, default to text
           const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
-          runConfigView(createConfigOutputSink(format), { format: format as "text" | "json" });
+          runConfigView(createConfigOutputSink(format), { format });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",

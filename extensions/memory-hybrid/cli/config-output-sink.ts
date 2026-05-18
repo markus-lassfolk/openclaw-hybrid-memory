@@ -7,9 +7,11 @@ export function createConfigOutputSink(format: "text" | "json"): VerifyCliSink {
         try {
           JSON.parse(s);
           process.stdout.write(`${s}\n`);
+          return;
         } catch {
-          console.error(s);
+          // Route non-JSON diagnostics away from machine-readable stdout.
         }
+        console.error(s);
       },
       error: (s: string) => console.error(s),
     };
