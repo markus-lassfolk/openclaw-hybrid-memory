@@ -52,16 +52,38 @@ class AliasVectorIndex {
   ) {}
 
   private async ensureInitialized(): Promise<void> {
+    if (this.closed) {
+      throw new Error("AliasVectorIndex is closed");
+    }
     if (this.table) return;
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInitialize().catch((err) => {
-      capturePluginError(err as Error, {
-        operation: "alias-vector-db-init",
-        subsystem: "aliases",
+    this.initPromise = this.doInitialize()
+      .then(() => {
+        // close() may have been called while doInitialize() was in flight.
+        // Release the newly-opened connection so it does not leak.
+        if (this.closed) {
+          try {
+            this.db?.close();
+          } catch {
+            // ignore
+          }
+          this.db = null;
+          this.table = null;
+          throw new Error("AliasVectorIndex closed during initialization");
+        }
+      })
+      .catch((err) => {
+        this.initPromise = null;
+        // Suppress error reporting for expected closed-state errors; only report
+        // genuine initialization failures so they reach error tracking.
+        if (!this.closed) {
+          capturePluginError(err as Error, {
+            operation: "alias-vector-db-init",
+            subsystem: "aliases",
+          });
+        }
+        throw err;
       });
-      this.initPromise = null;
-      throw err;
-    });
     return this.initPromise;
   }
 
@@ -143,10 +165,12 @@ class AliasVectorIndex {
         },
       ]);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "alias-vector-store",
-        subsystem: "aliases",
-      });
+      if (!this.closed) {
+        capturePluginError(err as Error, {
+          operation: "alias-vector-store",
+          subsystem: "aliases",
+        });
+      }
       pluginLogger.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
     }
   }
@@ -178,7 +202,7 @@ class AliasVectorIndex {
     } catch (err) {
       if (err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG)) {
         this.schemaValid = false;
-      } else {
+      } else if (!this.closed) {
         capturePluginError(err as Error, {
           operation: "alias-vector-search",
           severity: "info",
@@ -199,10 +223,12 @@ class AliasVectorIndex {
       }
       await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "alias-vector-delete",
-        subsystem: "aliases",
-      });
+      if (!this.closed) {
+        capturePluginError(err as Error, {
+          operation: "alias-vector-delete",
+          subsystem: "aliases",
+        });
+      }
       pluginLogger.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
     }
   }
