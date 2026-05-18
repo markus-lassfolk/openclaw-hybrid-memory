@@ -187,7 +187,8 @@ function extractBackfillFact(line: string): {
 export function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const out: string[] = [];
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
@@ -204,8 +205,9 @@ export function extractUserMessageTextsFromSessionJsonl(filePath: string): strin
           out.push(block.text.trim());
         }
       }
-    } catch {
-      // skip malformed
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Malformed session JSONL at ${filePath}:${i + 1} (${message})`);
     }
   }
   return out;
@@ -360,6 +362,12 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       allTexts.push(...extractUserMessageTextsFromSessionJsonl(fp));
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
+      return {
+        reinforcement: [],
+        correction: [],
+        sessionsScanned: sessionFiles.length,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
   const unmatched = allTexts.filter((text) => {
