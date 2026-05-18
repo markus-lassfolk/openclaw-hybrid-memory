@@ -43,15 +43,17 @@ let tmpDir: string;
 
 /**
  * Build a minimal HandlerContext that satisfies runSelfCorrectionExtractForCli.
+ * runSelfCorrectionExtractForCli only uses ctx.logger, so we only need to set
+ * that field correctly; the rest are stubs.
  */
 function makeCtx(): HandlerContext {
   return {
-    factsDb: {} as any,
-    vectorDb: {} as any,
-    embeddings: {} as any,
-    openai: {} as any,
-    proposalsDb: null as any,
-    cfg: {} as any,
+    factsDb: {},
+    vectorDb: {},
+    embeddings: {},
+    openai: {},
+    proposalsDb: null,
+    cfg: {},
     credentialsDb: null,
     aliasDb: null,
     wal: null,
