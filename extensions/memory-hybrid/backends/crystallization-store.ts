@@ -36,6 +36,7 @@ export type CrystallizationStatus =
   | "validated"
   | "approved"
   | "installed"
+  | "quarantined"
   | "rejected"
   | "superseded";
 
@@ -548,6 +549,21 @@ export class CrystallizationStore extends BaseSqliteStore {
         )
         .run(reason ?? null, now, id);
 
+      if (result.changes === 0) return null;
+      return this.getByIdInternal(id);
+    });
+  }
+
+  quarantine(id: string, reason?: string): CrystallizationProposal | null {
+    return this.runWithDb("quarantine", () => {
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+           SET status = 'quarantined', rejection_reason = ?, updated_at = ?
+           WHERE id = ? AND status = 'installed'`,
+        )
+        .run(reason ?? null, now, id);
       if (result.changes === 0) return null;
       return this.getByIdInternal(id);
     });
