@@ -76,10 +76,12 @@ export interface RescanInstalledSkillsResult {
 
 const RESCAN_MESSAGE_LIMIT = 100;
 
-function pushLimitedMessage(messages: string[], message: string): void {
+function pushLimitedMessage(messages: string[], message: string): boolean {
   if (messages.length < RESCAN_MESSAGE_LIMIT) {
     messages.push(message);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -481,12 +483,13 @@ export class CrystallizationProposer {
     let skipped = 0;
     const errors: string[] = [];
     const messages: string[] = [];
+    let truncated = false;
     const fallbackOutputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
 
     for (const proposal of installed) {
       if (!proposal.outputPath?.trim()) {
         skipped++;
-        pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
+        truncated = !pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`) || truncated;
         continue;
       }
       let skillContent: string;
@@ -520,15 +523,15 @@ export class CrystallizationProposer {
           const updated = this.crystallizationStore.quarantine(proposal.id, reason);
           if (updated) {
             quarantined++;
-            pushLimitedMessage(
+            truncated = !pushLimitedMessage(
               messages,
               `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
-            );
+            ) || truncated;
           } else {
             errors.push(`${proposal.id}: quarantine update failed`);
           }
         } else {
-          pushLimitedMessage(messages, `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+          truncated = !pushLimitedMessage(messages, `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`) || truncated;
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -536,7 +539,7 @@ export class CrystallizationProposer {
       }
     }
 
-    if (messages.length >= RESCAN_MESSAGE_LIMIT) {
+    if (truncated) {
       messages.push(`Message output truncated after ${RESCAN_MESSAGE_LIMIT} entries`);
     }
 
