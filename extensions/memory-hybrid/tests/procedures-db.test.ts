@@ -7,6 +7,7 @@ import { FactsDB } from "../backends/facts-db.js";
 
 let tmpDir: string;
 let db: FactsDB;
+type FactsDbWithLiveDb = FactsDB & { liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } };
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "procedures-db-test-"));
@@ -663,6 +664,56 @@ describe("FactsDB procedureFeedback", () => {
     const result = db.getProcedureById(proc.id);
     expect(result?.avoidanceNotes).toBeDefined();
     expect(result?.avoidanceNotes?.some((n) => n.includes("SSH key may be dropped"))).toBe(true);
+  });
+
+  it("getProcedureById ignores malformed avoidance_notes JSON", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Malformed avoidance notes",
+      recipeJson: "[]",
+      procedureType: "positive",
+    });
+
+    db.procedureFeedback({
+      procedureId: proc.id,
+      success: false,
+      context: "baseline note",
+    });
+
+    (db as unknown as FactsDbWithLiveDb).liveDb
+      .prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE procedure_id = ?")
+      .run('{"unexpected":"object"}', proc.id);
+
+    const result = db.getProcedureById(proc.id);
+    expect(result?.id).toBe(proc.id);
+    expect(result?.avoidanceNotes).toEqual([]);
+  });
+
+  it("procedureFeedback keeps only string avoidance notes from previous versions", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Mixed avoidance notes",
+      recipeJson: "[]",
+      procedureType: "positive",
+    });
+
+    db.procedureFeedback({
+      procedureId: proc.id,
+      success: false,
+      context: "first failure",
+    });
+
+    (db as unknown as FactsDbWithLiveDb).liveDb
+      .prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE procedure_id = ?")
+      .run('["keep me",42,null,{"bad":true}]', proc.id);
+
+    const result = db.procedureFeedback({
+      procedureId: proc.id,
+      success: false,
+      context: "second failure",
+    });
+
+    expect(result?.avoidanceNotes).toContain("keep me");
+    expect(result?.avoidanceNotes?.some((note) => note.includes("second failure"))).toBe(true);
+    expect(result?.avoidanceNotes?.every((note) => typeof note === "string")).toBe(true);
   });
 
   it("procedureFeedback creates an episode record on failure", () => {
