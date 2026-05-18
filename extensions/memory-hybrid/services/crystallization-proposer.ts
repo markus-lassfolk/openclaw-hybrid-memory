@@ -533,11 +533,7 @@ export class CrystallizationProposer {
   ): { skillContent: string; proposalCardJson?: string } {
     let skillContent = proposal.skillContent;
     if (overrides.skillName && overrides.skillName !== proposal.skillName) {
-      const h1Pattern = new RegExp(
-        `^#\\s+(?:${escapeRegExp(titleCase(proposal.skillName))}|${escapeRegExp(proposal.skillName)})\\s*$`,
-        "m",
-      );
-      skillContent = skillContent.replace(h1Pattern, `# ${overrides.skillName}`);
+      skillContent = replaceFirstBodyH1AfterFrontmatter(skillContent, overrides.skillName);
       skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
