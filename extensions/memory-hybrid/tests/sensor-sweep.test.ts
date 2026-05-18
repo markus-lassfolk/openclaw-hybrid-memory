@@ -536,6 +536,69 @@ describe("sweepAll", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("memory-patterns");
   });
+
+  it("reports garmin sensor error when Home Assistant states JSON is malformed", async () => {
+    const cfg = parseSensorSweepConfig({
+      sensorSweep: {
+        enabled: true,
+        homeAssistant: { baseUrl: "http://ha.local:8123", token: "token" },
+        garmin: { enabled: true, entityPrefix: "sensor.garmin" },
+        sessionHistory: { enabled: false },
+        memoryPatterns: { enabled: false },
+        github: { enabled: false },
+      },
+    });
+    const factsDb = makeFactsDbStub();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{bad-json", { status: 200, headers: { "content-type": "application/json" } })),
+    );
+
+    try {
+      const result = await sweepAll(bus, cfg, factsDb, { tier: 1 });
+      const garmin = result.sensors.find((s) => s.sensor === "garmin");
+      expect(garmin?.error).toContain("Invalid JSON response from HA /api/states");
+      expect(result.totalWritten).toBe(0);
+      expect(result.errors.some((e) => e.includes("garmin"))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports garmin sensor error when Home Assistant states payload is not an array", async () => {
+    const cfg = parseSensorSweepConfig({
+      sensorSweep: {
+        enabled: true,
+        homeAssistant: { baseUrl: "http://ha.local:8123", token: "token" },
+        garmin: { enabled: true, entityPrefix: "sensor.garmin" },
+        sessionHistory: { enabled: false },
+        memoryPatterns: { enabled: false },
+        github: { enabled: false },
+      },
+    });
+    const factsDb = makeFactsDbStub();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ entity_id: "sensor.garmin_steps" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    try {
+      const result = await sweepAll(bus, cfg, factsDb, { tier: 1 });
+      const garmin = result.sensors.find((s) => s.sensor === "garmin");
+      expect(garmin?.error).toContain("Invalid Home Assistant response from HA /api/states: expected array");
+      expect(result.totalWritten).toBe(0);
+      expect(result.errors.some((e) => e.includes("garmin"))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("sensor-sweep Home Assistant fetch boundaries (#1476)", () => {
