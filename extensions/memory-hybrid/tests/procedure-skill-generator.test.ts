@@ -48,8 +48,14 @@ function isSlugOrPathIdentityKey(key: string, path: string): boolean {
 
 function expectSidecarHasNoStaleIdentity(sidecarPath: string, originalSlug: string, originalPath: string): void {
   const serialized = readFileSync(sidecarPath, "utf-8");
-  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original slug`).not.toContain(originalSlug);
-  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original path`).not.toContain(originalPath);
+  // Collision-resolved slugs intentionally extend the original slug with a numeric suffix.
+  // Guard against preserving the exact pre-collision identity, not the resolved slug/path.
+  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original slug`).not.toContain(
+    JSON.stringify(originalSlug),
+  );
+  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original path`).not.toContain(
+    JSON.stringify(originalPath),
+  );
   expect(collectIdentityKeyFindings(JSON.parse(serialized))).toEqual([]);
 }
 
