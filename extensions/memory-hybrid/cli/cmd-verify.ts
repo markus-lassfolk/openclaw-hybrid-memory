@@ -11,7 +11,6 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import OpenAI from "openai";
 
 import { findPluginRoot } from "../utils/plugin-root.js";
@@ -83,84 +82,20 @@ import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth
 
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
+import {
+  getCachedFactCount,
+  readApproxFactsRowCount,
+  resetVerifyFactCountCacheForTests,
+} from "./verify/fact-count.js";
+import { computeVectorSqliteOrphans } from "./verify/orphans.js";
+import { readOpenclawConfigRoot } from "./verify/openclaw-config.js";
 
-const VERIFY_FACT_COUNT_TTL_MS = 5 * 60_000;
-let verifyFactCountCache: { path: string; n: number; at: number } | null = null;
-
-type OpenclawConfigReadResult =
-  | { path: string; exists: false; root: undefined; error: undefined }
-  | { path: string; exists: true; root: Record<string, unknown>; error: undefined }
-  | { path: string; exists: true; root: undefined; error: string };
-
-function readApproxFactsRowCount(db: DatabaseSync): number | null {
-  try {
-    const row = db.prepare(`SELECT stat FROM sqlite_stat1 WHERE tbl = 'facts' LIMIT 1`).get() as
-      | { stat: string | number }
-      | undefined;
-    if (row == null || row.stat === undefined || row.stat === null) return null;
-    const statStr = String(row.stat).trim();
-    const firstInt = statStr.split(/\s+/)[0];
-    if (!firstInt) return null;
-    const n = Number.parseInt(firstInt, 10);
-    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
-  } catch {
-    return null;
-  }
-}
-
-function getCachedFactCount(
-  factsDb: { count: () => number; getRawDb: () => DatabaseSync },
-  sqlitePath: string,
-): number {
-  const now = Date.now();
-  if (
-    verifyFactCountCache &&
-    verifyFactCountCache.path === sqlitePath &&
-    now - verifyFactCountCache.at < VERIFY_FACT_COUNT_TTL_MS
-  ) {
-    return verifyFactCountCache.n;
-  }
-  const approx = readApproxFactsRowCount(factsDb.getRawDb());
-  const n = approx != null ? approx : factsDb.count();
-  verifyFactCountCache = { path: sqlitePath, n, at: now };
-  return n;
-}
-
-/** Test-only: reset verify fact-count TTL cache between tests. */
-export function resetVerifyFactCountCacheForTests(): void {
-  verifyFactCountCache = null;
-}
-
-/** Test-only: mirror cmd-verify reconcile orphan set diff. */
-export function computeVectorSqliteOrphans(
-  sqliteIds: string[],
-  vectorIds: string[],
-): { vectorOrphans: string[]; sqliteOrphans: string[] } {
-  const sqliteSet = new Set(sqliteIds);
-  const vectorSet = new Set(vectorIds);
-  return {
-    vectorOrphans: vectorIds.filter((id) => !sqliteSet.has(id)),
-    sqliteOrphans: sqliteIds.filter((id) => !vectorSet.has(id)),
-  };
-}
-
-export { readApproxFactsRowCount, getCachedFactCount };
-
-function readOpenclawConfigRoot(configPath: string): OpenclawConfigReadResult {
-  if (!existsSync(configPath)) return { path: configPath, exists: false, root: undefined, error: undefined };
-  try {
-    const raw = readFileSync(configPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return { path: configPath, exists: true, root: parsed, error: undefined };
-  } catch (err) {
-    return {
-      path: configPath,
-      exists: true,
-      root: undefined,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
+export {
+  computeVectorSqliteOrphans,
+  getCachedFactCount,
+  readApproxFactsRowCount,
+  resetVerifyFactCountCacheForTests,
+};
 
 export async function runVerifyForCli(
   ctx: HandlerContext,
