@@ -86,9 +86,7 @@ export function makeFullStackApi(tmpDir: string) {
       return (api.on as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
     },
     hookHandlers(eventName: string): Array<(event: unknown, hookCtx: unknown) => Promise<unknown>> {
-      return (api.on as ReturnType<typeof vi.fn>).mock.calls
-        .filter((c) => c[0] === eventName)
-        .map((c) => c[1]);
+      return (api.on as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === eventName).map((c) => c[1]);
     },
   };
 

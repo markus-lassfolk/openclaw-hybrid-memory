@@ -107,10 +107,7 @@ export async function invokeAgentEnd(
   messages: unknown[],
   sessionKey: string,
 ): Promise<void> {
-  await handler(
-    { messages, success: true },
-    { sessionKey, sessionId: sessionKey, agentId: "main" },
-  );
+  await handler({ messages, success: true }, { sessionKey, sessionId: sessionKey, agentId: "main" });
 }
 
 export { PreFinalizationGuardBlockingError };

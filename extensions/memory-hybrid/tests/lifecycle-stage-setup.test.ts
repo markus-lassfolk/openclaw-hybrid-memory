@@ -8,7 +8,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { runSetupStage } from "../lifecycle/stage-setup.js";
-import { buildRecallLifecycleContext, makeMockStageApi, makeRecallSessionState } from "./helpers/lifecycle-recall-harness.js";
+import {
+  buildRecallLifecycleContext,
+  makeMockStageApi,
+  makeRecallSessionState,
+} from "./helpers/lifecycle-recall-harness.js";
 
 describe("runSetupStage", () => {
   let tmpDir: string;

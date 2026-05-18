@@ -9,10 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
-import {
-  buildGuardTestLifecycleContext,
-  makeMockHookApi,
-} from "./helpers/lifecycle-hook-harness.js";
+import { buildGuardTestLifecycleContext, makeMockHookApi } from "./helpers/lifecycle-hook-harness.js";
 
 vi.mock("../lifecycle/stage-capture.js", () => ({
   runCaptureStage: vi.fn().mockResolvedValue(undefined),

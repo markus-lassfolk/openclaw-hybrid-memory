@@ -96,9 +96,7 @@ export async function buildExplicitSemanticQueryVector({
 
   try {
     void import("./error-reporter.js")
-      .then(({ addOperationBreadcrumb }) =>
-        addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`),
-      )
+      .then(({ addOperationBreadcrumb }) => addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`))
       .catch(() => undefined);
     let textToEmbed = query;
 

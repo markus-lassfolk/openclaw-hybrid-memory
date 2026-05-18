@@ -53,11 +53,7 @@ describe("registerCredentialHint", () => {
   });
 
   it("returns credential-hint prependContext for fresh valid pending file", async () => {
-    writeFileSync(
-      pendingPath,
-      JSON.stringify({ hints: ["github token"], at: Date.now() }),
-      "utf-8",
-    );
+    writeFileSync(pendingPath, JSON.stringify({ hints: ["github token"], at: Date.now() }), "utf-8");
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     ctx.cfg.credentials = { enabled: true, autoDetect: true };
     ctx.cfg.verbosity = "normal";

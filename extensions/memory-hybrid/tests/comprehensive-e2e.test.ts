@@ -17,10 +17,7 @@ import { hybridConfigSchema } from "../config.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { PreFinalizationGuardBlockingError } from "../services/pre-finalization-guard.js";
 import { _testing } from "../index.js";
-import {
-  benignFinalizationMessages,
-  pendingCiTurnMessages,
-} from "./fixtures/maeve-ledger.js";
+import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
   assertFullStackPaths,
@@ -166,9 +163,9 @@ describe("Comprehensive e2e — full plugin register()", () => {
     it("agent_end blocks when CI is pending and project ledger is empty", async () => {
       register();
       const handler = api.hookHandlers("agent_end")[0]!;
-      await expect(
-        handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX),
-      ).rejects.toBeInstanceOf(PreFinalizationGuardBlockingError);
+      await expect(handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX)).rejects.toBeInstanceOf(
+        PreFinalizationGuardBlockingError,
+      );
     });
 
     it("after_compaction injects post-compaction memory summary for stored facts", async () => {

@@ -34,7 +34,11 @@ describe("registerFrustrationHandlers", () => {
     const sessionState = makeRecallSessionState();
     registerFrustrationHandlers(api as never, ctx, sessionState);
     const reg = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "before_agent_start");
-    return { handler: reg?.[1] as (event: unknown, hookCtx: unknown) => Promise<{ prependContext?: string } | undefined>, api, sessionState };
+    return {
+      handler: reg?.[1] as (event: unknown, hookCtx: unknown) => Promise<{ prependContext?: string } | undefined>,
+      api,
+      sessionState,
+    };
   }
 
   it("skips detection when user content is shorter than 5 characters", async () => {
@@ -42,7 +46,10 @@ describe("registerFrustrationHandlers", () => {
       frustrationDetection: { enabled: true, injectionThreshold: 0.3 },
     });
     const { handler } = captureHandler(ctx);
-    const out = await handler({ prompt: "ok" }, { sessionKey: "agent:main:telegram:frust", sessionId: "agent:main:telegram:frust" });
+    const out = await handler(
+      { prompt: "ok" },
+      { sessionKey: "agent:main:telegram:frust", sessionId: "agent:main:telegram:frust" },
+    );
     expect(out).toBeUndefined();
   });
 

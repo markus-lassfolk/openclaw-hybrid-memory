@@ -10,11 +10,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import { registerLifecycleHooks } from "../setup/register-hooks.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import * as postCompactionRecall from "../services/post-compaction-recall.js";
-import {
-  buildPluginApiForRegisterHooks,
-  captureHookHandler,
-  makeHooksApi,
-} from "./helpers/register-hooks-harness.js";
+import { buildPluginApiForRegisterHooks, captureHookHandler, makeHooksApi } from "./helpers/register-hooks-harness.js";
 
 vi.mock("../lifecycle/stage-capture.js", () => ({
   runCaptureStage: vi.fn().mockResolvedValue(undefined),

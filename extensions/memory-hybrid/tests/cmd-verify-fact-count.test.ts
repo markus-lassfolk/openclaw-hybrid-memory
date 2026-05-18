@@ -8,11 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import {
-  getCachedFactCount,
-  readApproxFactsRowCount,
-  resetVerifyFactCountCacheForTests,
-} from "../cli/cmd-verify.js";
+import { getCachedFactCount, readApproxFactsRowCount, resetVerifyFactCountCacheForTests } from "../cli/cmd-verify.js";
 
 describe("cmd-verify fact count helpers", () => {
   let tmpDir: string;
