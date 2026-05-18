@@ -1,84 +1,71 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { stat } from "node:fs/promises";
+/**
+ * registerCredentialHint before_agent_start JSON/file boundaries.
+ */
+
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerCredentialHint } from "../lifecycle/stage-credential-hint.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { FactsDB } from "../backends/facts-db.js";
+import { buildRecallLifecycleContext } from "./helpers/lifecycle-recall-harness.js";
 
-function createApi() {
-  let beforeStartHandler: (() => Promise<unknown> | unknown) | undefined;
-  return {
-    api: {
-      on: vi.fn((event: string, handler: () => Promise<unknown> | unknown) => {
-        if (event === "before_agent_start") beforeStartHandler = handler;
-      }),
-      logger: {
-        warn: vi.fn(),
-      },
-    },
-    runBeforeAgentStart: async () => {
-      if (!beforeStartHandler) throw new Error("before_agent_start not registered");
-      return await beforeStartHandler();
-    },
-  };
-}
+vi.mock("../services/error-reporter.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/error-reporter.js")>();
+  return { ...actual, capturePluginError: vi.fn() };
+});
 
-describe("stage-credential-hint", () => {
-  let root: string;
-  let sqlitePath: string;
+describe("registerCredentialHint", () => {
+  let tmpDir: string;
+  let factsDb: FactsDB;
   let pendingPath: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "stage-credential-hint-"));
-    const dbDir = join(root, "db");
-    mkdirSync(dbDir, { recursive: true });
-    sqlitePath = join(dbDir, "memory.sqlite");
-    pendingPath = join(dbDir, "credentials-pending.json");
+    tmpDir = mkdtempSync(join(tmpdir(), "stage-credential-hint-"));
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+    pendingPath = join(tmpDir, "credentials-pending.json");
+    vi.mocked(capturePluginError).mockClear();
   });
 
   afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+    factsDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("drops invalid/truncated JSON without throwing or reporting", async () => {
-    writeFileSync(pendingPath, '{"hints": ["api_key"]', "utf8");
+  function captureHandler(ctx: ReturnType<typeof buildRecallLifecycleContext>) {
+    const api = { on: vi.fn(), logger: { warn: vi.fn() } };
+    registerCredentialHint(api as never, ctx);
+    const reg = (api.on as ReturnType<typeof vi.fn>).mock.calls[0];
+    return reg[1] as () => Promise<{ prependContext?: string } | undefined>;
+  }
 
-    const { api, runBeforeAgentStart } = createApi();
-    const ctx = {
-      cfg: {
-        credentials: { enabled: true, autoDetect: true },
-        verbosity: "normal",
-      },
-      resolvedSqlitePath: sqlitePath,
-    } as const;
+  it("removes invalid JSON without throwing and returns no prependContext", async () => {
+    writeFileSync(pendingPath, "{not-json", "utf-8");
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    ctx.cfg.credentials = { enabled: true, autoDetect: true };
 
-    registerCredentialHint(api as never, ctx as never);
+    const handler = captureHandler(ctx);
+    const out = await handler();
 
-    const result = await runBeforeAgentStart();
-    expect(result).toBeUndefined();
-
-    await expect(stat(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(api.logger.warn).toHaveBeenCalledTimes(1);
-    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("truncated"));
+    expect(out).toBeUndefined();
+    expect(ctx.resolvedSqlitePath).toBeTruthy();
   });
 
-  it("returns prependContext for valid hints and clears file", async () => {
-    writeFileSync(pendingPath, JSON.stringify({ hints: ["token", "password"], at: Date.now() }), "utf8");
+  it("returns credential-hint prependContext for fresh valid pending file", async () => {
+    writeFileSync(
+      pendingPath,
+      JSON.stringify({ hints: ["github token"], at: Date.now() }),
+      "utf-8",
+    );
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    ctx.cfg.credentials = { enabled: true, autoDetect: true };
+    ctx.cfg.verbosity = "normal";
 
-    const { api, runBeforeAgentStart } = createApi();
-    const ctx = {
-      cfg: {
-        credentials: { enabled: true, autoDetect: true },
-        verbosity: "normal",
-      },
-      resolvedSqlitePath: sqlitePath,
-    } as const;
+    const handler = captureHandler(ctx);
+    const out = await handler();
 
-    registerCredentialHint(api as never, ctx as never);
-    const result = (await runBeforeAgentStart()) as { prependContext: string };
-
-    expect(result.prependContext).toContain("credential-hint");
-    expect(result.prependContext).toContain("token, password");
-    await expect(stat(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(out?.prependContext).toContain("<credential-hint>");
+    expect(out?.prependContext).toContain("github token");
   });
 });

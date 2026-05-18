@@ -78,6 +78,14 @@ describe("language-keywords", () => {
       expect(merged.triggers.length).toBe(ENGLISH_KEYWORDS.triggers.length);
     });
 
+    it("returns English only when keywords file contains invalid JSON (#1477)", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(join(tmpDir, ".language-keywords.json"), "{ not valid json", "utf8");
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.triggers).toEqual([...ENGLISH_KEYWORDS.triggers]);
+    });
+
     it("merges English and file translations when file exists", async () => {
       setKeywordsPath(tmpDir);
       const filePath = join(tmpDir, ".language-keywords.json");

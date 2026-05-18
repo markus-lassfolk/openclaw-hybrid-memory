@@ -662,6 +662,24 @@ describe("FactsDB procedureFeedback", () => {
     expect(result).toBeNull();
   });
 
+  it("enrichProcedureWithFeedback tolerates malformed avoidance_notes JSON (#1470)", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Malformed notes",
+      recipeJson: "[]",
+      procedureType: "positive",
+    });
+    db.procedureFeedback({ procedureId: proc.id, success: false, context: "fail", failedAtStep: 1 });
+    const versionId = db.getProcedureVersions(proc.id)[0]?.id;
+    expect(versionId).toBeTruthy();
+    db.getRawDb()
+      .prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE id = ?")
+      .run("not-json", versionId);
+
+    expect(() => db.getProcedureById(proc.id)).not.toThrow();
+    const enriched = db.getProcedureById(proc.id);
+    expect(enriched?.id).toBe(proc.id);
+  });
+
   it("procedureFeedback records avoidance notes on failure", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Deploy",

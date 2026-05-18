@@ -126,6 +126,26 @@ function getCachedFactCount(
   return n;
 }
 
+/** Test-only: reset verify fact-count TTL cache between tests. */
+export function resetVerifyFactCountCacheForTests(): void {
+  verifyFactCountCache = null;
+}
+
+/** Test-only: mirror cmd-verify reconcile orphan set diff. */
+export function computeVectorSqliteOrphans(
+  sqliteIds: string[],
+  vectorIds: string[],
+): { vectorOrphans: string[]; sqliteOrphans: string[] } {
+  const sqliteSet = new Set(sqliteIds);
+  const vectorSet = new Set(vectorIds);
+  return {
+    vectorOrphans: vectorIds.filter((id) => !sqliteSet.has(id)),
+    sqliteOrphans: sqliteIds.filter((id) => !vectorSet.has(id)),
+  };
+}
+
+export { readApproxFactsRowCount, getCachedFactCount };
+
 function readOpenclawConfigRoot(configPath: string): OpenclawConfigReadResult {
   if (!existsSync(configPath)) return { path: configPath, exists: false, root: undefined, error: undefined };
   try {

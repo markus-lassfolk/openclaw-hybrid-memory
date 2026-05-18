@@ -184,7 +184,7 @@ function extractBackfillFact(line: string): {
 }
 
 /** Extract raw user message texts from a session file (for regex/sentiment). */
-function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
+export function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const out: string[] = [];
   for (const line of lines) {
