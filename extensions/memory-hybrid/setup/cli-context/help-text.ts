@@ -47,7 +47,7 @@ import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../../uti
 import { versionInfo } from "../../versionInfo.js";
 
 /** Help text shown after hybrid-mem commands list */
-const HYBRID_MEM_HELP_GROUPED = `
+export const HYBRID_MEM_HELP_GROUPED = `
 Commands by category:
 
   Getting Started (new users start here!)
@@ -144,7 +144,7 @@ Commands by category:
     backup verify        Check SQLite integrity without creating a backup
 `;
 
-const HYBRID_MEM_HELP_ACTIVE_TASKS = `
+export const HYBRID_MEM_HELP_ACTIVE_TASKS = `
   Goals & working memory
     goals config                   Show goal stewardship settings (goalStewardship.*); toggle: config-set goalStewardship
     goals list | status [label] | audit | …  Tracked goals (status alone = overview; status <label> = detail)

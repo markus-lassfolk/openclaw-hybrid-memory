@@ -6,6 +6,7 @@
   "files": [
     "dist",
     "index.ts",
+    "index-help.ts",
     "api",
     "config.ts",
     "config",
