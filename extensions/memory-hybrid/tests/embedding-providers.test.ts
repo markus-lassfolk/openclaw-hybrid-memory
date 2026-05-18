@@ -15,6 +15,7 @@ import {
   type EmbeddingConfig,
   Embeddings,
   FallbackEmbeddingProvider,
+  ONNX_RUNTIME_LOAD_TIMEOUT_MS,
   OllamaEmbeddingProvider,
   OnnxEmbeddingProvider,
   __setOnnxRuntimeLoaderForTests,
@@ -1052,7 +1053,7 @@ describe("OnnxEmbeddingProvider", () => {
 
       const resultPromise = provider.embedBatch(["hello world"]);
       const rejection = expect(resultPromise).rejects.toThrow(/Timed out loading onnxruntime-node/);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(ONNX_RUNTIME_LOAD_TIMEOUT_MS);
 
       await rejection;
       expect(vi.getTimerCount()).toBe(0);

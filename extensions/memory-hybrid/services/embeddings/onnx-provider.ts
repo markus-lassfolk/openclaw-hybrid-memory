@@ -30,7 +30,7 @@ type OnnxRuntimeLoader = () => Promise<OnnxRuntime>;
 
 const DEFAULT_ONNX_CACHE_DIR = join(homedir(), ".cache", "openclaw", "onnx-embeddings");
 const DEFAULT_ONNX_MAX_SEQ_LEN = 256;
-const ONNX_RUNTIME_LOAD_TIMEOUT_MS = 30_000;
+export const ONNX_RUNTIME_LOAD_TIMEOUT_MS = 30_000;
 
 const ONNX_MODEL_SPECS: Record<string, { repo: string; modelFile: string; vocabFileCandidates: string[] }> = {
   "all-MiniLM-L6-v2": {
@@ -80,12 +80,17 @@ export function __setOnnxRuntimeLoaderForTests(loader: OnnxRuntimeLoader | null)
 async function loadOnnxRuntime(): Promise<OnnxRuntime> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const runtime = await Promise.race([
       onnxRuntimeLoader(),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new OnnxRuntimeLoadTimeoutError(ONNX_RUNTIME_LOAD_TIMEOUT_MS)), ONNX_RUNTIME_LOAD_TIMEOUT_MS);
       }),
     ]);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
+    }
+    return runtime;
   } catch (err) {
     if (err instanceof OnnxRuntimeLoadTimeoutError) {
       throw err;
