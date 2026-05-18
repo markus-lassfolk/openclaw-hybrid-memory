@@ -187,7 +187,7 @@ describe("workspace skill install", () => {
     mkdirSync(skillsDir, { recursive: true });
     // Block the rename by placing a file at the path where the temp dir would be renamed.
     // installHybridMemoryWorkspaceSkill has no early-exit guard on destDir, so the copy
-    // proceeds, cpSync writes to tmpDir, then renameSync fails (ENOTDIR on Linux).
+    // proceeds, cpSync writes to tmpDir, then renameSync fails (error code varies by platform).
     writeFileSync(join(skillsDir, "hybrid-memory"), "blocking-file\n", "utf-8");
     const r = installHybridMemoryWorkspaceSkill({
       mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },

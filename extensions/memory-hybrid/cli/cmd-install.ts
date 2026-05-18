@@ -14,6 +14,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
@@ -118,6 +119,11 @@ function bundledHybridMemorySkillPath(pluginRootDir: string): string {
   return join(bundledHybridMemorySkillDir(pluginRootDir), "SKILL.md");
 }
 
+/** Returns a unique sibling temp-dir path under `skillsDir` for atomic rename into `destDir`. */
+function skillTmpDir(skillsDir: string): string {
+  return join(skillsDir, `.${HYBRID_MEMORY_SKILL_DIR}-tmp-${randomBytes(6).toString("hex")}`);
+}
+
 /** @internal Exported for tests — copies bundled `skills/hybrid-memory/` (SKILL.md + references/) into the workspace. */
 export function installHybridMemoryWorkspaceSkill(opts: {
   mergedOpenclawConfig: Record<string, unknown>;
@@ -135,13 +141,10 @@ export function installHybridMemoryWorkspaceSkill(opts: {
     return { path: dest };
   }
   try {
-    mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
-    const destDir = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR);
-    const tmpDir = join(
-      workspaceRoot,
-      "skills",
-      `.${HYBRID_MEMORY_SKILL_DIR}-tmp-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`,
-    );
+    const skillsDir = join(workspaceRoot, "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    const destDir = join(skillsDir, HYBRID_MEMORY_SKILL_DIR);
+    const tmpDir = skillTmpDir(skillsDir);
     try {
       cpSync(srcDir, tmpDir, { recursive: true });
       renameSync(tmpDir, destDir);
@@ -213,13 +216,10 @@ export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
     return { path: dest, deployed: false, skippedReason: "destination_dir_exists" };
   }
   try {
-    mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
+    const skillsDir = join(workspaceRoot, "skills");
+    mkdirSync(skillsDir, { recursive: true });
     const srcDir = bundledHybridMemorySkillDir(opts.pluginRootDir);
-    const tmpDir = join(
-      workspaceRoot,
-      "skills",
-      `.${HYBRID_MEMORY_SKILL_DIR}-tmp-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(16)}`,
-    );
+    const tmpDir = skillTmpDir(skillsDir);
     try {
       cpSync(srcDir, tmpDir, { recursive: true });
       renameSync(tmpDir, destDir);
