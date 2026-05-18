@@ -73,19 +73,27 @@ describe("getSessionFilePathsSince", () => {
     expect(result).toEqual([]);
   });
 
-  it("returns only .jsonl files modified after the cutoff", () => {
-    const old = join(tmpDir, "old-session.jsonl");
-    const recent = join(tmpDir, "recent-session.jsonl");
+  it("returns .jsonl files and excludes non-jsonl files", () => {
+    const jsonlFile = join(tmpDir, "session.jsonl");
     const nonJsonl = join(tmpDir, "readme.txt");
 
-    writeFileSync(old, "{}");
+    writeFileSync(jsonlFile, "{}");
     writeFileSync(nonJsonl, "ignore me");
-    writeFileSync(recent, "{}");
 
-    // Use sinceTimestamp = 0 so all files pass the mtime check (both were just created)
+    // sinceTimestamp = 0 means cutoff is epoch start — all freshly created files pass
     const result = getSessionFilePathsSince(tmpDir, 0, 0);
-    expect(result).toContain(recent);
+    expect(result).toContain(jsonlFile);
     expect(result).not.toContain(nonJsonl);
+  });
+
+  it("excludes .jsonl files whose mtime is at or before the cutoff", () => {
+    const jsonlFile = join(tmpDir, "session.jsonl");
+    writeFileSync(jsonlFile, "{}");
+
+    // Use a future cutoff so the just-created file is considered too old
+    const futureCutoff = Date.now() + 60_000;
+    const result = getSessionFilePathsSince(tmpDir, 0, futureCutoff);
+    expect(result).not.toContain(jsonlFile);
   });
 
   it("excludes .deleted .jsonl files", () => {
