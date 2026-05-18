@@ -177,7 +177,9 @@ describe("language-keywords", () => {
       const regexes = getMemoryTriggerRegexes();
       expect(Array.isArray(regexes)).toBe(true);
       expect(regexes.length).toBeGreaterThan(0);
-      regexes.forEach((r) => expect(r).toBeInstanceOf(RegExp));
+      for (const r of regexes) {
+        expect(r).toBeInstanceOf(RegExp);
+      }
     });
 
     it("matches English trigger phrase", () => {
@@ -266,9 +268,9 @@ describe("language-keywords", () => {
       expect(re.test("you misunderstood what I said")).toBe(true);
     });
 
-    it("matches negative emoji and user-saved correction phrases when path set", () => {
+    it("matches negative emoji and user-saved correction phrases when path set", async () => {
       setKeywordsPath(tmpDir);
-      clearKeywordCache();
+      await clearKeywordCache();
       saveUserFeedbackPhrases({ reinforcement: [], correction: ["my custom nope", "exactly wrong"] });
       const re = getCorrectionSignalRegex();
       expect(re.test("👎")).toBe(true);
@@ -279,9 +281,9 @@ describe("language-keywords", () => {
   });
 
   describe("getReinforcementSignalRegex", () => {
-    it("matches positive emoji and user-saved reinforcement phrases when path set", () => {
+    it("matches positive emoji and user-saved reinforcement phrases when path set", async () => {
       setKeywordsPath(tmpDir);
-      clearKeywordCache();
+      await clearKeywordCache();
       saveUserFeedbackPhrases({ reinforcement: ["spot on", "perfect match"], correction: [] });
       const re = getReinforcementSignalRegex();
       expect(re.test("👍")).toBe(true);
@@ -302,17 +304,17 @@ describe("language-keywords", () => {
       expect(getUserFeedbackPhrasesPath()).toBe(join(tmpDir, ".user-feedback-phrases.json"));
     });
 
-    it("loadUserFeedbackPhrases returns empty when file missing", () => {
+    it("loadUserFeedbackPhrases returns empty when file missing", async () => {
       setKeywordsPath(tmpDir);
-      clearKeywordCache();
+      await clearKeywordCache();
       const loaded = loadUserFeedbackPhrases();
       expect(loaded.reinforcement).toEqual([]);
       expect(loaded.correction).toEqual([]);
     });
 
-    it("saveUserFeedbackPhrases then loadUserFeedbackPhrases round-trips data", () => {
+    it("saveUserFeedbackPhrases then loadUserFeedbackPhrases round-trips data", async () => {
       setKeywordsPath(tmpDir);
-      clearKeywordCache();
+      await clearKeywordCache();
       const data = { reinforcement: ["great", "thanks"], correction: ["nope", "wrong"] };
       saveUserFeedbackPhrases(data);
       const loaded = loadUserFeedbackPhrases();

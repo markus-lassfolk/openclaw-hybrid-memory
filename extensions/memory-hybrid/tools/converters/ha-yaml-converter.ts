@@ -253,10 +253,14 @@ export const haYamlConverter: Converter = {
       }
       if (typeof obj !== "object" || obj === null) return;
       if (Array.isArray(obj)) {
-        obj.forEach((v) => collectIncludes(v, depth + 1));
+        for (const v of obj) {
+          collectIncludes(v, depth + 1);
+        }
         return;
       }
-      Object.values(obj).forEach((v) => collectIncludes(v, depth + 1));
+      for (const v of Object.values(obj)) {
+        collectIncludes(v, depth + 1);
+      }
     }
     collectIncludes(doc);
 

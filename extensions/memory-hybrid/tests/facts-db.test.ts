@@ -1300,7 +1300,9 @@ describe("FactsDB bi-temporal", () => {
       supersedesId: old.id,
     });
     db.supersede(old.id, newer.id);
-    const supersessionTime = db.getById(old.id)?.validUntil!;
+    const superseded = db.getById(old.id);
+    expect(superseded?.validUntil).toBeDefined();
+    const supersessionTime = superseded!.validUntil;
 
     const current = db.search("theme", 5);
     expect(current.some((r) => r.entry.id === newer.id)).toBe(true);
@@ -1367,7 +1369,9 @@ describe("FactsDB bi-temporal", () => {
       supersedesId: old.id,
     });
     db.supersede(old.id, newer.id);
-    const supersessionTime = db.getById(old.id)?.validUntil!;
+    const superseded = db.getById(old.id);
+    expect(superseded?.validUntil).toBeDefined();
+    const supersessionTime = superseded!.validUntil;
 
     const at1500 = db.lookup("Entity", "key", undefined, { asOf: 1500 });
     expect(at1500.length).toBe(1);
@@ -3488,7 +3492,7 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(updated?.lastAccessedAt).toBeDefined();
     expect(updated?.lastAccessedAt).not.toBeNull();
     // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-    expect(updated?.lastAccessedAt!).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(updated!.lastAccessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 
   it("refreshAccessedFacts increments access_count cumulatively", () => {

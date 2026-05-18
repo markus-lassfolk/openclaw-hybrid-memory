@@ -29,7 +29,9 @@ function recordDistinctSuccesses(procId: string): void {
 
 function collectIdentityKeyFindings(value: unknown, path = "$", findings: string[] = []): string[] {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectIdentityKeyFindings(item, `${path}[${index}]`, findings));
+    for (const [index, item] of value.entries()) {
+      collectIdentityKeyFindings(item, `${path}[${index}]`, findings);
+    }
     return findings;
   }
   if (!value || typeof value !== "object") return findings;
@@ -48,7 +50,9 @@ function isSlugOrPathIdentityKey(key: string, path: string): boolean {
 
 function collectExactValueFindings(value: unknown, target: string, path = "$", findings: string[] = []): string[] {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectExactValueFindings(item, target, `${path}[${index}]`, findings));
+    for (const [index, item] of value.entries()) {
+      collectExactValueFindings(item, target, `${path}[${index}]`, findings);
+    }
     return findings;
   }
   if (!value || typeof value !== "object") {

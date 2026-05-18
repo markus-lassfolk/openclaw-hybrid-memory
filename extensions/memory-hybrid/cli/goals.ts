@@ -163,12 +163,14 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       );
       console.log(`\nDescription:\n  ${goal.description}`);
       console.log("\nAcceptance Criteria:");
-      goal.acceptanceCriteria.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
+      for (const [i, c] of goal.acceptanceCriteria.entries()) {
+        console.log(`  ${i + 1}. ${c}`);
+      }
       if (goal.linkedTasks.length > 0) {
         console.log("\nLinked Tasks:");
-        goal.linkedTasks.forEach((t) =>
-          console.log(`  ${t.label.padEnd(20)} ${t.status}${t.sessionKey ? `  session: ${t.sessionKey}` : ""}`),
-        );
+        for (const t of goal.linkedTasks) {
+          console.log(`  ${t.label.padEnd(20)} ${t.status}${t.sessionKey ? `  session: ${t.sessionKey}` : ""}`);
+        }
       }
       console.log(`\nBlockers: ${goal.currentBlockers.length > 0 ? goal.currentBlockers.join(", ") : "none"}`);
       if (goal.escalationKind != null) {
@@ -195,9 +197,9 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       const last10 = goal.history.slice(-10).reverse();
       if (last10.length > 0) {
         console.log(`\nHistory (last ${last10.length}):`);
-        last10.forEach((h) =>
-          console.log(`  ${h.timestamp}  ${h.actor.padEnd(8)}  ${h.action.padEnd(18)} "${h.detail.slice(0, 100)}"`),
-        );
+        for (const h of last10) {
+          console.log(`  ${h.timestamp}  ${h.actor.padEnd(8)}  ${h.action.padEnd(18)} "${h.detail.slice(0, 100)}"`);
+        }
       }
     });
 

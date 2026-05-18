@@ -1576,12 +1576,16 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         console.log(`Sessions scanned: ${res.sessionsScanned}`);
         console.log(`Reinforcement phrases: ${res.reinforcement.length}`);
         if (res.reinforcement.length > 0) {
-          res.reinforcement.slice(0, 15).forEach((p) => console.log(`  + ${p}`));
+          for (const p of res.reinforcement.slice(0, 15)) {
+            console.log(`  + ${p}`);
+          }
           if (res.reinforcement.length > 15) console.log(`  ... and ${res.reinforcement.length - 15} more`);
         }
         console.log(`Correction phrases: ${res.correction.length}`);
         if (res.correction.length > 0) {
-          res.correction.slice(0, 15).forEach((p) => console.log(`  - ${p}`));
+          for (const p of res.correction.slice(0, 15)) {
+            console.log(`  - ${p}`);
+          }
           if (res.correction.length > 15) console.log(`  ... and ${res.correction.length - 15} more`);
         }
         if (res.learned) {
