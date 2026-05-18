@@ -2,7 +2,7 @@ import { getEnv } from "../utils/env-manager.js";
 /**
  * Crystallization Proposer — orchestrate the full propose→approve→write pipeline (Issue #208).
  *
- * Combines detectCandidates, crystallize, SkillValidator and CrystallizationStore
+ * Combines pattern detection, skill crystallization, SkillValidator and CrystallizationStore
  * into a single entry point for the crystallization workflow.
  *
  * Human approval is always required (autoApprove=false by default).
@@ -16,7 +16,7 @@ import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { stripLeadingHtmlComments } from "../utils/text.js";
+import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -24,8 +24,8 @@ import {
   detailSkillProposalValidation,
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
-import { detectCandidates } from "./pattern-detector.js";
-import { crystallize } from "./skill-crystallizer.js";
+import { detectCrystallizationCandidates } from "./pattern-detector.js";
+import { crystallizeSkill } from "./skill-crystallizer.js";
 import { buildNonPlaceholderEmailPattern } from "./skill-validator.js";
 
 /** When renaming, replace the first Markdown ATX H1 in the body (after frontmatter), if any. */
@@ -132,7 +132,7 @@ export class CrystallizationProposer {
       };
     }
 
-    const candidates = detectCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
+    const candidates = detectCrystallizationCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
     if (candidates.length === 0) {
       return { proposed: 0, skipped: 0, reasons: ["No new candidates found"] };
     }
@@ -144,11 +144,14 @@ export class CrystallizationProposer {
 
     for (const candidate of candidates) {
       try {
-        const result = crystallize(this.cfg, {
-          patternId: candidate.patternId,
-          evidenceHash: candidate.evidenceHash,
-          pattern: candidate.pattern,
-        });
+        const result = crystallizeSkill(
+          {
+            patternId: candidate.patternId,
+            evidenceHash: candidate.evidenceHash,
+            pattern: candidate.pattern,
+          },
+          this.cfg,
+        );
 
         const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
         const legacy = isLegacyMarkdownCrystallizationProposal(result.skillContent);
@@ -725,7 +728,7 @@ function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe:
     if (isTopLevelYamlKeyLine(L)) break;
     if (L.trim() === "") {
       let k = j + 1;
-      while (k < lines.length && lines[k]!.trim() === "") k++;
+      while (k < lines.length && lines[k]?.trim() === "") k++;
       if (k >= lines.length) return j;
       if (isTopLevelYamlKeyLine(lines[k]!)) break;
       if (leadingIndentLen(lines[k]!) > keyIndent) {

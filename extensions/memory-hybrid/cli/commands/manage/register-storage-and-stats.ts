@@ -420,7 +420,7 @@ export function buildAuditHealthReport(
   // two weeks while the store warms up.
   const oldestRow =
     raw != null
-      ? (raw.prepare(`SELECT MIN(created_at) AS oldest FROM facts WHERE superseded_at IS NULL`).get() as
+      ? (raw.prepare("SELECT MIN(created_at) AS oldest FROM facts WHERE superseded_at IS NULL").get() as
           | { oldest: number | null }
           | undefined)
       : undefined;
@@ -443,7 +443,7 @@ export function buildAuditHealthReport(
         ).map((row) => {
           const eventTypeHistogram: Record<string, number> = {};
           if (raw) {
-            const pr = raw.prepare(`SELECT provenance_json FROM facts WHERE id = ?`).get(row.id) as
+            const pr = raw.prepare("SELECT provenance_json FROM facts WHERE id = ?").get(row.id) as
               | { provenance_json: string | null }
               | undefined;
             if (pr?.provenance_json) {
@@ -562,11 +562,11 @@ export function buildAuditHealthReport(
   if (raw && hasBudget("storageGrowth")) {
     recordStorageGrowthSample(factsDb, lanceBytes);
     const lastRow = raw
-      .prepare(`SELECT recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1`)
+      .prepare("SELECT recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1")
       .get() as { recorded_at: number } | undefined;
     const latestSnap = raw
       .prepare(
-        `SELECT sqlite_bytes, lance_bytes, link_count, fact_count, recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1`,
+        "SELECT sqlite_bytes, lance_bytes, link_count, fact_count, recorded_at FROM storage_growth_history ORDER BY recorded_at DESC LIMIT 1",
       )
       .get() as
       | {
@@ -580,7 +580,7 @@ export function buildAuditHealthReport(
     const cutoff7d = nowSecReport - 7 * 86400;
     const baselineSnap = raw
       .prepare(
-        `SELECT sqlite_bytes, lance_bytes, link_count, fact_count, recorded_at FROM storage_growth_history WHERE recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1`,
+        "SELECT sqlite_bytes, lance_bytes, link_count, fact_count, recorded_at FROM storage_growth_history WHERE recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1",
       )
       .get(cutoff7d) as
       | {
@@ -755,7 +755,7 @@ export function buildAuditHealthReport(
 
   let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
   if (raw && hasBudget("graphHubGuard")) {
-    const probeRow = raw.prepare(`SELECT id FROM facts WHERE superseded_at IS NULL LIMIT 1`).get() as
+    const probeRow = raw.prepare("SELECT id FROM facts WHERE superseded_at IS NULL LIMIT 1").get() as
       | { id: string }
       | undefined;
     if (probeRow?.id) {
@@ -1402,7 +1402,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
                 let vectors: (number[] | null)[];
                 try {
                   vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
-                } catch (err) {
+                } catch (_err) {
                   vectors = [];
                   for (const fact of batch) {
                     try {
@@ -1598,7 +1598,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
                 resumeCheckpoint = null;
               }
             }
-            console.log(`Re-index: creating shadow table for safe rebuild...`);
+            console.log("Re-index: creating shadow table for safe rebuild...");
 
             let shadowTableName: string;
             try {
@@ -1615,7 +1615,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
               });
             }
 
-            console.log(`Re-index: embedding all facts into shadow table (this may take a while)...`);
+            console.log("Re-index: embedding all facts into shadow table (this may take a while)...");
             const result = await migrateEmbeddings({
               factsDb,
               vectorDb,
@@ -1704,19 +1704,19 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
             console.log(
               `Re-index: validation passed — ${result.migrated} >= ${minRequired} required (${(minFractionSuccess * 100).toFixed(1)}% of ${totalFacts})`,
             );
-            console.log(`Re-index: swapping shadow table into place...`);
+            console.log("Re-index: swapping shadow table into place...");
 
             try {
               await vectorDb.swapShadowTable(shadowTableName, minFractionSuccess, totalFacts);
             } catch (err) {
               console.error(`\nRe-index failed: shadow table swap failed: ${err}`);
-              console.error(`Live vector store was NOT modified.`);
+              console.error("Live vector store was NOT modified.");
               console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
               process.exit(1);
             }
 
             // Update embedding metadata in SQLite (batch update for all facts)
-            console.log(`Re-index: updating embedding metadata in SQLite...`);
+            console.log("Re-index: updating embedding metadata in SQLite...");
             const allFacts =
               typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
                 ? (() => {

@@ -34,7 +34,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
         debug: () => {},
         error: () => {},
       },
-      registerCli: (fn: () => void, opts?: { descriptors?: Array<{ name: string; description?: string }> }) => {
+      registerCli: (_fn: () => void, opts?: { descriptors?: Array<{ name: string; description?: string }> }) => {
         cliRegistered = true;
         if (opts?.descriptors) {
           cliDescriptors = opts.descriptors;
@@ -70,7 +70,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
         debug: () => {},
         error: () => {},
       },
-      registerCli: (fn: () => void, opts?: { descriptors?: Array<{ name: string }> }) => {
+      registerCli: (_fn: () => void, _opts?: { descriptors?: Array<{ name: string }> }) => {
         cliRegistered = true;
       },
       registerTool: () => {},
@@ -100,7 +100,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
         debug: () => {},
         error: () => {},
       },
-      registerCli: (fn: () => void, opts?: { descriptors?: Array<{ name: string }> }) => {
+      registerCli: (_fn: () => void, _opts?: { descriptors?: Array<{ name: string }> }) => {
         cliRegistered = true;
       },
       registerTool: () => {},
@@ -130,7 +130,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
         debug: () => {},
         error: () => {},
       },
-      registerCli: (fn: () => void, opts?: { descriptors?: Array<{ name: string }> }) => {
+      registerCli: (_fn: () => void, _opts?: { descriptors?: Array<{ name: string }> }) => {
         cliRegistered = true;
       },
       registerTool: () => {},

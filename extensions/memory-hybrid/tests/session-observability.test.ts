@@ -106,21 +106,21 @@ describe("buildSessionObservabilityReport", () => {
     const auditStore = makeMockAuditStore() as unknown as AuditStore;
 
     // Append two audit events with different sessionIds
-    auditStore.append!({
+    auditStore.append?.({
       agentId: "forge",
       action: "recall:completed",
       outcome: "success",
       sessionId: "session-alpha",
       context: { candidate_count: 5 },
     });
-    auditStore.append!({
+    auditStore.append?.({
       agentId: "forge",
       action: "recall:completed",
       outcome: "success",
       sessionId: "session-beta",
       context: { candidate_count: 3 },
     });
-    auditStore.append!({
+    auditStore.append?.({
       agentId: "scholar",
       action: "auto-capture:stored",
       outcome: "success",
@@ -154,14 +154,14 @@ describe("buildSessionObservabilityReport", () => {
     const auditStore = makeMockAuditStore() as unknown as AuditStore;
 
     // Simulate various capture outcomes
-    auditStore.append!({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:updated", outcome: "success", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:noop", outcome: "skipped", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:noop", outcome: "skipped", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:duplicate", outcome: "skipped", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:delete", outcome: "success", sessionId: "s1" });
-    auditStore.append!({
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:updated", outcome: "success", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:noop", outcome: "skipped", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:noop", outcome: "skipped", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:duplicate", outcome: "skipped", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:delete", outcome: "success", sessionId: "s1" });
+    auditStore.append?.({
       agentId: "forge",
       action: "auto-capture:classification-error",
       outcome: "failed",
@@ -192,8 +192,8 @@ describe("buildSessionObservabilityReport", () => {
 
   it("generates a non-empty summary string", async () => {
     const auditStore = makeMockAuditStore() as unknown as AuditStore;
-    auditStore.append!({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
-    auditStore.append!({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
+    auditStore.append?.({ agentId: "forge", action: "auto-capture:stored", outcome: "success", sessionId: "s1" });
 
     const report = await buildSessionObservabilityReport({
       factsDb: makeMockFactsDb() as unknown as FactsDB,
@@ -230,7 +230,7 @@ describe("buildSessionObservabilityReport", () => {
 
     // Append many audit events
     for (let i = 0; i < 100; i++) {
-      auditStore.append!({
+      auditStore.append?.({
         agentId: "forge",
         action: `test:action-${i}`,
         outcome: "success",
