@@ -270,6 +270,8 @@ describe("runCaptureStage", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("credential auto-detect failed"));
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("credential auto-detect failed: Error: simulated write failure"),
+    );
   });
 });

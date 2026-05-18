@@ -838,6 +838,8 @@ async function runCapture(
       const allText = texts.join("\n");
       const detected = detectCredentialPatterns(allText);
       if (detected.length > 0) {
+        // atomicWriteFile writes to a temp file then renames atomically (crash-safe).
+        // It always encodes as UTF-8 (see utils/atomic-write.ts).
         atomicWriteFile(
           pendingPath,
           JSON.stringify({
