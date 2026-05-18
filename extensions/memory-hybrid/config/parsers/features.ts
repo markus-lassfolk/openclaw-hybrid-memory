@@ -1008,7 +1008,7 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
   const validAction = (value: unknown): "expire-now" | "expire-soon" | "keep-stable" | undefined =>
     value === "expire-now" || value === "expire-soon" || value === "keep-stable" ? value : undefined;
   const repos = Array.isArray(github?.repos)
-    ? (github!.repos as unknown[])
+    ? (github?.repos as unknown[])
         .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
         .map((r) => r.trim())
     : undefined;

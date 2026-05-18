@@ -1,1 +1,1 @@
-const runSkillsSuggest = async () => {};
+const _runSkillsSuggest = async () => {};

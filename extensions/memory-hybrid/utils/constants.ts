@@ -60,7 +60,7 @@ export const INTERACTIVE_FTS_MAX_OR_TERMS = 16;
 export const SECONDS_PER_DAY = 86400;
 
 /** Max tokens for HOT tier (always-loaded session context). */
-const HOT_TIER_MAX_TOKENS = 2000;
+const _HOT_TIER_MAX_TOKENS = 2000;
 
 // Python Bridge constants
 /** Maximum number of retries for Python bridge startup. */

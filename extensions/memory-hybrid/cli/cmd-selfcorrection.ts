@@ -259,7 +259,7 @@ export async function runSelfCorrectionRunForCli(
         content = (r.stdout ?? "") + (r.stderr ?? "");
         if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
       } else {
-        logger.info?.(`memory-hybrid: self-correction-run model tier = heavy`);
+        logger.info?.("memory-hybrid: self-correction-run model tier = heavy");
         logger.info?.(`memory-hybrid: self-correction-run starting with model ${model} (source=${modelSource})`);
         logger.info?.(
           `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,

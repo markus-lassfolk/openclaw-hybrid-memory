@@ -300,17 +300,15 @@ import {
 import { CrystallizationProposer } from "./services/crystallization-proposer.js";
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
 import {
-  PatternDetector,
   computeEvidenceHash,
   computePatternId,
-  detectCandidates,
+  detectCrystallizationCandidates,
   scorePattern,
 } from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
 import {
-  SkillCrystallizer,
-  crystallize,
   buildExamplesText,
+  crystallizeSkill,
   deriveSkillName,
   inferCategory,
   isExecOnlySequence,
@@ -998,10 +996,8 @@ export const _testing = {
   hashToolSequence,
   // Workflow crystallization (Issue #208)
   CrystallizationStore,
-  PatternDetector,
-  detectCandidates,
-  SkillCrystallizer,
-  crystallize,
+  detectCrystallizationCandidates,
+  crystallizeSkill,
   SkillValidator,
   buildNonPlaceholderEmailPattern,
   CrystallizationProposer,

@@ -13,6 +13,9 @@ import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backe
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { ACTION_VERB_PATTERN } from "../utils/constants.js";
+import { deriveSkillName, isExecOnlySequence } from "./skill-crystallizer-helpers.js";
+
+export { deriveSkillName, isExecOnlySequence, normalizeSkillName } from "./skill-crystallizer-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -34,53 +37,6 @@ interface CrystallizationResult {
   hasScript: boolean;
   /** Shell script content if hasScript === true */
   scriptContent?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Derive a kebab-case skill name from example goals and tool sequence.
- * Prefers the first example goal, falls back to tool sequence hash.
- */
-export function deriveSkillName(exampleGoals: string[], toolSequence: string[], patternId: string): string {
-  // Try to extract a short phrase from the first example goal
-  const firstGoal = exampleGoals[0];
-  if (firstGoal && firstGoal.trim().length > 0) {
-    const slug = firstGoal
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .trim()
-      .split(/\s+/)
-      .slice(0, 4)
-      .join("-");
-    if (slug.length >= 3) return `auto-${slug}`;
-  }
-
-  // Fall back: use the first two tool names + hash fragment (lowercase for consistency)
-  const toolSlug = toolSequence
-    .slice(0, 2)
-    .join("-")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-");
-  return `auto-${toolSlug}-${patternId.slice(0, 6)}`;
-}
-
-export function normalizeSkillName(value: string): string {
-  const normalized = value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized.length > 0 ? normalized : "auto-generated-skill";
-}
-
-/**
- * Check whether a tool sequence is entirely exec calls (shell-automatable).
- */
-export function isExecOnlySequence(toolSequence: string[]): boolean {
-  return toolSequence.length > 0 && toolSequence.every((t) => t === "exec");
 }
 
 // ---------------------------------------------------------------------------
@@ -296,14 +252,14 @@ function buildProposalCard(
 }
 
 // ---------------------------------------------------------------------------
-// SkillCrystallizer — exported as a free function (no class wrapper needed)
+// Crystallization
 // ---------------------------------------------------------------------------
 
 /**
  * Generate a SKILL.md from a crystallization candidate.
  * Does NOT write to disk — returns content + proposed path for the approval flow.
  */
-export function crystallize(cfg: CrystallizationConfig, input: CrystallizationInput): CrystallizationResult {
+export function crystallizeSkill(input: CrystallizationInput, cfg: CrystallizationConfig): CrystallizationResult {
   const { patternId, pattern, evidenceHash } = input;
   const createdAt = new Date().toISOString().slice(0, 10);
 
@@ -327,22 +283,6 @@ export function crystallize(cfg: CrystallizationConfig, input: CrystallizationIn
     hasScript,
     scriptContent,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Deprecated class wrapper for backward compatibility
-// ---------------------------------------------------------------------------
-
-/**
- * @deprecated Use `crystallize` function directly instead.
- * This class wrapper is retained for backward compatibility only.
- */
-export class SkillCrystallizer {
-  constructor(private cfg: CrystallizationConfig) {}
-
-  crystallize(input: CrystallizationInput): CrystallizationResult {
-    return crystallize(this.cfg, input);
-  }
 }
 
 // ---------------------------------------------------------------------------

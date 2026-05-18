@@ -286,7 +286,7 @@ export async function runDistillForCli(
     const distillMainTier = configuredDistillTier === "heavy" ? "maintenance" : configuredDistillTier;
     if (configuredDistillTier === "heavy") {
       logger.warn?.(
-        `memory-hybrid: distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance). Use --model to override for a single run.`,
+        "memory-hybrid: distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance). Use --model to override for a single run.",
       );
     }
     const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, distillMainTier);

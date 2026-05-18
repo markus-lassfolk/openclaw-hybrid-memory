@@ -54,7 +54,7 @@ describe("dedupe-policy integration — implicit-feedback path (Issue #1194)", (
     expect(implicitCount).toBe(1);
 
     const raw = db.getRawDb();
-    const recall = raw.prepare(`SELECT recall_count FROM facts WHERE id = ?`).get(canonicalId) as {
+    const recall = raw.prepare("SELECT recall_count FROM facts WHERE id = ?").get(canonicalId) as {
       recall_count: number;
     };
     expect(recall.recall_count).toBeGreaterThanOrEqual(999);

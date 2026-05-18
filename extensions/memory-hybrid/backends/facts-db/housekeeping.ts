@@ -110,7 +110,7 @@ export function selfCorrectionIncidentsCount(db: DatabaseSync): number {
 }
 
 export function countSupersededFacts(db: DatabaseSync): number {
-  const row = db.prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NOT NULL`).get() as
+  const row = db.prepare("SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NOT NULL").get() as
     | { count: number }
     | undefined;
   return row?.count ?? 0;

@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 
 let tmpDir: string;
@@ -45,11 +46,35 @@ function isSlugOrPathIdentityKey(key: string, path: string): boolean {
   return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
 }
 
+function collectExactValueFindings(value: unknown, target: string, path = "$", findings: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectExactValueFindings(item, target, `${path}[${index}]`, findings));
+    return findings;
+  }
+  if (!value || typeof value !== "object") {
+    if (value === target) findings.push(path);
+    return findings;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    collectExactValueFindings(child, target, `${path}.${key}`, findings);
+  }
+  return findings;
+}
+
 function expectSidecarHasNoStaleIdentity(sidecarPath: string, originalSlug: string, originalPath: string): void {
   const serialized = readFileSync(sidecarPath, "utf-8");
-  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original slug`).not.toContain(originalSlug);
-  expect(serialized, `${relative(tmpDir, sidecarPath)} must not preserve original path`).not.toContain(originalPath);
-  expect(collectIdentityKeyFindings(JSON.parse(serialized))).toEqual([]);
+  const parsed = JSON.parse(serialized);
+  // Collision-resolved slugs intentionally extend the original slug with a numeric suffix.
+  // Guard against preserving the exact pre-collision identity value, not the resolved slug/path.
+  expect(
+    collectExactValueFindings(parsed, originalSlug),
+    `${relative(tmpDir, sidecarPath)} must not preserve original slug value`,
+  ).toEqual([]);
+  expect(
+    collectExactValueFindings(parsed, originalPath),
+    `${relative(tmpDir, sidecarPath)} must not preserve original path value`,
+  ).toEqual([]);
+  expect(collectIdentityKeyFindings(parsed)).toEqual([]);
 }
 
 describe("generateAutoSkills", () => {
@@ -83,18 +108,26 @@ describe("generateAutoSkills", () => {
     db.recordProcedureSuccess(proc.id, undefined, "s2");
     db.recordProcedureSuccess(proc.id, undefined, "s3");
 
-    const result = generateAutoSkills(
-      db,
-      {
-        skillsAutoPath: skillsDir,
-        validationThreshold: 3,
-        skillTTLDays: 30,
-        dryRun: false,
-        apply: true,
-        policy: "auto-safe",
-      },
-      { info: () => {}, warn: () => {} },
-    );
+    const previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
+    let result: ReturnType<typeof generateAutoSkills>;
+    try {
+      result = generateAutoSkills(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          validationThreshold: 3,
+          skillTTLDays: 30,
+          dryRun: false,
+          apply: true,
+          policy: "auto-safe",
+        },
+        { info: () => {}, warn: () => {} },
+      );
+    } finally {
+      if (previousWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
+    }
 
     expect(result.generated).toBe(1);
     expect(result.paths).toHaveLength(1);
@@ -124,6 +157,7 @@ describe("generateAutoSkills", () => {
 
     const proposalMetadata = JSON.parse(readFileSync(proposalMetadataPath, "utf-8"));
     expect(proposalMetadata).toMatchObject({
+      generated_skill_path: relative(tmpDir, join(skillsDir, "check-moltbook-notifications")),
       source_procedures: [proc.id],
       success_count: expect.any(Number),
       failure_count: expect.any(Number),
@@ -175,6 +209,7 @@ describe("generateAutoSkills", () => {
     const collidedDir = join(skillsDir, "validate-colliding-release-report-1");
     const skillContent = readFileSync(join(collidedDir, "SKILL.md"), "utf-8");
     const verification = JSON.parse(readFileSync(join(collidedDir, "verification.json"), "utf-8"));
+    const proposalMetadata = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8"));
 
     expect(skillContent).toContain("name: validate-colliding-release-report-1");
     expect(skillContent).toContain("# Validate Colliding Release Report 1");
@@ -182,6 +217,7 @@ describe("generateAutoSkills", () => {
       skill: "validate-colliding-release-report-1",
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
     });
+    expect(proposalMetadata.generated_skill_path).toBe(join(skillsDir, "validate-colliding-release-report-1"));
 
     const originalSlug = "validate-colliding-release-report";
     const originalPath = join(skillsDir, originalSlug);
