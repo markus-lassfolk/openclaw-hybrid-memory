@@ -64,25 +64,25 @@ interface HAEntity {
   last_updated: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isHAEntity(value: unknown): value is HAEntity {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.entity_id === "string" &&
-    typeof value.state === "string" &&
-    isRecord(value.attributes) &&
-    typeof value.last_updated === "string"
-  );
+function getHAEntityValidationError(value: unknown): string | null {
+  if (!isPlainObject(value)) return "value is not an object";
+  if (typeof value.entity_id !== "string") return "entity_id is not a string";
+  if (typeof value.state !== "string") return "state is not a string";
+  if (!isPlainObject(value.attributes)) return "attributes is not an object";
+  if (typeof value.last_updated !== "string") return "last_updated is not a string";
+  return null;
 }
 
 async function parseJsonBody(res: Response, context: string): Promise<unknown> {
   try {
     return await res.json();
-  } catch {
-    throw new Error(`Invalid JSON response from ${context}`);
+  } catch (err) {
+    const details = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid JSON response from ${context}: ${details}`);
   }
 }
 
@@ -91,18 +91,20 @@ function parseHAEntities(payload: unknown, context: string): HAEntity[] {
     throw new Error(`Invalid Home Assistant response from ${context}: expected array`);
   }
   for (const [index, item] of payload.entries()) {
-    if (!isHAEntity(item)) {
-      throw new Error(`Invalid Home Assistant entity at index ${index} from ${context}`);
+    const validationError = getHAEntityValidationError(item);
+    if (validationError) {
+      throw new Error(`Invalid Home Assistant entity at index ${index} from ${context}: ${validationError}`);
     }
   }
-  return payload;
+  return payload as HAEntity[];
 }
 
 function parseHAEntity(payload: unknown, context: string): HAEntity {
-  if (!isHAEntity(payload)) {
-    throw new Error(`Invalid Home Assistant response from ${context}: expected entity object`);
+  const validationError = getHAEntityValidationError(payload);
+  if (validationError) {
+    throw new Error(`Invalid Home Assistant response from ${context}: ${validationError}`);
   }
-  return payload;
+  return payload as HAEntity;
 }
 
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
