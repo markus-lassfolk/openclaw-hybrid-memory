@@ -1067,7 +1067,7 @@ const DEFAULT_CONTEXT_SPECIFIC_PATTERNS: RegExp[] = [
 
 const MAX_CONTEXT_SPECIFIC_REGEX_LENGTH = 256;
 const UNSAFE_OPERATOR_REGEX_PATTERN =
-  /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*?]|\[[^\]]*\][+*?][+*?]|\{\d+,?\d*\}[+*]|\.[+*?].*[+*?]|\([^)]*\|[^)]*\)[+*]/;
+  /\((?:[^()\\]|\\.)*[+*?](?:[^()\\]|\\.)*\)[+*?]|\[[^\]]*\][+*?][+*?]|\{\d+,?\d*\}[+*]|\.[+*?].*[+*?]|\([^)]*\|[^)]*\)[+*]/;
 
 function compileContextSpecificPattern(raw: string): RegExp | null {
   const trimmed = raw.trim();
