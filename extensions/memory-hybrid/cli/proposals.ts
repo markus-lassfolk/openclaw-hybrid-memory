@@ -1,31 +1,23 @@
-import { getEnv } from "../utils/env-manager.js";
 /**
- * CLI commands for managing persona proposals (human-only operations)
+ * Proposal utilities for persona-driven file modifications.
+ * CLI registration is in cli/commands/manage/register-budget-proposals.ts
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
+import type { IdentityFileType } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { getEnv } from "../utils/env-manager.js";
+import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { spawnSync } from "../utils/process-runner.js";
-import type { Chainable } from "./shared.js";
 
 /** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
 function resolveProposalTarget(targetFile: string): string {
   const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   return join(workspace, targetFile);
-}
-import { getFileSnapshot } from "../utils/file-snapshot.js";
-
-interface ProposalsCliContext {
-  proposalsDb: ProposalsDB;
-  cfg: HybridMemoryConfig;
-  resolvedSqlitePath: string;
-  api: ClawdbotPluginApi;
 }
 
 /**
@@ -63,15 +55,6 @@ async function auditProposal(
       logger.error(msg);
     }
   }
-}
-
-const _PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
-
-function formatExpires(proposal: { expiresAt: number | null; createdAt: number }): string {
-  if (!proposal.expiresAt) return "never";
-  const now = Math.floor(Date.now() / 1000);
-  const days = Math.max(0, Math.floor((proposal.expiresAt - now) / 86400));
-  return `${days}d`;
 }
 
 type ProposalChangeType = "append" | "replace";
@@ -241,133 +224,6 @@ function commitProposalChange(
     return { ok: false, error: `git commit failed: ${commit.stderr || commit.stdout}` };
   }
   return { ok: true };
-}
-
-/**
- * Register CLI commands for persona proposal management
- * NOTE: These are human-only commands and NOT exposed as agent-callable tools
- */
-function _registerProposalsCli(program: Chainable, ctx: ProposalsCliContext): void {
-  const proposals = program.command("proposals").description("Manage persona proposals (human-only commands)");
-
-  proposals
-    .command("show <proposalId>")
-    .description("Show full proposal content (observation, suggested change, optional diff)")
-    .option("--json", "Machine-readable output")
-    .option("--diff", "Show unified diff against current target file")
-    .action((proposalId: string, opts?: { json?: boolean; diff?: boolean }) => {
-      const proposal = ctx.proposalsDb.get(proposalId);
-      if (!proposal) {
-        console.error(`Proposal ${proposalId} not found`);
-        process.exit(1);
-      }
-      const targetPath = resolveProposalTarget(proposal.targetFile);
-      const includeDiff = !!opts?.diff || !!opts?.json;
-      let diffText: string | null = null;
-      if (includeDiff && existsSync(targetPath)) {
-        try {
-          const current = readFileSync(targetPath, "utf-8");
-          const proposed = buildAppliedContent(current, proposal, new Date().toISOString()).content;
-          diffText = buildUnifiedDiff(current, proposed, proposal.targetFile);
-        } catch (_err) {
-          diffText = null;
-        }
-      } else if (includeDiff) {
-        try {
-          const proposed = buildAppliedContent("", proposal, new Date().toISOString()).content;
-          diffText = buildUnifiedDiff("", proposed, proposal.targetFile);
-        } catch (_err) {
-          diffText = null;
-        }
-      }
-      if (opts?.json) {
-        console.log(JSON.stringify({ ...proposal, diff: diffText }, null, 2));
-        return;
-      }
-      const created = new Date(proposal.createdAt * 1000).toISOString();
-      const evidenceCount = Array.isArray(proposal.evidenceSessions) ? proposal.evidenceSessions.length : 0;
-      console.log(`Proposal: ${proposal.id}`);
-      console.log(`Status: ${proposal.status}`);
-      console.log(`Target: ${proposal.targetFile}`);
-      console.log(`Confidence: ${proposal.confidence.toFixed(2)}`);
-      console.log(`Created: ${created} (expires in ${formatExpires(proposal)})`);
-      console.log(`Evidence: ${evidenceCount} sessions`);
-      console.log("");
-      console.log("── Observation ──");
-      console.log(proposal.observation);
-      console.log("");
-      console.log("── Suggested Change ──");
-      console.log(proposal.suggestedChange);
-      if (opts?.diff) {
-        console.log("");
-        console.log("── Preview (diff) ──");
-        if (diffText) console.log(diffText);
-        else console.log("(diff unavailable)");
-      }
-    });
-
-  proposals
-    .command("review <proposalId> <action>")
-    .description("Approve or reject a persona proposal (action: approve|reject)")
-    .option("--reviewed-by <name>", "Name/ID of reviewer")
-    .action(async (proposalId: string, action: string, opts: { reviewedBy?: string }) => {
-      if (action !== "approve" && action !== "reject") {
-        console.error("Action must be 'approve' or 'reject'");
-        process.exit(1);
-      }
-
-      const proposal = ctx.proposalsDb.get(proposalId);
-      if (!proposal) {
-        console.error(`Proposal ${proposalId} not found`);
-        process.exit(1);
-      }
-
-      if (proposal.status !== "pending") {
-        console.error(`Proposal ${proposalId} is already ${proposal.status}. Cannot review again.`);
-        process.exit(1);
-      }
-
-      const newStatus = action === "approve" ? "approved" : "rejected";
-      ctx.proposalsDb.updateStatus(proposalId, newStatus, opts.reviewedBy);
-
-      await auditProposal(
-        action,
-        proposalId,
-        ctx.resolvedSqlitePath,
-        {
-          reviewedBy: opts.reviewedBy ?? "cli-user",
-          previousStatus: "pending",
-          newStatus,
-        },
-        { error: console.error },
-      );
-
-      console.log(`Proposal ${proposalId} ${action}d.`);
-      if (action === "approve") {
-        const applyResult = await applyApprovedProposal(ctx, proposalId);
-        if (applyResult.ok) {
-          console.log(`Applied to ${applyResult.targetFile}. Backup: ${applyResult.backupPath}`);
-        } else {
-          console.error(
-            `Apply failed: ${applyResult.error}. Proposal remains approved. Run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`,
-          );
-        }
-      }
-    });
-
-  proposals
-    .command("apply <proposalId>")
-    .description("Apply an approved persona proposal to its target identity file")
-    .action(async (proposalId: string) => {
-      const result = await applyApprovedProposal(ctx, proposalId);
-      if (!result.ok) {
-        console.error(result.error);
-        process.exit(1);
-      }
-      console.log(`Proposal ${proposalId} applied to ${result.targetFile}`);
-      if (result.backupPath) console.log(`Backup saved: ${result.backupPath}`);
-      console.log(`\nChange:\n${result.suggestedChange}`);
-    });
 }
 
 type ApplyProposalContext = {
