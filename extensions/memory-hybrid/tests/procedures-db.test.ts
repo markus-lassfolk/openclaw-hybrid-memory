@@ -7,7 +7,6 @@ import { FactsDB } from "../backends/facts-db.js";
 
 let tmpDir: string;
 let db: FactsDB;
-type FactsDbWithLiveDb = FactsDB & { liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } };
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "procedures-db-test-"));
@@ -679,7 +678,11 @@ describe("FactsDB procedureFeedback", () => {
       context: "baseline note",
     });
 
-    (db as unknown as FactsDbWithLiveDb).liveDb
+    (
+      db as unknown as FactsDB & {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+      }
+    ).liveDb
       .prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE procedure_id = ?")
       .run('{"unexpected":"object"}', proc.id);
 
@@ -701,7 +704,11 @@ describe("FactsDB procedureFeedback", () => {
       context: "first failure",
     });
 
-    (db as unknown as FactsDbWithLiveDb).liveDb
+    (
+      db as unknown as FactsDB & {
+        liveDb: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+      }
+    ).liveDb
       .prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE procedure_id = ?")
       .run('["keep me",42,null,{"bad":true}]', proc.id);
 
