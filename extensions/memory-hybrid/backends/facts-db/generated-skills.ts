@@ -606,15 +606,15 @@ function summarizeSkillTelemetry(
     proc.skillState !== "uninstalled" &&
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
-  const archiveCandidate = !promotionCandidate && now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
-  const overTriggering =
-    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
-  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
   const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
   const unblockCandidate =
     unblockAfterCleanUses > 0 &&
     (proc.skillState === "demoted" || proc.skillState === "archived") &&
     cleanUsesAfterDemotion >= unblockAfterCleanUses;
+  const archiveCandidate = !promotionCandidate && !unblockCandidate && now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const overTriggering =
+    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
+  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
 
   return {
     metrics: {
