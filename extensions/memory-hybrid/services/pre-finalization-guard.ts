@@ -313,6 +313,21 @@ function sessionRefMatches(relatedSession: string, currentSession: string): bool
   if (related === current) return true;
   if ((related === "main" || related === "private") && current.startsWith(`agent:${related}:`)) return true;
   if ((current === "main" || current === "private") && related.startsWith(`agent:${current}:`)) return true;
+  const relatedParts = related.split(":");
+  const currentParts = current.split(":");
+  const relatedIsAgentRef = relatedParts.length >= 3 && relatedParts[0] === "agent";
+  const currentIsAgentRef = currentParts.length >= 3 && currentParts[0] === "agent";
+  if (relatedIsAgentRef && currentIsAgentRef) {
+    const sameAgentId = relatedParts[1] === currentParts[1];
+    const relatedIsCanonicalMain = relatedParts.length === 3 && relatedParts[2] === "main";
+    const currentIsCanonicalMain = currentParts.length === 3 && currentParts[2] === "main";
+    const relatedIsChannelScoped = relatedParts.length >= 4 && relatedParts[2].length > 0;
+    const currentIsChannelScoped = currentParts.length >= 4 && currentParts[2].length > 0;
+    if (sameAgentId) {
+      if (relatedIsCanonicalMain && currentIsChannelScoped) return true;
+      if (currentIsCanonicalMain && relatedIsChannelScoped) return true;
+    }
+  }
   return false;
 }
 
