@@ -491,7 +491,7 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
     } catch (err) {
       /* non-fatal: stale or zero cached value will be used */
       pluginLogger.error(
-        `[dashboard-server] lance size traversal failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[dashboard-server] lance size traversal failed for ${ctx.resolvedLancePath}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
