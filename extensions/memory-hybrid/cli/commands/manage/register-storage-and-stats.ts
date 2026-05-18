@@ -3,7 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import type { Chainable, } from "../../shared.js";
+import type { Chainable } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { registerManageStorageMaintenance } from "./register-storage-maintenance.js";
 import { registerManageStorageEntitiesDecay } from "./register-storage-entities-decay.js";

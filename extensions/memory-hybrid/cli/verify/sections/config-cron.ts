@@ -1,4 +1,3 @@
-
 /**
  * CLI Verify Command Handler
  *
@@ -9,7 +8,7 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, readFileSync, } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { CredentialType } from "../../../config.js";

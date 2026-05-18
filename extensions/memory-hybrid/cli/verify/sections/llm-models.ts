@@ -9,10 +9,9 @@ import { getEnv } from "../../../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import OpenAI from "openai";
-
 
 import {
   getCronModelConfig,

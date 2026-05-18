@@ -116,7 +116,9 @@ function buildVectorDb(results: Record<string, Array<{ entry: { id: string }; sc
   };
 }
 
-function _buildSearchVectorDb(factToResults: Map<string, Array<{ entry: { id: string }; score: number }>>): GapVectorDB {
+function _buildSearchVectorDb(
+  factToResults: Map<string, Array<{ entry: { id: string }; score: number }>>,
+): GapVectorDB {
   return {
     search: async (_vector, _limit, minScore) => {
       // We can't easily map vector back to factId in a mock, so return all above threshold

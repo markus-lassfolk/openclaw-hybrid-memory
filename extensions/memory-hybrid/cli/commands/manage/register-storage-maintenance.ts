@@ -3,10 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import {
-  existsSync,
-  unlinkSync,
-} from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";

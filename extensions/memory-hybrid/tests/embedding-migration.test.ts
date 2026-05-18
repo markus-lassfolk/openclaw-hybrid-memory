@@ -6,10 +6,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  migrateEmbeddings,
-  runEmbeddingMaintenance,
-} from "../services/embedding-migration.js";
+import { migrateEmbeddings, runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 
 // ---------------------------------------------------------------------------

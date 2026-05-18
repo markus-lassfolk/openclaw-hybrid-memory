@@ -3,17 +3,11 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
-import { isValidCategory, } from "../../../config.js";
+import { isValidCategory } from "../../../config.js";
 import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { capturePluginError } from "../../../services/error-reporter.js";

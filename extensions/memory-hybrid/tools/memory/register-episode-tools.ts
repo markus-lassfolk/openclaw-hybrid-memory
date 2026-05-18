@@ -9,7 +9,7 @@ import { Type } from "@sinclair/typebox";
 import { stringEnum } from "../../utils/typebox.js";
 
 import { capturePluginError } from "../../services/error-reporter.js";
-import type { EpisodeOutcome, } from "../../types/memory.js";
+import type { EpisodeOutcome } from "../../types/memory.js";
 
 import type { MemoryToolRuntime } from "./runtime.js";
 

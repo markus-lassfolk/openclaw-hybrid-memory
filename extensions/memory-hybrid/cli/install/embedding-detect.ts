@@ -14,9 +14,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, } from "node:path";
+import { join } from "node:path";
 
 import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";

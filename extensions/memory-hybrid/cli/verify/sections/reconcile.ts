@@ -1,4 +1,3 @@
-
 /**
  * CLI Verify Command Handler
  *
@@ -12,18 +11,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import {
-  getCronModelConfig,
-} from "../../../config.js";
+import { getCronModelConfig } from "../../../config.js";
 import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-reconciler.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { PLUGIN_ID, } from "../../../utils/constants.js";
-import {
-  ensureGoalStewardshipHeartbeatCronJob,
-  ensureMaintenanceCronJobs,
-} from "../../cmd-install.js";
+import { PLUGIN_ID } from "../../../utils/constants.js";
+import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 

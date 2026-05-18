@@ -1,4 +1,3 @@
-
 import { toFloat32Array } from "../../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../../services/embeddings.js";
 import type { FactsDB } from "../../backends/facts-db.js";

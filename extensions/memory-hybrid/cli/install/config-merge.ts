@@ -1,6 +1,5 @@
-
-import { existsSync, readFileSync, } from "node:fs";
-import { dirname, join, } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { capturePluginError } from "../../services/error-reporter.js";
 import { resetAllBackoff } from "../../utils/auth-failover.js";

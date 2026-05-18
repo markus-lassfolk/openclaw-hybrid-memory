@@ -1,7 +1,6 @@
-
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
-import { FactsDB, } from "./backends/facts-db.js";
+import { FactsDB } from "./backends/facts-db.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { buildInstallDefaults, deepMerge } from "./cli/handlers.js";
@@ -17,11 +16,7 @@ import {
   runExplicitDeepRetrieval,
   serializeFactForContext,
 } from "./services/retrieval-orchestrator.js";
-import {
-  RRF_K_DEFAULT,
-  applyPostRrfAdjustments,
-  fuseResults,
-} from "./services/rrf-fusion.js";
+import { RRF_K_DEFAULT, applyPostRrfAdjustments, fuseResults } from "./services/rrf-fusion.js";
 import { versionInfo } from "./versionInfo.js";
 export type {
   GraphExpandedResult,
@@ -84,10 +79,8 @@ import {
   inferServiceFromText,
   isCredentialLike,
 } from "./services/auto-capture.js";
-import { normalizeSuggestedLabel, } from "./services/auto-classifier.js";
-import {
-  parseClassificationResponse,
-} from "./services/classification.js";
+import { normalizeSuggestedLabel } from "./services/auto-classifier.js";
+import { parseClassificationResponse } from "./services/classification.js";
 import { getRoot, isStructuredForConsolidation, runConsolidate, unionFind } from "./services/consolidation.js";
 import { extractStructuredFields } from "./services/fact-extraction.js";
 import {
@@ -98,12 +91,10 @@ import {
 } from "./services/reflection.js";
 import { AliasDB, generateAliases, searchAliasStrategy, storeAliases } from "./services/retrieval-aliases.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
-import {
-  PLUGIN_ID,
-} from "./utils/constants.js";
+import { PLUGIN_ID } from "./utils/constants.js";
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
-import { isHybridMemJsonInvocation, } from "./utils/hybrid-mem-json-cli.js";
+import { isHybridMemJsonInvocation } from "./utils/hybrid-mem-json-cli.js";
 
 export { isHybridMemJsonInvocation };
 import {
@@ -121,12 +112,7 @@ import {
   truncateForStorage,
   truncateText,
 } from "./utils/text.js";
-import {
-  CredentialsDB,
-  decryptValue,
-  deriveKey,
-  encryptValue,
-} from "./backends/credentials-db.js";
+import { CredentialsDB, decryptValue, deriveKey, encryptValue } from "./backends/credentials-db.js";
 import { CrystallizationStore } from "./backends/crystallization-store.js";
 import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { EventLog } from "./backends/event-log.js";

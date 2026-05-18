@@ -27,11 +27,8 @@ import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
-import {
-  cleanupEvictedVector,
-  deleteVectorForFactId,
-} from "../../services/vector-maintenance.js";
-import type { MemoryEntry, } from "../../types/memory.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";

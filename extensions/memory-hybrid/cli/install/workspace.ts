@@ -22,7 +22,7 @@ import { expandTilde } from "../../utils/path.js";
 
 import type { HybridMemoryConfig } from "../../config.js";
 import { compileHeartbeatMatchers } from "../../services/goal-stewardship-heartbeat.js";
-import type { PreFilterConfig, } from "../../services/session-pre-filter.js";
+import type { PreFilterConfig } from "../../services/session-pre-filter.js";
 
 /** Subfolder under workspace `skills/` — OpenClaw loads this with highest precedence vs shared/bundled skills. */
 const HYBRID_MEMORY_SKILL_DIR = "hybrid-memory";

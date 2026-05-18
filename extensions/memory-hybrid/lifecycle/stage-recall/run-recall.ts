@@ -18,9 +18,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
-import {
-  resolveInteractiveRecallPolicy,
-} from "../../services/retrieval-mode-policy.js";
+import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";

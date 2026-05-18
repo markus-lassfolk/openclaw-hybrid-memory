@@ -1,12 +1,11 @@
-
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
 
-import { type CronModelConfig, getCronModelConfig, } from "../../config.js";
+import { type CronModelConfig, getCronModelConfig } from "../../config.js";
 import { parseDigestWeeklyDeliveryOnly } from "../../config/parsers/features.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { ensureWorkspaceBootstrap } from "../../setup/workspace-bootstrap.js";

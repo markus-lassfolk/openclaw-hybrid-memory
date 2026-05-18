@@ -12,7 +12,7 @@ import {
 } from "../routes/graphql-server.js";
 import { CollaborationService } from "../services/collaboration.js";
 import { ProgressSpinner, showCompletionSummary, statusMessage } from "../utils/progress-indicators.js";
-import { detectAvailableProviders, } from "../utils/provider-detection.js";
+import { detectAvailableProviders } from "../utils/provider-detection.js";
 
 type ResolverArgs = Record<string, unknown>;
 type ResolverContext = Parameters<typeof resolvers.Mutation.supersedeFact>[2];

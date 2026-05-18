@@ -8,11 +8,11 @@
 import { Type } from "@sinclair/typebox";
 import { stringEnum } from "../../utils/typebox.js";
 
-import { AllEmbeddingProvidersFailed, } from "../../services/embeddings.js";
+import { AllEmbeddingProvidersFailed } from "../../services/embeddings.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { mergeResults } from "../../services/merge-results.js";
 import type { SearchResult } from "../../types/memory.js";
-import { UUID_REGEX, } from "../../utils/constants.js";
+import { UUID_REGEX } from "../../utils/constants.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 

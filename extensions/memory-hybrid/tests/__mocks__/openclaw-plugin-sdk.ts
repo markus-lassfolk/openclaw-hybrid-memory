@@ -1,5 +1,3 @@
-
-
 /**
  * Mock for openclaw/plugin-sdk — provides just the exports
  * that index.ts actually uses so tests can import the module.

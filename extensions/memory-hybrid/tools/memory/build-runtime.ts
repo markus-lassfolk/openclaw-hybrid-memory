@@ -60,8 +60,7 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
     factId: string,
     factScope: string | null | undefined,
   ): Promise<void> => {
-    if (!activeTaskCfg?.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath)
-      return;
+    if (!activeTaskCfg?.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath) return;
     if (factCategory !== TASK_LEDGER_CATEGORY) return;
     if ((factScope ?? "global") !== "global") return;
     await refreshActiveTaskProjectionBestEffort({

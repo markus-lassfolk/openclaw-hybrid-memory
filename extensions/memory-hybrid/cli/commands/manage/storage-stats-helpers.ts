@@ -3,18 +3,11 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
-import type { MemoryEntry, } from "../../../types/memory.js";
+import type { MemoryEntry } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import type { ManageBindings } from "./bindings.js";

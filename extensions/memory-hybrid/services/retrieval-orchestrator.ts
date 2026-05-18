@@ -978,11 +978,7 @@ export async function runExplicitDeepRetrieval(
     }
 
     let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
-    if (
-      strategies.includes("semantic") &&
-      embeddingRegistry?.isMultiModel() &&
-      factsDbForEmbeddings
-    ) {
+    if (strategies.includes("semantic") && embeddingRegistry?.isMultiModel() && factsDbForEmbeddings) {
       multiModelPromise = runMultiModelSemanticStrategies(
         factsDbForEmbeddings,
         embeddingRegistry,

@@ -1,4 +1,3 @@
-
 /**
  * CLI Verify Command Handler
  *
@@ -11,7 +10,7 @@
 
 import { writeFileSync } from "node:fs";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { PLUGIN_ID, } from "../../../utils/constants.js";
+import { PLUGIN_ID } from "../../../utils/constants.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 import { getCachedFactCount } from "../fact-count.js";

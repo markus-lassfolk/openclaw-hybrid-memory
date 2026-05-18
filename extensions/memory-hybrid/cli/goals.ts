@@ -1,4 +1,3 @@
-
 import type { HybridMemoryConfig } from "../config.js";
 import {
   listActiveGoals,

@@ -23,7 +23,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";

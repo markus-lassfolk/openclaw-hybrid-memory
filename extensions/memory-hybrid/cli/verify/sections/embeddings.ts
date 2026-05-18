@@ -1,4 +1,3 @@
-
 import { resolveSecretRef } from "../../../config/parsers/core.js";
 import {
   type EmbeddingConfig,

@@ -103,7 +103,7 @@ export function registerEdictTools(runtime: MemoryToolRuntime): void {
             details: { error: "invalid_ttl" },
           };
         }
-        if (ttlValue === "event" && (!expiresAt?.trim())) {
+        if (ttlValue === "event" && !expiresAt?.trim()) {
           return {
             content: [
               {
@@ -319,7 +319,7 @@ export function registerEdictTools(runtime: MemoryToolRuntime): void {
             details: { error: "invalid_ttl" },
           };
         }
-        if (ttlValue === "event" && (!expiresAt?.trim())) {
+        if (ttlValue === "event" && !expiresAt?.trim()) {
           return {
             content: [
               {
