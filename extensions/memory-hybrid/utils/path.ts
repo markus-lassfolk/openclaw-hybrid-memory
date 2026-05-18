@@ -59,7 +59,8 @@ export function toWorkspaceRelativePath(filePath: string, workspaceRoot = resolv
   const abs = normalize(isAbsolute(filePath) ? filePath : join(root, filePath));
   const rel = relative(root, abs);
   const posix = rel.split("\\").join("/");
-  if (!posix || posix.startsWith("..")) {
+  const segments = posix.split("/");
+  if (!posix || segments.includes("..")) {
     return abs.split("\\").join("/");
   }
   return posix;

@@ -113,7 +113,7 @@ function allocateDraftSkillDir(basePath: string, skillsAutoPath: string, slug: s
       return {
         slug: candidate,
         skillDir,
-        relativePath: join(skillsAutoPath, candidate),
+        relativePath: toWorkspaceRelativePath(join(skillsAutoPath, candidate)),
       };
     } catch (err) {
       if (isPathExistsError(err)) {
@@ -160,10 +160,14 @@ function rebaseDraftSlug(
     generatedSkillPath?: unknown;
     telemetryCommand?: unknown;
   };
+  const proposalMetadata = JSON.parse(draft.proposalMetadataJson) as {
+    generated_skill_path?: unknown;
+  };
   const originalSlug =
     typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
   verification.skill = resolvedSlug;
   verification.generatedSkillPath = generatedSkillPath;
+  proposalMetadata.generated_skill_path = generatedSkillPath;
   verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
 
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
@@ -181,6 +185,7 @@ function rebaseDraftSlug(
     ...draft,
     skillMd,
     verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
+    proposalMetadataJson: `${JSON.stringify(proposalMetadata, null, 2)}\n`,
   };
 }
 
