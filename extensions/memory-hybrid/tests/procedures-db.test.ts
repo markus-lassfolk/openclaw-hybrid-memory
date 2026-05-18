@@ -2,13 +2,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-nocheck
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 let tmpDir: string;
 let db: FactsDB;
 
 beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
   tmpDir = mkdtempSync(join(tmpdir(), "procedures-db-test-"));
   db = new FactsDB(join(tmpDir, "facts.db"));
 });
@@ -50,6 +53,34 @@ describe("FactsDB procedures table", () => {
     const found = db.getProcedureById(created.id);
     expect(found).not.toBeNull();
     expect(found?.taskPattern).toBe("HA health check");
+  });
+
+  it("getProcedureById normalizes drifted enum values from SQLite rows", () => {
+    const created = db.upsertProcedure({
+      taskPattern: "Enum drift check",
+      recipeJson: "[]",
+      procedureType: "negative",
+    });
+
+    db.getRawDb()
+      .prepare("UPDATE procedures SET procedure_type = ?, skill_state = ? WHERE id = ?")
+      .run("legacy", "retired", created.id);
+
+    const found = db.getProcedureById(created.id);
+
+    expect(found?.procedureType).toBe("positive");
+    expect(found?.skillState).toBe("draft");
+
+    const reportedMessages = vi
+      .mocked(errorReporter.capturePluginError)
+      .mock.calls.map(([error]) => (error instanceof Error ? error.message : String(error)));
+
+    expect(reportedMessages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("procedures.procedure_type"),
+        expect.stringContaining("procedures.skill_state"),
+      ]),
+    );
   });
 
   it("searchProcedures finds by task pattern words", () => {

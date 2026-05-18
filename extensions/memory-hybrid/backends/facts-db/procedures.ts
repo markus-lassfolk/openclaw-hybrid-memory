@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
-import type { ProcedureEntry, ScopeFilter } from "../../types/memory.js";
+import { GENERATED_SKILL_LIFECYCLE_STATES, type ProcedureEntry, type ScopeFilter } from "../../types/memory.js";
 import { recordEpisode } from "./episodes.js";
 import { sanitizeFts5QueryForFacts } from "./fts-text.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
@@ -46,6 +46,33 @@ const PROCEDURE_BLOCK_REASONS: ProcedurePromotionBlockReason[] = [
   "awaiting_approval",
   "unknown",
 ];
+const PROCEDURE_TYPES = ["positive", "negative"] as const;
+const PROCEDURE_TYPE_SET = new Set<ProcedureEntry["procedureType"]>(PROCEDURE_TYPES);
+const PROCEDURE_SKILL_STATE_SET = new Set<NonNullable<ProcedureEntry["skillState"]>>(GENERATED_SKILL_LIFECYCLE_STATES);
+
+function reportUnexpectedProcedureEnum(field: "procedure_type" | "skill_state", value: unknown): void {
+  capturePluginError(new TypeError(`Unexpected procedures.${field} value: ${String(value)}`), {
+    operation: `procedure-row-${field}`,
+    severity: "info",
+    subsystem: "facts",
+  });
+}
+
+function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"] {
+  if (typeof value !== "string" || value.trim() === "") return "positive";
+  if (PROCEDURE_TYPE_SET.has(value as ProcedureEntry["procedureType"])) return value as ProcedureEntry["procedureType"];
+  reportUnexpectedProcedureEnum("procedure_type", value);
+  return "positive";
+}
+
+function normalizeProcedureSkillState(value: unknown): NonNullable<ProcedureEntry["skillState"]> {
+  if (typeof value !== "string" || value.trim() === "") return "draft";
+  if (PROCEDURE_SKILL_STATE_SET.has(value as NonNullable<ProcedureEntry["skillState"]>)) {
+    return value as NonNullable<ProcedureEntry["skillState"]>;
+  }
+  reportUnexpectedProcedureEnum("skill_state", value);
+  return "draft";
+}
 
 function summarizeProcedureTriage(rows: ProcedureTriageRow[]): ProcedureTriageSummary {
   const byReason = Object.fromEntries(PROCEDURE_BLOCK_REASONS.map((reason) => [reason, 0])) as Record<
@@ -207,7 +234,7 @@ export function procedureRowToEntry(db: DatabaseSync, row: Record<string, unknow
     id: row.id as string,
     taskPattern: row.task_pattern as string,
     recipeJson: row.recipe_json as string,
-    procedureType: (row.procedure_type as "positive" | "negative") || "positive",
+    procedureType: normalizeProcedureType(row.procedure_type),
     successCount: (row.success_count as number) ?? 0,
     failureCount: (row.failure_count as number) ?? 0,
     lastValidated: (row.last_validated as number) ?? null,
@@ -237,7 +264,7 @@ export function procedureRowToEntry(db: DatabaseSync, row: Record<string, unknow
       }
     })(),
     promotedAt: (row.promoted_at as number) ?? null,
-    skillState: (row.skill_state as ProcedureEntry["skillState"]) ?? "draft",
+    skillState: normalizeProcedureSkillState(row.skill_state),
     skillStateReason: (row.skill_state_reason as string) ?? null,
     skillVersion: (row.skill_version as number) ?? 1,
     skillGeneratedAt: (row.skill_generated_at as number) ?? null,
