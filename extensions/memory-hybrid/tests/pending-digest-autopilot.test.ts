@@ -26,6 +26,7 @@ import {
   stablePendingDigestAutopilotJson,
 } from "../services/pending-digest-autopilot.js";
 import { pendingStorePaths } from "../services/pending-review-digest.js";
+import { setEnv } from "../utils/env-manager.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
 
 const dirs: string[] = [];
@@ -882,8 +883,7 @@ describe("pending digest autopilot parent (#1326)", () => {
         targetHash: defaultPreHash,
       });
     } finally {
-      if (previousWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
-      else process.env.OPENCLAW_WORKSPACE = previousWorkspace;
+      setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
     }
   });
 

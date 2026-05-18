@@ -139,7 +139,7 @@ describe("buildMultiGoalStewardshipPrepend", () => {
       triageHeavy: false,
     });
     expect(result).not.toBeNull();
-    expect(result!.prepend).toContain("hb-test");
+    expect(result?.prepend).toContain("hb-test");
   });
 
   it("skips goals still in cooldown", async () => {
@@ -212,7 +212,7 @@ describe("buildMultiGoalStewardshipPrepend", () => {
       triageHeavy: false,
     });
     expect(result).not.toBeNull();
-    expect(result!.prepend).toContain("crit-pri");
+    expect(result?.prepend).toContain("crit-pri");
   });
 
   it("keeps stewardship block payload within configured multiGoalMaxChars cap", async () => {
@@ -249,7 +249,7 @@ describe("buildMultiGoalStewardshipPrepend", () => {
       },
     );
     expect(result).not.toBeNull();
-    const blocks = result!.prepend.match(/<goal-stewardship>[\s\S]*?<\/goal-stewardship>/g) ?? [];
+    const blocks = result?.prepend.match(/<goal-stewardship>[\s\S]*?<\/goal-stewardship>/g) ?? [];
     const totalBlockChars = blocks.reduce((sum, block) => sum + block.length, 0);
     expect(totalBlockChars).toBeLessThanOrEqual(cap);
   });

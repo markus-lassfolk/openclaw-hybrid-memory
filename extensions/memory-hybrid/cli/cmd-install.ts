@@ -543,7 +543,7 @@ function ensureHybridMemCronMessageHasEnvSanitizer(message: string): string | nu
   }
   lines.splice(insertAt, 0, ...hybridMemCronEnvSanitizerBashLines());
   const nextBash = lines.join("\n");
-  const next = message.slice(0, m.index) + `\`\`\`bash\n${nextBash}\n\`\`\`` + message.slice(m.index + m[0].length);
+  const next = `${message.slice(0, m.index)}\`\`\`bash\n${nextBash}\n\`\`\`${message.slice(m.index + m[0].length)}`;
   return next === message ? null : next;
 }
 

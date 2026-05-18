@@ -15,6 +15,7 @@ import {
   PUBLIC_API_PREFIX,
   registerPublicApiRoutes,
 } from "../tools/public-api-routes.js";
+import { setEnv } from "../utils/env-manager.js";
 
 interface RouteRegistration {
   path: string;
@@ -31,14 +32,13 @@ describe("registerPublicApiRoutes", () => {
   beforeEach(() => {
     prevWorkspace = process.env.OPENCLAW_WORKSPACE;
     tmp = mkdtempSync(join(tmpdir(), "public-api-routes-"));
-    process.env.OPENCLAW_WORKSPACE = tmp;
+    setEnv("OPENCLAW_WORKSPACE", tmp);
     factsDb = new FactsDB(join(tmp, "facts.db"));
     narrativesDb = new NarrativesDB(join(tmp, "narratives.db"));
   });
 
   afterEach(() => {
-    if (prevWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
-    else process.env.OPENCLAW_WORKSPACE = prevWorkspace;
+    setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
     rmSync(tmp, { recursive: true, force: true });
   });
 

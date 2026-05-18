@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
+  type ProcedurePromotionDuplicateCandidate,
   createProcedurePromotionItem,
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
@@ -247,6 +248,10 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
       "--policy <policy>",
       "Promotion policy: draft-only, manual, auto-safe (default: dry-run draft-only; non-dry-run/apply defaults to auto-safe for legacy maintenance callers)",
     )
+    .option(
+      "--in-run-skill-json <json>",
+      'Optional JSON array of {"slug":"…","taskPattern":"…"} for same-run duplicate detection (e.g. parallel single promotes)',
+    )
     .option("--json", "Emit JSON")
     .action(
       withExit(
@@ -258,9 +263,30 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             apply?: boolean;
             policy?: string;
             json?: boolean;
+            inRunSkillJson?: string;
           },
         ) => {
           const apply = opts?.apply === true;
+          let inRunSkillCandidates: ProcedurePromotionDuplicateCandidate[] | undefined;
+          const raw = opts?.inRunSkillJson?.trim();
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw) as unknown;
+              if (!Array.isArray(parsed)) throw new Error("expected a JSON array");
+              inRunSkillCandidates = parsed.map((entry, i) => {
+                if (!entry || typeof entry !== "object") throw new Error(`index ${i}: expected object`);
+                const o = entry as Record<string, unknown>;
+                if (typeof o.slug !== "string" || typeof o.taskPattern !== "string") {
+                  throw new Error(`index ${i}: slug and taskPattern must be strings`);
+                }
+                return { slug: o.slug, taskPattern: o.taskPattern };
+              });
+            } catch (err) {
+              console.error(`error: --in-run-skill-json: ${err instanceof Error ? err.message : String(err)}`);
+              process.exitCode = 1;
+              return;
+            }
+          }
           const result = generateAutoSkillForProcedure(
             factsDb,
             {
@@ -272,6 +298,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               apply,
               policy: opts?.policy,
               requireValidation: opts?.force !== true,
+              ...(inRunSkillCandidates ? { inRunSkillCandidates } : {}),
             },
             { info: (s) => console.log(s), warn: (s) => console.warn(s) },
           );

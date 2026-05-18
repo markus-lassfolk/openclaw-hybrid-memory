@@ -510,7 +510,7 @@ describe("agent-health-store", () => {
       expect(merged.length).toBeGreaterThanOrEqual(1);
       const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
-      expect(forgeAgent!.errorCount).toBe(2); // From DB
+      expect(forgeAgent?.errorCount).toBe(2); // From DB
     });
 
     it("should map forge status to outcomes", () => {
@@ -553,7 +553,7 @@ describe("agent-health-store", () => {
       expect(merged.length).toBeGreaterThanOrEqual(1);
       const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
-      expect(forgeAgent!.agentId).toBe("forge");
+      expect(forgeAgent?.agentId).toBe("forge");
     });
 
     it("should include default agents in dashboard", () => {
@@ -573,7 +573,7 @@ describe("agent-health-store", () => {
 
       const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
-      expect(forgeAgent!.lastSeen).toBeGreaterThan(0);
+      expect(forgeAgent?.lastSeen).toBeGreaterThan(0);
     });
 
     it("should prioritize forge data over DB for active agents", () => {
@@ -604,9 +604,9 @@ describe("agent-health-store", () => {
 
       const forgeAgent = merged.find((a) => a.agentId === "forge");
       expect(forgeAgent).toBeDefined();
-      expect(forgeAgent!.lastTask).toBe("live task");
-      expect(forgeAgent!.outcome).toBe("success");
-      expect(forgeAgent!.lastSeen).toBeCloseTo(forgeTimestamp, -2);
+      expect(forgeAgent?.lastTask).toBe("live task");
+      expect(forgeAgent?.outcome).toBe("success");
+      expect(forgeAgent?.lastSeen).toBeCloseTo(forgeTimestamp, -2);
     });
   });
 });
