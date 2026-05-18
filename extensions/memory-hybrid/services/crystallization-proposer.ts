@@ -266,6 +266,7 @@ export class CrystallizationProposer {
     opts?: {
       name?: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): SkillProposalValidationResult | null {
@@ -289,6 +290,7 @@ export class CrystallizationProposer {
     const { skillContent: rewrittenContent } = this.applyOverridesToDraft(proposal, {
       skillName: safeName,
       category: desiredCategory,
+      description: opts?.description?.trim() || undefined,
       recommendedOutput: desiredRecommendedOutput,
     });
 
