@@ -306,6 +306,10 @@ function normalizeSessionRef(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function isCanonicalAgentSessionType(sessionType: string): boolean {
+  return sessionType === "main" || sessionType === "private";
+}
+
 function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
   const related = normalizeSessionRef(relatedSession);
   const current = normalizeSessionRef(currentSession);
@@ -315,18 +319,24 @@ function sessionRefMatches(relatedSession: string, currentSession: string): bool
   if ((current === "main" || current === "private") && related.startsWith(`agent:${current}:`)) return true;
   const relatedParts = related.split(":");
   const currentParts = current.split(":");
-  const relatedIsAgentRef = relatedParts.length >= 3 && relatedParts[0] === "agent";
-  const currentIsAgentRef = currentParts.length >= 3 && currentParts[0] === "agent";
+  const relatedIsAgentRef =
+    (relatedParts.length === 3 || relatedParts.length === 4) &&
+    relatedParts[0] === "agent" &&
+    relatedParts[1].length > 0 &&
+    relatedParts[2].length > 0;
+  const currentIsAgentRef =
+    (currentParts.length === 3 || currentParts.length === 4) &&
+    currentParts[0] === "agent" &&
+    currentParts[1].length > 0 &&
+    currentParts[2].length > 0;
   if (relatedIsAgentRef && currentIsAgentRef) {
     const sameAgentId = relatedParts[1] === currentParts[1];
     const relatedSessionType = relatedParts[2];
     const currentSessionType = currentParts[2];
-    const relatedIsCanonicalSession = relatedParts.length === 3 && (relatedSessionType === "main" || relatedSessionType === "private");
-    const currentIsCanonicalSession = currentParts.length === 3 && (currentSessionType === "main" || currentSessionType === "private");
-    const relatedIsChannelScoped =
-      relatedParts.length >= 4 && relatedSessionType.length > 0 && relatedSessionType !== "main" && relatedSessionType !== "private";
-    const currentIsChannelScoped =
-      currentParts.length >= 4 && currentSessionType.length > 0 && currentSessionType !== "main" && currentSessionType !== "private";
+    const relatedIsCanonicalSession = relatedParts.length === 3 && isCanonicalAgentSessionType(relatedSessionType);
+    const currentIsCanonicalSession = currentParts.length === 3 && isCanonicalAgentSessionType(currentSessionType);
+    const relatedIsChannelScoped = relatedParts.length === 4 && !isCanonicalAgentSessionType(relatedSessionType);
+    const currentIsChannelScoped = currentParts.length === 4 && !isCanonicalAgentSessionType(currentSessionType);
     if (sameAgentId) {
       if (relatedIsCanonicalSession && currentIsChannelScoped) return true;
       if (currentIsCanonicalSession && relatedIsChannelScoped) return true;
