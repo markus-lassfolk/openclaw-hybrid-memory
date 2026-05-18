@@ -152,7 +152,6 @@ export function buildExamplesText(exampleGoals: string[], skillName: string, too
       hasConcreteExample = true;
       return `- ${g}`;
     }
-    hasConcreteExample = true;
     return `- Run workflow: ${g}`;
   });
   if (!hasConcreteExample) {
