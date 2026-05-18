@@ -602,6 +602,9 @@ export function setGeneratedSkillLifecycleState(
   let proc: ProcedureEntry | null = null;
   if (procedureId != null) {
     proc = findProcedureById(db, procedureId);
+    if (proc && (proc.promotedToSkill !== 1 || !proc.skillPath?.trim())) {
+      return null;
+    }
   } else {
     proc = findGeneratedSkillProcedure(db, skillName);
   }
@@ -638,7 +641,11 @@ export function getGeneratedSkillByName(
   procedureId?: string,
 ): ProcedureEntry | null {
   if (procedureId != null) {
-    return findProcedureById(db, procedureId);
+    const proc = findProcedureById(db, procedureId);
+    if (proc && (proc.promotedToSkill !== 1 || !proc.skillPath?.trim())) {
+      return null;
+    }
+    return proc;
   }
   return findGeneratedSkillProcedure(db, skillName);
 }
