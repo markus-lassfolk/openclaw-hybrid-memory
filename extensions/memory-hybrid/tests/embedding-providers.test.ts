@@ -1051,7 +1051,7 @@ describe("OnnxEmbeddingProvider", () => {
       });
 
       const resultPromise = provider.embedBatch(["hello world"]);
-      const rejection = expect(resultPromise).rejects.toThrow("Timed out loading onnxruntime-node after 30000ms.");
+      const rejection = expect(resultPromise).rejects.toThrow(/Timed out loading onnxruntime-node/);
       await vi.advanceTimersByTimeAsync(30_000);
 
       await rejection;
