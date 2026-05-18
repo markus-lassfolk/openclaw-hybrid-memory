@@ -42,23 +42,22 @@ describe("FactsDB concurrent writes (#1465)", () => {
     expect(db.count()).toBe(40);
   });
 
-  it.fails(
-    "survives write attempts while another connection holds BEGIN IMMEDIATE (#1465)",
-    async () => {
-      const raw = db.getRawDb();
-      raw.exec("BEGIN IMMEDIATE");
-      const holdMs = 500;
-      const release = new Promise<void>((resolve) => {
-        setTimeout(() => {
-          raw.exec("ROLLBACK");
-          resolve();
-        }, holdMs);
-      });
-      try {
-        const results = await Promise.all([
-          ...Array.from({ length: 10 }, (_, i) =>
-            db
-              .store({
+  it.fails("survives write attempts while another connection holds BEGIN IMMEDIATE (#1465)", async () => {
+    const raw = db.getRawDb();
+    raw.exec("BEGIN IMMEDIATE");
+    const holdMs = 500;
+    const release = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        raw.exec("ROLLBACK");
+        resolve();
+      }, holdMs);
+    });
+    try {
+      const results = await Promise.all([
+        ...Array.from({ length: 10 }, (_, i) =>
+          Promise.resolve().then(() => {
+            try {
+              db.store({
                 text: `Blocked write ${i}`,
                 category: "fact",
                 importance: 0.5,
@@ -66,20 +65,22 @@ describe("FactsDB concurrent writes (#1465)", () => {
                 key: null,
                 value: null,
                 source: "concurrency-test",
-              })
-              .then(() => "ok")
-              .catch((err: unknown) => (err instanceof Error ? err.message : String(err))),
-          ),
-          release,
-        ]);
-        const locked = results.filter(
-          (r) => typeof r === "string" && (r.includes("locked") || r.includes("SQLITE_BUSY")),
-        );
-        expect(locked).toHaveLength(0);
-      } catch {
-        raw.exec("ROLLBACK");
-        throw new Error("unexpected throw from concurrency test");
-      }
-    },
-  );
+              });
+              return "ok";
+            } catch (err: unknown) {
+              return err instanceof Error ? err.message : String(err);
+            }
+          }),
+        ),
+        release,
+      ]);
+      const locked = results.filter(
+        (r) => typeof r === "string" && (r.includes("locked") || r.includes("SQLITE_BUSY")),
+      );
+      expect(locked).toHaveLength(0);
+    } catch {
+      raw.exec("ROLLBACK");
+      throw new Error("unexpected throw from concurrency test");
+    }
+  });
 });

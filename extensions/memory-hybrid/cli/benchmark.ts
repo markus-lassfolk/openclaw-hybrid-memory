@@ -15,7 +15,6 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BenchmarkResult } from "../benchmark/shadow-eval.js";
 import {
-  formatBenchmarkResult,
   formatBenchmarkResults,
   runAllBenchmarks,
   runBenchmark,

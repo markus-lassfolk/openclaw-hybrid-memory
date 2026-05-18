@@ -12,7 +12,6 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { extractEventText } from "../services/dream-cycle.js";
 import type {
-  ProvenanceEdgeRecord,
   ProvenanceEdgeType,
   ProvenanceService,
   ProvenanceSourceType,

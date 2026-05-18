@@ -1,16 +1,5 @@
-/**
- * Benchmark: procedure feedback (procedure versioning and effectiveness scoring)
- *
- * Tests procedure recall with versioning:
- *   - extractProceduresFromSessions: parse session JSONL → procedure entries
- *   - recall effectiveness: find best matching procedure for a task
- *
- * Shadow mode: compare recall quality with procedure versioning (multiple versions
- * ranked by successCount) vs. no versioning (flat list).
- */
 
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";

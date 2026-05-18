@@ -23,7 +23,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
@@ -875,7 +875,7 @@ export async function writeTaskSignal(label: string, signal: TaskSignal, memoryD
   const signalsDir = join(memoryDir, "task-signals");
   await mkdir(signalsDir, { recursive: true });
   // Sanitise label to be filesystem-safe
-  const safeLabel = label.replace(/[^a-zA-Z0-9_\-]/g, "-");
+  const safeLabel = label.replace(/[^a-zA-Z0-9_-]/g, "-");
   // Add timestamp + random suffix to prevent collisions (sanitized labels or same-millisecond writes)
   const timestamp = Date.now();
   const suffix = randomUUID().replace(/-/g, "").slice(0, 8);

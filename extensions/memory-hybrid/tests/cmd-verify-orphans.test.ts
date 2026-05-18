@@ -4,7 +4,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { hybridConfigSchema } from "../config.js";
@@ -100,7 +100,15 @@ describe("runVerifyForCli --reconcile", () => {
   });
 
   it("reports in-sync reconciliation when SQLite and LanceDB IDs align", async () => {
-    const id = factsDb.store({ text: "synced", category: "fact", source: "test" }).id;
+    const id = factsDb.store({
+      text: "synced",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    }).id;
     await vectorDb.store({ id, text: "synced", vector: makeVector(), importance: 0.5, category: "fact" });
 
     const { runVerifyForCli } = await import("../cli/handlers.js");

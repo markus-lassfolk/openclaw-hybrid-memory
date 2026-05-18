@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -268,7 +268,7 @@ function logHasDreamCycleProgress(logContent: string): boolean {
 
 function logHasValidateMarker(logContent: string): boolean {
   if (!logContent) return false;
-  return /(?:--- validate-cron-exit ---|Maintenance Validation|\"maintenanceStatus\")/im.test(logContent);
+  return /(?:--- validate-cron-exit ---|Maintenance Validation|"maintenanceStatus")/im.test(logContent);
 }
 
 function buildOrchestrationSyntheticStep(params: {

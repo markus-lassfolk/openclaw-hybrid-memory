@@ -1483,11 +1483,11 @@ describe.skip("FactsDB.updateFact", () => {
       value: null,
       source: "test",
     });
-    // @ts-ignore
-    // @ts-ignore
-    // @ts-ignore
+    // @ts-expect-error
+    // @ts-expect-error
+    // @ts-expect-error
     db.updateFact(entry.id, { text: "Updated text" });
-    // @ts-ignore
+    // @ts-expect-error
     const updated = db.getById(entry.id);
     expect(updated?.text).toBe("Updated text");
     expect(updated?.confidence).toBe(1.0);
@@ -1503,15 +1503,15 @@ describe.skip("FactsDB.updateFact", () => {
       value: "blue",
       source: "test",
     });
-    // @ts-ignore
+    // @ts-expect-error
     db.updateFact(entry.id, { value: "green" });
     const updated = db.getById(entry.id);
-    // @ts-ignore
+    // @ts-expect-error
     expect(updated?.value).toBe("green");
   });
 
   it("returns false for non-existent id", () => {
-    // @ts-ignore
+    // @ts-expect-error
     expect(db.updateFact("nonexistent", { text: "nope" })).toBe(false);
   });
 });

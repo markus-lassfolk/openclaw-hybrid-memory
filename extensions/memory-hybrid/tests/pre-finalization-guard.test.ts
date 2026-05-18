@@ -380,78 +380,71 @@ describe("pre-finalization guard", () => {
       { role: "assistant", content: "CI is still pending and checks are running." },
     ];
 
-    it.fails(
-      "does not block main-session finalization because a subagent task row has mismatched related_session",
-      () => {
-        const result = evaluatePreFinalizationGuard(mainSessionPendingTurn, {
-          nowMs: NOW_MS,
-          projectFacts: forgeSubagentFacts,
-          sessionKey: "agent:main:telegram:bc88cdda",
-        });
-        expect(result.action).toBe("allow");
-        expect(result.checkpoint.missingFields).not.toContain("related_session");
-      },
-    );
+    it.fails("does not block main-session finalization because a subagent task row has mismatched related_session", () => {
+      const result = evaluatePreFinalizationGuard(mainSessionPendingTurn, {
+        nowMs: NOW_MS,
+        projectFacts: forgeSubagentFacts,
+        sessionKey: "agent:main:telegram:bc88cdda",
+      });
+      expect(result.action).toBe("allow");
+      expect(result.checkpoint.missingFields).not.toContain("related_session");
+    });
 
-    it.fails(
-      "treats agent:main:main checkpoint related_session as matching agent:main:telegram:<session> finalization (#1486)",
-      () => {
-        const facts: MemoryEntry[] = [
-          projectFact({ id: "1", entity: "issue-telegram", key: "status", value: "waiting" }),
-          projectFact({ id: "2", entity: "issue-telegram", key: "next", value: "Recheck CI." }),
-          projectFact({ id: "3", entity: "issue-telegram", key: "task_updated", value: NOW_ISO }),
-          projectFact({
-            id: "4",
-            entity: "issue-telegram",
-            key: "related_session",
-            value: "agent:main:main",
-          }),
-          projectFact({
-            id: "5",
-            entity: "issue-telegram",
-            key: "wake_at",
-            value: "2026-05-10T08:41:00.000Z",
-          }),
-        ];
-        const result = evaluatePreFinalizationGuard(mainSessionPendingTurn, {
-          nowMs: NOW_MS,
-          projectFacts: facts,
-          sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
-        });
-        expect(result.action).toBe("allow");
-        expect(result.reason).toBe("checkpoint_present");
-      },
-    );
+    it.fails("treats agent:main:main checkpoint related_session as matching agent:main:telegram:<session> finalization (#1486)", () => {
+      const facts: MemoryEntry[] = [
+        projectFact({ id: "1", entity: "issue-telegram", key: "status", value: "waiting" }),
+        projectFact({ id: "2", entity: "issue-telegram", key: "next", value: "Recheck CI." }),
+        projectFact({ id: "3", entity: "issue-telegram", key: "task_updated", value: NOW_ISO }),
+        projectFact({
+          id: "4",
+          entity: "issue-telegram",
+          key: "related_session",
+          value: "agent:main:main",
+        }),
+        projectFact({
+          id: "5",
+          entity: "issue-telegram",
+          key: "wake_at",
+          value: "2026-05-10T08:41:00.000Z",
+        }),
+      ];
+      const result = evaluatePreFinalizationGuard(mainSessionPendingTurn, {
+        nowMs: NOW_MS,
+        projectFacts: facts,
+        sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+      });
+      expect(result.action).toBe("allow");
+      expect(result.reason).toBe("checkpoint_present");
+    });
 
     it("allows when the current session has a satisfied checkpoint despite other agents' ledger rows", () => {
-        const facts: MemoryEntry[] = [
-          ...forgeSubagentFacts,
-          projectFact({ id: "5", entity: "main-issue", key: "status", value: "waiting" }),
-          projectFact({ id: "6", entity: "main-issue", key: "next", value: "Recheck CI." }),
-          projectFact({ id: "7", entity: "main-issue", key: "task_updated", value: NOW_ISO }),
-          projectFact({
-            id: "8",
-            entity: "main-issue",
-            key: "related_session",
-            value: "agent:main:telegram:bc88cdda",
-          }),
-          projectFact({
-            id: "9",
-            entity: "main-issue",
-            key: "wake_at",
-            value: "2026-05-10T08:41:00.000Z",
-          }),
-        ];
-        const result = evaluatePreFinalizationGuard(mainSessionPendingTurn, {
-          nowMs: NOW_MS,
-          projectFacts: facts,
-          sessionKey: "agent:main:telegram:bc88cdda",
-        });
-        expect(result.action).toBe("allow");
-        expect(result.reason).toBe("checkpoint_present");
-        expect(result.checkpoint.projectCheckpointEntity).toBe("main-issue");
-      },
-    );
+      const facts: MemoryEntry[] = [
+        ...forgeSubagentFacts,
+        projectFact({ id: "5", entity: "main-issue", key: "status", value: "waiting" }),
+        projectFact({ id: "6", entity: "main-issue", key: "next", value: "Recheck CI." }),
+        projectFact({ id: "7", entity: "main-issue", key: "task_updated", value: NOW_ISO }),
+        projectFact({
+          id: "8",
+          entity: "main-issue",
+          key: "related_session",
+          value: "agent:main:telegram:bc88cdda",
+        }),
+        projectFact({
+          id: "9",
+          entity: "main-issue",
+          key: "wake_at",
+          value: "2026-05-10T08:41:00.000Z",
+        }),
+      ];
+      const result = evaluatePreFinalizationGuard(mainSessionPendingTurn, {
+        nowMs: NOW_MS,
+        projectFacts: facts,
+        sessionKey: "agent:main:telegram:bc88cdda",
+      });
+      expect(result.action).toBe("allow");
+      expect(result.reason).toBe("checkpoint_present");
+      expect(result.checkpoint.projectCheckpointEntity).toBe("main-issue");
+    });
   });
 
   it("detects OpenClaw toolCall content blocks as tool evidence", () => {

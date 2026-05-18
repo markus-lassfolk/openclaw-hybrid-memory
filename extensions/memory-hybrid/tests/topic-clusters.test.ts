@@ -37,7 +37,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import type { ClusterFactLookup, TopicCluster } from "../services/topic-clusters.js";
+import type { ClusterFactLookup, } from "../services/topic-clusters.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const { detectClusters, generateClusterLabel, FactsDB } = _testing;

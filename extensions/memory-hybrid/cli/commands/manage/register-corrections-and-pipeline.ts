@@ -9,12 +9,6 @@ import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgress
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
-import type {
-  AnalyzeFeedbackPhrasesResult,
-  FindDuplicatesResult,
-  SelfCorrectionExtractResult,
-  SelfCorrectionRunResult,
-} from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 
 function formatFollowUpError(err: unknown): string {

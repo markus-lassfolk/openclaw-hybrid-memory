@@ -1,4 +1,4 @@
-import { getEnv } from "../../../utils/env-manager.js";
+
 /**
  * CLI Verify Command Handler
  *
@@ -9,82 +9,54 @@ import { getEnv } from "../../../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import OpenAI from "openai";
 
-import { findPluginRoot } from "../../../utils/plugin-root.js";
-
-import type { CredentialType } from "../../../config.js";
 import {
   getCronModelConfig,
-  getLLMModelPreference,
-  getLLMModelPreferenceUnfiltered,
-  getProvidersWithKeys,
-  isCompactVerbosity,
-  resolveReflectionModelAndFallbacks,
 } from "../../../config.js";
-import { resolveSecretRef } from "../../../config/parsers/core.js";
-import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../../../services/adaptive-model-limits.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../../../services/chat.js";
-import { CostFeature } from "../../../services/cost-feature-labels.js";
-import { readGuardTimestampMs } from "../../../services/cron-guard.js";
-import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../../../services/cron-job-bash-harness.js";
 import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-reconciler.js";
-import {
-  collectRecentHmExitLedgerPaths,
-  findDeprecatedHybridMemCronTokens,
-  findDeprecatedTokensInHmExitContent,
-} from "../../../services/deprecated-cron-commands.js";
-import {
-  type EmbeddingConfig,
-  GOOGLE_EMBED_DEFAULT_DIMENSIONS,
-  GOOGLE_EMBED_DEFAULT_MODEL,
-  OPENAI_ONLY_EMBED_MODELS,
-  createEmbeddingProvider,
-} from "../../../services/embeddings.js";
-import { formatOpenAiEmbeddingDisplayLabel } from "../../../services/embeddings/shared.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import {
-  analyzeCronJobsAgainstHeartbeatPatterns,
-  extractCronJobMessageEntries,
-  getHeartbeatMatchersForVerify,
-} from "../../../services/goal-stewardship-verify-cron.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
-import { resolveWireApi } from "../../../services/model-capabilities.js";
-import { callResponsesApi } from "../../../services/responses-adapter.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { hasOAuthProfiles } from "../../../utils/auth.js";
-import { PLUGIN_ID, getRestartPendingPath } from "../../../utils/constants.js";
-import { inferModelProviderPrefix } from "../../../utils/model-provider-family.js";
-import { isHeavyModel } from "../../../utils/model-tier.js";
+import { PLUGIN_ID, } from "../../../utils/constants.js";
 import {
-  buildUnsupportedPerAgentCompactionWarning,
-  buildCompactionWatchdogAlert,
-  DEFAULT_COMPACTION_MODEL,
-  isCompactionModelTooStrong,
-  resolveCompactionModelSelection,
-} from "../../../utils/compaction-model-watchdog.js";
-import {
-  extractCronStoreJobModel,
-  readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
-} from "../../../utils/openclaw-agent-defaults.js";
-import {
-  detectRecommendedEmbeddingSetup,
   ensureGoalStewardshipHeartbeatCronJob,
   ensureMaintenanceCronJobs,
-  getDashboardUrl,
-  getPluginConfigFromFile,
-  resolveOpenclawJsonPathForWorkspace,
 } from "../../cmd-install.js";
-import { approxIntervalMs, relativeTime } from "../../shared.js";
-import { applyAzureFoundryVerifyDirectClientAuth } from "../../verify-llm-azure-auth.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 
 export async function runVerifyReconcileSection(state: VerifyRunState): Promise<void> {
-
-  const { ctx, opts, cfg, factsDb, vectorDb, embeddings, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai, log, tableLog, OK, FAIL, PAUSE, WARN_LINE, noEmoji, issues, fixes, warnings, loadBlocking, extDir, defaultConfigPath, openclawDir, openclawConfigRead, recommendedEmbedding, dashboardUrl } = state;
+  const {
+    ctx,
+    opts,
+    cfg,
+    factsDb,
+    vectorDb,
+    embeddings,
+    credentialsDb,
+    resolvedSqlitePath,
+    resolvedLancePath,
+    openai,
+    log,
+    tableLog,
+    OK,
+    FAIL,
+    PAUSE,
+    WARN_LINE,
+    noEmoji,
+    issues,
+    fixes,
+    warnings,
+    loadBlocking,
+    extDir,
+    defaultConfigPath,
+    openclawDir,
+    openclawConfigRead,
+    recommendedEmbedding,
+    dashboardUrl,
+  } = state;
 
   // ───── Reconciliation Check ─────
   if (opts.reconcile) {
@@ -119,7 +91,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           state.allOk = false;
           if (vectorOrphans.length > 0) {
             log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
-            vectorOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
+            for (const id of vectorOrphans.slice(0, 10)) log(`  - ${id}`);
             if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
             if (opts.fix) {
               let deleted = 0;
@@ -141,7 +113,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           if (sqliteOrphans.length > 0) {
             const WARN = noEmoji ? "[WARN]" : "⚠️";
             log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
-            sqliteOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
+            for (const id of sqliteOrphans.slice(0, 10)) log(`  - ${id}`);
             if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
             if (opts.fix && sqliteOrphanRebuildBudget > 0) {
               let rebuilt = 0;
@@ -336,8 +308,8 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             },
             digestWeeklyDelivery: cfg.digest.weekly.delivery,
           });
-          added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
-          normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
+          for (const name of added) applied.push(`Added ${name} job to ${cronStorePath}`);
+          for (const name of normalized) applied.push(`Normalized ${name} job (schedule/pluginJobId)`);
           if (cfg.goalStewardship.enabled && cfg.goalStewardship.heartbeatStewardship) {
             const heartbeat = ensureGoalStewardshipHeartbeatCronJob(openclawDir, {
               heartbeatPatterns: cfg.goalStewardship.heartbeatPatterns,
@@ -363,7 +335,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
         }
         if (applied.length > 0) {
           log("\n--- Applied fixes ---");
-          applied.forEach((a) => log(`  • ${a}`));
+          for (const a of applied) log(`  • ${a}`);
           if (changed) log(`Config written: ${defaultConfigPath}. Restart the gateway and run verify again.`);
         }
       } catch (e) {

@@ -58,8 +58,7 @@ export interface SummaryLevel {
  */
 export class MemoryCompressionService {
   constructor(
-    private factsDb: FactsDB,
-    private vectorDb: VectorDB | undefined,
+    private factsDb: FactsDB,_vectorDb: VectorDB | undefined,
     private config: CompressionConfig,
   ) {}
 

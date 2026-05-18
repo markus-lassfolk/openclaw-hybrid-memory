@@ -13,23 +13,35 @@ import {
   detectTopicShift,
   generateAmbientQueries,
   searchAmbientIssues,
-} from "../services/ambient-retrieval.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
-import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
-import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
+} from "../../services/ambient-retrieval.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
+import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import {
-  INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
   resolveInteractiveRecallPolicy,
-} from "../services/retrieval-mode-policy.js";
-import type { ScopeFilter } from "../types/memory.js";
-import type { SearchResult } from "../types/memory.js";
-import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
-import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
+} from "../../services/retrieval-mode-policy.js";
+import type { ScopeFilter } from "../../types/memory.js";
+import type { SearchResult } from "../../types/memory.js";
+import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
+import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
-import { yieldEventLoop } from "../utils/event-loop-yield.js";
-import { estimateTokens } from "../utils/text.js";
+import { yieldEventLoop } from "../../utils/event-loop-yield.js";
+import { estimateTokens } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
+
+function emptyRecallStage(): RecallStageResult {
+  return { kind: "empty", prependContext: undefined };
+}
+
+function recallAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+function clipNarrativeText(text: string, maxChars = 360): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
 
 export async function runRecall(
   event: unknown,

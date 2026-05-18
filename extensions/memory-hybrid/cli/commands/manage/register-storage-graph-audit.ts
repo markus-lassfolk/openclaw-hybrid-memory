@@ -4,42 +4,30 @@
  */
 
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
-  unlinkSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
-import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
-import { isValidCategory, vectorDimsForModel } from "../../../config.js";
+import { isValidCategory, } from "../../../config.js";
 import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
-import { runContextAudit } from "../../../services/context-audit.js";
-import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
-import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
-import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
-import { filterByScope } from "../../../services/merge-results.js";
-import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
-import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
-import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
-import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { getEnv } from "../../../utils/env-manager.js";
-import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
+import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
-import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
+import {
+  buildAuditHealthReport,
+  collectExportBundleFiles,
+  printAuditHealthMarkdown,
+  validateSyncEnvelope,
+} from "./storage-stats-helpers.js";
 
 export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBindings): void {
   const {
@@ -58,7 +46,6 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     auditStore,
     runExport,
   } = b;
-
 
   const graph = mem.command("graph").description("Graph repair and audit utilities");
   graph
@@ -277,13 +264,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     .option("--format <f>", "Output: lines, summary, or timeline", "lines")
     .action(
       withExit(
-        async (opts?: {
-          hours?: string;
-          agent?: string;
-          outcome?: string;
-          target?: string;
-          format?: string;
-        }) => {
+        async (opts?: { hours?: string; agent?: string; outcome?: string; target?: string; format?: string }) => {
           if (!auditStore) {
             console.error("Audit store is not available (e.g. in-memory tests or missing DB path).");
             process.exitCode = 1;
@@ -356,85 +337,78 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     .option("--limit <n>", "Max timeline entries per section (default 50, max 200)", "50")
     .option("--format <f>", "Output: summary (default), timeline, or json", "summary")
     .action(
-      withExit(
-        async (opts?: {
-          sessionId?: string;
-          agent?: string;
-          limit?: string;
-          format?: string;
-        }) => {
-          const limitRaw = Number.parseInt(String(opts?.limit ?? "50"), 10);
-          const limit = Math.max(1, Math.min(200, Number.isFinite(limitRaw) ? limitRaw : 50));
-          const format = String(opts?.format ?? "summary")
-            .trim()
-            .toLowerCase();
-          const sessionId = opts?.sessionId?.trim() || undefined;
-          const agentId = opts?.agent?.trim() || undefined;
-          const { buildSessionObservabilityReport } = await import("../../../services/session-observability.js");
-          const report = await buildSessionObservabilityReport({
-            factsDb,
-            eventLog: null,
-            narrativesDb: null,
-            auditStore: auditStore ?? null,
-            sessionId,
-            agentId,
-            limit,
-          });
+      withExit(async (opts?: { sessionId?: string; agent?: string; limit?: string; format?: string }) => {
+        const limitRaw = Number.parseInt(String(opts?.limit ?? "50"), 10);
+        const limit = Math.max(1, Math.min(200, Number.isFinite(limitRaw) ? limitRaw : 50));
+        const format = String(opts?.format ?? "summary")
+          .trim()
+          .toLowerCase();
+        const sessionId = opts?.sessionId?.trim() || undefined;
+        const agentId = opts?.agent?.trim() || undefined;
+        const { buildSessionObservabilityReport } = await import("../../../services/session-observability.js");
+        const report = await buildSessionObservabilityReport({
+          factsDb,
+          eventLog: null,
+          narrativesDb: null,
+          auditStore: auditStore ?? null,
+          sessionId,
+          agentId,
+          limit,
+        });
 
-          if (format === "json") {
-            console.log(JSON.stringify(report, null, 2));
-            return;
+        if (format === "json") {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        if (format === "timeline") {
+          console.log(
+            `Session observability timeline (${report.sessionId ?? "current"}, entries=${report.timeline.length})`,
+          );
+          for (const entry of report.timeline) {
+            const outcome = entry.outcome ? ` [${entry.outcome}]` : "";
+            const score = entry.score != null ? ` score=${entry.score.toFixed(3)}` : "";
+            console.log(`${entry.timestamp} ${entry.kind}${outcome}: ${entry.label} — ${entry.description}${score}`);
           }
-          if (format === "timeline") {
-            console.log(
-              `Session observability timeline (${report.sessionId ?? "current"}, entries=${report.timeline.length})`,
-            );
-            for (const entry of report.timeline) {
-              const outcome = entry.outcome ? ` [${entry.outcome}]` : "";
-              const score = entry.score != null ? ` score=${entry.score.toFixed(3)}` : "";
-              console.log(`${entry.timestamp} ${entry.kind}${outcome}: ${entry.label} — ${entry.description}${score}`);
-            }
-            if (report.timeline.length === 0) {
-              console.log("(no timeline entries for the requested scope)");
-            }
-            return;
+          if (report.timeline.length === 0) {
+            console.log("(no timeline entries for the requested scope)");
           }
+          return;
+        }
 
-          console.log(`Session: ${report.sessionId ?? "current"}${report.agentId ? `  agent=${report.agentId}` : ""}`);
-          if (report.windowStart || report.windowEnd) {
-            console.log(`Window: ${report.windowStart ?? "?"} → ${report.windowEnd ?? "?"}`);
+        console.log(`Session: ${report.sessionId ?? "current"}${report.agentId ? `  agent=${report.agentId}` : ""}`);
+        if (report.windowStart || report.windowEnd) {
+          console.log(`Window: ${report.windowStart ?? "?"} → ${report.windowEnd ?? "?"}`);
+        }
+        console.log(report.summary);
+        console.log("");
+        console.log("Capture");
+        console.log(
+          `  stored=${report.capture.factsStored} updated=${report.capture.factsUpdated} duplicatesSuppressed=${report.capture.duplicatesSuppressed} noopSkipped=${report.capture.noopSkipped} errors=${report.capture.errorsEncountered}`,
+        );
+        console.log("Recall");
+        console.log(
+          `  candidates=${report.recall.candidatesFound} injected=${report.recall.injectedCount} omitted=${report.recall.omittedCount}`,
+        );
+        if (report.recall.strategies.length > 0) {
+          console.log(`  strategies=${report.recall.strategies.join(", ")}`);
+        }
+        if (report.recall.directiveMatches.length > 0) {
+          console.log(`  directives=${report.recall.directiveMatches.slice(0, 5).join(" | ")}`);
+        }
+        if (report.recall.suppressionReasons.length > 0) {
+          console.log(`  suppressionReasons=${report.recall.suppressionReasons.slice(0, 3).join(" | ")}`);
+        }
+        console.log("Injection");
+        console.log(
+          `  blocks=${report.injection.blocksInjected} tokens≈${report.injection.totalTokensEstimate} budget=${report.injection.budgetTokens} used≈${Math.round(report.injection.budgetUsedFraction * 100)}%`,
+        );
+        if (report.suppressions.length > 0) {
+          console.log("Suppressions");
+          for (const s of report.suppressions.slice(0, 10)) {
+            console.log(`  ${s.timestamp} [${s.outcome}] ${s.reason}${s.detail ? ` — ${s.detail}` : ""}`);
           }
-          console.log(report.summary);
-          console.log("");
-          console.log("Capture");
-          console.log(
-            `  stored=${report.capture.factsStored} updated=${report.capture.factsUpdated} duplicatesSuppressed=${report.capture.duplicatesSuppressed} noopSkipped=${report.capture.noopSkipped} errors=${report.capture.errorsEncountered}`,
-          );
-          console.log("Recall");
-          console.log(
-            `  candidates=${report.recall.candidatesFound} injected=${report.recall.injectedCount} omitted=${report.recall.omittedCount}`,
-          );
-          if (report.recall.strategies.length > 0) {
-            console.log(`  strategies=${report.recall.strategies.join(", ")}`);
-          }
-          if (report.recall.directiveMatches.length > 0) {
-            console.log(`  directives=${report.recall.directiveMatches.slice(0, 5).join(" | ")}`);
-          }
-          if (report.recall.suppressionReasons.length > 0) {
-            console.log(`  suppressionReasons=${report.recall.suppressionReasons.slice(0, 3).join(" | ")}`);
-          }
-          console.log("Injection");
-          console.log(
-            `  blocks=${report.injection.blocksInjected} tokens≈${report.injection.totalTokensEstimate} budget=${report.injection.budgetTokens} used≈${Math.round(report.injection.budgetUsedFraction * 100)}%`,
-          );
-          if (report.suppressions.length > 0) {
-            console.log("Suppressions");
-            for (const s of report.suppressions.slice(0, 10)) {
-              console.log(`  ${s.timestamp} [${s.outcome}] ${s.reason}${s.detail ? ` — ${s.detail}` : ""}`);
-            }
-          }
-        },
-      ),
+        }
+      }),
     );
 
   mem

@@ -48,7 +48,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
-function makeTmpOutputDir(): string {
+function _makeTmpOutputDir(): string {
   const dir = join(tmpDir, "skills-out");
   return dir;
 }
@@ -606,7 +606,7 @@ describe("detectCrystallizationCandidates", () => {
   it("skips patterns rejected with legacy unchanged evidence hashes", () => {
     for (let i = 0; i < 3; i++) {
       wfStore.record({
-        goal: "legacy " + i,
+        goal: `legacy ${i}`,
         toolSequence: ["exec", "write"],
         outcome: "success",
       });
@@ -835,13 +835,7 @@ describe("SkillValidator", () => {
     validator = new SkillValidator();
   });
 
-  function compactValidSkill(
-    extra: {
-      workflow?: string;
-      extraBody?: string;
-      includeRelated?: boolean;
-    } = {},
-  ): string {
+  function compactValidSkill(extra: { workflow?: string; extraBody?: string; includeRelated?: boolean } = {}): string {
     const workflow =
       extra.workflow ??
       "1. Use `read` to load inputs.\n2. Use `exec` only in dry-run mode.\n3. Verify outputs before continuing.";

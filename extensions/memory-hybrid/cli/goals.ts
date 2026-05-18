@@ -1,7 +1,4 @@
-/**
- * CLI: hybrid-mem goals — list, status, cancel, stewardship-run
- */
-import { join } from "node:path";
+
 import type { HybridMemoryConfig } from "../config.js";
 import {
   listActiveGoals,

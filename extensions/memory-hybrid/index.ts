@@ -1,86 +1,27 @@
-/**
- * OpenClaw Memory Hybrid Plugin
- *
- * Two-tier memory system:
- *   1. SQLite + FTS5 — structured facts, instant full-text search, zero API cost
- *   2. LanceDB — semantic vector search for fuzzy/contextual recall
- *
- * Retrieval merges results from both backends, deduplicates, and prioritizes
- * high-confidence FTS5 matches over approximate vector matches.
- */
 
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Type } from "@sinclair/typebox";
-import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
-import { type ContradictionRecord, FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType } from "./backends/facts-db.js";
+import { FactsDB, } from "./backends/facts-db.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { buildInstallDefaults, deepMerge } from "./cli/handlers.js";
-import {
-  CREDENTIAL_TYPES,
-  type ConfigMode,
-  type CredentialType,
-  DECAY_CLASSES,
-  DEFAULT_MEMORY_CATEGORIES,
-  type DecayClass,
-  type HybridMemoryConfig,
-  type IdentityFileType,
-  type MemoryCategory,
-  PROPOSAL_STATUSES,
-  isValidCategory,
-  setMemoryCategories,
-  vectorDimsForModel,
-} from "./config.js";
 import { hybridConfigSchema } from "./config/hybrid-schema.js";
-import {
-  chatComplete,
-  createPendingLLMWarnings,
-  distillBatchTokenLimit,
-  distillMaxOutputTokens,
-} from "./services/chat.js";
-import { type EmbeddingProvider, Embeddings, safeEmbed } from "./services/embeddings.js";
+import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { buildFts5Query, rebuildFtsIndex, searchFts } from "./services/fts-search.js";
 import { HOP_SCORE_DECAY, expandGraph, formatLinkPath } from "./services/graph-retrieval.js";
 import { filterByScope, mergeResults } from "./services/merge-results.js";
-import { extractProceduresFromSessions } from "./services/procedure-extractor.js";
-import { generateAutoSkills } from "./services/procedure-skill-generator.js";
 import {
   DEFAULT_RETRIEVAL_CONFIG,
-  type RetrievalPipelineOptions,
   estimateTokenCount,
   packIntoBudget,
   runExplicitDeepRetrieval,
   serializeFactForContext,
 } from "./services/retrieval-orchestrator.js";
 import {
-  type FactMetadata,
-  type FusedResult,
   RRF_K_DEFAULT,
-  type RankedResult,
   applyPostRrfAdjustments,
   fuseResults,
 } from "./services/rrf-fusion.js";
-import {
-  registerHybridMemCliHelpOnlyWithApi,
-  registerHybridMemCliMetadataOnly,
-  registerHybridMemCliWithApi,
-} from "./setup/cli-context.js";
 import { versionInfo } from "./versionInfo.js";
 export type {
   GraphExpandedResult,
@@ -137,124 +78,35 @@ export type {
   ClusterDetectionOptions,
   ClusterFactLookup,
 } from "./services/topic-clusters.js";
-import type { MemoryPluginAPI } from "./api/memory-plugin-api.js";
-import { type PluginRuntime, clearRuntimeTimers, createTimers } from "./api/plugin-runtime.js";
 import {
-  type AuthFailurePattern,
-  DEFAULT_AUTH_FAILURE_PATTERNS,
-  buildCredentialQuery,
-  detectAuthFailure,
-  formatCredentialHint,
-} from "./services/auth-failure-detect.js";
-import {
-  SENSITIVE_PATTERNS,
-  VAULT_POINTER_PREFIX,
   detectCredentialPatterns,
   extractCredentialMatch,
-  getMemoryTriggers,
   inferServiceFromText,
   isCredentialLike,
-  tryParseCredentialForVault,
 } from "./services/auto-capture.js";
-import { normalizeSuggestedLabel, runAutoClassify, runClassifyForCli } from "./services/auto-classifier.js";
-import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "./services/capture-utils.js";
+import { normalizeSuggestedLabel, } from "./services/auto-classifier.js";
 import {
-  type MemoryClassification,
-  classifyMemoryOperation,
   parseClassificationResponse,
 } from "./services/classification.js";
 import { getRoot, isStructuredForConsolidation, runConsolidate, unionFind } from "./services/consolidation.js";
-import { ContextualVariantGenerator, VariantGenerationQueue } from "./services/contextual-variants.js";
-import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "./services/credential-migration.js";
-import { type ToolCallCredential, extractCredentialsFromToolCalls } from "./services/credential-scanner.js";
-import {
-  type DirectiveExtractResult,
-  type DirectiveIncident,
-  runDirectiveExtract,
-} from "./services/directive-extract.js";
-import type { EmbeddingRegistry } from "./services/embedding-registry.js";
-import { capturePluginError } from "./services/error-reporter.js";
 import { extractStructuredFields } from "./services/fact-extraction.js";
-import { gatherIngestFiles } from "./services/ingest-utils.js";
-import { PythonBridge } from "./services/python-bridge.js";
 import {
   dotProductSimilarity,
   loadReflectionDedupeCorpusVectors,
   normalizeVector,
   parsePatternsFromReflectionResponse,
-  runReflection,
-  runReflectionMeta,
-  runReflectionRules,
 } from "./services/reflection.js";
-import {
-  type ReinforcementExtractResult,
-  type ReinforcementIncident,
-  runReinforcementExtract,
-} from "./services/reinforcement-extract.js";
 import { AliasDB, generateAliases, searchAliasStrategy, storeAliases } from "./services/retrieval-aliases.js";
-import {
-  type CorrectionIncident,
-  type SelfCorrectionExtractResult,
-  runSelfCorrectionExtract,
-} from "./services/self-correction-extract.js";
-import { insertRulesUnderSection } from "./services/tools-md-section.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
-import { walRemove, walWrite } from "./services/wal-helpers.js";
-import { closeOldDatabases, initializeDatabases } from "./setup/init-databases.js";
-import { type PluginServiceContext, createPluginService } from "./setup/plugin-service.js";
 import {
-  applyGatewayEmbeddingInheritanceBeforeParse,
-  shallowClonePluginConfigForGatewayMerge,
-} from "./setup/provider-router.js";
-import { registerLifecycleHooks } from "./setup/register-hooks.js";
-import { registerTools } from "./setup/register-tools.js";
-import type { MemoryEntry, ScopeFilter, SearchResult } from "./types/memory.js";
-import { MEMORY_SCOPES } from "./types/memory.js";
-import {
-  BATCH_STORE_IMPORTANCE,
-  BATCH_THROTTLE_MS,
-  CLASSIFY_CANDIDATE_MAX_CHARS,
-  CLI_STORE_IMPORTANCE,
-  CONSOLIDATION_MERGE_MAX_CHARS,
-  CREDENTIAL_NOTES_MAX_CHARS,
-  DEFAULT_MIN_SCORE,
-  FACT_PREVIEW_MAX_CHARS,
   PLUGIN_ID,
-  REFLECTION_DEDUPE_THRESHOLD,
-  REFLECTION_IMPORTANCE,
-  REFLECTION_MAX_FACTS_PER_CATEGORY,
-  REFLECTION_MAX_FACT_LENGTH,
-  REFLECTION_META_MAX_CHARS,
-  REFLECTION_PATTERN_MAX_CHARS,
-  REFLECTION_TEMPERATURE,
-  SECONDS_PER_DAY,
-  SQLITE_BUSY_TIMEOUT_MS,
-  getRestartPendingPath,
 } from "./utils/constants.js";
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
-import { tryExtractionFromTemplates } from "./utils/extraction-from-template.js";
-import { isHybridMemJsonInvocation, wrapApiLoggerStderrForJsonCli } from "./utils/hybrid-mem-json-cli.js";
-import {
-  getCategoryDecisionRegex,
-  getCategoryEntityRegex,
-  getCategoryFactRegex,
-  getCategoryPreferenceRegex,
-  getCorrectionSignalRegex,
-  getExtractionTemplates,
-  getLanguageKeywordsFilePath,
-  getMemoryTriggerRegexes,
-  setKeywordsPath,
-} from "./utils/language-keywords.js";
-import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
+import { isHybridMemJsonInvocation, } from "./utils/hybrid-mem-json-cli.js";
 
 export { isHybridMemJsonInvocation };
-import { initPluginLogger } from "./utils/logger.js";
-import { fillPrompt, loadPrompt } from "./utils/prompt-loader.js";
-import { computeDynamicSalience } from "./utils/salience.js";
-import { buildToolScopeFilter } from "./utils/scope-filter.js";
 import {
-  TAG_PATTERNS,
   extractTags,
   normalizeTextForDedupe,
   normalizedHash,
@@ -263,21 +115,13 @@ import {
   tagsContains,
 } from "./utils/tags.js";
 import {
-  chunkSessionText,
-  chunkTextByChars,
   estimateTokens,
   estimateTokensForDisplay,
   formatProgressiveIndexLine,
   truncateForStorage,
   truncateText,
 } from "./utils/text.js";
-
-// Backend Imports (extracted from god file for maintainability)
-
-import { AgentHealthStore, agentHealthDbPathForMemorySqlite } from "./backends/agent-health-store.js";
-import { AuditStore, auditDbPathForMemorySqlite } from "./backends/audit-store.js";
 import {
-  type CredentialEntry,
   CredentialsDB,
   decryptValue,
   deriveKey,
@@ -288,7 +132,7 @@ import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { EventLog } from "./backends/event-log.js";
 import { IssueStore } from "./backends/issue-store.js";
 import { LearningsDB } from "./backends/learnings-db.js";
-import { type ProposalEntry, ProposalsDB } from "./backends/proposals-db.js";
+import { ProposalsDB } from "./backends/proposals-db.js";
 import { ToolProposalStore } from "./backends/tool-proposal-store.js";
 import {
   WorkflowStore,
@@ -331,7 +175,6 @@ const memoryHybridPlugin = {
     runMemoryHybridRegister(api);
   },
 };
-
 
 // Export internal functions and classes for testing
 export const _testing = {

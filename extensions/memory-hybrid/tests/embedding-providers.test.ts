@@ -1766,7 +1766,7 @@ describe("AsyncSemaphore", () => {
     await s.acquire();
     const third = s.acquire();
     let progressed = false;
-    third.then(() => {
+    await third.then(() => {
       progressed = true;
     });
     await new Promise((r) => setImmediate(r));

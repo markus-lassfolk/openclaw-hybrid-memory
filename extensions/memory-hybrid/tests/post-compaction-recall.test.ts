@@ -10,10 +10,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import * as recallPipeline from "../services/recall-pipeline.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import {
-  buildRecallLifecycleContext,
-  makeMockStageApi,
-} from "./helpers/lifecycle-recall-harness.js";
+import { buildRecallLifecycleContext, makeMockStageApi } from "./helpers/lifecycle-recall-harness.js";
 
 vi.mock("../services/recall-pipeline.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/recall-pipeline.js")>();
@@ -75,11 +72,7 @@ describe("buildPostCompactionRecallSnippet", () => {
     ]);
     const api = makeMockStageApi();
 
-    const out = await buildPostCompactionRecallSnippet(
-      ctx,
-      api as never,
-      "what were we working on before compaction",
-    );
+    const out = await buildPostCompactionRecallSnippet(ctx, api as never, "what were we working on before compaction");
 
     expect(out).toContain("post-compaction recall");
     expect(out).toContain("<recalled-context>");

@@ -9,54 +9,25 @@ import { getEnv } from "../../../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, } from "node:fs";
 import { dirname, join } from "node:path";
 import OpenAI from "openai";
 
-import { findPluginRoot } from "../../../utils/plugin-root.js";
 
-import type { CredentialType } from "../../../config.js";
 import {
   getCronModelConfig,
   getLLMModelPreference,
   getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
-  isCompactVerbosity,
-  resolveReflectionModelAndFallbacks,
 } from "../../../config.js";
 import { resolveSecretRef } from "../../../config/parsers/core.js";
 import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../../../services/adaptive-model-limits.js";
 import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../../../services/chat.js";
 import { CostFeature } from "../../../services/cost-feature-labels.js";
-import { readGuardTimestampMs } from "../../../services/cron-guard.js";
-import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../../../services/cron-job-bash-harness.js";
-import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-reconciler.js";
-import {
-  collectRecentHmExitLedgerPaths,
-  findDeprecatedHybridMemCronTokens,
-  findDeprecatedTokensInHmExitContent,
-} from "../../../services/deprecated-cron-commands.js";
-import {
-  type EmbeddingConfig,
-  GOOGLE_EMBED_DEFAULT_DIMENSIONS,
-  GOOGLE_EMBED_DEFAULT_MODEL,
-  OPENAI_ONLY_EMBED_MODELS,
-  createEmbeddingProvider,
-} from "../../../services/embeddings.js";
-import { formatOpenAiEmbeddingDisplayLabel } from "../../../services/embeddings/shared.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import {
-  analyzeCronJobsAgainstHeartbeatPatterns,
-  extractCronJobMessageEntries,
-  getHeartbeatMatchersForVerify,
-} from "../../../services/goal-stewardship-verify-cron.js";
-import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
 import { resolveWireApi } from "../../../services/model-capabilities.js";
 import { callResponsesApi } from "../../../services/responses-adapter.js";
-import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { hasOAuthProfiles } from "../../../utils/auth.js";
-import { PLUGIN_ID, getRestartPendingPath } from "../../../utils/constants.js";
-import { inferModelProviderPrefix } from "../../../utils/model-provider-family.js";
 import { isHeavyModel } from "../../../utils/model-tier.js";
 import {
   buildUnsupportedPerAgentCompactionWarning,
@@ -65,19 +36,6 @@ import {
   isCompactionModelTooStrong,
   resolveCompactionModelSelection,
 } from "../../../utils/compaction-model-watchdog.js";
-import {
-  extractCronStoreJobModel,
-  readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
-} from "../../../utils/openclaw-agent-defaults.js";
-import {
-  detectRecommendedEmbeddingSetup,
-  ensureGoalStewardshipHeartbeatCronJob,
-  ensureMaintenanceCronJobs,
-  getDashboardUrl,
-  getPluginConfigFromFile,
-  resolveOpenclawJsonPathForWorkspace,
-} from "../../cmd-install.js";
-import { approxIntervalMs, relativeTime } from "../../shared.js";
 import { applyAzureFoundryVerifyDirectClientAuth } from "../../verify-llm-azure-auth.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
@@ -92,7 +50,35 @@ import {
 
 export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<void> {
   ensureRawPluginConfigOnState(state);
-  const { ctx, opts, cfg, factsDb, vectorDb, embeddings, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai, log, tableLog, OK, FAIL, PAUSE, WARN_LINE, noEmoji, issues, fixes, warnings, loadBlocking, extDir, defaultConfigPath, openclawDir, openclawConfigRead, recommendedEmbedding, dashboardUrl } = state;
+  const {
+    ctx,
+    opts,
+    cfg,
+    factsDb,
+    vectorDb,
+    embeddings,
+    credentialsDb,
+    resolvedSqlitePath,
+    resolvedLancePath,
+    openai,
+    log,
+    tableLog,
+    OK,
+    FAIL,
+    PAUSE,
+    WARN_LINE,
+    noEmoji,
+    issues,
+    fixes,
+    warnings,
+    loadBlocking,
+    extDir,
+    defaultConfigPath,
+    openclawDir,
+    openclawConfigRead,
+    recommendedEmbedding,
+    dashboardUrl,
+  } = state;
 
   // ───── LLM / models table: one row per model from llm.nano / llm.maintenance / llm.default / llm.heavy; auth + source ─────
   tableLog("\n───── LLM / Models (from llm.nano, llm.maintenance, llm.default, llm.heavy) ─────");
@@ -441,11 +427,11 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
     if (!source) source = "—";
     const inConfig = configModelSet.has(model);
     const tiersLabel = tiersForModel(model);
-    let oauthResult: boolean | undefined = undefined;
-    let apiResult: boolean | undefined = undefined;
-    let oauthError: string | undefined = undefined;
-    let apiError: string | undefined = undefined;
-    let apiSkippedReason: string | undefined = undefined;
+    let oauthResult: boolean | undefined;
+    let apiResult: boolean | undefined;
+    let oauthError: string | undefined;
+    let apiError: string | undefined;
+    let apiSkippedReason: string | undefined;
     // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/maintenance/default/heavy.
     if (opts.testLlm && enabled && (hasOAuth || hasApi)) {
       const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
