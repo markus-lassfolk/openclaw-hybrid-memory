@@ -10,6 +10,7 @@ import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
@@ -128,7 +129,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       warnOnce: ctx.warnOnce,
       warnOnceKey: ctx.warnOnceKey,
       suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
-      warn: (_m) => {},
+      warn: (m) => pluginLogger.warn(m),
     },
   );
 

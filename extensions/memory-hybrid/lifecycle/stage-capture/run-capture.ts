@@ -36,8 +36,6 @@ import { truncateForStorage } from "../../utils/text.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
-const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
-
 /** Outcome indicator patterns for episodic memory auto-capture (#781). */
 interface OutcomePattern {
   regex: RegExp;
