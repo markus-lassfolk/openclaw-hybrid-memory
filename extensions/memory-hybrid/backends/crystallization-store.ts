@@ -48,6 +48,7 @@ export const CRYSTALLIZATION_QUEUE_STATUS_FILTERS: ReadonlyArray<Crystallization
   "validated",
   "approved",
   "installed",
+  "quarantined",
   "rejected",
   "superseded",
   "pending",
@@ -308,6 +309,7 @@ export class CrystallizationStore extends BaseSqliteStore {
       "validated",
       "approved",
       "installed",
+      "quarantined",
       "rejected",
       "superseded",
     ];

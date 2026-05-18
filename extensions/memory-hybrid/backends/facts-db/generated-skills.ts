@@ -325,9 +325,9 @@ function applyTelemetryRollupDelta(
   let dClear = 0;
   let dConsidered = 0;
   let dSkipped = 0;
+  if (input.userCorrection === true || input.causedRework === true) dFp = 1;
   if (input.decision === "selected") {
     dSel = 1;
-    if (input.userCorrection === true || input.causedRework === true) dFp = 1;
     const outcome = input.taskOutcome;
     if (outcome === "success") {
       dSucc = 1;
@@ -979,6 +979,21 @@ function summarizeSkillTelemetryFromRollups(
     skillTelemetryEntries(db, canonicalSkillName, proc.id),
     now,
   );
+  const demotedOrArchivedAt =
+    proc.skillState === "demoted" || proc.skillState === "archived"
+      ? (proc.skillStateChangedAt ?? proc.updatedAt ?? 0)
+      : null;
+  let cleanUsesAfterDemotion = 0;
+  if (demotedOrArchivedAt != null) {
+    const postDemotionActivations = skillTelemetryEntries(db, canonicalSkillName, proc.id).filter(
+      (a) =>
+        a.decision === "selected" &&
+        a.taskOutcome === "success" &&
+        !a.userCorrection &&
+        a.createdAt > demotedOrArchivedAt,
+    );
+    cleanUsesAfterDemotion = postDemotionActivations.length;
+  }
   const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
   const summary = deriveMetricsAndFlags(
     {
@@ -999,7 +1014,7 @@ function summarizeSkillTelemetryFromRollups(
       skippedCount,
       savedToolCalls,
       savedTimeMs,
-      cleanUsesAfterDemotion: 0,
+      cleanUsesAfterDemotion,
     },
     proc,
     policy,
