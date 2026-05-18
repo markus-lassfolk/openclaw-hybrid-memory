@@ -30,6 +30,7 @@ type OnnxRuntimeLoader = () => Promise<OnnxRuntime>;
 
 const DEFAULT_ONNX_CACHE_DIR = join(homedir(), ".cache", "openclaw", "onnx-embeddings");
 const DEFAULT_ONNX_MAX_SEQ_LEN = 256;
+const ONNX_RUNTIME_LOAD_TIMEOUT_MS = 30_000;
 
 const ONNX_MODEL_SPECS: Record<string, { repo: string; modelFile: string; vocabFileCandidates: string[] }> = {
   "all-MiniLM-L6-v2": {
@@ -52,6 +53,14 @@ class OnnxRuntimeMissingError extends Error {
   }
 }
 
+class OnnxRuntimeLoadTimeoutError extends Error {
+  readonly code = "ONNX_RUNTIME_LOAD_TIMEOUT";
+  constructor(timeoutMs: number) {
+    super(`Timed out loading onnxruntime-node after ${timeoutMs}ms.`);
+    this.name = "OnnxRuntimeLoadTimeoutError";
+  }
+}
+
 export function isOnnxRuntimeMissingError(err: unknown): err is OnnxRuntimeMissingError {
   return (
     err instanceof OnnxRuntimeMissingError ||
@@ -69,12 +78,25 @@ export function __setOnnxRuntimeLoaderForTests(loader: OnnxRuntimeLoader | null)
 }
 
 async function loadOnnxRuntime(): Promise<OnnxRuntime> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await onnxRuntimeLoader();
-  } catch {
+    return await Promise.race([
+      Promise.resolve().then(() => onnxRuntimeLoader()),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new OnnxRuntimeLoadTimeoutError(ONNX_RUNTIME_LOAD_TIMEOUT_MS)), ONNX_RUNTIME_LOAD_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (err) {
+    if (err instanceof OnnxRuntimeLoadTimeoutError) {
+      throw err;
+    }
     throw new OnnxRuntimeMissingError(
       "onnxruntime-node is not installed. Install it to use provider='onnx' (e.g. npm i onnxruntime-node).",
     );
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
