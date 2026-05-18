@@ -618,7 +618,7 @@ ${proposal.skillContent}`;
 const MAX_YAML_VALUE_SCAN_LINES = 512;
 
 /** Update a key in the opening YAML frontmatter block (after optional leading HTML comment). */
-function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
+export function patchOpeningYamlField(skillContent: string, key: string, value: string): string {
   const body = stripLeadingHtmlComments(skillContent);
   const prefix = skillContent.slice(0, skillContent.length - body.length);
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
