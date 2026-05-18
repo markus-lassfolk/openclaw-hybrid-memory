@@ -18,7 +18,7 @@ export class PreFinalizationGuardBlockingError extends Error {
 }
 
 const WAITING_OR_PENDING_RE =
-  /\b(waiting\s+(?:for|on|to)|still\s+waiting|pending|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
+  /\b(waiting\s+(?:for|on|to)|still\s+(?:waiting|pending)|pending\s+(?:ci|checks?|review|merge|approval|deploy(?:ment)?|jobs?|workflows?|pipeline|runs?|builds?)|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
 const NEGATED_WAITING_OR_PENDING_RE =
   /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|waiting|awaiting)\b/i;
 const CLEARED_WAITING_OR_PENDING_RE =
@@ -341,13 +341,28 @@ function evaluateProjectCheckpoint(
 
   const grouped = groupProjectFactsByEntity(projectFacts);
   let bestUnsatisfied: { entity: string; updatedMs: number; missingFields: string[] } | null = null;
+  // Track whether any active entity is scoped to this session (#1479 Fix A+B).
+  let sessionScopedEntityFound = false;
 
   for (const [entity, keyMap] of grouped.entries()) {
     const status = normalizeProjectStatus(chooseLatestText(keyMap.get("status")));
     if (!status || !ACTIVE_PROJECT_STATUSES.has(status)) continue;
 
-    const next = chooseLatestText(keyMap.get("next"));
     const relatedSession = chooseLatestText(keyMap.get("related_session"));
+
+    // When a sessionKey is provided, only evaluate entities that belong to this session.
+    // Entities whose related_session is absent or points to a different session (e.g. a
+    // Forge/Pr-Steward subagent) are not the current session's responsibility and must not
+    // trigger the guard (#1479 Fix A+B).
+    if (currentSessionKey) {
+      if (!sessionRefMatches(relatedSession, currentSessionKey)) {
+        continue;
+      }
+    }
+
+    sessionScopedEntityFound = true;
+
+    const next = chooseLatestText(keyMap.get("next"));
     const relatedGoal = chooseLatestText(keyMap.get("related_goal")) || chooseLatestText(keyMap.get("goal_id"));
     const updatedRaw =
       chooseLatestText(keyMap.get("task_updated")) ||
@@ -362,9 +377,10 @@ function evaluateProjectCheckpoint(
         const raw = chooseLatestText(keyMap.get(k));
         return raw.length > 0;
       });
-    const relatedSessionMatches = currentSessionKey
-      ? sessionRefMatches(relatedSession, currentSessionKey)
-      : relatedSession.length > 0;
+    // When currentSessionKey is set, the entity already passed sessionRefMatches above, so
+    // related_session is always satisfied for filtered entities.  Without a sessionKey the
+    // original check (related_session must be non-empty) is preserved.
+    const relatedSessionMatches = currentSessionKey ? true : relatedSession.length > 0;
 
     const missingFields: string[] = [];
     if (!next) missingFields.push("next");
@@ -388,6 +404,12 @@ function evaluateProjectCheckpoint(
     if (!bestUnsatisfied || rankMs > bestUnsatisfied.updatedMs) {
       bestUnsatisfied = { entity, updatedMs: rankMs, missingFields };
     }
+  }
+
+  // When sessionKey is provided and no active entities are scoped to this session, there is
+  // no checkpoint obligation — other sessions' tasks must not penalise this session (#1479).
+  if (currentSessionKey && !sessionScopedEntityFound) {
+    return { satisfied: true, missingFields: [] };
   }
 
   if (bestUnsatisfied) {
@@ -551,7 +573,7 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
 
   const missing =
     result.checkpoint.missingFields.length > 0 ? result.checkpoint.missingFields.join(", ") : "project checkpoint";
-  const mode = result.action === "block" ? "blocking" : "warning";
+  const mode = result.action === "block" ? "advisory" : "warning";
   const conditionalHints: string[] = [];
   if (result.checkpoint.missingFields.includes("wake_link")) {
     conditionalHints.push(
