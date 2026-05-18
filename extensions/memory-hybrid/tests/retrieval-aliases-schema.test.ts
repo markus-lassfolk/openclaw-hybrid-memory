@@ -164,7 +164,7 @@ describe("AliasVectorIndex closed-state safety (issue #1494)", () => {
     const aliasIndex = (db as any).aliasIndex;
 
     // Intercept doInitialize to simulate a slow async init
-    let resolveInit!: () => void;
+    let resolveInit: () => void = () => {};
     const initBarrier = new Promise<void>((res) => {
       resolveInit = res;
     });
