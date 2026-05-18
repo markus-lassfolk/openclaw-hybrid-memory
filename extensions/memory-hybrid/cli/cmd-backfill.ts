@@ -360,9 +360,10 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   let scannedSessions = 0;
   let firstSessionParseError: string | null = null;
   for (const { path: fp } of sessionFiles) {
-    scannedSessions++;
     try {
-      allTexts.push(...extractUserMessageTextsFromSessionJsonl(fp));
+      const texts = extractUserMessageTextsFromSessionJsonl(fp);
+      allTexts.push(...texts);
+      scannedSessions++;
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
       if (!firstSessionParseError) firstSessionParseError = err instanceof Error ? err.message : String(err);

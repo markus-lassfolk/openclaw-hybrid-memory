@@ -70,7 +70,7 @@ describe("runAnalyzeFeedbackPhrasesForCli session JSONL parsing", () => {
     expect(result.sessionsScanned).toBe(1);
   });
 
-  it("continues scanning files after malformed JSONL and reports scanned count accurately", async () => {
+  it("continues scanning files after malformed JSONL and reports successfully scanned count", async () => {
     writeSessionFile('{"type":"message"\n', { agentId: "agent-1", fileName: "bad.jsonl" });
     writeSessionFile(
       `${JSON.stringify({
@@ -84,6 +84,6 @@ describe("runAnalyzeFeedbackPhrasesForCli session JSONL parsing", () => {
 
     expect(result.error).toContain("Malformed session JSONL at");
     expect(result.error).toContain("bad.jsonl:1");
-    expect(result.sessionsScanned).toBe(2);
+    expect(result.sessionsScanned).toBe(1);
   });
 });
