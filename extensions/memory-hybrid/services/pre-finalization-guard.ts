@@ -319,13 +319,17 @@ function sessionRefMatches(relatedSession: string, currentSession: string): bool
   const currentIsAgentRef = currentParts.length >= 3 && currentParts[0] === "agent";
   if (relatedIsAgentRef && currentIsAgentRef) {
     const sameAgentId = relatedParts[1] === currentParts[1];
-    const relatedIsCanonicalMain = relatedParts.length === 3 && relatedParts[2] === "main";
-    const currentIsCanonicalMain = currentParts.length === 3 && currentParts[2] === "main";
-    const relatedIsChannelScoped = relatedParts.length >= 4 && relatedParts[2].length > 0;
-    const currentIsChannelScoped = currentParts.length >= 4 && currentParts[2].length > 0;
+    const relatedSessionType = relatedParts[2];
+    const currentSessionType = currentParts[2];
+    const relatedIsCanonicalSession = relatedParts.length === 3 && (relatedSessionType === "main" || relatedSessionType === "private");
+    const currentIsCanonicalSession = currentParts.length === 3 && (currentSessionType === "main" || currentSessionType === "private");
+    const relatedIsChannelScoped =
+      relatedParts.length >= 4 && relatedSessionType.length > 0 && relatedSessionType !== "main" && relatedSessionType !== "private";
+    const currentIsChannelScoped =
+      currentParts.length >= 4 && currentSessionType.length > 0 && currentSessionType !== "main" && currentSessionType !== "private";
     if (sameAgentId) {
-      if (relatedIsCanonicalMain && currentIsChannelScoped) return true;
-      if (currentIsCanonicalMain && relatedIsChannelScoped) return true;
+      if (relatedIsCanonicalSession && currentIsChannelScoped) return true;
+      if (currentIsCanonicalSession && relatedIsChannelScoped) return true;
     }
   }
   return false;

@@ -361,6 +361,52 @@ describe("pre-finalization guard", () => {
     expect(result.checkpoint.missingFields).toContain("related_session");
   });
 
+  it("treats canonical private session refs as matching channel-scoped sessions for the same agent", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "issue-1486-private", key: "status", value: "waiting" }),
+      projectFact({ id: "2", entity: "issue-1486-private", key: "next", value: "Recheck CI in 10 minutes." }),
+      projectFact({ id: "3", entity: "issue-1486-private", key: "task_updated", value: NOW_ISO }),
+      projectFact({ id: "4", entity: "issue-1486-private", key: "related_session", value: "agent:main:private" }),
+      projectFact({ id: "5", entity: "issue-1486-private", key: "wake_at", value: "2026-05-10T08:41:00.000Z" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "CI is still pending and checks are running." },
+    ];
+
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+
+    expect(result.action).toBe("allow");
+    expect(result.reason).toBe("checkpoint_present");
+    expect(result.checkpoint.projectFactsSatisfied).toBe(true);
+  });
+
+  it("does not treat malformed canonical refs as channel-scoped session matches", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "issue-1486-malformed", key: "status", value: "in_progress" }),
+      projectFact({ id: "2", entity: "issue-1486-malformed", key: "next", value: "Continue processing." }),
+      projectFact({ id: "3", entity: "issue-1486-malformed", key: "task_updated", value: NOW_ISO }),
+      projectFact({ id: "4", entity: "issue-1486-malformed", key: "related_session", value: "agent:main:main:extra" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("related_session");
+  });
+
   it("formats conditional wake/goal requirements in the guard message", () => {
     const result: PreFinalizationGuardResult = {
       action: "block",
