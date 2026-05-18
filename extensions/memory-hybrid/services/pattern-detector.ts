@@ -12,7 +12,12 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 import { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
 
-export { computeEvidenceHash, computeLegacyEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
+export {
+  computeEvidenceHash,
+  computeLegacyEvidenceHash,
+  computePatternId,
+  scorePattern,
+} from "./pattern-detector-hash.js";
 
 // ---------------------------------------------------------------------------
 // Public types

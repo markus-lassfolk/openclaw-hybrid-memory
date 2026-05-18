@@ -489,7 +489,8 @@ export class CrystallizationProposer {
     for (const proposal of installed) {
       if (!proposal.outputPath?.trim()) {
         skipped++;
-        truncated = !pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`) || truncated;
+        truncated =
+          !pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`) || truncated;
         continue;
       }
       let skillContent: string;
@@ -523,15 +524,20 @@ export class CrystallizationProposer {
           const updated = this.crystallizationStore.quarantine(proposal.id, reason);
           if (updated) {
             quarantined++;
-            truncated = !pushLimitedMessage(
-              messages,
-              `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
-            ) || truncated;
+            truncated =
+              !pushLimitedMessage(
+                messages,
+                `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+              ) || truncated;
           } else {
             errors.push(`${proposal.id}: quarantine update failed`);
           }
         } else {
-          truncated = !pushLimitedMessage(messages, `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`) || truncated;
+          truncated =
+            !pushLimitedMessage(
+              messages,
+              `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+            ) || truncated;
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
