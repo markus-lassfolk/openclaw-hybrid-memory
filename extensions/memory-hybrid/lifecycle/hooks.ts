@@ -26,10 +26,7 @@ import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
-import {
-  formatPreFinalizationGuardMessage,
-  evaluatePreFinalizationGuard,
-} from "../services/pre-finalization-guard.js";
+import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -248,8 +245,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               ctx.auditStore?.append({
                 agentId: ctx.currentAgentIdRef.value ?? "unknown",
-                action: "cleanup:pre-finalization-guard-blocked",
-                outcome: "failed",
+                action: "cleanup:pre-finalization-guard-advisory",
+                outcome: "partial",
                 context: {
                   missingFields: guard.checkpoint.missingFields,
                   signals: guard.signals,

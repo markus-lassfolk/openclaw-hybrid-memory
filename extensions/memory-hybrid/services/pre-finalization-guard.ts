@@ -564,7 +564,11 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
     return "pre-finalization guard: no unfinished external-workflow signals detected.";
   }
   if (result.reason === "checkpoint_present") {
-    const source = result.checkpoint.activeTaskCheckpointCalled ? "active_task_checkpoint tool call" : "project facts";
+    const source = result.checkpoint.activeTaskCheckpointCalled
+      ? "active_task_checkpoint tool call"
+      : result.checkpoint.projectCheckpointEntity
+        ? "project facts"
+        : "no session-scoped active task (no obligation)";
     return `pre-finalization guard: checkpoint satisfied via ${source}.`;
   }
   if (result.reason === "explicit_bypass") {
