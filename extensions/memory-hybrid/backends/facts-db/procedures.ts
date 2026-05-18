@@ -59,6 +59,8 @@ function reportUnexpectedProcedureEnum(field: "procedure_type" | "skill_state", 
 }
 
 function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"] {
+  // Preserve historical fallback for missing/blank rows without emitting noisy reports for
+  // legacy or partially migrated data; only unexpected non-empty strings are diagnosable drift.
   if (typeof value !== "string" || value.trim() === "") return "positive";
   if (PROCEDURE_TYPE_SET.has(value as ProcedureEntry["procedureType"])) return value as ProcedureEntry["procedureType"];
   reportUnexpectedProcedureEnum("procedure_type", value);
@@ -66,6 +68,7 @@ function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"]
 }
 
 function normalizeProcedureSkillState(value: unknown): NonNullable<ProcedureEntry["skillState"]> {
+  // Missing/blank state should continue to behave like the column default and migration baseline.
   if (typeof value !== "string" || value.trim() === "") return "draft";
   if (PROCEDURE_SKILL_STATE_SET.has(value as NonNullable<ProcedureEntry["skillState"]>)) {
     return value as NonNullable<ProcedureEntry["skillState"]>;
