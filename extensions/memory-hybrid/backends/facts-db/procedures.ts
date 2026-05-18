@@ -89,6 +89,17 @@ function hasRecipeAnchor(recipeJson: string | null | undefined): boolean {
   }
 }
 
+function parseAvoidanceNotes(raw: string | null | undefined): string[] {
+  if (!raw || raw.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((note): note is string => typeof note === "string");
+  } catch {
+    return [];
+  }
+}
+
 function procedureBlockReason(
   row: ProcedureEntry,
   duplicateSlugs: Set<string>,
@@ -180,12 +191,8 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
     // Merge avoidance notes across all versions
     const allNotes = new Set<string>(base.avoidanceNotes ?? []);
     if (versionRow.avoidance_notes) {
-      try {
-        const notes = JSON.parse(versionRow.avoidance_notes) as string[];
-        notes.forEach((n) => allNotes.add(n));
-      } catch {
-        // ignore parse errors
-      }
+      const notes = parseAvoidanceNotes(versionRow.avoidance_notes);
+      notes.forEach((n) => allNotes.add(n));
     }
 
     return {
@@ -350,12 +357,8 @@ export function procedureFeedback(
       .all(input.procedureId) as Array<{ avoidance_notes: string | null }>;
     for (const row of prevNotes) {
       if (row.avoidance_notes) {
-        try {
-          const existing = JSON.parse(row.avoidance_notes) as string[];
-          avoidanceNotes.push(...existing);
-        } catch {
-          // ignore
-        }
+        const existing = parseAvoidanceNotes(row.avoidance_notes);
+        avoidanceNotes.push(...existing);
       }
     }
 
