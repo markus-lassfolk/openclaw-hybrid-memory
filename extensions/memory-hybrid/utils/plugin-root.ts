@@ -48,8 +48,7 @@ export function findPluginRoot(metaUrl: string): string {
   }
 
   throw new Error(
-    `findPluginRoot: could not locate ${PLUGIN_MANIFEST_FILENAME} above ${startFile}. ` +
-      "The plugin must be installed with its manifest at the package root.",
+    `findPluginRoot: could not locate ${PLUGIN_MANIFEST_FILENAME} above ${startFile}. The plugin must be installed with its manifest at the package root.`,
   );
 }
 

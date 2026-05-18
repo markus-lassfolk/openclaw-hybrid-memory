@@ -321,9 +321,7 @@ export function applyDedupe(
     if (!ctx.suppressVectorFallbackWarning) {
       // Caller asked for vector dedupe but supplied neither candidates nor an embedding.
       // (Write-time vector cosine requires caller-supplied `vectorCandidates` because `applyDedupe` is synchronous.)
-      const message =
-        `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe.` +
-        ` (Hint: plumb vector neighbour candidates into FactsDB.store(..., { vectorCandidates }) to enable synchronous cosine checks.)`;
+      const message = `memory-hybrid: store dedupe — vectorThreshold=${profile.vectorThreshold} is set but no vector candidates were provided; falling back to lexical-only dedupe. (Hint: plumb vector neighbour candidates into FactsDB.store(..., { vectorCandidates }) to enable synchronous cosine checks.)`;
       const keyBase = (ctx.warnOnceKey?.trim() || profile.sourcePattern).slice(0, 80);
       const warnKey = `store-dedupe-vector-fallback:${keyBase}:${profile.vectorThreshold}`;
       if (ctx.warnOnce) {
@@ -346,7 +344,7 @@ export function applyDedupe(
     } else {
       rows = ctx.db
         .prepare(
-          `SELECT id, text FROM facts WHERE source = ? AND superseded_at IS NULL AND created_at >= ? AND scope = ? AND scope_target = ? ORDER BY created_at DESC LIMIT ?`,
+          "SELECT id, text FROM facts WHERE source = ? AND superseded_at IS NULL AND created_at >= ? AND scope = ? AND scope_target = ? ORDER BY created_at DESC LIMIT ?",
         )
         .all(candidate.source, since, candidateScope, candidateScopeTarget, JACCARD_ROW_LIMIT) as Array<{
         id: string;
@@ -403,7 +401,7 @@ export function hasGlobalDuplicateProbe(
     const since = opts.nowSec - JACCARD_LOOKBACK_SEC;
     const rows = db
       .prepare(
-        `SELECT id, text FROM facts WHERE superseded_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
+        "SELECT id, text FROM facts WHERE superseded_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
       )
       .all(since, JACCARD_ROW_LIMIT) as Array<{ id: string; text: string }>;
 

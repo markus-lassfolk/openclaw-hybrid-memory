@@ -51,8 +51,8 @@ export function mergeFactProvenanceJson(existingRaw: string | null | undefined, 
     merged.sourceEvents = [...byId.values()];
   }
 
-  if (merged.sourceFactIds.length === 0) delete merged.sourceFactIds;
-  if (merged.sourceEventIds.length === 0) delete merged.sourceEventIds;
+  if (merged.sourceFactIds.length === 0) merged.sourceFactIds = undefined;
+  if (merged.sourceEventIds.length === 0) merged.sourceEventIds = undefined;
   return JSON.stringify(merged);
 }
 

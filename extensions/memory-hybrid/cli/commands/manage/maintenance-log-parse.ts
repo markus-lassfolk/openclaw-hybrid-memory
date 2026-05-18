@@ -77,7 +77,7 @@ export function parseCronRunLog(content: string): AnalyzedRun[] {
       if (/\[ERROR\]|\[FATAL\]|\[FAILURE\]|✗|failed|error/i.test(line)) {
         if (currentRun.exitCode === undefined || currentRun.exitCode !== 0) {
           currentRun.status = "failure";
-          currentRun.error = (currentRun.error ? currentRun.error + "; " : "") + line.trim().slice(0, 200);
+          currentRun.error = (currentRun.error ? `${currentRun.error}; ` : "") + line.trim().slice(0, 200);
         }
       }
       if (
