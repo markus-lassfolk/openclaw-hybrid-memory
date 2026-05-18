@@ -95,9 +95,11 @@ export async function buildExplicitSemanticQueryVector({
   }
 
   try {
-    import("./error-reporter.js").then(({ addOperationBreadcrumb }) =>
-      addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`),
-    );
+    void import("./error-reporter.js")
+      .then(({ addOperationBreadcrumb }) =>
+        addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`),
+      )
+      .catch(() => undefined);
     let textToEmbed = query;
 
     if (policy.allowHyde && cfg.queryExpansion.enabled) {

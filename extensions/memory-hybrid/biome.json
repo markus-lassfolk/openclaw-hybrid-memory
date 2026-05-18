@@ -1,18 +1,24 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "files": {
-    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.cjs", "**/*.mjs"],
-    "ignore": [
-      "dist/**",
-      "node_modules/**",
-      "scripts/**",
-      "coverage/**",
-      "**/*.tgz",
-      "**/*.bak",
-      "**/*.txt",
-      "**/*.log",
-      "VERSION",
-      "tsconfig*.json"
+    "includes": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.json",
+      "**/*.cjs",
+      "**/*.mjs",
+      "!**/dist/**",
+      "!**/node_modules/**",
+      "!**/scripts/**",
+      "!**/coverage/**",
+      "!**/*.tgz",
+      "!**/*.bak",
+      "!**/*.txt",
+      "!**/*.log",
+      "!**/VERSION",
+      "!**/tsconfig*.json"
     ]
   },
   "formatter": {
@@ -41,14 +47,14 @@
         "noMisleadingCharacterClass": "warn",
         "noControlCharactersInRegex": "warn",
         "noConfusingVoidType": "warn",
-        "noGlobalIsNan": "error"
+        "noGlobalIsNan": "error",
+        "noVar": "error"
       },
       "correctness": {
         "noUnusedVariables": "warn"
       },
       "style": {
         "useConst": "warn",
-        "noVar": "error",
         "noNonNullAssertion": "warn",
         "noParameterAssign": "warn",
         "noUnusedTemplateLiteral": "warn",
@@ -65,12 +71,15 @@
       },
       "performance": {
         "noDelete": "warn"
+      },
+      "nursery": {
+        "noFloatingPromises": "error"
       }
     }
   },
   "overrides": [
     {
-      "include": ["cli/**", "tests/**", "utils/logger.ts", "utils/hybrid-mem-json-cli.ts"],
+      "includes": ["**/cli/**", "**/tests/**", "**/utils/logger.ts", "**/utils/hybrid-mem-json-cli.ts"],
       "linter": {
         "rules": {
           "suspicious": {
