@@ -15,7 +15,6 @@ import { normalizedHash, serializeTags } from "../../utils/tags.js";
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
 const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
 const SQLITE_BUSY_STORE_BACKOFF_MAX_MS = 500;
-const SQLITE_BUSY_WAIT = new Int32Array(new SharedArrayBuffer(4));
 
 function isSqliteBusyError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -26,16 +25,16 @@ function isSqliteBusyError(err: unknown): boolean {
 
 function sleepSync(ms: number): void {
   if (ms <= 0) return;
-  Atomics.wait(SQLITE_BUSY_WAIT, 0, 0, ms);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
-  for (let attempt = 0; ; attempt += 1) {
+  for (let attempt = 0; attempt <= SQLITE_BUSY_STORE_MAX_RETRIES; attempt += 1) {
     try {
       run();
       return;
     } catch (err) {
-      if (!isSqliteBusyError(err) || attempt >= SQLITE_BUSY_STORE_MAX_RETRIES) {
+      if (!isSqliteBusyError(err) || attempt === SQLITE_BUSY_STORE_MAX_RETRIES) {
         throw err;
       }
       // Re-apply timeout before retry in case lock contention happened after reconnect/reopen.

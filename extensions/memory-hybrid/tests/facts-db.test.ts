@@ -143,13 +143,13 @@ describe("FactsDB.store", () => {
 
   it("retries a transient SQLITE_BUSY lock during store", () => {
     const sqlite = (db as any).db;
-    const originalPrepare = sqlite.prepare.bind(sqlite);
+    const originalPrepare = sqlite.prepare;
     let failOnce = true;
     let interceptedRuns = 0;
 
     sqlite.prepare = (sql: string) => {
-      const stmt = originalPrepare(sql);
-      if (typeof sql === "string" && sql.includes("INSERT INTO facts")) {
+      const stmt = originalPrepare.call(sqlite, sql);
+      if (sql.includes("INSERT INTO facts")) {
         return new Proxy(stmt, {
           get(target, prop, receiver) {
             if (prop === "run") {
