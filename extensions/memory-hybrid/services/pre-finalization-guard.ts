@@ -10,13 +10,6 @@
 import type { MemoryEntry } from "../types/memory.js";
 import { TASK_LEDGER_CATEGORY, groupProjectFactsByEntity } from "./task-ledger-facts.js";
 
-export class PreFinalizationGuardBlockingError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PreFinalizationGuardBlockingError";
-  }
-}
-
 const WAITING_OR_PENDING_RE =
   /\b(waiting\s+(?:for|on|to)|still\s+(?:waiting|pending)|pending\s+(?:ci|checks?|review|merge|approval|deploy(?:ment)?|jobs?|workflows?|pipeline|runs?|builds?)|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
 const NEGATED_WAITING_OR_PENDING_RE =
