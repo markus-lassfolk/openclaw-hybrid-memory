@@ -880,7 +880,7 @@ Use for collecting markerless legacy reports.
     const evaluation = evaluateProcedureForPromotion(
       createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
       parseProcedurePromotionPolicy("auto-safe"),
-      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["a{1,3}?b"] },
+      { skillsAutoPath: skillsDir, validationThreshold: 3, contextSpecificTaskPatterns: ["a{1,3}?"] },
     );
 
     expect(evaluation.metadata.rejectionReasons).toContain("too_context_specific");
