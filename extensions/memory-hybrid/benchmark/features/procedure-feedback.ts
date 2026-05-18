@@ -1,5 +1,4 @@
-
-import { mkdtempSync, rmSync, } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";

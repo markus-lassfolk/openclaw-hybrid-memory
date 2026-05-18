@@ -1,4 +1,3 @@
-
 import type { DatabaseSync } from "node:sqlite";
 
 import type { ScopeFilter, SearchResult } from "../../types/memory.js";

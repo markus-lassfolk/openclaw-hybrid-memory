@@ -14,11 +14,7 @@ import { getEnv } from "../utils/env-manager.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BenchmarkResult } from "../benchmark/shadow-eval.js";
-import {
-  formatBenchmarkResults,
-  runAllBenchmarks,
-  runBenchmark,
-} from "../benchmark/shadow-eval.js";
+import { formatBenchmarkResults, runAllBenchmarks, runBenchmark } from "../benchmark/shadow-eval.js";
 import type { HybridMemCliContext } from "./register.js";
 import type { Chainable } from "./shared.js";
 
