@@ -323,7 +323,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
           }
           // Determine format: --json takes precedence, then --format, default to text
           const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
-          runConfigView(
+          await runConfigView(
             { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
             { format: format as "text" | "json" },
           );
@@ -343,7 +343,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .action(
       withExit(async () => {
         try {
-          runConfigView(
+          await runConfigView(
             { log: (s: string) => console.log(s), error: (s: string) => console.error(s) },
             { format: "json", featuresOnly: true },
           );
