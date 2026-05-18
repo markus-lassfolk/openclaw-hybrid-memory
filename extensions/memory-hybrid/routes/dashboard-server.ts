@@ -486,9 +486,13 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
       _lanceInFlight.set(ctx.resolvedLancePath, inFlightPromise);
     }
     try {
+      // Result is already written to the cache inside .then() above.
       await inFlightPromise;
-    } catch {
+    } catch (err) {
       /* non-fatal: stale or zero cached value will be used */
+      pluginLogger.error(
+        `[dashboard-server] lance size traversal failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size ?? 0;
