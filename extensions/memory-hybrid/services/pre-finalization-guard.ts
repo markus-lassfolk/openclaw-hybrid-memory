@@ -11,7 +11,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { TASK_LEDGER_CATEGORY, groupProjectFactsByEntity } from "./task-ledger-facts.js";
 
 const WAITING_OR_PENDING_RE =
-  /\b(waiting\s+(?:for|on|to)|still\s+(?:waiting|pending)|pending\s+(?:ci|checks?|review|merge|approval|deploy(?:ment)?|jobs?|workflows?|pipeline|runs?|builds?)|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
+  /\b(waiting\s+(?:for|on|to)|still\s+(?:waiting|pending)|pending\s+(?:ci|checks?|reviews?|merges?|approvals?|deploy(?:ment)?s?|jobs?|workflows?|pipelines?|runs?|builds?)|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
 const NEGATED_WAITING_OR_PENDING_RE =
   /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|waiting|awaiting)\b/i;
 const CLEARED_WAITING_OR_PENDING_RE =
@@ -330,7 +330,14 @@ function evaluateProjectCheckpoint(
   goalAssess: GoalAssessEvidence,
   currentSessionKey?: string,
 ): ProjectCheckpointEvaluation {
-  if (projectFacts.length === 0) return { satisfied: false, missingFields: ["status"] };
+  if (projectFacts.length === 0) {
+    // When a sessionKey is provided and there are no project facts at all, there is no
+    // checkpoint obligation for this session — return satisfied to avoid false positives (#1479).
+    if (currentSessionKey) {
+      return { satisfied: true, missingFields: [] };
+    }
+    return { satisfied: false, missingFields: ["status"] };
+  }
 
   const grouped = groupProjectFactsByEntity(projectFacts);
   let bestUnsatisfied: { entity: string; updatedMs: number; missingFields: string[] } | null = null;
