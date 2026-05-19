@@ -373,6 +373,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     try {
       const { texts, firstMalformedLine } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
       if (firstMalformedLine !== null) {
+        logger.warn?.(
+          `memory-hybrid: Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}, continuing with valid lines`,
+        );
         if (!firstSessionParseError) {
           firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
         }
@@ -382,6 +385,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       allTexts.push(...texts);
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
+      logger.warn?.(
+        `memory-hybrid: Failed to parse session file ${fp}: ${err instanceof Error ? err.message : String(err)}`,
+      );
       const message = err instanceof Error ? err.message : String(err);
       if (!firstSessionParseError) firstSessionParseError = `Failed to parse session file ${fp}: ${message}`;
     }
