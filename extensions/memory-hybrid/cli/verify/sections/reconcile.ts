@@ -343,7 +343,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           if (changed) log(`Config written: ${defaultConfigPath}. Restart the gateway and run verify again.`);
         }
       } catch (e) {
-        const _err = state.sink.error ?? state.rawLog;
+        const _err = state.sink.error ?? ((s: string) => console.error(s));
         _err(`\nCould not apply fixes to config: ${String(e)}`);
         capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:apply-fixes" });
         const snippet = {
