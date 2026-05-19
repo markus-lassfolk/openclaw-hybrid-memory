@@ -229,6 +229,45 @@ describe("buildExplicitSemanticQueryVector", () => {
     expect(result.warning).toBeNull();
     expect(result.queryVector).toEqual([20]);
   });
+
+  it("does not emit unhandled rejections when breadcrumb recording fails", async () => {
+    const embeddings = { embed: vi.fn(async (text: string) => [text.length]) };
+    const logger = { warn: vi.fn(), debug: vi.fn() };
+    vi.spyOn(errorReporter, "addOperationBreadcrumb").mockImplementation(() => {
+      throw new Error("breadcrumb failed");
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const result = await buildExplicitSemanticQueryVector({
+        query: "find the backup host",
+        cfg: {
+          llm: undefined,
+          retrieval: DEFAULT_RETRIEVAL_CONFIG,
+          queryExpansion: { enabled: false, mode: "always", maxVariants: 4, cacheSize: 50, timeoutMs: 5000 },
+        },
+        embeddings,
+        openai: makeMockOpenAI("unused") as never,
+        pendingLLMWarnings: { add: vi.fn(), drain: vi.fn(() => []) },
+        logger,
+      });
+
+      await vi.dynamicImportSettled();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(result.warning).toBeNull();
+      expect(result.queryVector).toEqual([20]);
+      expect(unhandled).toHaveLength(0);
+      expect(logger.debug).toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("suppresses expected all-provider embedding failures on the explicit/deep path", async () => {
     const embeddings = {
       embed: vi.fn(async () => {

@@ -96,26 +96,9 @@ export async function buildExplicitSemanticQueryVector({
   try {
     void import("./error-reporter.js")
       .then(({ addOperationBreadcrumb }) => addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`))
-      .catch(() => undefined);
-    let textToEmbed = query;
-
-    if (policy.allowHyde && cfg.queryExpansion.enabled) {
-      textToEmbed = await expandQueryWithHyde({
-        query,
-        rawCfg: cfg as Parameters<typeof import("../config/index.js").getCronModelConfig>[0],
-        model: cfg.queryExpansion.model,
-        timeoutMs: cfg.queryExpansion.timeoutMs,
-        openai: openai as any,
-        label: "HyDE",
-        pendingWarnings: pendingLLMWarnings,
-        logger,
-        subsystem: "retrieval",
-        operation: "explicit-hyde-generation",
+      .catch((error: unknown) => {
+        logger.debug?.(`memory-hybrid: failed to record retrieval breadcrumb: ${String(error)}`);
       });
-    }
-
-    return { queryVector: await embeddings.embed(textToEmbed), warning: null };
-  } catch (err) {
     if (!shouldSuppressEmbeddingError(err)) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "retrieval",
