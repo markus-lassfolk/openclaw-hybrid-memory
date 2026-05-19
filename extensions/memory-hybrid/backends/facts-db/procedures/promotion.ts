@@ -139,7 +139,7 @@ export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: s
               updated_at = ?,
               skill_state = CASE
                 WHEN skill_state IS NULL OR skill_state = '' OR skill_state = 'draft' THEN 'experimental'
-                WHEN skill_state NOT IN ('draft', 'experimental', 'stable', 'retired') THEN 'experimental'
+                WHEN skill_state NOT IN ('draft', 'experimental', 'trusted', 'demoted', 'archived', 'uninstalled', 'rejected') THEN 'experimental'
                 ELSE skill_state
               END,
               skill_generated_at = COALESCE(skill_generated_at, ?, promoted_at, created_at),
