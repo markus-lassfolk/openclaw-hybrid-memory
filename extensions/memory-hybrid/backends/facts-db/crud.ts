@@ -6,10 +6,43 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
+
+const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
+const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
+const SQLITE_BUSY_STORE_BACKOFF_MAX_MS = 500;
+
+function isSqliteBusyError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const code =
+    typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+  return /SQLITE_BUSY|database is locked/i.test(message) || /SQLITE_BUSY/i.test(code);
+}
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
+  for (let attempt = 0; attempt <= SQLITE_BUSY_STORE_MAX_RETRIES; attempt += 1) {
+    try {
+      run();
+      return;
+    } catch (err) {
+      if (!isSqliteBusyError(err) || attempt === SQLITE_BUSY_STORE_MAX_RETRIES) {
+        throw err;
+      }
+      db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      const delayMs = Math.min(SQLITE_BUSY_STORE_BACKOFF_BASE_MS * 2 ** attempt, SQLITE_BUSY_STORE_BACKOFF_MAX_MS);
+      sleepSync(delayMs);
+    }
+  }
+}
 
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
@@ -128,7 +161,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       warnOnce: ctx.warnOnce,
       warnOnceKey: ctx.warnOnceKey,
       suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
-      warn: (m) => console.warn(m),
+      warn: (_m) => {},
     },
   );
 
@@ -369,7 +402,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     },
     beginMode,
   );
-  tx();
+  runWithSqliteBusyRetry(ctx.db, () => {
+    quotaExceededSource = null;
+    evictedFactId = null;
+    tx();
+  });
   if (quotaExceededSource) {
     throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
   }

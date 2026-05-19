@@ -182,7 +182,7 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
     if (versionRow.avoidance_notes) {
       try {
         const notes = JSON.parse(versionRow.avoidance_notes) as string[];
-        notes.forEach((n) => allNotes.add(n));
+        for (const n of notes) allNotes.add(n);
       } catch {
         // ignore parse errors
       }
@@ -1015,7 +1015,7 @@ export function triageProcedures(
   for (const promoted of promotedRows) {
     duplicateSlugs.add(slugForProcedure(promoted.task_pattern));
     if (promoted.skill_path) {
-      const leaf = promoted.skill_path.split(/[\/]/).filter(Boolean).pop();
+      const leaf = promoted.skill_path.split(/[/]/).filter(Boolean).pop();
       if (leaf) duplicateSlugs.add(leaf);
     }
   }

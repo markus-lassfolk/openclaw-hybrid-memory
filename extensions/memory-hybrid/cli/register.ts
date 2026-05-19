@@ -10,12 +10,9 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { filterByScope, type mergeResults } from "../services/merge-results.js";
+import type { mergeResults } from "../services/merge-results.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
-import type { SearchResult } from "../types/memory.js";
-import type { ScopeFilter } from "../types/memory.js";
 import { PLUGIN_ID } from "../utils/constants.js";
-import { parseSourceDate } from "../utils/dates.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
 import { registerStatusCommands } from "./cmd-status.js";
@@ -178,15 +175,8 @@ export type HybridMemCliContext = {
     notes: string | null;
   } | null;
   runCredentialsAudit: () => CredentialsAuditResult;
-  runCredentialsPrune: (opts: {
-    dryRun: boolean;
-    yes?: boolean;
-    onlyFlags?: string[];
-  }) => CredentialsPruneResult;
-  runUninstall: (opts: {
-    cleanAll: boolean;
-    leaveConfig: boolean;
-  }) => Promise<UninstallCliResult>;
+  runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
+  runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -203,30 +193,17 @@ export type HybridMemCliContext = {
     limit: number;
     model: string;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
-  runReflection: (opts: {
-    window: number;
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
   }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;
     metaStored: number;
   }>;
@@ -252,11 +229,7 @@ export type HybridMemCliContext = {
       factIdOld: string;
     }>;
   }>;
-  runClassify: (opts: {
-    dryRun: boolean;
-    limit: number;
-    model?: string;
-  }) => Promise<{
+  runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
@@ -281,12 +254,7 @@ export type HybridMemCliContext = {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: {
-    limit: number;
-    dryRun: boolean;
-    model?: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
@@ -322,12 +290,7 @@ export type HybridMemCliContext = {
     outputPath?: string;
     learn?: boolean;
   }) => Promise<AnalyzeFeedbackPhrasesResult>;
-  runExtractDirectives: (opts: {
-    days?: number;
-    verbose?: boolean;
-    dryRun?: boolean;
-    full?: boolean;
-  }) => Promise<{
+  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
     incidents: Array<{
       userMessage: string;
       categories: string[];
@@ -340,12 +303,7 @@ export type HybridMemCliContext = {
     sessionsScanned: number;
     skipped?: boolean;
   }>;
-  runExtractReinforcement: (opts: {
-    days?: number;
-    verbose?: boolean;
-    dryRun?: boolean;
-    full?: boolean;
-  }) => Promise<{
+  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
     incidents: Array<{
       userMessage: string;
       agentBehavior: string;
@@ -373,10 +331,7 @@ export type HybridMemCliContext = {
     sessionsScanned: number;
     closedLoopReport?: string;
   }>;
-  runGenerateProposals?: (opts: {
-    dryRun: boolean;
-    verbose?: boolean;
-  }) => Promise<{ created: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
@@ -450,9 +405,9 @@ export type HybridMemCliContext = {
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
-  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<
-    import("../cli/handlers.js").CrossAgentLearningCliResult
-  >;
+  runCrossAgentLearning?: (opts?: {
+    verbose?: boolean;
+  }) => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;

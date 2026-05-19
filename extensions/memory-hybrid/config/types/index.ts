@@ -32,9 +32,6 @@ import type {
 } from "./capture.js";
 
 import type {
-  CouncilConfig,
-  CouncilProvenanceMode,
-  CronReliabilityConfig,
   HealthConfig,
   MaintenanceConfig,
   NightlyCycleConfig,

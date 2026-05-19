@@ -51,7 +51,6 @@ import {
   setPreserveUntil as setPreserveUntilImpl,
   trimToBudget as trimToBudgetImpl,
   type RetierReport,
-  type TieringCounts,
   type TieringOptions,
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";

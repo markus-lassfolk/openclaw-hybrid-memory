@@ -52,12 +52,7 @@ export type DistillContext = {
     },
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;
-  runExtractDirectives: (opts: {
-    days?: number;
-    verbose?: boolean;
-    dryRun?: boolean;
-    full?: boolean;
-  }) => Promise<{
+  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
     incidents: Array<{
       userMessage: string;
       categories: string[];
@@ -71,12 +66,7 @@ export type DistillContext = {
     stored?: number;
     skipped?: boolean;
   }>;
-  runExtractReinforcement: (opts: {
-    days?: number;
-    verbose?: boolean;
-    dryRun?: boolean;
-    full?: boolean;
-  }) => Promise<{
+  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
     incidents: Array<{
       userMessage: string;
       agentBehavior: string;
@@ -89,10 +79,7 @@ export type DistillContext = {
     sessionsScanned: number;
     skipped?: boolean;
   }>;
-  runGenerateProposals?: (opts: {
-    dryRun: boolean;
-    verbose?: boolean;
-  }) => Promise<{ created: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
 export function registerDistillCommands(mem: Chainable, ctx: DistillContext): void {

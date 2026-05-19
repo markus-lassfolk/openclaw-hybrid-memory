@@ -1,7 +1,3 @@
-/**
- * FTS search, entity/key lookup, ID prefix resolution, superseded-text cache (Issue #954).
- */
-import type { SQLInputValue } from "node:sqlite";
 import type { DatabaseSync } from "node:sqlite";
 
 import type { ScopeFilter, SearchResult } from "../../types/memory.js";
@@ -16,7 +12,7 @@ import {
   computeDiversityFromEvents as computeDiversityFromEventsHelper,
 } from "./reinforcement.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
-import { scopeFilterClauseNamed, scopeFilterClausePositional } from "./scope-sql.js";
+import { scopeFilterClausePositional } from "./scope-sql.js";
 
 /**
  * Shared JS-side row filter for two-phase FTS search results.
