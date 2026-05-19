@@ -57,15 +57,11 @@ function makeCtx(overrides?: Partial<HandlerContext["cfg"]>): HandlerContext {
 
   return {
     cfg,
-    dataDir: ".",
-    noEmoji: false,
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    } as unknown as HandlerContext["logger"],
-  };
+    },
+  } as unknown as HandlerContext;
 }
 
 /** Same wiring as registerManageCorrectionsAndPipeline `config` action. */
