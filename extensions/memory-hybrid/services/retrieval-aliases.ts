@@ -240,6 +240,7 @@ class AliasVectorIndex {
       this.table = null;
       this.db?.close();
       this.db = null;
+      this.initPromise = null;
     } catch {
       // Ignore close errors
     }
