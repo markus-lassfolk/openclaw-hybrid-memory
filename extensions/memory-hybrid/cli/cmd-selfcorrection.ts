@@ -10,7 +10,7 @@ import { getEnv } from "../utils/env-manager.js";
  * in the shared constants module because they are only consumed by these handlers.
  */
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -456,7 +456,12 @@ export async function runSelfCorrectionRunForCli(
             .replace(/^```\w*\n?|```\s*$/g, "")
             .trim();
           if (cleaned.length > 50) {
-            atomicWriteFile(toolsPath, cleaned);
+            // Follow symlinks so shared TOOLS.md targets are updated, not replaced.
+            if (existsSync(toolsPath) && lstatSync(toolsPath).isSymbolicLink()) {
+              writeFileSync(toolsPath, cleaned, "utf-8");
+            } else {
+              atomicWriteFile(toolsPath, cleaned);
+            }
             toolsApplied = toolsSuggestions.length;
             autoFixed += toolsApplied;
           }

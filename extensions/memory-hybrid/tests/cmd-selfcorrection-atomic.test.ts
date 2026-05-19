@@ -10,7 +10,7 @@
 
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runSelfCorrectionExtractForCli } from "../cli/cmd-selfcorrection.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -88,7 +88,7 @@ function createSessionFile(dir: string): string {
         content: [
           {
             type: "text",
-            text: "No, that's wrong. Please revert that and use the original name. This is incorrect.",
+            text: "You misunderstood what I said — please revert that and use the original name instead.",
           },
         ],
       },
@@ -129,7 +129,7 @@ describe("runSelfCorrectionExtractForCli — atomic outputPath write", () => {
 
     const written = JSON.parse(readFileSync(outputPath, "utf-8")) as CorrectionIncident[];
     expect(written).toHaveLength(result.incidents.length);
-    expect(written[0]).toMatchObject({ sessionFile: sessionPath });
+    expect(written[0]).toMatchObject({ sessionFile: basename(sessionPath) });
   });
 
   it("creates intermediate directories for outputPath", () => {
