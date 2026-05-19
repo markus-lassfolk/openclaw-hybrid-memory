@@ -1122,7 +1122,7 @@ export class VectorDB {
     options: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number } = {},
   ): Promise<SemanticQueryCacheEntry | null> {
     try {
-      if (!this.lanceDbAvailable) return null;
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return null;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.semanticQueryCacheTable) return null;
       if (!this.semanticQueryCacheSchemaValid) return null;
@@ -1210,7 +1210,7 @@ export class VectorDB {
     cachedAt?: number;
   }): Promise<void> {
     try {
-      if (!this.lanceDbAvailable) return;
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.semanticQueryCacheTable) return;
       if (!this.semanticQueryCacheSchemaValid) return;
@@ -1320,7 +1320,7 @@ export class VectorDB {
     id?: string;
   }): Promise<string> {
     try {
-      if (!this.lanceDbAvailable) return entry.id ?? randomUUID();
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return entry.id ?? randomUUID();
       await this.waitForReindexLockRelease();
       await this.ensureInitialized();
       // LanceDB unavailable (FTS5-only fallback mode): return canonical id without storing vectors.
@@ -1413,7 +1413,7 @@ export class VectorDB {
   async optimize(
     olderThanMs: number = 7 * 24 * 60 * 60 * 1000,
   ): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
-    if (!this.lanceDbAvailable) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
+    if (!this.lanceDbAvailable && this.lanceInitFailed) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     await this.waitForReindexLockRelease();
     await this.ensureInitialized();
     if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
@@ -1470,7 +1470,7 @@ export class VectorDB {
 
   async search(vector: number[], limit = 5, minScore = 0.3): Promise<SearchResult[]> {
     try {
-      if (!this.lanceDbAvailable) {
+      if (!this.lanceDbAvailable && this.lanceInitFailed) {
         this.lastSearchFailReason = "lance_unavailable";
         return [];
       }
@@ -1556,10 +1556,9 @@ export class VectorDB {
 
   async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
     try {
-      if (!this.lanceDbAvailable) return false;
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return false;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
-      // Same early-exit as search(): schema was already reported invalid at startup.
       if (!this.schemaValid) return false;
       // Dimension pre-check: silently return false (no duplicate) if the query vector
       // dim doesn't match the table dim. Prevents LanceDB "No vector column found to
@@ -1616,7 +1615,7 @@ export class VectorDB {
       return false;
     }
     try {
-      if (!this.lanceDbAvailable) return false;
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return false;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
       const normalizedId = id.toLowerCase();
@@ -1653,7 +1652,7 @@ export class VectorDB {
     const normalized = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
     if (normalized.length === 0) return 0;
     try {
-      if (!this.lanceDbAvailable) return 0;
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return 0;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
       if (this.optimizePromise) {
@@ -1691,7 +1690,7 @@ export class VectorDB {
 
   async count(): Promise<number> {
     const tryCount = async (): Promise<number> => {
-      if (!this.lanceDbAvailable) return 0;
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return 0;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
       const acquired = this.acquireReader();
@@ -1761,7 +1760,7 @@ export class VectorDB {
    */
   async getAllIds(): Promise<string[]> {
     try {
-      if (!this.lanceDbAvailable) return [];
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return [];
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return [];
       if (!this.schemaValid) return [];
@@ -1833,7 +1832,7 @@ export class VectorDB {
    */
   async getVectorsByFactIds(ids: string[]): Promise<Map<string, number[]>> {
     const out = new Map<string, number[]>();
-    if (!this.lanceDbAvailable || ids.length === 0) return out;
+    if ((!this.lanceDbAvailable && this.lanceInitFailed) || ids.length === 0) return out;
     try {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table || !this.schemaValid) return out;
