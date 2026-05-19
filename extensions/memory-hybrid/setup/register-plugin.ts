@@ -28,6 +28,7 @@ import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   shallowClonePluginConfigForGatewayMerge,
 } from "./provider-router.js";
+import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
 import { PLUGIN_ID } from "../utils/constants.js";
@@ -469,21 +470,11 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   // ContextEngine Plugin Slot (Issue #273) -- feature-detected, non-fatal if unavailable
 
-  import("../services/context-engine.js")
-    .then(({ registerHybridContextEngine }) =>
-      registerHybridContextEngine({
-        factsDb: runtime.factsDb,
-        vectorDb: runtime.vectorDb,
-        wal: runtime.wal,
-        embeddings: runtime.embeddings,
-        cfg: runtime.cfg,
-        logger: logApi.logger,
-        pluginVersion: versionInfo.pluginVersion,
-      }),
-    )
-    .catch((err: unknown) => {
-      logApi.logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
-    });
+  registerContextEngineBestEffort({
+    runtime,
+    logger: logApi.logger,
+    pluginVersion: versionInfo.pluginVersion,
+  });
 
   // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
   try {
