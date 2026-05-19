@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fsyncError = vi.hoisted(() => ({ value: null as Error | null }));
 const failNextOpen = vi.hoisted(() => ({ value: null as Error | null }));
 const syncError = vi.hoisted(() => ({ value: null as Error | null }));
+// Tracks how many times fh.close() has been called via the intercepted open().
 const closedHandleCount = vi.hoisted(() => ({ value: 0 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -664,17 +665,20 @@ describe("WriteAheadLog", () => {
     });
 
     it("closes file handle when both datasync and fsync fallback fail (EPERM cascade)", async () => {
+      // datasync() fails with EPERM, then sync() also fails — fh must still be closed.
       const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      const syncFail = Object.assign(new Error("sync unsupported"), { code: "EPERM" });
       fsyncError.value = epermError;
-      syncError.value = Object.assign(new Error("operation not permitted on sync"), { code: "EPERM" });
+      syncError.value = syncFail;
       const before = closedHandleCount.value;
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
         operation: "store" as const,
-        data: { text: "close-check cascade", category: "general", importance: 0.5, source: "test" },
+        data: { text: "close-check double-fail", category: "general", importance: 0.5, source: "test" },
       };
       await expect(wal.write(entry)).rejects.toThrow(/WAL write failed/);
+      // fh was opened (open() succeeded) so close() must have been called.
       expect(closedHandleCount.value).toBeGreaterThan(before);
     });
   });
