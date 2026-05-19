@@ -71,6 +71,8 @@ class AliasVectorIndex {
           this.table = null;
           throw new Error("AliasVectorIndex closed during initialization");
         }
+        // Init complete; table is ready — drop the promise so close() and tests see a clean idle state.
+        this.initPromise = null;
       })
       .catch((err) => {
         this.initPromise = null;
@@ -170,8 +172,8 @@ class AliasVectorIndex {
           operation: "alias-vector-store",
           subsystem: "aliases",
         });
+        pluginLogger.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
       }
-      pluginLogger.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
     }
   }
 
@@ -208,8 +210,8 @@ class AliasVectorIndex {
           severity: "info",
           subsystem: "aliases",
         });
+        pluginLogger.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
       }
-      pluginLogger.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
       return [];
     }
   }
@@ -228,8 +230,8 @@ class AliasVectorIndex {
           operation: "alias-vector-delete",
           subsystem: "aliases",
         });
+        pluginLogger.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
       }
-      pluginLogger.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
     }
   }
 
