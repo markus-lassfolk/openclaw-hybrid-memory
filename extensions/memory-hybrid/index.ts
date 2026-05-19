@@ -164,6 +164,7 @@ import {
   setKeywordsPath,
 } from "./utils/language-keywords.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "./utils/language-keywords.js";
+import { execSync } from "./utils/process-runner.js";
 
 export { _testing } from "./index-testing-exports.js";
 
@@ -597,8 +598,6 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     setImmediate(() => {
       void (async () => {
         try {
-          const { execSync } = await import("node:child_process");
-
           // Check if a backup cron is already registered
           let currentCrontab = "";
           try {
