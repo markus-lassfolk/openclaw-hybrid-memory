@@ -14,7 +14,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { PreFinalizationGuardBlockingError } from "../services/pre-finalization-guard.js";
 import { _testing } from "../index.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
@@ -159,12 +158,11 @@ describe("Comprehensive e2e — full plugin register()", () => {
       ).resolves.not.toThrow();
     });
 
-    it("agent_end blocks when CI is pending and project ledger is empty", async () => {
+    it("agent_end allows when CI is pending and project ledger is empty (#1479)", async () => {
       register();
       const handler = api.hookHandlers("agent_end")[0]!;
-      await expect(handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX)).rejects.toBeInstanceOf(
-        PreFinalizationGuardBlockingError,
-      );
+      await expect(handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX)).resolves.toBeUndefined();
+      expect(api.logger.warn).not.toHaveBeenCalled();
     });
 
     it("after_compaction injects post-compaction memory summary for stored facts", async () => {

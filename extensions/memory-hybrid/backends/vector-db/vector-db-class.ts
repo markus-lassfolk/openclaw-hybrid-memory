@@ -2,10 +2,10 @@
  * LanceDB VectorDB class implementation.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve as pathResolve } from "node:path";
+import { isAbsolute, join, relative, resolve as pathResolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
@@ -1051,10 +1051,7 @@ export class VectorDB {
     return this.table;
   }
 
-  private getSemanticQueryCacheTable(): lancedb.Table {
-    if (!this.semanticQueryCacheTable) {
-      throw new Error("Semantic query cache table not initialized.");
-    }
+  private getSemanticQueryCacheTable(): lancedb.Table | null {
     return this.semanticQueryCacheTable;
   }
 
@@ -1091,6 +1088,7 @@ export class VectorDB {
 
   private async pruneSemanticQueryCache(filterKey: string): Promise<void> {
     const table = this.getSemanticQueryCacheTable();
+    if (!table) return;
     const rows = await table
       .query()
       .where(`filterKey = '${this.escapeSqlString(filterKey)}'`)
@@ -1137,7 +1135,9 @@ export class VectorDB {
       // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
       if (vector.length !== this.vectorDim) return null;
 
-      const candidates = await this.getSemanticQueryCacheTable().vectorSearch(vector).limit(candidateLimit).toArray();
+      const cacheTable = this.getSemanticQueryCacheTable();
+      if (!cacheTable) return null;
+      const candidates = await cacheTable.vectorSearch(vector).limit(candidateLimit).toArray();
 
       let bestMatch: SemanticQueryCacheEntry | null = null;
       for (const row of candidates) {
@@ -1214,7 +1214,9 @@ export class VectorDB {
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.semanticQueryCacheTable) return;
       if (!this.semanticQueryCacheSchemaValid) return;
       const filterKey = entry.filterKey ?? "default";
-      await this.getSemanticQueryCacheTable().add([
+      const cacheTable = this.getSemanticQueryCacheTable();
+      if (!cacheTable) return;
+      await cacheTable.add([
         {
           id: randomUUID(),
           queryText: entry.queryText,

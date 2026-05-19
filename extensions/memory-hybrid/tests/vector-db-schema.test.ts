@@ -433,7 +433,7 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
     await db.close();
   });
 
-  it.fails("issue #1464: storeSemanticQueryCache survives prune when cache table is cleared mid-flight", async () => {
+  it("issue #1464: storeSemanticQueryCache survives prune when cache table is cleared mid-flight", async () => {
     const db = new VectorDB(lanceDir, CORRECT_DIM);
     await db.storeSemanticQueryCache({
       queryText: "warm",
@@ -447,8 +447,7 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
       pruneSemanticQueryCache: (filterKey: string) => Promise<void>;
     };
     const realPrune = internal.pruneSemanticQueryCache.bind(db);
-    const pruneSpy = vi.spyOn(internal, "pruneSemanticQueryCache");
-    pruneSpy.mockImplementation(async (filterKey: string) => {
+    vi.spyOn(db as object, "pruneSemanticQueryCache" as never).mockImplementation(async (filterKey: string) => {
       internal.semanticQueryCacheTable = null;
       await realPrune(filterKey);
     });

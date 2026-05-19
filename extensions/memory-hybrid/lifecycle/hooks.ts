@@ -26,13 +26,9 @@ import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
-import {
-  formatPreFinalizationGuardMessage,
-  evaluatePreFinalizationGuard,
-  PreFinalizationGuardBlockingError,
-} from "../services/pre-finalization-guard.js";
+import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
-import type { LifecycleContext } from "./types.js";
+import type { LifecycleContext, SessionState } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
 
@@ -249,8 +245,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               ctx.auditStore?.append({
                 agentId: ctx.currentAgentIdRef.value ?? "unknown",
-                action: "cleanup:pre-finalization-guard-blocked",
-                outcome: "failed",
+                action: "cleanup:pre-finalization-guard-advisory",
+                outcome: "partial",
                 context: {
                   missingFields: guard.checkpoint.missingFields,
                   signals: guard.signals,
@@ -259,12 +255,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             } catch (auditErr) {
               api.logger.debug?.(`memory-hybrid: audit store append failed (non-fatal): ${String(auditErr)}`);
             }
-            throw new PreFinalizationGuardBlockingError(`memory-hybrid: ${guardMessage}`);
+            // agent_end is fail-open in OpenClaw core (hook-runner-global), so throwing here
+            // only produces a spurious error-level log without actually blocking finalization.
+            // Log the advisory at warn level only (#1479 Fix D).
           }
         } catch (err) {
-          if (err instanceof PreFinalizationGuardBlockingError) {
-            throw err;
-          }
           api.logger.debug?.(`memory-hybrid: pre-finalization guard skipped (non-fatal): ${String(err)}`);
         }
       }

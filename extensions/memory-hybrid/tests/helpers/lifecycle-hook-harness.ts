@@ -9,7 +9,6 @@ import type { FactsDB } from "../../backends/facts-db.js";
 import { hybridConfigSchema, type HybridMemoryConfig } from "../../config.js";
 import { createLifecycleHooks } from "../../lifecycle/hooks.js";
 import type { LifecycleContext } from "../../lifecycle/types.js";
-import { PreFinalizationGuardBlockingError } from "../../services/pre-finalization-guard.js";
 
 export type AgentEndHandler = (event: unknown, hookCtx: unknown) => Promise<void>;
 
@@ -90,15 +89,18 @@ export function buildGuardTestLifecycleContext(tmpDir: string, factsDb: FactsDB)
   };
 }
 
-export function captureAgentEndHandler(ctx: LifecycleContext): AgentEndHandler {
-  const api = makeMockHookApi("unused");
+export function captureAgentEndHandler(
+  ctx: LifecycleContext,
+  sessionKey = "agent:main:telegram:test-session",
+): { handler: AgentEndHandler; api: MockHookApi } {
+  const api = makeMockHookApi(sessionKey);
   const hooks = createLifecycleHooks(ctx);
   hooks.onAgentEnd(api as never);
   const registration = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((args) => args[0] === "agent_end");
   if (!registration?.[1]) {
     throw new Error("agent_end handler was not registered");
   }
-  return registration[1] as AgentEndHandler;
+  return { handler: registration[1] as AgentEndHandler, api };
 }
 
 export async function invokeAgentEnd(
@@ -107,7 +109,5 @@ export async function invokeAgentEnd(
   messages: unknown[],
   sessionKey: string,
 ): Promise<void> {
-  await handler({ messages, success: true }, { sessionKey, sessionId: sessionKey, agentId: "main" });
+  await handler({ messages, success: true, sessionKey }, { sessionKey, sessionId: sessionKey, agentId: "main" });
 }
-
-export { PreFinalizationGuardBlockingError };

@@ -87,7 +87,7 @@ describe("VerificationStore.verify", () => {
 
     const vf = store.getVerified("fact-6");
     expect(vf?.nextVerification).toBeTruthy();
-    const next = new Date(vf!.nextVerification as string);
+    const next = new Date(vf?.nextVerification as string);
     const expectedMin = new Date(before.getTime() + 29 * 24 * 3600 * 1000);
     const expectedMax = new Date(after.getTime() + 31 * 24 * 3600 * 1000);
     expect(next >= expectedMin).toBe(true);
@@ -461,7 +461,7 @@ describe("VerificationConfig defaults", () => {
       const vf = s.getVerified("fact-cfg");
       expect(vf?.nextVerification).toBeTruthy();
       const now = Date.now();
-      const next = new Date(vf!.nextVerification as string).getTime();
+      const next = new Date(vf?.nextVerification as string).getTime();
       const diffDays = (next - now) / (24 * 3600 * 1000);
       expect(diffDays).toBeGreaterThan(28);
       expect(diffDays).toBeLessThan(32);
@@ -479,7 +479,7 @@ describe("VerificationConfig defaults", () => {
     custom.verify("fact-7d", "7-day reverification", "agent");
     const vf = custom.getVerified("fact-7d");
     expect(vf?.nextVerification).toBeTruthy();
-    const next = new Date(vf!.nextVerification as string).getTime();
+    const next = new Date(vf?.nextVerification as string).getTime();
     const diffDays = (next - Date.now()) / (24 * 3600 * 1000);
     expect(diffDays).toBeGreaterThan(5);
     expect(diffDays).toBeLessThan(9);

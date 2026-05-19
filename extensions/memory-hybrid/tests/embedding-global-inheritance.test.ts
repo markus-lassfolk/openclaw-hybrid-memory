@@ -2,10 +2,13 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 /**
  * Issue #1002 — inherit embedding-related fields from OpenClaw gateway before config parse.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import {
   applyGatewayEmbeddingInheritanceBeforeParse,
+  clearOllamaHealthCacheEntry,
+  OLLAMA_HEALTH_TIMEOUT_MS,
+  probeOllamaEndpoint,
   shallowClonePluginConfigForGatewayMerge,
 } from "../setup/provider-router.js";
 
@@ -176,5 +179,45 @@ describe("embedding global inheritance (issue #1002)", () => {
       gateway,
     );
     expect(cfg.embedding.model).toBe("text-embedding-3-small");
+  });
+});
+
+describe("probeOllamaEndpoint", () => {
+  const baseUrl = "http://ollama-health.example.test/timeout";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    clearOllamaHealthCacheEntry(baseUrl);
+  });
+
+  afterEach(() => {
+    clearOllamaHealthCacheEntry(baseUrl);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("returns false when the Ollama health probe times out", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")), {
+          once: true,
+        });
+      });
+    });
+
+    const resultPromise = probeOllamaEndpoint(baseUrl);
+
+    await vi.advanceTimersByTimeAsync(OLLAMA_HEALTH_TIMEOUT_MS);
+
+    await expect(resultPromise).resolves.toBe(false);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it("returns true when the Ollama health probe succeeds", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+
+    await expect(probeOllamaEndpoint(baseUrl)).resolves.toBe(true);
   });
 });
