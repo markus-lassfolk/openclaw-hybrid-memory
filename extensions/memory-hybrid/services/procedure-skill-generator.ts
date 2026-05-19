@@ -201,6 +201,8 @@ type GenerateAutoSkillsOptions = {
   dryRun?: boolean;
   apply?: boolean;
   policy?: string;
+  /** Extra regex sources for `too_context_specific` deferrals (merged with defaults; #1421). */
+  promotionContextSpecificPatterns?: readonly string[];
   /** Same-run draft slugs/task patterns for duplicate detection (single-procedure promote / custom orchestration). */
   inRunSkillCandidates?: readonly ProcedurePromotionDuplicateCandidate[];
   /** When true, duplicate-skill detection re-reads every SKILL.md (bypass mtime cache). */
@@ -252,6 +254,7 @@ export function generateAutoSkills(
       resolvedSlug,
       inRunSkillCandidates: [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
       evidence,
+      contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
@@ -441,6 +444,7 @@ export function generateAutoSkillForProcedure(
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
+    contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
     inRunSkillCandidates: options.inRunSkillCandidates ?? [],
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
   });

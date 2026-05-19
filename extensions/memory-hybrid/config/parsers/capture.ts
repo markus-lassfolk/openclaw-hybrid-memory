@@ -145,6 +145,11 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
       Number.isFinite(proceduresRaw.maxInjectionTokens)
         ? Math.floor(proceduresRaw.maxInjectionTokens)
         : 500,
+    promotionContextSpecificPatterns:
+      Array.isArray(proceduresRaw?.promotionContextSpecificPatterns) &&
+      proceduresRaw.promotionContextSpecificPatterns.every((x) => typeof x === "string")
+        ? (proceduresRaw.promotionContextSpecificPatterns as string[]).map((s) => s.trim()).filter((s) => s.length > 0)
+        : undefined,
   };
 }
 
