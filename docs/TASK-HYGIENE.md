@@ -56,6 +56,8 @@ Requires **`activeTask.enabled`**. The tool is registered with the plugin regard
   2. Writing project facts (`category:project`) with `status` (`in_progress`/`waiting`/`blocked`), `next`, fresh `task_updated` (default freshness window: **2 hours**), and `related_session` bound to the current session (`waiting` also needs a persisted wake link; goal-backed rows also need `goal_assess` in the turn).
   False positives can be bypassed explicitly by adding `CHECKPOINT_GUARD_BYPASS: <short reason>` in the final assistant message.
 
+**Multi-agent and Telegram (2026.5.190+):** `related_session` matching now distinguishes the **main checkpoint session** from **Telegram (or other channel) session refs**, and the pre-finalization guard avoids false blocks when another agent’s `related_session` fact is unrelated to the finishing turn. If finalization still feels stuck in a multi-agent deployment, confirm project facts use the correct session ref for the agent that is ending, or use the bypass line above.
+
 ## Related docs
 
 - [GOAL-STEWARDSHIP-DESIGN.md](GOAL-STEWARDSHIP-DESIGN.md) — goals vs tactical tasks

@@ -47,6 +47,8 @@ openclaw hybrid-mem analyze-feedback-phrases --learn
 
 Discovered phrases are saved under `~/.openclaw/memory/.user-feedback-phrases.json` and are **merged** with the built-in correction and reinforcement lists when building the detection regexes. So after you run with `--learn`, both self-correction extract and reinforcement extract will match your (and anyone else on the same install’s) typical phrases. Run it periodically (e.g. in a weekly nightly) to keep the list up to date.
 
+**Malformed JSONL:** If a session file has a bad line (truncated write, partial copy), `analyze-feedback-phrases` logs a warning, continues with valid lines from that file, and sets **`error`** in the CLI result when any session had parse issues. Other sessions in the run are still analyzed.
+
 ---
 
 ## Commands

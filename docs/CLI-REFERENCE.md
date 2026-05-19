@@ -91,13 +91,14 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `extract-procedures [--dir path] [--days N] [--dry-run]` | Extract tool-call procedures from session JSONL; store positive/negative procedures. |
 | `self-correction-extract [--days N] [--output path]` | Extract user correction incidents from session JSONL (last N days). Uses `.language-keywords.json` — run `build-languages` first for non-English. |
 | `self-correction-run [--extract-path path] [--workspace path] [--dry-run] [--approve] [--model M] [--no-apply-tools]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
-| `analyze-feedback-phrases [--days N] [--model M] [--output path] [--learn]` | Analyze session logs to discover *your* praise/frustration phrases. Uses nano-tier for sentiment pre-filter and heavy-tier for phrase extraction (model-agnostic; omit `--days` for auto 30 days first run, then 3 days). Use `--learn` to merge into `.user-feedback-phrases.json`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md#learning-your-feedback-wording-user-specific-phrases). |
+| `analyze-feedback-phrases [--days N] [--model M] [--output path] [--learn]` | Analyze session logs to discover *your* praise/frustration phrases. Uses nano-tier for sentiment pre-filter and heavy-tier for phrase extraction (model-agnostic; omit `--days` for auto 30 days first run, then 3 days). Use `--learn` to merge into `.user-feedback-phrases.json`. Malformed JSONL in a session file sets `error` in the result (valid lines from other sessions are still used). See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md#learning-your-feedback-wording-user-specific-phrases). |
 | `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
 | `skills queue [--status <s>] [--limit N] [--json]` | List crystallization proposals. `--status` accepts lifecycle values plus aliases `pending`, `approved`, `ready` (validated + validation allow), and `needs-override` (validated + allow-with-override). Unknown values error instead of returning empty. |
 | `skills show <id> [--json]` | Show one proposal (card + draft SKILL.md). |
 | `skills validate <id> [--json]` | Run static `SkillValidator` on draft content. |
 | `skills reject <id> [--reason <text>] [--json]` | Reject a proposal (symmetric to install). |
 | `skills install <id> [--name …] [--category …] [--description …] [--override-warnings] [--json]` | Approve and write SKILL.md under the configured crystallization output directory. |
+| `skills rescan [--json]` | Re-read each **installed** crystallization proposal’s on-disk `SKILL.md`, run generated-skill validation, update stored results; set status **`quarantined`** when validation returns **deny**. See [OPERATIONS.md § Crystallization: weekly skill rescan](OPERATIONS.md#crystallization-weekly-skill-rescan-optional). |
 | `skills telemetry [skill-name] [--json]` | Report generated skill activation telemetry, false-positive/false-negative signals, lifecycle state, and promotion/demotion/archive recommendations. |
 | `skills record …` / `skills correct …` | Record activation telemetry or mark a false positive (see [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md)). |
 | `skills demote <skill-name> --reason "<reason>"` | Manually demote a generated skill (for example when it is over-triggering). |
@@ -275,6 +276,15 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 
 **Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect). A **dimension mismatch** between embeddings and LanceDB counts as failure (`1`) so scripts and monitors can detect silent semantic-search breakage. After fixing `embedding.*` / `vector.*`, run `openclaw hybrid-mem re-index` if vectors were built with the wrong model. See [Troubleshooting — dimension mismatch](TROUBLESHOOTING.md#embedding-vs-lancedb-dimension-mismatch).
 
+**`--json` and stdout (scripting):** When you pass **`--json`**, machine-readable output goes to **stdout** only. Human-oriented diagnostics (warnings, fix hints, progress lines) go to **stderr** so pipelines stay valid:
+
+```bash
+openclaw hybrid-mem verify --json 2>/dev/null | jq .
+openclaw hybrid-mem verify --json 2>verify-human.log | jq '.ok'
+```
+
+The same contract applies to other JSON commands (`status --json`, `skills queue --json`, `config` when emitting JSON, etc.): do not parse stdout as JSON if you did not pass `--json`, and avoid mixing log lines into stdout in custom wrappers.
+
 `openclaw hybrid-mem doctor` adds a guided onboarding wrapper around install + verify:
 
 - step 1: checks/applies recommended defaults (`install`)
@@ -282,6 +292,20 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 - step 3: prints remediation summary and next actions
 
 Use `--fix` to apply install defaults and verify repairs, or `--dry-run` to preview changes.
+
+---
+
+## JSON output contract (scripting)
+
+Several commands support **`--json`**. Follow these rules when automating:
+
+| Rule | Detail |
+|------|--------|
+| **stdout** | JSON only when `--json` is set (or the command is JSON-only, e.g. `goals status --json`). |
+| **stderr** | Human diagnostics, warnings, and fix text (especially `verify --json`). |
+| **Exit codes** | See per-command sections (e.g. verify: `0` / `1` / `2`). |
+
+Commands that register plugin config during startup must not print non-JSON lines to stdout when you use JSON mode (for example corrections/config registration during `config --json`). If `jq` fails with “parse error”, check stderr for the real message and upgrade to **2026.5.190+** if you hit legacy stdout pollution.
 
 ---
 

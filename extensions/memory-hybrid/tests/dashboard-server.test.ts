@@ -292,6 +292,22 @@ describe("collectStatus", () => {
       isolatedCtx.vectorDb.close();
     }
   });
+
+  it("reuses cached lance size on sequential collectStatus within TTL (#1501 TOCTOU)", async () => {
+    const isolatedCtx = makeContext(mkdtempSync(join(tmpdir(), "dashboard-lance-cache-")));
+    const getDirSizeSpy = vi.spyOn(fsUtils, "getDirSize").mockResolvedValue(42);
+    try {
+      const first = await collectStatus(isolatedCtx);
+      const second = await collectStatus(isolatedCtx);
+      expect(getDirSizeSpy).toHaveBeenCalledTimes(1);
+      expect(first.memory.lanceSizeBytes).toBe(42);
+      expect(second.memory.lanceSizeBytes).toBe(42);
+    } finally {
+      getDirSizeSpy.mockRestore();
+      isolatedCtx.factsDb.close();
+      isolatedCtx.vectorDb.close();
+    }
+  });
 });
 
 describeCreateDashboardServer("createDashboardServer", () => {

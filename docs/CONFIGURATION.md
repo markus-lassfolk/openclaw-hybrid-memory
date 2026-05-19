@@ -514,6 +514,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 | `providers` | Per-provider API keys and optional `baseURL`. Built-in (no `baseURL` needed): `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key), `minimax` (uses `MINIMAX_API_KEY` env var fallback). Any other OpenAI-compatible provider can be added here with an explicit `baseURL`. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
 | `fallbackModel` | Optional last-resort model when `fallbackToDefault` is true. |
+| `localAutoStart` | `false` | When **`true`** and any tier list includes an `ollama/…` model, the plugin may spawn **`ollama serve`** in the background during DB bootstrap if the endpoint is down (deduplicated per process; detached child is **`unref()`** so the gateway can exit). See [LLM-AND-PROVIDERS.md § Ollama auto-start](LLM-AND-PROVIDERS.md#ollama-auto-start-llmlocalautostart). |
 
 **Zero config:** When `llm` is not set, the plugin automatically derives tiers from `agents.defaults.model` (the list shown by `openclaw models list`). The verify output shows `(auto from agents.defaults.model)` when this is active.
 
@@ -697,6 +698,8 @@ Optional config for the self-correction pipeline: semantic dedup before storing 
 ## Workflow crystallization
 
 Workflow crystallization analyses tool-sequence patterns and generates pending **AgentSkill SKILL.md** proposals. No skills are written until a human approves via `memory_crystallize_approve` or the CLI. Requires the workflow store (tool-sequence tracking). See release notes 2026.3.70 and [CLI-REFERENCE.md](CLI-REFERENCE.md).
+
+**2026.5.190+:** Crystallization and workflow stores use **`schema_meta` migrations** on startup. Approving/installing skills is atomic; re-installing the same pattern **supersedes** older installs via `listByPatternId`. Operators can run **`openclaw hybrid-mem skills rescan`** to quarantine on-disk skills that fail current validation ([OPERATIONS.md](OPERATIONS.md)).
 
 ```json
 {
@@ -1671,6 +1674,8 @@ Sensors are divided into tiers (e.g. Tier 1: Garmin, GitHub, memory stats; Tier 
 - **homeAssistant**: Requires a base URL and token. Used by the `garmin`, `homeAssistantAnomaly`, and `yarbo` sensors. Use `env:HA_TOKEN` to pull from the environment.
 - **Tier 1 Sensors**: `garmin`, `github`, `sessionHistory`, `memoryPatterns`.
 - **Tier 2 Sensors**: `homeAssistantAnomaly`, `systemHealth`, `weather`, `yarbo`.
+
+**Home Assistant fault tolerance:** `/api/states` can return hundreds of entities. A single malformed or incomplete entity (custom integration, `null` attributes, etc.) is **skipped with telemetry** instead of failing the whole sweep, so Garmin/Yarbo prefix filters still run when their target entities are valid.
 
 ---
 

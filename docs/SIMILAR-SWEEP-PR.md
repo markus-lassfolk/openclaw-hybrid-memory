@@ -4,7 +4,7 @@ During active feature work, **pause opening new similar-sweep PRs** until the cu
 
 ## Before opening
 
-1. `git fetch origin main && git rebase origin/main`
+1. `git fetch origin main && git rebase origin/main` — do **not** `git merge main` (merge commits clutter the graph; use rebase when syncing with `main`).
 2. Use the checklist in [`.github/pull_request_template/similar_sweep.md`](../.github/pull_request_template/similar_sweep.md)
 3. Run overlap check: `node .github/scripts/check-pr-file-overlap.mjs`
 

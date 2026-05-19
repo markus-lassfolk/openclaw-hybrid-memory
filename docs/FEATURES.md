@@ -23,7 +23,8 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Graph memory** | [GRAPH-MEMORY.md](GRAPH-MEMORY.md) | Typed links between facts, spreading activation |
 | **Contacts, orgs & NER** | [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md), [GRAPH-MEMORY.md](GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) | `memory_directory` tool; SQLite tables for people/orgs; multilingual PERSON/ORG extraction (franc + LLM) when `graph.enabled`; CLI `enrich-entities` (#985–#987) |
 | **Session distillation** | [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) | Extracting facts from session logs |
-| **Procedural memory** | [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) | Procedure tagging, recall, auto-skills from session tool sequences (issue #23) |
+| **Procedural memory** | [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) | Procedure tagging, recall, auto-skills, promotion gates, telemetry (issue #23) |
+| **Skill pipelines** | [SKILL-PIPELINES.md](SKILL-PIPELINES.md) | Crystallization vs procedure promotion, shared lifecycle, operator playbooks |
 | **Credentials** | [CREDENTIALS.md](CREDENTIALS.md) | Opt-in encrypted credential vault |
 | **WAL** | [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) | Write-ahead log for crash resilience |
 | **Conflicting memories** | [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md) | Classify-before-write (ADD/UPDATE/DELETE/NOOP), supersession, bi-temporal |
@@ -47,6 +48,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Document ingestion** | [CONFIGURATION.md](CONFIGURATION.md#document-ingestion-206) | Ingest PDF, DOCX, HTML, images, and more as searchable fact chunks (`memory_ingest_document`, `memory_ingest_folder`). (#206) |
 | **Mission Control dashboard** | [CONFIGURATION.md](CONFIGURATION.md#mission-control-dashboard-dashboard) | Real-time web dashboard (port 7700) — memory stats, cron jobs, task queue, agent status, git activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. (#309) |
 | **Cost optimization playbook** | [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md) | Concrete low-cost rollout plan: mode-by-use-case, cheap-first model tiers, distill guardrails, token budgets, local embeddings, weekly auditing. |
+| **Generated skill validation** | [SKILL-PIPELINES.md](SKILL-PIPELINES.md), [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) | Content gates, static validation, `skills rescan` / quarantine, `staticValidation` semantics (2026.5.190+) |
 
 ---
 
