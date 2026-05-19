@@ -54,8 +54,8 @@ export function procedureTypeSortRank(value: unknown): number {
 export const POSITIVE_PROCEDURE_TYPE_SQL = `(
   procedure_type IS NULL
   OR trim(procedure_type) = ''
-  OR trim(procedure_type) = 'positive'
-  OR (trim(procedure_type) NOT IN ('positive', 'negative') AND trim(procedure_type) != '')
+  OR LOWER(trim(procedure_type)) = 'positive'
+  OR (LOWER(trim(procedure_type)) NOT IN ('positive', 'negative') AND trim(procedure_type) != '')
 )`;
 
 function repairProcedureEnumDrift(
