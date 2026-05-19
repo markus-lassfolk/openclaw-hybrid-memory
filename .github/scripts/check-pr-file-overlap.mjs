@@ -48,13 +48,22 @@ const pathsToCheck =
     ? [...currentPrPaths]
     : [...byFile.keys()];
 
+// When the current PR is excluded from byFile, list.length counts only *other* PRs;
+// use >= so current + maxOpen others (maxOpen+1 total) still triggers a violation.
+const exceedsMaxOpen = ([, list]) =>
+  currentPr != null && currentPrPaths.size > 0 ? list.length >= maxOpen : list.length > maxOpen;
+
 const violations = pathsToCheck
   .map((path) => [path, byFile.get(path) ?? []])
-  .filter(([, list]) => list.length > maxOpen)
+  .filter(exceedsMaxOpen)
   .sort((a, b) => b[1].length - a[1].length);
 
 if (violations.length === 0) {
-  console.log(`OK: no path has more than ${maxOpen} open PRs under ${prefix}`);
+  const limitDesc =
+    currentPr != null && currentPrPaths.size > 0
+      ? `${maxOpen} other open PR(s) plus this PR`
+      : `more than ${maxOpen} open PRs`;
+  console.log(`OK: no path has ${limitDesc} under ${prefix}`);
   process.exit(0);
 }
 

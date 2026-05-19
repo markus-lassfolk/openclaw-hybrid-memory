@@ -1,17 +1,5 @@
-/**
- * Extract CLI — split from cmd-extract.ts.
- */
+/** Reinforcement extraction CLI (`runExtractReinforcementForCli`). Split from cmd-extract.ts. */
 import { getEnv } from "../utils/env-manager.js";
-/**
- * Extract CLI Handler Functions
- *
- * Contains scan state, session helpers, and the following handlers:
- *   runExtractProceduresForCli, runGenerateAutoSkillsForCli,
- *   runExtractDirectivesForCli, runExtractReinforcementForCli,
- *   runGenerateProposalsForCli, runExtractDailyForCli.
- * Extracted from handlers.ts.
- */
-
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";

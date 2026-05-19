@@ -1,13 +1,4 @@
-/**
- * Extract CLI Handler Functions
- *
- * Contains scan state, session helpers, and the following handlers:
- *   runExtractProceduresForCli, runGenerateAutoSkillsForCli,
- *   runExtractDirectivesForCli, runExtractReinforcementForCli,
- *   runGenerateProposalsForCli, runExtractDailyForCli.
- * Extracted from handlers.ts.
- */
-
+/** Daily markdown extraction CLI (`runExtractDailyForCli`). Split from cmd-extract.ts. */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
