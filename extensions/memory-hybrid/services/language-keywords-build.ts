@@ -308,7 +308,7 @@ async function generateIntentBasedLanguages(
 /**
  * Legacy: translate keywords literally (same order as English). Kept for backward compatibility.
  */
-async function translateKeywordsToLanguages(
+async function _translateKeywordsToLanguages(
   langCodes: string[],
   openai: OpenAI,
   model: string,

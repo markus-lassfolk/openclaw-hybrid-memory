@@ -53,7 +53,7 @@ export type ProposalEntry = {
 };
 
 export class ProposalsDB extends BaseSqliteStore {
-  private readonly dbPath: string;
+  protected readonly dbPath: string;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });

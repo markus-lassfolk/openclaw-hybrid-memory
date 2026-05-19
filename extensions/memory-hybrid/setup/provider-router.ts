@@ -368,7 +368,7 @@ export const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
 /** How long to cache an Ollama health-check result (positive or negative). */
 const OLLAMA_HEALTH_CACHE_TTL_MS = 30_000;
 /** Timeout for a single Ollama /api/tags health ping. */
-const OLLAMA_HEALTH_TIMEOUT_MS = 2_000;
+export const OLLAMA_HEALTH_TIMEOUT_MS = 2_000;
 
 /**
  * Module-level health cache so repeated calls within the TTL window skip the network round-trip.
@@ -385,11 +385,9 @@ export async function probeOllamaEndpoint(baseUrl: string): Promise<boolean> {
   const now = Date.now();
   const cached = _ollamaHealthCache.get(baseUrl);
   if (cached && now - cached.ts < OLLAMA_HEALTH_CACHE_TTL_MS) return cached.ok;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTH_TIMEOUT_MS);
   try {
     const resp = await fetch(`${baseUrl}/api/tags`, {
-      signal: controller.signal,
+      signal: AbortSignal.timeout(OLLAMA_HEALTH_TIMEOUT_MS),
     });
     const ok = resp.ok;
     _ollamaHealthCache.set(baseUrl, { ok, ts: now });
@@ -397,8 +395,6 @@ export async function probeOllamaEndpoint(baseUrl: string): Promise<boolean> {
   } catch {
     _ollamaHealthCache.set(baseUrl, { ok: false, ts: now });
     return false;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
