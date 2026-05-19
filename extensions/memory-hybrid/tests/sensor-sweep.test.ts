@@ -581,11 +581,12 @@ describe("sweepAll", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ entity_id: "sensor.garmin_steps" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ entity_id: "sensor.garmin_steps" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
       ),
     );
 
