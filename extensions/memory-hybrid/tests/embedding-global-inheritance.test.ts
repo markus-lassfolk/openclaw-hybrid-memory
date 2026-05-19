@@ -197,22 +197,25 @@ describe("probeOllamaEndpoint", () => {
   });
 
   it("returns false when the Ollama health probe times out", async () => {
+    const abortError = new DOMException("The operation was aborted.", "AbortError");
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(abortError), ms);
+      return controller.signal;
+    });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
-      const signal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
-        signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")), {
-          once: true,
-        });
+        init?.signal?.addEventListener("abort", () => reject(abortError), { once: true });
       });
     });
 
     const resultPromise = probeOllamaEndpoint(baseUrl);
-
     await vi.advanceTimersByTimeAsync(OLLAMA_HEALTH_TIMEOUT_MS);
 
     await expect(resultPromise).resolves.toBe(false);
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(fetchSpy.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    timeoutSpy.mockRestore();
   });
 
   it("returns true when the Ollama health probe succeeds", async () => {
