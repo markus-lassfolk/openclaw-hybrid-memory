@@ -65,7 +65,6 @@ import type {
   GenerateAutoSkillsResult,
 } from "./types.js";
 
-
 export async function runGenerateProposalsForCli(
   ctx: HandlerContext,
   opts: { dryRun: boolean; verbose?: boolean },

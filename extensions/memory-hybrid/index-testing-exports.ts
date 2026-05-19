@@ -146,7 +146,6 @@ import { detectCategory } from "./setup/register-plugin.js";
 import { isHybridMemHelpInvocation } from "./index-help.js";
 
 export const _testing = {
-
   // Utility functions
   normalizeTextForDedupe,
   normalizedHash,
@@ -274,4 +273,3 @@ export const _testing = {
   // Learnings intake buffer — staged memory promotion (Issue #617)
   LearningsDB,
 };
-

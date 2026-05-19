@@ -272,4 +272,3 @@ describe("pre-finalization guard", () => {
     expect(result.checkpoint.missingFields).toContain("wake_link");
   });
 });
-

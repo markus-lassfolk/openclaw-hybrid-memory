@@ -203,4 +203,3 @@ export function getStaleProcedures(db: DatabaseSync, ttlDays: number, limit = 10
     .all(cutoff, cutoff, limit) as Array<Record<string, unknown>>;
   return rows.map((r) => procedureRowToEntry(db, r));
 }
-

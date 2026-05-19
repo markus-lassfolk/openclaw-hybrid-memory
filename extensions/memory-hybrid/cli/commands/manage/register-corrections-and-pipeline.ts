@@ -8,7 +8,11 @@ import { registerManageCorrections } from "./register-corrections.js";
 import { registerManageReflectionPipeline } from "./register-reflection-pipeline.js";
 import { registerManageSelfCorrectionFeedback } from "./register-self-correction-feedback.js";
 
-export { runVerboseFollowUp, type FollowUpProgressSupplier, type RunVerboseFollowUpOptions } from "./dream-cycle-followup.js";
+export {
+  runVerboseFollowUp,
+  type FollowUpProgressSupplier,
+  type RunVerboseFollowUpOptions,
+} from "./dream-cycle-followup.js";
 
 export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBindings): void {
   registerManageCorrections(mem, b);

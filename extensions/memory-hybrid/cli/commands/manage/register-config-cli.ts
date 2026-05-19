@@ -11,13 +11,7 @@ import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageConfigCli(mem: Chainable, b: ManageBindings): void {
-  const {
-    runConfigView,
-    runConfigMode,
-    runConfigSet,
-    runConfigSetHelp,
-  } = b;
-
+  const { runConfigView, runConfigMode, runConfigSet, runConfigSetHelp } = b;
 
   const configCommand = mem
     .command("config")

@@ -294,4 +294,3 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
 // expiresAt, lastConfirmedAt) must use conservative/unknown defaults so un-enriched
 // results are not falsely ranked highly.
 // ---------------------------------------------------------------------------
-

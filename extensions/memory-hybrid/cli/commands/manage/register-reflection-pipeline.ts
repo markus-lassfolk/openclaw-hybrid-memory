@@ -42,7 +42,6 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     ctx,
   } = b;
 
-
   mem
     .command("backfill")
     .description(

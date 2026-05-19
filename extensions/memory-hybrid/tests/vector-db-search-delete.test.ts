@@ -442,4 +442,3 @@ describe("VectorDB.deleteMany", () => {
     expect(fallbackDeleteSpy).toHaveBeenNthCalledWith(2, id2.toLowerCase());
   });
 });
-

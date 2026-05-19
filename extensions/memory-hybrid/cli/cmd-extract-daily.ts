@@ -65,7 +65,6 @@ import type {
   GenerateAutoSkillsResult,
 } from "./types.js";
 
-
 export async function runExtractDailyForCli(
   ctx: HandlerContext,
   opts: { days: number; dryRun: boolean; verbose?: boolean },

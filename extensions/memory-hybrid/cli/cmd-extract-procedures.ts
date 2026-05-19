@@ -65,7 +65,6 @@ import type {
   GenerateAutoSkillsResult,
 } from "./types.js";
 
-
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,

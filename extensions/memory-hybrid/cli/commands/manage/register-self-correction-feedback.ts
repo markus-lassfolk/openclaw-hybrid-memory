@@ -24,7 +24,6 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
     runAnalyzeFeedbackPhrases,
   } = b;
 
-
   mem
     .command("self-correction-extract")
     .description(

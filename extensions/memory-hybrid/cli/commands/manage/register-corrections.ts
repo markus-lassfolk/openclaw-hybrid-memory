@@ -11,10 +11,7 @@ import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageCorrections(mem: Chainable, b: ManageBindings): void {
-  const {
-    listCommands,
-    runStore,
-  } = b;
+  const { listCommands, runStore } = b;
 
   const corrections = mem.command("corrections").description("Manage self-correction reports");
   corrections

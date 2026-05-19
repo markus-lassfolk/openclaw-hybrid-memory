@@ -223,4 +223,3 @@ describe("VectorDB auto-repair on dimension mismatch (issue #128)", () => {
 // ---------------------------------------------------------------------------
 // VectorDB.optimize() — compaction and version pruning (issue #292)
 // ---------------------------------------------------------------------------
-
