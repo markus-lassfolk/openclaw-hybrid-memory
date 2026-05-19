@@ -291,7 +291,7 @@ vi.mock("../setup/provider-router.js", async (importOriginal) => {
   };
 });
 
-vi.mock("node:child_process", () => ({
+vi.mock("../utils/process-runner.js", () => ({
   spawn: vi.fn(() => ({
     on: vi.fn(),
     unref: vi.fn(),
@@ -299,11 +299,8 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { probeOllamaEndpoint } from "../setup/provider-router.js";
-import { spawn } from "node:child_process";
-import {
-  startOllamaIfNeeded,
-  _resetOllamaAutoStartForTesting,
-} from "../setup/bootstrap-databases.js";
+import { spawn } from "../utils/process-runner.js";
+import { startOllamaIfNeeded, _resetOllamaAutoStartForTesting } from "../setup/bootstrap-databases.js";
 
 describe("startOllamaIfNeeded — deduplication guard", () => {
   const makeApi = () => ({

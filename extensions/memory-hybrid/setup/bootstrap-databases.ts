@@ -117,9 +117,10 @@ export function startOllamaIfNeeded(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   _ollamaAutoStartPromise = (async () => {
     try {
       const ollamaBase =
-        (
-          cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined
-        )?.ollama?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
+        (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.ollama?.baseURL?.replace(
+          /\/v1\/?$/,
+          "",
+        ) ?? OLLAMA_DEFAULT_BASE_URL;
       const running = await probeOllamaEndpoint(ollamaBase);
       if (!running) {
         api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
