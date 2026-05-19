@@ -43,7 +43,12 @@ describe("registerCredentialHint", () => {
   it("removes invalid JSON without throwing and returns no prependContext", async () => {
     writeFileSync(pendingPath, "{not-json", "utf-8");
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
-    ctx.cfg.credentials = { enabled: true, autoDetect: true, store: "sqlite", encryptionKey: "test-key-32-chars-minimum!!!!" };
+    ctx.cfg.credentials = {
+      enabled: true,
+      autoDetect: true,
+      store: "sqlite",
+      encryptionKey: "test-key-32-chars-minimum!!!!",
+    };
 
     const handler = captureHandler(ctx);
     const out = await handler();
@@ -55,7 +60,12 @@ describe("registerCredentialHint", () => {
   it("returns credential-hint prependContext for fresh valid pending file", async () => {
     writeFileSync(pendingPath, JSON.stringify({ hints: ["github token"], at: Date.now() }), "utf-8");
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
-    ctx.cfg.credentials = { enabled: true, autoDetect: true, store: "sqlite", encryptionKey: "test-key-32-chars-minimum!!!!" };
+    ctx.cfg.credentials = {
+      enabled: true,
+      autoDetect: true,
+      store: "sqlite",
+      encryptionKey: "test-key-32-chars-minimum!!!!",
+    };
     ctx.cfg.verbosity = "normal";
 
     const handler = captureHandler(ctx);

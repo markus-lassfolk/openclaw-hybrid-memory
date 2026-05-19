@@ -100,7 +100,15 @@ describe("runVerifyForCli --reconcile", () => {
   });
 
   it("reports in-sync reconciliation when SQLite and LanceDB IDs align", async () => {
-    const id = factsDb.store({ text: "synced", category: "fact", source: "test", entity: null, key: null, value: null, importance: 0.5 }).id;
+    const id = factsDb.store({
+      text: "synced",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    }).id;
     await vectorDb.store({ id, text: "synced", vector: makeVector(), importance: 0.5, category: "fact" });
 
     const { runVerifyForCli } = await import("../cli/handlers.js");
