@@ -534,6 +534,14 @@
       "label": "Auto-skills path",
       "help": "Path for auto-generated skills (default: skills/auto)"
     },
+    "procedures.maxInjectionTokens": {
+      "label": "Max injection tokens",
+      "help": "Max tokens for procedure block injected into recall (default: 500)"
+    },
+    "procedures.promotionContextSpecificPatterns": {
+      "label": "Context-specific patterns",
+      "help": "Optional regex patterns (case-insensitive) for extra too_context_specific task checks (#1421)"
+    },
     "distill.apiKey": {
       "label": "Gemini API Key (distill)",
       "sensitive": true,
@@ -1502,6 +1510,17 @@
           "requireApprovalForPromote": {
             "type": "boolean",
             "description": "Require human move to promote auto-skill (default: true)"
+          },
+          "maxInjectionTokens": {
+            "type": "number",
+            "description": "Max tokens for procedure block injected into recall (default: 500)"
+          },
+          "promotionContextSpecificPatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional regex pattern strings (case-insensitive) for extra too_context_specific task checks (#1421)"
           }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"
