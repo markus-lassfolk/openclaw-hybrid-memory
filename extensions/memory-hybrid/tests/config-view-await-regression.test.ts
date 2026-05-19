@@ -16,7 +16,10 @@ import type { VerifyCliSink } from "../cli/types.js";
 
 const origArgv = process.argv.slice();
 
-type ConfigViewFn = (sink: VerifyCliSink, opts?: { format?: "text" | "json"; featuresOnly?: boolean }) => void | Promise<void>;
+type ConfigViewFn = (
+  sink: VerifyCliSink,
+  opts?: { format?: "text" | "json"; featuresOnly?: boolean },
+) => void | Promise<void>;
 
 function makeBindings(runConfigView: ConfigViewFn): ManageBindings {
   return {
@@ -29,7 +32,12 @@ function makeBindings(runConfigView: ConfigViewFn): ManageBindings {
     runFindDuplicates: vi.fn(),
     runConsolidate: vi.fn(),
     runReflection: vi.fn(),
-    reflectionConfig: {},
+    reflectionConfig: {
+      enabled: false,
+      defaultWindow: 7,
+      minObservations: 3,
+      model: "test-model",
+    },
     runReflectionRules: vi.fn(),
     runReflectionMeta: vi.fn(),
     runReflectIdentity: vi.fn(),
@@ -96,9 +104,7 @@ describe("registerManageCorrectionsAndPipeline — config command await regressi
     registerManageCorrectionsAndPipeline(mem, bindings);
 
     // In non-standalone mode withExit re-throws, so parseAsync should reject
-    await expect(mem.parseAsync(["config", "--json"], { from: "user" })).rejects.toThrow(
-      "async-config-view-failure",
-    );
+    await expect(mem.parseAsync(["config", "--json"], { from: "user" })).rejects.toThrow("async-config-view-failure");
   });
 });
 
@@ -124,8 +130,6 @@ describe("registerManageCorrectionsAndPipeline — features command await regres
     const mem = buildMem();
     registerManageCorrectionsAndPipeline(mem, bindings);
 
-    await expect(mem.parseAsync(["features"], { from: "user" })).rejects.toThrow(
-      "async-features-view-failure",
-    );
+    await expect(mem.parseAsync(["features"], { from: "user" })).rejects.toThrow("async-features-view-failure");
   });
 });
