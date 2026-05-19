@@ -35,7 +35,7 @@ export function normalizeProcedureType(value: unknown): ProcedureEntry["procedur
 
 export function normalizeProcedureSkillState(value: unknown): NonNullable<ProcedureEntry["skillState"]> {
   if (typeof value !== "string" || value.trim() === "") return "draft";
-  const trimmed = value.trim();
+  const trimmed = value.trim().toLowerCase();
   if (PROCEDURE_SKILL_STATE_SET.has(trimmed as NonNullable<ProcedureEntry["skillState"]>)) {
     return trimmed as NonNullable<ProcedureEntry["skillState"]>;
   }
@@ -66,8 +66,8 @@ function repairProcedureEnumDrift(
   rawState: unknown,
   normalizedState: NonNullable<ProcedureEntry["skillState"]>,
 ): void {
-  const rawTypeStr = typeof rawType === "string" ? rawType.trim() : "";
-  const rawStateStr = typeof rawState === "string" ? rawState.trim() : "";
+  const rawTypeStr = typeof rawType === "string" ? rawType.trim().toLowerCase() : "";
+  const rawStateStr = typeof rawState === "string" ? rawState.trim().toLowerCase() : "";
   const typeDrifted = rawTypeStr !== "" && !PROCEDURE_TYPE_SET.has(rawTypeStr as ProcedureEntry["procedureType"]);
   const stateDrifted =
     rawStateStr !== "" && !PROCEDURE_SKILL_STATE_SET.has(rawStateStr as NonNullable<ProcedureEntry["skillState"]>);
