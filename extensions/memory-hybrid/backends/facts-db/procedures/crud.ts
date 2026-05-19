@@ -11,6 +11,17 @@ import { sanitizeFts5QueryForFacts } from "../fts-text.js";
 
 // ---------- Procedural memory: procedures table CRUD ----------
 
+function parseAvoidanceNotes(raw: string | null | undefined): string[] {
+  if (!raw || raw.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((note): note is string => typeof note === "string");
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Load version-level feedback data for a procedure and merge into ProcedureEntry.
  * Called after the base row is mapped so we keep procedureRowToEntry pure.
@@ -86,12 +97,8 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
     // Merge avoidance notes across all versions
     const allNotes = new Set<string>(base.avoidanceNotes ?? []);
     if (versionRow.avoidance_notes) {
-      try {
-        const notes = JSON.parse(versionRow.avoidance_notes) as string[];
-        for (const n of notes) allNotes.add(n);
-      } catch {
-        // ignore parse errors
-      }
+      const notes = parseAvoidanceNotes(versionRow.avoidance_notes);
+      for (const n of notes) allNotes.add(n);
     }
 
     return {
@@ -256,12 +263,8 @@ export function procedureFeedback(
       .all(input.procedureId) as Array<{ avoidance_notes: string | null }>;
     for (const row of prevNotes) {
       if (row.avoidance_notes) {
-        try {
-          const existing = JSON.parse(row.avoidance_notes) as string[];
-          avoidanceNotes.push(...existing);
-        } catch {
-          // ignore
-        }
+        const existing = parseAvoidanceNotes(row.avoidance_notes);
+        avoidanceNotes.push(...existing);
       }
     }
 
@@ -357,23 +360,17 @@ export function getProcedureVersions(
     )
     .all(procedureId) as Array<Record<string, unknown>>;
 
-  return rows.map((r) => ({
-    id: r.id as string,
-    versionNumber: r.version_number as number,
-    successCount: r.success_count as number,
-    failureCount: r.failure_count as number,
-    avoidanceNotes: (() => {
-      const raw = r.avoidance_notes as string | null;
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.filter((n: unknown) => typeof n === "string") : null;
-      } catch {
-        return null;
-      }
-    })(),
-    createdAt: r.created_at as number,
-  }));
+  return rows.map((r) => {
+    const notes = parseAvoidanceNotes(r.avoidance_notes as string | null);
+    return {
+      id: r.id as string,
+      versionNumber: r.version_number as number,
+      successCount: r.success_count as number,
+      failureCount: r.failure_count as number,
+      avoidanceNotes: notes.length > 0 ? notes : null,
+      createdAt: r.created_at as number,
+    };
+  });
 }
 
 /**

@@ -29,7 +29,7 @@ export function registerManageConfigCli(mem: Chainable, b: ManageBindings): void
           }
           // Determine format: --json takes precedence, then --format, default to text
           const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
-          runConfigView(createConfigOutputSink(format), { format });
+          await runConfigView(createConfigOutputSink(format), { format });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
@@ -46,7 +46,7 @@ export function registerManageConfigCli(mem: Chainable, b: ManageBindings): void
     .action(
       withExit(async () => {
         try {
-          runConfigView(createConfigOutputSink("json"), { format: "json", featuresOnly: true });
+          await runConfigView(createConfigOutputSink("json"), { format: "json", featuresOnly: true });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
