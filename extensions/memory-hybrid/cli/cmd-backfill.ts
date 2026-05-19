@@ -205,9 +205,8 @@ export function extractUserMessageTextsFromSessionJsonl(filePath: string): strin
           out.push(block.text.trim());
         }
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Malformed session JSONL at ${filePath}:${i + 1} (${message})`);
+    } catch {
+      continue;
     }
   }
   return out;
