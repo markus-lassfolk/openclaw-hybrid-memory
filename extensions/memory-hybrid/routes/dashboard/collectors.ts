@@ -24,6 +24,7 @@ import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { ProvenanceService } from "../../services/provenance.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
+import { pluginLogger } from "../../utils/logger.js";
 import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
 
@@ -464,22 +465,32 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   const sqliteShmSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-shm`);
   const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
 
-  // Use cached LanceDB size to avoid blocking on large directory traversals
+  // Use cached LanceDB size to avoid blocking on large directory traversals.
+  // TOCTOU guard: write to cache inside .then() — before .finally() clears the
+  // in-flight entry — so any concurrent caller that sees no in-flight promise
+  // will always find the cache already populated.
   const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath);
   const now = Date.now();
   if (!cachedEntry || now - cachedEntry.ts > LANCE_CACHE_TTL_MS) {
     let inFlightPromise = _lanceInFlight.get(ctx.resolvedLancePath);
     if (!inFlightPromise) {
-      inFlightPromise = getDirSize(ctx.resolvedLancePath).finally(() => {
-        _lanceInFlight.delete(ctx.resolvedLancePath);
-      });
+      inFlightPromise = getDirSize(ctx.resolvedLancePath)
+        .then((size) => {
+          _lanceSizeCache.set(ctx.resolvedLancePath, { size, ts: Date.now() });
+          return size;
+        })
+        .finally(() => {
+          _lanceInFlight.delete(ctx.resolvedLancePath);
+        });
       _lanceInFlight.set(ctx.resolvedLancePath, inFlightPromise);
     }
-    const size = await inFlightPromise;
-    _lanceSizeCache.set(ctx.resolvedLancePath, {
-      size,
-      ts: Date.now(),
-    });
+    try {
+      await inFlightPromise;
+    } catch (err) {
+      pluginLogger.error(
+        `[dashboard-server] lance size traversal failed for ${ctx.resolvedLancePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size ?? 0;
 
