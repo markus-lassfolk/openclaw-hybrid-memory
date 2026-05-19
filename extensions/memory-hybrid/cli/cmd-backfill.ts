@@ -15,7 +15,7 @@ import { getEnv } from "../utils/env-manager.js";
  *   - runIngestFilesForCli       — ingest workspace markdown files via LLM
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -25,6 +25,7 @@ import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens }
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
 import {
@@ -36,12 +37,10 @@ import {
 } from "../utils/language-keywords.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chunkTextByChars, estimateTokens } from "../utils/text.js";
-
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -214,7 +213,6 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
       }
     } catch {
       if (firstMalformedLine === null) firstMalformedLine = i + 1;
-      continue;
     }
   }
   return { texts, firstMalformedLine };
@@ -389,8 +387,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     }
   }
   if (firstSessionParseError) {
-    const sessionsScanned =
-      successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length;
+    const sessionsScanned = successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length;
     return {
       reinforcement: [],
       correction: [],
