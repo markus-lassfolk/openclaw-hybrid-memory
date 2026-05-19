@@ -106,7 +106,10 @@ describe("lifecycle agent_end pre-finalization guard", () => {
   });
 
   it("allows agent_end when main task checkpoint uses agent:main:main but sessionKey is agent:main:telegram (#1486)", async () => {
-    seedMainTelegramCheckpoint(factsDb, { relatedSession: MAIN_CANONICAL_SESSION });
+    seedMainTelegramCheckpoint(factsDb, {
+      relatedSession: MAIN_CANONICAL_SESSION,
+      updatedIso: new Date().toISOString(),
+    });
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
     const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
