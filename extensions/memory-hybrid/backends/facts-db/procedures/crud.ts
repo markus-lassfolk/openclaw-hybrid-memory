@@ -23,20 +23,53 @@ function reportUnexpectedProcedureEnum(field: "procedure_type" | "skill_state", 
   });
 }
 
-function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"] {
+export function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"] {
   if (typeof value !== "string" || value.trim() === "") return "positive";
   if (PROCEDURE_TYPE_SET.has(value as ProcedureEntry["procedureType"])) return value as ProcedureEntry["procedureType"];
   reportUnexpectedProcedureEnum("procedure_type", value);
   return "positive";
 }
 
-function normalizeProcedureSkillState(value: unknown): NonNullable<ProcedureEntry["skillState"]> {
+export function normalizeProcedureSkillState(value: unknown): NonNullable<ProcedureEntry["skillState"]> {
   if (typeof value !== "string" || value.trim() === "") return "draft";
   if (PROCEDURE_SKILL_STATE_SET.has(value as NonNullable<ProcedureEntry["skillState"]>)) {
     return value as NonNullable<ProcedureEntry["skillState"]>;
   }
   reportUnexpectedProcedureEnum("skill_state", value);
   return "draft";
+}
+
+/** SQLite predicate: rows that normalize to positive procedure_type (incl. enum drift). */
+export const POSITIVE_PROCEDURE_TYPE_SQL = `(procedure_type = 'positive' OR procedure_type IS NULL OR trim(procedure_type) = '' OR (procedure_type NOT IN ('positive', 'negative') AND trim(procedure_type) != ''))`;
+
+function repairProcedureEnumDrift(
+  db: DatabaseSync,
+  id: string,
+  rawType: unknown,
+  normalizedType: ProcedureEntry["procedureType"],
+  rawState: unknown,
+  normalizedState: NonNullable<ProcedureEntry["skillState"]>,
+): void {
+  const rawTypeStr = typeof rawType === "string" ? rawType.trim() : "";
+  const rawStateStr = typeof rawState === "string" ? rawState.trim() : "";
+  const typeDrifted = rawTypeStr !== "" && !PROCEDURE_TYPE_SET.has(rawTypeStr as ProcedureEntry["procedureType"]);
+  const stateDrifted =
+    rawStateStr !== "" && !PROCEDURE_SKILL_STATE_SET.has(rawStateStr as NonNullable<ProcedureEntry["skillState"]>);
+  if (!typeDrifted && !stateDrifted) return;
+  try {
+    db.prepare(`UPDATE procedures SET procedure_type = ?, skill_state = ?, updated_at = ? WHERE id = ?`).run(
+      normalizedType,
+      normalizedState,
+      Math.floor(Date.now() / 1000),
+      id,
+    );
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: "repair-procedure-enum-drift",
+      severity: "info",
+      subsystem: "facts",
+    });
+  }
 }
 
 /**
@@ -137,11 +170,15 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
 }
 
 export function procedureRowToEntry(db: DatabaseSync, row: Record<string, unknown>): ProcedureEntry {
+  const id = row.id as string;
+  const procedureType = normalizeProcedureType(row.procedure_type);
+  const skillState = normalizeProcedureSkillState(row.skill_state);
+  repairProcedureEnumDrift(db, id, row.procedure_type, procedureType, row.skill_state, skillState);
   const base: ProcedureEntry = {
-    id: row.id as string,
+    id,
     taskPattern: row.task_pattern as string,
     recipeJson: row.recipe_json as string,
-    procedureType: normalizeProcedureType(row.procedure_type),
+    procedureType,
     successCount: (row.success_count as number) ?? 0,
     failureCount: (row.failure_count as number) ?? 0,
     lastValidated: (row.last_validated as number) ?? null,
@@ -171,7 +208,7 @@ export function procedureRowToEntry(db: DatabaseSync, row: Record<string, unknow
       }
     })(),
     promotedAt: (row.promoted_at as number) ?? null,
-    skillState: normalizeProcedureSkillState(row.skill_state),
+    skillState,
     skillStateReason: (row.skill_state_reason as string) ?? null,
     skillVersion: (row.skill_version as number) ?? 1,
     skillGeneratedAt: (row.skill_generated_at as number) ?? null,
