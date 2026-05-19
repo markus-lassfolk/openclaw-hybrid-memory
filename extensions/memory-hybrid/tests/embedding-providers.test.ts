@@ -15,6 +15,7 @@ import {
   type EmbeddingConfig,
   Embeddings,
   FallbackEmbeddingProvider,
+  ONNX_RUNTIME_LOAD_TIMEOUT_MS,
   OllamaEmbeddingProvider,
   OnnxEmbeddingProvider,
   __setOnnxRuntimeLoaderForTests,
@@ -1040,6 +1041,27 @@ describe("createEmbeddingProvider factory", () => {
 // ---------------------------------------------------------------------------
 
 describe("OnnxEmbeddingProvider", () => {
+  it("times out when loading the ONNX runtime hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      __setOnnxRuntimeLoaderForTests(() => new Promise<never>(() => {}));
+
+      const provider = new OnnxEmbeddingProvider({
+        model: "all-MiniLM-L6-v2",
+        dimensions: 384,
+      });
+
+      const resultPromise = provider.embedBatch(["hello world"]);
+      const rejection = expect(resultPromise).rejects.toThrow(/Timed out loading onnxruntime-node/);
+      await vi.advanceTimersByTimeAsync(ONNX_RUNTIME_LOAD_TIMEOUT_MS);
+
+      await rejection;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("creates embeddings with the expected dimensions (mocked runtime)", async () => {
     class FakeTensor {
       constructor(
@@ -1070,24 +1092,29 @@ describe("OnnxEmbeddingProvider", () => {
     };
 
     __setOnnxRuntimeLoaderForTests(async () => fakeRuntime as never);
+    vi.useFakeTimers();
+    try {
+      const tmp = await fs.mkdtemp(join(tmpdir(), "onnx-test-"));
+      const modelPath = join(tmp, "model.onnx");
+      const vocabPath = join(tmp, "vocab.txt");
+      await fs.writeFile(modelPath, "");
+      await fs.writeFile(vocabPath, ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "hello", "world"].join("\n"));
 
-    const tmp = await fs.mkdtemp(join(tmpdir(), "onnx-test-"));
-    const modelPath = join(tmp, "model.onnx");
-    const vocabPath = join(tmp, "vocab.txt");
-    await fs.writeFile(modelPath, "");
-    await fs.writeFile(vocabPath, ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "hello", "world"].join("\n"));
-
-    const provider = new OnnxEmbeddingProvider({
-      model: modelPath,
-      modelPath,
-      vocabPath,
-      dimensions: 3,
-      batchSize: 2,
-    });
-    const results = await provider.embedBatch(["hello world", "test"]);
-    expect(results).toHaveLength(2);
-    expect(results[0]).toHaveLength(3);
-    expect(results[1]).toHaveLength(3);
+      const provider = new OnnxEmbeddingProvider({
+        model: modelPath,
+        modelPath,
+        vocabPath,
+        dimensions: 3,
+        batchSize: 2,
+      });
+      const results = await provider.embedBatch(["hello world", "test"]);
+      expect(results).toHaveLength(2);
+      expect(results[0]).toHaveLength(3);
+      expect(results[1]).toHaveLength(3);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
