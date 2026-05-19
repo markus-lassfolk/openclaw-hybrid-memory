@@ -45,7 +45,7 @@ export function normalizeProcedureSkillState(value: unknown): NonNullable<Proced
 
 /** Sort-only type rank without emitting drift reports (used in search comparators). */
 export function procedureTypeSortRank(value: unknown): number {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+  const trimmed = typeof value === "string" ? value.trim().toLowerCase() : "";
   if (trimmed === "negative") return 0;
   return 1;
 }
