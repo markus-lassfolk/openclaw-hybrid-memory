@@ -111,6 +111,36 @@ describe("lifecycle agent_end pre-finalization guard", () => {
     const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
     await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    expect(api.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns on agent_end when canonical agent:main:main ledger row is incomplete for telegram session (#1486)", async () => {
+    const entity = "issue-telegram-canonical-incomplete";
+    factsDb.store({
+      text: `Task [${entity}] status: waiting`,
+      category: TASK_LEDGER_CATEGORY,
+      importance: 0.7,
+      entity,
+      key: "status",
+      value: "waiting",
+      source: "test",
+      decayClass: "permanent",
+    });
+    factsDb.store({
+      text: `Task [${entity}] related_session: ${MAIN_CANONICAL_SESSION}`,
+      category: TASK_LEDGER_CATEGORY,
+      importance: 0.7,
+      entity,
+      key: "related_session",
+      value: MAIN_CANONICAL_SESSION,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
+
+    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("pre-finalization guard"));
   });
 
   it("allows agent_end after active_task_checkpoint with live session key then pending CI language (#1486 chain)", async () => {

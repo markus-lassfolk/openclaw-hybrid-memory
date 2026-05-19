@@ -482,6 +482,57 @@ describe("pre-finalization guard", () => {
     expect(result.action).toBe("allow");
   });
 
+  it("blocks when canonical agent:main:main ledger row applies to live telegram session (#1486)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "main-canonical-task", key: "status", value: "waiting" }),
+      projectFact({
+        id: "2",
+        entity: "main-canonical-task",
+        key: "related_session",
+        value: "agent:main:main",
+      }),
+      // missing: next, task_updated, wake_link
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("next");
+    expect(result.checkpoint.missingFields).toContain("task_updated");
+  });
+
+  it("allows when canonical agent:main:main ledger row is complete for live telegram session (#1486)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "main-canonical-task", key: "status", value: "waiting" }),
+      projectFact({ id: "2", entity: "main-canonical-task", key: "next", value: "Recheck CI." }),
+      projectFact({ id: "3", entity: "main-canonical-task", key: "task_updated", value: NOW_ISO }),
+      projectFact({
+        id: "4",
+        entity: "main-canonical-task",
+        key: "related_session",
+        value: "agent:main:main",
+      }),
+      projectFact({ id: "5", entity: "main-canonical-task", key: "wake_at", value: "2026-05-10T08:41:00.000Z" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("allow");
+    expect(result.checkpoint.projectFactsSatisfied).toBe(true);
+  });
+
   it("still blocks when a session-owned entity lacks checkpoint fields", () => {
     const facts: MemoryEntry[] = [
       projectFact({ id: "1", entity: "own-task", key: "status", value: "in_progress" }),

@@ -299,6 +299,24 @@ function normalizeSessionRef(value: string): string {
   return value.trim().toLowerCase();
 }
 
+const MAIN_AGENT_CANONICAL_SESSION = "agent:main:main";
+
+/** OpenClaw canonical main session ref stored on project-ledger rows. */
+function isMainAgentCanonicalSessionRef(ref: string): boolean {
+  return ref === MAIN_AGENT_CANONICAL_SESSION;
+}
+
+/**
+ * Live main-agent channel session (`agent:main:telegram:*`, etc.), not subagent/cron keys.
+ */
+function isMainAgentLiveChannelSessionRef(ref: string): boolean {
+  if (!ref.startsWith("agent:main:") || ref.includes("subagent:")) return false;
+  const parts = ref.split(":");
+  if (parts.length < 4 || parts[1] !== "main") return false;
+  const channel = parts[2];
+  return channel !== "main" && channel !== "cron" && channel !== "subagent";
+}
+
 export function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
   const related = normalizeSessionRef(relatedSession);
   const current = normalizeSessionRef(currentSession);
@@ -306,6 +324,13 @@ export function sessionRefMatches(relatedSession: string, currentSession: string
   if (related === current) return true;
   if ((related === "main" || related === "private") && current.startsWith(`agent:${related}:`)) return true;
   if ((current === "main" || current === "private") && related.startsWith(`agent:${current}:`)) return true;
+  // #1486: ledger rows tagged agent:main:main apply to live agent:main:<channel>:* sessions.
+  if (
+    (isMainAgentCanonicalSessionRef(related) && isMainAgentLiveChannelSessionRef(current)) ||
+    (isMainAgentLiveChannelSessionRef(related) && isMainAgentCanonicalSessionRef(current))
+  ) {
+    return true;
+  }
   return false;
 }
 
