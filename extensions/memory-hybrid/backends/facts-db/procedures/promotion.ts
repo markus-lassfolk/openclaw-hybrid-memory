@@ -138,9 +138,9 @@ export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: s
               skill_path = ?,
               updated_at = ?,
               skill_state = CASE
-                WHEN skill_state IS NULL OR trim(skill_state) = '' OR trim(skill_state) = 'draft' THEN 'experimental'
-                WHEN trim(skill_state) NOT IN ('draft', 'experimental', 'trusted', 'demoted', 'archived', 'uninstalled', 'rejected') THEN 'experimental'
-                ELSE trim(skill_state)
+                WHEN skill_state IS NULL OR trim(skill_state) = '' OR LOWER(trim(skill_state)) = 'draft' THEN 'experimental'
+                WHEN LOWER(trim(skill_state)) NOT IN ('draft', 'experimental', 'trusted', 'demoted', 'archived', 'uninstalled', 'rejected') THEN 'experimental'
+                ELSE LOWER(trim(skill_state))
               END,
               skill_generated_at = COALESCE(skill_generated_at, ?, promoted_at, created_at),
               skill_version = COALESCE(skill_version, 1)
