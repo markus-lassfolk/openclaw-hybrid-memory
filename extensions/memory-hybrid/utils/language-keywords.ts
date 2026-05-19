@@ -524,7 +524,7 @@ export function loadMergedKeywords(): MergedKeywords {
         data = parsed as LanguageKeywordsFile;
       } else {
         capturePluginError(
-          new Error(`language-keywords file has unexpected shape: ${Array.isArray(parsed) ? "array" : typeof parsed}`),
+          new Error(`language-keywords file has unexpected shape: ${parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed}`),
           { operation: "load-language-keywords", severity: "info", subsystem: "utils" },
         );
       }
