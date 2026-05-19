@@ -612,7 +612,10 @@ Use for collecting markerless legacy reports.
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-second-session`);
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-third-session`);
     }
+    // recordProcedureSuccess bumps last_validated to now; refresh lastFailed while keeping
+    // lastValidated within skillTTLDays so generateAutoSkills still evaluates this row.
     const recentFailureProc = requireProcedure(cases[1].proc.id);
+    const nowSec = Math.floor(Date.now() / 1000);
     db.upsertProcedure({
       id: recentFailureProc.id,
       taskPattern: recentFailureProc.taskPattern,
@@ -621,8 +624,8 @@ Use for collecting markerless legacy reports.
       successCount: recentFailureProc.successCount,
       failureCount: recentFailureProc.failureCount,
       confidence: recentFailureProc.confidence,
-      lastValidated: 1_700_000_000,
-      lastFailed: Math.floor(Date.now() / 1000),
+      lastValidated: nowSec - 3600,
+      lastFailed: nowSec,
     });
 
     // Existing skill collision.

@@ -894,8 +894,7 @@ function summarizeSkillTelemetry(
   );
   const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
   const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
-  const archiveCandidate =
-    activationCountTotal === 0 && archiveBaselineAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const lastActivityAt = lastUsedAt ?? archiveBaselineAt;
   const promotionCandidate =
     proc.skillState !== "demoted" &&
     proc.skillState !== "archived" &&
@@ -903,14 +902,16 @@ function summarizeSkillTelemetry(
     proc.skillState !== "uninstalled" &&
     proc.skillState !== "rejected" &&
     successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
-  const overTriggering =
-    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
-  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
   const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
   const unblockCandidate =
     unblockAfterCleanUses > 0 &&
     (proc.skillState === "demoted" || proc.skillState === "archived") &&
     cleanUsesAfterDemotion >= unblockAfterCleanUses;
+  const archiveCandidate =
+    !promotionCandidate && !unblockCandidate && now - lastActivityAt >= policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const overTriggering =
+    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
+  const revisionCandidate = nearMissCount >= policy.revisionNearMissThreshold && skippedCount >= consideredCount;
 
   return {
     metrics: {
@@ -1043,7 +1044,7 @@ function desiredLifecycleTransition(
   if (currentState !== "archived" && flags.archiveCandidate) {
     return {
       state: "archived",
-      reason: `auto-archived after ${policy.archiveAfterUnusedDays} days without any recorded activation`,
+      reason: `auto-archived after ${policy.archiveAfterUnusedDays} days without selected-activation activity`,
     };
   }
   // Allow automatic unblocking of demoted/archived skills when they accumulate
