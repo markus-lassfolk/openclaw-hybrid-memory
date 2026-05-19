@@ -11,7 +11,7 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { stablePersonaProposalTriageJson } from "../../../services/persona-proposal-triage.js";
 import { buildAppliedContent, buildUnifiedDiff } from "../../proposals.js";
-import { type Chainable, relativeTime, withExit } from "../../shared.js";
+import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageBudgetAndProposals(mem: Chainable, b: ManageBindings): void {

@@ -17,7 +17,7 @@ interface ParseCtx {
 }
 
 export function parseYaml(text: string): YAMLValue {
-  if (!text || !text.trim()) return null;
+  if (!text?.trim()) return null;
   const normalized = text.replace(/\r/g, "");
   const ctx: ParseCtx = { lines: normalized.split("\n"), pos: 0 };
   skipBlanks(ctx);

@@ -215,7 +215,7 @@ export class WriteAheadLog {
     const removedIds = new Set<string>();
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+      if (!trimmed?.startsWith(WAL_REMOVE_PREFIX)) continue;
       try {
         const obj = JSON.parse(trimmed) as { op: string; id: string };
         if (obj.op === "remove" && obj.id) removedIds.add(obj.id);

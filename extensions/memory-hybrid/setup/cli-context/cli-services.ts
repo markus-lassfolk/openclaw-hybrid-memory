@@ -1,0 +1,397 @@
+import { dirname, join } from "node:path";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import type { HandlerContext } from "../../cli/handlers.js";
+import type { HybridMemCliContext } from "../../cli/register.js";
+import type { FindDuplicatesResult } from "../../cli/types.js";
+import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../../config.js";
+import { runClassifyForCli } from "../../services/auto-classifier.js";
+import { runConsolidate } from "../../services/consolidation.js";
+import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
+import { type DreamCycleResult, runDreamCycle } from "../../services/dream-cycle.js";
+import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
+import { runExport } from "../../services/export-memory.js";
+import { runFindDuplicates } from "../../services/find-duplicates.js";
+import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
+import { mergeResults } from "../../services/merge-results.js";
+import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
+import { parseSourceDate } from "../../utils/dates.js";
+import { resolveTierPreferenceWithSources } from "../../utils/llm-selection.js";
+import { pluginLogger } from "../../utils/logger.js";
+import { versionInfo } from "../../versionInfo.js";
+
+/** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
+interface CliContextServices {
+  runFindDuplicates: (opts: {
+    threshold: number;
+    includeStructured: boolean;
+    limit: number;
+  }) => Promise<FindDuplicatesResult>;
+  runConsolidate: (opts: {
+    threshold: number;
+    includeStructured: boolean;
+    dryRun: boolean;
+    limit: number;
+    model: string;
+  }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
+  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+    factsAnalyzed: number;
+    patternsExtracted: number;
+    patternsStored: number;
+    window: number;
+  }>;
+  runReflectionRules: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+  }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
+  runReflectionMeta: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+  }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
+    reclassified: number;
+    total: number;
+    breakdown?: Record<string, number>;
+  }>;
+  runCompaction: (opts?: { apply?: boolean }) => Promise<{
+    hot: number;
+    warm: number;
+    cold: number;
+    structural: number;
+    changed?: number;
+    examined?: number;
+    apply?: boolean;
+  }>;
+  runBuildLanguageKeywords: (opts: {
+    model?: string;
+    dryRun?: boolean;
+  }) => Promise<
+    { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
+  >;
+  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
+    pending: number;
+    processed: number;
+    factsEnriched: number;
+    skipped?: boolean;
+    pendingFactIds?: string[];
+    enrichedFacts?: import("../../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
+  }>;
+  runExport: (opts: {
+    outputPath: string;
+    excludeCredentials?: boolean;
+    includeCredentials?: boolean;
+    sources?: string[];
+    mode?: "replace" | "additive";
+  }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
+  runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
+  runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
+  runResolveContradictions: () => Promise<{
+    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  }>;
+  getMemoryCategories: () => string[];
+  mergeResults: HybridMemCliContext["mergeResults"];
+  parseSourceDate: (v: string | number | null | undefined) => number | null;
+  versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
+}
+
+/** Context passed from plugin register() to wire CLI without pulling all service imports into index. */
+export interface HybridMemCliRegistrationContext {
+  factsDb: HandlerContext["factsDb"];
+  vectorDb: HandlerContext["vectorDb"];
+  embeddings: HandlerContext["embeddings"];
+  openai: HandlerContext["openai"];
+  cfg: HandlerContext["cfg"];
+  credentialsDb: HandlerContext["credentialsDb"];
+  aliasDb: HandlerContext["aliasDb"];
+  wal: HandlerContext["wal"];
+  proposalsDb: HandlerContext["proposalsDb"];
+  identityReflectionStore: HandlerContext["identityReflectionStore"];
+  personaStateStore: HandlerContext["personaStateStore"];
+  crystallizationStore?: HandlerContext["crystallizationStore"];
+  verificationStore?: import("../../services/verification-store.js").VerificationStore | null;
+  provenanceService?: import("../../services/provenance.js").ProvenanceService | null;
+  resolvedSqlitePath: string;
+  resolvedLancePath: string;
+  pluginId: string;
+  detectCategory: HandlerContext["detectCategory"];
+  /** Optional event log for episodic consolidation in dream cycle. */
+  eventLog?: import("../../backends/event-log.js").EventLog | null;
+  /** LLM cost tracker (Issue #270). */
+  costTracker?: import("../../backends/cost-tracker.js").CostTracker | null;
+  /** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
+  eventBus?: import("../../backends/event-bus.js").EventBus | null;
+  /** Audit log (Issue #790). */
+  auditStore?: import("../../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../../backends/agent-health-store.js").AgentHealthStore | null;
+}
+
+export function buildCliContextServices(
+  ctx: HybridMemCliRegistrationContext,
+  api: ClawdbotPluginApi,
+): CliContextServices {
+  const {
+    factsDb,
+    vectorDb,
+    embeddings,
+    openai,
+    cfg,
+    resolvedSqlitePath,
+    aliasDb,
+    verificationStore,
+    provenanceService,
+    wal,
+  } = ctx;
+  const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
+  const adaptiveMaintenanceStatePath = join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json");
+  const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
+  return {
+    runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
+    runConsolidate: async (opts) => {
+      // Skip if OpenAI provider is configured but API key is missing
+      if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
+        return { clustersFound: 0, merged: 0, deleted: 0 };
+      }
+      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
+      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
+    },
+    runReflection: async (opts) => {
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const modelSource = opts.model
+        ? "--model"
+        : cfg.reflection.model?.trim()
+          ? "reflection.model"
+          : "llm.maintenance[0]";
+      const result = await runReflection(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        {
+          defaultWindow: cfg.reflection.defaultWindow,
+          minObservations: cfg.reflection.minObservations,
+          enabled: cfg.reflection.enabled,
+        },
+        {
+          ...opts,
+          model: effectiveModel,
+          modelSource,
+          fallbackModels,
+          adaptiveStatePath: adaptiveMaintenanceStatePath,
+        },
+        logSink,
+        provenanceService,
+      );
+      // Record savings: each pattern stored encodes knowledge that saves future manual analysis
+      if (result.patternsStored > 0 && !opts.dryRun && ctx.costTracker) {
+        ctx.costTracker.recordSavings({
+          feature: "reflection",
+          action: "pattern extracted and stored",
+          countAvoided: result.patternsStored,
+          estimatedSavingUsd: result.patternsStored * 0.0005,
+          note: `${result.factsAnalyzed} facts analyzed → ${result.patternsStored} patterns stored`,
+        });
+      }
+      return result;
+    },
+    runReflectionRules: (opts) => {
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const modelSource = opts.model
+        ? "--model"
+        : cfg.reflection.model?.trim()
+          ? "reflection.model"
+          : "llm.maintenance[0]";
+      return runReflectionRules(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        {
+          ...opts,
+          model: effectiveModel,
+          modelSource,
+          fallbackModels,
+          adaptiveStatePath: adaptiveMaintenanceStatePath,
+        },
+        logSink,
+        provenanceService,
+      );
+    },
+    runReflectionMeta: (opts) => {
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const modelSource = opts.model
+        ? "--model"
+        : cfg.reflection.model?.trim()
+          ? "reflection.model"
+          : "llm.maintenance[0]";
+      return runReflectionMeta(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        {
+          ...opts,
+          model: effectiveModel,
+          modelSource,
+          fallbackModels,
+          adaptiveStatePath: adaptiveMaintenanceStatePath,
+        },
+        logSink,
+        provenanceService,
+      );
+    },
+    runClassify: async (opts) => {
+      const result = await runClassifyForCli(
+        factsDb,
+        openai,
+        cfg.autoClassify,
+        {
+          ...opts,
+          model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "nano").defaultModel,
+        },
+        discoveredPath,
+        logSink,
+        undefined,
+      );
+      // Record savings: batching avoids N individual LLM calls
+      if (result.reclassified > 0 && !opts.dryRun && ctx.costTracker) {
+        const batchSize = cfg.autoClassify.batchSize ?? 20;
+        const batchesUsed = Math.ceil(result.reclassified / batchSize);
+        const callsAvoided = Math.max(0, result.reclassified - batchesUsed);
+        if (callsAvoided > 0) {
+          ctx.costTracker.recordSavings({
+            feature: "auto-classify",
+            action: "batch-classified facts",
+            countAvoided: callsAvoided,
+            estimatedSavingUsd: callsAvoided * 0.0001,
+            note: `${result.reclassified} facts in ${batchesUsed} batch(es) vs ${result.reclassified} individual calls`,
+          });
+        }
+      }
+      return result;
+    },
+    runCompaction: (opts?: { apply?: boolean }) =>
+      Promise.resolve(
+        factsDb.retier(
+          {
+            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+            coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
+            hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
+            hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
+            hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
+            hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
+            hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
+            structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
+            structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
+          },
+          opts?.apply !== false,
+        ),
+      ),
+    runBuildLanguageKeywords: (opts) =>
+      runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
+        model:
+          opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
+        dryRun: opts.dryRun,
+      }),
+    runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
+    runExport: (opts) =>
+      Promise.resolve(
+        runExport(factsDb, opts, {
+          pluginVersion: versionInfo.pluginVersion,
+          schemaVersion: versionInfo.schemaVersion,
+        }),
+      ),
+    runDreamCycle: async (opts?: { verbose?: boolean }) => {
+      const verbose = !!opts?.verbose;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
+      const tierPref = resolveTierPreferenceWithSources(cfg, "default");
+      const dreamSource =
+        typeof cfg.nightlyCycle.model === "string" && cfg.nightlyCycle.model.trim().length > 0
+          ? "nightlyCycle.model"
+          : tierPref.models[0] === dreamModel
+            ? (tierPref.sources[0] ?? "built-in")
+            : "built-in";
+      pluginLogger.info("memory-hybrid: dream-cycle model tier = default");
+      pluginLogger.info(`memory-hybrid: dream-cycle starting with model ${dreamModel} (source=${dreamSource})`);
+      pluginLogger.info(
+        `memory-hybrid: dream-cycle fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+      );
+      if (verbose) {
+        pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
+      }
+      const flush = await runPreConsolidationFlush(
+        { wal, factsDb, vectorDb, embeddings },
+        api.logger,
+        "dream_cycle_consolidation",
+      );
+      if (verbose) {
+        pluginLogger.info(
+          `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped})`,
+        );
+      }
+      return runDreamCycle(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        ctx.eventLog ?? null,
+        {
+          enabled: cfg.nightlyCycle.enabled,
+          schedule: cfg.nightlyCycle.schedule,
+          reflectWindowDays: cfg.nightlyCycle.reflectWindowDays,
+          pruneMode: cfg.nightlyCycle.pruneMode,
+          model: dreamModel,
+          fallbackModels: fallbackModels ?? [],
+          consolidateAfterDays: cfg.nightlyCycle.consolidateAfterDays,
+          eventLogArchivalDays: cfg.eventLog.archivalDays,
+          eventLogArchivePath: cfg.eventLog.archivePath,
+          maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          maxEventsPerConsolidation: cfg.nightlyCycle.maxEventsPerConsolidation,
+          logRetentionDays: cfg.nightlyCycle.logRetentionDays,
+          vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
+          reclassifyDecayOnCycle: cfg.nightlyCycle.reclassifyDecayOnCycle,
+          reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
+          reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
+          enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
+          verbose,
+          episodicConsolidationEventTypes: {
+            allow: cfg.nightlyCycle.consolidationEventTypeAllow,
+            deny: cfg.nightlyCycle.consolidationEventTypeDeny,
+          },
+        },
+        logSink,
+        provenanceService,
+      );
+    },
+    runContinuousVerification: async (opts?: { verbose?: boolean }) => {
+      if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
+        return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
+      }
+      const verbose = !!opts?.verbose;
+      return runVerificationCycle(verificationStore, factsDb, openai, {
+        cycleDays: cfg.verification.cycleDays,
+        verificationModel: cfg.verification.verificationModel,
+        ...(verbose
+          ? {
+              onProgress: (message: string) => {
+                pluginLogger.info(message);
+              },
+            }
+          : {}),
+      });
+    },
+    runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
+    getMemoryCategories: () => [...getMemoryCategories()],
+    mergeResults,
+    parseSourceDate,
+    versionInfo,
+  };
+}

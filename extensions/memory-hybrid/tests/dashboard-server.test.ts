@@ -28,7 +28,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fsUtils from "../utils/fs.js";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
 import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
@@ -275,6 +276,21 @@ describe("collectStatus", () => {
     const status = await collectStatus(ctx);
     expect(status.memory.vectorCount).toBeGreaterThanOrEqual(0);
     expect(Number.isInteger(status.memory.vectorCount)).toBe(true);
+  });
+
+  it("shares one lance directory traversal across concurrent collectStatus calls (#1501)", async () => {
+    const isolatedCtx = makeContext(mkdtempSync(join(tmpdir(), "dashboard-lance-race-")));
+    const getDirSizeSpy = vi.spyOn(fsUtils, "getDirSize");
+    try {
+      const [a, b] = await Promise.all([collectStatus(isolatedCtx), collectStatus(isolatedCtx)]);
+      expect(getDirSizeSpy).toHaveBeenCalledTimes(1);
+      expect(a.memory.lanceSizeBytes).toBe(b.memory.lanceSizeBytes);
+      expect(a.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+    } finally {
+      getDirSizeSpy.mockRestore();
+      isolatedCtx.factsDb.close();
+      isolatedCtx.vectorDb.close();
+    }
   });
 });
 

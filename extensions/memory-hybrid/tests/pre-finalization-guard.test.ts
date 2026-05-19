@@ -295,7 +295,7 @@ describe("pre-finalization guard", () => {
     expect(result.checkpoint.missingFields).toContain("wake_link");
   });
 
-  it("requires project checkpoint related_session to match the active session", () => {
+  it("ignores project entities owned by other sessions (no checkpoint obligation for this session)", () => {
     const facts: MemoryEntry[] = [
       projectFact({ id: "1", entity: "issue-1271-ci", key: "status", value: "in_progress" }),
       projectFact({ id: "2", entity: "issue-1271-ci", key: "next", value: "Continue processing." }),
@@ -311,8 +311,10 @@ describe("pre-finalization guard", () => {
       projectFacts: facts,
       sessionKey: "agent:main:current-session",
     });
-    expect(result.action).toBe("block");
-    expect(result.checkpoint.missingFields).toContain("related_session");
+    // The entity belongs to another session; this session has no checkpoint obligation.
+    expect(result.action).toBe("allow");
+    expect(result.checkpoint.missingFields).toHaveLength(0);
+    expect(result.checkpoint.missingFields).not.toContain("related_session");
   });
 
   it("formats conditional wake/goal requirements in the guard message", () => {
@@ -381,5 +383,210 @@ describe("pre-finalization guard", () => {
     expect(result.action).toBe("allow");
     expect(result.reason).toBe("checkpoint_present");
     expect(result.checkpoint.activeTaskCheckpointCalled).toBe(true);
+  });
+
+  // ── multi-agent related_session shapes (#1479) ──────────────────────────────
+
+  it("allows when all active ledger rows belong to forge/pr-steward subagents (global noise)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "fix-pr-1457-typecheck", key: "status", value: "blocked" }),
+      projectFact({ id: "2", entity: "fix-pr-1457-typecheck", key: "next", value: "Waiting for review." }),
+      projectFact({ id: "3", entity: "fix-pr-1457-typecheck", key: "task_updated", value: NOW_ISO }),
+      projectFact({
+        id: "4",
+        entity: "fix-pr-1457-typecheck",
+        key: "related_session",
+        value: "agent:forge:subagent:fec9e6ed-0000-0000-0000-000000000001",
+      }),
+      projectFact({ id: "5", entity: "pr-stewardship-pr-1454", key: "status", value: "blocked" }),
+      projectFact({ id: "6", entity: "pr-stewardship-pr-1454", key: "next", value: "Merge pending." }),
+      projectFact({ id: "7", entity: "pr-stewardship-pr-1454", key: "task_updated", value: NOW_ISO }),
+      projectFact({
+        id: "8",
+        entity: "pr-stewardship-pr-1454",
+        key: "related_session",
+        value: "agent:pr-steward:subagent:69b0d87d-0000-0000-0000-000000000002",
+      }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI to finish the queue run." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("allow");
+  });
+
+  it("allows when active entity has related_session='pending' (unresolved placeholder)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "hybrid-memory-pr-merge-gate", key: "status", value: "in_progress" }),
+      projectFact({ id: "2", entity: "hybrid-memory-pr-merge-gate", key: "next", value: "Waiting for gate." }),
+      projectFact({ id: "3", entity: "hybrid-memory-pr-merge-gate", key: "task_updated", value: NOW_ISO }),
+      projectFact({ id: "4", entity: "hybrid-memory-pr-merge-gate", key: "related_session", value: "pending" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("allow");
+  });
+
+  it("allows when active entity has related_session set to a GitHub PR URL", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "hybrid-memory-pr1332", key: "status", value: "in_progress" }),
+      projectFact({ id: "2", entity: "hybrid-memory-pr1332", key: "next", value: "Final review." }),
+      projectFact({ id: "3", entity: "hybrid-memory-pr1332", key: "task_updated", value: NOW_ISO }),
+      projectFact({
+        id: "4",
+        entity: "hybrid-memory-pr1332",
+        key: "related_session",
+        value: "https://github.com/org/repo/pull/1332",
+      }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("allow");
+  });
+
+  it("blocks when active entity has no related_session fact for the current session (#1504)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "smoke-test", key: "status", value: "in_progress" }),
+      projectFact({ id: "2", entity: "smoke-test", key: "next", value: "Continue smoke test." }),
+      projectFact({ id: "3", entity: "smoke-test", key: "task_updated", value: NOW_ISO }),
+      // no related_session fact
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("related_session");
+  });
+
+  it("blocks when canonical agent:main:main ledger row applies to live telegram session (#1486)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "main-canonical-task", key: "status", value: "waiting" }),
+      projectFact({
+        id: "2",
+        entity: "main-canonical-task",
+        key: "related_session",
+        value: "agent:main:main",
+      }),
+      // missing: next, task_updated, wake_link
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("next");
+    expect(result.checkpoint.missingFields).toContain("task_updated");
+  });
+
+  it("allows when canonical agent:main:main ledger row is complete for live telegram session (#1486)", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "main-canonical-task", key: "status", value: "waiting" }),
+      projectFact({ id: "2", entity: "main-canonical-task", key: "next", value: "Recheck CI." }),
+      projectFact({ id: "3", entity: "main-canonical-task", key: "task_updated", value: NOW_ISO }),
+      projectFact({
+        id: "4",
+        entity: "main-canonical-task",
+        key: "related_session",
+        value: "agent:main:main",
+      }),
+      projectFact({ id: "5", entity: "main-canonical-task", key: "wake_at", value: "2026-05-10T08:41:00.000Z" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:telegram:bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("allow");
+    expect(result.checkpoint.projectFactsSatisfied).toBe(true);
+  });
+
+  it("still blocks when a session-owned entity lacks checkpoint fields", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "own-task", key: "status", value: "in_progress" }),
+      // missing: next, task_updated
+      projectFact({
+        id: "2",
+        entity: "own-task",
+        key: "related_session",
+        value: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
+      }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
+    });
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("next");
+    expect(result.checkpoint.missingFields).toContain("task_updated");
+    expect(result.checkpoint.missingFields).not.toContain("related_session");
+  });
+
+  // ── Fix C: tightened WAITING_OR_PENDING_RE (#1479) ──────────────────────────
+
+  it("does not treat batch-queue 'pending' language as unfinished workflow signal", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "How many issues are left?" },
+      { role: "assistant", content: "The script processes 10 pending source issues per run." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
+    expect(result.signals.waitingOrPending).toBe(false);
+    expect(result.action).toBe("allow");
+  });
+
+  it("still detects 'still pending' as an unfinished workflow signal", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "The CI run is still pending." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
+    expect(result.signals.waitingOrPending).toBe(true);
+  });
+
+  it("still detects 'pending review' as an unfinished workflow signal", () => {
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "The PR is pending review before merge." },
+    ];
+    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
+    expect(result.signals.waitingOrPending).toBe(true);
   });
 });

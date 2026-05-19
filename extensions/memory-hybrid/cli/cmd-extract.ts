@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
-import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
+import type { MemoryCategory } from "../config.js";
 import {
   getCronModelConfig,
   getDefaultCronModel,
@@ -92,6 +92,11 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
       subsystem: "cli",
       operation: "getSessionFilePathsSince",
     });
+    console.warn(
+      "[memory-hybrid] getSessionFilePathsSince: could not list session directory",
+      sessionDir,
+      (err as Error)?.message ?? String(err),
+    );
     return [];
   }
 }
