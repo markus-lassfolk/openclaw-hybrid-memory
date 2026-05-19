@@ -92,6 +92,11 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
       subsystem: "cli",
       operation: "getSessionFilePathsSince",
     });
+    console.warn(
+      "[memory-hybrid] getSessionFilePathsSince: could not list session directory",
+      sessionDir,
+      (err as Error)?.message ?? String(err),
+    );
     return [];
   }
 }
