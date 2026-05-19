@@ -139,6 +139,42 @@ describe("language-keywords", () => {
       expect(first).toBe(second);
     });
 
+    it("returns English only when file contains malformed JSON", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(join(tmpDir, ".language-keywords.json"), "{ this is not valid json }", "utf8");
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.triggers).toContain("remember");
+      expect(merged.triggers.length).toBe(ENGLISH_KEYWORDS.triggers.length);
+    });
+
+    it("returns English only when file contains valid JSON null", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(join(tmpDir, ".language-keywords.json"), "null", "utf8");
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.triggers).toContain("remember");
+      expect(merged.triggers.length).toBe(ENGLISH_KEYWORDS.triggers.length);
+    });
+
+    it("returns English only when file contains a JSON array", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(join(tmpDir, ".language-keywords.json"), '["not", "an", "object"]', "utf8");
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.triggers).toContain("remember");
+      expect(merged.triggers.length).toBe(ENGLISH_KEYWORDS.triggers.length);
+    });
+
+    it("returns English only when file contains a JSON number", async () => {
+      setKeywordsPath(tmpDir);
+      writeFileSync(join(tmpDir, ".language-keywords.json"), "42", "utf8");
+      await clearKeywordCache();
+      const merged = loadMergedKeywords();
+      expect(merged.triggers).toContain("remember");
+      expect(merged.triggers.length).toBe(ENGLISH_KEYWORDS.triggers.length);
+    });
+
     it("clearKeywordCache forces reload on next loadMergedKeywords", async () => {
       setKeywordsPath(tmpDir);
       writeFileSync(
