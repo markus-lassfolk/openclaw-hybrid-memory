@@ -9,12 +9,17 @@ if ! command -v openclaw >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required for release smoke checks (install jq or use a host that has it)." >&2
+  exit 1
+fi
+
 echo "== hybrid-mem verify --json (stdout must be valid JSON) =="
 json="$(openclaw hybrid-mem verify --json 2>/dev/null)" || {
   echo "verify --json failed (is hybrid-mem plugin installed and configured?)" >&2
   exit 1
 }
-echo "$json" | jq -e '.ok != null' >/dev/null
+echo "$json" | jq -e '.ok == true' >/dev/null
 echo "verify --json: ok"
 
 echo "== hybrid-mem skills rescan (dry validation of installed skills) =="
