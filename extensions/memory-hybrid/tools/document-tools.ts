@@ -478,7 +478,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       };
     }
 
-    if (!markdown || !markdown.trim()) {
+    if (!markdown?.trim()) {
       const response = makeErrorResponse("Document converted but produced no text content.", {
         error: "empty_content",
         path: realPath,

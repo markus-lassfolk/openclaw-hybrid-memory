@@ -50,10 +50,9 @@ export function computeFingerprint(input: string): string {
  * by the Rumination Engine.
  */
 export class EventBus extends BaseSqliteStore {
+  protected readonly dbPath: string;
   /** Tracks terminal closed state separately from base class field. */
   private _terminallyClosed = false;
-
-  private readonly dbPath: string;
 
   /**
    * Initializes the Event Bus database, creating the file and schema if needed.

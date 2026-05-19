@@ -10,7 +10,7 @@ import { registerSkillsCommands } from "../cli/skills.js";
 import { CATEGORY_SECTION_TAXONOMIES } from "../config/skill-sections.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
-import { GeneratedSkillValidationService, parseSkillFrontmatter } from "../services/generated-skill-validation.js";
+import { GeneratedSkillValidationService } from "../services/generated-skill-validation.js";
 import { crystallizeSkill } from "../services/skill-crystallizer.js";
 import { buildNonPlaceholderEmailPattern } from "../services/skill-validator.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
@@ -656,7 +656,8 @@ Bounded CLI release-health review workflow.
       const output = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { ok?: boolean; outputPath?: string };
       expect(output.ok).toBe(true);
       expect(output.outputPath).toBeDefined();
-      expect(existsSync(output.outputPath!)).toBe(true);
+      if (!output.outputPath) throw new Error("expected outputPath from skills install");
+      expect(existsSync(output.outputPath)).toBe(true);
     } finally {
       process.exitCode = undefined;
       cStore.close();

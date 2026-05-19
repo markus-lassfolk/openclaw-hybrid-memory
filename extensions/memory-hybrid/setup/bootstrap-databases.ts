@@ -157,6 +157,15 @@ export function startOllamaIfNeeded(cfg: HybridMemoryConfig, api: ClawdbotPlugin
 }
 
 /**
+ * Ollama auto-start: if any tier includes ollama/* models and localAutoStart is enabled,
+ * attempt to launch `ollama serve` in the background when the server is not already running.
+ * Delegates to `startOllamaIfNeeded`; retained for backwards-compatibility with external callers.
+ */
+export function maybeAutoStartOllama(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): void {
+  startOllamaIfNeeded(cfg, api);
+}
+
+/**
  * Initializes all databases and services for the plugin.
  *
  * This includes:

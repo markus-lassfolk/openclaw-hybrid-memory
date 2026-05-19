@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 import { _testing } from "../index.js";
 
 const {
@@ -46,7 +47,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
-function makeTmpOutputDir(): string {
+function _makeTmpOutputDir(): string {
   const dir = join(tmpDir, "skills-out");
   return dir;
 }
@@ -159,6 +160,58 @@ describe("CrystallizationStore.list", () => {
 
   it("respects limit", () => {
     expect(cStore.list({ limit: 1 }).length).toBe(1);
+  });
+
+  it("throws on invalid status typo (#1420)", () => {
+    expect(() => cStore.list({ status: "reject" as never })).toThrow(/Invalid status filter/i);
+  });
+});
+
+describe("CrystallizationStore.list ready / needs-override (#1420)", () => {
+  function stubValidation(decision: "allow" | "allow-with-override"): SkillProposalValidationResult {
+    return {
+      schemaVersion: 1,
+      validatedAt: "2026-01-01T00:00:00.000Z",
+      overallStatus: "passed",
+      approvalDecision: decision,
+      staticValidation: { status: "passed", violations: [], frontmatter: {}, safeOutputPath: "/tmp/x" },
+      dryLoadValidation: { status: "passed", violations: [], discovered: {} },
+      syntheticActivationEval: {
+        status: "passed",
+        score: 2,
+        cases: { positive: "a", negative: "b", edge: "c" },
+        results: { positiveMatched: true, negativeMatched: true, edgeMatched: true },
+        notes: [],
+      },
+      canarySession: { status: "not-run" },
+    };
+  }
+
+  it("maps ready and needs-override to validation decisions", () => {
+    const allow = cStore.create({
+      patternId: "pa",
+      evidenceHash: "ea",
+      skillName: "sa",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    cStore.saveValidationResult(allow.id, stubValidation("allow"));
+    const over = cStore.create({
+      patternId: "pb",
+      evidenceHash: "eb",
+      skillName: "sb",
+      skillContent: "#c",
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    cStore.saveValidationResult(over.id, stubValidation("allow-with-override"));
+    const ready = cStore.list({ status: "ready" });
+    expect(ready.map((p: { id: string }) => p.id)).toContain(allow.id);
+    expect(ready.map((p: { id: string }) => p.id)).not.toContain(over.id);
+    const need = cStore.list({ status: "needs-override" });
+    expect(need.map((p: { id: string }) => p.id)).toContain(over.id);
+    expect(need.map((p: { id: string }) => p.id)).not.toContain(allow.id);
   });
 });
 
@@ -737,13 +790,7 @@ describe("SkillValidator", () => {
     validator = new SkillValidator();
   });
 
-  function compactValidSkill(
-    extra: {
-      workflow?: string;
-      extraBody?: string;
-      includeRelated?: boolean;
-    } = {},
-  ): string {
+  function compactValidSkill(extra: { workflow?: string; extraBody?: string; includeRelated?: boolean } = {}): string {
     const workflow =
       extra.workflow ??
       "1. Use `read` to load inputs.\n2. Use `exec` only in dry-run mode.\n3. Verify outputs before continuing.";
