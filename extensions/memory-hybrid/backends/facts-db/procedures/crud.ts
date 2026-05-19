@@ -25,7 +25,7 @@ function reportUnexpectedProcedureEnum(field: "procedure_type" | "skill_state", 
 
 export function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"] {
   if (typeof value !== "string" || value.trim() === "") return "positive";
-  const trimmed = value.trim();
+  const trimmed = value.trim().toLowerCase();
   if (PROCEDURE_TYPE_SET.has(trimmed as ProcedureEntry["procedureType"])) {
     return trimmed as ProcedureEntry["procedureType"];
   }
@@ -586,7 +586,7 @@ export function listProceduresUpdatedInLastNDays(db: DatabaseSync, days: number,
     const cutoff = Math.floor(Date.now() / 1000) - clampedDays * 24 * 3600;
     const rows = db
       .prepare(
-        `SELECT * FROM procedures WHERE procedure_type = 'positive' AND updated_at >= ? AND promoted_to_skill = 0 ORDER BY updated_at DESC, created_at DESC LIMIT ?`,
+        `SELECT * FROM procedures WHERE ${POSITIVE_PROCEDURE_TYPE_SQL} AND updated_at >= ? AND promoted_to_skill = 0 ORDER BY updated_at DESC, created_at DESC LIMIT ?`,
       )
       .all(cutoff, limit) as Array<Record<string, unknown>>;
     return rows.map((r) => procedureRowToEntry(db, r));
