@@ -335,8 +335,10 @@ function sessionRefMatches(relatedSession: string, currentSession: string): bool
     const currentSessionType = currentParts[2];
     const relatedIsCanonicalSession = relatedParts.length === 3 && isCanonicalAgentSessionType(relatedSessionType);
     const currentIsCanonicalSession = currentParts.length === 3 && isCanonicalAgentSessionType(currentSessionType);
-    const relatedIsChannelScoped = relatedParts.length === 4 && !isCanonicalAgentSessionType(relatedSessionType);
-    const currentIsChannelScoped = currentParts.length === 4 && !isCanonicalAgentSessionType(currentSessionType);
+    const relatedIsChannelScoped =
+      relatedParts.length === 4 && relatedParts[3].length > 0 && !isCanonicalAgentSessionType(relatedSessionType);
+    const currentIsChannelScoped =
+      currentParts.length === 4 && currentParts[3].length > 0 && !isCanonicalAgentSessionType(currentSessionType);
     if (sameAgentId) {
       if (relatedIsCanonicalSession && currentIsChannelScoped) return true;
       if (currentIsCanonicalSession && relatedIsChannelScoped) return true;

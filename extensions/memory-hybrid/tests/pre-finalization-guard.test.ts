@@ -429,6 +429,28 @@ describe("pre-finalization guard", () => {
     expect(result.checkpoint.missingFields).toContain("related_session");
   });
 
+  it("does not treat empty-suffix channel session refs as valid matches", () => {
+    const facts: MemoryEntry[] = [
+      projectFact({ id: "1", entity: "issue-1486-empty-suffix", key: "status", value: "in_progress" }),
+      projectFact({ id: "2", entity: "issue-1486-empty-suffix", key: "next", value: "Continue processing." }),
+      projectFact({ id: "3", entity: "issue-1486-empty-suffix", key: "task_updated", value: NOW_ISO }),
+      projectFact({ id: "4", entity: "issue-1486-empty-suffix", key: "related_session", value: "agent:main:telegram:" }),
+    ];
+    const messages: unknown[] = [
+      { role: "user", content: "Status?" },
+      { role: "assistant", content: "Still waiting for CI." },
+    ];
+
+    const result = evaluatePreFinalizationGuard(messages, {
+      nowMs: NOW_MS,
+      projectFacts: facts,
+      sessionKey: "agent:main:main",
+    });
+
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("related_session");
+  });
+
   it("formats conditional wake/goal requirements in the guard message", () => {
     const result: PreFinalizationGuardResult = {
       action: "block",
