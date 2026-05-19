@@ -519,7 +519,15 @@ export function loadMergedKeywords(): MergedKeywords {
   if (existsSync(filePath)) {
     try {
       const raw = readFileSync(filePath, "utf8");
-      data = JSON.parse(raw) as LanguageKeywordsFile;
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        data = parsed as LanguageKeywordsFile;
+      } else {
+        capturePluginError(
+          new Error(`language-keywords file has unexpected shape: ${Array.isArray(parsed) ? "array" : typeof parsed}`),
+          { operation: "load-language-keywords", severity: "info", subsystem: "utils" },
+        );
+      }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "load-language-keywords",
