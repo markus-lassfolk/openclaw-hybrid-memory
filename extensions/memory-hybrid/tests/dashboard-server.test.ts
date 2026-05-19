@@ -28,7 +28,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fsUtils from "../utils/fs.js";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
 import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
@@ -277,22 +278,19 @@ describe("collectStatus", () => {
     expect(Number.isInteger(status.memory.vectorCount)).toBe(true);
   });
 
-  // Regression for broad-toctou-size-cache-check (Issue #1501):
-  // Concurrent calls must share a single in-flight traversal and both resolve
-  // to a valid, non-negative lanceSizeBytes without error.
-  it("concurrent collectStatus calls both resolve with valid lanceSizeBytes (TOCTOU regression)", async () => {
-    const [a, b] = await Promise.all([collectStatus(ctx), collectStatus(ctx)]);
-    expect(a.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
-    expect(b.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
-    // Both should agree on the same value (same path, same cache window)
-    expect(a.memory.lanceSizeBytes).toBe(b.memory.lanceSizeBytes);
-  });
-
-  it("second collectStatus call within TTL uses cached lanceSizeBytes (no duplicate traversal)", async () => {
-    const first = await collectStatus(ctx);
-    const second = await collectStatus(ctx);
-    expect(second.memory.lanceSizeBytes).toBe(first.memory.lanceSizeBytes);
-    expect(second.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+  it("shares one lance directory traversal across concurrent collectStatus calls (#1501)", async () => {
+    const isolatedCtx = makeContext(mkdtempSync(join(tmpdir(), "dashboard-lance-race-")));
+    const getDirSizeSpy = vi.spyOn(fsUtils, "getDirSize");
+    try {
+      const [a, b] = await Promise.all([collectStatus(isolatedCtx), collectStatus(isolatedCtx)]);
+      expect(getDirSizeSpy).toHaveBeenCalledTimes(1);
+      expect(a.memory.lanceSizeBytes).toBe(b.memory.lanceSizeBytes);
+      expect(a.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+    } finally {
+      getDirSizeSpy.mockRestore();
+      isolatedCtx.factsDb.close();
+      isolatedCtx.vectorDb.close();
+    }
   });
 });
 

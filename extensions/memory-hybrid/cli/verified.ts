@@ -68,42 +68,34 @@ export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext
     .option("--max <n>", "Maximum items to inspect (default: 100)")
     .option("--json", "Emit structured JSON")
     .action(
-      withExit(
-        async (opts?: {
-          dryRun?: boolean;
-          apply?: boolean;
-          policy?: string;
-          max?: string;
-          json?: boolean;
-        }) => {
-          if (opts?.dryRun && opts?.apply) throw new Error("Use only one of --dry-run or --apply");
-          const mode = opts?.apply ? "apply" : "dry-run";
-          const policy: VerifiedTriagePolicy = assertVerifiedTriagePolicy(String(opts?.policy ?? "report-only"));
-          if (mode === "apply" && policy === "report-only") {
-            throw new Error(
-              "Policy report-only is preview-only; use --dry-run or choose --policy classify/apply-obvious.",
-            );
-          }
-          const max = parsePositiveInt(opts?.max, 100);
-          const store =
-            mode === "apply" && policy !== "report-only"
-              ? new PendingAutopilotStore(resolvePendingAutopilotPath(ctx))
-              : null;
-          try {
-            const result = await runVerifiedFactTriage(ctx.factsDb, {
-              mode,
-              policy,
-              max,
-              reverificationDays: ctx.reverificationDays,
-              store,
-            });
-            if (opts?.json) console.log(JSON.stringify(result, null, 2));
-            else printHumanTriage(result);
-          } finally {
-            store?.close();
-          }
-        },
-      ),
+      withExit(async (opts?: { dryRun?: boolean; apply?: boolean; policy?: string; max?: string; json?: boolean }) => {
+        if (opts?.dryRun && opts?.apply) throw new Error("Use only one of --dry-run or --apply");
+        const mode = opts?.apply ? "apply" : "dry-run";
+        const policy: VerifiedTriagePolicy = assertVerifiedTriagePolicy(String(opts?.policy ?? "report-only"));
+        if (mode === "apply" && policy === "report-only") {
+          throw new Error(
+            "Policy report-only is preview-only; use --dry-run or choose --policy classify/apply-obvious.",
+          );
+        }
+        const max = parsePositiveInt(opts?.max, 100);
+        const store =
+          mode === "apply" && policy !== "report-only"
+            ? new PendingAutopilotStore(resolvePendingAutopilotPath(ctx))
+            : null;
+        try {
+          const result = await runVerifiedFactTriage(ctx.factsDb, {
+            mode,
+            policy,
+            max,
+            reverificationDays: ctx.reverificationDays,
+            store,
+          });
+          if (opts?.json) console.log(JSON.stringify(result, null, 2));
+          else printHumanTriage(result);
+        } finally {
+          store?.close();
+        }
+      }),
     );
 }
 

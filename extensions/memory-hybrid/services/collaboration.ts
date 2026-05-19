@@ -4,7 +4,6 @@
  */
 
 import { createRequire } from "node:module";
-import type { FactsDB } from "../backends/facts-db.js";
 
 const require = createRequire(import.meta.url);
 
@@ -99,7 +98,7 @@ export interface Activity {
 export class CollaborationService {
   private db: { exec(sql: string): void; prepare(sql: string): any; close?(): void };
 
-  constructor(private sqlitePath: string) {
+  constructor(sqlitePath: string) {
     this.db = new (require("node:sqlite").DatabaseSync)(sqlitePath);
     this.initSchema();
   }

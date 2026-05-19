@@ -25,6 +25,7 @@ export const AGENT_TOOL_CONTRACT_NAMES = [
   "memory_crystallize_approve",
   "memory_crystallize_list",
   "memory_crystallize_reject",
+  "memory_crystallize_skills_rescan",
   "memory_directory",
   "memory_edict_stats",
   "memory_forget",

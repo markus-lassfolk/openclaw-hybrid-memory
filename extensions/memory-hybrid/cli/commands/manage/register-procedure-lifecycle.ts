@@ -134,13 +134,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--json", "Emit JSON")
     .action(
       withExit(
-        async (opts?: {
-          status?: string;
-          notPromoted?: boolean;
-          limit?: string;
-          policy?: string;
-          json?: boolean;
-        }) => {
+        async (opts?: { status?: string; notPromoted?: boolean; limit?: string; policy?: string; json?: boolean }) => {
           const status = opts?.status === "all" ? "all" : "validated";
           const limit = Number.parseInt(opts?.limit ?? "50", 10);
           if (!Number.isFinite(limit) || limit < 1) {
@@ -163,6 +157,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             const evaluation = evaluateProcedureForPromotion(item, policy, {
               skillsAutoPath: resolvedSkillsAutoPath,
               validationThreshold: cfg.procedures.validationThreshold,
+              contextSpecificTaskPatterns: cfg.procedures.promotionContextSpecificPatterns,
             });
             return {
               ...row,
@@ -298,6 +293,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               apply,
               policy: opts?.policy,
               requireValidation: opts?.force !== true,
+              promotionContextSpecificPatterns: cfg.procedures.promotionContextSpecificPatterns,
               ...(inRunSkillCandidates ? { inRunSkillCandidates } : {}),
             },
             { info: (s) => console.log(s), warn: (s) => console.warn(s) },

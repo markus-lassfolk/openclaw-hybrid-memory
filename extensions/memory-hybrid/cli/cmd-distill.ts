@@ -9,11 +9,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-import type { HybridMemoryConfig } from "../config.js";
 import {
   getCronModelConfig,
   getDefaultCronModel,
-  getLLMModelPreference,
   describeMaintenanceFallbackPolicy,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
@@ -49,6 +47,7 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { chunkSessionText, estimateTokens } from "../utils/text.js";
 import { getMaxMtime } from "./cmd-extract.js";
+import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
 import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
@@ -96,39 +95,6 @@ export function gatherSessionFiles(opts: {
   }
   out.sort((a, b) => a.mtime - b.mtime);
   return out;
-}
-
-/**
- * Extract text content from session JSONL file
- */
-function extractTextFromSessionJsonl(filePath: string): string {
-  const lines = readFileSync(filePath, "utf-8").split("\n");
-  const parts: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const obj = JSON.parse(trimmed) as {
-        type?: string;
-        message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
-      };
-      if (obj.type !== "message" || !obj.message) continue;
-      const msg = obj.message;
-      if (msg.role !== "user" && msg.role !== "assistant") continue;
-      const content = msg.content;
-      if (!Array.isArray(content)) continue;
-      for (const block of content) {
-        if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
-          parts.push(block.text.trim());
-        }
-      }
-    } catch {
-      // NOTE: Intentionally NOT using capturePluginError here to avoid flooding
-      // error logs with JSON parse errors from malformed session lines.
-      // This is a best-effort parser; we skip bad lines silently.
-    }
-  }
-  return parts.join("\n\n");
 }
 
 export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boolean }): DistillWindowResult {

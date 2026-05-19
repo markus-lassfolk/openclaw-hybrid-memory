@@ -94,9 +94,9 @@ const MAX_SKILL_CHARS = 16_000;
 // MAX_SKILL_LINES is imported from config/skill-sections.ts — the single source of truth
 // shared with SkillValidator (issue #1366).
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
-const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
-const EXPLANATION_PATTERN = /\b(?:explain|describe|summarize|review)\b/;
+const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+-]|z)+/i;
 const NEGATION_PATTERN = /\b(?:without|do not|don't|avoid)\b/;
+const EXPLANATION_PATTERN = /\b(?:explain|describe)\b/;
 const STOP_WORDS = new Set([
   "about",
   "after",
@@ -588,12 +588,11 @@ function scoreActivationPrompt(prompt: string, sourceText: string): { matched: b
   const normalizedPrompt = prompt.toLowerCase();
   const normalizedSource = sourceText.toLowerCase();
   if (/\b(?:run|follow|execute|process|perform|use)\b/.test(normalizedPrompt)) score += 1;
-  if (EXPLANATION_PATTERN.test(normalizedPrompt)) {
-    if (EXPLANATION_PATTERN.test(normalizedSource)) score += 1;
-    else score -= 1;
-  }
   if (NEGATION_PATTERN.test(normalizedPrompt) && !NEGATION_PATTERN.test(normalizedSource)) {
-    score -= 2;
+    // Edge prompts intentionally reuse trigger terms while saying not to execute.
+    // Treat those as non-matches for action workflows, while still allowing
+    // explanation-style skills to warn when they would over-trigger.
+    score -= EXPLANATION_PATTERN.test(normalizedSource) ? 2 : overlap + 2;
   }
   const isShortPrompt = promptWords.size <= 2;
   const minimumOverlap = isShortPrompt ? 1 : 2;

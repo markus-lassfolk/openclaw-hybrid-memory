@@ -242,7 +242,7 @@ export function getDistillMaxOutputTokens(model: string): number {
 /**
  * Context window in tokens (for hints or context-audit). Returns 128_000 for unknown models.
  */
-function getContextWindow(model: string): number {
+function _getContextWindow(model: string): number {
   const cap = getModelCapabilities(model);
   return cap?.contextWindow ?? DEFAULT_CAPABILITIES.contextWindow;
 }
