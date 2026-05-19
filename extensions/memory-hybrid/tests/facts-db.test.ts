@@ -140,6 +140,55 @@ describe("FactsDB.store", () => {
     const fetched = db.getById(entry.id);
     expect(fetched?.why).toBe("Jest startup overhead was slowing local CI feedback loops");
   });
+
+  it("retries a transient SQLITE_BUSY lock during store", () => {
+    const sqlite = (db as any).db;
+    const originalPrepare = sqlite.prepare;
+    let failOnce = true;
+    let interceptedRuns = 0;
+
+    sqlite.prepare = (sql: string) => {
+      const stmt = originalPrepare.call(sqlite, sql);
+      if (sql.includes("INSERT INTO facts")) {
+        return new Proxy(stmt, {
+          get(target, prop, receiver) {
+            if (prop === "run") {
+              return (...args: unknown[]) => {
+                interceptedRuns += 1;
+                if (failOnce) {
+                  failOnce = false;
+                  const err = new Error("SQLITE_BUSY: database is locked");
+                  (err as any).code = "SQLITE_BUSY";
+                  throw err;
+                }
+                return (target as any).run(...args);
+              };
+            }
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      }
+      return stmt;
+    };
+
+    try {
+      const entry = db.store({
+        text: "Retry SQLITE_BUSY once and succeed",
+        category: "fact",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      expect(entry.id).toBeDefined();
+      expect(interceptedRuns).toBe(2);
+      expect(db.count()).toBe(1);
+    } finally {
+      sqlite.prepare = originalPrepare;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
