@@ -694,9 +694,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         .prepare(
           "SELECT status, evidence_hash, pattern_snapshot FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
         )
-        .get(patternId) as
-        | { status?: string; evidence_hash?: string; pattern_snapshot?: string }
-        | undefined;
+        .get(patternId) as { status?: string; evidence_hash?: string; pattern_snapshot?: string } | undefined;
       if (!row) return false;
       if (row.status !== "rejected" && row.status !== "quarantined") return false;
 
