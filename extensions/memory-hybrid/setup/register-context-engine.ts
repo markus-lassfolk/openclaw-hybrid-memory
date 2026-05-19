@@ -1,10 +1,7 @@
 import type { PluginRuntime } from "../api/plugin-runtime.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-type ContextEngineRegistrationRuntime = Pick<
-  PluginRuntime,
-  "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg"
->;
+type ContextEngineRegistrationRuntime = Pick<PluginRuntime, "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg">;
 
 type ContextEngineRegistrar = (opts: {
   factsDb: ContextEngineRegistrationRuntime["factsDb"];

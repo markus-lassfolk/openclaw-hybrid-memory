@@ -19,15 +19,19 @@ describe("registerContextEngineBestEffort", () => {
     capturePluginErrorMock.mockClear();
   });
 
-  it("registers context engine when loader succeeds", async () => {
-    const logger = { warn: vi.fn() };
-    const runtime = {
+  function makeRuntime() {
+    return {
       factsDb: {} as unknown,
       vectorDb: {} as unknown,
-      wal: {} as unknown,
+      wal: null,
       embeddings: {} as unknown,
       cfg: {} as unknown,
     } as Parameters<typeof registerContextEngineBestEffort>[0]["runtime"];
+  }
+
+  it("registers context engine when loader succeeds", async () => {
+    const logger = { warn: vi.fn() };
+    const runtime = makeRuntime();
     const registerHybridContextEngine = vi.fn();
 
     registerContextEngineBestEffort({
@@ -54,13 +58,7 @@ describe("registerContextEngineBestEffort", () => {
 
   it("reports and warns when loader rejects", async () => {
     const logger = { warn: vi.fn() };
-    const runtime = {
-      factsDb: {} as unknown,
-      vectorDb: {} as unknown,
-      wal: null,
-      embeddings: {} as unknown,
-      cfg: {} as unknown,
-    } as Parameters<typeof registerContextEngineBestEffort>[0]["runtime"];
+    const runtime = makeRuntime();
 
     registerContextEngineBestEffort({
       runtime,
@@ -69,6 +67,54 @@ describe("registerContextEngineBestEffort", () => {
       loadContextEngine: async () => {
         throw new Error("loader failed");
       },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(capturePluginErrorMock).toHaveBeenCalledWith(expect.any(Error), {
+      subsystem: "registration",
+      operation: "plugin-register:context-engine",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("ContextEngine registration skipped"));
+  });
+
+  it("reports and warns when registrar throws", async () => {
+    const logger = { warn: vi.fn() };
+    const runtime = makeRuntime();
+
+    registerContextEngineBestEffort({
+      runtime,
+      logger,
+      pluginVersion: "2026.5.0",
+      loadContextEngine: async () => ({
+        registerHybridContextEngine: () => {
+          throw new Error("registrar failed");
+        },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(capturePluginErrorMock).toHaveBeenCalledWith(expect.any(Error), {
+      subsystem: "registration",
+      operation: "plugin-register:context-engine",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("ContextEngine registration skipped"));
+  });
+
+  it("reports and warns when registrar returns a rejected promise", async () => {
+    const logger = { warn: vi.fn() };
+    const runtime = makeRuntime();
+
+    registerContextEngineBestEffort({
+      runtime,
+      logger,
+      pluginVersion: "2026.5.0",
+      loadContextEngine: async () => ({
+        registerHybridContextEngine: async () => {
+          throw new Error("registrar rejected");
+        },
+      }),
     });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
