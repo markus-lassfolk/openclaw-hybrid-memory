@@ -5,7 +5,7 @@ import type { ProcedureEntry, ScopeFilter } from "../../../types/memory.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
 import { scopeFilterClausePositional } from "../scope-sql.js";
 
-import { procedureRowToEntry } from "./crud.js";
+import { procedureRowToEntry, procedureTypeSortRank } from "./crud.js";
 
 export function searchProcedures(
   db: DatabaseSync,
@@ -50,8 +50,8 @@ export function searchProcedures(
 
     // Sort by procedure_type (positive first), then boosted score, then validation
     scored.sort((a, b) => {
-      const typeA = (a.procedure_type as string) === "positive" ? 1 : 0;
-      const typeB = (b.procedure_type as string) === "positive" ? 1 : 0;
+      const typeA = procedureTypeSortRank(a.procedure_type);
+      const typeB = procedureTypeSortRank(b.procedure_type);
       if (typeB !== typeA) return typeB - typeA;
       if (b.boostedScore !== a.boostedScore) return b.boostedScore - a.boostedScore;
       const lastValA = (a.last_validated as number) ?? 0;
