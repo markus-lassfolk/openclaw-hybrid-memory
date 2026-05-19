@@ -147,6 +147,9 @@ export function installHybridMemoryWorkspaceSkill(opts: {
     const tmpDir = skillTmpDir(skillsDir);
     try {
       cpSync(srcDir, tmpDir, { recursive: true });
+      if (existsSync(destDir)) {
+        rmSync(destDir, { recursive: true, force: true });
+      }
       renameSync(tmpDir, destDir);
     } catch (copyErr) {
       try {
