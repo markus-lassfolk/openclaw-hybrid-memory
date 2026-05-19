@@ -93,8 +93,10 @@ export function detectCrystallizationCandidates(
     // inputs (tool sequence / example goals / metric milestones) changed.
     try {
       if (
-        crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash) ||
-        crystallizationStore.isRejectedWithSameEvidence(patternId, legacyEvidenceHash)
+        crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash, {
+          legacyEvidenceHash,
+          evidenceCountBucketSize: cfg.evidenceCountBucketSize,
+        })
       ) {
         continue;
       }

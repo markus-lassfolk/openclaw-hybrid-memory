@@ -38,10 +38,27 @@ describe("legacy crystallization evidence hashes", () => {
         rejectionReason: "human: not useful",
       });
 
-      // Legacy hash stored, but new evidence hash includes metrics
-      // Should return false (not rejected with same evidence) because hashes don't match
+      const milestoneHash = computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 });
+      const legacyHash = computeLegacyEvidenceHash(pattern);
+
+      // Milestone-only check: stored legacy hash does not equal milestone hash string
+      expect(store.isRejectedWithSameEvidence(patternId, milestoneHash)).toBe(false);
+
+      // Legacy-stored rejection with unchanged metrics since snapshot: still suppressed
       expect(
-        store.isRejectedWithSameEvidence(patternId, computeEvidenceHash(pattern, { evidenceCountBucketSize: 5 })),
+        store.isRejectedWithSameEvidence(patternId, milestoneHash, {
+          legacyEvidenceHash: legacyHash,
+          evidenceCountBucketSize: 5,
+        }),
+      ).toBe(true);
+
+      const crossedMetrics: WorkflowPattern = { ...pattern, totalCount: 95, successRate: 1 };
+      const crossedMilestoneHash = computeEvidenceHash(crossedMetrics, { evidenceCountBucketSize: 5 });
+      expect(
+        store.isRejectedWithSameEvidence(patternId, crossedMilestoneHash, {
+          legacyEvidenceHash: computeLegacyEvidenceHash(crossedMetrics),
+          evidenceCountBucketSize: 5,
+        }),
       ).toBe(false);
     } finally {
       store.close();
