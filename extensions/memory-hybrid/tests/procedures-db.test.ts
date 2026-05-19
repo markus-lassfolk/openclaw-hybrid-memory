@@ -672,7 +672,7 @@ describe("FactsDB procedureFeedback", () => {
 
     const result = db.getProcedureById(proc.id);
     expect(result?.id).toBe(proc.id);
-    expect(result?.avoidanceNotes).toEqual([]);
+    expect(result?.avoidanceNotes).toBeUndefined();
   });
 
   it("procedureFeedback keeps only string avoidance notes from previous versions", () => {
