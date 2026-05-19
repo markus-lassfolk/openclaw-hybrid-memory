@@ -5,7 +5,6 @@
  * Single timeout: 60s.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../../config.js";
@@ -30,6 +29,7 @@ import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humani
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
+import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { extractTags } from "../../utils/tags.js";
 import { truncateForStorage } from "../../utils/text.js";
@@ -830,14 +830,13 @@ export async function runCapture(
       const allText = texts.join("\n");
       const detected = detectCredentialPatterns(allText);
       if (detected.length > 0) {
-        await mkdir(dirname(pendingPath), { recursive: true });
-        await writeFile(
+        // Write atomically (temp-then-rename) to avoid partial state on crash.
+        atomicWriteFile(
           pendingPath,
           JSON.stringify({
             hints: detected.map((d) => d.hint),
             at: Date.now(),
           }),
-          "utf-8",
         );
         api.logger.info(
           `memory-hybrid: credential patterns detected (${detected.map((d) => d.hint).join(", ")}) — will prompt next turn`,
