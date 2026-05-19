@@ -168,7 +168,7 @@ export function findShortestPath(
  * @returns Resolved fact ID, or null if not resolvable.
  */
 export function resolveInput(db: ShortestPathLookup, input: string): string | null {
-  if (!input || !input.trim()) return null;
+  if (!input?.trim()) return null;
   const trimmed = input.trim();
 
   // Try as a direct fact ID first

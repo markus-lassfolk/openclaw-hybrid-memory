@@ -103,14 +103,11 @@ export function captureAgentEndHandler(ctx: LifecycleContext): AgentEndHandler {
 
 export async function invokeAgentEnd(
   handler: AgentEndHandler,
-  api: MockHookApi,
+  _api: MockHookApi,
   messages: unknown[],
   sessionKey: string,
 ): Promise<void> {
-  await handler(
-    { messages, success: true },
-    { sessionKey, sessionId: sessionKey, agentId: "main" },
-  );
+  await handler({ messages, success: true }, { sessionKey, sessionId: sessionKey, agentId: "main" });
 }
 
 export { PreFinalizationGuardBlockingError };

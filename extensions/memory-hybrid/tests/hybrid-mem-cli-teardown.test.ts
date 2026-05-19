@@ -52,9 +52,7 @@ function makeCliRegistrationContext(workspace: string): HybridMemCliRegistration
   };
 }
 
-function makeMockApi(registerCapture: {
-  callback: ((opts: { program: Command }) => void) | null;
-}): ClawdbotPluginApi {
+function makeMockApi(registerCapture: { callback: ((opts: { program: Command }) => void) | null }): ClawdbotPluginApi {
   return {
     logger: {
       info: () => {},

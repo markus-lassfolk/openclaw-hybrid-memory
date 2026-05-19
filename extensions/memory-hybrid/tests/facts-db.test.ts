@@ -1300,7 +1300,7 @@ describe("FactsDB bi-temporal", () => {
       supersedesId: old.id,
     });
     db.supersede(old.id, newer.id);
-    const supersessionTime = db.getById(old.id)?.validUntil!;
+    const supersessionTime = db.getById(old.id)!.validUntil;
 
     const current = db.search("theme", 5);
     expect(current.some((r) => r.entry.id === newer.id)).toBe(true);
@@ -1367,7 +1367,7 @@ describe("FactsDB bi-temporal", () => {
       supersedesId: old.id,
     });
     db.supersede(old.id, newer.id);
-    const supersessionTime = db.getById(old.id)?.validUntil!;
+    const supersessionTime = db.getById(old.id)!.validUntil;
 
     const at1500 = db.lookup("Entity", "key", undefined, { asOf: 1500 });
     expect(at1500.length).toBe(1);
@@ -1483,11 +1483,11 @@ describe.skip("FactsDB.updateFact", () => {
       value: null,
       source: "test",
     });
-    // @ts-ignore
-    // @ts-ignore
-    // @ts-ignore
+    // @ts-expect-error
+    // @ts-expect-error
+    // @ts-expect-error
     db.updateFact(entry.id, { text: "Updated text" });
-    // @ts-ignore
+    // @ts-expect-error
     const updated = db.getById(entry.id);
     expect(updated?.text).toBe("Updated text");
     expect(updated?.confidence).toBe(1.0);
@@ -1503,15 +1503,15 @@ describe.skip("FactsDB.updateFact", () => {
       value: "blue",
       source: "test",
     });
-    // @ts-ignore
+    // @ts-expect-error
     db.updateFact(entry.id, { value: "green" });
     const updated = db.getById(entry.id);
-    // @ts-ignore
+    // @ts-expect-error
     expect(updated?.value).toBe("green");
   });
 
   it("returns false for non-existent id", () => {
-    // @ts-ignore
+    // @ts-expect-error
     expect(db.updateFact("nonexistent", { text: "nope" })).toBe(false);
   });
 });
@@ -3488,7 +3488,7 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(updated?.lastAccessedAt).toBeDefined();
     expect(updated?.lastAccessedAt).not.toBeNull();
     // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-    expect(updated?.lastAccessedAt!).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(updated!.lastAccessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 
   it("refreshAccessedFacts increments access_count cumulatively", () => {

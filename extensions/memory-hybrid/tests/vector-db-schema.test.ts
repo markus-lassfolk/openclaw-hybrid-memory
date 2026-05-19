@@ -433,71 +433,66 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
     await db.close();
   });
 
-  it.fails(
-    "issue #1464: storeSemanticQueryCache survives prune when cache table is cleared mid-flight",
-    async () => {
-      const db = new VectorDB(lanceDir, CORRECT_DIM);
-      await db.storeSemanticQueryCache({
-        queryText: "warm",
-        vector: [1, 0, 0],
-        factIds: ["warm"],
-        filterKey: "race",
-      });
+  it.fails("issue #1464: storeSemanticQueryCache survives prune when cache table is cleared mid-flight", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.storeSemanticQueryCache({
+      queryText: "warm",
+      vector: [1, 0, 0],
+      factIds: ["warm"],
+      filterKey: "race",
+    });
 
-      const internal = db as unknown as {
-        semanticQueryCacheTable: unknown;
-        pruneSemanticQueryCache: (filterKey: string) => Promise<void>;
-      };
-      const realPrune = internal.pruneSemanticQueryCache.bind(db);
-      vi.spyOn(db as object, "pruneSemanticQueryCache" as never).mockImplementation(async (filterKey: string) => {
-        internal.semanticQueryCacheTable = null;
-        await realPrune(filterKey);
-      });
+    const internal = db as unknown as {
+      semanticQueryCacheTable: unknown;
+      pruneSemanticQueryCache: (filterKey: string) => Promise<void>;
+    };
+    const realPrune = internal.pruneSemanticQueryCache.bind(db);
+    const pruneSpy = vi.spyOn(internal, "pruneSemanticQueryCache");
+    pruneSpy.mockImplementation(async (filterKey: string) => {
+      internal.semanticQueryCacheTable = null;
+      await realPrune(filterKey);
+    });
 
-      await db.storeSemanticQueryCache({
-        queryText: "race query",
-        vector: [1, 0, 0],
-        factIds: ["fact-race"],
-        filterKey: "race",
-      });
+    await db.storeSemanticQueryCache({
+      queryText: "race query",
+      vector: [1, 0, 0],
+      factIds: ["fact-race"],
+      filterKey: "race",
+    });
 
-      expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
-      await db.close();
-    },
-  );
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
 
-  it(
-    "issue #1464: concurrent storeSemanticQueryCache during repair does not throw to caller",
-    async () => {
-      const db = new VectorDB(lanceDir, CORRECT_DIM);
-      await db.storeSemanticQueryCache({
-        queryText: "warm",
-        vector: [1, 0, 0],
-        factIds: ["warm"],
+  it("issue #1464: concurrent storeSemanticQueryCache during repair does not throw to caller", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.storeSemanticQueryCache({
+      queryText: "warm",
+      vector: [1, 0, 0],
+      factIds: ["warm"],
+      filterKey: "concurrent-race",
+    });
+
+    const internal = db as unknown as {
+      semanticQueryCacheRepairPromise: Promise<void> | null;
+    };
+    const slowRepair = new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    internal.semanticQueryCacheRepairPromise = slowRepair;
+
+    await expect(
+      db.storeSemanticQueryCache({
+        queryText: "during-repair",
+        vector: [0, 1, 0],
+        factIds: ["during-repair"],
         filterKey: "concurrent-race",
-      });
+      }),
+    ).resolves.toBeUndefined();
 
-      const internal = db as unknown as {
-        semanticQueryCacheRepairPromise: Promise<void> | null;
-      };
-      const slowRepair = new Promise<void>((resolve) => {
-        setTimeout(resolve, 50);
-      });
-      internal.semanticQueryCacheRepairPromise = slowRepair;
-
-      await expect(
-        db.storeSemanticQueryCache({
-          queryText: "during-repair",
-          vector: [0, 1, 0],
-          factIds: ["during-repair"],
-          filterKey: "concurrent-race",
-        }),
-      ).resolves.toBeUndefined();
-
-      await slowRepair;
-      await db.close();
-    },
-  );
+    await slowRepair;
+    await db.close();
+  });
 });
 
 // ---------------------------------------------------------------------------

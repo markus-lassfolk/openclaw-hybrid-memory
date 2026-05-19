@@ -5,16 +5,9 @@ import { parseDuration } from "../../utils/duration.js";
 import { resolveWorkspacePath } from "../../utils/path.js";
 import type { MemoryToolsContext } from "./types.js";
 import type { MemoryToolRuntime } from "./runtime.js";
-import {
-  isEdictWriteToolEnabled,
-  sanitizeScopeParam,
-  storeRegistryEmbeddings,
-} from "./helpers.js";
+import { isEdictWriteToolEnabled, sanitizeScopeParam, storeRegistryEmbeddings } from "./helpers.js";
 
-export function buildMemoryToolRuntime(
-  resolvedContext: MemoryToolsContext,
-  api: ClawdbotPluginApi,
-): MemoryToolRuntime {
+export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api: ClawdbotPluginApi): MemoryToolRuntime {
   const {
     factsDb,
     edictStore,
@@ -67,8 +60,7 @@ export function buildMemoryToolRuntime(
     factId: string,
     factScope: string | null | undefined,
   ): Promise<void> => {
-    if (!activeTaskCfg || !activeTaskCfg.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath)
-      return;
+    if (!activeTaskCfg?.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath) return;
     if (factCategory !== TASK_LEDGER_CATEGORY) return;
     if ((factScope ?? "global") !== "global") return;
     await refreshActiveTaskProjectionBestEffort({

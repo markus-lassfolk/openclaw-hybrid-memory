@@ -1,50 +1,24 @@
-// @ts-nocheck
-import { getEnv } from "../utils/env-manager.js";
-/**
- * Build HybridMemCliContext from handler context and services.
- * Moves CLI wiring out of index.ts so the plugin entry stays small.
- */
-
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
-import type { Command } from "commander";
+import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { ActiveTaskContext } from "../cli/active-tasks.js";
-import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
-import type { HandlerContext } from "../cli/handlers.js";
-import * as handlers from "../cli/handlers.js";
-import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../cli/hybrid-mem-commander-utils.js";
-import { applyApprovedProposal } from "../cli/proposals.js";
-import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
-import type { FindDuplicatesResult } from "../cli/types.js";
-import {
-  getCronModelConfig,
-  getDefaultCronModel,
-  getMemoryCategories,
-  hybridConfigSchema,
-  resolveReflectionModelAndFallbacks,
-} from "../config.js";
-import { runClassifyForCli } from "../services/auto-classifier.js";
-import { runConsolidate } from "../services/consolidation.js";
-import { type VerificationCycleResult, runVerificationCycle } from "../services/continuous-verifier.js";
-import { readGuardTimestampMs } from "../services/cron-guard.js";
-import { type DreamCycleResult, runDreamCycle } from "../services/dream-cycle.js";
-import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { runExport } from "../services/export-memory.js";
-import { runFindDuplicates } from "../services/find-duplicates.js";
-import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
-import { mergeResults } from "../services/merge-results.js";
-import { runPersonaProposalTriage, validatePersonaPolicy } from "../services/persona-proposal-triage.js";
-import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
-import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
-import { parseSourceDate } from "../utils/dates.js";
-import { parseDuration } from "../utils/duration.js";
-import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
-import { versionInfo } from "../versionInfo.js";
+import type { HandlerContext } from "../../cli/handlers.js";
+import type { HybridMemCliContext } from "../../cli/register.js";
+import type { FindDuplicatesResult } from "../../cli/types.js";
+import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../../config.js";
+import { runClassifyForCli } from "../../services/auto-classifier.js";
+import { runConsolidate } from "../../services/consolidation.js";
+import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
+import { type DreamCycleResult, runDreamCycle } from "../../services/dream-cycle.js";
+import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
+import { runExport } from "../../services/export-memory.js";
+import { runFindDuplicates } from "../../services/find-duplicates.js";
+import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
+import { mergeResults } from "../../services/merge-results.js";
+import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
+import { parseSourceDate } from "../../utils/dates.js";
+import { resolveTierPreferenceWithSources } from "../../utils/llm-selection.js";
+import { pluginLogger } from "../../utils/logger.js";
+import { versionInfo } from "../../versionInfo.js";
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
 interface CliContextServices {
@@ -96,18 +70,13 @@ interface CliContextServices {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: {
-    limit: number;
-    dryRun: boolean;
-    model?: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
     skipped?: boolean;
     pendingFactIds?: string[];
-    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
+    enrichedFacts?: import("../../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
   }>;
   runExport: (opts: {
     outputPath: string;
@@ -142,24 +111,27 @@ export interface HybridMemCliRegistrationContext {
   identityReflectionStore: HandlerContext["identityReflectionStore"];
   personaStateStore: HandlerContext["personaStateStore"];
   crystallizationStore?: HandlerContext["crystallizationStore"];
-  verificationStore?: import("../services/verification-store.js").VerificationStore | null;
-  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
+  verificationStore?: import("../../services/verification-store.js").VerificationStore | null;
+  provenanceService?: import("../../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
   detectCategory: HandlerContext["detectCategory"];
   /** Optional event log for episodic consolidation in dream cycle. */
-  eventLog?: import("../backends/event-log.js").EventLog | null;
+  eventLog?: import("../../backends/event-log.js").EventLog | null;
   /** LLM cost tracker (Issue #270). */
-  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  costTracker?: import("../../backends/cost-tracker.js").CostTracker | null;
   /** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
-  eventBus?: import("../backends/event-bus.js").EventBus | null;
+  eventBus?: import("../../backends/event-bus.js").EventBus | null;
   /** Audit log (Issue #790). */
-  auditStore?: import("../backends/audit-store.js").AuditStore | null;
-  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  auditStore?: import("../../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
-function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
+export function buildCliContextServices(
+  ctx: HybridMemCliRegistrationContext,
+  api: ClawdbotPluginApi,
+): CliContextServices {
   const {
     factsDb,
     vectorDb,

@@ -2,10 +2,10 @@
  * LanceDB VectorDB class implementation.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve as pathResolve } from "node:path";
+import { isAbsolute, join, resolve as pathResolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
@@ -2034,4 +2034,3 @@ export class VectorDB {
     return { ...this.degradedState };
   }
 }
-

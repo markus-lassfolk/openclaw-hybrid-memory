@@ -554,10 +554,7 @@ describe("sensor-sweep Home Assistant fetch boundaries (#1476)", () => {
   });
 
   beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn() as typeof fetch,
-    );
+    vi.stubGlobal("fetch", vi.fn() as typeof fetch);
   });
 
   afterEach(() => {

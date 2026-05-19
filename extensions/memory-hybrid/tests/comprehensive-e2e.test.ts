@@ -9,18 +9,14 @@
  * Requires Node >= 22.16 (node:sqlite).
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hybridConfigSchema } from "../config.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { PreFinalizationGuardBlockingError } from "../services/pre-finalization-guard.js";
 import { _testing } from "../index.js";
-import {
-  benignFinalizationMessages,
-  pendingCiTurnMessages,
-} from "./fixtures/maeve-ledger.js";
+import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
   assertFullStackPaths,
@@ -123,7 +119,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
         details?: { id: string; action: string };
       };
       expect(stored.details?.action).toBe("created");
-      const id = stored.details!.id;
+      const id = stored.details?.id;
 
       const byId = (await recall.execute("c2", { id })) as {
         details?: { count: number; memories?: { text: string }[] };
@@ -140,9 +136,9 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
     it("memory_store then memory_recall by query finds the fact", async () => {
       const unique = "Comprehensive e2e semantic phrase zephyr-port-4242";
-      await api.getTool("memory_store")!.execute("c1", { text: unique, category: "fact", importance: 0.9 });
+      await api.getTool("memory_store")?.execute("c1", { text: unique, category: "fact", importance: 0.9 });
 
-      const recalled = (await api.getTool("memory_recall")!.execute("c2", {
+      const recalled = (await api.getTool("memory_recall")?.execute("c2", {
         query: "zephyr port",
         limit: 5,
       })) as { details?: { count: number; memories?: { text: string }[] } };
@@ -166,14 +162,14 @@ describe("Comprehensive e2e — full plugin register()", () => {
     it("agent_end blocks when CI is pending and project ledger is empty", async () => {
       register();
       const handler = api.hookHandlers("agent_end")[0]!;
-      await expect(
-        handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX),
-      ).rejects.toBeInstanceOf(PreFinalizationGuardBlockingError);
+      await expect(handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX)).rejects.toBeInstanceOf(
+        PreFinalizationGuardBlockingError,
+      );
     });
 
     it("after_compaction injects post-compaction memory summary for stored facts", async () => {
       register({ verbosity: "normal", autoRecall: { enabled: true, authFailure: { enabled: false } } });
-      await api.getTool("memory_store")!.execute("c1", {
+      await api.getTool("memory_store")?.execute("c1", {
         text: "Fact retained across compaction for comprehensive e2e",
         category: "fact",
         importance: 0.8,
@@ -194,17 +190,17 @@ describe("Comprehensive e2e — full plugin register()", () => {
       register();
       const text = "Persisted on disk for secondary connection read";
       const id = (
-        (await api.getTool("memory_store")!.execute("c1", {
+        (await api.getTool("memory_store")?.execute("c1", {
           text,
           category: "fact",
           importance: 0.7,
         })) as { details?: { id: string } }
-      ).details!.id;
+      ).details?.id;
 
       const sqlitePath = join(tmpDir, "facts.db");
       const reader = new FactsDB(sqlitePath, { fuzzyDedupe: false });
       try {
-        expect(reader.getById(id)?.text).toBe(text);
+        expect(reader.getById(id!)?.text).toBe(text);
         expect(reader.count()).toBeGreaterThanOrEqual(1);
       } finally {
         reader.close();
@@ -216,7 +212,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
       const sqlitePath = join(tmpDir, "facts.db");
       const lancePath = join(tmpDir, "lancedb");
       const stored = (
-        (await api.getTool("memory_store")!.execute("c1", {
+        (await api.getTool("memory_store")?.execute("c1", {
           text: "Verify reconcile in-sync fact",
           category: "fact",
           importance: 0.8,

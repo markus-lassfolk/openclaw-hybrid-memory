@@ -5,13 +5,8 @@
  * All backends are mocked — no real SQLite / LanceDB / embedding API required.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type EmbeddingMaintenanceOptions,
-  type MigrateEmbeddingsOptions,
-  migrateEmbeddings,
-  runEmbeddingMaintenance,
-} from "../services/embedding-migration.js";
+import { describe, expect, it, vi } from "vitest";
+import { migrateEmbeddings, runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 
 // ---------------------------------------------------------------------------

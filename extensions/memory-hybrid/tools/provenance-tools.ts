@@ -11,12 +11,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { extractEventText } from "../services/dream-cycle.js";
-import type {
-  ProvenanceEdgeRecord,
-  ProvenanceEdgeType,
-  ProvenanceService,
-  ProvenanceSourceType,
-} from "../services/provenance.js";
+import type { ProvenanceEdgeType, ProvenanceService, ProvenanceSourceType } from "../services/provenance.js";
 
 interface PluginContext {
   factsDb: FactsDB;

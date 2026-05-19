@@ -34,7 +34,6 @@ import {
   captureAgentEndHandler,
   invokeAgentEnd,
   makeMockHookApi,
-  PreFinalizationGuardBlockingError,
 } from "./helpers/lifecycle-hook-harness.js";
 
 describe("lifecycle agent_end pre-finalization guard", () => {
@@ -56,7 +55,9 @@ describe("lifecycle agent_end pre-finalization guard", () => {
     const handler = captureAgentEndHandler(ctx);
     const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
 
-    await expect(invokeAgentEnd(handler, api, benignFinalizationMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    await expect(
+      invokeAgentEnd(handler, api, benignFinalizationMessages(), MAIN_TELEGRAM_SESSION),
+    ).resolves.toBeUndefined();
     expect(api.logger.warn).not.toHaveBeenCalled();
   });
 
@@ -80,60 +81,54 @@ describe("lifecycle agent_end pre-finalization guard", () => {
     await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
   });
 
-  it.fails(
-    "allows agent_end when main task checkpoint uses agent:main:main but sessionKey is agent:main:telegram (#1486)",
-    async () => {
-      seedMainTelegramCheckpoint(factsDb, { relatedSession: MAIN_CANONICAL_SESSION });
-      const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-      const handler = captureAgentEndHandler(ctx);
-      const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+  it.fails("allows agent_end when main task checkpoint uses agent:main:main but sessionKey is agent:main:telegram (#1486)", async () => {
+    seedMainTelegramCheckpoint(factsDb, { relatedSession: MAIN_CANONICAL_SESSION });
+    const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const handler = captureAgentEndHandler(ctx);
+    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
 
-      await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
-    },
-  );
+    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+  });
 
-  it.fails(
-    "allows agent_end after active_task_checkpoint with live session key then pending CI language (#1486 chain)",
-    async () => {
-      const cfg = hybridConfigSchema.parse({
-        embedding: { apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
-        sqlitePath: join(tmpDir, "facts.db"),
-        lanceDbPath: join(tmpDir, "lancedb"),
-        activeTask: {
-          enabled: true,
-          ledger: "facts",
-          filePath: "ACTIVE-TASKS.md",
-          staleThreshold: "24h",
-        },
-      });
-      const vectorDb = {
-        hasDuplicate: vi.fn().mockResolvedValue(true),
-        store: vi.fn().mockResolvedValue(undefined),
-      } as unknown as VectorDB;
-      const embeddings = {
-        modelName: "text-embedding-3-small",
-        dimensions: 4,
-        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3, 0.4]),
-        embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3, 0.4]]),
-      } as unknown as EmbeddingProvider;
+  it.fails("allows agent_end after active_task_checkpoint with live session key then pending CI language (#1486 chain)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
+      sqlitePath: join(tmpDir, "facts.db"),
+      lanceDbPath: join(tmpDir, "lancedb"),
+      activeTask: {
+        enabled: true,
+        ledger: "facts",
+        filePath: "ACTIVE-TASKS.md",
+        staleThreshold: "24h",
+      },
+    });
+    const vectorDb = {
+      hasDuplicate: vi.fn().mockResolvedValue(true),
+      store: vi.fn().mockResolvedValue(undefined),
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "text-embedding-3-small",
+      dimensions: 4,
+      embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3, 0.4]),
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3, 0.4]]),
+    } as unknown as EmbeddingProvider;
 
-      const checkpoint = await runActiveTaskCheckpoint(
-        { cfg, factsDb, vectorDb, embeddings, openclawDir: join(tmpDir, "openclaw") },
-        {
-          entity: "issue-checkpoint-chain",
-          status: "waiting",
-          next: "Recheck CI.",
-          relatedSession: MAIN_TELEGRAM_SESSION,
-          title: "CI watch",
-        },
-      );
-      expect(checkpoint.ok).toBe(true);
+    const checkpoint = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir: join(tmpDir, "openclaw") },
+      {
+        entity: "issue-checkpoint-chain",
+        status: "waiting",
+        next: "Recheck CI.",
+        relatedSession: MAIN_TELEGRAM_SESSION,
+        title: "CI watch",
+      },
+    );
+    expect(checkpoint.ok).toBe(true);
 
-      const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-      const handler = captureAgentEndHandler(ctx);
-      const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+    const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const handler = captureAgentEndHandler(ctx);
+    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
 
-      await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
-    },
-  );
+    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+  });
 });

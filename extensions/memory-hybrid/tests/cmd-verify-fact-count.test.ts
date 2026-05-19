@@ -8,11 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import {
-  getCachedFactCount,
-  readApproxFactsRowCount,
-  resetVerifyFactCountCacheForTests,
-} from "../cli/cmd-verify.js";
+import { getCachedFactCount, readApproxFactsRowCount, resetVerifyFactCountCacheForTests } from "../cli/cmd-verify.js";
 
 describe("cmd-verify fact count helpers", () => {
   let tmpDir: string;
@@ -38,15 +34,15 @@ describe("cmd-verify fact count helpers", () => {
   });
 
   it("readApproxFactsRowCount parses first integer from sqlite_stat1 stat column", () => {
-    factsDb.store({ text: "one", category: "fact", source: "test" });
-    factsDb.store({ text: "two", category: "fact", source: "test" });
+    factsDb.store({ text: "one", category: "fact", source: "test", entity: null, key: null, value: null, importance: 0.5 });
+    factsDb.store({ text: "two", category: "fact", source: "test", entity: null, key: null, value: null, importance: 0.5 });
     factsDb.getRawDb().exec("ANALYZE");
     const n = readApproxFactsRowCount(factsDb.getRawDb());
     expect(n).toBeGreaterThanOrEqual(2);
   });
 
   it("getCachedFactCount reuses TTL cache for the same sqlite path", () => {
-    factsDb.store({ text: "cached", category: "fact", source: "test" });
+    factsDb.store({ text: "cached", category: "fact", source: "test", entity: null, key: null, value: null, importance: 0.5 });
     const countSpy = vi.spyOn(factsDb, "count");
     const first = getCachedFactCount(factsDb, sqlitePath);
     const second = getCachedFactCount(factsDb, sqlitePath);

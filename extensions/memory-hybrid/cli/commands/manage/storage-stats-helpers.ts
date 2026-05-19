@@ -3,43 +3,14 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  unlinkSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
-import { isValidCategory, vectorDimsForModel } from "../../../config.js";
-import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
-import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
-import { runContextAudit } from "../../../services/context-audit.js";
-import { migrateEmbeddings } from "../../../services/embedding-migration.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
-import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
-import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
-import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
-import { filterByScope } from "../../../services/merge-results.js";
-import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
-import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
-import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
+import type { MemoryEntry } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
-import { getEnv } from "../../../utils/env-manager.js";
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
-import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
-import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
 export const IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP = 20_000;
 
@@ -51,11 +22,11 @@ type ReindexCheckpoint = {
   ts: number;
 };
 
-function defaultReindexCheckpointPath(resolvedSqlitePath: string): string {
+export function defaultReindexCheckpointPath(resolvedSqlitePath: string): string {
   return join(dirname(resolvedSqlitePath), ".reindex_checkpoint.json");
 }
 
-function readReindexCheckpoint(path: string): ReindexCheckpoint | null {
+export function readReindexCheckpoint(path: string): ReindexCheckpoint | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<ReindexCheckpoint>;
@@ -80,18 +51,18 @@ function readReindexCheckpoint(path: string): ReindexCheckpoint | null {
   return null;
 }
 
-function writeReindexCheckpoint(path: string, state: ReindexCheckpoint): void {
+export function writeReindexCheckpoint(path: string, state: ReindexCheckpoint): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(state, null, 2), "utf-8");
 }
 
-function parseBoundedIntOption(raw: unknown, fallback: number, min: number, max: number): number {
+export function parseBoundedIntOption(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number.parseInt(String(raw ?? fallback), 10);
   const value = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, value));
 }
 
-function parseBoundedFloatOption(raw: unknown, fallback: number, min: number, max: number): number {
+export function parseBoundedFloatOption(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number.parseFloat(String(raw ?? fallback));
   const value = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, value));
@@ -108,7 +79,7 @@ const SYNC_BUNDLE_SALT_BYTES = 16;
 const SYNC_BUNDLE_IV_BYTES = 12;
 const SYNC_BUNDLE_TAG_BYTES = 16;
 
-function collectExportBundleFiles(root: string, dir = root): SyncBundleFile[] {
+export function collectExportBundleFiles(root: string, dir = root): SyncBundleFile[] {
   const files: SyncBundleFile[] = [];
   for (const name of readdirSync(dir).sort()) {
     const fullPath = join(dir, name);
@@ -142,7 +113,7 @@ function decodeRequiredBase64Field(envelope: Record<string, unknown>, field: str
   return decoded;
 }
 
-function validateSyncEnvelope(raw: unknown): {
+export function validateSyncEnvelope(raw: unknown): {
   schemaVersion: 1;
   type: "hybrid-memory-sync-bundle";
   alg: "aes-256-gcm";
@@ -216,7 +187,7 @@ export function recordStorageGrowthSample(
 }
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
-function entryMatchesHybridSearchFilters(
+export function entryMatchesHybridSearchFilters(
   entry: MemoryEntry,
   opts?: {
     category?: string;
@@ -343,7 +314,7 @@ export type AuditHealthReport = {
   elapsedMs?: number;
 };
 
-function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb"]): number {
+export function countImplicitFeedbackTrajectorySignals(factsDb: ManageBindings["factsDb"]): number {
   const raw = factsDb.getRawDb?.();
   if (!raw) return 0;
   const row = raw
@@ -840,7 +811,7 @@ export function buildAuditHealthReport(
   };
 }
 
-function printAuditHealthMarkdown(report: AuditHealthReport): void {
+export function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log("# Hybrid-memory audit health");
   console.log("");
   console.log(`Status: ${report.status}`);
