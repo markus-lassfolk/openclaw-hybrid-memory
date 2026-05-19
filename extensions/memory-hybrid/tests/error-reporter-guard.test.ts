@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "../utils/env-manager.js";
+import { setEnv } from "../utils/env-manager.js";
 /**
  * Test suite specifically for UnconfiguredProviderError guard behavior.
  * Uses vi.stubGlobal to mock native fetch so we can verify whether events

@@ -14,7 +14,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { type FactsDbWithEmbeddings, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories

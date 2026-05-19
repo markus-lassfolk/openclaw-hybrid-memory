@@ -233,6 +233,55 @@ function requestHashFromInput(
   return createHash("sha256").update(normalizedSummary).digest("hex").slice(0, 16);
 }
 
+/** Per-procedure counters maintained incrementally on telemetry insert (#1415 / #1400). */
+type TelemetryRollupRow = {
+  gst_sel_total: number;
+  gst_near_miss_total: number;
+  gst_fp_signals_total: number;
+  gst_fn_signals_total: number;
+  gst_user_correction_total: number;
+  gst_outcome_success: number;
+  gst_outcome_failure: number;
+  gst_outcome_partial: number;
+  gst_outcome_unknown: number;
+  gst_success_clear_total: number;
+  gst_considered_total: number;
+  gst_skipped_total: number;
+  gst_saved_tool_calls_sum: number;
+  gst_saved_time_ms_sum: number;
+  gst_last_selected_at: number | null;
+};
+
+function readTelemetryRollup(db: DatabaseSync, procedureId: string): TelemetryRollupRow | null {
+  const row = db
+    .prepare(
+      `SELECT gst_sel_total, gst_near_miss_total, gst_fp_signals_total, gst_fn_signals_total,
+              gst_user_correction_total, gst_outcome_success, gst_outcome_failure, gst_outcome_partial,
+              gst_outcome_unknown, gst_success_clear_total, gst_considered_total, gst_skipped_total,
+              gst_saved_tool_calls_sum, gst_saved_time_ms_sum, gst_last_selected_at
+         FROM procedures WHERE id = ?`,
+    )
+    .get(procedureId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    gst_sel_total: (row.gst_sel_total as number) ?? 0,
+    gst_near_miss_total: (row.gst_near_miss_total as number) ?? 0,
+    gst_fp_signals_total: (row.gst_fp_signals_total as number) ?? 0,
+    gst_fn_signals_total: (row.gst_fn_signals_total as number) ?? 0,
+    gst_user_correction_total: (row.gst_user_correction_total as number) ?? 0,
+    gst_outcome_success: (row.gst_outcome_success as number) ?? 0,
+    gst_outcome_failure: (row.gst_outcome_failure as number) ?? 0,
+    gst_outcome_partial: (row.gst_outcome_partial as number) ?? 0,
+    gst_outcome_unknown: (row.gst_outcome_unknown as number) ?? 0,
+    gst_success_clear_total: (row.gst_success_clear_total as number) ?? 0,
+    gst_considered_total: (row.gst_considered_total as number) ?? 0,
+    gst_skipped_total: (row.gst_skipped_total as number) ?? 0,
+    gst_saved_tool_calls_sum: (row.gst_saved_tool_calls_sum as number) ?? 0,
+    gst_saved_time_ms_sum: (row.gst_saved_time_ms_sum as number) ?? 0,
+    gst_last_selected_at: (row.gst_last_selected_at as number | null) ?? null,
+  };
+}
+
 /** Recompute rollup columns from `generated_skill_telemetry` (e.g. after correction edits). */
 export function rebuildGeneratedSkillTelemetryRollupsForProcedure(db: DatabaseSync, procedureId: string): void {
   db.prepare(
@@ -245,8 +294,8 @@ export function rebuildGeneratedSkillTelemetryRollupsForProcedure(db: DatabaseSy
            gst_outcome_success = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success'),
            gst_outcome_failure = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'failure'),
            gst_outcome_partial = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'partial'),
-           gst_outcome_unknown = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.task_outcome IS NULL OR t.task_outcome = '' OR t.task_outcome NOT IN ('success','failure','partial'))),
-           gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
+            gst_outcome_unknown = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND (t.task_outcome IS NULL OR t.task_outcome = '' OR t.task_outcome NOT IN ('success','failure','partial'))),
+            gst_success_clear_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected' AND t.task_outcome = 'success' AND t.user_correction = 0),
            gst_considered_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'considered'),
            gst_skipped_total = (SELECT COUNT(*) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'skipped'),
            gst_saved_tool_calls_sum = (SELECT COALESCE(SUM(CASE WHEN t.saved_tool_calls > 0 THEN t.saved_tool_calls ELSE 0 END), 0) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id),
@@ -254,6 +303,99 @@ export function rebuildGeneratedSkillTelemetryRollupsForProcedure(db: DatabaseSy
            gst_last_selected_at = (SELECT MAX(t.created_at) FROM generated_skill_telemetry t WHERE t.procedure_id = p.id AND t.decision = 'selected')
      WHERE p.id = ?`,
   ).run(procedureId);
+}
+
+function applyTelemetryRollupDelta(
+  db: DatabaseSync,
+  procedureId: string,
+  input: GeneratedSkillTelemetryRecordInput,
+  savedCalls: number,
+  savedTimeMs: number,
+  nowSec: number,
+): void {
+  let dSel = 0;
+  let dNear = 0;
+  let dFp = 0;
+  let dFn = 0;
+  let dUserCorr = 0;
+  let dSucc = 0;
+  let dFail = 0;
+  let dPart = 0;
+  let dUnk = 0;
+  let dClear = 0;
+  let dConsidered = 0;
+  let dSkipped = 0;
+  if (input.userCorrection === true || input.causedRework === true) dFp = 1;
+  if (input.decision === "selected") {
+    dSel = 1;
+    const outcome = input.taskOutcome;
+    if (outcome === "success") {
+      dSucc = 1;
+      if (input.userCorrection !== true) dClear = 1;
+    } else if (outcome === "failure") {
+      dFail = 1;
+    } else if (outcome === "partial") {
+      dPart = 1;
+    } else {
+      dUnk = 1;
+    }
+  } else {
+    dNear = 1;
+    if (input.decision === "considered") dConsidered = 1;
+    if (input.decision === "skipped") dSkipped = 1;
+  }
+  if (input.falseNegativeSignal === true) dFn = 1;
+  if (input.userCorrection === true) dUserCorr = 1;
+  const positiveSavedCalls = savedCalls > 0 ? savedCalls : 0;
+  const positiveSavedTimeMs = savedTimeMs > 0 ? savedTimeMs : 0;
+  const lastSelectedAt = input.decision === "selected" ? nowSec : 0;
+  db.prepare(
+    `UPDATE procedures SET
+       gst_sel_total = gst_sel_total + ?,
+       gst_near_miss_total = gst_near_miss_total + ?,
+       gst_fp_signals_total = gst_fp_signals_total + ?,
+       gst_fn_signals_total = gst_fn_signals_total + ?,
+       gst_user_correction_total = gst_user_correction_total + ?,
+       gst_outcome_success = gst_outcome_success + ?,
+       gst_outcome_failure = gst_outcome_failure + ?,
+       gst_outcome_partial = gst_outcome_partial + ?,
+       gst_outcome_unknown = gst_outcome_unknown + ?,
+       gst_success_clear_total = gst_success_clear_total + ?,
+       gst_considered_total = gst_considered_total + ?,
+       gst_skipped_total = gst_skipped_total + ?,
+       gst_saved_tool_calls_sum = gst_saved_tool_calls_sum + ?,
+       gst_saved_time_ms_sum = gst_saved_time_ms_sum + ?,
+       gst_last_selected_at = CASE WHEN ? > COALESCE(gst_last_selected_at, 0) THEN ? ELSE gst_last_selected_at END
+     WHERE id = ?`,
+  ).run(
+    dSel,
+    dNear,
+    dFp,
+    dFn,
+    dUserCorr,
+    dSucc,
+    dFail,
+    dPart,
+    dUnk,
+    dClear,
+    dConsidered,
+    dSkipped,
+    positiveSavedCalls,
+    positiveSavedTimeMs,
+    lastSelectedAt,
+    lastSelectedAt,
+    procedureId,
+  );
+}
+
+function countSelectedActivationsSince(db: DatabaseSync, procedureId: string, sinceSec: number): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM generated_skill_telemetry
+        WHERE procedure_id = ? AND decision = 'selected' AND created_at >= ?`,
+    )
+    .get(procedureId, sinceSec) as { c: number };
+  return row?.c ?? 0;
 }
 
 function generatedSkillRows(db: DatabaseSync): Array<Record<string, unknown>> {
@@ -269,15 +411,40 @@ function generatedSkillRows(db: DatabaseSync): Array<Record<string, unknown>> {
     .all() as Array<Record<string, unknown>>;
 }
 
-function findGeneratedSkillProcedure(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+function findGeneratedSkillProcedureMatches(db: DatabaseSync, skillName: string): ProcedureEntry[] {
   const trimmed = skillName.trim();
-  if (trimmed.length === 0) return null;
+  if (trimmed.length === 0) return [];
+  const matches: ProcedureEntry[] = [];
   for (const row of generatedSkillRows(db)) {
     const proc = procedureRowToEntry(db, row);
-    if (proc.skillPath === trimmed) return proc;
-    if (proc.skillPath && skillPathBasename(proc.skillPath) === trimmed) return proc;
+    if (!proc.skillPath?.trim()) continue;
+    const path = proc.skillPath.trim();
+    if (path === trimmed || skillPathBasename(path) === trimmed) matches.push(proc);
   }
-  return null;
+  return matches;
+}
+
+function findGeneratedSkillProcedure(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+  return findGeneratedSkillProcedureMatches(db, skillName)[0] ?? null;
+}
+
+function findGeneratedSkillProcedureStrict(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+  const trimmed = skillName.trim();
+  const matches = findGeneratedSkillProcedureMatches(db, trimmed);
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new Error(
+      `Ambiguous skill name "${trimmed}": multiple promoted procedures match; pass procedureId to disambiguate`,
+    );
+  }
+  return matches[0] ?? null;
+}
+
+function findProcedureById(db: DatabaseSync, procedureId: string): ProcedureEntry | null {
+  const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(procedureId) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? procedureRowToEntry(db, row) : null;
 }
 
 export function listGeneratedSkillProcedures(db: DatabaseSync): ProcedureEntry[] {
@@ -315,12 +482,9 @@ export function recordGeneratedSkillTelemetry(
   input: GeneratedSkillTelemetryRecordInput,
   policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
 ): GeneratedSkillTelemetryEntry {
-  let proc = findGeneratedSkillProcedure(db, input.skillName);
+  let proc: ProcedureEntry | null = null;
   if (input.procedureId != null) {
-    const row = db.prepare("SELECT * FROM procedures WHERE id = ? LIMIT 1").get(input.procedureId) as
-      | Record<string, unknown>
-      | undefined;
-    const candidate = row ? procedureRowToEntry(db, row) : null;
+    const candidate = findProcedureById(db, input.procedureId);
     if (!candidate) throw new Error(`Procedure not found for telemetry: ${input.procedureId}`);
     if (candidate.promotedToSkill !== 1 || !candidate.skillPath?.trim()) {
       throw new Error(`Procedure ${input.procedureId} is not a promoted generated skill`);
@@ -331,6 +495,8 @@ export function recordGeneratedSkillTelemetry(
       throw new Error(`Procedure ${input.procedureId} skill_path does not match skill name "${input.skillName}"`);
     }
     proc = candidate;
+  } else {
+    proc = findGeneratedSkillProcedureStrict(db, input.skillName);
   }
   if (!proc) throw new Error(`Generated skill not found: ${input.skillName}`);
   if (input.userCorrection === true) {
@@ -371,11 +537,13 @@ export function recordGeneratedSkillTelemetry(
     input.sessionId ?? null,
     now,
   );
+  applyTelemetryRollupDelta(db, proc.id, input, input.savedToolCalls ?? 0, input.savedTimeMs ?? 0, now);
   refreshGeneratedSkillLifecycleState(
     db,
     proc.skillPath ? skillPathBasename(proc.skillPath) : input.skillName,
     policy,
     now,
+    proc.id,
   );
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(id) as GeneratedSkillTelemetryRow,
@@ -416,7 +584,8 @@ export function markGeneratedSkillTelemetryFalsePositive(
             correction_reason = COALESCE(?, correction_reason)
       WHERE id = ?`,
   ).run(normalizeSummary(correctionReason), activationId);
-  refreshGeneratedSkillLifecycleState(db, row.skill_name, policy);
+  rebuildGeneratedSkillTelemetryRollupsForProcedure(db, row.procedure_id);
+  refreshGeneratedSkillLifecycleState(db, row.skill_name, policy, undefined, row.procedure_id);
   return mapGeneratedSkillTelemetryRow(
     db.prepare("SELECT * FROM generated_skill_telemetry WHERE id = ?").get(activationId) as GeneratedSkillTelemetryRow,
   );
@@ -428,8 +597,17 @@ export function setGeneratedSkillLifecycleState(
   state: GeneratedSkillLifecycleState,
   reason: string | null,
   at = Math.floor(Date.now() / 1000),
+  procedureId?: string,
 ): ProcedureEntry | null {
-  const proc = findGeneratedSkillProcedure(db, skillName);
+  let proc: ProcedureEntry | null = null;
+  if (procedureId != null) {
+    proc = findProcedureById(db, procedureId);
+    if (proc && (proc.promotedToSkill !== 1 || !proc.skillPath?.trim())) {
+      return null;
+    }
+  } else {
+    proc = findGeneratedSkillProcedure(db, skillName);
+  }
   if (!proc) return null;
   if (state === "experimental") {
     // When a skill is reset/unblocked back to experimental, update skill_generated_at to mark
@@ -451,47 +629,165 @@ export function setGeneratedSkillLifecycleState(
              skill_state_reason = ?,
              skill_state_changed_at = ?,
              updated_at = ?
-       WHERE id = ?`,
+        WHERE id = ?`,
     ).run(state, normalizeSummary(reason), at, at, proc.id);
   }
-  return getGeneratedSkillByName(db, skillName);
+  return getGeneratedSkillByName(db, skillName, procedureId);
 }
 
-export function getGeneratedSkillByName(db: DatabaseSync, skillName: string): ProcedureEntry | null {
+export function getGeneratedSkillByName(
+  db: DatabaseSync,
+  skillName: string,
+  procedureId?: string,
+): ProcedureEntry | null {
+  if (procedureId != null) {
+    const proc = findProcedureById(db, procedureId);
+    if (proc && (proc.promotedToSkill !== 1 || !proc.skillPath?.trim())) {
+      return null;
+    }
+    return proc;
+  }
   return findGeneratedSkillProcedure(db, skillName);
 }
 
-function skillTelemetryEntries(db: DatabaseSync, skillName: string): GeneratedSkillTelemetryEntry[] {
-  return (
-    db
-      .prepare(
-        `SELECT *
-           FROM generated_skill_telemetry
-          WHERE skill_name = ?
-          ORDER BY created_at DESC`,
-      )
-      .all(skillName) as GeneratedSkillTelemetryRow[]
-  ).map(mapGeneratedSkillTelemetryRow);
+function skillTelemetryEntries(
+  db: DatabaseSync,
+  skillName: string,
+  procedureId?: string,
+): GeneratedSkillTelemetryEntry[] {
+  const query = procedureId
+    ? `SELECT *
+         FROM generated_skill_telemetry
+        WHERE skill_name = ? AND procedure_id = ?
+        ORDER BY created_at DESC`
+    : `SELECT *
+         FROM generated_skill_telemetry
+        WHERE skill_name = ?
+        ORDER BY created_at DESC`;
+  const params = procedureId ? [skillName, procedureId] : [skillName];
+  return (db.prepare(query).all(...params) as GeneratedSkillTelemetryRow[]).map(mapGeneratedSkillTelemetryRow);
 }
 
 function skillTelemetryRecentEntries(
   db: DatabaseSync,
   skillName: string,
   limit: number,
+  procedureId?: string,
 ): GeneratedSkillTelemetryEntry[] {
-  return (
-    db
-      .prepare(
-        `SELECT id, procedure_id, skill_name, skill_version, request_hash, request_summary, decision, confidence,
+  const query = procedureId
+    ? `SELECT id, procedure_id, skill_name, skill_version, request_hash, request_summary, decision, confidence,
+                reason, task_outcome, user_correction, correction_reason, false_negative_signal, caused_rework,
+                saved_tool_calls, saved_time_ms, scope, scope_target, agent_id, session_id, created_at
+           FROM generated_skill_telemetry
+          WHERE skill_name = ? AND procedure_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?`
+    : `SELECT id, procedure_id, skill_name, skill_version, request_hash, request_summary, decision, confidence,
                 reason, task_outcome, user_correction, correction_reason, false_negative_signal, caused_rework,
                 saved_tool_calls, saved_time_ms, scope, scope_target, agent_id, session_id, created_at
            FROM generated_skill_telemetry
           WHERE skill_name = ?
           ORDER BY created_at DESC
-          LIMIT ?`,
-      )
-      .all(skillName, limit) as GeneratedSkillTelemetryRow[]
-  ).map(mapGeneratedSkillTelemetryRow);
+          LIMIT ?`;
+  const params = procedureId ? [skillName, procedureId, limit] : [skillName, limit];
+  return (db.prepare(query).all(...params) as GeneratedSkillTelemetryRow[]).map(mapGeneratedSkillTelemetryRow);
+}
+
+type RawTelemetryCounts = {
+  activationCountPerWeek: number;
+  activationCountTotal: number;
+  nearMissCount: number;
+  falsePositiveSignals: number;
+  falseNegativeSignals: number;
+  correctionCount: number;
+  repeatedCorrectionCount: number;
+  lastUsedAt: number | null;
+  successCount: number;
+  failureCount: number;
+  partialCount: number;
+  unknownCount: number;
+  successfulUsesWithoutCorrection: number;
+  consideredCount: number;
+  skippedCount: number;
+  savedToolCalls: number;
+  savedTimeMs: number;
+  cleanUsesAfterDemotion: number;
+};
+
+function deriveMetricsAndFlags(
+  counts: RawTelemetryCounts,
+  proc: ProcedureEntry,
+  policy: GeneratedSkillLifecyclePolicy,
+  now: number,
+): { metrics: GeneratedSkillTelemetryMetrics; flags: GeneratedSkillTelemetryFlags } {
+  const knownOutcomeTotal = counts.successCount + counts.failureCount + counts.partialCount + counts.unknownCount;
+  const successRate = knownOutcomeTotal > 0 ? counts.successCount / knownOutcomeTotal : null;
+  const failureRate = knownOutcomeTotal > 0 ? counts.failureCount / knownOutcomeTotal : null;
+  const partialRate = knownOutcomeTotal > 0 ? counts.partialCount / knownOutcomeTotal : null;
+  const unknownRate = knownOutcomeTotal > 0 ? counts.unknownCount / knownOutcomeTotal : null;
+  const exposureTotal = counts.activationCountTotal + counts.nearMissCount;
+  const falsePositiveRate = exposureTotal > 0 ? counts.falsePositiveSignals / exposureTotal : null;
+  const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
+  const { falsePositiveRate: demoteFpRate, minSamples: demoteMinSamples } = effectiveDemoteThresholdsForRisk(
+    riskLevel,
+    policy,
+  );
+  const generatedAt = proc.skillGeneratedAt ?? proc.promotedAt ?? proc.updatedAt ?? proc.createdAt ?? now;
+  const archiveBaselineAt = proc.skillState === "demoted" ? (proc.skillStateChangedAt ?? generatedAt) : generatedAt;
+  const archiveCandidate =
+    counts.activationCountTotal === 0 && archiveBaselineAt <= now - policy.archiveAfterUnusedDays * 24 * 60 * 60;
+  const promotionCandidate =
+    proc.skillState !== "demoted" &&
+    proc.skillState !== "archived" &&
+    proc.skillState !== "trusted" &&
+    proc.skillState !== "uninstalled" &&
+    proc.skillState !== "rejected" &&
+    counts.successfulUsesWithoutCorrection >= policy.promoteAfterSuccessfulUses;
+  const overTriggering =
+    exposureTotal >= demoteMinSamples && falsePositiveRate != null && falsePositiveRate >= demoteFpRate;
+  const revisionCandidate =
+    counts.nearMissCount >= policy.revisionNearMissThreshold && counts.skippedCount >= counts.consideredCount;
+  const unblockAfterCleanUses = policy.unblockAfterCleanUses ?? 0;
+  const unblockCandidate =
+    unblockAfterCleanUses > 0 &&
+    (proc.skillState === "demoted" || proc.skillState === "archived") &&
+    counts.cleanUsesAfterDemotion >= unblockAfterCleanUses;
+
+  return {
+    metrics: {
+      activationCountPerWeek: counts.activationCountPerWeek,
+      activationCountTotal: counts.activationCountTotal,
+      nearMissCount: counts.nearMissCount,
+      falsePositiveSignals: counts.falsePositiveSignals,
+      falseNegativeSignals: counts.falseNegativeSignals,
+      correctionCount: counts.correctionCount,
+      repeatedCorrectionCount: counts.repeatedCorrectionCount,
+      lastUsedAt: counts.lastUsedAt,
+      successCount: counts.successCount,
+      failureCount: counts.failureCount,
+      partialCount: counts.partialCount,
+      unknownCount: counts.unknownCount,
+      successRate,
+      failureRate,
+      partialRate,
+      unknownRate,
+      successfulUsesWithoutCorrection: counts.successfulUsesWithoutCorrection,
+      consideredCount: counts.consideredCount,
+      skippedCount: counts.skippedCount,
+      savedToolCalls: counts.savedToolCalls,
+      savedTimeMs: counts.savedTimeMs,
+      falsePositiveRate,
+      cleanUsesAfterDemotion: counts.cleanUsesAfterDemotion,
+    },
+    flags: {
+      promotionCandidate,
+      overTriggering,
+      revisionCandidate,
+      neverUsed: counts.activationCountTotal === 0,
+      archiveCandidate,
+      unblockCandidate,
+    },
+  };
 }
 
 function summarizeSkillTelemetry(
@@ -654,6 +950,86 @@ function summarizeSkillTelemetry(
   };
 }
 
+function summarizeSkillTelemetryFromRollups(
+  db: DatabaseSync,
+  proc: ProcedureEntry,
+  canonicalSkillName: string,
+  policy: GeneratedSkillLifecyclePolicy,
+  now: number,
+): {
+  metrics: GeneratedSkillTelemetryMetrics;
+  flags: GeneratedSkillTelemetryFlags;
+  riskLevel: "low" | "medium" | "high";
+} {
+  const r = readTelemetryRollup(db, proc.id);
+  if (!r) {
+    return summarizeSkillTelemetry(proc, skillTelemetryEntries(db, canonicalSkillName, proc.id), policy, now);
+  }
+  const weekAgo = now - 7 * 24 * 60 * 60;
+  const activationCountPerWeek = countSelectedActivationsSince(db, proc.id, weekAgo);
+  const activationCountTotal = r.gst_sel_total;
+  const nearMissCount = r.gst_near_miss_total;
+  const falsePositiveSignals = r.gst_fp_signals_total;
+  const falseNegativeSignals = r.gst_fn_signals_total;
+  const correctionCount = r.gst_user_correction_total;
+  const lastUsedAt = r.gst_last_selected_at;
+  const successCount = r.gst_outcome_success;
+  const failureCount = r.gst_outcome_failure;
+  const partialCount = r.gst_outcome_partial;
+  const unknownCount = r.gst_outcome_unknown;
+  const successfulUsesWithoutCorrection = r.gst_success_clear_total;
+  const consideredCount = r.gst_considered_total;
+  const skippedCount = r.gst_skipped_total;
+  const savedToolCalls = r.gst_saved_tool_calls_sum;
+  const savedTimeMs = r.gst_saved_time_ms_sum;
+  const repeatedCorrectionCount = countRepeatedUserCorrectionBuckets(
+    skillTelemetryEntries(db, canonicalSkillName, proc.id),
+    now,
+  );
+  const demotedOrArchivedAt =
+    proc.skillState === "demoted" || proc.skillState === "archived"
+      ? (proc.skillStateChangedAt ?? proc.updatedAt ?? 0)
+      : null;
+  let cleanUsesAfterDemotion = 0;
+  if (demotedOrArchivedAt != null) {
+    const postDemotionActivations = skillTelemetryEntries(db, canonicalSkillName, proc.id).filter(
+      (a) =>
+        a.decision === "selected" &&
+        a.taskOutcome === "success" &&
+        !a.userCorrection &&
+        a.createdAt > demotedOrArchivedAt,
+    );
+    cleanUsesAfterDemotion = postDemotionActivations.length;
+  }
+  const riskLevel = determineRiskLevel(proc, parseRecipeOrRaw(proc.recipeJson));
+  const summary = deriveMetricsAndFlags(
+    {
+      activationCountPerWeek,
+      activationCountTotal,
+      nearMissCount,
+      falsePositiveSignals,
+      falseNegativeSignals,
+      correctionCount,
+      repeatedCorrectionCount,
+      lastUsedAt,
+      successCount,
+      failureCount,
+      partialCount,
+      unknownCount,
+      successfulUsesWithoutCorrection,
+      consideredCount,
+      skippedCount,
+      savedToolCalls,
+      savedTimeMs,
+      cleanUsesAfterDemotion,
+    },
+    proc,
+    policy,
+    now,
+  );
+  return { ...summary, riskLevel };
+}
+
 function desiredLifecycleTransition(
   currentState: GeneratedSkillLifecycleState,
   flags: GeneratedSkillTelemetryFlags,
@@ -705,6 +1081,7 @@ export function refreshGeneratedSkillLifecycleState(
   skillName: string,
   policy?: GeneratedSkillLifecyclePolicy,
   now?: number,
+  procedureId?: string,
 ): ProcedureEntry | null;
 export function refreshGeneratedSkillLifecycleState(
   db: DatabaseSync,
@@ -712,6 +1089,7 @@ export function refreshGeneratedSkillLifecycleState(
   policy: GeneratedSkillLifecyclePolicy,
   now: number,
   returnMetrics: true,
+  procedureId?: string,
 ): {
   proc: ProcedureEntry;
   metrics: GeneratedSkillTelemetryMetrics;
@@ -723,7 +1101,8 @@ export function refreshGeneratedSkillLifecycleState(
   skillName: string,
   policy: GeneratedSkillLifecyclePolicy = DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
   now = Math.floor(Date.now() / 1000),
-  returnMetrics = false,
+  returnMetricsOrProcedureId: boolean | string = false,
+  procedureId?: string,
 ):
   | ProcedureEntry
   | {
@@ -733,17 +1112,23 @@ export function refreshGeneratedSkillLifecycleState(
       riskLevel: "low" | "medium" | "high";
     }
   | null {
-  const proc = findGeneratedSkillProcedure(db, skillName);
+  const returnMetrics = returnMetricsOrProcedureId === true;
+  const resolvedProcedureId = typeof returnMetricsOrProcedureId === "string" ? returnMetricsOrProcedureId : procedureId;
+  const proc =
+    resolvedProcedureId != null
+      ? findProcedureById(db, resolvedProcedureId)
+      : findGeneratedSkillProcedure(db, skillName);
   if (!proc?.skillPath) return null;
   const canonicalSkillName = skillPathBasename(proc.skillPath);
-  const activations = skillTelemetryEntries(db, canonicalSkillName);
+  const activations = skillTelemetryEntries(db, canonicalSkillName, proc.id);
   const { metrics, flags, riskLevel } = summarizeSkillTelemetry(proc, activations, policy, now);
   const currentState = proc.skillState ?? "experimental";
   const transition = desiredLifecycleTransition(currentState, flags, metrics, policy, riskLevel);
   const updatedProc =
     transition == null
       ? proc
-      : (setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now) ?? proc);
+      : (setGeneratedSkillLifecycleState(db, canonicalSkillName, transition.state, transition.reason, now, proc.id) ??
+        proc);
   if (returnMetrics) {
     return { proc: updatedProc, metrics, flags, riskLevel };
   }
@@ -781,8 +1166,8 @@ export function buildGeneratedSkillTelemetryReport(
   for (const proc of procedures) {
     if (proc.skillPath) {
       const skillName = skillPathBasename(proc.skillPath);
-      const result = refreshGeneratedSkillLifecycleState(db, skillName, policy, now, true);
-      if (result) refreshResults.set(skillName, result);
+      const result = refreshGeneratedSkillLifecycleState(db, skillName, policy, now, true, proc.id);
+      if (result) refreshResults.set(proc.id, result);
     }
   }
   const rows = listGeneratedSkillProcedures(db)
@@ -792,28 +1177,28 @@ export function buildGeneratedSkillTelemetryReport(
     })
     .map((proc) => {
       const skillName = skillPathBasename(proc.skillPath ?? proc.taskPattern);
-      const cachedResult = refreshResults.get(skillName);
+      const cachedResult = refreshResults.get(proc.id);
+      let procFresh: ProcedureEntry = proc;
       let metrics: GeneratedSkillTelemetryMetrics;
       let flags: GeneratedSkillTelemetryFlags;
       let riskLevel: "low" | "medium" | "high";
       if (cachedResult) {
-        metrics = cachedResult.metrics;
-        flags = cachedResult.flags;
-        riskLevel = cachedResult.riskLevel;
+        ({ proc: procFresh, metrics, flags, riskLevel } = cachedResult);
       } else {
-        const activations = skillTelemetryEntries(db, skillName);
+        const activations = skillTelemetryEntries(db, skillName, proc.id);
         const summary = summarizeSkillTelemetry(proc, activations, policy, now);
         metrics = summary.metrics;
         flags = summary.flags;
         riskLevel = summary.riskLevel;
       }
-      const currentState = proc.skillState ?? "experimental";
-
+      const currentState = procFresh.skillState ?? "experimental";
+      const stateReason = procFresh.skillStateReason ?? null;
+      const generatedAt = procFresh.skillGeneratedAt ?? procFresh.promotedAt ?? null;
       let recommendation: "promote" | "demote" | "archive" | "revise" | "unblock" | "observe";
 
       if (currentState === "uninstalled" || currentState === "rejected") {
         recommendation = "observe";
-      } else if (currentState === "experimental" && proc.skillStateReason?.startsWith("auto-unblocked")) {
+      } else if (currentState === "experimental" && stateReason?.startsWith("auto-unblocked")) {
         recommendation = "unblock";
       } else if (currentState === "archived" && flags.archiveCandidate) {
         recommendation = "observe";
@@ -832,20 +1217,19 @@ export function buildGeneratedSkillTelemetryReport(
       } else {
         recommendation = "observe";
       }
-
       return {
-        procedureId: proc.id,
+        procedureId: procFresh.id,
         skillName,
-        skillPath: proc.skillPath ?? skillName,
-        skillVersion: proc.skillVersion ?? 1,
+        skillPath: procFresh.skillPath ?? skillName,
+        skillVersion: procFresh.skillVersion ?? 1,
         riskLevel,
         state: currentState,
-        stateReason: proc.skillStateReason ?? null,
-        generatedAt: proc.skillGeneratedAt ?? proc.promotedAt ?? null,
+        stateReason,
+        generatedAt,
         metrics,
         flags,
         recommendation,
-        recentActivations: skillTelemetryRecentEntries(db, skillName, recentLimit),
+        recentActivations: skillTelemetryRecentEntries(db, skillName, recentLimit, procFresh.id),
       } satisfies GeneratedSkillTelemetryReportRow;
     })
     .sort((a, b) => a.skillName.localeCompare(b.skillName));

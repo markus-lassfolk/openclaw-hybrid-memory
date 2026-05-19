@@ -455,7 +455,7 @@ function buildWakeMessage(args: {
   guardYears: number;
 }): string {
   const lines: string[] = [
-    `Active-task wake reminder for \"${args.entity}\".`,
+    `Active-task wake reminder for "${args.entity}".`,
     `Scheduled resume time (UTC): ${args.resumeAtIso}`,
     `Status: ${args.status}`,
   ];

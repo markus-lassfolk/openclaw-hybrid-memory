@@ -9,11 +9,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-import type { HybridMemoryConfig } from "../config.js";
 import {
   getCronModelConfig,
   getDefaultCronModel,
-  getLLMModelPreference,
   describeMaintenanceFallbackPolicy,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";

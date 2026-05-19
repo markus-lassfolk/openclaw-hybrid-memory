@@ -16,7 +16,7 @@ import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -72,6 +72,33 @@ export interface RescanInstalledSkillsResult {
   skipped: number;
   errors: string[];
   messages: string[];
+}
+
+const RESCAN_MESSAGE_LIMIT = 100;
+
+function pushLimitedMessage(messages: string[], message: string): boolean {
+  if (messages.length < RESCAN_MESSAGE_LIMIT) {
+    messages.push(message);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Derive the root output directory from an installed skill's absolute path.
+ * Falls back to `fallbackOutputDir` when the path does not match the expected
+ * `/<skillName>/SKILL.md` suffix.  Returns `"/"` (never `""`) when the skill
+ * is installed directly under filesystem root (e.g. `/my-skill/SKILL.md`).
+ *
+ * @internal exported for unit testing only
+ */
+export function outputDirForInstalledSkill(outputPath: string, skillName: string, fallbackOutputDir: string): string {
+  const normalizedOutputPath = resolve(outputPath);
+  const expectedSuffix = resolve(`/${skillName}/SKILL.md`);
+  if (!normalizedOutputPath.endsWith(expectedSuffix)) {
+    return fallbackOutputDir;
+  }
+  return normalizedOutputPath.slice(0, -expectedSuffix.length) || "/";
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +296,7 @@ export class CrystallizationProposer {
     opts?: {
       name?: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): SkillProposalValidationResult | null {
@@ -292,6 +320,7 @@ export class CrystallizationProposer {
     const { skillContent: rewrittenContent } = this.applyOverridesToDraft(proposal, {
       skillName: safeName,
       category: desiredCategory,
+      description: opts?.description?.trim() || undefined,
       recommendedOutput: desiredRecommendedOutput,
     });
 
@@ -322,6 +351,7 @@ export class CrystallizationProposer {
       overrideWarnings?: boolean;
       name?: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): ApproveResult {
@@ -346,6 +376,7 @@ export class CrystallizationProposer {
       {
         skillName: safeName,
         category: desiredCategory,
+        description: opts?.description?.trim() || undefined,
         recommendedOutput: desiredRecommendedOutput,
       },
     );
@@ -383,6 +414,7 @@ export class CrystallizationProposer {
       skillName: safeName,
       skillContent: rewrittenContent,
       category: desiredCategory,
+      ...(opts?.description?.trim() ? { description: opts.description.trim() } : {}),
       recommendedOutput: desiredRecommendedOutput,
       proposalCardJson: rewrittenCardJson,
     });
@@ -456,12 +488,14 @@ export class CrystallizationProposer {
     let skipped = 0;
     const errors: string[] = [];
     const messages: string[] = [];
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    let truncated = false;
+    const fallbackOutputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
 
     for (const proposal of installed) {
       if (!proposal.outputPath?.trim()) {
         skipped++;
-        messages.push(`Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
+        truncated =
+          !pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`) || truncated;
         continue;
       }
       let skillContent: string;
@@ -477,6 +511,7 @@ export class CrystallizationProposer {
       try {
         const pattern = parsePatternSnapshot(proposal.patternSnapshot);
         const legacy = isLegacyMarkdownCrystallizationProposal(skillContent);
+        const outputDir = outputDirForInstalledSkill(proposal.outputPath, proposal.skillName, fallbackOutputDir);
         const validation = this.validator.validate(
           {
             outputDir,
@@ -494,17 +529,29 @@ export class CrystallizationProposer {
           const updated = this.crystallizationStore.quarantine(proposal.id, reason);
           if (updated) {
             quarantined++;
-            messages.push(`Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+            truncated =
+              !pushLimitedMessage(
+                messages,
+                `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+              ) || truncated;
           } else {
             errors.push(`${proposal.id}: quarantine update failed`);
           }
         } else {
-          messages.push(`OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+          truncated =
+            !pushLimitedMessage(
+              messages,
+              `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+            ) || truncated;
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${proposal.id}: validate failed — ${msg}`);
       }
+    }
+
+    if (truncated) {
+      messages.push(`Message output truncated after ${RESCAN_MESSAGE_LIMIT} entries`);
     }
 
     return { scanned, quarantined, skipped, errors, messages };
@@ -528,6 +575,7 @@ export class CrystallizationProposer {
     overrides: {
       skillName: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): { skillContent: string; proposalCardJson?: string } {
@@ -537,13 +585,20 @@ export class CrystallizationProposer {
       skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
-      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
+      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, () => `**Category:** ${overrides.category}`);
       skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
+    }
+    if (overrides.description) {
+      skillContent = skillContent.replace(
+        /^\*\*Description:\*\* .+$/m,
+        () => `**Description:** ${overrides.description}`,
+      );
+      skillContent = patchOpeningYamlField(skillContent, "description", overrides.description);
     }
     if (overrides.recommendedOutput) {
       skillContent = skillContent.replace(
         /^\*\*Recommended output:\*\* .+$/m,
-        `**Recommended output:** ${overrides.recommendedOutput}`,
+        () => `**Recommended output:** ${overrides.recommendedOutput}`,
       );
     }
 
@@ -553,6 +608,7 @@ export class CrystallizationProposer {
         const parsed = JSON.parse(proposalCardJson) as Record<string, unknown>;
         parsed.name = overrides.skillName;
         if (overrides.category) parsed.category = overrides.category;
+        if (overrides.description) parsed.description = overrides.description;
         if (overrides.recommendedOutput) parsed.recommended_output = overrides.recommendedOutput;
         proposalCardJson = JSON.stringify(parsed);
       } catch {
@@ -596,7 +652,7 @@ ${proposal.skillContent}`;
       const existing = this.crystallizationStore.listByPatternId(patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
-        if (p.status === "installed" || p.status === "approved") {
+        if (p.status === "installed" || p.status === "approved" || p.status === "quarantined") {
           this.crystallizationStore.supersede(p.id, supersededBy);
         }
       }
@@ -620,7 +676,8 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
   const inner = m[1]!;
-  const innerLineBreak = m[0].includes("\r\n") ? "\r\n" : "\n";
+  const openingLineBreak = m[0].startsWith("---\r\n") ? "\r\n" : "\n";
+  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : openingLineBreak;
   const lines = inner.split(/\r?\n/);
   const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
   let keyIdx = -1;
@@ -700,7 +757,7 @@ function isTopLevelYamlKeyLine(line: string): boolean {
 
 function leadingIndentLen(line: string): number {
   const m = /^([ \t]*)/.exec(line);
-  return m ? m[1]!.length : 0;
+  return m ? m[1]?.length : 0;
 }
 
 function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe: RegExp): number {

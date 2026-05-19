@@ -48,7 +48,7 @@ interface HumanizerResult {
  * Returns null when output is empty, non-JSON, or missing required fields.
  */
 export function parseHumanizerOutput(raw: string): HumanizerResult | null {
-  if (!raw || !raw.trim()) return null;
+  if (!raw?.trim()) return null;
   try {
     const parsed = JSON.parse(raw.trim()) as unknown;
     if (typeof parsed !== "object" || parsed === null) return null;
