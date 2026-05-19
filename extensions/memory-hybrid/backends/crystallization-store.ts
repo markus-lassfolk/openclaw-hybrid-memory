@@ -12,7 +12,9 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
+import { computeEvidenceHash } from "../services/pattern-detector-hash.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
+import type { WorkflowPattern } from "./workflow-store.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { escapeLikeLiteralForBackslashEscape } from "./facts-db/entity-layer.js";
 import { readSchemaVersion, runVersionedSchemaMigration } from "./sqlite-schema-meta.js";
@@ -606,6 +608,7 @@ export class CrystallizationStore extends BaseSqliteStore {
     });
   }
 
+  /** Mark an installed proposal as quarantined (failed re-validation of on-disk SKILL.md). */
   quarantine(id: string, reason?: string): CrystallizationProposal | null {
     return this.runWithDb("quarantine", () => {
       const now = new Date().toISOString();
@@ -674,18 +677,43 @@ export class CrystallizationStore extends BaseSqliteStore {
   }
 
   /**
-   * Rejection guard: returns true if the latest proposal for this pattern was rejected
-   * with the same evidence hash (i.e., no meaningful new evidence since rejection).
+   * Rejection / quarantine guard: returns true if the latest proposal for this pattern was rejected
+   * or quarantined with the same evidence hash (no meaningful new evidence since suppression).
+   *
+   * When `legacyEvidenceHash` is provided and the stored hash is legacy-format, suppression uses
+   * milestone buckets from `pattern_snapshot` at rejection time so metric milestone crossings can
+   * re-arm proposals without permanently blocking on legacy hash equality.
    */
-  isRejectedWithSameEvidence(patternId: string, evidenceHash: string): boolean {
+  isRejectedWithSameEvidence(
+    patternId: string,
+    evidenceHash: string,
+    opts?: { legacyEvidenceHash?: string; evidenceCountBucketSize?: number },
+  ): boolean {
     return this.runWithDb("isRejectedWithSameEvidence", () => {
       const row = this.liveDb
         .prepare(
-          "SELECT status, evidence_hash FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+          "SELECT status, evidence_hash, pattern_snapshot FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
         )
-        .get(patternId) as { status?: string; evidence_hash?: string } | undefined;
+        .get(patternId) as { status?: string; evidence_hash?: string; pattern_snapshot?: string } | undefined;
       if (!row) return false;
-      return row.status === "rejected" && (row.evidence_hash ?? "") === evidenceHash;
+      if (row.status !== "rejected" && row.status !== "quarantined") return false;
+
+      const stored = row.evidence_hash ?? "";
+      if (stored === evidenceHash) return true;
+
+      const legacyEvidenceHash = opts?.legacyEvidenceHash;
+      if (!legacyEvidenceHash || stored !== legacyEvidenceHash) return false;
+
+      const bucketSize = opts.evidenceCountBucketSize ?? 5;
+      try {
+        const atRejection = JSON.parse(row.pattern_snapshot ?? "{}") as WorkflowPattern;
+        const rejectionMilestoneHash = computeEvidenceHash(atRejection, {
+          evidenceCountBucketSize: bucketSize,
+        });
+        return rejectionMilestoneHash === evidenceHash;
+      } catch {
+        return true;
+      }
     });
   }
 
@@ -696,7 +724,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         .prepare(
           `UPDATE crystallization_proposals
            SET status = 'superseded', superseded_by = ?, superseded_at = ?, updated_at = ?
-           WHERE id = ? AND status IN ('installed', 'approved')`,
+           WHERE id = ? AND status IN ('installed', 'approved', 'quarantined')`,
         )
         .run(supersededBy, now, now, id);
       if (result.changes === 0) return null;
