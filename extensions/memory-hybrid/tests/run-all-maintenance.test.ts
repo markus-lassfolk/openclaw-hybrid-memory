@@ -27,10 +27,6 @@ function makeBindings(overrides: Partial<ManageBindings> & { factsDb: ManageBind
     runExtractImplicitFeedback: null,
     runExtractProcedures: null,
     runGenerateAutoSkills: null,
-    reflectionConfig: null,
-    runReflection: null,
-    runReflectionRules: null,
-    runReflectionMeta: null,
     runReflectIdentity: null,
     runGenerateProposals: null,
     runSelfCorrectionRun: vi.fn().mockResolvedValue(undefined),
@@ -60,7 +56,6 @@ describe("run-all maintenance CLI", () => {
     registerManageAgentsAuditRunall(
       mem,
       makeBindings({
-        resolvedSqlitePath: null,
         factsDb: {
           backfillDecay,
           prune,

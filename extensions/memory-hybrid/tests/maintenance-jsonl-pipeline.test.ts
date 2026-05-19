@@ -9,10 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  extractUserMessageTextsFromSessionJsonl,
-  runAnalyzeFeedbackPhrasesForCli,
-} from "../cli/cmd-backfill.js";
+import { extractUserMessageTextsFromSessionJsonl, runAnalyzeFeedbackPhrasesForCli } from "../cli/cmd-backfill.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import { getEnv, setEnv } from "../utils/env-manager.js";
 
@@ -67,10 +64,7 @@ describe("maintenance pipeline — malformed session JSONL", () => {
   });
 
   it("analyze-feedback reports malformed file but continues scanning other agents", async () => {
-    writeSession(
-      ".openclaw/agents/agent-bad/sessions/bad.jsonl",
-      '{"type":"message"\n',
-    );
+    writeSession(".openclaw/agents/agent-bad/sessions/bad.jsonl", '{"type":"message"\n');
     writeSession(
       ".openclaw/agents/agent-good/sessions/good.jsonl",
       `${JSON.stringify({

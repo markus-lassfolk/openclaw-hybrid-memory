@@ -29,10 +29,10 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as fsUtils from "../utils/fs.js";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
 import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
+import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
 

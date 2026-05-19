@@ -21,8 +21,8 @@ import type { EventLogEntry } from "../backends/event-log.js";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import {
-  type DreamCycleConfig,
   buildDigestSummary,
+  type DreamCycleConfig,
   extractEventText,
   groupEventsByEntity,
   runDreamCycle,
