@@ -1,11 +1,10 @@
-
 import type { MemoryCategory } from "../config.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
-import { cleanupEvictedVector, } from "../services/vector-maintenance.js";
-import { getDirectiveSignalRegex, } from "../utils/language-keywords.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { getDirectiveSignalRegex } from "../utils/language-keywords.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";

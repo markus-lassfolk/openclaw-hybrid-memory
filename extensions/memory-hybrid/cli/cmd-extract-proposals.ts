@@ -12,15 +12,11 @@ import { getEnv } from "../utils/env-manager.js";
  * Extracted from handlers.ts.
  */
 
-import { existsSync, readFileSync, } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  getCronModelConfig,
-  getLLMModelPreference,
-  resolveReflectionModelAndFallbacks,
-} from "../config.js";
-import { chatCompleteWithRetryDetailed, } from "../services/chat.js";
+import { getCronModelConfig, getLLMModelPreference, resolveReflectionModelAndFallbacks } from "../config.js";
+import { chatCompleteWithRetryDetailed } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
@@ -286,7 +282,3 @@ export async function runGenerateProposalsForCli(
   }
   return { created };
 }
-
-/**
- * Extract facts from daily memory markdown files
- */

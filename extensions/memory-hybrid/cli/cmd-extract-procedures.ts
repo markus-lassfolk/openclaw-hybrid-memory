@@ -1,13 +1,9 @@
-
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
-import type {
-  ExtractProceduresResult,
-  GenerateAutoSkillsResult,
-} from "./types.js";
+import type { ExtractProceduresResult, GenerateAutoSkillsResult } from "./types.js";
 
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
 export async function runExtractProceduresForCli(

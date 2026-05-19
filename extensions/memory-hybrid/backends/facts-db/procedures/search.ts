@@ -1,4 +1,3 @@
-
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../../services/error-reporter.js";

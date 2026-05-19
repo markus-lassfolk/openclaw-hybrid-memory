@@ -1,4 +1,3 @@
-
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { createConfigOutputSink } from "../../config-output-sink.js";
 import { type Chainable, withExit } from "../../shared.js";

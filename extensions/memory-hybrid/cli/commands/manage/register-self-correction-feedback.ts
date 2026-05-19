@@ -1,4 +1,3 @@
-
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";

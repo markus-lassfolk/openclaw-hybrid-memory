@@ -1,4 +1,3 @@
-
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";

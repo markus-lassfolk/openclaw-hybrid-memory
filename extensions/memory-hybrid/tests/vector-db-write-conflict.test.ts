@@ -11,14 +11,7 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: mockCapturePluginError,
 }));
 
-
-import {
-  VectorDB,
-  describe,
-  expect,
-  it,
-  randomUUID,
-} from "./helpers/vector-db-test-shared.js";
+import { VectorDB, describe, expect, it, randomUUID } from "./helpers/vector-db-test-shared.js";
 
 describe("VectorDB write conflict retries (#reembed-vectorless)", () => {
   const DIM = 3;

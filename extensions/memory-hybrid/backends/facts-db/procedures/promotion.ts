@@ -1,4 +1,3 @@
-
 import type { DatabaseSync } from "node:sqlite";
 
 import type { ProcedureEntry } from "../../../types/memory.js";

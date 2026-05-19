@@ -12,16 +12,12 @@ import { getEnv } from "../utils/env-manager.js";
  * Extracted from handlers.ts.
  */
 
-import { existsSync, readFileSync, } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
-import {
-  getCronModelConfig,
-  getDefaultCronModel,
-  getLLMModelPreference,
-} from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
@@ -29,7 +25,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { type ReinforcementExtractResult, runReinforcementExtract } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
-import { cleanupEvictedVector, } from "../services/vector-maintenance.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
@@ -409,8 +405,3 @@ export async function runExtractReinforcementForCli(
     if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
-
-/**
- * Generate persona proposals from reflection insights (patterns, rules, meta).
- * Reads identity files, calls LLM to find gaps, creates proposals in DB (fixes #81).
- */

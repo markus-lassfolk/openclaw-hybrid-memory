@@ -1,4 +1,3 @@
-
 /**
  * Extract CLI Handler Functions
  *
@@ -9,14 +8,11 @@
  * Extracted from handlers.ts.
  */
 
-import { existsSync, readFileSync, } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
-import {
-  getCronModelConfig,
-  getDefaultCronModel,
-} from "../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
@@ -25,13 +21,10 @@ import { extractStructuredFields } from "../services/fact-extraction.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { BATCH_STORE_IMPORTANCE, } from "../utils/constants.js";
+import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
-import type {
-  ExtractDailyResult,
-  ExtractDailySink,
-} from "./types.js";
+import type { ExtractDailyResult, ExtractDailySink } from "./types.js";
 
 export async function runExtractDailyForCli(
   ctx: HandlerContext,
