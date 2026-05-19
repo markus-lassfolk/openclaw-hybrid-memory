@@ -168,8 +168,8 @@ export async function runVerifyEmbeddingsSection(state: VerifyRunState): Promise
           : p === "ollama"
             ? `Local/Ollama (${embModel})`
             : `Local/ONNX (${embModel})`;
-    let success: boolean | undefined = undefined;
-    let embError: string | undefined = undefined;
+    let success: boolean | undefined;
+    let embError: string | undefined;
     if (!opts.testLlm && (api === "True" || api === "Local")) {
       state.embeddingOk = true;
     }

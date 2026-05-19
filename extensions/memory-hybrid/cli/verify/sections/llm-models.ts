@@ -441,11 +441,11 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
     if (!source) source = "—";
     const inConfig = configModelSet.has(model);
     const tiersLabel = tiersForModel(model);
-    let oauthResult: boolean | undefined = undefined;
-    let apiResult: boolean | undefined = undefined;
-    let oauthError: string | undefined = undefined;
-    let apiError: string | undefined = undefined;
-    let apiSkippedReason: string | undefined = undefined;
+    let oauthResult: boolean | undefined;
+    let apiResult: boolean | undefined;
+    let oauthError: string | undefined;
+    let apiError: string | undefined;
+    let apiSkippedReason: string | undefined;
     // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/maintenance/default/heavy.
     if (opts.testLlm && enabled && (hasOAuth || hasApi)) {
       const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
