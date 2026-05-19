@@ -35,6 +35,7 @@ import type { VerificationStore } from "../services/verification-store.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
+import { spawn } from "../utils/process-runner.js";
 import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -122,7 +123,6 @@ export function startOllamaIfNeeded(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       const running = await probeOllamaEndpoint(ollamaBase);
       if (!running) {
         api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
-        const { spawn } = await import("node:child_process");
         const child = spawn("ollama", ["serve"], {
           detached: true,
           stdio: "ignore",
