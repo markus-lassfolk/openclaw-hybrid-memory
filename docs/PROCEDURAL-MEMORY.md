@@ -26,7 +26,7 @@ All under `plugins.entries["openclaw-hybrid-memory"].config.procedures`:
 | `sessionsDir` | `~/.openclaw/agents/main/sessions` | Directory containing session `.jsonl` files. |
 | `minSteps` | `2` | Minimum tool-call steps to consider a sequence a procedure. |
 | `validationThreshold` | `3` | Success count required before auto-generating a skill. |
-| `skillTTLDays` | `30` | TTL (days) for procedure confidence / revalidation. |
+| `skillTTLDays` | `30` | Auto skill generation only considers positive procedures whose latest activity (`last_validated`, else `updated_at`, else `created_at`) is within this many days. |
 | `skillsAutoPath` | `skills/auto` | Path (relative to workspace or absolute) for auto-generated skills. |
 | `requireApprovalForPromote` | `true` | When true, human should move skills out of `auto/` to promote to permanent. |
 
@@ -81,7 +81,7 @@ Generated skills start in the `experimental` lifecycle state. Each activation or
 Telemetry reports surface activations per week, near-misses, false-positive/false-negative signals, success/failure/partial rates, repeated corrections, and archive/revision candidates. Each row also includes a heuristic `riskLevel` (`low` | `medium` | `high`) derived from task pattern + recipe content. The lifecycle policy:
 - **Auto-promotes** experimental skills to `trusted` after repeated successful uses without correction.
 - **Auto-demotes** when false-positive rate crosses a **risk-adjusted** threshold (high-risk demotes sooner, low-risk uses a slightly higher FP bar).
-- **Auto-archives** never-used skills after the configured window.
+- **Auto-archives** skills after the configured idle window has passed since the last **selected** activation (or since skill generation when there have been no selections).
 - **Auto-unblocks** demoted skills back to `experimental` after enough clean uses (configurable via `unblockAfterCleanUses`).
 
 When a skill is reset from `demoted` back to `experimental` (manually or automatically), the evaluation window resets so pre-demotion signals don't block the recovery.
