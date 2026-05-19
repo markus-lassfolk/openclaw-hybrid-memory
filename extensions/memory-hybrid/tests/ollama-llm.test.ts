@@ -2,7 +2,7 @@
  * Tests for Ollama local LLM provider support in hybrid-memory.
  * Covers: provider resolution, health check / graceful fallback, cost tracking ($0), nano-tier classification.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -276,5 +276,157 @@ describe("parseLLMConfig — provider baseURL / baseUrl", () => {
     };
     const result = parseLLMConfig(cfg);
     expect(result?.providers?.["azure-foundry"]?.baseURL).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. startOllamaIfNeeded — deduplication guard (race / concurrent-init safety)
+// ─────────────────────────────────────────────────────────────────────────────
+vi.mock("../setup/provider-router.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../setup/provider-router.js")>();
+  return {
+    ...actual,
+    probeOllamaEndpoint: vi.fn(),
+    clearOllamaHealthCacheEntry: vi.fn(),
+  };
+});
+
+vi.mock("../utils/process-runner.js", () => ({
+  spawn: vi.fn(() => ({
+    on: vi.fn(),
+    unref: vi.fn(),
+  })),
+}));
+
+import { probeOllamaEndpoint } from "../setup/provider-router.js";
+import { spawn } from "../utils/process-runner.js";
+import { startOllamaIfNeeded, _resetOllamaAutoStartForTesting } from "../setup/bootstrap-databases.js";
+
+describe("startOllamaIfNeeded — deduplication guard", () => {
+  const makeApi = () => ({
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+  });
+
+  const baseCfg = {
+    llm: {
+      localAutoStart: true,
+      default: ["ollama/qwen3:8b"],
+      heavy: [],
+      nano: [],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetOllamaAutoStartForTesting();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not spawn ollama at all when the server is already running", async () => {
+    vi.mocked(probeOllamaEndpoint).mockResolvedValue(true);
+
+    startOllamaIfNeeded(baseCfg as never, makeApi() as never);
+
+    // Drain microtasks so the async IIFE can run
+    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeOllamaEndpoint).toHaveBeenCalledOnce();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("spawns ollama exactly once even when called concurrently twice", async () => {
+    // First probe: Ollama is down; use a manually-resolved promise so the second call
+    // arrives while the first auto-start is still in-flight (before the probe resolves).
+    let resolveProbe!: (v: boolean) => void;
+    const slowProbe = new Promise<boolean>((res) => {
+      resolveProbe = res;
+    });
+    vi.mocked(probeOllamaEndpoint)
+      .mockReturnValueOnce(slowProbe) // first probe (is it running?) — held
+      .mockResolvedValue(true); // re-probe after spawn
+
+    const api1 = makeApi();
+    const api2 = makeApi();
+
+    startOllamaIfNeeded(baseCfg as never, api1 as never);
+    // Second call arrives while the first is still awaiting the slow probe
+    startOllamaIfNeeded(baseCfg as never, api2 as never);
+
+    // Unblock the first probe — Ollama is down, so it should spawn
+    resolveProbe(false);
+    await vi.runAllTimersAsync();
+
+    // Advance past the 2-second post-spawn wait
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.runAllTimersAsync();
+
+    // spawn must have been called only once despite two concurrent startOllamaIfNeeded calls
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledWith("ollama", ["serve"], { detached: true, stdio: "ignore" });
+    // Two probes: initial + re-probe after spawn
+    expect(probeOllamaEndpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a new auto-start after the previous one completes", async () => {
+    vi.mocked(probeOllamaEndpoint)
+      .mockResolvedValueOnce(false) // first run: down
+      .mockResolvedValueOnce(true) // re-probe after first spawn
+      .mockResolvedValueOnce(false) // second run: down again
+      .mockResolvedValue(true); // re-probe after second spawn
+
+    startOllamaIfNeeded(baseCfg as never, makeApi() as never);
+    await vi.runAllTimersAsync();
+    // Advance past the 2-second wait; finally clears _ollamaAutoStartPromise
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.runAllTimersAsync();
+
+    expect(spawn).toHaveBeenCalledOnce();
+
+    // _ollamaAutoStartPromise should now be null (cleared by finally); second call can run
+    startOllamaIfNeeded(baseCfg as never, makeApi() as never);
+    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.runAllTimersAsync();
+
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips when localAutoStart is false", async () => {
+    const cfg = { llm: { localAutoStart: false, default: ["ollama/qwen3:8b"], heavy: [], nano: [] } };
+    startOllamaIfNeeded(cfg as never, makeApi() as never);
+    await vi.runAllTimersAsync();
+    expect(probeOllamaEndpoint).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("skips when no ollama/* models are configured", async () => {
+    const cfg = {
+      llm: { localAutoStart: true, default: ["openai/gpt-4.1-mini"], heavy: [], nano: [] },
+    };
+    startOllamaIfNeeded(cfg as never, makeApi() as never);
+    await vi.runAllTimersAsync();
+    expect(probeOllamaEndpoint).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("captures and logs errors without crashing when probeOllamaEndpoint throws", async () => {
+    const { capturePluginError } = await import("../services/error-reporter.js");
+    vi.mocked(probeOllamaEndpoint).mockRejectedValue(new Error("network failure"));
+    const api = makeApi();
+
+    startOllamaIfNeeded(baseCfg as never, api as never);
+    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("network failure"));
+    expect(capturePluginError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "network failure" }),
+      expect.objectContaining({ operation: "ollama-auto-start" }),
+    );
   });
 });
