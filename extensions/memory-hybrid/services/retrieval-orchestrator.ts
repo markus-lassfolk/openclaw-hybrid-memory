@@ -96,7 +96,9 @@ export async function buildExplicitSemanticQueryVector({
   try {
     void import("./error-reporter.js")
       .then(({ addOperationBreadcrumb }) => addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`))
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        logger.debug?.(`memory-hybrid: failed to record retrieval breadcrumb: ${String(error)}`);
+      });
     let textToEmbed = query;
 
     if (policy.allowHyde && cfg.queryExpansion.enabled) {
