@@ -28,7 +28,7 @@ import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
-import type { LifecycleContext, SessionState } from "./types.js";
+import type { LifecycleContext } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
 

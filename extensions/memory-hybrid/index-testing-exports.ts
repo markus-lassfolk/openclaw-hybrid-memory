@@ -129,12 +129,19 @@ import { CrystallizationProposer } from "./services/crystallization-proposer.js"
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
 import {
   computeEvidenceHash,
+  computeLegacyEvidenceHash,
   computePatternId,
   detectCrystallizationCandidates,
   scorePattern,
 } from "./services/pattern-detector.js";
 import { ProvenanceService } from "./services/provenance.js";
-import { crystallizeSkill, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
+import {
+  buildExamplesText,
+  crystallizeSkill,
+  deriveSkillName,
+  inferCategory,
+  isExecOnlySequence,
+} from "./services/skill-crystallizer.js";
 import { SkillValidator, buildNonPlaceholderEmailPattern } from "./services/skill-validator.js";
 import { ToolProposer } from "./services/tool-proposer.js";
 import { VerificationError, VerificationStore, shouldAutoVerify } from "./services/verification-store.js";
@@ -252,9 +259,12 @@ export const _testing = {
   CrystallizationProposer,
   computePatternId,
   computeEvidenceHash,
+  computeLegacyEvidenceHash,
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
+  buildExamplesText,
+  inferCategory,
   // Plugin self-extension (Issue #210)
   ToolProposalStore,
   GapDetector,
