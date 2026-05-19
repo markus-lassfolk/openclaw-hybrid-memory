@@ -343,7 +343,8 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           if (changed) log(`Config written: ${defaultConfigPath}. Restart the gateway and run verify again.`);
         }
       } catch (e) {
-        log(`\nCould not apply fixes to config: ${String(e)}`);
+        const _err = state.sink.error ?? state.rawLog;
+        _err(`\nCould not apply fixes to config: ${String(e)}`);
         capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:apply-fixes" });
         const snippet = {
           embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },
@@ -352,8 +353,8 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           captureMaxChars: 5000,
           store: { fuzzyDedupe: false },
         };
-        log(`Minimal config snippet to merge into plugins.entries["${PLUGIN_ID}"].config:`);
-        log(JSON.stringify(snippet, null, 2));
+        _err(`Minimal config snippet to merge into plugins.entries["${PLUGIN_ID}"].config:`);
+        _err(JSON.stringify(snippet, null, 2));
       }
     } else {
       log("\n--- Fix (--fix) ---");
