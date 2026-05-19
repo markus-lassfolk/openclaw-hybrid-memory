@@ -633,8 +633,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return listGeneratedSkillProceduresImpl(this.liveDb);
   }
 
-  getGeneratedSkillByName(skillName: string): ProcedureEntry | null {
-    return getGeneratedSkillByNameImpl(this.liveDb, skillName);
+  getGeneratedSkillByName(skillName: string, procedureId?: string): ProcedureEntry | null {
+    return getGeneratedSkillByNameImpl(this.liveDb, skillName, procedureId);
   }
 
   recordGeneratedSkillTelemetry(
@@ -661,16 +661,18 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     state: GeneratedSkillLifecycleState,
     reason: string | null,
     at?: number,
+    procedureId?: string,
   ): ProcedureEntry | null {
-    return setGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, state, reason, at);
+    return setGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, state, reason, at, procedureId);
   }
 
   refreshGeneratedSkillLifecycleState(
     skillName: string,
     policy?: GeneratedSkillLifecyclePolicy,
     now?: number,
+    procedureId?: string,
   ): ProcedureEntry | null {
-    return refreshGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, policy, now);
+    return refreshGeneratedSkillLifecycleStateImpl(this.liveDb, skillName, policy, now, procedureId);
   }
 
   buildGeneratedSkillTelemetryReport(options?: {
