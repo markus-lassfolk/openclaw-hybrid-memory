@@ -299,7 +299,7 @@ function normalizeSessionRef(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
+export function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
   const related = normalizeSessionRef(relatedSession);
   const current = normalizeSessionRef(currentSession);
   if (!related || !current) return false;

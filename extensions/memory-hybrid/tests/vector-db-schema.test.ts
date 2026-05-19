@@ -442,14 +442,15 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
       filterKey: "race",
     });
 
-    const internal = db as unknown as {
-      semanticQueryCacheTable: unknown;
-      pruneSemanticQueryCache: (filterKey: string) => Promise<void>;
+    const dbWithCacheGetter = db as unknown as {
+      getSemanticQueryCacheTable: () => unknown;
     };
-    const realPrune = internal.pruneSemanticQueryCache.bind(db);
-    vi.spyOn(db as object, "pruneSemanticQueryCache" as never).mockImplementation(async (filterKey: string) => {
-      internal.semanticQueryCacheTable = null;
-      await realPrune(filterKey);
+    const cacheTable = dbWithCacheGetter.getSemanticQueryCacheTable();
+    expect(cacheTable).toBeTruthy();
+    let getTableCalls = 0;
+    vi.spyOn(dbWithCacheGetter, "getSemanticQueryCacheTable").mockImplementation(() => {
+      getTableCalls += 1;
+      return getTableCalls === 1 ? cacheTable : null;
     });
 
     await db.storeSemanticQueryCache({
@@ -460,6 +461,7 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
     });
 
     expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    expect(getTableCalls).toBe(2);
     await db.close();
   });
 
