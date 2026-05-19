@@ -2,7 +2,7 @@
  * CLI: skill proposal queue (crystallization lifecycle) and generated-skill telemetry.
  *
  * Commands:
- * - hybrid-mem skills queue | show | validate | reject | install | telemetry …
+ * - hybrid-mem skills queue | show | validate | reject | install | rescan | telemetry …
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
@@ -448,6 +448,30 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           if (!result.success) process.exitCode = 1;
         },
       ),
+    );
+
+  (skills.command("rescan") as ArgumentChainable)
+    .description(
+      "Re-validate on-disk SKILL.md for each installed crystallization proposal; quarantine rows that fail generated-skill validation",
+    )
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (opts: { json?: boolean }) => {
+        const store = requireStore(ctx);
+        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+        const result = proposer.rescanInstalledSkills();
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: result.errors.length === 0, ...result }, null, 2));
+          if (result.errors.length > 0) process.exitCode = 2;
+          return;
+        }
+        console.log(
+          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`,
+        );
+        for (const line of result.messages) console.log(`  ${line}`);
+        for (const line of result.errors) console.error(`  error: ${line}`);
+        if (result.errors.length > 0) process.exitCode = 2;
+      }),
     );
 }
 

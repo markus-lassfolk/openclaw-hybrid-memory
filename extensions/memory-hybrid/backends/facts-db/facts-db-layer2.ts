@@ -613,8 +613,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return recordProcedureFailureImpl(this.liveDb, id, recipeJson, sessionId);
   }
 
-  getProceduresReadyForSkill(validationThreshold: number, limit = 50): ProcedureEntry[] {
-    return getProceduresReadyForSkillImpl(this.liveDb, validationThreshold, limit);
+  getProceduresReadyForSkill(validationThreshold: number, limit = 50, skillTTLDays?: number): ProcedureEntry[] {
+    return getProceduresReadyForSkillImpl(this.liveDb, validationThreshold, limit, skillTTLDays);
   }
 
   markProcedurePromoted(id: string, skillPath: string): boolean {
