@@ -93,7 +93,13 @@ export function runSelfCorrectionExtractForCli(
     });
     if (opts.outputPath && result.incidents.length > 0) {
       try {
-        atomicWriteFile(opts.outputPath, JSON.stringify(result.incidents, null, 2));
+        const outputJson = JSON.stringify(result.incidents, null, 2);
+        // Follow symlinks so shared extract targets are updated, not replaced.
+        if (existsSync(opts.outputPath) && lstatSync(opts.outputPath).isSymbolicLink()) {
+          writeFileSync(opts.outputPath, outputJson, "utf-8");
+        } else {
+          atomicWriteFile(opts.outputPath, outputJson);
+        }
       } catch (e) {
         capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionExtractForCli:write-output" });
       }
