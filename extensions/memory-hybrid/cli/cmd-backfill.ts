@@ -367,32 +367,17 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   const reinforcementRegex = getReinforcementSignalRegex();
   const correctionRegex = getCorrectionSignalRegex();
   const allTexts: string[] = [];
-  let successfullyScannedSessions = 0;
-  let firstSessionParseError: string | null = null;
   for (const { path: fp } of sessionFiles) {
     try {
       const { texts, firstMalformedLine } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
       if (firstMalformedLine !== null) {
-        if (!firstSessionParseError) {
-          firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
-        }
-      } else {
-        successfullyScannedSessions++;
+        logger.warn?.(`memory-hybrid: Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}, continuing with valid lines`);
       }
       allTexts.push(...texts);
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
-      const message = err instanceof Error ? err.message : String(err);
-      if (!firstSessionParseError) firstSessionParseError = `Failed to parse session file ${fp}: ${message}`;
+      logger.warn?.(`memory-hybrid: Failed to parse session file ${fp}: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
-  if (firstSessionParseError) {
-    return {
-      reinforcement: [],
-      correction: [],
-      sessionsScanned: successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length,
-      error: firstSessionParseError,
-    };
   }
   const unmatched = allTexts.filter((text) => {
     return !reinforcementRegex.test(text) && !correctionRegex.test(text);
