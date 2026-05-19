@@ -38,6 +38,7 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
       if (!isSqliteBusyError(err) || attempt === SQLITE_BUSY_STORE_MAX_RETRIES) {
         throw err;
       }
+      // Re-apply timeout before retry in case lock contention happened after reconnect/reopen.
       db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
       const delayMs = Math.min(SQLITE_BUSY_STORE_BACKOFF_BASE_MS * 2 ** attempt, SQLITE_BUSY_STORE_BACKOFF_MAX_MS);
       sleepSync(delayMs);
