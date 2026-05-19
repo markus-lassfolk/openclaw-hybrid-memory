@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -179,6 +179,41 @@ describe("workspace skill install", () => {
     } catch {
       expect(true).toBe(true);
     }
+  });
+
+  it("installHybridMemoryWorkspaceSkill replaces blocking file at destination", () => {
+    const destRoot = join(tmp, "ws-atomic-install");
+    const skillsDir = join(destRoot, "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    // Place a file at the path where the skill directory should be installed.
+    // The install should remove this file and successfully install the skill directory.
+    writeFileSync(join(skillsDir, "hybrid-memory"), "blocking-file\n", "utf-8");
+    const r = installHybridMemoryWorkspaceSkill({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: PLUGIN_ROOT,
+      dryRun: false,
+    });
+    expect(r.error).toBeUndefined();
+    // No temp directories should remain in skills/
+    const leftover = readdirSync(skillsDir).filter((e) => e.startsWith(".hybrid-memory-tmp-"));
+    expect(leftover).toHaveLength(0);
+    // The skill should be successfully installed
+    expect(readFileSync(join(skillsDir, "hybrid-memory", "SKILL.md"), "utf-8")).toContain("memory_store");
+  });
+
+  it("ensureHybridMemoryWorkspaceSkillIfMissing leaves no temp dir after successful deploy", () => {
+    const destRoot = join(tmp, "ws-ensure-atomic-success");
+    const r = ensureHybridMemoryWorkspaceSkillIfMissing({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: PLUGIN_ROOT,
+    });
+    expect(r.deployed).toBe(true);
+    // The temp dir must have been renamed to the final destination — no .hybrid-memory-tmp-* left.
+    const skillsDir = join(destRoot, "skills");
+    const leftover = readdirSync(skillsDir).filter((e) => e.startsWith(".hybrid-memory-tmp-"));
+    expect(leftover).toHaveLength(0);
+    // Final destination should contain valid content
+    expect(readFileSync(join(destRoot, "skills", "hybrid-memory", "SKILL.md"), "utf-8")).toContain("memory_store");
   });
 });
 
