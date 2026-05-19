@@ -387,11 +387,10 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     }
   }
   if (firstSessionParseError) {
-    const sessionsScanned = successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length;
     return {
       reinforcement: [],
       correction: [],
-      sessionsScanned,
+      sessionsScanned: sessionFiles.length,
       error: firstSessionParseError,
     };
   }
