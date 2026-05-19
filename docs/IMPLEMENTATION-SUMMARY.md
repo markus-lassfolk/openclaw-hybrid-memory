@@ -1,12 +1,14 @@
 # Implementation Summary: Features #3, #5, and #6
 
+> **Note:** Dashboard code now lives under `routes/dashboard/`; `routes/dashboard-server.ts` is a **barrel re-export**. For current layout see [ARCHITECTURE-CENTER.md](ARCHITECTURE-CENTER.md).
+
 This document summarizes the implementation of three strategic enhancements for OpenClaw Hybrid Memory.
 
 ## ✅ #3: Visual Memory Graph Explorer
 
 ### What Was Implemented
 
-1. **Route Integration** (`routes/dashboard-server.ts`)
+1. **Route Integration** (`routes/dashboard/server.ts`; barrel `routes/dashboard-server.ts`)
    - Added `/graph` route serving the interactive visualization
    - Added `/graphql` POST endpoint for GraphQL API
    - Integrated with existing dashboard server

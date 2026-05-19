@@ -29,10 +29,10 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as fsUtils from "../utils/fs.js";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
 import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
+import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
 
@@ -286,6 +286,22 @@ describe("collectStatus", () => {
       expect(getDirSizeSpy).toHaveBeenCalledTimes(1);
       expect(a.memory.lanceSizeBytes).toBe(b.memory.lanceSizeBytes);
       expect(a.memory.lanceSizeBytes).toBeGreaterThanOrEqual(0);
+    } finally {
+      getDirSizeSpy.mockRestore();
+      isolatedCtx.factsDb.close();
+      isolatedCtx.vectorDb.close();
+    }
+  });
+
+  it("reuses cached lance size on sequential collectStatus within TTL (#1501 TOCTOU)", async () => {
+    const isolatedCtx = makeContext(mkdtempSync(join(tmpdir(), "dashboard-lance-cache-")));
+    const getDirSizeSpy = vi.spyOn(fsUtils, "getDirSize").mockResolvedValue(42);
+    try {
+      const first = await collectStatus(isolatedCtx);
+      const second = await collectStatus(isolatedCtx);
+      expect(getDirSizeSpy).toHaveBeenCalledTimes(1);
+      expect(first.memory.lanceSizeBytes).toBe(42);
+      expect(second.memory.lanceSizeBytes).toBe(42);
     } finally {
       getDirSizeSpy.mockRestore();
       isolatedCtx.factsDb.close();

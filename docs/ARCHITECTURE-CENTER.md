@@ -46,7 +46,7 @@ These are valuable, but they are not the architecture center and should evolve w
 
 | Subsystem | Primary ownership (module/files) | Classification |
 |---|---|---|
-| Dashboard and HTTP routes | `extensions/memory-hybrid/routes/dashboard-server.ts`, `extensions/memory-hybrid/tools/dashboard-routes.ts` | Adjacent observability/UI surface |
+| Dashboard and HTTP routes | `extensions/memory-hybrid/routes/dashboard/server.ts`, `extensions/memory-hybrid/routes/dashboard/collectors.ts`, `extensions/memory-hybrid/routes/dashboard/html.ts`, barrel `extensions/memory-hybrid/routes/dashboard-server.ts`, `extensions/memory-hybrid/tools/dashboard-routes.ts` | Adjacent observability/UI surface |
 | Workflow mining and pattern tracking | `extensions/memory-hybrid/backends/workflow-store.ts`, `extensions/memory-hybrid/services/workflow-tracker.ts`, `extensions/memory-hybrid/tools/workflow-tools.ts` | Adjacent learning/analytics layer |
 | Issue tracking | `extensions/memory-hybrid/backends/issue-store.ts`, `extensions/memory-hybrid/tools/issue-tools.ts` | Adjacent operational state |
 | Crystallization and self-extension | `extensions/memory-hybrid/backends/crystallization-store.ts`, `extensions/memory-hybrid/backends/tool-proposal-store.ts`, `extensions/memory-hybrid/services/crystallization-proposer.ts`, `extensions/memory-hybrid/services/skill-crystallizer.ts`, `extensions/memory-hybrid/services/tool-proposer.ts`, `extensions/memory-hybrid/tools/crystallization-tools.ts`, `extensions/memory-hybrid/tools/self-extension-tools.ts` | Adjacent autonomy/optimization features |
@@ -96,7 +96,8 @@ openclaw-hybrid-memory
 │   ├── tools/memory-tools.ts              # primary tool API
 │   └── services/provenance.ts + event-log.ts
 └── Adjacent subsystems
-    ├── routes/dashboard-server.ts         # dashboard/UI endpoint
+    ├── routes/dashboard/                  # Mission Control server, collectors, GraphQL
+    ├── routes/dashboard-server.ts         # barrel re-export (do not add logic here)
     ├── tools/dashboard-routes.ts          # dashboard HTTP routes
     ├── workflow/issue/crystallization/*   # learning and operations layers
     ├── self-extension/*                   # proposal and generation paths
@@ -106,6 +107,19 @@ openclaw-hybrid-memory
 ```
 
 ---
+
+## Module layout (contributors)
+
+Large CLI and backend surfaces are split for reviewability (2026.5.190+):
+
+| Area | Prefer adding code in |
+|------|------------------------|
+| Manage CLI commands | `cli/commands/manage/register-*.ts` (smallest matching file) |
+| Procedure DB | `backends/facts-db/procedures/*.ts` |
+| Dashboard | `routes/dashboard/*.ts` |
+| Lifecycle hooks | `lifecycle/*/` focused modules |
+
+See [SIMILAR-SWEEP-PR.md](SIMILAR-SWEEP-PR.md) when opening similarity-sweep PRs.
 
 ## Refactor Guardrails
 

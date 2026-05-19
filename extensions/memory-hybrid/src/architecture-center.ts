@@ -90,6 +90,9 @@ export const ARCHITECTURE_CENTER = {
     {
       name: "Dashboard and HTTP routes",
       ownership: [
+        "extensions/memory-hybrid/routes/dashboard/server.ts",
+        "extensions/memory-hybrid/routes/dashboard/collectors.ts",
+        "extensions/memory-hybrid/routes/dashboard/html.ts",
         "extensions/memory-hybrid/routes/dashboard-server.ts",
         "extensions/memory-hybrid/tools/dashboard-routes.ts",
       ],

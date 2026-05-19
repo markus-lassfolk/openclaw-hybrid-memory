@@ -87,6 +87,9 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 | [Multilingual language keywords](LANGUAGE-KEYWORDS) | Auto-capture and categories in multiple languages; auto-build and build-languages |
 | [Automatic Categories](AUTOMATIC-CATEGORIES) | Category discovery from "other" facts |
 | [Dynamic Derived Data](DYNAMIC-DERIVED-DATA) | Index: tags, categories, decay, and other derived data |
+| [Procedural memory](PROCEDURAL-MEMORY) | Procedure tagging, recall, auto-skills, promotion gates |
+| [Skill pipelines](SKILL-PIPELINES) | Crystallization vs procedure promotion, lifecycle states, operator playbooks |
+| [Cost optimization playbook](COST-OPTIMIZATION-PLAYBOOK) | Cheap-first tiers, distill guardrails, weekly auditing |
 
 ### Operations & maintenance
 
@@ -119,6 +122,8 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 |----------|-------------|
 | [Credits & attribution](CREDITS-AND-ATTRIBUTION) | Sources, lineage, and what this repository adds |
 | [Contributor onboarding](CONTRIBUTOR-ONBOARDING) | First-contribution path, quality bar, and high-impact starter areas |
+| [Similar-sweep PR process](SIMILAR-SWEEP-PR) | Contributor merge order and module-split conventions during sweep batches |
+| [Release notes 2026.5.190](../release-notes/release-notes-2026.5.190.md) | Latest release highlights and upgrade notes |
 
 ---
 

@@ -530,6 +530,26 @@ Popular models and their dimensions:
 }
 ```
 
+### Ollama auto-start (`llm.localAutoStart`)
+
+When **`llm.localAutoStart`** is **`true`** (boolean only; the string `"true"` is ignored) and at least one configured tier includes an **`ollama/…`** model, the plugin can start Ollama during database bootstrap if `GET /api/tags` fails:
+
+- Spawns **`ollama serve`** once per process (concurrent bootstrap calls share one in-flight promise).
+- Uses a **detached** child with **`unref()`** so the gateway process is not kept alive solely by Ollama.
+- Logs spawn errors without crashing the plugin; re-probes after a short delay.
+
+```json
+"llm": {
+  "localAutoStart": true,
+  "default": ["ollama/qwen3:8b"],
+  "providers": {
+    "ollama": { "baseURL": "http://127.0.0.1:11434/v1", "apiKey": "ollama" }
+  }
+}
+```
+
+You still need Ollama installed on the host PATH. For embeddings-only setups, start Ollama yourself or use ONNX; `localAutoStart` applies to the **LLM tier lists**, not embedding init.
+
 ---
 
 ### ONNX (fully local, no API key)

@@ -21,8 +21,8 @@ import type { EventLogEntry } from "../backends/event-log.js";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import {
-  type DreamCycleConfig,
   buildDigestSummary,
+  type DreamCycleConfig,
   extractEventText,
   groupEventsByEntity,
   runDreamCycle,
@@ -314,6 +314,28 @@ describe("runEpisodicConsolidation", () => {
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
     expect(result.eventsConsolidated).toBe(2);
     expect(result.factsCreated).toBe(1); // Both go into __default__ group
+  });
+
+  it("is idempotent: a second consolidation pass does not recreate facts", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Nightly idempotency batch" },
+    });
+
+    const first = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(first.eventsConsolidated).toBe(1);
+    expect(first.factsCreated).toBe(1);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+
+    const dreamFactsBefore = factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle").length;
+
+    const second = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(second.eventsConsolidated).toBe(0);
+    expect(second.factsCreated).toBe(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle").length).toBe(dreamFactsBefore);
   });
 
   it("stores JSON provenance instead of DERIVED_FROM links for consolidated events", async () => {

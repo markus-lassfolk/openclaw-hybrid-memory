@@ -24,6 +24,17 @@ nav_order: 83
 - onboarding and doctor flows
 - operator safety and trust surfaces
 
+## Code layout (where to edit)
+
+Avoid growing monolithic orchestrators. Prefer the smallest matching module:
+
+- **CLI:** `extensions/memory-hybrid/cli/commands/manage/register-*.ts` (not a single giant `manage.ts`)
+- **Procedures DB:** `extensions/memory-hybrid/backends/facts-db/procedures/`
+- **Dashboard:** `extensions/memory-hybrid/routes/dashboard/` (`dashboard-server.ts` is a barrel only)
+- **Vector DB:** `extensions/memory-hybrid/backends/vector-db/vector-db-class.ts`
+
+During active similarity-sweep batches, read [SIMILAR-SWEEP-PR.md](SIMILAR-SWEEP-PR.md) before opening another sweep PR.
+
 ## Contribution quality bar
 
 - strict TypeScript compatibility

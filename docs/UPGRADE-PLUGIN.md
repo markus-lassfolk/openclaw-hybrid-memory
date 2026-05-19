@@ -155,6 +155,19 @@ Before or after upgrading, check:
 
 If a release notes file says "run `hybrid-mem install` after upgrade" or "back up before upgrading", follow that.
 
+### Upgrading to 2026.5.190 (from 2026.5.101 or earlier)
+
+| Topic | What to expect |
+|-------|----------------|
+| **Procedure success rates** | Re-scanning session JSONL uses **any-failure-wins** per session; historical success counts may **drop** if a session had an early tool failure before a later success. See [MAINTENANCE.md](MAINTENANCE.md). |
+| **`staticValidation`** | Reflects only generated-skill **static/recipe** gates; other defer reasons appear in `rejectionReasons` without marking `staticValidation` failed. |
+| **JSON CLI** | `verify --json` prints diagnostics on **stderr**; stdout is JSON only. See [CLI-REFERENCE.md](CLI-REFERENCE.md#json-output-contract-scripting). |
+| **Ollama** | Optional **`llm.localAutoStart: true`** to spawn `ollama serve` when tiers use `ollama/*` and the endpoint is down. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#ollama-auto-start-llmlocalautostart). |
+| **Crystallization DB** | `schema_meta` migrations for crystallization/workflow stores run on startup; older pattern installs may be **superseded** by `listByPatternId`. |
+| **Skills** | Atomic writes for skill dirs; `skills rescan` can **quarantine** stale on-disk skills. See [OPERATIONS.md](OPERATIONS.md). |
+
+Full list: [release-notes-2026.5.190.md](../release-notes/release-notes-2026.5.190.md).
+
 ### Backups
 
 For major upgrades or if you're unsure, back up the memory data first. See [BACKUP.md](BACKUP.md) for what to copy and how to restore.
@@ -312,6 +325,19 @@ Before or after upgrading, check:
 - **release-notes/** — Release notes for specific versions (e.g. new features, breaking changes, config changes).
 
 If a release notes file says "run `hybrid-mem install` after upgrade" or "back up before upgrading", follow that.
+
+### Upgrading to 2026.5.190 (from 2026.5.101 or earlier)
+
+| Topic | What to expect |
+|-------|----------------|
+| **Procedure success rates** | Re-scanning session JSONL uses **any-failure-wins** per session; historical success counts may **drop** if a session had an early tool failure before a later success. See [MAINTENANCE.md](MAINTENANCE.md). |
+| **`staticValidation`** | Reflects only generated-skill **static/recipe** gates; other defer reasons appear in `rejectionReasons` without marking `staticValidation` failed. |
+| **JSON CLI** | `verify --json` prints diagnostics on **stderr**; stdout is JSON only. See [CLI-REFERENCE.md](CLI-REFERENCE.md#json-output-contract-scripting). |
+| **Ollama** | Optional **`llm.localAutoStart: true`** to spawn `ollama serve` when tiers use `ollama/*` and the endpoint is down. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#ollama-auto-start-llmlocalautostart). |
+| **Crystallization DB** | `schema_meta` migrations for crystallization/workflow stores run on startup; older pattern installs may be **superseded** by `listByPatternId`. |
+| **Skills** | Atomic writes for skill dirs; `skills rescan` can **quarantine** stale on-disk skills. See [OPERATIONS.md](OPERATIONS.md). |
+
+Full list: [release-notes-2026.5.190.md](../release-notes/release-notes-2026.5.190.md).
 
 ### Backups
 

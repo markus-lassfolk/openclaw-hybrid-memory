@@ -148,7 +148,10 @@ openclaw hybrid-mem skills doctor                             # scan for missing
 openclaw hybrid-mem skills doctor --fix                      # mark missing as uninstalled
 openclaw hybrid-mem skills doctor --workspace /path/to/ws   # custom workspace root
 openclaw hybrid-mem skills doctor --json                     # machine-readable output
+openclaw hybrid-mem skills rescan [--json]                  # re-validate installed skills; quarantine on deny
 ```
+
+**Validation and eval (2026.5.190+):** Generated skills pass **content gates** and static validation before install; promotion may record **eval** metadata under the skill directory. Use `skills validate` / `skills rescan` when policy or on-disk content changes. See [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) for procedure-side promotion gates and `staticValidation` semantics.
 
 ---
 

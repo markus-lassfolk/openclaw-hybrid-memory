@@ -63,6 +63,46 @@ Start with **2000** ms when you see quota signals; tune with your provider’s R
 
 **Note:** “Sanitize on retry” in logs refers to **message** / tool-*call* repair (for example pairing `tool_use` with `tool_result`), not to rewriting tool **definitions** in the request.
 
+### `verify --json` or `jq` fails with “parse error”
+
+**Symptoms:** `openclaw hybrid-mem verify --json | jq .` fails; stdout contains log lines mixed with JSON.
+
+**Fix:** Use **2026.5.190+**. Human diagnostics go to **stderr**; stdout is JSON only when `--json` is set. Example:
+
+```bash
+openclaw hybrid-mem verify --json 2>verify.log | jq .
+```
+
+See [CLI-REFERENCE.md § JSON output contract](CLI-REFERENCE.md#json-output-contract-scripting).
+
+### LanceDB init timeout or “semantic cache” errors after upgrade
+
+**Symptoms:** Semantic search unavailable at startup; logs mention Lance init failure, ONNX load hang, or vector count timeout.
+
+**Checks:**
+
+1. Run **`openclaw hybrid-mem verify`** (and **`--fix`** if suggested).
+2. Confirm **`@lancedb/lancedb`** native bindings: `cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild @lancedb/lancedb`.
+3. After a failed init, the plugin records **`lanceInitFailed`** and avoids throwing on optional tables (for example semantic cache) until you fix the underlying issue and restart.
+
+Heavy ONNX models on slow disks may need a warm start before first recall.
+
+### `SQLITE_BUSY` during fact store
+
+**Symptoms:** Intermittent store/recall errors under concurrent cron + gateway load.
+
+**Cause:** SQLite writer contention on `facts.db`.
+
+**Fix:** **2026.5.190+** retries `FactsDB.store` / `storeFact` on **`SQLITE_BUSY`**. If errors persist, stagger maintenance crons or reduce parallel writers; see [MAINTENANCE.md](MAINTENANCE.md).
+
+### Sensor sweep: Garmin/Yarbo failed but Home Assistant works in UI
+
+**Symptoms:** `sensor-sweep` logs invalid entity errors yet some sensors still update.
+
+**Cause:** HA `/api/states` returns all entities; one bad row no longer fails the entire fetch (**2026.5.190+** skips invalid entities).
+
+**Fix:** Fix or ignore the offending integration entity; target prefix entities can still be read. See [CONFIGURATION.md § Sensor Sweep](CONFIGURATION.md#sensor-sweep-sensorsweep-236).
+
 ### `LiveSessionModelSwitchError` on maintenance crons
 
 **Symptoms:** A scheduled **`hybrid-mem:*`** job fails; logs mention **`LiveSessionModelSwitchError`** or “live session model switch”.
