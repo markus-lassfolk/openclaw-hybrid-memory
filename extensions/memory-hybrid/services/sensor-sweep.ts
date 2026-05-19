@@ -64,6 +64,55 @@ interface HAEntity {
   last_updated: string;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getHAEntityValidationError(value: unknown): string | null {
+  if (!isPlainObject(value)) return "value is not an object";
+  if (typeof value.entity_id !== "string") return "entity_id is not a string";
+  if (typeof value.state !== "string") return "state is not a string";
+  if (!isPlainObject(value.attributes)) return "attributes is not an object";
+  if (typeof value.last_updated !== "string") return "last_updated is not a string";
+  return null;
+}
+
+async function parseJsonBody(res: Response, context: string): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch (err) {
+    const details = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid JSON response from ${context}: ${details}`);
+  }
+}
+
+function parseHAEntities(payload: unknown, context: string): HAEntity[] {
+  if (!Array.isArray(payload)) {
+    throw new Error(`Invalid Home Assistant response from ${context}: expected array`);
+  }
+  const valid: HAEntity[] = [];
+  for (const [index, item] of payload.entries()) {
+    const validationError = getHAEntityValidationError(item);
+    if (validationError) {
+      capturePluginError(
+        new Error(`Invalid Home Assistant entity at index ${index} from ${context}: ${validationError}`),
+        { operation: "parse-ha-entities", severity: "info", subsystem: "sensor-sweep" },
+      );
+      continue;
+    }
+    valid.push(item as HAEntity);
+  }
+  return valid;
+}
+
+function parseHAEntity(payload: unknown, context: string): HAEntity {
+  const validationError = getHAEntityValidationError(payload);
+  if (validationError) {
+    throw new Error(`Invalid Home Assistant response from ${context}: ${validationError}`);
+  }
+  return payload as HAEntity;
+}
+
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
   const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
   const token = ha.token.startsWith("env:") ? (getEnv(ha.token.slice(4)) ?? "") : ha.token;
@@ -93,7 +142,7 @@ async function fetchHaEntities(
 
   const res = await fetchHa(ha, "/api/states");
   if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
-  const all = (await res.json()) as HAEntity[];
+  const all = parseHAEntities(await parseJsonBody(res, "HA /api/states"), "HA /api/states");
   return all.filter((e) => e.entity_id.startsWith(prefix));
 }
 
@@ -101,13 +150,16 @@ async function fetchHaEntityById(ha: HomeAssistantSensorConfig, entityId: string
   const res = await fetchHa(ha, `/api/states/${encodeURIComponent(entityId)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
-  return (await res.json()) as HAEntity;
+  return parseHAEntity(
+    await parseJsonBody(res, `HA /api/states/${encodeURIComponent(entityId)}`),
+    `HA /api/states/${encodeURIComponent(entityId)}`,
+  );
 }
 
 async function fetchAllHaStates(ha: HomeAssistantSensorConfig): Promise<HAEntity[]> {
   const res = await fetchHa(ha, "/api/states");
   if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
-  return (await res.json()) as HAEntity[];
+  return parseHAEntities(await parseJsonBody(res, "HA /api/states"), "HA /api/states");
 }
 
 // ---------------------------------------------------------------------------
