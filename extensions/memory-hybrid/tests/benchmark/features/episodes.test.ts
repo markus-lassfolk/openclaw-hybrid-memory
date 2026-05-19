@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { benchmark, shadowBenchmark, testAccuracy } from "../../../benchmark/features/episodes.js";
 import type { BenchmarkContext } from "../../../benchmark/shadow-eval.js";

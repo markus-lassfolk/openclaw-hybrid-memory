@@ -18,7 +18,6 @@ import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 import {
   CATEGORY_FRONTMATTER_KEYS,
-  DEFAULT_REQUIRED_SECTIONS,
   MAX_SKILL_LINES,
   getSectionTaxonomy,
   type SectionTaxonomyOverrides,
@@ -105,7 +104,7 @@ const SECRET_PATTERNS: Array<[name: string, pattern: RegExp, description: string
   ],
   [
     "api-key-assignment",
-    /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{\[\]]+/i,
+    /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{[\]]+/i,
     "Credential assignment pattern detected (must not be copied into skills)",
   ],
   [
@@ -454,7 +453,7 @@ export function normalizeHeading(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\/\s-]+/gu, "")
+    .replace(/[^\p{L}\p{N}/\s-]+/gu, "")
     .replace(/\s+/g, " ");
 }
 

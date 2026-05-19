@@ -10,15 +10,8 @@
 import type { MemoryEntry } from "../types/memory.js";
 import { TASK_LEDGER_CATEGORY, groupProjectFactsByEntity } from "./task-ledger-facts.js";
 
-export class PreFinalizationGuardBlockingError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PreFinalizationGuardBlockingError";
-  }
-}
-
 const WAITING_OR_PENDING_RE =
-  /\b(waiting\s+(?:for|on|to)|still\s+waiting|pending|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
+  /\b(waiting\s+(?:for|on|to)|still\s+(?:waiting|pending)|pending\s+(?:ci|checks?|reviews?|merges?|approvals?|deploy(?:ment)?s?|jobs?|workflows?|pipelines?|runs?|builds?)|will\s+recheck|recheck\s+(?:later|tomorrow|again|soon|after|in|at|once)|check back(?:\s+(?:later|tomorrow|soon|after|in|at|once))?|continue (?:later|after|tomorrow)|follow up(?: later)?|awaiting)\b/i;
 const NEGATED_WAITING_OR_PENDING_RE =
   /\b(?:no longer|not|nothing|without|never)\b[\s\S]{0,24}\b(?:pending|waiting|awaiting)\b/i;
 const CLEARED_WAITING_OR_PENDING_RE =
@@ -306,13 +299,40 @@ function normalizeSessionRef(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
+const MAIN_AGENT_CANONICAL_SESSION = "agent:main:main";
+
+/** OpenClaw canonical main session ref stored on project-ledger rows. */
+function isMainAgentCanonicalSessionRef(ref: string): boolean {
+  return ref === MAIN_AGENT_CANONICAL_SESSION;
+}
+
+/**
+ * Live main-agent channel session (`agent:main:telegram:*`, etc.), not subagent/cron keys.
+ */
+function isMainAgentLiveChannelSessionRef(ref: string): boolean {
+  if (!ref.startsWith("agent:main:") || ref.includes("subagent:")) return false;
+  const parts = ref.split(":");
+  if (parts.length < 4 || parts[1] !== "main") return false;
+  const channel = parts[2];
+  const sessionId = parts[3] ?? "";
+  if (!sessionId) return false;
+  return channel !== "main" && channel !== "cron" && channel !== "subagent";
+}
+
+export function sessionRefMatches(relatedSession: string, currentSession: string): boolean {
   const related = normalizeSessionRef(relatedSession);
   const current = normalizeSessionRef(currentSession);
   if (!related || !current) return false;
   if (related === current) return true;
   if ((related === "main" || related === "private") && current.startsWith(`agent:${related}:`)) return true;
   if ((current === "main" || current === "private") && related.startsWith(`agent:${current}:`)) return true;
+  // #1486: ledger rows tagged agent:main:main apply to live agent:main:<channel>:* sessions.
+  if (
+    (isMainAgentCanonicalSessionRef(related) && isMainAgentLiveChannelSessionRef(current)) ||
+    (isMainAgentLiveChannelSessionRef(related) && isMainAgentCanonicalSessionRef(current))
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -336,18 +356,49 @@ function evaluateProjectCheckpoint(
   taskUpdatedFreshnessMs: number,
   goalAssess: GoalAssessEvidence,
   currentSessionKey?: string,
+  projectFactsProvided?: boolean,
 ): ProjectCheckpointEvaluation {
-  if (projectFacts.length === 0) return { satisfied: false, missingFields: ["status"] };
+  if (projectFacts.length === 0) {
+    // When a sessionKey is provided and there are no project facts at all, there is no
+    // checkpoint obligation for this session — return satisfied to avoid false positives (#1479).
+    // Only apply this when projectFacts were explicitly provided (not just defaulted to empty).
+    if (currentSessionKey && projectFactsProvided) {
+      return { satisfied: true, missingFields: [] };
+    }
+    return { satisfied: false, missingFields: ["status"] };
+  }
 
   const grouped = groupProjectFactsByEntity(projectFacts);
   let bestUnsatisfied: { entity: string; updatedMs: number; missingFields: string[] } | null = null;
+  // Track whether any active entity is scoped to this session (#1479 Fix A+B).
+  let sessionScopedEntityFound = false;
+  let otherSessionActiveCount = 0;
+  let unscopedActiveCount = 0;
 
   for (const [entity, keyMap] of grouped.entries()) {
     const status = normalizeProjectStatus(chooseLatestText(keyMap.get("status")));
     if (!status || !ACTIVE_PROJECT_STATUSES.has(status)) continue;
 
-    const next = chooseLatestText(keyMap.get("next"));
     const relatedSession = chooseLatestText(keyMap.get("related_session"));
+
+    // When a sessionKey is provided, only evaluate entities that belong to this session.
+    // Entities whose related_session is absent or points to a different session (e.g. a
+    // Forge/Pr-Steward subagent) are not the current session's responsibility and must not
+    // trigger the guard (#1479 Fix A+B).
+    if (currentSessionKey) {
+      if (!relatedSession) {
+        unscopedActiveCount++;
+        continue;
+      }
+      if (!sessionRefMatches(relatedSession, currentSessionKey)) {
+        otherSessionActiveCount++;
+        continue;
+      }
+    }
+
+    sessionScopedEntityFound = true;
+
+    const next = chooseLatestText(keyMap.get("next"));
     const relatedGoal = chooseLatestText(keyMap.get("related_goal")) || chooseLatestText(keyMap.get("goal_id"));
     const updatedRaw =
       chooseLatestText(keyMap.get("task_updated")) ||
@@ -362,9 +413,10 @@ function evaluateProjectCheckpoint(
         const raw = chooseLatestText(keyMap.get(k));
         return raw.length > 0;
       });
-    const relatedSessionMatches = currentSessionKey
-      ? sessionRefMatches(relatedSession, currentSessionKey)
-      : relatedSession.length > 0;
+    // When currentSessionKey is set, the entity already passed sessionRefMatches above, so
+    // related_session is always satisfied for filtered entities.  Without a sessionKey the
+    // original check (related_session must be non-empty) is preserved.
+    const relatedSessionMatches = currentSessionKey ? true : relatedSession.length > 0;
 
     const missingFields: string[] = [];
     if (!next) missingFields.push("next");
@@ -387,6 +439,18 @@ function evaluateProjectCheckpoint(
     const rankMs = Number.isFinite(updatedMs) ? updatedMs : 0;
     if (!bestUnsatisfied || rankMs > bestUnsatisfied.updatedMs) {
       bestUnsatisfied = { entity, updatedMs: rankMs, missingFields };
+    }
+  }
+
+  // When sessionKey is provided and no active entities are scoped to this session, waive
+  // obligation only if every active row belongs to another session (#1479, #1504, #1531).
+  // Unscoped active rows (missing/invalid related_session) still owe a checkpoint.
+  if (currentSessionKey && !sessionScopedEntityFound) {
+    if (otherSessionActiveCount > 0 && unscopedActiveCount === 0) {
+      return { satisfied: true, missingFields: [] };
+    }
+    if (unscopedActiveCount > 0) {
+      return { satisfied: false, missingFields: ["related_session"] };
     }
   }
 
@@ -487,6 +551,7 @@ export function evaluatePreFinalizationGuard(
     taskUpdatedFreshnessMs,
     goalAssess,
     options.sessionKey,
+    options.projectFacts !== undefined,
   );
   const checkpointSatisfied = activeTaskCheckpointCalled || projectCheckpoint.satisfied;
 
@@ -542,7 +607,11 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
     return "pre-finalization guard: no unfinished external-workflow signals detected.";
   }
   if (result.reason === "checkpoint_present") {
-    const source = result.checkpoint.activeTaskCheckpointCalled ? "active_task_checkpoint tool call" : "project facts";
+    const source = result.checkpoint.activeTaskCheckpointCalled
+      ? "active_task_checkpoint tool call"
+      : result.checkpoint.projectCheckpointEntity
+        ? "project facts"
+        : "no session-scoped active task (no obligation)";
     return `pre-finalization guard: checkpoint satisfied via ${source}.`;
   }
   if (result.reason === "explicit_bypass") {
@@ -551,7 +620,11 @@ export function formatPreFinalizationGuardMessage(result: PreFinalizationGuardRe
 
   const missing =
     result.checkpoint.missingFields.length > 0 ? result.checkpoint.missingFields.join(", ") : "project checkpoint";
-  const mode = result.action === "block" ? "blocking" : "warning";
+  // "advisory" (block action) is intentionally softer in wording than "warning" because
+  // agent_end is fail-open in OpenClaw core — the guard cannot actually block finalization.
+  // Using "advisory" avoids the misleading "blocking finalization" + "handler failed" log pair
+  // described in issue #1479 Fix D.  "warning" (warn action) is for weak-signal turns.
+  const mode = result.action === "block" ? "advisory" : "warning";
   const conditionalHints: string[] = [];
   if (result.checkpoint.missingFields.includes("wake_link")) {
     conditionalHints.push(

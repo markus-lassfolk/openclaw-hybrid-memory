@@ -612,6 +612,18 @@ Use for collecting markerless legacy reports.
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-second-session`);
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-third-session`);
     }
+    const recentFailureProc = requireProcedure(cases[1].proc.id);
+    db.upsertProcedure({
+      id: recentFailureProc.id,
+      taskPattern: recentFailureProc.taskPattern,
+      recipeJson: recentFailureProc.recipeJson,
+      procedureType: "positive",
+      successCount: recentFailureProc.successCount,
+      failureCount: recentFailureProc.failureCount,
+      confidence: recentFailureProc.confidence,
+      lastValidated: 1_700_000_000,
+      lastFailed: Math.floor(Date.now() / 1000),
+    });
 
     // Existing skill collision.
     const dup = addProcedure({

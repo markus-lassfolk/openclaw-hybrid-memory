@@ -564,6 +564,10 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
       typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0 ? Math.floor(raw.maxCrystallized) : 50,
     pruneUnusedDays:
       typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0 ? Math.floor(raw.pruneUnusedDays) : 30,
+    evidenceCountBucketSize:
+      typeof raw?.evidenceCountBucketSize === "number" && raw.evidenceCountBucketSize >= 1
+        ? Math.min(1000, Math.floor(raw.evidenceCountBucketSize))
+        : 5,
     sectionTaxonomy: parseSectionTaxonomyOverrides(raw?.sectionTaxonomy),
     placeholderEmailDomains: (() => {
       const raw_domains = raw?.placeholderEmailDomains;

@@ -33,7 +33,6 @@ import {
   type InteractiveRecallPolicy,
   resolveConstrainedRetrievalPolicy,
   resolveExplicitDeepRetrievalPolicy,
-  resolveInteractiveRecallPolicy,
 } from "./retrieval-mode-policy.js";
 import { getCandidateIdsByStructuredFilters, hasActiveFilters } from "../backends/facts-db/search.js";
 import {
@@ -95,9 +94,9 @@ export async function buildExplicitSemanticQueryVector({
   }
 
   try {
-    import("./error-reporter.js").then(({ addOperationBreadcrumb }) =>
-      addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`),
-    );
+    void import("./error-reporter.js")
+      .then(({ addOperationBreadcrumb }) => addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`))
+      .catch(() => undefined);
     let textToEmbed = query;
 
     if (policy.allowHyde && cfg.queryExpansion.enabled) {
@@ -979,12 +978,7 @@ export async function runExplicitDeepRetrieval(
     }
 
     let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
-    if (
-      strategies.includes("semantic") &&
-      embeddingRegistry &&
-      embeddingRegistry.isMultiModel() &&
-      factsDbForEmbeddings
-    ) {
+    if (strategies.includes("semantic") && embeddingRegistry?.isMultiModel() && factsDbForEmbeddings) {
       multiModelPromise = runMultiModelSemanticStrategies(
         factsDbForEmbeddings,
         embeddingRegistry,

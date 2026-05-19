@@ -83,6 +83,57 @@ interface DatabaseContext {
 }
 
 /**
+ * Ollama auto-start: if any tier includes ollama/* models and localAutoStart is enabled,
+ * attempt to launch `ollama serve` in the background when the server is not already running.
+ * Fire-and-forget; errors are logged, not thrown to the caller.
+ */
+export function maybeAutoStartOllama(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): void {
+  if (!cfg.llm?.localAutoStart) return;
+  const allModels = [...(cfg.llm.nano ?? []), ...(cfg.llm.default ?? []), ...(cfg.llm.heavy ?? [])];
+  const hasOllamaModels = allModels.some((m) => m.split("/")[0]?.toLowerCase() === "ollama");
+  if (!hasOllamaModels) return;
+
+  void (async () => {
+    try {
+      const ollamaBase =
+        (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.ollama?.baseURL?.replace(
+          /\/v1\/?$/,
+          "",
+        ) ?? OLLAMA_DEFAULT_BASE_URL;
+      const running = await probeOllamaEndpoint(ollamaBase);
+      if (!running) {
+        api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
+        const { spawn } = await import("node:child_process");
+        const child = spawn("ollama", ["serve"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.on("error", (err) => {
+          api.logger.warn(`memory-hybrid: Ollama spawn error: ${err.message}`);
+        });
+        child.unref();
+        await new Promise<void>((r) => setTimeout(r, 2000));
+        clearOllamaHealthCacheEntry(ollamaBase);
+        const nowRunning = await probeOllamaEndpoint(ollamaBase);
+        if (nowRunning) {
+          api.logger.info("memory-hybrid: Ollama started successfully");
+        } else {
+          api.logger.warn(
+            "memory-hybrid: Ollama auto-start attempted but server still not available — local model calls will fall back to cloud",
+          );
+        }
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "ollama-auto-start",
+        subsystem: "llm",
+      });
+      api.logger.warn(`memory-hybrid: Ollama auto-start failed: ${err}`);
+    }
+  })();
+}
+
+/**
  * Initializes all databases and services for the plugin.
  *
  * This includes:
@@ -388,53 +439,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     }
   }
 
-  // Ollama auto-start: if any tier includes ollama/* models and localAutoStart is enabled,
-  // attempt to launch `ollama serve` in the background when the server is not already running.
-  if (cfg.llm?.localAutoStart) {
-    const allModels = [...(cfg.llm.nano ?? []), ...(cfg.llm.default ?? []), ...(cfg.llm.heavy ?? [])];
-    const hasOllamaModels = allModels.some((m) => m.split("/")[0]?.toLowerCase() === "ollama");
-    if (hasOllamaModels) {
-      void (async () => {
-        try {
-          const ollamaBase =
-            (
-              cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined
-            )?.ollama?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
-          const running = await probeOllamaEndpoint(ollamaBase);
-          if (!running) {
-            api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
-            const { spawn } = await import("node:child_process");
-            const child = spawn("ollama", ["serve"], {
-              detached: true,
-              stdio: "ignore",
-            });
-            child.on("error", (err) => {
-              api.logger.warn(`memory-hybrid: Ollama spawn error: ${err.message}`);
-            });
-            child.unref();
-            // Allow Ollama ~2 s to bind its port before re-probing
-            await new Promise<void>((r) => setTimeout(r, 2000));
-            // Invalidate any cached "down" entry so the next probe goes to the network
-            clearOllamaHealthCacheEntry(ollamaBase);
-            const nowRunning = await probeOllamaEndpoint(ollamaBase);
-            if (nowRunning) {
-              api.logger.info("memory-hybrid: Ollama started successfully");
-            } else {
-              api.logger.warn(
-                "memory-hybrid: Ollama auto-start attempted but server still not available — local model calls will fall back to cloud",
-              );
-            }
-          }
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "ollama-auto-start",
-            subsystem: "llm",
-          });
-          api.logger.warn(`memory-hybrid: Ollama auto-start failed: ${err}`);
-        }
-      })();
-    }
-  }
+  void maybeAutoStartOllama(cfg, api);
 
   // Chat/LLM client: multi-provider proxy that routes each model to the correct API.
   // google/* → Google Gemini OpenAI-compat API (uses distill.apiKey or llm.providers.google.apiKey)

@@ -10,7 +10,6 @@
  * of tracking mention frequency vs not tracking.
  */
 
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -94,7 +94,7 @@ const MAX_SKILL_CHARS = 16_000;
 // MAX_SKILL_LINES is imported from config/skill-sections.ts — the single source of truth
 // shared with SkillValidator (issue #1366).
 const TRANSCRIPT_LINE_RE = /^(?:user|assistant|system|tool):/i;
-const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+\-]|z)+/i;
+const TIMESTAMP_LINE_RE = /^\d{4}-\d{2}-\d{2}[t ](?:[0-9:.+-]|z)+/i;
 const NEGATION_PATTERN = /\b(?:without|do not|don't|avoid)\b/;
 const EXPLANATION_PATTERN = /\b(?:explain|describe)\b/;
 const STOP_WORDS = new Set([
