@@ -162,7 +162,7 @@ export async function syncLifecycleFromGitHub(
   }
   const gh = opts.gh ?? defaultGhClient();
   const apply = opts.apply !== false;
-  const logger = opts.logger ?? { info: () => {}, warn: (m) => console.warn(m) };
+  const logger = opts.logger ?? { info: () => {}, warn: (_m) => {} };
 
   const errors: LifecycleSyncReport["errors"] = [];
 

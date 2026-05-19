@@ -137,12 +137,7 @@ export type ManageContext = {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: {
-    limit: number;
-    dryRun: boolean;
-    model?: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
@@ -275,9 +270,9 @@ export type ManageContext = {
   runContinuousVerification?: (opts?: {
     verbose?: boolean;
   }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
-  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<
-    import("../cli/handlers.js").CrossAgentLearningCliResult
-  >;
+  runCrossAgentLearning?: (opts?: {
+    verbose?: boolean;
+  }) => Promise<import("../cli/handlers.js").CrossAgentLearningCliResult>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;

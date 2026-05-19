@@ -492,7 +492,7 @@ export async function runSelfCorrectionRunForCli(
           ]
         : []),
       ...(toolsApplied > 0
-        ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section \"${toolsSection}\".`, ""]
+        ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section "${toolsSection}".`, ""]
         : []),
       ...(proposals.length > 0
         ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""]

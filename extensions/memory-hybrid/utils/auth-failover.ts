@@ -94,7 +94,7 @@ export function recordOAuthFailure(provider: string, options: AuthFailoverOption
  * Clear backoff for a provider (e.g. after manual reset or success).
  * If statePath is set, loads and saves; otherwise no-op for persistence.
  */
-function clearOAuthBackoff(provider: string, options: AuthFailoverOptions = {}): void {
+function _clearOAuthBackoff(provider: string, options: AuthFailoverOptions = {}): void {
   const statePath = options.statePath;
   if (!statePath) return;
   const state = loadState(statePath);

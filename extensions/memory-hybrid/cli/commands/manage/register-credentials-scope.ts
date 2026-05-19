@@ -6,8 +6,8 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { ScopeFilter } from "../../../types/memory.js";
-import { type Chainable, relativeTime, withExit } from "../../shared.js";
-import type { CredentialsAuditResult, CredentialsPruneResult, MigrateToVaultResult } from "../../types.js";
+import { type Chainable, withExit } from "../../shared.js";
+import type { MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindings): void {
