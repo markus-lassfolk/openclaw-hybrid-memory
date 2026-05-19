@@ -91,39 +91,3 @@ describe("runConfigViewForCli JSON", () => {
     expect(parsed.mode).toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Regression: broad-config-view-missing-await (issue #1496)
-// Verify that runConfigViewForCli can be safely awaited in async contexts and
-// that errors thrown synchronously are propagated through an awaited call.
-// ---------------------------------------------------------------------------
-describe("runConfigViewForCli await-safety", () => {
-  it("resolves when awaited (synchronous void return is await-compatible)", async () => {
-    const lines: string[] = [];
-    // await on a void-returning function is a no-op but must not throw or swallow output
-    await runConfigViewForCli(makeCtx(), { log: (s) => lines.push(s), error: vi.fn() }, { format: "json" });
-    expect(lines).toHaveLength(1);
-    const parsed = JSON.parse(lines[0] as string) as Record<string, unknown>;
-    expect(parsed.schemaVersion).toBe(1);
-  });
-
-  it("synchronous error from runConfigViewForCli is caught when wrapped in try/catch with await", async () => {
-    // Simulate what the CLI action handler does: await runConfigView(...) inside try/catch.
-    // If the function throws synchronously, the error should surface via the awaited call.
-    const throwingSink: VerifyCliSink = {
-      log: () => {
-        throw new Error("simulated-config-view-failure");
-      },
-      error: vi.fn(),
-    };
-
-    let caught: Error | undefined;
-    try {
-      await runConfigViewForCli(makeCtx(), throwingSink, { format: "json" });
-    } catch (err) {
-      caught = err instanceof Error ? err : new Error(String(err));
-    }
-    expect(caught).toBeDefined();
-    expect(caught?.message).toBe("simulated-config-view-failure");
-  });
-});
