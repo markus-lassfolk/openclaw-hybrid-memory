@@ -639,9 +639,7 @@ describe("FactsDB procedureFeedback", () => {
     db.procedureFeedback({ procedureId: proc.id, success: false, context: "fail", failedAtStep: 1 });
     const versionId = db.getProcedureVersions(proc.id)[0]?.id;
     expect(versionId).toBeTruthy();
-    db.getRawDb()
-      .prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE id = ?")
-      .run("not-json", versionId);
+    db.getRawDb().prepare("UPDATE procedure_versions SET avoidance_notes = ? WHERE id = ?").run("not-json", versionId);
 
     expect(() => db.getProcedureById(proc.id)).not.toThrow();
     const enriched = db.getProcedureById(proc.id);

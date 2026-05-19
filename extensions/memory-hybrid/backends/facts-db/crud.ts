@@ -128,7 +128,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       warnOnce: ctx.warnOnce,
       warnOnceKey: ctx.warnOnceKey,
       suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
-      warn: (m) => console.warn(m),
+      warn: (_m) => {},
     },
   );
 

@@ -8,36 +8,35 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { MemoryCategory } from "../config.js";
-import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { detectCredentialPatterns } from "../services/auto-capture.js";
+import type { MemoryCategory } from "../../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../../config.js";
+import { detectCredentialPatterns } from "../../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
   getAutoCaptureExtractionMethod,
   resolveCaptureProvenance,
-} from "../services/capture-provenance.js";
+} from "../../services/capture-provenance.js";
 import {
   type MemoryClassification,
   classifyMemoryOperation,
   classifyMemoryOperationsBatch,
-} from "../services/classification.js";
-import { validateScopedClassificationTarget } from "../services/classification-scope.js";
-import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
-import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
-import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
-import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
-import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
-import { extractTags } from "../utils/tags.js";
-import { truncateForStorage } from "../utils/text.js";
-import { withTimeout } from "../utils/timeout.js";
+} from "../../services/classification.js";
+import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
+import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
+import { isOllamaCircuitBreakerOpen } from "../../services/embeddings.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { extractStructuredFields } from "../../services/fact-extraction.js";
+import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import type { MemoryEntry } from "../../types/memory.js";
+import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
+import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
+import { extractTags } from "../../utils/tags.js";
+import { truncateForStorage } from "../../utils/text.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
-const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
 /** Outcome indicator patterns for episodic memory auto-capture (#781). */
 interface OutcomePattern {
@@ -364,7 +363,9 @@ export async function runCapture(
               existingFacts: prepared[pi].similarFacts,
             }));
             const outs = await classifyMemoryOperationsBatch(inputs, ctx.openai, classifyModel, api.logger);
-            idxs.forEach((pi, j) => classificationByIndex.set(pi, outs[j]));
+            idxs.forEach((pi, j) => {
+              classificationByIndex.set(pi, outs[j]);
+            });
           }
         }
 

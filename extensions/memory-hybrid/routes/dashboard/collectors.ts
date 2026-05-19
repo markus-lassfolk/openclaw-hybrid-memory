@@ -9,33 +9,28 @@
 
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { Server } from "node:http";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { IssueStore } from "../backends/issue-store.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
-import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
-import { pluginLogger } from "../utils/logger.js";
-import { execFile as execFileCb } from "../utils/process-runner.js";
-import { parseTags } from "../utils/tags.js";
-import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
+import { type AgentHealthView, mergeAgentHealthDashboard } from "../../backends/agent-health-store.js";
+import type { AuditStore } from "../../backends/audit-store.js";
+import type { EdictStore } from "../../backends/edict-store.js";
+import type { FactsDB } from "../../backends/facts-db.js";
+import type { IssueStore } from "../../backends/issue-store.js";
+import type { NarrativesDB } from "../../backends/narratives-db.js";
+import type { VectorDB } from "../../backends/vector-db.js";
+import type { WorkflowStore } from "../../backends/workflow-store.js";
+import type { ProvenanceService } from "../../services/provenance.js";
+import type { VerificationStore } from "../../services/verification-store.js";
+import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
+import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
+import { execFile as execFileCb } from "../../utils/process-runner.js";
 
 const execFile = promisify(execFileCb);
 const require = createRequire(import.meta.url);
 
-const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
+const _MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
 const VERIFIED_FACT_SET_TTL_MS = 5000;
 const verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
 
@@ -45,7 +40,7 @@ function clearVerifiedFactIdCache(ctx: DashboardContext): void {
   verifiedFactIdCacheByStore.delete(store);
 }
 
-function getVerifiedFactIdSet(ctx: DashboardContext): Set<string> {
+export function getVerifiedFactIdSet(ctx: DashboardContext): Set<string> {
   const store = ctx.verificationStore;
   if (!store) return new Set();
   const now = Date.now();
@@ -65,7 +60,7 @@ function getVerifiedFactIdSet(ctx: DashboardContext): Set<string> {
   }
 }
 
-function parseUrlPathSegment(input: string): string | null {
+export function parseUrlPathSegment(input: string): string | null {
   try {
     const trimmed = input.trim();
     if (!trimmed) return null;
@@ -75,7 +70,10 @@ function parseUrlPathSegment(input: string): string | null {
   }
 }
 
-function readJsonBody(req: import("node:http").IncomingMessage, maxBytes: number): Promise<Record<string, unknown>> {
+export function readJsonBody(
+  req: import("node:http").IncomingMessage,
+  maxBytes: number,
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let sizeBytes = 0;
@@ -155,13 +153,13 @@ export interface DashboardContext {
   /** Optional embedding registry exposed to GraphQL context. */
   embeddingRegistry?: unknown;
   /** Optional CostTracker instance — delegates cost stats to the established abstraction. */
-  costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  costTracker?: import("../../backends/cost-tracker.js").CostTracker | null;
   /** Optional logger for structured logging of server errors */
   logger?: { error?: (msg: string) => void };
   /** Cross-agent audit trail (Issue #790). */
   auditStore?: AuditStore | null;
   /** Per-agent health store (Issue #789). */
-  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  agentHealthStore?: import("../../backends/agent-health-store.js").AgentHealthStore | null;
   /** Edict store for verified ground-truth facts. */
   edictStore?: EdictStore | null;
   /** Verification store for critical facts. */
@@ -330,7 +328,7 @@ interface MemoryViewerEpisode {
   tags: string[];
 }
 
-interface MemoryViewerFact {
+export interface MemoryViewerFact {
   id: string;
   text: string;
   why?: string | null;
@@ -714,7 +712,10 @@ function collectCostStats(ctx: DashboardContext): CostStats {
   }
 }
 
-async function collectAgentHealth(ctx: DashboardContext, forgeState?: ForgeTaskItem[]): Promise<AgentHealthPayload> {
+export async function collectAgentHealth(
+  ctx: DashboardContext,
+  forgeState?: ForgeTaskItem[],
+): Promise<AgentHealthPayload> {
   if (!ctx.agentHealthStore) {
     return { enabled: false, agents: [], alerts: [] };
   }
@@ -733,7 +734,7 @@ async function collectAgentHealth(ctx: DashboardContext, forgeState?: ForgeTaskI
   }
 }
 
-function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
+export function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
   if (!ctx.auditStore) {
     return {
       enabled: false,
@@ -786,7 +787,7 @@ function openFactsDbReadonly(path: string): import("node:sqlite").DatabaseSync |
 }
 
 /** Collect Memory Viewer overview stats. */
-async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryViewerStats> {
+export async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryViewerStats> {
   const factsDb = ctx.factsDb;
   const totalFacts = factsDb.count();
   const totalExpired = factsDb.countExpired();
@@ -880,7 +881,7 @@ async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryVi
 }
 
 /** Collect recent episodes — reads from the episodes table within the facts DB. */
-function collectMemoryViewerEpisodes(ctx: DashboardContext, limit = 50): MemoryViewerEpisode[] {
+export function collectMemoryViewerEpisodes(ctx: DashboardContext, limit = 50): MemoryViewerEpisode[] {
   try {
     const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
     if (!roDb) return [];
@@ -919,7 +920,7 @@ function collectMemoryViewerEpisodes(ctx: DashboardContext, limit = 50): MemoryV
 }
 
 /** Collect recent narratives. */
-function collectMemoryViewerNarratives(ctx: DashboardContext, limit = 20): MemoryViewerNarrative[] {
+export function collectMemoryViewerNarratives(ctx: DashboardContext, limit = 20): MemoryViewerNarrative[] {
   try {
     if (!ctx.narrativesDb) return [];
     return ctx.narrativesDb.listRecent(limit, "all").map((n) => ({
@@ -937,7 +938,7 @@ function collectMemoryViewerNarratives(ctx: DashboardContext, limit = 20): Memor
 }
 
 /** Collect recent issues. */
-function collectMemoryViewerIssues(ctx: DashboardContext): MemoryViewerIssue[] {
+export function collectMemoryViewerIssues(ctx: DashboardContext): MemoryViewerIssue[] {
   try {
     if (!ctx.issueStore) return [];
     return ctx.issueStore.list({}).map((issue) => ({
@@ -961,7 +962,7 @@ function collectMemoryViewerIssues(ctx: DashboardContext): MemoryViewerIssue[] {
 }
 
 /** Collect workflow patterns / recent traces. */
-function collectMemoryViewerWorkflows(ctx: DashboardContext, limit = 100): MemoryViewerWorkflow[] {
+export function collectMemoryViewerWorkflows(ctx: DashboardContext, limit = 100): MemoryViewerWorkflow[] {
   try {
     if (!ctx.workflowStore) return [];
     const traces = ctx.workflowStore.list({ limit });
@@ -985,7 +986,7 @@ function collectMemoryViewerWorkflows(ctx: DashboardContext, limit = 100): Memor
 }
 
 /** Collect recent edicts. */
-function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
+export function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
   try {
     if (!ctx.edictStore) return [];
     return ctx.edictStore.list({}).map((e) => ({
@@ -1004,7 +1005,7 @@ function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
 }
 
 /** Collect verified facts using the public listLatestVerified API. */
-function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): MemoryViewerVerification[] {
+export function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): MemoryViewerVerification[] {
   try {
     if (!ctx.verificationStore) return [];
     const verified = ctx.verificationStore.listLatestVerified().slice(0, Math.max(1, Math.min(500, Math.floor(limit))));
@@ -1022,7 +1023,7 @@ function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): Memory
 }
 
 /** Collect top entities. */
-function collectMemoryViewerEntities(ctx: DashboardContext, limit = 50): MemoryViewerEntity[] {
+export function collectMemoryViewerEntities(ctx: DashboardContext, limit = 50): MemoryViewerEntity[] {
   try {
     const raw = ctx.factsDb.getRawDb();
     const rows = raw
@@ -1056,7 +1057,7 @@ function collectMemoryViewerEntities(ctx: DashboardContext, limit = 50): MemoryV
 }
 
 /** Collect provenance edges for a fact. */
-function collectMemoryViewerProvenance(ctx: DashboardContext, factId: string): MemoryViewerProvenance | null {
+export function collectMemoryViewerProvenance(ctx: DashboardContext, factId: string): MemoryViewerProvenance | null {
   try {
     if (!ctx.provenanceService) return null;
     // Note: getProvenance accepts an optional factsDb param for fact text enrichment.
@@ -1082,7 +1083,7 @@ function collectMemoryViewerProvenance(ctx: DashboardContext, factId: string): M
 }
 
 /** Collect fact links from the memory_links table. */
-function collectMemoryViewerLinks(ctx: DashboardContext, limit = 5000): MemoryViewerLinks[] {
+export function collectMemoryViewerLinks(ctx: DashboardContext, limit = 5000): MemoryViewerLinks[] {
   try {
     const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
     if (!roDb) return [];
@@ -1165,4 +1166,3 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
 // ---------------------------------------------------------------------------
 // HTML dashboard
 // ---------------------------------------------------------------------------
-

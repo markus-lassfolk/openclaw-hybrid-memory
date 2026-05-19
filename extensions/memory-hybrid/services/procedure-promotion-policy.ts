@@ -250,7 +250,7 @@ const DESTRUCTIVE_OR_PRIVILEGED_PATTERNS: Array<[RegExp, ProcedurePromotionReaso
 ];
 
 const CREDENTIAL_PATTERNS: RegExp[] = [
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{\[\]]+/i,
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|private[_-]?key)\s*[:=]\s*[^\s,;}{[\]]+/i,
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/i,
   PEM_PRIVATE_KEY_PATTERN,

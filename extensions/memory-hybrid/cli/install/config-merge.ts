@@ -1,51 +1,11 @@
-/**
- * CLI Install/Uninstall/Upgrade Command Handlers
- *
- * Contains all install-related functions extracted from handlers.ts:
- * - buildPreFilterConfig
- * - Cron constants and helpers (PLUGIN_JOB_ID_PREFIX, MIN_INTERVAL_MS,
- *   MAINTENANCE_CRON_JOBS, LEGACY_JOB_MATCHERS, resolveCronJob,
- *   ensureMaintenanceCronJobs, createProgressReporter)
- * - deepMerge
- * - runResetAuthBackoffForCli
- * - runInstallForCli
- * - runUninstallForCli
- * - runUpgradeForCli
- */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
-
-import { getEnv } from "../utils/env-manager.js";
-import { expandTilde } from "../utils/path.js";
-import { findPluginRoot } from "../utils/plugin-root.js";
-
-import type { DigestWeeklyDeliveryConfig, HybridMemoryConfig } from "../config.js";
-import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
-import { buildGuardPrefix } from "../services/cron-guard.js";
-import {
-  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
-  buildHybridMemCronTaskMessage,
-  hybridMemCronEnvSanitizerBashLines,
-} from "../services/cron-job-bash-harness.js";
-import { findDeprecatedHybridMemCronTokens } from "../services/deprecated-cron-commands.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
-import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
-import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
-import { resetAllBackoff } from "../utils/auth-failover.js";
-import { DEFAULT_COMPACTION_MODEL } from "../utils/compaction-model-watchdog.js";
-import { PLUGIN_ID } from "../utils/constants.js";
-import {
-  extractCronStoreJobModel,
-  readAgentsPrimaryModelFromOpenclawJsonPath,
-  setCronStoreJobModelFields,
-} from "../utils/openclaw-agent-defaults.js";
-import type { HandlerContext } from "./handlers.js";
-import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./types.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { resetAllBackoff } from "../../utils/auth-failover.js";
+import { DEFAULT_COMPACTION_MODEL } from "../../utils/compaction-model-watchdog.js";
+import { PLUGIN_ID } from "../../utils/constants.js";
+import type { HandlerContext } from "../handlers.js";
 
 export function createProgressReporter(
   sink: { log: (msg: string) => void },
@@ -220,7 +180,7 @@ export function buildInstallDefaults(pluginId: string = PLUGIN_ID): Record<strin
 }
 
 /** Get plugin entry config from root openclaw config (for schedule overrides etc.). */
-function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
+export function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
   const plugins = root?.plugins as Record<string, unknown> | undefined;
   const entries = plugins?.entries as Record<string, unknown> | undefined;
   const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
@@ -230,13 +190,13 @@ function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unk
     : undefined;
 }
 
-type EmbeddingSetupInspection = {
+export type EmbeddingSetupInspection = {
   provider?: string;
   model?: string;
   hasUsableApiKey: boolean;
 };
 
-type DetectedEmbeddingSetup = {
+export type DetectedEmbeddingSetup = {
   provider: "onnx" | "ollama" | "openai" | "google";
   model: string;
   source: string;
@@ -246,11 +206,11 @@ type DetectedEmbeddingSetup = {
 
 type EmbeddingProviderName = DetectedEmbeddingSetup["provider"];
 
-function readString(value: unknown): string | undefined {
+export function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function normalizeEmbeddingProvider(value: unknown): EmbeddingProviderName | undefined {
+export function normalizeEmbeddingProvider(value: unknown): EmbeddingProviderName | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized === "onnx" || normalized === "ollama" || normalized === "openai" || normalized === "google") {
@@ -259,7 +219,7 @@ function normalizeEmbeddingProvider(value: unknown): EmbeddingProviderName | und
   return undefined;
 }
 
-function defaultModelForProvider(provider: EmbeddingProviderName): string {
+export function defaultModelForProvider(provider: EmbeddingProviderName): string {
   if (provider === "google") return "gemini-embedding-001";
   if (provider === "ollama") return "nomic-embed-text";
   if (provider === "onnx") return "all-MiniLM-L6-v2";
@@ -281,7 +241,7 @@ function isOpenClawSecretRefObject(
   );
 }
 
-function isPlaceholderSecret(value: unknown): boolean {
+export function isPlaceholderSecret(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const trimmed = value.trim();
   if (!trimmed) return true;
@@ -299,7 +259,7 @@ function isPlaceholderSecret(value: unknown): boolean {
   );
 }
 
-function hasUsableSecret(value: unknown): boolean {
+export function hasUsableSecret(value: unknown): boolean {
   if (isOpenClawSecretRefObject(value)) return true;
   if (typeof value !== "string") return false;
   const trimmed = value.trim();
@@ -310,7 +270,7 @@ function hasUsableSecret(value: unknown): boolean {
   return trimmed.length >= 10;
 }
 
-function inspectExistingEmbeddingSetup(root: Record<string, unknown>): EmbeddingSetupInspection {
+export function inspectExistingEmbeddingSetup(root: Record<string, unknown>): EmbeddingSetupInspection {
   const pluginConfig = getPluginEntryConfig(root) ?? {};
   const embedding = (pluginConfig.embedding as Record<string, unknown> | undefined) ?? {};
   const provider = readString(embedding.provider);
@@ -331,4 +291,3 @@ function inspectExistingEmbeddingSetup(root: Record<string, unknown>): Embedding
       hasUsableSecret(azureFoundryProvider?.apiKey),
   };
 }
-

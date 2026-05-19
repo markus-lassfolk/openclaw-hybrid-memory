@@ -3,7 +3,11 @@ import { isCompactVerbosity, type HybridMemoryConfig } from "../../config.js";
 import type { HandlerContext } from "../handlers.js";
 import type { VerifyCliSink } from "../types.js";
 import { readOpenclawConfigRoot, type OpenclawConfigReadResult } from "./openclaw-config.js";
-import { detectRecommendedEmbeddingSetup, getDashboardUrl, resolveOpenclawJsonPathForWorkspace } from "../cmd-install.js";
+import {
+  detectRecommendedEmbeddingSetup,
+  getDashboardUrl,
+  resolveOpenclawJsonPathForWorkspace,
+} from "../cmd-install.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
 import { PLUGIN_ID } from "../../utils/constants.js";
 import { dirname } from "node:path";

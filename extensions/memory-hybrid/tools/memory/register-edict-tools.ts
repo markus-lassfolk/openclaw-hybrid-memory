@@ -6,75 +6,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type OpenAI from "openai";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { stringEnum } from "../../utils/typebox.js";
-
-import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../../api/memory-plugin-api.js";
-import type { AuditStore } from "../../backends/audit-store.js";
-import type { CredentialsDB } from "../../backends/credentials-db.js";
-import type { EdictStore } from "../../backends/edict-store.js";
-import type { EventLog } from "../../backends/event-log.js";
-import { categoryToEventType } from "../../backends/event-log.js";
-import type { FactsDB } from "../../backends/facts-db.js";
-import type { NarrativesDB } from "../../backends/narratives-db.js";
-import type { VectorDB } from "../../backends/vector-db.js";
-import {
-  DECAY_CLASSES,
-  type DecayClass,
-  type HybridMemoryConfig,
-  type MemoryCategory,
-  getCronModelConfig,
-  getDefaultCronModel,
-  getLLMModelPreference,
-  getMemoryCategories,
-  isCompactVerbosity,
-} from "../../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
-import type { PendingLLMWarnings } from "../../services/chat.js";
-import { classifyMemoryOperation } from "../../services/classification.js";
-import type { VariantGenerationQueue } from "../../services/contextual-variants.js";
-import type { EmbeddingRegistry } from "../../services/embedding-registry.js";
-import { toFloat32Array } from "../../services/embedding-registry.js";
-import type { EmbeddingProvider } from "../../services/embeddings.js";
-import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
-import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
-import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
-import { extractStructuredFields } from "../../services/fact-extraction.js";
-import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
-import { filterByScope, mergeResults } from "../../services/merge-results.js";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
-import type { ProvenanceService } from "../../services/provenance.js";
-import { QueryExpander } from "../../services/query-expander.js";
-import { type AliasDB, storeAliases } from "../../services/retrieval-aliases.js";
-import {
-  resolveConstrainedRetrievalPolicy,
-  resolveExplicitDeepRetrievalPolicy,
-  type ConstrainedRetrievalPolicy,
-  type ExplicitDeepRetrievalPolicy,
-} from "../../services/retrieval-mode-policy.js";
-import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
-import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../../services/task-ledger-facts.js";
-import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
-import type { VerificationStore } from "../../services/verification-store.js";
-import { shouldAutoVerify } from "../../services/verification-store.js";
-import {
-  cleanupEvictedVector,
-  deleteVectorForFactId,
-  storeCanonicalVectorForFact,
-} from "../../services/vector-maintenance.js";
-import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
-import { MEMORY_SCOPES } from "../../types/memory.js";
-import { UUID_REGEX, getSessionLogFileSuffix } from "../../utils/constants.js";
-import { detectFutureDate } from "../../utils/date-detector.js";
-import { parseSourceDate } from "../../utils/dates.js";
-import { parseDuration } from "../../utils/duration.js";
-import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
-import { getEnv } from "../../utils/env-manager.js";
-import { resolveWorkspacePath } from "../../utils/path.js";
-import { extractTags } from "../../utils/tags.js";
-import { truncateForStorage } from "../../utils/text.js";
-import { runActiveTaskCheckpoint } from "../../services/active-task-checkpoint.js";
+import { capturePluginError } from "../../services/error-reporter.js";
 
 import type { MemoryToolRuntime } from "./runtime.js";
 
@@ -171,7 +103,7 @@ export function registerEdictTools(runtime: MemoryToolRuntime): void {
             details: { error: "invalid_ttl" },
           };
         }
-        if (ttlValue === "event" && (!expiresAt || !expiresAt.trim())) {
+        if (ttlValue === "event" && !expiresAt?.trim()) {
           return {
             content: [
               {
@@ -195,7 +127,7 @@ export function registerEdictTools(runtime: MemoryToolRuntime): void {
           content: [
             {
               type: "text",
-              text: `Edict added: \"${edict.text.slice(0, 80)}${edict.text.length > 80 ? "..." : ""}\" (id: ${edict.id})`,
+              text: `Edict added: "${edict.text.slice(0, 80)}${edict.text.length > 80 ? "..." : ""}" (id: ${edict.id})`,
             },
           ],
           details: { edict },
@@ -387,7 +319,7 @@ export function registerEdictTools(runtime: MemoryToolRuntime): void {
             details: { error: "invalid_ttl" },
           };
         }
-        if (ttlValue === "event" && (!expiresAt || !expiresAt.trim())) {
+        if (ttlValue === "event" && !expiresAt?.trim()) {
           return {
             content: [
               {
@@ -419,7 +351,7 @@ export function registerEdictTools(runtime: MemoryToolRuntime): void {
           content: [
             {
               type: "text",
-              text: `Edict updated: \"${updated.text.slice(0, 80)}${updated.text.length > 80 ? "..." : ""}\" (id: ${updated.id})`,
+              text: `Edict updated: "${updated.text.slice(0, 80)}${updated.text.length > 80 ? "..." : ""}" (id: ${updated.id})`,
             },
           ],
           details: { edict: updated },

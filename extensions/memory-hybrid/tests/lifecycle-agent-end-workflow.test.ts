@@ -9,10 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
-import {
-  buildGuardTestLifecycleContext,
-  makeMockHookApi,
-} from "./helpers/lifecycle-hook-harness.js";
+import { buildGuardTestLifecycleContext, makeMockHookApi } from "./helpers/lifecycle-hook-harness.js";
 
 vi.mock("../lifecycle/stage-capture.js", () => ({
   runCaptureStage: vi.fn().mockResolvedValue(undefined),
@@ -38,7 +35,7 @@ describe("lifecycle agent_end workflow tracking", () => {
 
   it("flushes workflow trace when assistant messages include tool_calls", async () => {
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    ctx.cfg.workflowTracking = { enabled: true, maxTracesPerDay: 100 };
+    ctx.cfg.workflowTracking = { enabled: true, maxTracesPerDay: 100, retentionDays: 90 };
     const push = vi.fn();
     const flush = vi.fn().mockReturnValue("trace-42");
     ctx.workflowTracker = { push, flush } as unknown as typeof ctx.workflowTracker;
@@ -47,7 +44,7 @@ describe("lifecycle agent_end workflow tracking", () => {
     createLifecycleHooks(ctx).onAgentEnd(api as never);
     const handler = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "agent_end")?.[1];
 
-    await handler!(
+    await handler?.(
       {
         messages: [
           { role: "user", content: "deploy the service" },
@@ -69,7 +66,7 @@ describe("lifecycle agent_end workflow tracking", () => {
 
   it("does not throw when workflow tracking fails", async () => {
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    ctx.cfg.workflowTracking = { enabled: true, maxTracesPerDay: 100 };
+    ctx.cfg.workflowTracking = { enabled: true, maxTracesPerDay: 100, retentionDays: 90 };
     ctx.workflowTracker = {
       push: vi.fn().mockImplementation(() => {
         throw new Error("tracker push failed");
@@ -82,7 +79,7 @@ describe("lifecycle agent_end workflow tracking", () => {
     const handler = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "agent_end")?.[1];
 
     await expect(
-      handler!(
+      handler?.(
         {
           messages: [
             { role: "user", content: "run tools" },

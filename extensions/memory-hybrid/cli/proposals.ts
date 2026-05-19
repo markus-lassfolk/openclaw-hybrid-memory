@@ -247,7 +247,7 @@ function commitProposalChange(
  * Register CLI commands for persona proposal management
  * NOTE: These are human-only commands and NOT exposed as agent-callable tools
  */
-function registerProposalsCli(program: Chainable, ctx: ProposalsCliContext): void {
+function _registerProposalsCli(program: Chainable, ctx: ProposalsCliContext): void {
   const proposals = program.command("proposals").description("Manage persona proposals (human-only commands)");
 
   proposals

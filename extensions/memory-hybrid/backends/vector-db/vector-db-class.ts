@@ -2036,4 +2036,3 @@ export class VectorDB {
     return { ...this.degradedState };
   }
 }
-

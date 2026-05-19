@@ -47,7 +47,9 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         lines.push(`  Skipped:  ${result.skipped}`);
         if (result.reasons.length > 0) {
           lines.push("  Details:");
-          result.reasons.forEach((r) => lines.push(`    - ${r}`));
+          result.reasons.forEach((r) => {
+            lines.push(`    - ${r}`);
+          });
         }
         if (result.proposed > 0) {
           lines.push("");

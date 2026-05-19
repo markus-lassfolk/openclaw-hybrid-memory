@@ -7,8 +7,13 @@ import { sessionRefMatches } from "../services/pre-finalization-guard.js";
 import { FORGE_SUBAGENT_SESSION, MAIN_CANONICAL_SESSION, MAIN_TELEGRAM_SESSION } from "./fixtures/maeve-ledger.js";
 
 describe("sessionRefMatches", () => {
-  it.fails("matches agent:main:main checkpoint to agent:main:telegram session (#1486)", () => {
+  it("matches agent:main:main checkpoint to agent:main:telegram session (#1486)", () => {
     expect(sessionRefMatches(MAIN_CANONICAL_SESSION, MAIN_TELEGRAM_SESSION)).toBe(true);
+    expect(sessionRefMatches(MAIN_TELEGRAM_SESSION, MAIN_CANONICAL_SESSION)).toBe(true);
+  });
+
+  it("does not match two different live main channel sessions", () => {
+    expect(sessionRefMatches("agent:main:telegram:session-a", "agent:main:telegram:session-b")).toBe(false);
   });
 
   it("does not match forge subagent session to main telegram session", () => {
