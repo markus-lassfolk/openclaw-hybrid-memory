@@ -12,58 +12,32 @@ import { getEnv } from "../utils/env-manager.js";
  * Extracted from handlers.ts.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
-import type { MemoryCategory } from "../config.js";
 import {
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
-  resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { chatCompleteWithRetryDetailed, distillMaxOutputTokens } from "../services/chat.js";
-import { validateScopedClassificationTarget } from "../services/classification-scope.js";
-import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
+import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
-import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
-import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
-import { runIdentityReflection } from "../services/identity-reflection.js";
-import {
-  buildPersonaStateInsightsBlock,
-  promotePersonaStateFromReflections,
-} from "../services/persona-state-promotion.js";
-import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
-import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { type ReinforcementExtractResult, runReinforcementExtract } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
-import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
-import { findSimilarByEmbedding } from "../services/vector-search.js";
-import type { MemoryEntry } from "../types/memory.js";
-import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { cleanupEvictedVector, } from "../services/vector-maintenance.js";
+import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { extractTags } from "../utils/tags.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
-import { capProposalConfidence } from "./proposals.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
-import type {
-  ExtractDailyResult,
-  ExtractDailySink,
-  ExtractProceduresResult,
-  GenerateAutoSkillsResult,
-} from "./types.js";
 
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
 export async function runExtractReinforcementForCli(

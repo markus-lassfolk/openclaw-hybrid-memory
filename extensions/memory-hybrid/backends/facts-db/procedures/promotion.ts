@@ -1,14 +1,7 @@
-/**
- * Procedure promotion and triage.
- */
-import { createHash, randomUUID } from "node:crypto";
+
 import type { DatabaseSync } from "node:sqlite";
 
-import { capturePluginError } from "../../../services/error-reporter.js";
-import type { ProcedureEntry, ScopeFilter } from "../../../types/memory.js";
-import { recordEpisode } from "../episodes.js";
-import { sanitizeFts5QueryForFacts } from "../fts-text.js";
-import { scopeFilterClausePositional } from "../scope-sql.js";
+import type { ProcedureEntry } from "../../../types/memory.js";
 
 import type { ProcedureTriageReport } from "./types.js";
 import { procedureBlockReason, slugForProcedure, summarizeProcedureTriage } from "./internal.js";

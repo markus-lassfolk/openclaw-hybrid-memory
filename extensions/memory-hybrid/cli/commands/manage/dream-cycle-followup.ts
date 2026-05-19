@@ -2,8 +2,7 @@
  * CLI registration — split from register-corrections-and-pipeline.ts (merge-conflict remediation).
  */
 
-import { capturePluginError } from "../../../services/error-reporter.js";
-import { type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
+import type { ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
 function formatFollowUpError(err: unknown): string {
   return err instanceof Error ? (err.stack ?? err.message) : String(err);
 }

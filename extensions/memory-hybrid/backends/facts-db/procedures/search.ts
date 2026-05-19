@@ -1,12 +1,8 @@
-/**
- * Procedure search.
- */
-import { createHash, randomUUID } from "node:crypto";
+
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import type { ProcedureEntry, ScopeFilter } from "../../../types/memory.js";
-import { recordEpisode } from "../episodes.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
 import { scopeFilterClausePositional } from "../scope-sql.js";
 
@@ -213,5 +209,3 @@ export function getNegativeProceduresMatching(
   const all = searchProcedures(db, taskDescription, limit * 2, 0.1, scopeFilter);
   return all.filter((p) => p.procedureType === "negative").slice(0, limit);
 }
-
-/** Record a successful use of a procedure (bump success_count, last_validated). */

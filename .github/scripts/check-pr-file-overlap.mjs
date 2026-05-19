@@ -5,12 +5,17 @@
  */
 import { execSync } from "node:child_process";
 
-const maxOpen = Number.parseInt(
-  process.argv.find((a) => a.startsWith("--max-open="))?.split("=")[1] ??
-    process.env.PR_OVERLAP_MAX ??
-    "2",
-  10,
-);
+function parseMaxOpenArg() {
+  const eq = process.argv.find((a) => a.startsWith("--max-open="));
+  if (eq) return eq.split("=")[1];
+  const idx = process.argv.indexOf("--max-open");
+  if (idx >= 0 && process.argv[idx + 1] && !process.argv[idx + 1].startsWith("-")) {
+    return process.argv[idx + 1];
+  }
+  return process.env.PR_OVERLAP_MAX ?? "2";
+}
+
+const maxOpen = Number.parseInt(parseMaxOpenArg(), 10);
 
 const prefix = "extensions/memory-hybrid/";
 const currentPr = process.env.GITHUB_PR_NUMBER

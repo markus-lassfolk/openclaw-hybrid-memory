@@ -14,8 +14,6 @@ vi.mock("../services/error-reporter.js", () => ({
 import * as errorReporter from "../services/error-reporter.js";
 
 import {
-  CORRECT_DIM,
-  WRONG_DIM,
   VectorDB,
   afterEach,
   beforeEach,
@@ -27,7 +25,6 @@ import {
   mkdtempSync,
   randomUUID,
   rmSync,
-  seedTable,
   tmpdir,
 } from "./helpers/vector-db-test-shared.js";
 

@@ -5,7 +5,6 @@ import { FactsDB } from "./backends/facts-db.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { buildInstallDefaults, deepMerge } from "./cli/handlers.js";
-import { hybridConfigSchema } from "./config/hybrid-schema.js";
 import { Embeddings, safeEmbed } from "./services/embeddings.js";
 import { buildFts5Query, rebuildFtsIndex, searchFts } from "./services/fts-search.js";
 import { HOP_SCORE_DECAY, expandGraph, formatLinkPath } from "./services/graph-retrieval.js";
@@ -18,7 +17,6 @@ import {
   serializeFactForContext,
 } from "./services/retrieval-orchestrator.js";
 import { RRF_K_DEFAULT, applyPostRrfAdjustments, fuseResults } from "./services/rrf-fusion.js";
-import { versionInfo } from "./versionInfo.js";
 export type {
   GraphExpandedResult,
   GraphExpansionStats,
@@ -92,7 +90,6 @@ import {
 } from "./services/reflection.js";
 import { AliasDB, generateAliases, searchAliasStrategy, storeAliases } from "./services/retrieval-aliases.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
-import { PLUGIN_ID } from "./utils/constants.js";
 import { parseSourceDate } from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
 import { isHybridMemJsonInvocation } from "./utils/hybrid-mem-json-cli.js";

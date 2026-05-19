@@ -1,14 +1,13 @@
 /**
  * Procedure row mapping and CRUD.
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
-import type { ProcedureEntry, ScopeFilter } from "../../../types/memory.js";
+import type { ProcedureEntry, } from "../../../types/memory.js";
 import { recordEpisode } from "../episodes.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
-import { scopeFilterClausePositional } from "../scope-sql.js";
 
 // ---------- Procedural memory: procedures table CRUD ----------
 
@@ -553,8 +552,3 @@ export function findProcedureByTaskPattern(db: DatabaseSync, taskPattern: string
     return [];
   }
 }
-
-/**
- * Search procedures by task description (FTS). Returns positive procedures first, then negative.
- * Phase 2: Applies reinforcement boost to score when reinforced_count > 0.
- */

@@ -11,24 +11,13 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: mockCapturePluginError,
 }));
 
-import * as errorReporter from "../services/error-reporter.js";
 
 import {
-  CORRECT_DIM,
-  WRONG_DIM,
   VectorDB,
-  afterEach,
-  beforeEach,
   describe,
   expect,
   it,
-  join,
-  lancedb,
-  mkdtempSync,
   randomUUID,
-  rmSync,
-  seedTable,
-  tmpdir,
 } from "./helpers/vector-db-test-shared.js";
 
 describe("VectorDB write conflict retries (#reembed-vectorless)", () => {

@@ -1,7 +1,7 @@
 /**
  * Orchestrator for corrections and pipeline CLI registration (split modules).
  */
-import { type Chainable } from "../../shared.js";
+import type { Chainable } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { registerManageConfigCli } from "./register-config-cli.js";
 import { registerManageCorrections } from "./register-corrections.js";
