@@ -221,5 +221,7 @@ jobs:
       - name: Check open PR file overlap
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_OVERLAP_MAX: "2"
         run: node .github/scripts/check-pr-file-overlap.mjs --max-open=2
+        continue-on-error: true

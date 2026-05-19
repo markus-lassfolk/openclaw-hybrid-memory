@@ -13,6 +13,9 @@ const maxOpen = Number.parseInt(
 );
 
 const prefix = "extensions/memory-hybrid/";
+const currentPr = process.env.GITHUB_PR_NUMBER
+  ? Number.parseInt(process.env.GITHUB_PR_NUMBER, 10)
+  : null;
 
 function ghJson(args) {
   return JSON.parse(execSync(`gh ${args.join(" ")}`, { encoding: "utf8" }));
@@ -20,16 +23,28 @@ function ghJson(args) {
 
 const prs = ghJson(["pr", "list", "--state", "open", "--json", "number,files,title"]);
 const byFile = new Map();
+/** Paths touched by the PR under review (when GITHUB_PR_NUMBER is set). */
+const currentPrPaths = new Set();
 
 for (const pr of prs) {
   for (const f of pr.files ?? []) {
     if (!f.path.startsWith(prefix)) continue;
+    if (currentPr != null && pr.number === currentPr) {
+      currentPrPaths.add(f.path);
+      continue;
+    }
     if (!byFile.has(f.path)) byFile.set(f.path, []);
     byFile.get(f.path).push({ number: pr.number, title: pr.title });
   }
 }
 
-const violations = [...byFile.entries()]
+const pathsToCheck =
+  currentPr != null && currentPrPaths.size > 0
+    ? [...currentPrPaths]
+    : [...byFile.keys()];
+
+const violations = pathsToCheck
+  .map((path) => [path, byFile.get(path) ?? []])
   .filter(([, list]) => list.length > maxOpen)
   .sort((a, b) => b[1].length - a[1].length);
 

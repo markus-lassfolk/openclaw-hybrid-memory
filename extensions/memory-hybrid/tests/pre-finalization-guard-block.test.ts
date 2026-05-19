@@ -8,6 +8,7 @@ import {
   formatPreFinalizationGuardMessage,
   type PreFinalizationGuardResult,
 } from "../services/pre-finalization-guard.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { NOW_ISO, NOW_MS, projectFact } from "./helpers/pre-finalization-guard-fixtures.js";
 
 describe("pre-finalization guard", () => {
