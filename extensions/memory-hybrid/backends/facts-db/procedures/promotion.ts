@@ -4,7 +4,7 @@ import type { ProcedureEntry } from "../../../types/memory.js";
 
 import type { ProcedureTriageReport } from "./types.js";
 import { procedureBlockReason, slugForProcedure, summarizeProcedureTriage } from "./internal.js";
-import { getProcedureById, procedureRowToEntry } from "./crud.js";
+import { getProcedureById, POSITIVE_PROCEDURE_TYPE_SQL, procedureRowToEntry } from "./crud.js";
 
 export function recordProcedureSuccess(db: DatabaseSync, id: string, recipeJson?: string, sessionId?: string): boolean {
   const now = Math.floor(Date.now() / 1000);
@@ -114,7 +114,7 @@ export function getProceduresReadyForSkill(
   const rows = db
     .prepare(
       `SELECT * FROM procedures
-        WHERE procedure_type = 'positive'
+        WHERE ${POSITIVE_PROCEDURE_TYPE_SQL}
           AND success_count >= ?
           AND promoted_to_skill = 0
           AND (? = 0 OR COALESCE(last_validated, updated_at, created_at) >= ?)
@@ -138,8 +138,9 @@ export function markProcedurePromoted(db: DatabaseSync, id: string, skillPath: s
               skill_path = ?,
               updated_at = ?,
               skill_state = CASE
-                WHEN skill_state IS NULL OR skill_state = '' OR skill_state = 'draft' THEN 'experimental'
-                ELSE skill_state
+                WHEN skill_state IS NULL OR trim(skill_state) = '' OR LOWER(trim(skill_state)) = 'draft' THEN 'experimental'
+                WHEN LOWER(trim(skill_state)) NOT IN ('draft', 'experimental', 'trusted', 'demoted', 'archived', 'uninstalled', 'rejected') THEN 'experimental'
+                ELSE LOWER(trim(skill_state))
               END,
               skill_generated_at = COALESCE(skill_generated_at, ?, promoted_at, created_at),
               skill_version = COALESCE(skill_version, 1)
