@@ -1832,7 +1832,7 @@ export class VectorDB {
    */
   async getVectorsByFactIds(ids: string[]): Promise<Map<string, number[]>> {
     const out = new Map<string, number[]>();
-    if (!this.lanceDbAvailable || ids.length === 0) return out;
+    if ((!this.lanceDbAvailable && this.lanceInitFailed) || ids.length === 0) return out;
     try {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table || !this.schemaValid) return out;
