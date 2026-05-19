@@ -19,9 +19,13 @@ vi.mock("../setup/provider-router.js", async (importOriginal) => {
   };
 });
 
-vi.mock("node:child_process", () => ({
-  spawn: (...args: unknown[]) => spawnMock(...args),
-}));
+vi.mock("../utils/process-runner.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/process-runner.js")>();
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) => spawnMock(...args),
+  };
+});
 
 describe("maybeAutoStartOllama", () => {
   beforeEach(() => {
