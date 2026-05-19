@@ -25,18 +25,29 @@ function reportUnexpectedProcedureEnum(field: "procedure_type" | "skill_state", 
 
 export function normalizeProcedureType(value: unknown): ProcedureEntry["procedureType"] {
   if (typeof value !== "string" || value.trim() === "") return "positive";
-  if (PROCEDURE_TYPE_SET.has(value as ProcedureEntry["procedureType"])) return value as ProcedureEntry["procedureType"];
+  const trimmed = value.trim();
+  if (PROCEDURE_TYPE_SET.has(trimmed as ProcedureEntry["procedureType"])) {
+    return trimmed as ProcedureEntry["procedureType"];
+  }
   reportUnexpectedProcedureEnum("procedure_type", value);
   return "positive";
 }
 
 export function normalizeProcedureSkillState(value: unknown): NonNullable<ProcedureEntry["skillState"]> {
   if (typeof value !== "string" || value.trim() === "") return "draft";
-  if (PROCEDURE_SKILL_STATE_SET.has(value as NonNullable<ProcedureEntry["skillState"]>)) {
-    return value as NonNullable<ProcedureEntry["skillState"]>;
+  const trimmed = value.trim();
+  if (PROCEDURE_SKILL_STATE_SET.has(trimmed as NonNullable<ProcedureEntry["skillState"]>)) {
+    return trimmed as NonNullable<ProcedureEntry["skillState"]>;
   }
   reportUnexpectedProcedureEnum("skill_state", value);
   return "draft";
+}
+
+/** Sort-only type rank without emitting drift reports (used in search comparators). */
+export function procedureTypeSortRank(value: unknown): number {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed === "negative") return 0;
+  return 1;
 }
 
 /** SQLite predicate: rows that normalize to positive procedure_type (incl. enum drift). */

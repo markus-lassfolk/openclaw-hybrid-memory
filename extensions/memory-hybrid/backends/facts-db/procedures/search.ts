@@ -5,7 +5,7 @@ import type { ProcedureEntry, ScopeFilter } from "../../../types/memory.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
 import { scopeFilterClausePositional } from "../scope-sql.js";
 
-import { normalizeProcedureType, procedureRowToEntry } from "./crud.js";
+import { procedureRowToEntry, procedureTypeSortRank } from "./crud.js";
 
 export function searchProcedures(
   db: DatabaseSync,
@@ -25,7 +25,7 @@ export function searchProcedures(
   try {
     // Apply scope filter to procedures search
     const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
-    const baseSql = `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY bm25(procedures_fts) LIMIT ?`;
+    const baseSql = `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`;
     const rows = db.prepare(baseSql).all(safeQuery, ...scopeParams, limit * 2) as Array<Record<string, unknown>>;
 
     if (rows.length === 0) return [];
@@ -50,8 +50,8 @@ export function searchProcedures(
 
     // Sort by procedure_type (positive first), then boosted score, then validation
     scored.sort((a, b) => {
-      const typeA = normalizeProcedureType(a.procedure_type) === "positive" ? 1 : 0;
-      const typeB = normalizeProcedureType(b.procedure_type) === "positive" ? 1 : 0;
+      const typeA = procedureTypeSortRank(a.procedure_type);
+      const typeB = procedureTypeSortRank(b.procedure_type);
       if (typeB !== typeA) return typeB - typeA;
       if (b.boostedScore !== a.boostedScore) return b.boostedScore - a.boostedScore;
       const lastValA = (a.last_validated as number) ?? 0;
