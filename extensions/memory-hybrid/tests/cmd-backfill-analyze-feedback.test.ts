@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAnalyzeFeedbackPhrasesForCli } from "../cli/cmd-backfill.js";
 import type { HandlerContext } from "../cli/handlers.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 describe("runAnalyzeFeedbackPhrasesForCli session JSONL parsing", () => {
   let tempHome: string;
@@ -12,17 +13,15 @@ describe("runAnalyzeFeedbackPhrasesForCli session JSONL parsing", () => {
 
   beforeEach(() => {
     tempHome = mkdtempSync(join(tmpdir(), "hybrid-backfill-analyze-"));
-    previousHome = process.env.HOME;
-    previousUserProfile = process.env.USERPROFILE;
-    process.env.HOME = tempHome;
-    process.env.USERPROFILE = tempHome;
+    previousHome = getEnv("HOME");
+    previousUserProfile = getEnv("USERPROFILE");
+    setEnv("HOME", tempHome);
+    setEnv("USERPROFILE", tempHome);
   });
 
   afterEach(() => {
-    if (previousHome === undefined) process.env.HOME = undefined;
-    else process.env.HOME = previousHome;
-    if (previousUserProfile === undefined) process.env.USERPROFILE = undefined;
-    else process.env.USERPROFILE = previousUserProfile;
+    setEnv("HOME", previousHome);
+    setEnv("USERPROFILE", previousUserProfile);
     rmSync(tempHome, { recursive: true, force: true });
   });
 

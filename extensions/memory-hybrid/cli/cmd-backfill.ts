@@ -183,10 +183,17 @@ function extractBackfillFact(line: string): {
   return { text: t, category, entity, key, value, source_date };
 }
 
-/** Extract raw user message texts from a session file (for regex/sentiment). */
-export function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
+export type SessionJsonlUserMessageExtraction = {
+  texts: string[];
+  /** First 1-based line number that failed JSON.parse, if any. */
+  firstMalformedLine: number | null;
+};
+
+/** Extract user message texts and record the first malformed JSONL line (best-effort per line). */
+export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string): SessionJsonlUserMessageExtraction {
   const lines = readFileSync(filePath, "utf-8").split("\n");
-  const out: string[] = [];
+  const texts: string[] = [];
+  let firstMalformedLine: number | null = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
@@ -202,14 +209,20 @@ export function extractUserMessageTextsFromSessionJsonl(filePath: string): strin
       if (!Array.isArray(content)) continue;
       for (const block of content) {
         if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
-          out.push(block.text.trim());
+          texts.push(block.text.trim());
         }
       }
     } catch {
+      if (firstMalformedLine === null) firstMalformedLine = i + 1;
       continue;
     }
   }
-  return out;
+  return { texts, firstMalformedLine };
+}
+
+/** Extract raw user message texts from a session file (for regex/sentiment). */
+export function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
+  return extractUserMessageTextsFromSessionJsonlWithMeta(filePath).texts;
 }
 
 // ---------------------------------------------------------------------------
@@ -356,13 +369,19 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   const reinforcementRegex = getReinforcementSignalRegex();
   const correctionRegex = getCorrectionSignalRegex();
   const allTexts: string[] = [];
-  let scannedSessions = 0;
+  let successfullyScannedSessions = 0;
   let firstSessionParseError: string | null = null;
   for (const { path: fp } of sessionFiles) {
     try {
-      const texts = extractUserMessageTextsFromSessionJsonl(fp);
+      const { texts, firstMalformedLine } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
+      if (firstMalformedLine !== null) {
+        if (!firstSessionParseError) {
+          firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
+        }
+      } else {
+        successfullyScannedSessions++;
+      }
       allTexts.push(...texts);
-      scannedSessions++;
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:read-session" });
       const message = err instanceof Error ? err.message : String(err);
@@ -370,11 +389,13 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     }
   }
   if (firstSessionParseError) {
+    const sessionsScanned =
+      successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length;
     return {
       reinforcement: [],
       correction: [],
-      sessionsScanned: scannedSessions,
-      error: `${firstSessionParseError}; discarded extracted messages from ${scannedSessions} successfully scanned session file(s).`,
+      sessionsScanned,
+      error: firstSessionParseError,
     };
   }
   const unmatched = allTexts.filter((text) => {
