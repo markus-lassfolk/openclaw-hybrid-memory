@@ -145,17 +145,22 @@ export function installHybridMemoryWorkspaceSkill(opts: {
     mkdirSync(skillsDir, { recursive: true });
     const destDir = join(skillsDir, HYBRID_MEMORY_SKILL_DIR);
     const tmpDir = skillTmpDir(skillsDir);
+    let destRemoved = false;
     try {
       cpSync(srcDir, tmpDir, { recursive: true });
       if (existsSync(destDir)) {
         rmSync(destDir, { recursive: true, force: true });
+        destRemoved = true;
       }
       renameSync(tmpDir, destDir);
     } catch (copyErr) {
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        /* ignore temp-cleanup failure */
+      // Only clean up tmpDir if destDir wasn't removed - otherwise tmpDir is the only remaining copy
+      if (!destRemoved) {
+        try {
+          rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          /* ignore temp-cleanup failure */
+        }
       }
       throw copyErr;
     }

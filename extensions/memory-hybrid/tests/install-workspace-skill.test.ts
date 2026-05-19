@@ -181,25 +181,24 @@ describe("workspace skill install", () => {
     }
   });
 
-  it("installHybridMemoryWorkspaceSkill cleans up temp dir when rename fails", () => {
+  it("installHybridMemoryWorkspaceSkill replaces blocking file at destination", () => {
     const destRoot = join(tmp, "ws-atomic-install");
     const skillsDir = join(destRoot, "skills");
     mkdirSync(skillsDir, { recursive: true });
-    // Block the rename by placing a file at the path where the temp dir would be renamed.
-    // installHybridMemoryWorkspaceSkill has no early-exit guard on destDir, so the copy
-    // proceeds, cpSync writes to tmpDir, then renameSync fails (error code varies by platform).
+    // Place a file at the path where the skill directory should be installed.
+    // The install should remove this file and successfully install the skill directory.
     writeFileSync(join(skillsDir, "hybrid-memory"), "blocking-file\n", "utf-8");
     const r = installHybridMemoryWorkspaceSkill({
       mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
       pluginRootDir: PLUGIN_ROOT,
       dryRun: false,
     });
-    expect(r.error).toBeDefined();
+    expect(r.error).toBeUndefined();
     // No temp directories should remain in skills/
     const leftover = readdirSync(skillsDir).filter((e) => e.startsWith(".hybrid-memory-tmp-"));
     expect(leftover).toHaveLength(0);
-    // The blocking file must be untouched
-    expect(readFileSync(join(skillsDir, "hybrid-memory"), "utf-8")).toBe("blocking-file\n");
+    // The skill should be successfully installed
+    expect(readFileSync(join(skillsDir, "hybrid-memory", "SKILL.md"), "utf-8")).toContain("memory_store");
   });
 
   it("ensureHybridMemoryWorkspaceSkillIfMissing leaves no temp dir after successful deploy", () => {
