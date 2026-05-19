@@ -1052,10 +1052,7 @@ export class VectorDB {
     return this.table;
   }
 
-  private getSemanticQueryCacheTable(): lancedb.Table {
-    if (!this.semanticQueryCacheTable) {
-      throw new Error("Semantic query cache table not initialized.");
-    }
+  private getSemanticQueryCacheTable(): lancedb.Table | null {
     return this.semanticQueryCacheTable;
   }
 
@@ -1698,26 +1695,25 @@ export class VectorDB {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
       const acquired = this.acquireReader();
-      let releaseReaderWhenCountSettles = false;
       try {
         const t = this.getTable();
         const countPromise = t.countRows();
         const count = await withTimeout(VECTORDB_COUNT_TIMEOUT_MS, () => countPromise);
         if (count === null) {
-          releaseReaderWhenCountSettles = true;
           this.logWarn(`memory-hybrid: LanceDB count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`);
+          // countRows() is not cancellable; log settlement without holding the reader slot
+          // (a hung promise must not leak _activeReadersByPath and block optimize drain).
           void countPromise.then(
-            () => this.releaseReader(acquired),
+            () => {},
             (countErr) => {
               this.logWarn(`memory-hybrid: LanceDB count failed after timing out: ${countErr}`);
-              this.releaseReader(acquired);
             },
           );
           return 0;
         }
         return count;
       } finally {
-        if (!releaseReaderWhenCountSettles) this.releaseReader(acquired);
+        this.releaseReader(acquired);
       }
     };
     try {
