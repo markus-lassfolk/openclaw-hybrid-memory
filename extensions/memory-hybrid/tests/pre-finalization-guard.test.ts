@@ -463,7 +463,7 @@ describe("pre-finalization guard", () => {
     expect(result.action).toBe("allow");
   });
 
-  it("allows when active entity has no related_session fact at all", () => {
+  it("blocks when active entity has no related_session fact for the current session (#1504)", () => {
     const facts: MemoryEntry[] = [
       projectFact({ id: "1", entity: "smoke-test", key: "status", value: "in_progress" }),
       projectFact({ id: "2", entity: "smoke-test", key: "next", value: "Continue smoke test." }),
@@ -479,7 +479,8 @@ describe("pre-finalization guard", () => {
       projectFacts: facts,
       sessionKey: "bc88cdda-db96-4c80-9021-44015f2ca1d9",
     });
-    expect(result.action).toBe("allow");
+    expect(result.action).toBe("block");
+    expect(result.checkpoint.missingFields).toContain("related_session");
   });
 
   it("blocks when canonical agent:main:main ledger row applies to live telegram session (#1486)", () => {

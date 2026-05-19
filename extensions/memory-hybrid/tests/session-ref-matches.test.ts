@@ -28,4 +28,9 @@ describe("sessionRefMatches", () => {
     expect(sessionRefMatches("main", "agent:main:telegram:abc")).toBe(true);
     expect(sessionRefMatches("agent:main:telegram:abc", "main")).toBe(true);
   });
+
+  it("does not treat empty channel session suffix as a live channel ref (#1505)", () => {
+    expect(sessionRefMatches("agent:main:main", "agent:main:telegram:")).toBe(false);
+    expect(sessionRefMatches("agent:main:telegram:", "agent:main:main")).toBe(false);
+  });
 });
