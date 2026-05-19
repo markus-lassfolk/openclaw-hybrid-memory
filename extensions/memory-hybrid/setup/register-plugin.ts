@@ -6,12 +6,14 @@ import { EventBus } from "../backends/event-bus.js";
 import { LearningsDB } from "../backends/learnings-db.js";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { type PluginRuntime, clearRuntimeTimers, createTimers } from "../api/plugin-runtime.js";
-import type { MemoryCategory } from "../config.js";
+import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { hybridConfigSchema } from "../config/hybrid-schema.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
+import { getMemoryTriggers } from "../services/auto-capture.js";
 import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "../services/capture-utils.js";
 import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
@@ -30,13 +32,12 @@ import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import { isHybridMemHelpInvocation } from "../index-help.js";
-import { isHybridMemJsonInvocation, wrapApiLoggerStderrForJsonCli } from "../utils/hybrid-mem-json-cli.js";
+import { wrapApiLoggerStderrForJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
   getCategoryEntityRegex,
   getCategoryFactRegex,
   getCategoryPreferenceRegex,
-  getMemoryTriggers,
 } from "../utils/language-keywords.js";
 import { initPluginLogger } from "../utils/logger.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
@@ -468,7 +469,7 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   // ContextEngine Plugin Slot (Issue #273) -- feature-detected, non-fatal if unavailable
 
-  import("./services/context-engine.js")
+  import("../services/context-engine.js")
     .then(({ registerHybridContextEngine }) =>
       registerHybridContextEngine({
         factsDb: runtime.factsDb,
@@ -575,9 +576,4 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   }
 }
 
-export {
-  runtimeRef,
-  shouldCapture,
-  detectCategory,
-  performHybridMemCliTeardown,
-};
+export { runtimeRef, shouldCapture, detectCategory, performHybridMemCliTeardown };

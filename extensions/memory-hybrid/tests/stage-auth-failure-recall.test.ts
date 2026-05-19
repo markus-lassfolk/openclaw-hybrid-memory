@@ -40,7 +40,11 @@ describe("registerAuthFailureRecall", () => {
     const sessionState = makeRecallSessionState();
     registerAuthFailureRecall(api as never, ctx, sessionState);
     const reg = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "before_agent_start");
-    return { handler: reg?.[1] as (event: unknown, hookCtx: unknown) => Promise<{ prependContext?: string } | undefined>, api, sessionState };
+    return {
+      handler: reg?.[1] as (event: unknown, hookCtx: unknown) => Promise<{ prependContext?: string } | undefined>,
+      api,
+      sessionState,
+    };
   }
 
   it("skips invalid regex patterns without failing registration", () => {
@@ -69,6 +73,9 @@ describe("registerAuthFailureRecall", () => {
       text: "GitHub API token is ghp_test",
       category: "technical",
       entity: "credentials",
+      key: null,
+      value: null,
+      importance: 0.8,
       tags: ["credential", "github"],
       source: "conversation",
     });

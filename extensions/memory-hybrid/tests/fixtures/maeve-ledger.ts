@@ -11,12 +11,7 @@ export const MAIN_TELEGRAM_SESSION = "agent:main:telegram:bc88cdda-db96-4c80-902
 export const MAIN_CANONICAL_SESSION = "agent:main:main";
 export const FORGE_SUBAGENT_SESSION = "agent:forge:subagent:1";
 
-function storeProjectFact(
-  db: FactsDB,
-  entity: string,
-  key: string,
-  value: string,
-): void {
+function storeProjectFact(db: FactsDB, entity: string, key: string, value: string): void {
   db.store({
     text: `Task [${entity}] ${key}: ${value}`,
     category: TASK_LEDGER_CATEGORY,

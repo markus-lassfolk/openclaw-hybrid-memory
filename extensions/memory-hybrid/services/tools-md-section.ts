@@ -69,7 +69,9 @@ export function insertRulesUnderSection(
   if (sectionStart >= 0) {
     const sectionEnd = findSectionEnd(lines, sectionStart);
     const existing = getExistingRuleLines(lines, sectionStart, sectionEnd);
-    existing.forEach((r) => existingSet.add(normalizeRuleLine(r)));
+    existing.forEach((r) => {
+      existingSet.add(normalizeRuleLine(r));
+    });
   }
 
   const toInsert: string[] = [];

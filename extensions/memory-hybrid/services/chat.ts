@@ -11,7 +11,6 @@ import { capturePluginError } from "./error-reporter.js";
 import {
   formatProviderRateLimitHeaderSummary,
   is403QuotaOrRateLimitLike,
-  parseGoDurationToMs,
   parseRetryAfterMs,
 } from "./llm-rate-limit-headers.js";
 import {

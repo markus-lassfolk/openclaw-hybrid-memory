@@ -46,7 +46,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 
-function makeTmpOutputDir(): string {
+function _makeTmpOutputDir(): string {
   const dir = join(tmpDir, "skills-out");
   return dir;
 }
@@ -737,13 +737,7 @@ describe("SkillValidator", () => {
     validator = new SkillValidator();
   });
 
-  function compactValidSkill(
-    extra: {
-      workflow?: string;
-      extraBody?: string;
-      includeRelated?: boolean;
-    } = {},
-  ): string {
+  function compactValidSkill(extra: { workflow?: string; extraBody?: string; includeRelated?: boolean } = {}): string {
     const workflow =
       extra.workflow ??
       "1. Use `read` to load inputs.\n2. Use `exec` only in dry-run mode.\n3. Verify outputs before continuing.";

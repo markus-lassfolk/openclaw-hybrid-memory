@@ -134,13 +134,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--json", "Emit JSON")
     .action(
       withExit(
-        async (opts?: {
-          status?: string;
-          notPromoted?: boolean;
-          limit?: string;
-          policy?: string;
-          json?: boolean;
-        }) => {
+        async (opts?: { status?: string; notPromoted?: boolean; limit?: string; policy?: string; json?: boolean }) => {
           const status = opts?.status === "all" ? "all" : "validated";
           const limit = Number.parseInt(opts?.limit ?? "50", 10);
           if (!Number.isFinite(limit) || limit < 1) {

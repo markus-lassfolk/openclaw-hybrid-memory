@@ -7,37 +7,17 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { existsSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { Server } from "node:http";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { promisify } from "node:util";
-import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { IssueStore } from "../backends/issue-store.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
-import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
-import { pluginLogger } from "../utils/logger.js";
-import { execFile as execFileCb } from "../utils/process-runner.js";
-import { parseTags } from "../utils/tags.js";
-import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
+import type { VerificationStore } from "../../services/verification-store.js";
+import { execFile as execFileCb } from "../../utils/process-runner.js";
 
-const execFile = promisify(execFileCb);
-const require = createRequire(import.meta.url);
+const _execFile = promisify(execFileCb);
+const _require = createRequire(import.meta.url);
 
-const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
-const VERIFIED_FACT_SET_TTL_MS = 5000;
-const verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
+const _MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
+const _VERIFIED_FACT_SET_TTL_MS = 5000;
+const _verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
 
 export function getDashboardHtml(): string {
   return `<!DOCTYPE html>
@@ -287,12 +267,12 @@ function renderCosts(c) {
   } else {
     html += \`<div class="stat-row"><span class="stat-label">Total calls</span><span class="stat-value">\${c.totalCalls.toLocaleString()}</span></div>\`;
     html += \`<div class="stat-row"><span class="stat-label">Tokens in/out</span><span class="stat-value">\${c.totalInputTokens.toLocaleString()} / \${c.totalOutputTokens.toLocaleString()}</span></div>\`;
-    html += \`<div class="stat-row" style="margin-bottom:8px"><span class="stat-label">Est. cost</span><span class="stat-value" style="color:var(--green)">\$\${c.totalEstimatedCostUsd.toFixed(4)}</span></div>\`;
+    html += \`<div class="stat-row" style="margin-bottom:8px"><span class="stat-label">Est. cost</span><span class="stat-value" style="color:var(--green)">$\${c.totalEstimatedCostUsd.toFixed(4)}</span></div>\`;
     c.features.slice(0, 6).forEach(f => {
       html += \`<div class="cost-row">
         <div class="cost-feature">\${escHtml(f.feature)}</div>
         <div class="cost-calls">\${f.calls} calls</div>
-        <div class="cost-usd">\$\${f.estimatedCostUsd.toFixed(4)}</div>
+        <div class="cost-usd">$\${f.estimatedCostUsd.toFixed(4)}</div>
       </div>\`;
     });
   }

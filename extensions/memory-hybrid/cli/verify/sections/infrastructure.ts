@@ -1,4 +1,3 @@
-import { getEnv } from "../../../utils/env-manager.js";
 /**
  * CLI Verify Command Handler
  *
@@ -9,83 +8,43 @@ import { getEnv } from "../../../utils/env-manager.js";
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import OpenAI from "openai";
-
-import { findPluginRoot } from "../../../utils/plugin-root.js";
-
-import type { CredentialType } from "../../../config.js";
-import {
-  getCronModelConfig,
-  getLLMModelPreference,
-  getLLMModelPreferenceUnfiltered,
-  getProvidersWithKeys,
-  isCompactVerbosity,
-  resolveReflectionModelAndFallbacks,
-} from "../../../config.js";
-import { resolveSecretRef } from "../../../config/parsers/core.js";
-import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../../../services/adaptive-model-limits.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens } from "../../../services/chat.js";
-import { CostFeature } from "../../../services/cost-feature-labels.js";
-import { readGuardTimestampMs } from "../../../services/cron-guard.js";
-import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../../../services/cron-job-bash-harness.js";
-import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-reconciler.js";
-import {
-  collectRecentHmExitLedgerPaths,
-  findDeprecatedHybridMemCronTokens,
-  findDeprecatedTokensInHmExitContent,
-} from "../../../services/deprecated-cron-commands.js";
-import {
-  type EmbeddingConfig,
-  GOOGLE_EMBED_DEFAULT_DIMENSIONS,
-  GOOGLE_EMBED_DEFAULT_MODEL,
-  OPENAI_ONLY_EMBED_MODELS,
-  createEmbeddingProvider,
-} from "../../../services/embeddings.js";
-import { formatOpenAiEmbeddingDisplayLabel } from "../../../services/embeddings/shared.js";
+import { writeFileSync } from "node:fs";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import {
-  analyzeCronJobsAgainstHeartbeatPatterns,
-  extractCronJobMessageEntries,
-  getHeartbeatMatchersForVerify,
-} from "../../../services/goal-stewardship-verify-cron.js";
-import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
-import { resolveWireApi } from "../../../services/model-capabilities.js";
-import { callResponsesApi } from "../../../services/responses-adapter.js";
-import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { hasOAuthProfiles } from "../../../utils/auth.js";
-import { PLUGIN_ID, getRestartPendingPath } from "../../../utils/constants.js";
-import { inferModelProviderPrefix } from "../../../utils/model-provider-family.js";
-import { isHeavyModel } from "../../../utils/model-tier.js";
-import {
-  buildUnsupportedPerAgentCompactionWarning,
-  buildCompactionWatchdogAlert,
-  DEFAULT_COMPACTION_MODEL,
-  isCompactionModelTooStrong,
-  resolveCompactionModelSelection,
-} from "../../../utils/compaction-model-watchdog.js";
-import {
-  extractCronStoreJobModel,
-  readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
-} from "../../../utils/openclaw-agent-defaults.js";
-import {
-  detectRecommendedEmbeddingSetup,
-  ensureGoalStewardshipHeartbeatCronJob,
-  ensureMaintenanceCronJobs,
-  getDashboardUrl,
-  getPluginConfigFromFile,
-  resolveOpenclawJsonPathForWorkspace,
-} from "../../cmd-install.js";
-import { approxIntervalMs, relativeTime } from "../../shared.js";
-import { applyAzureFoundryVerifyDirectClientAuth } from "../../verify-llm-azure-auth.js";
+import { PLUGIN_ID } from "../../../utils/constants.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 import { getCachedFactCount } from "../fact-count.js";
 
 export async function runVerifyInfrastructureSection(state: VerifyRunState): Promise<void> {
-
-  const { ctx, opts, cfg, factsDb, vectorDb, embeddings, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai, log, tableLog, OK, FAIL, PAUSE, WARN_LINE, noEmoji, issues, fixes, warnings, loadBlocking, extDir, defaultConfigPath, openclawDir, openclawConfigRead, recommendedEmbedding, dashboardUrl } = state;
+  const {
+    ctx,
+    opts,
+    cfg,
+    factsDb,
+    vectorDb,
+    embeddings,
+    credentialsDb,
+    resolvedSqlitePath,
+    resolvedLancePath,
+    openai,
+    log,
+    tableLog,
+    OK,
+    FAIL,
+    PAUSE,
+    WARN_LINE,
+    noEmoji,
+    issues,
+    fixes,
+    warnings,
+    loadBlocking,
+    extDir,
+    defaultConfigPath,
+    openclawDir,
+    openclawConfigRead,
+    recommendedEmbedding,
+    dashboardUrl,
+  } = state;
 
   log("\n───── Infrastructure ─────");
 
@@ -202,7 +161,9 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     state.issues.push(`LanceDB: ${msg}`);
     if (isBindingsError(msg)) {
       state.lanceBindingsFailed = true;
-      state.fixes.push(`Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
+      state.fixes.push(
+        `Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`,
+      );
     } else if (msg.includes("VectorDB not initialized") || msg.includes("close() was called")) {
       state.fixes.push(
         "LanceDB connection was not ready (often transient after plugin load or reload). Re-run verify; the plugin will reconnect automatically. Not caused by reindexing.",
@@ -215,5 +176,4 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     log(`${FAIL} LanceDB: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
   }
-
 }

@@ -13,40 +13,16 @@
  * - runUpgradeForCli
  */
 
-import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
+import { dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
 
-import { getEnv } from "../utils/env-manager.js";
-import { expandTilde } from "../utils/path.js";
-import { findPluginRoot } from "../utils/plugin-root.js";
+import { getEnv } from "../../utils/env-manager.js";
+import { expandTilde } from "../../utils/path.js";
 
-import type { DigestWeeklyDeliveryConfig, HybridMemoryConfig } from "../config.js";
-import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { parseDigestWeeklyDeliveryOnly } from "../config/parsers/features.js";
-import { buildGuardPrefix } from "../services/cron-guard.js";
-import {
-  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
-  buildHybridMemCronTaskMessage,
-  hybridMemCronEnvSanitizerBashLines,
-} from "../services/cron-job-bash-harness.js";
-import { findDeprecatedHybridMemCronTokens } from "../services/deprecated-cron-commands.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
-import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
-import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
-import { resetAllBackoff } from "../utils/auth-failover.js";
-import { DEFAULT_COMPACTION_MODEL } from "../utils/compaction-model-watchdog.js";
-import { PLUGIN_ID } from "../utils/constants.js";
-import {
-  extractCronStoreJobModel,
-  readAgentsPrimaryModelFromOpenclawJsonPath,
-  setCronStoreJobModelFields,
-} from "../utils/openclaw-agent-defaults.js";
-import type { HandlerContext } from "./handlers.js";
-import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./types.js";
-
+import type { HybridMemoryConfig } from "../../config.js";
+import { compileHeartbeatMatchers } from "../../services/goal-stewardship-heartbeat.js";
+import type { PreFilterConfig } from "../../services/session-pre-filter.js";
 
 /** Subfolder under workspace `skills/` — OpenClaw loads this with highest precedence vs shared/bundled skills. */
 const HYBRID_MEMORY_SKILL_DIR = "hybrid-memory";
@@ -59,7 +35,7 @@ function resolvedPathOrFallback(path: string): string {
   }
 }
 
-function isPathInsideDir(rootDirAbs: string, candidatePath: string): boolean {
+export function isPathInsideDir(rootDirAbs: string, candidatePath: string): boolean {
   const rootResolved = resolvedPathOrFallback(rootDirAbs);
   const candidateAbs = isAbsolute(candidatePath) ? candidatePath : pathResolve(candidatePath);
   const candidateResolved = resolvedPathOrFallback(candidateAbs);
@@ -72,13 +48,13 @@ function hasNoWhitespace(s: string): boolean {
   return !/[\s\r\n\t]/.test(s);
 }
 
-function npxExecutable(): string {
+export function npxExecutable(): string {
   if (process.platform !== "win32") return "npx";
   const candidate = join(dirname(process.execPath), "npx.cmd");
   return existsSync(candidate) ? candidate : "npx.cmd";
 }
 
-function assertSafeRequestedVersionArg(version: string): void {
+export function assertSafeRequestedVersionArg(version: string): void {
   const v = version.trim();
   if (!v) throw new Error("Upgrade version is empty");
   if (!hasNoWhitespace(v)) throw new Error("Upgrade version contains whitespace");
@@ -316,9 +292,9 @@ export function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
-const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
-const GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID = "goal-stewardship-heartbeat";
-const GOAL_STEWARDSHIP_HEARTBEAT_CRON_EXPR = "*/30 * * * *";
+export const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
+export const GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID = "goal-stewardship-heartbeat";
+export const GOAL_STEWARDSHIP_HEARTBEAT_CRON_EXPR = "*/30 * * * *";
 
 function extractPlainHeartbeatPatternHints(patterns: string[]): string[] {
   const out: string[] = [];
@@ -341,7 +317,7 @@ function extractPlainHeartbeatPatternHints(patterns: string[]): string[] {
   return out;
 }
 
-function selectGoalStewardshipHeartbeatMessage(heartbeatPatterns: string[]): string | null {
+export function selectGoalStewardshipHeartbeatMessage(heartbeatPatterns: string[]): string | null {
   const matchers = compileHeartbeatMatchers(heartbeatPatterns);
   const candidates = ["cron heartbeat"];
   for (const hint of extractPlainHeartbeatPatternHints(heartbeatPatterns)) {
@@ -368,7 +344,7 @@ function collectHeartbeatMessageCandidatesFromJob(job: Record<string, unknown>):
   return out;
 }
 
-function selectExistingGoalStewardshipHeartbeatMessage(
+export function selectExistingGoalStewardshipHeartbeatMessage(
   existing: Record<string, unknown> | undefined,
   heartbeatPatterns: string[],
 ): string | null {

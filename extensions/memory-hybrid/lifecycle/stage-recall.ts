@@ -7,9 +7,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import {
-  INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
-} from "../services/retrieval-mode-policy.js";
+import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import type { LifecycleContext, RecallStageResult, SessionState } from "./types.js";
 import { runRecall } from "./stage-recall/run-recall.js";
 
