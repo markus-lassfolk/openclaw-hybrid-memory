@@ -794,9 +794,7 @@ describe("VectorDB init-timeout recovery (issue #1495)", () => {
    *   lanceDbAvailable=false, lanceInitFailed=false
    * (mirrors initWithTimeout().catch with isTimeout=true at line ~383).
    */
-  function setTimeoutDegradedState(
-    db: InstanceType<typeof VectorDB>,
-  ): void {
+  function setTimeoutDegradedState(db: InstanceType<typeof VectorDB>): void {
     const internals = db as unknown as {
       lanceDbAvailable: boolean;
       lanceInitFailed: boolean;
