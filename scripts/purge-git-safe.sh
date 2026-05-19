@@ -84,7 +84,9 @@ while IFS= read -r b; do
     continue
   fi
 
-  if $merged_pr || $ancestor || [[ "$b" == fix/* ]] || [[ "$b" == pr-*-review ]]; then
+  if $merged_pr || $ancestor; then
+    BRANCHES_TO_DROP+=("$b")
+  elif [[ "$b" == pr-*-review ]]; then
     BRANCHES_TO_DROP+=("$b")
   fi
 done < <(git branch --format='%(refname:short)')
