@@ -314,6 +314,8 @@ function isMainAgentLiveChannelSessionRef(ref: string): boolean {
   const parts = ref.split(":");
   if (parts.length < 4 || parts[1] !== "main") return false;
   const channel = parts[2];
+  const sessionId = parts[3] ?? "";
+  if (!sessionId) return false;
   return channel !== "main" && channel !== "cron" && channel !== "subagent";
 }
 
@@ -370,6 +372,8 @@ function evaluateProjectCheckpoint(
   let bestUnsatisfied: { entity: string; updatedMs: number; missingFields: string[] } | null = null;
   // Track whether any active entity is scoped to this session (#1479 Fix A+B).
   let sessionScopedEntityFound = false;
+  let otherSessionActiveCount = 0;
+  let unscopedActiveCount = 0;
 
   for (const [entity, keyMap] of grouped.entries()) {
     const status = normalizeProjectStatus(chooseLatestText(keyMap.get("status")));
@@ -382,7 +386,12 @@ function evaluateProjectCheckpoint(
     // Forge/Pr-Steward subagent) are not the current session's responsibility and must not
     // trigger the guard (#1479 Fix A+B).
     if (currentSessionKey) {
+      if (!relatedSession) {
+        unscopedActiveCount++;
+        continue;
+      }
       if (!sessionRefMatches(relatedSession, currentSessionKey)) {
+        otherSessionActiveCount++;
         continue;
       }
     }
@@ -433,10 +442,16 @@ function evaluateProjectCheckpoint(
     }
   }
 
-  // When sessionKey is provided and no active entities are scoped to this session, there is
-  // no checkpoint obligation — other sessions' tasks must not penalise this session (#1479).
+  // When sessionKey is provided and no active entities are scoped to this session, waive
+  // obligation only if every active row belongs to another session (#1479, #1504, #1531).
+  // Unscoped active rows (missing/invalid related_session) still owe a checkpoint.
   if (currentSessionKey && !sessionScopedEntityFound) {
-    return { satisfied: true, missingFields: [] };
+    if (otherSessionActiveCount > 0 && unscopedActiveCount === 0) {
+      return { satisfied: true, missingFields: [] };
+    }
+    if (unscopedActiveCount > 0) {
+      return { satisfied: false, missingFields: ["related_session"] };
+    }
   }
 
   if (bestUnsatisfied) {
