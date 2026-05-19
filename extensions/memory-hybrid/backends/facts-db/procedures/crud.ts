@@ -360,23 +360,17 @@ export function getProcedureVersions(
     )
     .all(procedureId) as Array<Record<string, unknown>>;
 
-  return rows.map((r) => ({
-    id: r.id as string,
-    versionNumber: r.version_number as number,
-    successCount: r.success_count as number,
-    failureCount: r.failure_count as number,
-    avoidanceNotes: (() => {
-      const raw = r.avoidance_notes as string | null;
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.filter((n: unknown) => typeof n === "string") : null;
-      } catch {
-        return null;
-      }
-    })(),
-    createdAt: r.created_at as number,
-  }));
+  return rows.map((r) => {
+    const notes = parseAvoidanceNotes(r.avoidance_notes as string | null);
+    return {
+      id: r.id as string,
+      versionNumber: r.version_number as number,
+      successCount: r.success_count as number,
+      failureCount: r.failure_count as number,
+      avoidanceNotes: notes.length > 0 ? notes : null,
+      createdAt: r.created_at as number,
+    };
+  });
 }
 
 /**
