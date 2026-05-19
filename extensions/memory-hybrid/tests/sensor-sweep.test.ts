@@ -537,3 +537,81 @@ describe("sweepAll", () => {
     expect(result.errors[0]).toContain("memory-patterns");
   });
 });
+
+describe("sensor-sweep Home Assistant fetch boundaries (#1476)", () => {
+  const haConfig = {
+    baseUrl: "http://ha.local:8123",
+    token: "test-token",
+    timeoutMs: 5_000,
+  };
+
+  const sweepCfg = parseSensorSweepConfig({
+    sensorSweep: {
+      enabled: true,
+      homeAssistant: haConfig,
+      garmin: { enabled: true, entityPrefix: "sensor.garmin" },
+    },
+  });
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn() as typeof fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns garmin error instead of throwing when HA responds 200 with invalid JSON", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => JSON.parse("{ not-json"),
+    } as Response);
+
+    const result = await sweepAll(bus, sweepCfg, makeFactsDbStub(), { tier: 1, sources: ["garmin"] });
+    const garmin = result.sensors.find((s) => s.sensor === "garmin");
+    expect(garmin?.error).toBeDefined();
+    expect(result.errors.some((e) => e.includes("garmin"))).toBe(true);
+  });
+
+  it("returns garmin error instead of throwing when HA responds 500", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({}),
+    } as Response);
+
+    const result = await sweepAll(bus, sweepCfg, makeFactsDbStub(), { tier: 1, sources: ["garmin"] });
+    const garmin = result.sensors.find((s) => s.sensor === "garmin");
+    expect(garmin?.error).toContain("500");
+  });
+
+  it("filters HA entities by prefix when JSON array is valid", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [
+        {
+          entity_id: "sensor.garmin.steps",
+          state: "1000",
+          attributes: { unit_of_measurement: "steps" },
+          last_updated: new Date().toISOString(),
+        },
+        {
+          entity_id: "sensor.other.temp",
+          state: "20",
+          attributes: {},
+          last_updated: new Date().toISOString(),
+        },
+      ],
+    } as Response);
+
+    const result = await sweepAll(bus, sweepCfg, makeFactsDbStub(), { tier: 1, sources: ["garmin"] });
+    const garmin = result.sensors.find((s) => s.sensor === "garmin");
+    expect(garmin?.error).toBeUndefined();
+    expect(garmin?.eventsWritten).toBe(1);
+  });
+});

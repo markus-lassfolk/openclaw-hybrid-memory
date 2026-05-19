@@ -117,7 +117,7 @@ function migrateEventLogRelaxEventTypeCheck(db: DatabaseSync): void {
 }
 
 export class EventLog extends BaseSqliteStore {
-  private readonly dbPath: string;
+  protected readonly dbPath: string;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });

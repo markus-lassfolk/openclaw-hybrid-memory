@@ -3,3 +3,11 @@
 
 # Workflow changes need extra scrutiny
 .github/workflows/ @markus-lassfolk
+
+# High-churn merge hotspots (review when large diffs)
+extensions/memory-hybrid/cli/commands/manage/register-corrections-and-pipeline.ts @markus-lassfolk
+extensions/memory-hybrid/cli/commands/manage/register-config-cli.ts @markus-lassfolk
+extensions/memory-hybrid/cli/commands/manage/dream-cycle-followup.ts @markus-lassfolk
+extensions/memory-hybrid/index.ts @markus-lassfolk
+extensions/memory-hybrid/backends/facts-db/procedures.ts @markus-lassfolk
+extensions/memory-hybrid/cli/cmd-extract.ts @markus-lassfolk

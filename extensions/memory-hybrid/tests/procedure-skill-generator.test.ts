@@ -29,7 +29,9 @@ function recordDistinctSuccesses(procId: string): void {
 
 function collectIdentityKeyFindings(value: unknown, path = "$", findings: string[] = []): string[] {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectIdentityKeyFindings(item, `${path}[${index}]`, findings));
+    value.forEach((item, index) => {
+      collectIdentityKeyFindings(item, `${path}[${index}]`, findings);
+    });
     return findings;
   }
   if (!value || typeof value !== "object") return findings;
@@ -48,7 +50,9 @@ function isSlugOrPathIdentityKey(key: string, path: string): boolean {
 
 function collectExactValueFindings(value: unknown, target: string, path = "$", findings: string[] = []): string[] {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectExactValueFindings(item, target, `${path}[${index}]`, findings));
+    value.forEach((item, index) => {
+      collectExactValueFindings(item, target, `${path}[${index}]`, findings);
+    });
     return findings;
   }
   if (!value || typeof value !== "object") {
@@ -819,8 +823,14 @@ description: Existing legacy skill created before completion markers.
     });
     recordDistinctSuccesses(retry.id);
 
-    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementationOnce(() => {
-      throw new Error("mark failed");
+    const hydratedProc = db.getProcedureById(proc.id)!;
+    const hydratedRetry = db.getProcedureById(retry.id)!;
+    const selectionOrder = [hydratedProc, hydratedRetry];
+    const readySpy = vi.spyOn(db, "getProceduresReadyForSkill").mockReturnValue(selectionOrder);
+    const originalMarkProcedurePromoted = db.markProcedurePromoted.bind(db);
+    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementation((id, skillPath) => {
+      if (id === proc.id) throw new Error("mark failed");
+      return originalMarkProcedurePromoted(id, skillPath);
     });
 
     const result = generateAutoSkills(
@@ -837,6 +847,7 @@ description: Existing legacy skill created before completion markers.
     );
 
     markSpy.mockRestore();
+    readySpy.mockRestore();
 
     expect(result.generated).toBe(1);
     expect(result.paths).toEqual([join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md")]);

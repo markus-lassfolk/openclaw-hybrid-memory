@@ -10,9 +10,19 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
-import { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
+import {
+  computeEvidenceHash,
+  computeLegacyEvidenceHash,
+  computePatternId,
+  scorePattern,
+} from "./pattern-detector-hash.js";
 
-export { computeEvidenceHash, computePatternId, scorePattern } from "./pattern-detector-hash.js";
+export {
+  computeEvidenceHash,
+  computeLegacyEvidenceHash,
+  computePatternId,
+  scorePattern,
+} from "./pattern-detector-hash.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -28,6 +38,15 @@ interface CrystallizationCandidate {
   score: number;
 }
 
+// ---------------------------------------------------------------------------
+// PatternDetector — exported as a free function (no class wrapper needed)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect crystallization candidates from recent workflow patterns.
+ * Applies min usage count and success rate thresholds, skips already-proposed patterns.
+ * Returns candidates sorted by score descending.
+ */
 export function detectCrystallizationCandidates(
   workflowStore: WorkflowStore,
   crystallizationStore: CrystallizationStore,
@@ -64,13 +83,21 @@ export function detectCrystallizationCandidates(
     if (pattern.toolSequence.length === 0) continue;
 
     const patternId = computePatternId(pattern.toolSequence);
-    const evidenceHash = computeEvidenceHash(pattern);
+    const evidenceHash = computeEvidenceHash(pattern, {
+      evidenceCountBucketSize: cfg.evidenceCountBucketSize,
+    });
+    const legacyEvidenceHash = computeLegacyEvidenceHash(pattern);
 
-    // Skip if latest rejected proposal was based on the same unchanged evidence.
+    // Skip if latest rejected/quarantined proposal was based on the same unchanged evidence.
     // Prevents "spammy" re-proposals after a human rejection unless substantive
-    // inputs (tool sequence / example goals) changed.
+    // inputs (tool sequence / example goals / metric milestones) changed.
     try {
-      if (crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash)) {
+      if (
+        crystallizationStore.isRejectedWithSameEvidence(patternId, evidenceHash, {
+          legacyEvidenceHash,
+          evidenceCountBucketSize: cfg.evidenceCountBucketSize,
+        })
+      ) {
         continue;
       }
     } catch (err) {
