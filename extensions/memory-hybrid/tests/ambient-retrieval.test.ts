@@ -15,7 +15,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AmbientConfig } from "../config.js";
 import {
-  type AmbientQuery,
   SessionSeenFacts,
   cosineDistance,
   cosineSimilarity,

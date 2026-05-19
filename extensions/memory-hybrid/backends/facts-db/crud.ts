@@ -15,6 +15,7 @@ import { normalizedHash, serializeTags } from "../../utils/tags.js";
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
 const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
 const SQLITE_BUSY_STORE_BACKOFF_MAX_MS = 500;
+const SQLITE_BUSY_STORE_SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 function isSqliteBusyError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -25,7 +26,7 @@ function isSqliteBusyError(err: unknown): boolean {
 
 function sleepSync(ms: number): void {
   if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  Atomics.wait(SQLITE_BUSY_STORE_SLEEP, 0, 0, ms);
 }
 
 function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
@@ -162,7 +163,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       warnOnce: ctx.warnOnce,
       warnOnceKey: ctx.warnOnceKey,
       suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
-      warn: (m) => console.warn(m),
+      warn: (_m) => {},
     },
   );
 
@@ -171,11 +172,13 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     // of a near-duplicate, bump recall on the existing winner so the dedup acts as a
     // reinforcement signal instead of silently dropping the new evidence.
     if (dedupe.reason === "vector" || dedupe.reason === "lexical" || dedupe.reason === "hash") {
-      ctx.db
-        .prepare(
-          "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_confirmed_at = ? WHERE id = ?",
-        )
-        .run(nowSec, dedupe.existingId);
+      runWithSqliteBusyRetry(ctx.db, () => {
+        ctx.db
+          .prepare(
+            "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_confirmed_at = ? WHERE id = ?",
+          )
+          .run(nowSec, dedupe.existingId);
+      });
     }
     const existing = ctx.getById(dedupe.existingId);
     if (existing) return { entry: existing, evictedFactId: null };
@@ -185,11 +188,13 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   }
 
   if (dedupe.action === "boost") {
-    ctx.db
-      .prepare(
-        "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, importance = min(1.0, importance + ?) WHERE id = ?",
-      )
-      .run(dedupe.boostBy, dedupe.existingId);
+    runWithSqliteBusyRetry(ctx.db, () => {
+      ctx.db
+        .prepare(
+          "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, importance = min(1.0, importance + ?) WHERE id = ?",
+        )
+        .run(dedupe.boostBy, dedupe.existingId);
+    });
     const boosted = ctx.getById(dedupe.existingId);
     if (boosted) return { entry: boosted, evictedFactId: null };
     throw new Error(
@@ -223,7 +228,9 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
           .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
           .run(mergedText, mergedHash, existing.id);
       });
-      mergeTx();
+      runWithSqliteBusyRetry(ctx.db, () => {
+        mergeTx();
+      });
       // Signal callers to re-embed only when the persisted text changed. This handles edge
       // cases where append text is truncated and the final merged text remains unchanged.
       const embeddingStale = mergedText !== existing.text;
@@ -403,7 +410,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     },
     beginMode,
   );
-  runWithSqliteBusyRetry(ctx.db, tx);
+  runWithSqliteBusyRetry(ctx.db, () => {
+    quotaExceededSource = null;
+    evictedFactId = null;
+    tx();
+  });
   if (quotaExceededSource) {
     throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
   }

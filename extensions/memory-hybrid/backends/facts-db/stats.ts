@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { DECAY_CLASSES } from "../../config.js";
 import { isValidCategory } from "../../config.js";
-import { filterEntityStopWords, isEntityStopWord } from "../../utils/entity-stopwords.js";
+import { isEntityStopWord } from "../../utils/entity-stopwords.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { searchFts } from "../../services/fts-search.js";
 import { parseTags } from "../../utils/tags.js";

@@ -68,7 +68,9 @@ export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: 
         lines.push(`  Skipped:  ${result.skipped}`);
         if (result.reasons.length > 0) {
           lines.push("  Details:");
-          result.reasons.forEach((r) => lines.push(`    - ${r}`));
+          result.reasons.forEach((r) => {
+            lines.push(`    - ${r}`);
+          });
         }
         if (result.proposed > 0) {
           lines.push("");

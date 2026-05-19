@@ -66,7 +66,7 @@ function makeMockEventLog(): Pick<EventLog, "append"> {
   } as unknown as EventLog;
 }
 
-function makeMockNarrativesDb() {
+function _makeMockNarrativesDb() {
   return null;
 }
 
