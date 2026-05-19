@@ -329,11 +329,13 @@ function evaluateProjectCheckpoint(
   taskUpdatedFreshnessMs: number,
   goalAssess: GoalAssessEvidence,
   currentSessionKey?: string,
+  projectFactsProvided?: boolean,
 ): ProjectCheckpointEvaluation {
   if (projectFacts.length === 0) {
     // When a sessionKey is provided and there are no project facts at all, there is no
     // checkpoint obligation for this session — return satisfied to avoid false positives (#1479).
-    if (currentSessionKey) {
+    // Only apply this when projectFacts were explicitly provided (not just defaulted to empty).
+    if (currentSessionKey && projectFactsProvided) {
       return { satisfied: true, missingFields: [] };
     }
     return { satisfied: false, missingFields: ["status"] };
@@ -509,6 +511,7 @@ export function evaluatePreFinalizationGuard(
     taskUpdatedFreshnessMs,
     goalAssess,
     options.sessionKey,
+    options.projectFacts !== undefined,
   );
   const checkpointSatisfied = activeTaskCheckpointCalled || projectCheckpoint.satisfied;
 
