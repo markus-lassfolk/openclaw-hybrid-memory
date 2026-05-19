@@ -635,7 +635,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
  * file missing, or value is empty after trimming).
  */
 export function resolveSecretRef(value: string): string | undefined {
-  if (!value || !value.trim()) return undefined;
+  if (!value?.trim()) return undefined;
   const v = value.trim();
   if (v.startsWith("env:")) {
     const varName = v.slice(4).trim();

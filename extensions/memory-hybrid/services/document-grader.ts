@@ -29,7 +29,7 @@ function buildGradePrompt(query: string, docs: GradeableDocument[]): string {
     })
     .join("\n\n");
 
-  return `You are grading retrieval relevance for a memory system. For each document, answer if it helps answer the query. Return ONLY a JSON array with one string per document: \"yes\" or \"no\".\n\nQuery: "${query}"\n\nDocuments:\n${renderedDocs}`;
+  return `You are grading retrieval relevance for a memory system. For each document, answer if it helps answer the query. Return ONLY a JSON array with one string per document: "yes" or "no".\n\nQuery: "${query}"\n\nDocuments:\n${renderedDocs}`;
 }
 
 function parseGrades(response: string, count: number): Array<"yes" | "no"> {

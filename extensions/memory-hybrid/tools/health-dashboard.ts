@@ -6,7 +6,6 @@
  * avg confidence, link density, storage size, and timestamps.
  */
 
-import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 

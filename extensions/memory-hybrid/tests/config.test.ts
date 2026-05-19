@@ -3,8 +3,6 @@ import {
   CREDENTIAL_TYPES,
   DECAY_CLASSES,
   DEFAULT_MEMORY_CATEGORIES,
-  type DecayClass,
-  type HybridMemoryConfig,
   TTL_DEFAULTS,
   getCronModelConfig,
   getDefaultCronModel,
@@ -19,7 +17,7 @@ import {
   vectorDimsForModel,
 } from "../config.js";
 import type { ConfigMode } from "../config.js";
-import { getEnv, setEnv } from "../utils/env-manager.js";
+import { setEnv } from "../utils/env-manager.js";
 import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------

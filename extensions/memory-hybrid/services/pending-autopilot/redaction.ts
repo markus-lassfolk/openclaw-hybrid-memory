@@ -3,7 +3,7 @@
 const SECRET_PATTERNS: RegExp[] = [
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;}{\[\]]+/gi,
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;}{[\]]+/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@[^\s]+/gi,
 ];

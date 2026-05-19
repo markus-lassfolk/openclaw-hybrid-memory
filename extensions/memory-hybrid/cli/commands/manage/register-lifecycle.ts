@@ -87,13 +87,7 @@ export function registerExpireBySourceCommands(mem: Chainable, b: ManageBindings
     .option("--json", "Emit JSON report only")
     .action(
       withExit(
-        async (opts: {
-          pattern: string;
-          days: string;
-          apply?: boolean;
-          decayClass?: string;
-          json?: boolean;
-        }) => {
+        async (opts: { pattern: string; days: string; apply?: boolean; decayClass?: string; json?: boolean }) => {
           const ttlDays = Number.parseInt(opts.days, 10);
           if (!Number.isFinite(ttlDays) || ttlDays < 1) {
             console.error("error: --days must be a positive integer");

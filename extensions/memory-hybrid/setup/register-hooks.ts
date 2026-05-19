@@ -6,7 +6,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
