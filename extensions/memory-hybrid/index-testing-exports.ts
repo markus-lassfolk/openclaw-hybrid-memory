@@ -129,6 +129,7 @@ import { CrystallizationProposer } from "./services/crystallization-proposer.js"
 import { GapDetector, computeGapId, deriveToolNameFromSequence } from "./services/gap-detector.js";
 import {
   computeEvidenceHash,
+  computeLegacyEvidenceHash,
   computePatternId,
   detectCrystallizationCandidates,
   scorePattern,
@@ -252,6 +253,7 @@ export const _testing = {
   CrystallizationProposer,
   computePatternId,
   computeEvidenceHash,
+  computeLegacyEvidenceHash,
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
