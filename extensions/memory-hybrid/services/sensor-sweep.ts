@@ -90,13 +90,19 @@ function parseHAEntities(payload: unknown, context: string): HAEntity[] {
   if (!Array.isArray(payload)) {
     throw new Error(`Invalid Home Assistant response from ${context}: expected array`);
   }
+  const valid: HAEntity[] = [];
   for (const [index, item] of payload.entries()) {
     const validationError = getHAEntityValidationError(item);
     if (validationError) {
-      throw new Error(`Invalid Home Assistant entity at index ${index} from ${context}: ${validationError}`);
+      capturePluginError(
+        new Error(`Invalid Home Assistant entity at index ${index} from ${context}: ${validationError}`),
+        { operation: "parse-ha-entities", severity: "info", subsystem: "sensor-sweep" },
+      );
+      continue;
     }
+    valid.push(item as HAEntity);
   }
-  return payload as HAEntity[];
+  return valid;
 }
 
 function parseHAEntity(payload: unknown, context: string): HAEntity {

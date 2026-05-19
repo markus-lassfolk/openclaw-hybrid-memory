@@ -678,4 +678,37 @@ describe("sensor-sweep Home Assistant fetch boundaries (#1476)", () => {
     expect(garmin?.error).toBeUndefined();
     expect(garmin?.eventsWritten).toBe(1);
   });
+
+  it("skips invalid HA entities in /api/states and still sweeps valid prefix matches", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [
+        {
+          entity_id: "sensor.garmin.steps",
+          state: "1000",
+          attributes: { unit_of_measurement: "steps" },
+          last_updated: new Date().toISOString(),
+        },
+        {
+          entity_id: "sensor.garmin.bad",
+          state: 123,
+          attributes: {},
+          last_updated: new Date().toISOString(),
+        },
+        {
+          entity_id: "sensor.other.temp",
+          state: "20",
+          attributes: {},
+          last_updated: new Date().toISOString(),
+        },
+      ],
+    } as Response);
+
+    const result = await sweepAll(bus, sweepCfg, makeFactsDbStub(), { tier: 1, sources: ["garmin"] });
+    const garmin = result.sensors.find((s) => s.sensor === "garmin");
+    expect(garmin?.error).toBeUndefined();
+    expect(garmin?.eventsWritten).toBe(1);
+  });
 });
