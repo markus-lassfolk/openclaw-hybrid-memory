@@ -10,11 +10,12 @@ import { getEnv } from "../utils/env-manager.js";
  * in the shared constants module because they are only consumed by these handlers.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { distillMaxOutputTokens } from "../services/chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
@@ -92,8 +93,13 @@ export function runSelfCorrectionExtractForCli(
     });
     if (opts.outputPath && result.incidents.length > 0) {
       try {
-        mkdirSync(dirname(opts.outputPath), { recursive: true });
-        writeFileSync(opts.outputPath, JSON.stringify(result.incidents, null, 2), "utf-8");
+        const outputJson = JSON.stringify(result.incidents, null, 2);
+        // Follow symlinks so shared extract targets are updated, not replaced.
+        if (existsSync(opts.outputPath) && lstatSync(opts.outputPath).isSymbolicLink()) {
+          writeFileSync(opts.outputPath, outputJson, "utf-8");
+        } else {
+          atomicWriteFile(opts.outputPath, outputJson);
+        }
       } catch (e) {
         capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionExtractForCli:write-output" });
       }
@@ -186,8 +192,7 @@ export async function runSelfCorrectionRunForCli(
     if (incidents.length === 0) {
       const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
       try {
-        mkdirSync(reportDir, { recursive: true });
-        writeFileSync(reportPath, emptyReport, "utf-8");
+        atomicWriteFile(reportPath, emptyReport);
       } catch (err) {
         capturePluginError(err as Error, {
           subsystem: "cli",
@@ -457,7 +462,12 @@ export async function runSelfCorrectionRunForCli(
             .replace(/^```\w*\n?|```\s*$/g, "")
             .trim();
           if (cleaned.length > 50) {
-            writeFileSync(toolsPath, cleaned, "utf-8");
+            // Follow symlinks so shared TOOLS.md targets are updated, not replaced.
+            if (existsSync(toolsPath) && lstatSync(toolsPath).isSymbolicLink()) {
+              writeFileSync(toolsPath, cleaned, "utf-8");
+            } else {
+              atomicWriteFile(toolsPath, cleaned);
+            }
             toolsApplied = toolsSuggestions.length;
             autoFixed += toolsApplied;
           }
@@ -499,8 +509,7 @@ export async function runSelfCorrectionRunForCli(
         : []),
     ];
     try {
-      mkdirSync(reportDir, { recursive: true });
-      writeFileSync(reportPath, reportLines.join("\n"), "utf-8");
+      atomicWriteFile(reportPath, reportLines.join("\n"));
     } catch (e) {
       logger.warn?.(`memory-hybrid: could not write report: ${e}`);
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
