@@ -390,7 +390,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     return {
       reinforcement: [],
       correction: [],
-      sessionsScanned: sessionFiles.length,
+      sessionsScanned:
+        successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length,
       error: firstSessionParseError,
     };
   }
