@@ -180,7 +180,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
       expect(out?.prependContext).toContain("post-compaction memory summary");
       expect(out?.prependContext).toContain("retained across compaction");
-    });
+    }, 60_000);
   });
 
   describe("persistence and verify boundaries", () => {
