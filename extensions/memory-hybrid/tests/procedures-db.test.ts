@@ -220,6 +220,23 @@ describe("FactsDB procedures table", () => {
     expect(after?.skillGeneratedAt).toBeGreaterThan(0);
   });
 
+  it("markProcedurePromoted preserves trimmed trusted skill_state on idempotent promote", () => {
+    const created = db.upsertProcedure({
+      taskPattern: "Trusted skill procedure",
+      recipeJson: "[]",
+      procedureType: "positive",
+      successCount: 5,
+    });
+    db.getRawDb()
+      .prepare("UPDATE procedures SET skill_state = ?, promoted_to_skill = 1, skill_path = ? WHERE id = ?")
+      .run(" trusted ", "skills/auto/trusted-skill", created.id);
+
+    const ok = db.markProcedurePromoted(created.id, "skills/auto/trusted-skill");
+    expect(ok).toBe(true);
+    const after = db.getProcedureById(created.id);
+    expect(after?.skillState).toBe("trusted");
+  });
+
   it("getStaleProcedures returns procedures past TTL", () => {
     const old = Math.floor(Date.now() / 1000) - 60 * 24 * 3600; // 60 days ago
     db.upsertProcedure({
