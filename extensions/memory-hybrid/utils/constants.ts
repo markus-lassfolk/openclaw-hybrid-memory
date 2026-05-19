@@ -117,6 +117,9 @@ export const VECTORDB_READER_DRAIN_TIMEOUT_MS = 30_000;
 /** Timeout (ms) for VectorDB initialization (connect + table open). */
 export const VECTORDB_INIT_TIMEOUT_MS = 60_000;
 
+/** Timeout (ms) for VectorDB count query. */
+export const VECTORDB_COUNT_TIMEOUT_MS = 30_000;
+
 /** Timeout (ms) for VectorDB getVectorsByFactIds batch query. */
 export const VECTORDB_GET_VECTORS_TIMEOUT_MS = 45_000;
 

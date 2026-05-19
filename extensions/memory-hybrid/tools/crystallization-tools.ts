@@ -10,7 +10,10 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import {
+  assertCrystallizationQueueStatusFilter,
+  type CrystallizationStore,
+} from "../backends/crystallization-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
@@ -47,9 +50,9 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         lines.push(`  Skipped:  ${result.skipped}`);
         if (result.reasons.length > 0) {
           lines.push("  Details:");
-          for (const r of result.reasons) {
+          result.reasons.forEach((r) => {
             lines.push(`    - ${r}`);
-          }
+          });
         }
         if (result.proposed > 0) {
           lines.push("");
@@ -87,14 +90,18 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
             Type.Literal("pending"),
             Type.Literal("approved"),
             Type.Literal("rejected"),
+            Type.Literal("candidate"),
             Type.Literal("drafted"),
             Type.Literal("validated"),
             Type.Literal("installed"),
             Type.Literal("quarantined"),
             Type.Literal("superseded"),
+            Type.Literal("ready"),
+            Type.Literal("needs-override"),
           ],
           {
-            description: "Filter by proposal status. Omit to list all proposals.",
+            description:
+              "Filter by proposal status. pending=drafted+validated; approved=approved+installed; ready=validated+allow; needs-override=validated+allow-with-override.",
           },
         ),
       ),
@@ -108,21 +115,14 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
       const { status, limit } = params as {
-        status?:
-          | "pending"
-          | "approved"
-          | "rejected"
-          | "drafted"
-          | "validated"
-          | "installed"
-          | "quarantined"
-          | "superseded";
+        status?: string;
         limit?: number;
       };
 
       try {
+        assertCrystallizationQueueStatusFilter(status);
         const proposals = crystallizationStore.list({
-          status,
+          status: status as never,
           limit: limit ?? 20,
         });
 
@@ -225,14 +225,20 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           description: "Set true to approve when activation evaluation warns (requires explicit human intent).",
         }),
       ),
+      description: Type.Optional(
+        Type.String({
+          description: "Optional description override (YAML frontmatter + proposal card).",
+        }),
+      ),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
-      const { id, name, category, recommended_output, overrideWarnings } = params as {
+      const { id, name, category, recommended_output, overrideWarnings, description } = params as {
         id: string;
         name?: string;
         category?: string;
         recommended_output?: "SKILL.md only";
         overrideWarnings?: boolean;
+        description?: string;
       };
 
       try {
@@ -240,6 +246,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         const result = proposer.approveProposal(id, {
           name,
           category,
+          description,
           recommendedOutput: recommended_output,
           overrideWarnings,
         });

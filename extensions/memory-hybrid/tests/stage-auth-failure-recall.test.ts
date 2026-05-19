@@ -72,10 +72,10 @@ describe("registerAuthFailureRecall", () => {
     const stored = factsDb.store({
       text: "GitHub API token is ghp_test",
       category: "technical",
-      importance: 0.5,
       entity: "credentials",
       key: null,
       value: null,
+      importance: 0.8,
       tags: ["credential", "github"],
       source: "conversation",
     });

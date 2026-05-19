@@ -36,6 +36,8 @@ import { truncateForStorage } from "../../utils/text.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
+const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+
 /** Outcome indicator patterns for episodic memory auto-capture (#781). */
 interface OutcomePattern {
   regex: RegExp;
@@ -361,7 +363,9 @@ export async function runCapture(
               existingFacts: prepared[pi].similarFacts,
             }));
             const outs = await classifyMemoryOperationsBatch(inputs, ctx.openai, classifyModel, api.logger);
-            for (let j = 0; j < idxs.length; j++) classificationByIndex.set(idxs[j], outs[j]);
+            idxs.forEach((pi, j) => {
+              classificationByIndex.set(pi, outs[j]);
+            });
           }
         }
 

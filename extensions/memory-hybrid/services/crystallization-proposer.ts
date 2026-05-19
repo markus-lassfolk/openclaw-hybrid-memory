@@ -296,6 +296,7 @@ export class CrystallizationProposer {
     opts?: {
       name?: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): SkillProposalValidationResult | null {
@@ -319,6 +320,7 @@ export class CrystallizationProposer {
     const { skillContent: rewrittenContent } = this.applyOverridesToDraft(proposal, {
       skillName: safeName,
       category: desiredCategory,
+      description: opts?.description?.trim() || undefined,
       recommendedOutput: desiredRecommendedOutput,
     });
 
@@ -349,6 +351,7 @@ export class CrystallizationProposer {
       overrideWarnings?: boolean;
       name?: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): ApproveResult {
@@ -373,6 +376,7 @@ export class CrystallizationProposer {
       {
         skillName: safeName,
         category: desiredCategory,
+        description: opts?.description?.trim() || undefined,
         recommendedOutput: desiredRecommendedOutput,
       },
     );
@@ -410,6 +414,7 @@ export class CrystallizationProposer {
       skillName: safeName,
       skillContent: rewrittenContent,
       category: desiredCategory,
+      ...(opts?.description?.trim() ? { description: opts.description.trim() } : {}),
       recommendedOutput: desiredRecommendedOutput,
       proposalCardJson: rewrittenCardJson,
     });
@@ -570,6 +575,7 @@ export class CrystallizationProposer {
     overrides: {
       skillName: string;
       category?: string;
+      description?: string;
       recommendedOutput?: "SKILL.md only";
     },
   ): { skillContent: string; proposalCardJson?: string } {
@@ -579,13 +585,20 @@ export class CrystallizationProposer {
       skillContent = patchOpeningYamlField(skillContent, "name", overrides.skillName);
     }
     if (overrides.category) {
-      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, `**Category:** ${overrides.category}`);
+      skillContent = skillContent.replace(/^\*\*Category:\*\* .+$/m, () => `**Category:** ${overrides.category}`);
       skillContent = patchOpeningYamlField(skillContent, "category", overrides.category);
+    }
+    if (overrides.description) {
+      skillContent = skillContent.replace(
+        /^\*\*Description:\*\* .+$/m,
+        () => `**Description:** ${overrides.description}`,
+      );
+      skillContent = patchOpeningYamlField(skillContent, "description", overrides.description);
     }
     if (overrides.recommendedOutput) {
       skillContent = skillContent.replace(
         /^\*\*Recommended output:\*\* .+$/m,
-        `**Recommended output:** ${overrides.recommendedOutput}`,
+        () => `**Recommended output:** ${overrides.recommendedOutput}`,
       );
     }
 
@@ -595,6 +608,7 @@ export class CrystallizationProposer {
         const parsed = JSON.parse(proposalCardJson) as Record<string, unknown>;
         parsed.name = overrides.skillName;
         if (overrides.category) parsed.category = overrides.category;
+        if (overrides.description) parsed.description = overrides.description;
         if (overrides.recommendedOutput) parsed.recommended_output = overrides.recommendedOutput;
         proposalCardJson = JSON.stringify(parsed);
       } catch {
@@ -662,7 +676,8 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
   const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!m) return skillContent;
   const inner = m[1]!;
-  const innerLineBreak = m[0].includes("\r\n") ? "\r\n" : "\n";
+  const openingLineBreak = m[0].startsWith("---\r\n") ? "\r\n" : "\n";
+  const innerLineBreak = inner.includes("\r\n") ? "\r\n" : openingLineBreak;
   const lines = inner.split(/\r?\n/);
   const keyLineRe = new RegExp(`^${escapeRegExp(key)}:\\s*(.*)$`);
   let keyIdx = -1;

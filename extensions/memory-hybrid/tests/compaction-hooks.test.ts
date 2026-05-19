@@ -75,11 +75,11 @@ describe("compaction lifecycle hooks", () => {
     factsDb.store({
       text: "should not appear in silent mode",
       category: "fact",
-      importance: 0.5,
+      source: "test",
       entity: null,
       key: null,
       value: null,
-      source: "test",
+      importance: 0.5,
     });
     registerLifecycleHooks(pluginApi as never, api as never);
     const handler = captureHookHandler(api, "after_compaction");
@@ -100,11 +100,11 @@ describe("compaction lifecycle hooks", () => {
     factsDb.store({
       text: "retained fact across compaction",
       category: "fact",
-      importance: 0.5,
+      source: "test",
       entity: null,
       key: null,
       value: null,
-      source: "test",
+      importance: 0.5,
     });
     vi.mocked(postCompactionRecall.buildPostCompactionRecallSnippet).mockResolvedValue(
       "<!-- memory-hybrid: post-compaction recall -->\n<recalled-context>hit</recalled-context>",

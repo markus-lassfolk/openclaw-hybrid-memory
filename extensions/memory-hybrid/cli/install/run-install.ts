@@ -19,14 +19,14 @@ import {
   inspectExistingEmbeddingSetup,
 } from "./config-merge.js";
 import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
-import { ensureMaintenanceCronJobs } from "./cron-jobs.js";
+import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "./cron-jobs.js";
 import {
-  PLUGIN_JOB_ID_PREFIX,
   applyHybridMemoryToolsMd,
   assertSafeRequestedVersionArg,
   installHybridMemoryWorkspaceSkill,
   isPathInsideDir,
   npxExecutable,
+  PLUGIN_JOB_ID_PREFIX,
   resolveAgentWorkspaceRoot,
 } from "./workspace.js";
 

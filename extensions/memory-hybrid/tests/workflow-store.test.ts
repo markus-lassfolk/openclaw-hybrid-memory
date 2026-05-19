@@ -94,9 +94,7 @@ describe("extractGoalKeywords", () => {
 
   it("lowercases all keywords", () => {
     const kw = extractGoalKeywords("Deploy Application Server");
-    for (const k of kw) {
-      expect(k).toBe(k.toLowerCase());
-    }
+    for (const k of kw) expect(k).toBe(k.toLowerCase());
   });
 
   it("returns at most 10 keywords", () => {
@@ -110,9 +108,7 @@ describe("extractGoalKeywords", () => {
 
   it("strips punctuation", () => {
     const kw = extractGoalKeywords("deploy: server, restart!");
-    for (const k of kw) {
-      expect(k).not.toMatch(/[^a-z0-9\-_]/);
-    }
+    for (const k of kw) expect(k).not.toMatch(/[^a-z0-9\-_]/);
   });
 });
 
@@ -329,9 +325,7 @@ describe("WorkflowStore.getPatterns", () => {
 
   it("filters by minSuccessRate", () => {
     const patterns = store.getPatterns({ minSuccessRate: 0.9 });
-    for (const p of patterns) {
-      expect(p.successRate).toBeGreaterThanOrEqual(0.9);
-    }
+    for (const p of patterns) expect(p.successRate).toBeGreaterThanOrEqual(0.9);
   });
 
   it("respects limit", () => {

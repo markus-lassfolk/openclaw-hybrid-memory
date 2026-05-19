@@ -18,6 +18,7 @@ vi.mock("../src/worker/narratives.js", () => ({
 
 import { FactsDB } from "../backends/facts-db.js";
 import { hybridConfigSchema } from "../config.js";
+import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import { runActiveTaskCheckpoint } from "../services/active-task-checkpoint.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -33,7 +34,6 @@ import {
   buildGuardTestLifecycleContext,
   captureAgentEndHandler,
   invokeAgentEnd,
-  makeMockHookApi,
 } from "./helpers/lifecycle-hook-harness.js";
 
 describe("lifecycle agent_end pre-finalization guard", () => {
@@ -52,8 +52,7 @@ describe("lifecycle agent_end pre-finalization guard", () => {
 
   it("allows agent_end when turn has no external-work signals", async () => {
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    const handler = captureAgentEndHandler(ctx);
-    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
     await expect(
       invokeAgentEnd(handler, api, benignFinalizationMessages(), MAIN_TELEGRAM_SESSION),
@@ -61,36 +60,93 @@ describe("lifecycle agent_end pre-finalization guard", () => {
     expect(api.logger.warn).not.toHaveBeenCalled();
   });
 
-  it("blocks agent_end when CI pending and ledger empty", async () => {
+  it("allows agent_end when CI pending but FactsDB ledger is empty (#1479)", async () => {
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    const handler = captureAgentEndHandler(ctx);
-    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
-    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).rejects.toMatchObject({
-      name: "PreFinalizationGuardBlockingError",
-      message: expect.stringContaining("pre-finalization guard"),
-    });
+    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    expect(api.logger.warn).not.toHaveBeenCalled();
   });
 
-  it.fails("does not block main Telegram session when only Forge subagent rows exist in FactsDB (#1479)", async () => {
+  it("warns on agent_end when CI pending and session-owned ledger lacks checkpoint fields", async () => {
+    const entity = "issue-telegram-incomplete";
+    factsDb.store({
+      text: `Task [${entity}] status: in_progress`,
+      category: TASK_LEDGER_CATEGORY,
+      importance: 0.7,
+      entity,
+      key: "status",
+      value: "in_progress",
+      source: "test",
+      decayClass: "permanent",
+    });
+    factsDb.store({
+      text: `Task [${entity}] related_session: ${MAIN_TELEGRAM_SESSION}`,
+      category: TASK_LEDGER_CATEGORY,
+      importance: 0.7,
+      entity,
+      key: "related_session",
+      value: MAIN_TELEGRAM_SESSION,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
+
+    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("pre-finalization guard"));
+  });
+
+  it("does not block main Telegram session when only Forge subagent rows exist in FactsDB (#1479)", async () => {
     seedForgeActiveTask(factsDb);
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    const handler = captureAgentEndHandler(ctx);
-    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
     await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
   });
 
-  it.fails("allows agent_end when main task checkpoint uses agent:main:main but sessionKey is agent:main:telegram (#1486)", async () => {
-    seedMainTelegramCheckpoint(factsDb, { relatedSession: MAIN_CANONICAL_SESSION });
+  it("allows agent_end when main task checkpoint uses agent:main:main but sessionKey is agent:main:telegram (#1486)", async () => {
+    seedMainTelegramCheckpoint(factsDb, {
+      relatedSession: MAIN_CANONICAL_SESSION,
+      updatedIso: new Date().toISOString(),
+    });
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    const handler = captureAgentEndHandler(ctx);
-    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
     await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    expect(api.logger.warn).not.toHaveBeenCalled();
   });
 
-  it.fails("allows agent_end after active_task_checkpoint with live session key then pending CI language (#1486 chain)", async () => {
+  it("warns on agent_end when canonical agent:main:main ledger row is incomplete for telegram session (#1486)", async () => {
+    const entity = "issue-telegram-canonical-incomplete";
+    factsDb.store({
+      text: `Task [${entity}] status: waiting`,
+      category: TASK_LEDGER_CATEGORY,
+      importance: 0.7,
+      entity,
+      key: "status",
+      value: "waiting",
+      source: "test",
+      decayClass: "permanent",
+    });
+    factsDb.store({
+      text: `Task [${entity}] related_session: ${MAIN_CANONICAL_SESSION}`,
+      category: TASK_LEDGER_CATEGORY,
+      importance: 0.7,
+      entity,
+      key: "related_session",
+      value: MAIN_CANONICAL_SESSION,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
+
+    await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("pre-finalization guard"));
+  });
+
+  it("allows agent_end after active_task_checkpoint with live session key then pending CI language (#1486 chain)", async () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
       sqlitePath: join(tmpDir, "facts.db"),
@@ -126,8 +182,7 @@ describe("lifecycle agent_end pre-finalization guard", () => {
     expect(checkpoint.ok).toBe(true);
 
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
-    const handler = captureAgentEndHandler(ctx);
-    const api = makeMockHookApi(MAIN_TELEGRAM_SESSION);
+    const { handler, api } = captureAgentEndHandler(ctx, MAIN_TELEGRAM_SESSION);
 
     await expect(invokeAgentEnd(handler, api, pendingCiTurnMessages(), MAIN_TELEGRAM_SESSION)).resolves.toBeUndefined();
   });

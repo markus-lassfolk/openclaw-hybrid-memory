@@ -2,18 +2,23 @@
  * CLI: skill proposal queue (crystallization lifecycle) and generated-skill telemetry.
  *
  * Commands:
- * - hybrid-mem skills queue | show | validate | install | rescan
- * - hybrid-mem skills telemetry | record | correct | demote (when FactsDB is available)
+ * - hybrid-mem skills queue | show | validate | reject | install | rescan | telemetry …
  */
 
-import type { CrystallizationStatus } from "../backends/crystallization-store.js";
-import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { CrystallizationQueueStatusFilter, CrystallizationStore } from "../backends/crystallization-store.js";
+import {
+  assertCrystallizationQueueStatusFilter,
+  CRYSTALLIZATION_QUEUE_STATUS_FILTERS,
+} from "../backends/crystallization-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import {
+  summarizeSkillProposalValidation,
+  type SkillProposalValidationResult,
+} from "../services/generated-skill-validation.js";
 import { GeneratedSkillLifecycleService } from "../services/generated-skill-lifecycle.js";
 import { SkillValidator } from "../services/skill-validator.js";
-import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
 import type { Chainable } from "./shared.js";
 import { relativeTime, withExit } from "./shared.js";
 
@@ -48,6 +53,15 @@ function requireStore(ctx: SkillsCliContext): CrystallizationStore {
   return store;
 }
 
+function formatProposalReadiness(p: { validationResult?: SkillProposalValidationResult }): string {
+  const vr = p.validationResult;
+  if (!vr) return " — validation: not run";
+  if (vr.approvalDecision === "allow") return " — ready ✓";
+  if (vr.approvalDecision === "allow-with-override") return " — needs override";
+  if (vr.approvalDecision === "deny") return " — blocked (deny)";
+  return ` — ${vr.approvalDecision}`;
+}
+
 export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): void {
   const skills = mem
     .command("skills")
@@ -64,7 +78,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     .description("List proposal cards in the approval queue")
     .option(
       "--status <status>",
-      "Filter by status (pending/drafted/validated/approved/installed/quarantined/rejected/superseded)",
+      `Filter: ${CRYSTALLIZATION_QUEUE_STATUS_FILTERS.join(", ")} (pending=drafted+validated, approved=approved+installed; ready=validated+allow; needs-override=validated+allow-with-override)`,
     )
     .option("--limit <n>", "Limit results (default: 20)")
     .option("--json", "Print JSON")
@@ -72,9 +86,16 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       withExit(async (opts: { status?: string; limit?: string; json?: boolean }) => {
         const store = requireStore(ctx);
         const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
-        const status =
-          (opts.status as CrystallizationStatus | "pending" | "approved" | "rejected" | undefined) ?? undefined;
-        const proposals = store.list({ status, limit });
+        const status = (opts.status as CrystallizationQueueStatusFilter | undefined) ?? undefined;
+        let proposals;
+        try {
+          assertCrystallizationQueueStatusFilter(opts.status);
+          proposals = store.list({ status, limit });
+        } catch (err) {
+          console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+          process.exitCode = 1;
+          return;
+        }
 
         if (opts.json) {
           console.log(JSON.stringify({ ok: true, count: proposals.length, proposals }, null, 2));
@@ -96,8 +117,11 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           } catch {
             // ignore
           }
-          console.log(`[${p.status}] ${p.skillName}${observed}`);
+          console.log(`[${p.status}] ${p.skillName}${observed}${formatProposalReadiness(p)}`);
           console.log(`  id: ${p.id}`);
+          if (p.validationResult) {
+            console.log(`  validation: ${summarizeSkillProposalValidation(p.validationResult)}`);
+          }
           if (p.category) console.log(`  category: ${p.category}`);
           if (p.outputPath) console.log(`  output: ${p.outputPath}`);
           if (p.rejectionReason) console.log(`  rejected: ${p.rejectionReason}`);
@@ -167,7 +191,9 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
 
         if (opts.legacy) {
           // Cheap path: run only SkillValidator (static checks without dry-load/activation).
-          const validator = new SkillValidator(ctx.cfg.crystallization.sectionTaxonomy);
+          const validator = new SkillValidator({
+            sectionTaxonomyOverrides: ctx.cfg.crystallization.sectionTaxonomy,
+          });
           const result = validator.validate(proposal.skillContent);
           if (opts.json) {
             console.log(
@@ -247,11 +273,73 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
+  (skills.command("reject") as ArgumentChainable)
+    .description("Reject a crystallization proposal or permanently reject an installed generated skill")
+    .argument("<target>", "Proposal id or generated skill name")
+    .option("--reason <reason>", "Reason recorded for audit / operator rejection")
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (target: string, opts?: { reason?: string; json?: boolean }) => {
+        const proposal = ctx.crystallizationStore?.getById(target) ?? null;
+        if (proposal) {
+          const store = requireStore(ctx);
+          const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+          const result = proposer.rejectProposal(target, opts?.reason);
+          if (opts?.json) {
+            console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));
+            if (!result.success) process.exitCode = 1;
+            return;
+          }
+          console.log(result.success ? `✓ ${result.message}` : `✗ ${result.message}`);
+          if (!result.success) process.exitCode = 1;
+          return;
+        }
+
+        if (!factsDb) {
+          console.error(`error: no proposal or generated skill found for '${target}'`);
+          process.exitCode = 1;
+          return;
+        }
+        const lifecycle = new GeneratedSkillLifecycleService(factsDb);
+        const current = lifecycle.getSkill(target);
+        if (!current) {
+          console.error(`error: no proposal or generated skill found for '${target}'`);
+          process.exitCode = 1;
+          return;
+        }
+        const reason = opts?.reason?.trim();
+        if (!reason) {
+          console.error("error: --reason is required when rejecting an installed generated skill");
+          process.exitCode = 1;
+          return;
+        }
+        if (current.skillState === "rejected" || current.skillState === "uninstalled") {
+          console.error(
+            `error: skill '${target}' is in terminal state '${current.skillState}' — only installed, non-terminal skills can be rejected`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        const updated = lifecycle.setState(target, "rejected", reason);
+        if (!updated) {
+          console.error(`error: generated skill not found: ${target}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify(updated, null, 2));
+          return;
+        }
+        console.log(`Rejected ${target}: ${updated.skillStateReason ?? "manual rejection"}`);
+      }),
+    );
+
   (skills.command("install") as ArgumentChainable)
     .description("Approve and install a proposal (writes SKILL.md to the skills directory)")
     .argument("<id>", "Proposal id")
     .option("--name <slug>", "Rename before install")
     .option("--category <category>", "Category override")
+    .option("--description <text>", "Override proposal description (frontmatter + card)")
     .option("--recommended-output <type>", "Output type override (currently: 'SKILL.md only')", "SKILL.md only")
     .option("--override-warnings", "Approve proposals with activation warnings (explicit operator override)")
     .option("--dry-run", "Preview validation and output path without writing SKILL.md to disk")
@@ -263,6 +351,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           opts: {
             name?: string;
             category?: string;
+            description?: string;
             recommendedOutput?: string;
             overrideWarnings?: boolean;
             dryRun?: boolean;
@@ -277,7 +366,8 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             const result = proposer.validateProposal(id, {
               name: opts.name,
               category: opts.category,
-              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+              description: opts.description,
+              recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : undefined,
             });
             if (!result) {
               console.error(`Proposal '${id}' not found`);
@@ -345,7 +435,8 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           const result = proposer.approveProposal(id, {
             name: opts.name,
             category: opts.category,
-            recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : "SKILL.md only",
+            description: opts.description,
+            recommendedOutput: opts.recommendedOutput === "SKILL.md only" ? "SKILL.md only" : undefined,
             overrideWarnings: opts.overrideWarnings === true,
           });
           if (opts.json) {
@@ -464,6 +555,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
     .option("--scope-target <id>", "Scope target id")
     .option("--agent-id <id>", "Agent id")
     .option("--session-id <id>", "Session id")
+    .option("--procedure-id <id>", "Procedure id to disambiguate skills with same basename")
     .option("--json", "Emit JSON")
     .action(
       withExit(
@@ -486,6 +578,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
             scopeTarget?: string;
             agentId?: string;
             sessionId?: string;
+            procedureId?: string;
             json?: boolean;
           },
         ) => {
@@ -544,6 +637,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           try {
             const activation = lifecycle.recordTelemetry({
               skillName,
+              procedureId: opts?.procedureId,
               decision: decision as "selected" | "considered" | "skipped",
               requestSummary: opts?.requestSummary,
               requestHash: opts?.requestHash,
@@ -566,7 +660,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
               process.exitCode = 1;
               return;
             }
-            const skill = lifecycle.getSkill(skillName);
+            const skill = factsDb.getGeneratedSkillByName(skillName, activation.procedureId);
             if (opts?.json) {
               console.log(JSON.stringify({ activation, skill }, null, 2));
               return;
@@ -595,7 +689,7 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           process.exitCode = 1;
           return;
         }
-        const skill = lifecycle.getSkill(activation.skillName);
+        const skill = factsDb.getGeneratedSkillByName(activation.skillName, activation.procedureId);
         if (opts?.json) {
           console.log(JSON.stringify({ activation, skill }, null, 2));
           return;
@@ -664,40 +758,6 @@ function registerGeneratedSkillTelemetryCli(skills: ArgumentChainable, factsDb: 
           return;
         }
         console.log(`Reset ${skillName} to experimental: ${updated.skillStateReason ?? "manual reset"}`);
-      }),
-    );
-
-  skills
-    .command("reject <skillName>")
-    .description("Permanently reject a generated skill (operator decision after install)")
-    .requiredOption("--reason <reason>", "Operator reason for rejection")
-    .option("--json", "Emit JSON")
-    .action(
-      withExit(async (skillName: string, opts?: { reason?: string; json?: boolean }) => {
-        const current = lifecycle.getSkill(skillName);
-        if (!current) {
-          console.error(`error: generated skill not found: ${skillName}`);
-          process.exitCode = 1;
-          return;
-        }
-        if (current.skillState === "rejected" || current.skillState === "uninstalled") {
-          console.error(
-            `error: skill '${skillName}' is in terminal state '${current.skillState}' — only installed, non-terminal skills can be rejected`,
-          );
-          process.exitCode = 1;
-          return;
-        }
-        const updated = lifecycle.setState(skillName, "rejected", opts?.reason ?? "manual rejection");
-        if (!updated) {
-          console.error(`error: generated skill not found: ${skillName}`);
-          process.exitCode = 1;
-          return;
-        }
-        if (opts?.json) {
-          console.log(JSON.stringify(updated, null, 2));
-          return;
-        }
-        console.log(`Rejected ${skillName}: ${updated.skillStateReason ?? "manual rejection"}`);
       }),
     );
 

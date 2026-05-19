@@ -1,11 +1,9 @@
-// @ts-nocheck
 import type { Command } from "commander";
 import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../../cli/hybrid-mem-commander-utils.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../../cli/register.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { HYBRID_MEM_HELP_ACTIVE_TASKS, HYBRID_MEM_HELP_GROUPED } from "./help-text.js";
 import type { RegisterHybridMemCliWithApiOptions } from "./register-full.js";
-
 export function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,

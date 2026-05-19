@@ -385,6 +385,8 @@ export class PluginManager {
  * Example plugin implementation
  */
 export class SlackNotificationPlugin implements MemoryPlugin {
+  private webhookUrl?: string;
+
   metadata: PluginMetadata = {
     id: "slack-notifications",
     name: "Slack Notifications",
@@ -407,8 +409,6 @@ export class SlackNotificationPlugin implements MemoryPlugin {
       }
     },
   };
-
-  private webhookUrl?: string;
 
   async init(context: PluginExtensionContext): Promise<void> {
     context.logger.info("Slack notifications plugin initialized");

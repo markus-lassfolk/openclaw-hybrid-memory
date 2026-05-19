@@ -85,7 +85,9 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           state.allOk = false;
           if (vectorOrphans.length > 0) {
             log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
-            for (const id of vectorOrphans.slice(0, 10)) log(`  - ${id}`);
+            vectorOrphans.slice(0, 10).forEach((id) => {
+              log(`  - ${id}`);
+            });
             if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
             if (opts.fix) {
               let deleted = 0;
@@ -107,7 +109,9 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           if (sqliteOrphans.length > 0) {
             const WARN = noEmoji ? "[WARN]" : "⚠️";
             log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
-            for (const id of sqliteOrphans.slice(0, 10)) log(`  - ${id}`);
+            sqliteOrphans.slice(0, 10).forEach((id) => {
+              log(`  - ${id}`);
+            });
             if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
             if (opts.fix && sqliteOrphanRebuildBudget > 0) {
               let rebuilt = 0;
@@ -302,8 +306,12 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             },
             digestWeeklyDelivery: cfg.digest.weekly.delivery,
           });
-          for (const name of added) applied.push(`Added ${name} job to ${cronStorePath}`);
-          for (const name of normalized) applied.push(`Normalized ${name} job (schedule/pluginJobId)`);
+          added.forEach((name) => {
+            applied.push(`Added ${name} job to ${cronStorePath}`);
+          });
+          normalized.forEach((name) => {
+            applied.push(`Normalized ${name} job (schedule/pluginJobId)`);
+          });
           if (cfg.goalStewardship.enabled && cfg.goalStewardship.heartbeatStewardship) {
             const heartbeat = ensureGoalStewardshipHeartbeatCronJob(openclawDir, {
               heartbeatPatterns: cfg.goalStewardship.heartbeatPatterns,
@@ -329,7 +337,9 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
         }
         if (applied.length > 0) {
           log("\n--- Applied fixes ---");
-          for (const a of applied) log(`  • ${a}`);
+          applied.forEach((a) => {
+            log(`  • ${a}`);
+          });
           if (changed) log(`Config written: ${defaultConfigPath}. Restart the gateway and run verify again.`);
         }
       } catch (e) {

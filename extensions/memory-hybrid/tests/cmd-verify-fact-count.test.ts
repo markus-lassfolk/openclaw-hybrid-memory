@@ -37,20 +37,20 @@ describe("cmd-verify fact count helpers", () => {
     factsDb.store({
       text: "one",
       category: "fact",
-      importance: 0.5,
+      source: "test",
       entity: null,
       key: null,
       value: null,
-      source: "test",
+      importance: 0.5,
     });
     factsDb.store({
       text: "two",
       category: "fact",
-      importance: 0.5,
+      source: "test",
       entity: null,
       key: null,
       value: null,
-      source: "test",
+      importance: 0.5,
     });
     factsDb.getRawDb().exec("ANALYZE");
     const n = readApproxFactsRowCount(factsDb.getRawDb());
@@ -61,11 +61,11 @@ describe("cmd-verify fact count helpers", () => {
     factsDb.store({
       text: "cached",
       category: "fact",
-      importance: 0.5,
+      source: "test",
       entity: null,
       key: null,
       value: null,
-      source: "test",
+      importance: 0.5,
     });
     const countSpy = vi.spyOn(factsDb, "count");
     const first = getCachedFactCount(factsDb, sqlitePath);

@@ -25,14 +25,6 @@ describe("retrieval-orchestrator dynamic import (#1478/#1475)", () => {
         query: "test query",
         cfg: {
           llm: undefined,
-          embedding: {
-            provider: "openai",
-            apiKey: "sk-test-key-long-enough",
-            model: "text-embedding-3-small",
-            dimensions: 3,
-            batchSize: 1,
-          },
-          reflection: { enabled: false, defaultWindow: 7, minObservations: 1 },
           retrieval: { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["semantic"] },
           queryExpansion: {
             enabled: false,
@@ -40,19 +32,19 @@ describe("retrieval-orchestrator dynamic import (#1478/#1475)", () => {
             maxVariants: 4,
             cacheSize: 50,
             timeoutMs: 5000,
-            skipForInteractiveTurns: true,
+            skipForInteractiveTurns: false,
           },
         },
         embeddings: {
           embed: vi.fn(async () => [1, 0, 0]),
-          embedBatch: vi.fn(async () => [[1, 0, 0]]),
+          embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1, 0, 0])),
           dimensions: 3,
-          modelName: "test-embed",
+          modelName: "test",
         },
         openai: null as never,
         pendingLLMWarnings: { add: vi.fn(), drain: vi.fn(() => []) },
         logger: { info: vi.fn(), warn: vi.fn() },
-      });
+      } as unknown as Parameters<typeof buildExplicitSemanticQueryVector>[0]);
       await vi.dynamicImportSettled();
       expect(unhandled).toEqual([]);
     } finally {

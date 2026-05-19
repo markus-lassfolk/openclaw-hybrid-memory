@@ -9,11 +9,12 @@ import { type PluginRuntime, clearRuntimeTimers, createTimers } from "../api/plu
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { hybridConfigSchema } from "../config/hybrid-schema.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
+import { getMemoryTriggers } from "../services/auto-capture.js";
 import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "../services/capture-utils.js";
 import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { PythonBridge } from "../services/python-bridge.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
+import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
 import {
@@ -38,7 +39,6 @@ import {
   getCategoryFactRegex,
   getCategoryPreferenceRegex,
 } from "../utils/language-keywords.js";
-import { getMemoryTriggers } from "../services/auto-capture.js";
 import { initPluginLogger } from "../utils/logger.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { versionInfo } from "../versionInfo.js";

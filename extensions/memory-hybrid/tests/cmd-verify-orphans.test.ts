@@ -103,11 +103,11 @@ describe("runVerifyForCli --reconcile", () => {
     const id = factsDb.store({
       text: "synced",
       category: "fact",
-      importance: 0.5,
+      source: "test",
       entity: null,
       key: null,
       value: null,
-      source: "test",
+      importance: 0.5,
     }).id;
     await vectorDb.store({ id, text: "synced", vector: makeVector(), importance: 0.5, category: "fact" });
 

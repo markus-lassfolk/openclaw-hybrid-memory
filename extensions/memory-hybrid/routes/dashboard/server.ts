@@ -39,11 +39,11 @@ import {
   collectMemoryViewerWorkflows,
   collectStatus,
   getVerifiedFactIdSet,
+  type MemoryViewerFact,
   parseUrlPathSegment,
   performFactAction,
   readJsonBody,
   type DashboardContext,
-  type MemoryViewerFact,
 } from "./collectors.js";
 import { getDashboardHtml } from "./html.js";
 

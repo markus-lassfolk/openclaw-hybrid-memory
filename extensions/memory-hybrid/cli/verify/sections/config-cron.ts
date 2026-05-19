@@ -670,7 +670,9 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
       const errLines = lines.filter((l) => /error|fail|warn/i.test(l));
       if (errLines.length > 0) {
         log(`\nRecent log lines mentioning memory-hybrid/errors (last ${errLines.length}):`);
-        for (const l of errLines.slice(-10)) log(`  ${l.slice(0, 120)}`);
+        errLines.slice(-10).forEach((l) => {
+          log(`  ${l.slice(0, 120)}`);
+        });
       } else if (lines.length > 0) {
         log(`\nLog file: ${lines.length} relevant lines (no errors in sample)`);
       }
@@ -727,15 +729,21 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     log("\n--- Issues ---");
     if (state.loadBlocking.length > 0) {
       log("Load-blocking (prevent OpenClaw / plugin from loading):");
-      for (const i of state.loadBlocking) log(`  - ${i}`);
+      state.loadBlocking.forEach((i) => {
+        log(`  - ${i}`);
+      });
     }
     const other = state.issues.filter((i) => !state.loadBlocking.includes(i));
     if (other.length > 0) {
       log(other.length > 0 && state.loadBlocking.length > 0 ? "Other:" : "Issues:");
-      for (const i of other) log(`  - ${i}`);
+      other.forEach((i) => {
+        log(`  - ${i}`);
+      });
     }
     log("\n--- Fixes for detected issues ---");
-    for (const f of state.fixes) log(`  • ${f}`);
+    state.fixes.forEach((f) => {
+      log(`  • ${f}`);
+    });
     log(
       `\nEdit config: ${defaultConfigPath} (resolved via OPENCLAW_CONFIG/OPENCLAW_CONFIG_PATH/OPENCLAW_HOME). Restart gateway after changing plugin config.`,
     );

@@ -342,9 +342,9 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
         ];
         if (dryRun) {
           log("run-all (dry-run). Would run:");
-          for (const [i, s] of steps.entries()) {
+          steps.forEach((s, i) => {
             log(`  ${i + 1}. ${s.name}`);
-          }
+          });
           return;
         }
         for (let i = 0; i < steps.length; i++) {

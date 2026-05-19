@@ -55,8 +55,8 @@ describe("FactsDB concurrent writes (#1465)", () => {
     try {
       const results = await Promise.all([
         ...Array.from({ length: 10 }, (_, i) =>
-          Promise.resolve().then(() => {
-            try {
+          Promise.resolve()
+            .then(() => {
               db.store({
                 text: `Blocked write ${i}`,
                 category: "fact",
@@ -67,10 +67,8 @@ describe("FactsDB concurrent writes (#1465)", () => {
                 source: "concurrency-test",
               });
               return "ok";
-            } catch (err: unknown) {
-              return err instanceof Error ? err.message : String(err);
-            }
-          }),
+            })
+            .catch((err: unknown) => (err instanceof Error ? err.message : String(err))),
         ),
         release,
       ]);

@@ -177,9 +177,7 @@ describe("language-keywords", () => {
       const regexes = getMemoryTriggerRegexes();
       expect(Array.isArray(regexes)).toBe(true);
       expect(regexes.length).toBeGreaterThan(0);
-      for (const r of regexes) {
-        expect(r).toBeInstanceOf(RegExp);
-      }
+      for (const r of regexes) expect(r).toBeInstanceOf(RegExp);
     });
 
     it("matches English trigger phrase", () => {
