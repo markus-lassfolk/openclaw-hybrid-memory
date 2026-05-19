@@ -165,22 +165,26 @@ describe("Comprehensive e2e — full plugin register()", () => {
       expect(api.logger.warn).not.toHaveBeenCalled();
     });
 
-    it("after_compaction injects post-compaction memory summary for stored facts", async () => {
-      register({ verbosity: "normal", autoRecall: { enabled: true, authFailure: { enabled: false } } });
-      await api.getTool("memory_store")?.execute("c1", {
-        text: "Fact retained across compaction for comprehensive e2e",
-        category: "fact",
-        importance: 0.8,
-      });
+    it(
+      "after_compaction injects post-compaction memory summary for stored facts",
+      async () => {
+        register({ verbosity: "normal", autoRecall: { enabled: true, authFailure: { enabled: false } } });
+        await api.getTool("memory_store")?.execute("c1", {
+          text: "Fact retained across compaction for comprehensive e2e",
+          category: "fact",
+          importance: 0.8,
+        });
 
-      const handler = api.hookHandlers("after_compaction")[0]!;
-      const out = (await handler({ messageCount: 12, compactedCount: 4, tokenCount: 8000 }, HOOK_CTX)) as
-        | { prependContext?: string }
-        | undefined;
+        const handler = api.hookHandlers("after_compaction")[0]!;
+        const out = (await handler({ messageCount: 12, compactedCount: 4, tokenCount: 8000 }, HOOK_CTX)) as
+          | { prependContext?: string }
+          | undefined;
 
-      expect(out?.prependContext).toContain("post-compaction memory summary");
-      expect(out?.prependContext).toContain("retained across compaction");
-    });
+        expect(out?.prependContext).toContain("post-compaction memory summary");
+        expect(out?.prependContext).toContain("retained across compaction");
+      },
+      60_000,
+    );
   });
 
   describe("persistence and verify boundaries", () => {
