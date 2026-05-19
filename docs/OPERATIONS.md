@@ -59,6 +59,15 @@ After adding jobs, the gateway will pick them up on next start (or according to 
 
 For isolated `hybrid-mem:*` jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive session key). Leave `sessionKey` unset so OpenClaw resolves per-job isolated keys (`cron:<jobId>`). `verify --fix` strips bad top-level `sessionKey` values for isolated hybrid-mem jobs.
 
+### Crystallization: weekly skill rescan (optional)
+
+When workflow crystallization is enabled and skills are installed under `crystallization.outputDir`, operators may want to re-validate on-disk `SKILL.md` files periodically (policy drift, manual edits, or validator updates).
+
+- **CLI:** `openclaw hybrid-mem skills rescan` — re-reads each **installed** proposal’s `SKILL.md`, runs generated-skill validation, updates stored validation results, and sets status **`quarantined`** with `stale validation: …` when validation returns **deny**.
+- **Agent tool:** `memory_crystallize_skills_rescan` (same behaviour).
+
+There is no default weekly job for this path yet. To run it on a schedule, add an OpenClaw cron job (for example weekly) whose message invokes the CLI above from your plugin install context, or trigger the tool from an operator workflow.
+
 ### Nightly session distillation
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.

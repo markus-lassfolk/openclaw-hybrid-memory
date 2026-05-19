@@ -823,8 +823,14 @@ description: Existing legacy skill created before completion markers.
     });
     recordDistinctSuccesses(retry.id);
 
-    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementationOnce(() => {
-      throw new Error("mark failed");
+    const hydratedProc = db.getProcedureById(proc.id)!;
+    const hydratedRetry = db.getProcedureById(retry.id)!;
+    const selectionOrder = [hydratedProc, hydratedRetry];
+    const readySpy = vi.spyOn(db, "getProceduresReadyForSkill").mockReturnValue(selectionOrder);
+    const originalMarkProcedurePromoted = db.markProcedurePromoted.bind(db);
+    const markSpy = vi.spyOn(db, "markProcedurePromoted").mockImplementation((id, skillPath) => {
+      if (id === proc.id) throw new Error("mark failed");
+      return originalMarkProcedurePromoted(id, skillPath);
     });
 
     const result = generateAutoSkills(
@@ -841,6 +847,7 @@ description: Existing legacy skill created before completion markers.
     );
 
     markSpy.mockRestore();
+    readySpy.mockRestore();
 
     expect(result.generated).toBe(1);
     expect(result.paths).toEqual([join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md")]);

@@ -201,6 +201,11 @@ export type CrystallizationConfig = {
   /** Project-level SKILL.md section taxonomy overrides keyed by category. */
   sectionTaxonomy?: SectionTaxonomyOverrides;
   /**
+   * Bucket width for `totalCount` in evidence hashing (default: 5).
+   * Uses `floor(totalCount / m) * m`; `successRate` is rounded to one decimal in the hash payload.
+   */
+  evidenceCountBucketSize: number;
+  /**
    * Email domains treated as safe placeholders during skill validation (Issue #1383).
    * Extend this list with your organisation's internal placeholder domains so they are
    * not flagged as real addresses. Default: ["example.com", "localhost", "test.com", "example.org"].
