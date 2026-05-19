@@ -2,10 +2,10 @@
  * LanceDB VectorDB class implementation.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve as pathResolve } from "node:path";
+import { isAbsolute, join, resolve as pathResolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
@@ -14,6 +14,7 @@ import {
   LANCE_NO_VECTOR_COL_MSG,
   LANCE_VECTOR_SEARCH_MAX_LIMIT,
   UUID_REGEX,
+  VECTORDB_COUNT_TIMEOUT_MS,
   VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
@@ -29,12 +30,12 @@ import { withTimeout } from "../../utils/timeout.js";
 import {
   autoOptimizePauseByPath,
   LANCE_TABLE,
-  optimizingByPath,
   optimizeFailuresByPath,
+  optimizingByPath,
   SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY,
   SEMANTIC_QUERY_CACHE_TABLE,
-  VECTOR_BULK_DELETE_IN_CHUNK,
   type SemanticQueryCacheEntry,
+  VECTOR_BULK_DELETE_IN_CHUNK,
   type VectorDBLogger,
 } from "./constants.js";
 import { isPathInsideDir, resolvedPathOrFallback } from "./path-utils.js";
@@ -1051,7 +1052,10 @@ export class VectorDB {
     return this.table;
   }
 
-  private getSemanticQueryCacheTable(): lancedb.Table | null {
+  private getSemanticQueryCacheTable(): lancedb.Table {
+    if (!this.semanticQueryCacheTable) {
+      throw new Error("Semantic query cache table not initialized.");
+    }
     return this.semanticQueryCacheTable;
   }
 
@@ -1694,11 +1698,26 @@ export class VectorDB {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
       const acquired = this.acquireReader();
+      let releaseReaderWhenCountSettles = false;
       try {
         const t = this.getTable();
-        return await t.countRows();
+        const countPromise = t.countRows();
+        const count = await withTimeout(VECTORDB_COUNT_TIMEOUT_MS, () => countPromise);
+        if (count === null) {
+          releaseReaderWhenCountSettles = true;
+          this.logWarn(`memory-hybrid: LanceDB count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`);
+          void countPromise.then(
+            () => this.releaseReader(acquired),
+            (countErr) => {
+              this.logWarn(`memory-hybrid: LanceDB count failed after timing out: ${countErr}`);
+              this.releaseReader(acquired);
+            },
+          );
+          return 0;
+        }
+        return count;
       } finally {
-        this.releaseReader(acquired);
+        if (!releaseReaderWhenCountSettles) this.releaseReader(acquired);
       }
     };
     try {
