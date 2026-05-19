@@ -5,7 +5,11 @@ export function ensureRawPluginConfigOnState(state: VerifyRunState): void {
   if (state.rawPluginConfig !== undefined) return;
   const rawPluginConfigResult = getPluginConfigFromFile(state.defaultConfigPath);
   state.rawPluginConfig = "error" in rawPluginConfigResult ? undefined : rawPluginConfigResult.config;
-  if ("error" in rawPluginConfigResult && state.openclawConfigRead.exists && state.openclawConfigRead.error === undefined) {
+  if (
+    "error" in rawPluginConfigResult &&
+    state.openclawConfigRead.exists &&
+    state.openclawConfigRead.error === undefined
+  ) {
     state.warnings.push(
       `OpenClaw config at ${state.defaultConfigPath} could not be interpreted for plugin settings (${rawPluginConfigResult.error}).`,
     );

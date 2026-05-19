@@ -62,8 +62,8 @@ export class ProgressSpinner {
 export class ProgressBar {
   private message: string;
   private total: number;
-  private current = 0;
   private startTime: number;
+  private current = 0;
   private width = 40;
   private lastLoggedPercent = -1;
 

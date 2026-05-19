@@ -261,7 +261,7 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
 
     expect(storeResult.details?.id).toBeDefined();
     expect(storeResult.details?.action).toBe("created");
-    const factId = storeResult.details?.id!;
+    const factId = storeResult.details?.id;
 
     const recallByIdResult = (await recallTool?.execute("call-2", { id: factId })) as {
       content?: { type: string; text: string }[];

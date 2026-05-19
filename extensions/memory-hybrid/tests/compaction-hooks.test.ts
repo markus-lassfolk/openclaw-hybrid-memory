@@ -72,7 +72,15 @@ describe("compaction lifecycle hooks", () => {
   it("after_compaction returns undefined in silent verbosity without injecting", async () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, { verbosity: "silent" });
-    factsDb.store({ text: "should not appear in silent mode", category: "fact", source: "test" });
+    factsDb.store({
+      text: "should not appear in silent mode",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
     registerLifecycleHooks(pluginApi as never, api as never);
     const handler = captureHookHandler(api, "after_compaction");
 
@@ -88,8 +96,16 @@ describe("compaction lifecycle hooks", () => {
       verbosity: "normal",
       autoRecall: { enabled: true },
     });
-    pluginApi.lastAutoRecallPromptRef.value = "long enough prompt for recall";
-    factsDb.store({ text: "retained fact across compaction", category: "fact", source: "test" });
+    (pluginApi.lastAutoRecallPromptRef as { value: string | null }).value = "long enough prompt for recall";
+    factsDb.store({
+      text: "retained fact across compaction",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
     vi.mocked(postCompactionRecall.buildPostCompactionRecallSnippet).mockResolvedValue(
       "<!-- memory-hybrid: post-compaction recall -->\n<recalled-context>hit</recalled-context>",
     );

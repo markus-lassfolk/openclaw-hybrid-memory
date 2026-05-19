@@ -6,6 +6,8 @@
   "files": [
     "dist",
     "index.ts",
+    "index-help.ts",
+    "index-testing-exports.ts",
     "api",
     "config.ts",
     "config",

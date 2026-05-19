@@ -1,4 +1,3 @@
-import type { EmbeddingRegistry } from "../../services/embedding-registry.js";
 import { toFloat32Array } from "../../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../../services/embeddings.js";
 import type { FactsDB } from "../../backends/facts-db.js";
@@ -10,7 +9,10 @@ import type { MemoryToolsContext } from "./types.js";
 
 export const SCOPE_PARAM_MAX_LENGTH = 256;
 
-export function sanitizeScopeParam(paramName: "userId" | "agentId" | "sessionId", v: string | undefined): string | undefined {
+export function sanitizeScopeParam(
+  paramName: "userId" | "agentId" | "sessionId",
+  v: string | undefined,
+): string | undefined {
   if (v === undefined) return undefined;
   if (v.length > SCOPE_PARAM_MAX_LENGTH) {
     throw new Error(`${paramName} must be <= ${SCOPE_PARAM_MAX_LENGTH} characters`);
@@ -25,7 +27,9 @@ type LegacyMemoryToolsContext = Omit<
   wal?: unknown;
 };
 
-export function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsContext): ctx is MemoryToolsContext {
+export function hasBoundMemoryToolHelpers(
+  ctx: MemoryToolsContext | LegacyMemoryToolsContext,
+): ctx is MemoryToolsContext {
   const maybe = ctx as Partial<MemoryToolsContext> & { wal?: unknown };
   const hasAllNewHelpers =
     typeof maybe.buildToolScopeFilter === "function" &&

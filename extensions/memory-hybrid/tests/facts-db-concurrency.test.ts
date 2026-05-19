@@ -42,7 +42,7 @@ describe("FactsDB concurrent writes (#1465)", () => {
     expect(db.count()).toBe(40);
   });
 
-  it.fails("survives write attempts while another connection holds BEGIN IMMEDIATE (#1465)", async () => {
+  it("survives write attempts while another connection holds BEGIN IMMEDIATE (#1465)", async () => {
     const raw = db.getRawDb();
     raw.exec("BEGIN IMMEDIATE");
     const holdMs = 500;
@@ -55,17 +55,19 @@ describe("FactsDB concurrent writes (#1465)", () => {
     try {
       const results = await Promise.all([
         ...Array.from({ length: 10 }, (_, i) =>
-          db
-            .store({
-              text: `Blocked write ${i}`,
-              category: "fact",
-              importance: 0.5,
-              entity: null,
-              key: null,
-              value: null,
-              source: "concurrency-test",
+          Promise.resolve()
+            .then(() => {
+              db.store({
+                text: `Blocked write ${i}`,
+                category: "fact",
+                importance: 0.5,
+                entity: null,
+                key: null,
+                value: null,
+                source: "concurrency-test",
+              });
+              return "ok";
             })
-            .then(() => "ok")
             .catch((err: unknown) => (err instanceof Error ? err.message : String(err))),
         ),
         release,

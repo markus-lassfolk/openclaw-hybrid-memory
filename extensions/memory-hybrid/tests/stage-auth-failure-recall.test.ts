@@ -73,6 +73,9 @@ describe("registerAuthFailureRecall", () => {
       text: "GitHub API token is ghp_test",
       category: "technical",
       entity: "credentials",
+      key: null,
+      value: null,
+      importance: 0.8,
       tags: ["credential", "github"],
       source: "conversation",
     });

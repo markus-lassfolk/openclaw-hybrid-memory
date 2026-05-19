@@ -178,7 +178,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
     const disp = factStatusToDisplay(statusRaw);
     const started = resolveTaskStarted(f, bounds);
     const updated = resolveTaskUpdated(f, bounds);
-    let handoff: ActiveTaskEntry["handoff"] = undefined;
+    let handoff: ActiveTaskEntry["handoff"];
     if (f.handoff?.trim()) {
       try {
         handoff = JSON.parse(f.handoff.trim());

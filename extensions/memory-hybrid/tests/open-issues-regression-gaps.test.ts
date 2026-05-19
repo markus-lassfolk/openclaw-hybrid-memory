@@ -26,13 +26,25 @@ describe("retrieval-orchestrator dynamic import (#1478/#1475)", () => {
         cfg: {
           llm: undefined,
           retrieval: { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["semantic"] },
-          queryExpansion: { enabled: false, mode: "always", maxVariants: 4, cacheSize: 50, timeoutMs: 5000 },
+          queryExpansion: {
+            enabled: false,
+            mode: "always",
+            maxVariants: 4,
+            cacheSize: 50,
+            timeoutMs: 5000,
+            skipForInteractiveTurns: false,
+          },
         },
-        embeddings: { embed: vi.fn(async () => [1, 0, 0]) },
+        embeddings: {
+          embed: vi.fn(async () => [1, 0, 0]),
+          embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [1, 0, 0])),
+          dimensions: 3,
+          modelName: "test",
+        },
         openai: null as never,
         pendingLLMWarnings: { add: vi.fn(), drain: vi.fn(() => []) },
-        logger: { warn: vi.fn() },
-      });
+        logger: { info: vi.fn(), warn: vi.fn() },
+      } as unknown as Parameters<typeof buildExplicitSemanticQueryVector>[0]);
       await vi.dynamicImportSettled();
       expect(unhandled).toEqual([]);
     } finally {

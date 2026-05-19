@@ -6,7 +6,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { registerFrustrationHandlers } from "../lifecycle/stage-frustration.js";
 import {
@@ -92,7 +92,7 @@ describe("registerFrustrationHandlers", () => {
 
     const row = factsDb
       .getRawDb()
-      .prepare(`SELECT COUNT(*) as cnt FROM implicit_signals WHERE session_file = ?`)
+      .prepare("SELECT COUNT(*) as cnt FROM implicit_signals WHERE session_file = ?")
       .get("agent:main:telegram:frust") as { cnt: number };
     expect(row.cnt).toBeGreaterThan(0);
   });

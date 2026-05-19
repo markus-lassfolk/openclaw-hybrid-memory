@@ -18,10 +18,9 @@ export type { BoundWalRemoveFn, BoundWalWriteFn, MemoryToolsContext } from "./me
 
 export function registerMemoryTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void;
 export function registerMemoryTools(
-  ctx: Omit<
-    MemoryToolsContext,
-    "buildToolScopeFilter" | "walWrite" | "walRemove" | "findSimilarByEmbedding"
-  > & { wal?: unknown },
+  ctx: Omit<MemoryToolsContext, "buildToolScopeFilter" | "walWrite" | "walRemove" | "findSimilarByEmbedding"> & {
+    wal?: unknown;
+  },
   api: ClawdbotPluginApi,
   buildToolScopeFilter: BuildToolScopeFilterFn,
   walWrite: BoundWalWriteFn,
@@ -29,7 +28,11 @@ export function registerMemoryTools(
   findSimilarByEmbedding: FindSimilarByEmbeddingFn,
 ): void;
 export function registerMemoryTools(
-  ctx: MemoryToolsContext | (Omit<MemoryToolsContext, "buildToolScopeFilter" | "walWrite" | "walRemove" | "findSimilarByEmbedding"> & { wal?: unknown }),
+  ctx:
+    | MemoryToolsContext
+    | (Omit<MemoryToolsContext, "buildToolScopeFilter" | "walWrite" | "walRemove" | "findSimilarByEmbedding"> & {
+        wal?: unknown;
+      }),
   api: ClawdbotPluginApi,
   legacyBuildToolScopeFilter?: BuildToolScopeFilterFn,
   legacyWalWrite?: BoundWalWriteFn,

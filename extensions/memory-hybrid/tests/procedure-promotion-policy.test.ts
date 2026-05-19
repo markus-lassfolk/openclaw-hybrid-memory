@@ -245,10 +245,6 @@ describe("procedure promotion policy and adapter", () => {
       db.recordProcedureSuccess(proc.id, undefined, `${prefix}-c`);
     }
 
-    const hydratedFirst = requireProcedure(first.id);
-    const hydratedSecond = requireProcedure(second.id);
-    const readySpy = vi.spyOn(db, "getProceduresReadyForSkill").mockReturnValue([hydratedFirst, hydratedSecond]);
-
     const result = generateAutoSkills(
       db,
       {
@@ -261,8 +257,6 @@ describe("procedure promotion policy and adapter", () => {
       },
       { info: () => {}, warn: () => {} },
     );
-
-    readySpy.mockRestore();
 
     expect(result.dryRun).toBe(true);
     expect(result.summary).toMatchObject({
@@ -618,14 +612,16 @@ Use for collecting markerless legacy reports.
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-second-session`);
       db.recordProcedureSuccess(c.proc.id, undefined, `${c.reason}-third-session`);
     }
-    // recordProcedureSuccess updates last_validated = now; refresh lastFailed for the
-    // recent_failure case so it remains more recent than lastValidated.
-    const rfCase = cases[1]; // recent_failure
+    const recentFailureProc = requireProcedure(cases[1].proc.id);
     db.upsertProcedure({
-      id: rfCase.proc.id,
-      taskPattern: rfCase.proc.taskPattern,
-      recipeJson: rfCase.proc.recipeJson,
+      id: recentFailureProc.id,
+      taskPattern: recentFailureProc.taskPattern,
+      recipeJson: recentFailureProc.recipeJson,
       procedureType: "positive",
+      successCount: recentFailureProc.successCount,
+      failureCount: recentFailureProc.failureCount,
+      confidence: recentFailureProc.confidence,
+      lastValidated: 1_700_000_000,
       lastFailed: Math.floor(Date.now() / 1000),
     });
 

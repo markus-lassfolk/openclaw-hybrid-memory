@@ -37,7 +37,7 @@ const SCOPE_PARAM_MAX_LENGTH = 256;
  * Returns `undefined` unchanged so optional parameters remain optional.
  * Throws for oversized values to avoid identity collisions from truncation.
  */
-function sanitizeScopeParam(paramName: "userId" | "agentId" | "sessionId", v: string | undefined): string | undefined {
+function _sanitizeScopeParam(paramName: "userId" | "agentId" | "sessionId", v: string | undefined): string | undefined {
   if (v === undefined) return undefined;
   if (v.length > SCOPE_PARAM_MAX_LENGTH) {
     throw new Error(`${paramName} must be <= ${SCOPE_PARAM_MAX_LENGTH} characters`);

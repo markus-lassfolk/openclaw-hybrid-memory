@@ -7,42 +7,42 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { existsSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { promisify } from "node:util";
-import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { IssueStore } from "../backends/issue-store.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
-import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
-import { pluginLogger } from "../utils/logger.js";
-import { execFile as execFileCb } from "../utils/process-runner.js";
-import { parseTags } from "../utils/tags.js";
-import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
+import type { VerificationStore } from "../../services/verification-store.js";
+import { pluginLogger } from "../../utils/logger.js";
+import { execFile as execFileCb } from "../../utils/process-runner.js";
+import { parseTags } from "../../utils/tags.js";
+import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "../dashboard-graph.js";
 
-const execFile = promisify(execFileCb);
-const require = createRequire(import.meta.url);
+const _execFile = promisify(execFileCb);
+const _require = createRequire(import.meta.url);
 
 const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
-const VERIFIED_FACT_SET_TTL_MS = 5000;
-const verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
+const _VERIFIED_FACT_SET_TTL_MS = 5000;
+const _verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
 
 import {
+  collectAgentHealth,
+  collectAuditSummary,
+  collectMemoryViewerEdicts,
+  collectMemoryViewerEntities,
+  collectMemoryViewerEpisodes,
+  collectMemoryViewerIssues,
+  collectMemoryViewerLinks,
+  collectMemoryViewerNarratives,
+  collectMemoryViewerProvenance,
+  collectMemoryViewerStats,
+  collectMemoryViewerVerified,
+  collectMemoryViewerWorkflows,
   collectStatus,
-  collectForgeState,
+  getVerifiedFactIdSet,
+  type MemoryViewerFact,
+  parseUrlPathSegment,
   performFactAction,
+  readJsonBody,
   type DashboardContext,
 } from "./collectors.js";
 import { getDashboardHtml } from "./html.js";
@@ -55,7 +55,7 @@ export interface DashboardServer {
 
 export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
   const html = getDashboardHtml();
-  const { createGraphQLServer } = await import("./graphql-server.js");
+  const { createGraphQLServer } = await import("../graphql-server.js");
   const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
     config: ctx.cfg,
     factsDb: ctx.factsDb,
@@ -578,7 +578,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       res.end(html);
     } else if (pathname === "/graph") {
       // Serve the graph explorer visualization
-      const { graphExplorerHTML } = await import("./graph-explorer.js");
+      const { graphExplorerHTML } = await import("../graph-explorer.js");
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-cache",
