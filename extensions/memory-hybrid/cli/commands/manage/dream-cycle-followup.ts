@@ -1,6 +1,4 @@
-/**
- * CLI registration — split from register-corrections-and-pipeline.ts (merge-conflict remediation).
- */
+/** Dream-cycle follow-up progress formatting and verbose stage runner. */
 
 import type { ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
 function formatFollowUpError(err: unknown): string {

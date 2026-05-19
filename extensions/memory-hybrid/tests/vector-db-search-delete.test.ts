@@ -11,8 +11,6 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: mockCapturePluginError,
 }));
 
-import * as errorReporter from "../services/error-reporter.js";
-
 import {
   VectorDB,
   afterEach,
@@ -155,7 +153,7 @@ describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", 
     expect(result).toBe(false);
     expect(warns.some((w) => w.includes("invalid UUID") && w.includes(malformedId))).toBe(true);
     // capturePluginError must NOT be called — this is a graceful skip, not an error
-    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
   });
 
   it("returns false and logs a warning for any UUID with extra characters appended", async () => {
@@ -288,14 +286,14 @@ describe("VectorDB graceful degradation — FTS5-only fallback when lancedb.conn
     const db = new VectorDB("/tmp/test-lance", DIM);
     const results = await db.search(new Array(DIM).fill(0.1), 5, 0);
     expect(results).toHaveLength(0);
-    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
   });
 
   it("hasDuplicate() returns false without calling capturePluginError when LanceDB unavailable", async () => {
     const db = new VectorDB("/tmp/test-lance", DIM);
     const result = await db.hasDuplicate(new Array(DIM).fill(0.1));
     expect(result).toBe(false);
-    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
   });
 
   it("store() returns an id without throwing when LanceDB unavailable", async () => {

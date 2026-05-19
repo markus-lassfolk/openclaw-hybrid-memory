@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Fail when more than maxOpen PRs touch the same path under extensions/memory-hybrid/.
- * Usage: node .github/scripts/check-pr-file-overlap.mjs [--max-open 2]
+ * Usage: node .github/scripts/check-pr-file-overlap.mjs [--max-open 2] [--max-open=2]
  */
 import { execSync } from "node:child_process";
 

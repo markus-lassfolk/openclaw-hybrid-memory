@@ -1,3 +1,4 @@
+/** Procedure extraction and auto-skill CLI. Split from cmd-extract.ts. */
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";

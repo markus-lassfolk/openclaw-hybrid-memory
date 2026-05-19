@@ -1,3 +1,4 @@
+/** Directive extraction CLI (`runExtractDirectivesForCli`). Split from cmd-extract.ts. */
 import type { MemoryCategory } from "../config.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
