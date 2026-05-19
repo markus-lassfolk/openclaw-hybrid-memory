@@ -74,6 +74,33 @@ export interface RescanInstalledSkillsResult {
   messages: string[];
 }
 
+const RESCAN_MESSAGE_LIMIT = 100;
+
+function pushLimitedMessage(messages: string[], message: string): boolean {
+  if (messages.length < RESCAN_MESSAGE_LIMIT) {
+    messages.push(message);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Derive the root output directory from an installed skill's absolute path.
+ * Falls back to `fallbackOutputDir` when the path does not match the expected
+ * `/<skillName>/SKILL.md` suffix.  Returns `"/"` (never `""`) when the skill
+ * is installed directly under filesystem root (e.g. `/my-skill/SKILL.md`).
+ *
+ * @internal exported for unit testing only
+ */
+export function outputDirForInstalledSkill(outputPath: string, skillName: string, fallbackOutputDir: string): string {
+  const normalizedOutputPath = resolve(outputPath);
+  const expectedSuffix = resolve(`/${skillName}/SKILL.md`);
+  if (!normalizedOutputPath.endsWith(expectedSuffix)) {
+    return fallbackOutputDir;
+  }
+  return normalizedOutputPath.slice(0, -expectedSuffix.length) || "/";
+}
+
 // ---------------------------------------------------------------------------
 // CrystallizationProposer
 // ---------------------------------------------------------------------------
@@ -461,12 +488,14 @@ export class CrystallizationProposer {
     let skipped = 0;
     const errors: string[] = [];
     const messages: string[] = [];
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    let truncated = false;
+    const fallbackOutputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
 
     for (const proposal of installed) {
       if (!proposal.outputPath?.trim()) {
         skipped++;
-        messages.push(`Skipped ${proposal.id} (${proposal.skillName}): no outputPath`);
+        truncated =
+          !pushLimitedMessage(messages, `Skipped ${proposal.id} (${proposal.skillName}): no outputPath`) || truncated;
         continue;
       }
       let skillContent: string;
@@ -482,6 +511,7 @@ export class CrystallizationProposer {
       try {
         const pattern = parsePatternSnapshot(proposal.patternSnapshot);
         const legacy = isLegacyMarkdownCrystallizationProposal(skillContent);
+        const outputDir = outputDirForInstalledSkill(proposal.outputPath, proposal.skillName, fallbackOutputDir);
         const validation = this.validator.validate(
           {
             outputDir,
@@ -499,17 +529,29 @@ export class CrystallizationProposer {
           const updated = this.crystallizationStore.quarantine(proposal.id, reason);
           if (updated) {
             quarantined++;
-            messages.push(`Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+            truncated =
+              !pushLimitedMessage(
+                messages,
+                `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+              ) || truncated;
           } else {
             errors.push(`${proposal.id}: quarantine update failed`);
           }
         } else {
-          messages.push(`OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`);
+          truncated =
+            !pushLimitedMessage(
+              messages,
+              `OK ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+            ) || truncated;
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${proposal.id}: validate failed — ${msg}`);
       }
+    }
+
+    if (truncated) {
+      messages.push(`Message output truncated after ${RESCAN_MESSAGE_LIMIT} entries`);
     }
 
     return { scanned, quarantined, skipped, errors, messages };
@@ -610,7 +652,7 @@ ${proposal.skillContent}`;
       const existing = this.crystallizationStore.listByPatternId(patternId);
       for (const p of existing) {
         if (p.id === supersededBy) continue;
-        if (p.status === "installed" || p.status === "approved") {
+        if (p.status === "installed" || p.status === "approved" || p.status === "quarantined") {
           this.crystallizationStore.supersede(p.id, supersededBy);
         }
       }

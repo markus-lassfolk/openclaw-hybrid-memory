@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { deriveSkillName, isExecOnlySequence } from "./skill-crystallizer-helpers.js";
 
 export { deriveSkillName, isExecOnlySequence, normalizeSkillName } from "./skill-crystallizer-helpers.js";
@@ -132,20 +133,31 @@ ${exampleGoalsText}
 `;
 }
 
-function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
+export function buildExamplesText(exampleGoals: string[], skillName: string, toolSequence: string[]): string {
   const cleanedGoals = exampleGoals
     .map((g) => g.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
     .filter((g) => g.length > 0);
   const concreteGoals = cleanedGoals.filter((g) => g.length >= 18);
   const primaryGoal = cleanedGoals[0] ?? skillName.replace(/[-_]+/g, " ");
-  const concreteFallback = `Handle "${primaryGoal}" using the ${toolSequence.join(" → ")} workflow, then verify the result before reporting back.`;
+  const concreteFallback = `Run the ${toolSequence.join(" → ")} workflow to validate "${primaryGoal}" end-to-end, then report what changed.`;
   const examples = [...concreteGoals];
-  if (examples.length === 0) examples.push(concreteFallback);
   for (const goal of cleanedGoals) {
     if (examples.length >= 5) break;
     if (!examples.includes(goal)) examples.push(goal);
   }
-  return examples.map((g) => `- ${g}`).join("\n");
+  if (examples.length === 0) examples.push(concreteFallback);
+  let hasConcreteExample = false;
+  const rendered = examples.slice(0, 5).map((g) => {
+    if (ACTION_VERB_PATTERN.test(g) && g.length >= 18) {
+      hasConcreteExample = true;
+      return `- ${g}`;
+    }
+    return `- Run workflow: ${g}`;
+  });
+  if (!hasConcreteExample) {
+    rendered.unshift(`- ${concreteFallback}`);
+  }
+  return rendered.slice(0, 5).join("\n");
 }
 
 function recommendedOutput(): SkillProposalRecommendedOutput {
@@ -158,9 +170,12 @@ function computeConfidence(pattern: WorkflowPattern): number {
   return Math.max(0, Math.min(1, conf));
 }
 
-function inferCategory(toolSequence: string[]): string {
-  if (toolSequence.some((t) => t.toLowerCase().includes("github"))) return "workflow-automation";
-  if (toolSequence.includes("exec")) return "workflow-automation";
+export function inferCategory(toolSequence: string[]): string {
+  const tl = toolSequence.map((t) => t.toLowerCase());
+  if (tl.some((t) => t.includes("github"))) return "source-control";
+  if (tl.includes("exec")) return "shell-automation";
+  if (tl.some((t) => t === "write" || t.includes("patch"))) return "filesystem-editing";
+  if (tl.some((t) => t.includes("read") || t.includes("search"))) return "research-and-analysis";
   return "workflow-automation";
 }
 

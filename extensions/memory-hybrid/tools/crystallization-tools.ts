@@ -315,4 +315,34 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
       }
     },
   });
+
+  api.registerTool({
+    name: "memory_crystallize_skills_rescan",
+    label: "Rescan Installed Crystallization Skills",
+    description:
+      "Re-read each installed proposal's SKILL.md from disk, run generated-skill validation, and persist results. Proposals that fail validation are moved to status quarantined with a stale-validation reason.",
+    parameters: Type.Object({}),
+    async execute(_toolCallId: string, _params: Record<string, unknown>) {
+      try {
+        const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
+        const result = proposer.rescanInstalledSkills();
+        const lines: string[] = [
+          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`,
+        ];
+        for (const m of result.messages) lines.push(`  ${m}`);
+        for (const e of result.errors) lines.push(`  error: ${e}`);
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: result,
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "crystallization",
+          operation: "memory-crystallize-skills-rescan",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    },
+  });
 }

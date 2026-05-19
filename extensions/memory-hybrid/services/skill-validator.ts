@@ -14,6 +14,7 @@
  * config/skill-sections.ts (issues #1375, #1366, #1408).
  */
 
+import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 import {
   CATEGORY_FRONTMATTER_KEYS,
@@ -514,15 +515,27 @@ function extractSectionBody(
 }
 
 function containsConcreteExample(examplesBody: string): boolean {
-  const lines = examplesBody
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  // Accept any bullet/numbered item that isn't an obvious placeholder.
-  return lines.some((l) => {
+  const lines = examplesBody.split("\n").map((l) => l.trim());
+  const nonEmpty = lines.filter(Boolean);
+
+  const listOk = nonEmpty.some((l) => {
     if (!/^(?:[-*+]|\d+\.)\s+\S/.test(l)) return false;
     if (/\b(?:tbd|todo|placeholder|example here|fill in)\b/i.test(l)) return false;
-    return l.length >= 18;
+    if (l.length < 18) return false;
+    if (!ACTION_VERB_PATTERN.test(l)) return false;
+    return true;
+  });
+  if (listOk) return true;
+
+  return nonEmpty.some((l) => {
+    if (/^(?:[-*+]|\d+\.)\s/.test(l)) return false;
+    if (l.length < 40) return false;
+    if (!ACTION_VERB_PATTERN.test(l)) return false;
+    const words = l.split(/\s+/).filter(Boolean);
+    if (words.length < 4) return false;
+    if (l.length > 15 && l === l.toUpperCase()) return false;
+    if (/\b(?:tbd|todo|placeholder|example here|fill in)\b/i.test(l)) return false;
+    return true;
   });
 }
 
