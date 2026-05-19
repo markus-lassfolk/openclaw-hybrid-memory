@@ -135,22 +135,54 @@ describe("FactsDB procedures table", () => {
     expect(after?.failureCount).toBe(2);
   });
 
-  it("getProceduresReadyForSkill returns only positive with success_count >= threshold", () => {
+  it("getProceduresReadyForSkill excludes procedures older than skillTTLDays", () => {
+    const oldTs = Math.floor(Date.now() / 1000) - 60 * 24 * 60 * 60;
     db.upsertProcedure({
-      taskPattern: "Low success",
+      taskPattern: "Stale high success",
       recipeJson: "[]",
       procedureType: "positive",
-      successCount: 1,
+      successCount: 5,
+      lastValidated: oldTs,
     });
-    const high = db.upsertProcedure({
-      taskPattern: "High success",
+    const fresh = db.upsertProcedure({
+      taskPattern: "Fresh high success",
+      recipeJson: "[]",
+      procedureType: "positive",
+      successCount: 5,
+      lastValidated: Math.floor(Date.now() / 1000),
+    });
+    const ready = db.getProceduresReadyForSkill(3, 10, 30);
+    expect(ready.some((p) => p.id === fresh.id)).toBe(true);
+    expect(ready.some((p) => p.taskPattern === "Stale high success")).toBe(false);
+    const readyNoTtl = db.getProceduresReadyForSkill(3, 10);
+    expect(readyNoTtl.some((p) => p.taskPattern === "Stale high success")).toBe(true);
+  });
+
+  it("getProceduresReadyForSkill uses updated_at fallback for TTL and ordering", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const oldTs = now - 60 * 24 * 60 * 60;
+    const freshViaUpdatedAt = db.upsertProcedure({
+      taskPattern: "Fresh via updated_at fallback",
       recipeJson: "[]",
       procedureType: "positive",
       successCount: 5,
     });
-    const ready = db.getProceduresReadyForSkill(3, 10);
-    expect(ready.length).toBeGreaterThanOrEqual(1);
-    expect(ready.some((p) => p.id === high.id)).toBe(true);
+    const staleViaUpdatedAt = db.upsertProcedure({
+      taskPattern: "Stale via updated_at fallback",
+      recipeJson: "[]",
+      procedureType: "positive",
+      successCount: 5,
+    });
+    db.getRawDb()
+      .prepare("UPDATE procedures SET last_validated = NULL, created_at = ?, updated_at = ? WHERE id = ?")
+      .run(oldTs, now, freshViaUpdatedAt.id);
+    db.getRawDb()
+      .prepare("UPDATE procedures SET last_validated = NULL, created_at = ?, updated_at = ? WHERE id = ?")
+      .run(oldTs, oldTs, staleViaUpdatedAt.id);
+
+    const ready = db.getProceduresReadyForSkill(3, 1, 30);
+
+    expect(ready.map((p) => p.id)).toEqual([freshViaUpdatedAt.id]);
   });
 
   it("getProceduresReadyForSkill uses deterministic insertion order for equal validation scores", () => {

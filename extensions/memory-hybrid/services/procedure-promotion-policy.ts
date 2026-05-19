@@ -202,6 +202,8 @@ export interface ProcedurePromotionPolicyOptions {
   now?: number;
   resolvedSlug?: string;
   evidence?: ProcedurePromotionEvidence;
+  /** Extra `RegExp` sources (strings) matched against the task pattern for `too_context_specific` deferrals (#1421). */
+  contextSpecificTaskPatterns?: readonly string[];
   /** When true, re-read every SKILL.md from disk for duplicate detection (ignore mtime cache). */
   bypassDuplicateSkillCache?: boolean;
 }
@@ -359,9 +361,10 @@ export function evaluateProcedureForPromotion(
     gates.push(fail("malformed_recipe", "recipe must be a non-empty JSON array"));
   if (Array.isArray(recipe) && recipe.length === 1)
     gates.push(defer("low_reuse_value", "recipe is too thin to justify a skill"));
-  if (!hasEnoughTaskBoundary(proc.taskPattern))
-    gates.push(defer("vague_trigger", "task pattern lacks a clear reusable boundary"));
-  if (looksTooContextSpecific(proc.taskPattern))
+  const hasTaskBoundary = hasEnoughTaskBoundary(proc.taskPattern);
+  const contextSpecific = looksTooContextSpecific(proc.taskPattern, options.contextSpecificTaskPatterns);
+  if (!hasTaskBoundary) gates.push(defer("vague_trigger", "task pattern lacks a clear reusable boundary"));
+  if (contextSpecific)
     gates.push(defer("too_context_specific", "procedure task pattern appears bound to a private/local context"));
   if (looksNoisy(recipe)) gates.push(defer("noisy_trace", "recipe contains noisy trace steps"));
   if (looksNonDeterministic(combinedText))
@@ -387,8 +390,7 @@ export function evaluateProcedureForPromotion(
     userSignal: evidenceSummary.userSignal,
     generality: Math.min(1, evidenceSummary.sourceSessionCount / 3),
     riskLevel,
-    activationSpecificity:
-      hasEnoughTaskBoundary(proc.taskPattern) && !looksTooContextSpecific(proc.taskPattern) ? 1 : 0.4,
+    activationSpecificity: hasTaskBoundary && !contextSpecific ? 1 : 0.4,
     similarSkillExists,
   });
 
@@ -1054,10 +1056,47 @@ function hasEnoughTaskBoundary(task: string): boolean {
   return meaningfulWords.length >= 2;
 }
 
-const CONTEXT_SPECIFIC_PATTERN = /\b(?:my|household|personal)\b/i;
+const DEFAULT_CONTEXT_SPECIFIC_PATTERNS: RegExp[] = [
+  /\b(?:our|my)\s+team\b/i,
+  /\b(?:customer|tenant|org|account)[-_ ]?id\b/i,
+  /\b(?:internal(?:-only)?|staging|production|prod)\b/i,
+  /\b(?:bastion|cluster)\b/i,
+  /\barn:aws:[^\s]+\b/i,
+  /\b(?:slack|discord)\s+[#@]/i,
+  /[#@][a-z0-9][a-z0-9_-]{1,79}\b.{0,80}\b(?:slack|discord)\b/i,
+  /\b(?:slack|discord)\b.{0,80}[#@][a-z0-9][a-z0-9_-]{1,79}\b/i,
+];
 
-function looksTooContextSpecific(text: string): boolean {
-  return CONTEXT_SPECIFIC_PATTERN.test(text);
+const MAX_CONTEXT_SPECIFIC_REGEX_LENGTH = 256;
+const UNSAFE_OPERATOR_REGEX_PATTERN =
+  /\((?:[^()\\]|\\.)*[+*?](?:[^()\\]|\\.)*\)[+*?]|\[[^\]]*\][+*?][+*?]|\{\d+,?\d*\}[+*]|\.[+*?].*[+*?]|\([^)]*\|[^)]*\)[+*]/;
+
+function compileContextSpecificPattern(raw: string): RegExp | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_CONTEXT_SPECIFIC_REGEX_LENGTH) return null;
+  if (UNSAFE_OPERATOR_REGEX_PATTERN.test(trimmed)) return null;
+  try {
+    return new RegExp(trimmed, "i");
+  } catch {
+    return null;
+  }
+}
+
+function looksTooContextSpecific(text: string, extraPatterns?: readonly string[]): boolean {
+  if (/\b(?:my|household|personal)\b/i.test(text)) return true;
+  for (const p of DEFAULT_CONTEXT_SPECIFIC_PATTERNS) {
+    if (p.test(text)) return true;
+  }
+  if (extraPatterns) {
+    for (const raw of extraPatterns) {
+      const pattern = compileContextSpecificPattern(raw);
+      if (pattern?.test(text)) return true;
+    }
+  }
+  const hostish = text.match(/\b[a-z0-9]+(?:-[a-z0-9]+){2,}\b/gi) ?? [];
+  const longish = hostish.filter((m) => m.length >= 12);
+  if (longish.length >= 2) return true;
+  return false;
 }
 
 function looksNoisy(recipe: unknown): boolean {
@@ -1070,21 +1109,47 @@ function looksNonDeterministic(text: string): boolean {
   return /\b(maybe|guess|try until|random|wait a while|eventually|probably|if it feels)\b/i.test(text);
 }
 
+const EXPLICIT_VALIDATION_PATTERN =
+  /\b(?:verify|validate|assert|expect|expected|lint|typecheck)\b|\b(?:test\s+(?:pass|fail|result)|exit\s+(?:code|status|0)|diff\s+(?:output|result)|file\s+exists)\b/i;
+
+const MAX_VALIDATION_TEXT_PER_STEP = 8192;
+
+function collectStringsForValidation(value: unknown, depth: number, maxDepth: number, budget: { n: number }): string[] {
+  if (budget.n <= 0 || depth > maxDepth) return [];
+  if (typeof value === "string") {
+    const slice = value.slice(0, Math.min(value.length, budget.n));
+    budget.n -= slice.length;
+    return slice.length > 0 ? [slice] : [];
+  }
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    const out: string[] = [];
+    for (const el of value) {
+      out.push(...collectStringsForValidation(el, depth + 1, maxDepth, budget));
+      if (budget.n <= 0) break;
+    }
+    return out;
+  }
+  const out: string[] = [];
+  for (const v of Object.values(value as Record<string, unknown>)) {
+    out.push(...collectStringsForValidation(v, depth + 1, maxDepth, budget));
+    if (budget.n <= 0) break;
+  }
+  return out;
+}
+
 function hasValidationCheck(recipe: unknown, _task: string): boolean {
   if (!Array.isArray(recipe)) return false;
-  const explicitValidationPattern =
-    /\b(?:verify|validate|assert|expect|lint|typecheck)\b|\b(?:test\s+(?:pass|fail|result)|exit\s+(?:code|status)|diff\s+(?:output|result)|file\s+exists)\b/i;
   return recipe.some((step) => {
     if (!step || typeof step !== "object") return false;
     const s = step as Record<string, unknown>;
-    const fields = [s.summary, s.validation, s.expected, s.check, s.assertion, s.command]
-      .filter((value): value is string => typeof value === "string")
-      .join("\n");
-    const args = s.args && typeof s.args === "object" ? (s.args as Record<string, unknown>) : {};
-    const argFields = [args.command, args.validation, args.expected, args.check, args.assertion]
-      .filter((value): value is string => typeof value === "string")
-      .join("\n");
-    return explicitValidationPattern.test(`${fields}\n${argFields}`);
+    const budget = { n: MAX_VALIDATION_TEXT_PER_STEP };
+    const chunks: string[] = [];
+    for (const key of ["summary", "validation", "expected", "check", "assertion", "command", "args"] as const) {
+      chunks.push(...collectStringsForValidation(s[key], 0, 4, budget));
+      if (budget.n <= 0) break;
+    }
+    return EXPLICIT_VALIDATION_PATTERN.test(chunks.join("\n"));
   });
 }
 

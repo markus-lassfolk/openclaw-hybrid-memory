@@ -24,6 +24,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
 const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
@@ -161,7 +162,7 @@ Bounded release-health review workflow.
 
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
-    expect(validation.approvalDecision).toBe("allow-with-override");
+    expect(validation.approvalDecision).toBe("allow");
   });
 
   it("passes static, dry-load, and activation eval for crystallized skills", () => {
