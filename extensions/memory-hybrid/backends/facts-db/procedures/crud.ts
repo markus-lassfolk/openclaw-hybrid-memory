@@ -51,7 +51,12 @@ export function procedureTypeSortRank(value: unknown): number {
 }
 
 /** SQLite predicate: rows that normalize to positive procedure_type (incl. enum drift). */
-export const POSITIVE_PROCEDURE_TYPE_SQL = `(procedure_type = 'positive' OR procedure_type IS NULL OR trim(procedure_type) = '' OR (procedure_type NOT IN ('positive', 'negative') AND trim(procedure_type) != ''))`;
+export const POSITIVE_PROCEDURE_TYPE_SQL = `(
+  procedure_type IS NULL
+  OR trim(procedure_type) = ''
+  OR trim(procedure_type) = 'positive'
+  OR (trim(procedure_type) NOT IN ('positive', 'negative') AND trim(procedure_type) != '')
+)`;
 
 function repairProcedureEnumDrift(
   db: DatabaseSync,
