@@ -528,11 +528,19 @@
     },
     "procedures.skillTTLDays": {
       "label": "Skill TTL (days)",
-      "help": "Procedure confidence TTL / revalidation window (default: 30)"
+      "help": "Auto skill generation only includes procedures with activity within this window (uses last_validated, else updated_at, else created_at; default 30)"
     },
     "procedures.skillsAutoPath": {
       "label": "Auto-skills path",
       "help": "Path for auto-generated skills (default: skills/auto)"
+    },
+    "procedures.maxInjectionTokens": {
+      "label": "Max injection tokens",
+      "help": "Max tokens for procedure block injected into recall (default: 500)"
+    },
+    "procedures.promotionContextSpecificPatterns": {
+      "label": "Context-specific patterns",
+      "help": "Optional regex patterns (case-insensitive) for extra too_context_specific task checks (#1421)"
     },
     "distill.apiKey": {
       "label": "Gemini API Key (distill)",
@@ -1493,7 +1501,7 @@
           },
           "skillTTLDays": {
             "type": "number",
-            "description": "Procedure TTL days (default: 30)"
+            "description": "Only procedures with last_validated/updated_at/created_at within this many days are candidates for auto skill generation (default: 30)"
           },
           "skillsAutoPath": {
             "type": "string",
@@ -1502,6 +1510,17 @@
           "requireApprovalForPromote": {
             "type": "boolean",
             "description": "Require human move to promote auto-skill (default: true)"
+          },
+          "maxInjectionTokens": {
+            "type": "number",
+            "description": "Max tokens for procedure block injected into recall (default: 500)"
+          },
+          "promotionContextSpecificPatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional regex pattern strings (case-insensitive) for extra too_context_specific task checks (#1421)"
           }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"

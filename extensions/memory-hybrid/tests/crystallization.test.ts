@@ -26,6 +26,8 @@ const {
   scorePattern,
   deriveSkillName,
   isExecOnlySequence,
+  buildExamplesText,
+  inferCategory,
   buildNonPlaceholderEmailPattern,
 } = _testing as any;
 
@@ -855,6 +857,23 @@ describe("crystallizeSkill", () => {
     const result = crystallizeSkill({ patternId: "mix001", evidenceHash: "ev1", pattern }, cfg);
     expect(result.hasScript).toBe(false);
     expect(result.scriptContent).toBeUndefined();
+  });
+
+  it("renders fallback-prefixed examples without doubled bullets", () => {
+    const text = buildExamplesText(["nightly release health checks", "deployment dashboard"], "release-health", [
+      "read",
+      "exec",
+    ]);
+
+    expect(text.split("\n")[0]).toMatch(/^- nightly release health checks/);
+    expect(text).not.toContain("- - Run");
+  });
+
+  it("infers categories for common tool sequences", () => {
+    expect(inferCategory(["github", "read"])).toBe("source-control");
+    expect(inferCategory(["exec", "read"])).toBe("shell-automation");
+    expect(inferCategory(["write", "read"])).toBe("filesystem-editing");
+    expect(inferCategory(["read", "search"])).toBe("research-and-analysis");
   });
 
   it("expands ~ in outputDir", () => {
