@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DIRECTIVE_CATEGORIES, runDirectiveExtract } from "../services/directive-extract.js";
+import { runDirectiveExtract } from "../services/directive-extract.js";
 
 describe("directive-extract", () => {
   it("should detect explicit memory requests", () => {

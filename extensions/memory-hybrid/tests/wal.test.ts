@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // real implementation on a temporary directory.
 const fsyncError = vi.hoisted(() => ({ value: null as Error | null }));
 const failNextOpen = vi.hoisted(() => ({ value: null as Error | null }));
+const syncError = vi.hoisted(() => ({ value: null as Error | null }));
+const closedHandleCount = vi.hoisted(() => ({ value: 0 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -28,6 +30,20 @@ vi.mock("node:fs/promises", async (importOriginal) => {
             throw err;
           }
           return origDatasync();
+        });
+        const origSync = fh.sync.bind(fh);
+        vi.spyOn(fh, "sync").mockImplementation(async () => {
+          if (syncError.value) {
+            const err = syncError.value;
+            syncError.value = null;
+            throw err;
+          }
+          return origSync();
+        });
+        const origClose = fh.close.bind(fh);
+        vi.spyOn(fh, "close").mockImplementation(async () => {
+          closedHandleCount.value++;
+          return origClose();
         });
       }
       return fh;
@@ -54,6 +70,8 @@ describe("WriteAheadLog", () => {
 
   beforeEach(() => {
     fsyncError.value = null;
+    syncError.value = null;
+    closedHandleCount.value = 0;
     // Create a unique test directory for each test
     testDir = join(tmpdir(), `wal-test-${randomUUID()}`);
     mkdirSync(testDir, { recursive: true });
@@ -615,6 +633,49 @@ describe("WriteAheadLog", () => {
         data: { text: "Test ENOSPC", category: "general", importance: 0.5, source: "test" },
       };
       await expect(wal.write(entry)).rejects.toThrow(/WAL write failed/);
+    });
+
+    it("closes file handle when datasync throws EPERM and fsync fallback succeeds", async () => {
+      const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      fsyncError.value = epermError;
+      const before = closedHandleCount.value;
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "close-check EPERM", category: "general", importance: 0.5, source: "test" },
+      };
+      await wal.write(entry);
+      expect(closedHandleCount.value).toBeGreaterThan(before);
+    });
+
+    it("closes file handle when datasync throws an unexpected error (ENOSPC)", async () => {
+      const enospcError = Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      fsyncError.value = enospcError;
+      const before = closedHandleCount.value;
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "close-check ENOSPC", category: "general", importance: 0.5, source: "test" },
+      };
+      await expect(wal.write(entry)).rejects.toThrow(/WAL write failed/);
+      expect(closedHandleCount.value).toBeGreaterThan(before);
+    });
+
+    it("closes file handle when both datasync and fsync fallback fail (EPERM cascade)", async () => {
+      const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      fsyncError.value = epermError;
+      syncError.value = Object.assign(new Error("operation not permitted on sync"), { code: "EPERM" });
+      const before = closedHandleCount.value;
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "close-check cascade", category: "general", importance: 0.5, source: "test" },
+      };
+      await expect(wal.write(entry)).rejects.toThrow(/WAL write failed/);
+      expect(closedHandleCount.value).toBeGreaterThan(before);
     });
   });
 

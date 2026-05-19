@@ -117,6 +117,9 @@ export const VECTORDB_READER_DRAIN_TIMEOUT_MS = 30_000;
 /** Timeout (ms) for VectorDB initialization (connect + table open). */
 export const VECTORDB_INIT_TIMEOUT_MS = 60_000;
 
+/** Timeout (ms) for VectorDB count query. */
+export const VECTORDB_COUNT_TIMEOUT_MS = 30_000;
+
 /** Timeout (ms) for VectorDB getVectorsByFactIds batch query. */
 export const VECTORDB_GET_VECTORS_TIMEOUT_MS = 45_000;
 
@@ -144,3 +147,12 @@ export function getSessionLogFileSuffix(): string {
   if (!raw) return ".jsonl";
   return raw.startsWith(".") ? raw : `.${raw}`;
 }
+
+/**
+ * Regex pattern matching action verbs in skill examples and validation.
+ * Used by skill-crystallizer to detect when example goals need action-verb prefix
+ * and by skill-validator to verify examples contain concrete actions.
+ * Centralized to prevent crystallizer-validator desync (#1421).
+ */
+export const ACTION_VERB_PATTERN =
+  /\b(?:use|run|create|fix|validate|apply|checks?|install|deploy(?:ment)?|open|read|write|execute|verify|follow|review|summari[sz]e|analyse|analyze|test|investigate|configure|build|setup|set up|update|delete|remove|add|generate|migrate|publish|debug|scan|format|start|stop|restart|connect)\b/i;

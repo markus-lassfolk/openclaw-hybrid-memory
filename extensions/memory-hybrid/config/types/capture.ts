@@ -106,4 +106,6 @@ export type ProceduresConfig = {
   requireApprovalForPromote: boolean;
   /** Max tokens for procedure block injected into recall (default: 500). Prevents procedure context from dominating. */
   maxInjectionTokens: number;
+  /** Optional regex pattern strings (case-insensitive) for extra `too_context_specific` task checks (#1421). */
+  promotionContextSpecificPatterns?: string[];
 };

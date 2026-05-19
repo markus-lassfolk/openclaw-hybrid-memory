@@ -1,3 +1,6 @@
+/**
+ * Pre-finalization guard — block scenarios.
+ */
 import { describe, expect, it } from "vitest";
 import {
   CHECKPOINT_GUARD_BYPASS_PREFIX,
@@ -6,33 +9,7 @@ import {
   type PreFinalizationGuardResult,
 } from "../services/pre-finalization-guard.js";
 import type { MemoryEntry } from "../types/memory.js";
-
-const NOW_ISO = "2026-05-10T08:31:00.000Z";
-const NOW_MS = Date.parse(NOW_ISO);
-
-function projectFact(params: {
-  id: string;
-  entity: string;
-  key: string;
-  value: string;
-  createdAt?: number;
-}): MemoryEntry {
-  return {
-    id: params.id,
-    text: `Task [${params.entity}] ${params.key}: ${params.value}`,
-    category: "project",
-    importance: 0.7,
-    entity: params.entity,
-    key: params.key,
-    value: params.value,
-    source: "test",
-    createdAt: params.createdAt ?? Math.floor(NOW_MS / 1000),
-    decayClass: "permanent",
-    expiresAt: null,
-    lastConfirmedAt: Math.floor(NOW_MS / 1000),
-    confidence: 1,
-  };
-}
+import { NOW_ISO, NOW_MS, projectFact } from "./helpers/pre-finalization-guard-fixtures.js";
 
 describe("pre-finalization guard", () => {
   it("blocks CI-wait finalization when checkpoint is missing", () => {
@@ -293,93 +270,5 @@ describe("pre-finalization guard", () => {
     });
     expect(result.action).toBe("block");
     expect(result.checkpoint.missingFields).toContain("wake_link");
-  });
-
-  it("requires project checkpoint related_session to match the active session", () => {
-    const facts: MemoryEntry[] = [
-      projectFact({ id: "1", entity: "issue-1271-ci", key: "status", value: "in_progress" }),
-      projectFact({ id: "2", entity: "issue-1271-ci", key: "next", value: "Continue processing." }),
-      projectFact({ id: "3", entity: "issue-1271-ci", key: "task_updated", value: NOW_ISO }),
-      projectFact({ id: "4", entity: "issue-1271-ci", key: "related_session", value: "agent:main:other-session" }),
-    ];
-    const messages: unknown[] = [
-      { role: "user", content: "Status?" },
-      { role: "assistant", content: "Still waiting for CI." },
-    ];
-    const result = evaluatePreFinalizationGuard(messages, {
-      nowMs: NOW_MS,
-      projectFacts: facts,
-      sessionKey: "agent:main:current-session",
-    });
-    expect(result.action).toBe("block");
-    expect(result.checkpoint.missingFields).toContain("related_session");
-  });
-
-  it("formats conditional wake/goal requirements in the guard message", () => {
-    const result: PreFinalizationGuardResult = {
-      action: "block",
-      reason: "missing_checkpoint_block",
-      signals: {
-        waitingOrPending: true,
-        cronWakeScheduled: false,
-        backgroundProcessRunning: false,
-        gitOrGithubMutation: false,
-        unresolvedExternalMention: true,
-      },
-      checkpoint: {
-        activeTaskCheckpointCalled: false,
-        goalAssessCalled: false,
-        projectFactsSatisfied: false,
-        missingFields: ["wake_link", "goal_assess"],
-      },
-      bypassReason: null,
-    };
-    const message = formatPreFinalizationGuardMessage(result);
-    expect(message).toContain("wake");
-    expect(message).toContain("goal_assess");
-  });
-
-  it("allows hypothetical active_task_checkpoint tool as direct satisfaction path", () => {
-    const messages: unknown[] = [
-      { role: "user", content: "Pause and continue later." },
-      {
-        role: "assistant",
-        tool_calls: [
-          {
-            function: {
-              name: "active_task_checkpoint",
-              arguments: JSON.stringify({ label: "issue-1271", status: "waiting", next: "Recheck CI" }),
-            },
-          },
-        ],
-      },
-      { role: "assistant", content: "Still waiting for CI, I will continue later." },
-    ];
-
-    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
-    expect(result.action).toBe("allow");
-    expect(result.reason).toBe("checkpoint_present");
-    expect(result.checkpoint.activeTaskCheckpointCalled).toBe(true);
-  });
-
-  it("detects OpenClaw toolCall content blocks as tool evidence", () => {
-    const messages: unknown[] = [
-      { role: "user", content: "Pause and continue later." },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            name: "active_task_checkpoint",
-            arguments: { entity: "issue-1271", status: "waiting", next: "Recheck CI" },
-          },
-        ],
-      },
-      { role: "assistant", content: "Still waiting for CI, I will continue later." },
-    ];
-    const result = evaluatePreFinalizationGuard(messages, { nowMs: NOW_MS, projectFacts: [] });
-    expect(result.action).toBe("allow");
-    expect(result.reason).toBe("checkpoint_present");
-    expect(result.checkpoint.activeTaskCheckpointCalled).toBe(true);
   });
 });

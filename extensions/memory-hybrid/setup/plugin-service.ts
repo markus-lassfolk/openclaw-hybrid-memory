@@ -14,7 +14,6 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";

@@ -25,7 +25,7 @@ import {
 import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../services/adaptive-model-limits.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
-import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
+import { getRestartPendingPath } from "../utils/constants.js";
 import { getPluginConfigFromFile } from "./cmd-install.js";
 import { resolvedActiveTaskFilePath } from "./config-feature-summaries.js";
 import type { HandlerContext } from "./handlers.js";
