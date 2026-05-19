@@ -9,6 +9,7 @@ on:
       - 'hotfix/**'
       - 'copilot-fix/**'
       - 'cursor-agent/**'
+      - 'refactor/**'
   pull_request:
   workflow_call:
 
