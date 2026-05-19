@@ -26,6 +26,32 @@ Recommended settings for `main` branch protection on GitHub.
 ### Auto-delete head branches
 Enable **Automatically delete head branches** (under repository settings) to keep the branch list clean after merges.
 
+### Keep PR branches linear (avoid merge-commit ladders)
+When updating an open PR with latest `main`, **rebase** instead of merging `main` into the feature branch. Merge commits like `Merge branch 'main' into issue-…` stack up in the Git graph and make history hard to read.
+
+- GitHub UI: **Update branch** → choose **Rebase** when offered (repo setting: *Settings → General → Pull Requests → Allow rebase merging* and prefer rebase for branch updates).
+- CLI: `gh pr update-branch <number> --rebase`
+- Local: `git fetch origin main && git rebase origin/main` (see `docs/SIMILAR-SWEEP-PR.md`)
+
+Prefer **Squash and merge** when landing PRs on `main` so `main` stays a single commit per change.
+
+### Prune stale local branches
+After PRs merge, remove local copies so the IDE graph stays readable:
+
+```bash
+./scripts/prune-local-branches.sh        # preview
+./scripts/prune-local-branches.sh --apply
+```
+
+For stashes and leftover fix/review branches (archives first, then deletes):
+
+```bash
+./scripts/purge-git-safe.sh              # preview
+./scripts/purge-git-safe.sh --apply
+```
+
+Recovery: `git branch my-work archive/<branch-name>` or apply patches under `wip/archive/stashes/`.
+
 ## Rationale
 
 | Rule | Why |

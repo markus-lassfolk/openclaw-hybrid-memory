@@ -46,3 +46,6 @@ MEMORY_INDEX.md
 extensions/memory-hybrid/MEMORY_INDEX.md
 MEMORY_INDEX.hash
 extensions/memory-hybrid/MEMORY_INDEX.hash
+
+# Local git purge archives (patches + recovery notes; see wip/archive/README.md)
+wip/archive/
