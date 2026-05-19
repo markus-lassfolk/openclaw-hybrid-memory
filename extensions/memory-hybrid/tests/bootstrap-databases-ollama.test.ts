@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
-import { maybeAutoStartOllama } from "../setup/bootstrap-databases.js";
+import { _resetOllamaAutoStartForTesting, maybeAutoStartOllama } from "../setup/bootstrap-databases.js";
 
 const probeOllamaEndpoint = vi.fn();
 const clearOllamaHealthCacheEntry = vi.fn();
@@ -19,13 +19,18 @@ vi.mock("../setup/provider-router.js", async (importOriginal) => {
   };
 });
 
-vi.mock("node:child_process", () => ({
-  spawn: (...args: unknown[]) => spawnMock(...args),
-}));
+vi.mock("../utils/process-runner.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/process-runner.js")>();
+  return {
+    ...actual,
+    spawn: (...args: unknown[]) => spawnMock(...args),
+  };
+});
 
 describe("maybeAutoStartOllama", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    _resetOllamaAutoStartForTesting();
     probeOllamaEndpoint.mockReset();
     clearOllamaHealthCacheEntry.mockReset();
     spawnMock.mockReset();
