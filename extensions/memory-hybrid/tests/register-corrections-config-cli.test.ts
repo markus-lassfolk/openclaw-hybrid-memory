@@ -84,7 +84,7 @@ function registerConfigCommandLikeProduction(mem: Chainable, runConfigView: Mana
           return;
         }
         const format = opts?.json ? "json" : fmtRaw === "json" ? "json" : "text";
-        runConfigView(createConfigOutputSink(format), { format });
+        await runConfigView(createConfigOutputSink(format), { format });
       }),
     );
 }
@@ -92,7 +92,7 @@ function registerConfigCommandLikeProduction(mem: Chainable, runConfigView: Mana
 type ManageBindingsRunConfigView = (
   sink: ReturnType<typeof createConfigOutputSink>,
   opts?: { format?: "text" | "json"; featuresOnly?: boolean },
-) => void;
+) => void | Promise<void>;
 
 describe("hybrid-mem config CLI wiring (#1519)", () => {
   afterEach(() => {
