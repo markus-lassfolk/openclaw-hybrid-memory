@@ -56,7 +56,7 @@ function scanSkillDir(skillDir: string, slug: string): AutoSkillAuditEntry | nul
     recipeBytes,
     loadable: skillBytes <= MAX_SKILL_FILE_BYTES,
     transcriptLike: TRANSCRIPT_PATTERN.test(skillContent),
-    secretLike: validation.violations.some((v) => /credential|token|private-key/i.test(v)),
+    secretLike: validation.violations.some((v) => /credential|token|private[- ]?key/i.test(v)),
     injectionLike: INJECTION_PATTERN.test(skillContent),
     validationViolations: validation.violations,
   };

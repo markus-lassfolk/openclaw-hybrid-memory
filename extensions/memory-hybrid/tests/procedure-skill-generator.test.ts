@@ -44,7 +44,7 @@ function collectIdentityKeyFindings(value: unknown, path = "$", findings: string
 }
 
 function isSlugOrPathIdentityKey(key: string, path: string): boolean {
-  if (key === "path" && /^\$\[\d+\]\.args\.path$/.test(path)) return false;
+  if (key === "path" && /(?:^|\.)steps(?:\[\d+\]|\.[\d]+)\.args\.path$/.test(path)) return false;
   return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
 }
 
@@ -147,9 +147,12 @@ describe("generateAutoSkills", () => {
     expect(skillContent).toContain("## Workflow");
     expect(skillContent).toContain("references/telemetry.md");
     expect(skillContent).not.toContain("## Telemetry");
-    expect(skillContent).toContain("openclaw hybrid-mem skills record check-moltbook-notifications");
     expect(skillContent).toContain(proc.id);
-    expect(existsSync(join(skillsDir, "check-moltbook-notifications", "references", "telemetry.md"))).toBe(true);
+    const telemetryMd = readFileSync(
+      join(skillsDir, "check-moltbook-notifications", "references", "telemetry.md"),
+      "utf-8",
+    );
+    expect(telemetryMd).toContain("openclaw hybrid-mem skills record check-moltbook-notifications");
 
     const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8")) as { steps?: unknown[] };
     expect(Array.isArray(recipeContent.steps)).toBe(true);
@@ -217,10 +220,10 @@ describe("generateAutoSkills", () => {
     const verification = JSON.parse(readFileSync(join(collidedDir, "verification.json"), "utf-8"));
     const proposalMetadata = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8"));
 
-    expect(skillContent).toContain("name: validate-colliding-release-report-1");
-    expect(skillContent).toContain("# Validate Colliding Release Report 1");
+    expect(skillContent).toContain('name: "validating-colliding-release-report-1"');
+    expect(skillContent).toContain("# Validating Colliding Release Report 1");
     expect(verification).toMatchObject({
-      skill: "validate-colliding-release-report-1",
+      skill: "validating-colliding-release-report-1",
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
     });
     expect(proposalMetadata.generated_skill_path).toBe(join(skillsDir, "validate-colliding-release-report-1"));
@@ -700,7 +703,7 @@ description: Existing legacy skill created before completion markers.
     expect(existsSync(join(skillsDir, "validate-raced-draft-allocation", "SKILL.md"))).toBe(false);
     expect(existsSync(join(skillsDir, "validate-raced-draft-allocation-1", "SKILL.md"))).toBe(true);
     expect(readFileSync(join(skillsDir, "validate-raced-draft-allocation-1", "verification.json"), "utf-8")).toContain(
-      '"skill": "validate-raced-draft-allocation-1"',
+      '"skill": "validating-raced-draft-allocation-1"',
     );
   });
 
@@ -808,7 +811,7 @@ description: Existing legacy skill created before completion markers.
     });
     recordDistinctSuccesses(proc.id);
     const retry = db.upsertProcedure({
-      taskPattern: "Validate rollback batch behavior",
+      taskPattern: "Audit nightly backup restore checklist with objective gates",
       recipeJson: JSON.stringify([
         { tool: "read", args: { path: "status.json" }, summary: "Check status" },
         {
@@ -852,7 +855,9 @@ description: Existing legacy skill created before completion markers.
     readySpy.mockRestore();
 
     expect(result.generated).toBe(1);
-    expect(result.paths).toEqual([join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md")]);
+    expect(result.paths).toEqual([
+      join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates", "SKILL.md"),
+    ]);
     expect(result.skipped).toBe(1);
     expect(result.summary).toMatchObject({
       eligible: 2,
@@ -866,10 +871,12 @@ description: Existing legacy skill created before completion markers.
     });
     expect(result.decisions?.find((decision) => decision.procedureId === retry.id)).toMatchObject({
       action: "promoted-to-draft",
-      skillPath: join(skillsDir, "validate-rollback-batch-behavior"),
+      skillPath: join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates"),
     });
-    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior-1"))).toBe(false);
+    expect(
+      existsSync(join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates", "SKILL.md")),
+    ).toBe(true);
+    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
     expect(db.getProcedureById(retry.id)?.promotedToSkill).toBe(1);
   });

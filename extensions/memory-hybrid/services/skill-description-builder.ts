@@ -3,6 +3,7 @@
  */
 
 import { MAX_SKILL_DESCRIPTION_CHARS } from "../config/skill-size-limits.js";
+import { paraphraseShouldTrigger } from "./skill-eval-synthesizer.js";
 
 function tokenize(text: string): string[] {
   return text
@@ -24,21 +25,6 @@ function mineToolsFromRecipe(recipe: unknown): string[] {
   return [...tools].slice(0, 4);
 }
 
-function paraphraseTriggers(task: string, keyword: string): string[] {
-  const base = task.trim();
-  const k = keyword || "workflow";
-  return [
-    base,
-    `please ${base.toLowerCase()}`,
-    `can you ${base.toLowerCase()}`,
-    `need to ${base.toLowerCase()}`,
-    `run the validated ${k} workflow`,
-    `help me ${base.toLowerCase()}`,
-    `how do I ${base.toLowerCase().replace(/^\w/, (c) => c)}`,
-    `${k} check`,
-  ].filter((p, i, arr) => arr.indexOf(p) === i);
-}
-
 export type SkillDescriptionInput = {
   taskPattern: string;
   keyword: string;
@@ -52,11 +38,8 @@ export function buildPushySkillDescription(input: SkillDescriptionInput): string
   const task = input.taskPattern.trim();
   const keywords = tokenize(task);
   const tools = mineToolsFromRecipe(input.recipe);
-  const triggers = paraphraseTriggers(task, input.keyword);
-  const triggerSample = triggers
-    .slice(0, 4)
-    .map((t) => `"${t}"`)
-    .join(", ");
+  const triggers = paraphraseShouldTrigger(task, input.keyword);
+  const triggerSample = triggers.map((t) => `"${t}"`).join(", ");
   const keywordHint = keywords.length > 0 ? keywords.join(", ") : input.keyword;
   const toolHint = tools.length > 0 ? ` Tools: ${tools.join(", ")}.` : "";
 

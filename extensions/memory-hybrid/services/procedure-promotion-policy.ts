@@ -841,14 +841,10 @@ function buildProcedureSkillDraft(
     );
   }
   const recipeJson = summarized.recipeJson;
+  const workflowRecipe = summarized.sanitizedSteps;
   const redactedTask = redactAutopilotText(proc.taskPattern);
-  const sanitizedRecipe = summarized.recipe;
-  const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipe);
-  const recipeSteps =
-    typeof sanitizedRecipe === "object" && sanitizedRecipe !== null && "steps" in sanitizedRecipe
-      ? (sanitizedRecipe as Record<string, unknown>).steps
-      : sanitizedRecipe;
-  const workflow = buildActionableWorkflow(recipeSteps, proc.taskPattern, riskLevel);
+  const riskLevel = determineRiskLevel(item.procedure, workflowRecipe);
+  const workflow = buildActionableWorkflow(workflowRecipe, proc.taskPattern, riskLevel);
   const keyword = firstKeyword(proc.taskPattern);
   const skillName = toGerundSkillName(slug);
   const nameViolations = validateSkillName(skillName);
@@ -874,9 +870,9 @@ function buildProcedureSkillDraft(
   const description = buildPushySkillDescription({
     taskPattern: redactedTask.redacted,
     keyword,
-    recipe: recipeSteps,
+    recipe: workflowRecipe,
   });
-  const allowedTools = extractAllowedTools(recipeSteps);
+  const allowedTools = extractAllowedTools(workflowRecipe);
   const frontmatter =
     nameViolations.length > 0
       ? `---\n# Skill name validation failed: ${nameViolations.join("; ")}\n---`
@@ -891,9 +887,9 @@ function buildProcedureSkillDraft(
   const examplesSection = buildSkillExamplesSection({
     taskPattern: redactedTask.redacted,
     nearMiss,
-    recipe: recipeSteps,
+    recipe: workflowRecipe,
   });
-  const replayScript = maybeBundleReplayScript(recipeSteps);
+  const replayScript = maybeBundleReplayScript(workflowRecipe);
   const scriptHint = replayScript
     ? "\nRun `scripts/replay.sh` to execute the validated workflow (deterministic replay).\n"
     : "";
@@ -903,7 +899,7 @@ function buildProcedureSkillDraft(
       : "";
   const skillMd = `${frontmatter}
 
-# ${titleCase(skillName.replace(/-/g, " "))}
+# ${titleCase(skillName)}
 
 ## Do Not Use When
 - Destructive shell/service/package operations without explicit approval.

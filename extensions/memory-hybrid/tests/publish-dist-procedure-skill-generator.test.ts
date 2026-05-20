@@ -188,7 +188,7 @@ category: procedure
     );
 
     expect(result.summary?.drafted ?? 0).toBe(0);
-    expect(result.summary?.defersByReason?.noisy_trace).toBeGreaterThan(0);
+    expect(result.summary?.defersByReason?.noisy_trace ?? 0).toBeGreaterThan(0);
     expect(existsSync(join(skillsDir, "noisy-marathon-session-trace", "SKILL.md"))).toBe(false);
     db.close();
   });

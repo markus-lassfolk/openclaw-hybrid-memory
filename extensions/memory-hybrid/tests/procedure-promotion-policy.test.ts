@@ -223,7 +223,7 @@ describe("procedure promotion policy and adapter", () => {
 
     const skillPath = result.paths[0];
     const skill = readFileSync(skillPath, "utf-8");
-    expect(skill).toContain("## Anti-patterns / Known Failures");
+    expect(skill).toContain("## Anti-patterns");
     expect(skill).toMatch(/Known failure: v\d+ step 2:/);
     expect(skill).toContain("validation step was missing");
   });

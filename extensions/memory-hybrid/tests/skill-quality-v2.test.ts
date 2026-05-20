@@ -7,7 +7,7 @@ import {
 } from "../services/procedure-selection-metrics.js";
 import { toGerundSkillName, validateSkillName } from "../services/skill-name-validator.js";
 import { buildPushySkillDescription } from "../services/skill-description-builder.js";
-import { synthesizeTriggerEvalSet } from "../services/skill-eval-synthesizer.js";
+import { paraphraseShouldTrigger, synthesizeTriggerEvalSet } from "../services/skill-eval-synthesizer.js";
 import { maybeBundleReplayScript } from "../services/skill-script-bundler.js";
 import { buildSkillExamplesSection } from "../services/skill-examples-builder.js";
 import { addTableOfContentsIfLong } from "../services/skill-reference-sidecar.js";
@@ -34,6 +34,18 @@ describe("skill-description-builder", () => {
     });
     expect(desc.length).toBeLessThanOrEqual(MAX_SKILL_DESCRIPTION_CHARS);
     expect(desc.toLowerCase()).toContain("use this skill");
+  });
+
+  it("embeds the same trigger paraphrases used by eval synthesis", () => {
+    const taskPattern = "Check Moltbook notifications";
+    const desc = buildPushySkillDescription({
+      taskPattern,
+      keyword: "moltbook",
+      recipe: [{ tool: "read", summary: "check" }],
+    });
+    for (const phrase of paraphraseShouldTrigger(taskPattern, "moltbook")) {
+      expect(desc).toContain(`"${phrase}"`);
+    }
   });
 });
 

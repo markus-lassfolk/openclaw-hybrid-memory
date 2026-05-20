@@ -88,6 +88,8 @@ function sanitizeStep(step: unknown, index: number): RecipeStep {
 
 export type SummarizedRecipe = {
   recipe: unknown;
+  /** Sanitized step array safe for SKILL.md workflow and replay.sh (post-injection-scrub). */
+  sanitizedSteps: unknown[];
   recipeJson: string;
   omittedSteps: number;
   originalStepCount: number;
@@ -140,6 +142,7 @@ export function summarizeRecipeForSidecar(rawRecipe: unknown): SummarizedRecipe 
   }
   return {
     recipe: payload,
+    sanitizedSteps: sanitized,
     recipeJson,
     omittedSteps,
     originalStepCount,

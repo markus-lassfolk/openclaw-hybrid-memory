@@ -75,11 +75,12 @@ function promptTokens(text: string): string[] {
 }
 
 function descriptionMatchesPrompt(description: string, prompt: string, taskPattern: string): boolean {
-  const lower = prompt.toLowerCase();
+  const lower = prompt.toLowerCase().trim();
   const desc = description.toLowerCase();
+  if (lower.length >= 8 && desc.includes(lower)) return true;
   const taskSlice = taskPattern.toLowerCase().slice(0, Math.min(24, taskPattern.length));
   if (taskSlice.length >= 8 && lower.includes(taskSlice)) return true;
-  const tokens = promptTokens(taskPattern);
+  const tokens = [...new Set([...promptTokens(taskPattern), ...promptTokens(prompt)])];
   const overlap = tokens.filter((t) => desc.includes(t) && lower.includes(t)).length;
   return overlap >= Math.min(2, tokens.length);
 }

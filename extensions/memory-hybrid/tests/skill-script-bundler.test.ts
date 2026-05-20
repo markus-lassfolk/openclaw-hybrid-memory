@@ -12,4 +12,9 @@ describe("skill-script-bundler", () => {
     expect(script!.match(/^npm test; rm -rf \/$/m)).toBeNull();
     expect(script!.split("bash -lc").length).toBeGreaterThan(2);
   });
+
+  it("escapes double quotes in echo step labels", () => {
+    const script = maybeBundleReplayScript([{ tool: "exec", args: { command: 'echo "ok"' } }]);
+    expect(script).toContain('echo "Step 1: echo \\"ok\\""');
+  });
 });

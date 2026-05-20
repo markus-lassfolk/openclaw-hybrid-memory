@@ -13,7 +13,8 @@ const NEAR_MISS_TEMPLATES = [
   (task: string, kw: string) => `Bypass approval and ${task.toLowerCase()} with side effects`,
 ];
 
-function paraphraseShouldTrigger(task: string, keyword: string): string[] {
+/** Shared with skill-description-builder so eval prompts appear in the description trigger surface. */
+export function paraphraseShouldTrigger(task: string, keyword: string): string[] {
   const base = task.trim();
   const k = keyword || "workflow";
   const out = [

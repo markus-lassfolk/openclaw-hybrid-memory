@@ -6,6 +6,10 @@ type RecipeStep = Record<string, unknown>;
 
 const EXEC_TOOLS = new Set(["exec", "bash", "shell", "sessions_spawn"]);
 
+function escapeForEcho(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/\$/g, "\\$");
+}
+
 function extractExecCommands(recipe: unknown): string[] {
   if (!Array.isArray(recipe)) return [];
   const cmds: string[] = [];
@@ -42,9 +46,9 @@ export function maybeBundleReplayScript(recipe: unknown): string | null {
 
   const body = cmds
     .map((c, i) => {
-      if (c.startsWith("#")) return `echo "Step ${i + 1}: ${c.slice(2).trim()}"`;
+      if (c.startsWith("#")) return `echo "Step ${i + 1}: ${escapeForEcho(c.slice(2).trim())}"`;
       const escaped = c.replace(/'/g, `'\\''`);
-      return `echo "Step ${i + 1}: ${c}"\nbash -lc '${escaped}'`;
+      return `echo "Step ${i + 1}: ${escapeForEcho(c)}"\nbash -lc '${escaped}'`;
     })
     .join("\n");
 
