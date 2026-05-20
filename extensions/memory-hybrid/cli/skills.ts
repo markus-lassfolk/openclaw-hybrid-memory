@@ -487,12 +487,12 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           },
           { info: () => undefined, warn: () => undefined },
         );
-        const candidates = (result.decisions ?? []).slice(0, limit);
+        const candidates = (result.decisions ?? []).filter((d) => d.action === "deferred-for-human").slice(0, limit);
         if (opts.json) {
           console.log(JSON.stringify({ ok: true, summary: result.summary, candidates }, null, 2));
           return;
         }
-        const s = result.summary ?? { candidates: 0, eligible: 0, drafted: 0, deferred: 0, rejected: 0 } as any;
+        const s = result.summary ?? ({ candidates: 0, eligible: 0, drafted: 0, deferred: 0, rejected: 0 } as any);
         console.log(
           `Candidates: ${s.candidates}, eligible: ${s.eligible}, would-draft: ${s.drafted}, deferred: ${s.deferred}, rejected: ${s.rejected}`,
         );
@@ -520,7 +520,9 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
         const skillsPath = resolveWorkspacePath(opts.path ?? "skills/auto");
         const report = auditAutoSkills(skillsPath);
         if (opts.quarantine) {
-          const toMove = report.entries.filter((e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike);
+          const toMove = report.entries.filter(
+            (e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike,
+          );
           const result = quarantineAutoSkills(skillsPath, toMove);
           if (opts.json) {
             console.log(JSON.stringify({ ok: result.errors.length === 0, report, quarantine: result }, null, 2));
@@ -536,9 +538,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           console.log(JSON.stringify({ ok: true, ...report }, null, 2));
           return;
         }
-        console.log(
-          `Scanned: ${report.scanned}, oversized: ${report.oversized}, suspicious: ${report.suspicious}`,
-        );
+        console.log(`Scanned: ${report.scanned}, oversized: ${report.oversized}, suspicious: ${report.suspicious}`);
         for (const entry of report.entries) {
           console.log(
             `- ${entry.slug}: ${entry.skillBytes} B, loadable=${entry.loadable}, transcript=${entry.transcriptLike}, secret=${entry.secretLike}`,

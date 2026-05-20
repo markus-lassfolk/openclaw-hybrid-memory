@@ -26,10 +26,7 @@ import { formatEvalResultsJson, runProcedureSkillEval } from "./procedure-skill-
 import { summarizeRecipeForSidecar } from "./procedure-skill-recipe.js";
 import { quickValidateSkillMarkdown } from "./skill-creator-validator.js";
 import { applyProgressiveDisclosure, shrinkSkillMd } from "./procedure-skill-shrink.js";
-import {
-  formatProcedureSkillFrontmatter,
-  validateSkillCreatorFrontmatterKeys,
-} from "./skill-frontmatter.js";
+import { formatProcedureSkillFrontmatter, validateSkillCreatorFrontmatterKeys } from "./skill-frontmatter.js";
 import { extractAllowedTools, renderAllowedToolsYaml } from "./skill-allowed-tools.js";
 import { buildActionableWorkflow, lintWorkflowActionability } from "./procedure-skill-workflow.js";
 import { PEM_PRIVATE_KEY_PATTERN, PRIVATE_IP_PATTERN, SkillValidator } from "./skill-validator.js";
@@ -41,10 +38,7 @@ import {
 } from "./procedure-selection-metrics.js";
 import { toGerundSkillName, validateSkillName } from "./skill-name-validator.js";
 import { buildPushySkillDescription } from "./skill-description-builder.js";
-import {
-  buildLegacyEvalsJson,
-  synthesizeTriggerEvalSet,
-} from "./skill-eval-synthesizer.js";
+import { buildLegacyEvalsJson, synthesizeTriggerEvalSet } from "./skill-eval-synthesizer.js";
 import { buildSkillExamplesSection } from "./skill-examples-builder.js";
 import { maybeBundleReplayScript } from "./skill-script-bundler.js";
 import {
@@ -462,16 +456,9 @@ export function evaluateProcedureForPromotion(
     gates.push(defer("low_concreteness", "task/recipe lacks domain nouns or tool diversity"));
 
   const manualRequestCount = evidenceSummary.sourceManualRequestIds.length;
-  if (
-    policy === "auto-safe" &&
-    manualRequestCount < 1 &&
-    evidenceSummary.sourceSessionCount < 3
-  ) {
+  if (policy === "auto-safe" && manualRequestCount < 1 && evidenceSummary.sourceSessionCount < 3) {
     gates.push(
-      defer(
-        "insufficient_auto_safe_evidence",
-        "auto-safe requires ≥1 manual workflow request or ≥3 distinct sessions",
-      ),
+      defer("insufficient_auto_safe_evidence", "auto-safe requires ≥1 manual workflow request or ≥3 distinct sessions"),
     );
   }
 
@@ -567,8 +554,7 @@ export function evaluateProcedureForPromotion(
     functionalEval: gates.some((g) => g.reason === "functional_eval_failed") ? "failed" : "passed",
     baselineComparison: {
       withSkillPassed:
-        eligible &&
-        !gates.some((g) => g.reason === "functional_eval_failed" || g.reason === "trigger_eval_failed"),
+        eligible && !gates.some((g) => g.reason === "functional_eval_failed" || g.reason === "trigger_eval_failed"),
       withoutSkillPassed: false,
       improvement: eligible
         ? "deterministic evals in evals/results.json; scaffold adds workflow, validation, and safety gates"
@@ -768,9 +754,13 @@ function finalizeProcedureSkillDraft(
   };
 
   if (utf8ByteLength(skillMd) > MAX_SKILL_FILE_BYTES) {
-    gates.push(fail("skill_exceeds_openclaw_limit", `SKILL.md ${utf8ByteLength(skillMd)} bytes > ${MAX_SKILL_FILE_BYTES}`));
+    gates.push(
+      fail("skill_exceeds_openclaw_limit", `SKILL.md ${utf8ByteLength(skillMd)} bytes > ${MAX_SKILL_FILE_BYTES}`),
+    );
   } else if (utf8ByteLength(skillMd) > MAX_SKILL_FILE_BYTES_SAFE) {
-    gates.push(defer("skill_exceeds_openclaw_limit", `SKILL.md exceeds safe write target ${MAX_SKILL_FILE_BYTES_SAFE}`));
+    gates.push(
+      defer("skill_exceeds_openclaw_limit", `SKILL.md exceeds safe write target ${MAX_SKILL_FILE_BYTES_SAFE}`),
+    );
   }
   draft.skillMd = skillMd;
 
@@ -861,7 +851,7 @@ function buildProcedureSkillDraft(
     gates.push(fail("skill_creator_validation_failed", nameViolations.join("; ")));
   }
   const nearMiss = `Tasks that mention ${keyword} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
-  const telemetryCommand = `openclaw hybrid-mem skills record ${skillName}`;
+  const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
   const telemetryRequestSummaryArg = shellQuote(redactedTask.redacted);
   const antiPatterns = buildAntiPatternsForProcedure(proc);
   const generatedAt = new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString().slice(0, 10);
