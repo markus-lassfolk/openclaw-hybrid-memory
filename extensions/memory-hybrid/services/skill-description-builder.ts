@@ -55,10 +55,12 @@ export function buildPushySkillDescription(input: SkillDescriptionInput): string
       `Not for destructive ops, sends, or credentials.${toolHint}`;
   }
   if (utf8ByteLength(desc) > MAX_SKILL_DESCRIPTION_CHARS) {
-    while (utf8ByteLength(desc + "… [truncated]") > MAX_SKILL_DESCRIPTION_CHARS && desc.length > 0) {
+    const marker = "… [truncated]";
+    const minContentLength = 50;
+    while (utf8ByteLength(desc + marker) > MAX_SKILL_DESCRIPTION_CHARS && desc.length > minContentLength) {
       desc = desc.slice(0, -1);
     }
-    desc = desc.trimEnd() + "… [truncated]";
+    desc = desc.trimEnd() + marker;
   }
   return desc;
 }
