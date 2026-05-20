@@ -493,7 +493,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
         // without touching disk — exactly the data operators need to triage which
         // procedures to nudge with more evidence vs. ignore.
         const { generateAutoSkills } = await import("../services/procedure-skill-generator.js");
-        const skillsAutoPath = resolveWorkspacePath("skills/auto");
+        const skillsAutoPath = resolveWorkspacePath(ctx.cfg.procedures.skillsAutoPath ?? "skills/auto");
         const result = generateAutoSkills(
           factsDb,
           {

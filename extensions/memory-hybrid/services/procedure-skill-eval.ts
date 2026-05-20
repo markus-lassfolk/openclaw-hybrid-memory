@@ -78,11 +78,13 @@ function descriptionMatchesPrompt(description: string, prompt: string, taskPatte
   const lower = prompt.toLowerCase().trim();
   const desc = description.toLowerCase();
   if (lower.length >= 8 && desc.includes(lower)) return true;
-  const taskSlice = taskPattern.toLowerCase().slice(0, Math.min(24, taskPattern.length));
-  if (taskSlice.length >= 8 && lower.includes(taskSlice)) return true;
   const tokens = [...new Set([...promptTokens(taskPattern), ...promptTokens(prompt)])];
+  if (tokens.length === 0) return false;
   const overlap = tokens.filter((t) => desc.includes(t) && lower.includes(t)).length;
-  return overlap >= Math.min(2, tokens.length);
+  if (overlap >= Math.min(2, tokens.length)) return true;
+  const taskSlice = taskPattern.toLowerCase().slice(0, Math.min(24, taskPattern.length));
+  if (taskSlice.length >= 8 && lower.includes(taskSlice) && desc.includes(taskSlice)) return true;
+  return false;
 }
 
 function matchesTrigger(prompt: string, taskPattern: string, triggers: string[]): boolean {

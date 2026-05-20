@@ -82,6 +82,41 @@ describe("procedure-cluster", () => {
     const defer = buildClusterDeferMap(clusters);
     expect(defer.get("b")?.representativeId).toBe("a");
   });
+
+  it("does not cluster unrelated empty-token task patterns", () => {
+    const items = [
+      {
+        procedure: { id: "a", taskPattern: "go", successCount: 3, confidence: 0.9 },
+        payload: { skillSlug: "go-a" },
+      },
+      {
+        procedure: { id: "b", taskPattern: "io", successCount: 3, confidence: 0.9 },
+        payload: { skillSlug: "io-b" },
+      },
+    ];
+    const clusters = clusterProcedureItems(items, 0.6);
+    expect(clusters.length).toBe(2);
+  });
+
+  it("clusters transitive near-duplicates (A≈B, B≈C)", () => {
+    const items = [
+      {
+        procedure: { id: "a", taskPattern: "check moltbook notifications daily", successCount: 3, confidence: 0.9 },
+        payload: { skillSlug: "check-a" },
+      },
+      {
+        procedure: { id: "b", taskPattern: "check moltbook notifications feed", successCount: 2, confidence: 0.85 },
+        payload: { skillSlug: "check-b" },
+      },
+      {
+        procedure: { id: "c", taskPattern: "check moltbook notifications inbox", successCount: 1, confidence: 0.8 },
+        payload: { skillSlug: "check-c" },
+      },
+    ];
+    const clusters = clusterProcedureItems(items, 0.6);
+    expect(clusters.length).toBe(1);
+    expect(clusters[0].relatedProcedureIds.sort()).toEqual(["b", "c"]);
+  });
 });
 
 describe("procedure-selection-metrics", () => {

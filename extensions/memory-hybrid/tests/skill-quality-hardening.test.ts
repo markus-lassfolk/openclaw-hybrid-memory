@@ -18,6 +18,8 @@ import {
 } from "../services/skill-prompt-injection.js";
 import { summarizeRecipeForSidecar } from "../services/procedure-skill-recipe.js";
 import { quickValidateSkillMarkdown } from "../services/skill-creator-validator.js";
+import { buildPushySkillDescription } from "../services/skill-description-builder.js";
+import { paraphraseShouldTrigger } from "../services/skill-eval-synthesizer.js";
 import { runProcedureSkillEval, formatEvalResultsJson } from "../services/procedure-skill-eval.js";
 import { extractAllowedTools, renderAllowedToolsYaml } from "../services/skill-allowed-tools.js";
 import {
@@ -222,6 +224,21 @@ metadata:
 ## Examples
 - User: "Check Moltbook notifications" → run workflow and verify output.
 `;
+
+  it("matches paraphrase prompts quoted in description including validated workflow", () => {
+    const task = "Check Moltbook notifications";
+    const desc = buildPushySkillDescription({ taskPattern: task, keyword: "moltbook", recipe: [] });
+    const triggers = paraphraseShouldTrigger(task, "moltbook");
+    const skillMd = `---\ndescription: >-\n  ${desc}\n---\n# X\n## Workflow\n1. Verify output\n`;
+    const result = runProcedureSkillEval({
+      skillMd,
+      recipeJson: "{}",
+      taskPattern: task,
+      shouldTrigger: triggers,
+      shouldNotTrigger: [],
+    });
+    expect(result.triggerEval).toBe("passed");
+  });
 
   it("emits functionalPrompts, expectedVerification, safetyAssertions, humanReviewRequired", () => {
     const result = runProcedureSkillEval({

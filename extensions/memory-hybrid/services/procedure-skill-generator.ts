@@ -10,9 +10,9 @@ import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limit
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
-import { titleCase } from "../utils/text.js";
+import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
-import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
+import { buildClusterDeferMap, clusterProcedureItems, type ProcedureClusterResult } from "./procedure-cluster.js";
 import {
   createProcedurePromotionDecision,
   createProcedurePromotionItem,
@@ -292,6 +292,13 @@ export function generateAutoSkills(
     }
   }
   const baselineDescriptions = loadExistingSkillDescriptions(basePath);
+  const clusterRepresentativeEligible = buildClusterRepresentativeEligibility(factsDb, procedures, clusters, policy, {
+    skillsAutoPath: basePath,
+    validationThreshold: options.validationThreshold,
+    contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
+    bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+    baselineDescriptions,
+  });
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
@@ -306,6 +313,7 @@ export function generateAutoSkills(
       inputHash: item.inputHash,
       actor: { type: "system" as const, id: "generate-auto-skills" },
     };
+    const clusterMerge = clusterDeferMap.get(proc.id);
     const evaluation = evaluateProcedureForPromotion(item, policy, {
       skillsAutoPath: basePath,
       validationThreshold: options.validationThreshold,
@@ -315,6 +323,9 @@ export function generateAutoSkills(
       contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
       clusterDeferMap,
+      clusterRepresentativeEligible: clusterMerge
+        ? clusterRepresentativeEligible.get(clusterMerge.representativeId)
+        : undefined,
       relatedProcedureIds: relatedByRepresentative.get(proc.id),
       historicalPrompts,
       baselineDescriptions,
@@ -513,6 +524,27 @@ export function generateAutoSkillForProcedure(
   const item = createProcedurePromotionItem(proc, policy);
   const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
   const evidence = collectProcedurePromotionEvidence(factsDb, proc);
+  const baselineDescriptions = loadExistingSkillDescriptions(basePath);
+  const promotionItems = factsDb
+    .getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays)
+    .map((p) => createProcedurePromotionItem(p, policy));
+  const clusters = clusterProcedureItems(promotionItems);
+  const clusterDeferMap = buildClusterDeferMap(clusters);
+  const clusterMerge = clusterDeferMap.get(proc.id);
+  const readyProcedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays);
+  const clusterRepresentativeEligible = buildClusterRepresentativeEligibility(
+    factsDb,
+    readyProcedures,
+    clusters,
+    policy,
+    {
+      skillsAutoPath: basePath,
+      validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
+      contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
+      bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+      baselineDescriptions,
+    },
+  );
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
@@ -521,8 +553,12 @@ export function generateAutoSkillForProcedure(
     contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
     inRunSkillCandidates: options.inRunSkillCandidates ?? [],
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+    clusterDeferMap,
+    clusterRepresentativeEligible: clusterMerge
+      ? clusterRepresentativeEligible.get(clusterMerge.representativeId)
+      : undefined,
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, proc, evidence),
-    baselineDescriptions: loadExistingSkillDescriptions(basePath),
+    baselineDescriptions,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -708,6 +744,51 @@ function writeDraftSkill(
   atomicWriteSkillDir(skillDir, files);
 }
 
+function isActiveFactForReplay(fact: MemoryEntry | null): fact is MemoryEntry {
+  if (!fact?.text?.trim()) return false;
+  if (fact.supersededAt != null) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (fact.expiresAt != null && fact.expiresAt <= now) return false;
+  return true;
+}
+
+function buildClusterRepresentativeEligibility(
+  factsDb: FactsDB,
+  procedures: ProcedureEntry[],
+  clusters: ProcedureClusterResult[],
+  policy: ProcedurePromotionPolicy,
+  options: {
+    skillsAutoPath: string;
+    validationThreshold: number;
+    contextSpecificTaskPatterns?: readonly string[];
+    bypassDuplicateSkillCache?: boolean;
+    baselineDescriptions: string[];
+  },
+): Map<string, boolean> {
+  const eligible = new Map<string, boolean>();
+  for (const cluster of clusters) {
+    if (cluster.relatedProcedureIds.length === 0) continue;
+    const repId = cluster.representative.procedure.id;
+    if (eligible.has(repId)) continue;
+    const repProc = procedures.find((p) => p.id === repId);
+    if (!repProc) continue;
+    const item = createProcedurePromotionItem(repProc, policy);
+    const evidence = collectProcedurePromotionEvidence(factsDb, repProc);
+    const evaluation = evaluateProcedureForPromotion(item, policy, {
+      skillsAutoPath: options.skillsAutoPath,
+      validationThreshold: options.validationThreshold,
+      resolvedSlug: item.payload.skillSlug,
+      evidence,
+      contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
+      bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+      historicalPrompts: collectHistoricalSessionPrompts(factsDb, repProc, evidence),
+      baselineDescriptions: options.baselineDescriptions,
+    });
+    eligible.set(repId, evaluation.eligible);
+  }
+  return eligible;
+}
+
 function loadExistingSkillDescriptions(skillsBasePath: string): string[] {
   const descriptions: string[] = [];
   if (!existsSync(skillsBasePath)) return descriptions;
@@ -717,7 +798,8 @@ function loadExistingSkillDescriptions(skillsBasePath: string): string[] {
       const skillMdPath = join(skillsBasePath, entry.name, "SKILL.md");
       if (!existsSync(skillMdPath)) continue;
       const raw = readFileSync(skillMdPath, "utf8");
-      const fm = raw.match(/^---\n([\s\S]*?)\n---/);
+      const stripped = stripLeadingHtmlComments(raw);
+      const fm = stripped.match(/^---\n([\s\S]*?)\n---/);
       if (!fm) continue;
       const keys = parseSkillFrontmatterKeys(fm[1]);
       const desc = keys.get("description");
@@ -738,7 +820,7 @@ function collectHistoricalSessionPrompts(
   prompts.add(proc.taskPattern);
   for (const req of evidence.manualWorkflowRequests ?? []) {
     const fact = factsDb.getById(req.id);
-    if (fact?.text.trim()) {
+    if (isActiveFactForReplay(fact)) {
       prompts.add(fact.text.trim());
     }
   }

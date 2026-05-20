@@ -220,8 +220,8 @@ export interface ProcedurePromotionVerification {
   /** `failed` only when static SKILL.md / recipe structure validation failed; unrelated promotion gates do not flip this. */
   staticValidation: "passed" | "failed";
   safetyValidation: "passed" | "failed";
-  triggerEval: "passed" | "failed";
-  functionalEval: "passed" | "failed";
+  triggerEval: "passed" | "failed" | "skipped";
+  functionalEval: "passed" | "failed" | "skipped";
   baselineComparison: {
     withSkillPassed: boolean;
     withoutSkillPassed: boolean;
@@ -257,6 +257,8 @@ export interface ProcedurePromotionPolicyOptions {
   bypassDuplicateSkillCache?: boolean;
   /** Procedure ids deferred because a cluster representative was chosen. */
   clusterDeferMap?: ReadonlyMap<string, { representativeId: string; slug: string }>;
+  /** When set, only defer `cluster_merged_into` if the representative was promotion-eligible. */
+  clusterRepresentativeEligible?: boolean;
   /** Merged cluster members recorded in verification.json. */
   relatedProcedureIds?: string[];
   /** Historical user prompts for replay functional eval. */
@@ -392,7 +394,7 @@ export function evaluateProcedureForPromotion(
   const combinedText = `${proc.taskPattern}\n${recipeText}`;
 
   const clusterMerge = options.clusterDeferMap?.get(proc.id);
-  if (clusterMerge) {
+  if (clusterMerge && options.clusterRepresentativeEligible === true) {
     gates.push(
       defer(
         "cluster_merged_into",
@@ -553,12 +555,12 @@ export function evaluateProcedureForPromotion(
     )
       ? "failed"
       : "passed",
-    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed") ? "failed" : evalsWereRun ? "passed" : "failed",
+    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed") ? "failed" : evalsWereRun ? "passed" : "skipped",
     functionalEval: gates.some((g) => g.reason === "functional_eval_failed")
       ? "failed"
       : evalsWereRun
         ? "passed"
-        : "failed",
+        : "skipped",
     baselineComparison: {
       withSkillPassed:
         eligible && !gates.some((g) => g.reason === "functional_eval_failed" || g.reason === "trigger_eval_failed"),
