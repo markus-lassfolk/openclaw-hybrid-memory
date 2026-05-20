@@ -173,39 +173,47 @@ function rebaseDraftSlug(
   const proposalMetadata = JSON.parse(draft.proposalMetadataJson) as {
     generated_skill_path?: unknown;
   };
-  const originalSlug =
-    typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
+  const originalGerundName =
+    typeof verification.skill === "string" && verification.skill.length > 0
+      ? verification.skill
+      : toGerundSkillName(resolvedSlug);
   const resolvedSkillName = toGerundSkillName(resolvedSlug);
+  const originalTelemetryCommand =
+    typeof verification.telemetryCommand === "string" && verification.telemetryCommand.length > 0
+      ? verification.telemetryCommand
+      : `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
   verification.skill = resolvedSkillName;
   verification.generatedSkillPath = generatedSkillPath;
   proposalMetadata.generated_skill_path = generatedSkillPath;
-  verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillName}`;
+  verification.telemetryCommand = newTelemetryCommand;
 
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
   // its raw slug form (e.g. "# my-skill") so that non-standard headings are also
   // rebased correctly after a slug collision.
-  const h1Pattern = new RegExp(`^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`, "m");
-  const originalTelemetryCommand = `openclaw hybrid-mem skills record ${originalSlug}`;
-  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillName}`;
+  const h1Pattern = new RegExp(
+    `^# (?:${escapeRegExp(titleCase(originalGerundName))}|${escapeRegExp(originalGerundName.replace(/-/g, " "))})$`,
+    "m",
+  );
   const skillMd = draft.skillMd
     .replace(
-      new RegExp(`^name: (?:"${escapeRegExp(originalSlug)}"|${escapeRegExp(originalSlug)})$`, "m"),
+      new RegExp(`^name: (?:"${escapeRegExp(originalGerundName)}"|${escapeRegExp(originalGerundName)})$`, "m"),
       `name: "${resolvedSkillName}"`,
     )
     .replace(h1Pattern, `# ${titleCase(resolvedSkillName)}`)
     .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
 
   let triggerEvalJson = draft.triggerEvalJson;
-  if (triggerEvalJson && originalSlug !== resolvedSlug) {
+  if (triggerEvalJson && originalGerundName !== resolvedSkillName) {
     const triggerEval = JSON.parse(triggerEvalJson) as { skill_name?: unknown };
-    if (triggerEval.skill_name === originalSlug) {
+    if (triggerEval.skill_name === originalGerundName) {
       triggerEval.skill_name = resolvedSkillName;
       triggerEvalJson = `${JSON.stringify(triggerEval, null, 2)}\n`;
     }
   }
 
   let referenceTelemetryMd = draft.referenceTelemetryMd;
-  if (referenceTelemetryMd && originalSlug !== resolvedSlug) {
+  if (referenceTelemetryMd && originalTelemetryCommand !== newTelemetryCommand) {
     referenceTelemetryMd = referenceTelemetryMd.replace(
       new RegExp(escapeRegExp(originalTelemetryCommand), "g"),
       newTelemetryCommand,
@@ -224,6 +232,14 @@ function rebaseDraftSlug(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function promotionWriteFailureReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/OpenClaw limit|exceeds OpenClaw loader byte limit|refusing to write oversized/i.test(message)) {
+    return "skill_exceeds_openclaw_limit";
+  }
+  return "write_failed";
 }
 
 type GenerateAutoSkillsOptions = {
@@ -412,7 +428,7 @@ export function generateAutoSkills(
       decisions.push({
         procedureId: proc.id,
         action: "failed-validation",
-        reasons: ["write_failed"],
+        reasons: [promotionWriteFailureReason(err)],
         skillPath: evaluation.metadata.generatedSkillPath,
         inputHash: item.inputHash,
         policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
@@ -552,7 +568,12 @@ export function generateAutoSkillForProcedure(
       subsystem: "procedure-skill-generator",
       operation: "promote-write-draft",
     });
-    return { ok: false, reason: "write-failed", error: String(err) };
+    return {
+      ok: false,
+      reason: "write-failed",
+      error: String(err),
+      reasons: [promotionWriteFailureReason(err)],
+    };
   }
 
   const allocatedSkillPath = join(allocated.skillDir, "SKILL.md");
@@ -718,11 +739,9 @@ function collectHistoricalSessionPrompts(
   const prompts = new Set<string>();
   prompts.add(proc.taskPattern);
   for (const req of evidence.manualWorkflowRequests ?? []) {
-    if (req.sourceSession) {
-      const fact = factsDb.getById(req.id);
-      if (fact?.text.trim()) {
-        prompts.add(fact.text.trim());
-      }
+    const fact = factsDb.getById(req.id);
+    if (fact?.text.trim()) {
+      prompts.add(fact.text.trim());
     }
   }
   const episodes = factsDb.searchEpisodes({

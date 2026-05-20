@@ -849,6 +849,17 @@ function buildProcedureSkillDraft(
   const nameViolations = validateSkillName(skillName);
   if (nameViolations.length > 0) {
     gates.push(fail("skill_creator_validation_failed", nameViolations.join("; ")));
+    return {
+      slug,
+      skillMd: "",
+      recipeJson,
+      verificationJson: `${JSON.stringify({ skill: skillName, promotionDecision: "failed-validation" }, null, 2)}\n`,
+      evalsJson: "{}",
+      proposalMetadataJson: "{}",
+      redactionCount: redactedTask.redactionCount,
+      historicalPrompts: options.historicalPrompts,
+      baselineDescriptions: options.baselineDescriptions,
+    };
   }
   const nearMiss = `Tasks that mention ${keyword} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
   const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
@@ -969,7 +980,7 @@ ${examplesSection}${antiPatternsBlock}
     shouldNotTrigger: triggerEval.shouldNotTrigger,
   });
   const referenceTelemetryMd = buildTelemetryReferenceMd({
-    slug: skillName,
+    slug,
     telemetryCommand,
     telemetryRequestSummaryArg,
   });
@@ -985,7 +996,7 @@ ${examplesSection}${antiPatternsBlock}
     lastValidated: proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : null,
   };
   return {
-    slug: skillName,
+    slug,
     skillMd,
     recipeJson,
     verificationJson: `${JSON.stringify(redactAutopilotValue(verificationPayload), null, 2)}\n`,

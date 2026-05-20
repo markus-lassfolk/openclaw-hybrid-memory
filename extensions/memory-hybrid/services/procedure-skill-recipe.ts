@@ -45,14 +45,18 @@ type RecipeStep = Record<string, unknown>;
 
 function truncateUtf8(value: string, maxBytes: number): string {
   if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  const suffix = "…";
+  const suffixBytes = Buffer.byteLength(suffix, "utf8");
+  const budget = Math.max(0, maxBytes - suffixBytes);
   let lo = 0;
   let hi = value.length;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (Buffer.byteLength(value.slice(0, mid), "utf8") <= maxBytes) lo = mid;
+    if (Buffer.byteLength(value.slice(0, mid), "utf8") <= budget) lo = mid;
     else hi = mid - 1;
   }
-  return `${value.slice(0, lo)}…`;
+  const truncated = value.slice(0, lo);
+  return budget === 0 ? suffix : `${truncated}${suffix}`;
 }
 
 function sanitizeStep(step: unknown, index: number): RecipeStep {

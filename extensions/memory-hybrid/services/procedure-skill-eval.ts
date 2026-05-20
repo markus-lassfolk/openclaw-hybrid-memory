@@ -96,12 +96,12 @@ function matchesTrigger(prompt: string, taskPattern: string, triggers: string[])
 function matchesNearMiss(prompt: string, shouldNot: string[]): boolean {
   const lower = prompt.toLowerCase();
   if (isNearMissNegativePrompt(lower)) return true;
+  const destructiveOnPrompt = /\b(send|delete|destroy|credential|ssh|install)\b/i.test(lower);
+  if (!destructiveOnPrompt) return false;
   return shouldNot.some((t) => {
-    const destructive = /\b(send|delete|destroy|credential|ssh|install)\b/i.test(t);
-    if (!destructive) return false;
     const keywords = promptTokens(t);
     const overlap = keywords.filter((w) => lower.includes(w)).length;
-    return overlap >= 2 && destructive;
+    return overlap >= 2;
   });
 }
 
@@ -189,12 +189,13 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
   const checks: ProcedureSkillEvalCheck[] = [];
   const workflow = extractWorkflowSection(input.skillMd);
 
+  const description = extractDescription(input.skillMd);
   for (const prompt of input.shouldTrigger) {
-    const ok = matchesTrigger(prompt, input.taskPattern, input.shouldTrigger);
+    const ok = descriptionMatchesPrompt(description, prompt, input.taskPattern);
     checks.push({
       name: `shouldTrigger:${prompt.slice(0, 40)}`,
       passed: ok,
-      detail: ok ? "matched" : "did not match trigger heuristics",
+      detail: ok ? "description matches prompt" : "description did not match trigger prompt",
     });
   }
 

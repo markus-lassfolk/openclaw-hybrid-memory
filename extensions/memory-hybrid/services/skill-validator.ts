@@ -16,7 +16,12 @@
 
 import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
-import { MAX_SKILL_DESCRIPTION_CHARS, MAX_SKILL_FILE_BYTES_SAFE } from "../config/skill-size-limits.js";
+import {
+  MAX_SKILL_DESCRIPTION_CHARS,
+  MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_FILE_BYTES_SAFE,
+  utf8ByteLength,
+} from "../config/skill-size-limits.js";
 import {
   CATEGORY_FRONTMATTER_KEYS,
   MAX_SKILL_LINES,
@@ -268,6 +273,16 @@ export class SkillValidator {
    */
   validate(skillContent: string): ValidationResult {
     const violations: string[] = [];
+    const rawBytes = utf8ByteLength(skillContent);
+    if (rawBytes > MAX_SKILL_FILE_BYTES) {
+      return {
+        valid: false,
+        violations: [
+          `Skill exceeds OpenClaw loader byte limit (${rawBytes} > ${MAX_SKILL_FILE_BYTES}). Shrink SKILL.md or move deterministic detail into bounded sidecars.`,
+        ],
+      };
+    }
+
     const normalizedSkillContent = stripLeadingHtmlComments(skillContent);
     const lines = normalizedSkillContent.split("\n");
 
