@@ -844,7 +844,11 @@ function buildProcedureSkillDraft(
   const redactedTask = redactAutopilotText(proc.taskPattern);
   const sanitizedRecipe = summarized.recipe;
   const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipe);
-  const workflow = buildActionableWorkflow(sanitizedRecipe, proc.taskPattern, riskLevel);
+  const recipeSteps =
+    typeof sanitizedRecipe === "object" && sanitizedRecipe !== null && "steps" in sanitizedRecipe
+      ? (sanitizedRecipe as Record<string, unknown>).steps
+      : sanitizedRecipe;
+  const workflow = buildActionableWorkflow(recipeSteps, proc.taskPattern, riskLevel);
   const keyword = firstKeyword(proc.taskPattern);
   const skillName = toGerundSkillName(slug);
   const nameViolations = validateSkillName(skillName);

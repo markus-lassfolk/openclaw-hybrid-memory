@@ -487,7 +487,9 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           },
           { info: () => undefined, warn: () => undefined },
         );
-        const candidates = (result.decisions ?? []).filter((d) => d.action === "deferred-for-human").slice(0, limit);
+        const candidates = (result.decisions ?? [])
+          .filter((d) => d.action === "deferred-for-human" || d.action === "failed-validation")
+          .slice(0, limit);
         if (opts.json) {
           console.log(JSON.stringify({ ok: true, summary: result.summary, candidates }, null, 2));
           return;
