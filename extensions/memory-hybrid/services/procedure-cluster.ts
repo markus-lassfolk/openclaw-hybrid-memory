@@ -41,6 +41,11 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 export function clusterProcedureItems(items: ClusterableProcedureItem[], threshold = 0.6): ProcedureClusterResult[] {
   const remaining = [...items];
   const clusters: ProcedureClusterResult[] = [];
+  const tokenCache = new Map<string, Set<string>>();
+
+  for (const item of items) {
+    tokenCache.set(item.procedure.id, taskTokens(item.procedure.taskPattern));
+  }
 
   while (remaining.length > 0) {
     const seed = remaining.shift()!;
@@ -50,9 +55,9 @@ export function clusterProcedureItems(items: ClusterableProcedureItem[], thresho
       changed = false;
       for (let i = remaining.length - 1; i >= 0; i--) {
         const other = remaining[i]!;
-        const otherTokens = taskTokens(other.procedure.taskPattern);
+        const otherTokens = tokenCache.get(other.procedure.id)!;
         const matchesGroup = group.some(
-          (member) => jaccard(taskTokens(member.procedure.taskPattern), otherTokens) >= threshold,
+          (member) => jaccard(tokenCache.get(member.procedure.id)!, otherTokens) >= threshold,
         );
         if (matchesGroup) {
           group.push(other);

@@ -119,7 +119,7 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
       continue;
     }
     if (descriptionMode === "quoted") {
-      const joined = descriptionParts.join("\n") + line;
+      const joined = descriptionParts.length > 0 ? descriptionParts.join("\n") + "\n" + line : line;
       if (joined.endsWith('"') && !joined.endsWith('\\"')) {
         keys.set("description", joined.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"'));
         descriptionParts = [];
