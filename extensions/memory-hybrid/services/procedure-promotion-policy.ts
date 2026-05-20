@@ -842,8 +842,9 @@ function buildProcedureSkillDraft(
   }
   const recipeJson = summarized.recipeJson;
   const redactedTask = redactAutopilotText(proc.taskPattern);
-  const riskLevel = determineRiskLevel(item.procedure, recipe);
-  const workflow = buildActionableWorkflow(recipe, proc.taskPattern, riskLevel);
+  const sanitizedRecipe = summarized.recipe;
+  const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipe);
+  const workflow = buildActionableWorkflow(sanitizedRecipe, proc.taskPattern, riskLevel);
   const keyword = firstKeyword(proc.taskPattern);
   const skillName = toGerundSkillName(slug);
   const nameViolations = validateSkillName(skillName);
@@ -869,9 +870,9 @@ function buildProcedureSkillDraft(
   const description = buildPushySkillDescription({
     taskPattern: redactedTask.redacted,
     keyword,
-    recipe,
+    recipe: sanitizedRecipe,
   });
-  const allowedTools = extractAllowedTools(recipe);
+  const allowedTools = extractAllowedTools(sanitizedRecipe);
   const frontmatter =
     nameViolations.length > 0
       ? `---\n# Skill name validation failed: ${nameViolations.join("; ")}\n---`
@@ -886,9 +887,9 @@ function buildProcedureSkillDraft(
   const examplesSection = buildSkillExamplesSection({
     taskPattern: redactedTask.redacted,
     nearMiss,
-    recipe,
+    recipe: sanitizedRecipe,
   });
-  const replayScript = maybeBundleReplayScript(recipe);
+  const replayScript = maybeBundleReplayScript(sanitizedRecipe);
   const scriptHint = replayScript
     ? "\nRun `scripts/replay.sh` to execute the validated workflow (deterministic replay).\n"
     : "";
