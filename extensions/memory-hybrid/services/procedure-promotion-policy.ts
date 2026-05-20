@@ -983,7 +983,7 @@ ${examplesSection}${antiPatternsBlock}
     validatorScore: 0,
     promotionDecision: "drafted",
     rejectionReasons: gates.map((g) => g.reason),
-    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, skillName)),
+    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, slug)),
     policy,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
     inputHash: item.inputHash,
