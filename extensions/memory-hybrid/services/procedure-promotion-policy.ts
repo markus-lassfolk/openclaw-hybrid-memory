@@ -25,7 +25,7 @@ import {
 import { formatEvalResultsJson, runProcedureSkillEval } from "./procedure-skill-eval.js";
 import { summarizeRecipeForSidecar } from "./procedure-skill-recipe.js";
 import { quickValidateSkillMarkdown } from "./skill-creator-validator.js";
-import { applyProgressiveDisclosure, shrinkSkillMd } from "./procedure-skill-shrink.js";
+import { applyProgressiveDisclosure } from "./procedure-skill-shrink.js";
 import { formatProcedureSkillFrontmatter, validateSkillCreatorFrontmatterKeys } from "./skill-frontmatter.js";
 import { extractAllowedTools, renderAllowedToolsYaml } from "./skill-allowed-tools.js";
 import {
@@ -50,7 +50,7 @@ import {
   buildTelemetryReferenceMd,
   lintNestedReferences,
 } from "./skill-reference-sidecar.js";
-import { scanForPromptInjection, } from "./skill-prompt-injection.js";
+import { scanForPromptInjection } from "./skill-prompt-injection.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v3";
 
@@ -716,8 +716,7 @@ function finalizeProcedureSkillDraft(
   const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipe);
 
   let skillMd = draft.skillMd;
-  const shrink = shrinkSkillMd(skillMd, MAX_SKILL_FILE_BYTES_SAFE);
-  skillMd = shrink.skillMd;
+  const originalBytes = utf8ByteLength(skillMd);
   // Trigger progressive disclosure aggressively (target 64-96 KB per #1539)
   // so SKILL.md is genuinely compact, not merely "under the 256 KB loader cap".
   const disclosureTarget = Math.min(MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET, MAX_SKILL_FILE_BYTES_SAFE);
@@ -740,9 +739,9 @@ function finalizeProcedureSkillDraft(
     gates.push(fail("skill_static_validation_failed", nestedRefViolations.join("; ")));
   }
   draft.generationDiagnostics = {
-    originalBytes: shrink.diagnostics.originalBytes,
+    originalBytes,
     finalBytes: disclosure.diagnostics.finalBytes,
-    shrinkStages: [...shrink.diagnostics.shrinkStages, ...disclosure.diagnostics.shrinkStages],
+    shrinkStages: disclosure.diagnostics.shrinkStages,
     omittedSections: disclosure.diagnostics.omittedSections,
   };
 
