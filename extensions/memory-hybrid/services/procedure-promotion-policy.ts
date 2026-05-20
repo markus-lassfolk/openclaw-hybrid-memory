@@ -820,8 +820,7 @@ function buildProcedureSkillDraft(
   slug: string,
 ): GeneratedProcedureSkillDraft {
   const proc = item.procedure;
-  const recipe = redactAutopilotValue(item.payload.recipe);
-  const summarized = summarizeRecipeForSidecar(recipe);
+  const summarized = summarizeRecipeForSidecar(item.payload.recipe);
   if (!summarized.withinCap) {
     gates.push(defer("recipe_too_large", `recipe.json ${summarized.byteLength} bytes exceeds cap`));
   }
