@@ -18,16 +18,19 @@ import {
 import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 import {
   MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET,
   MAX_SKILL_FILE_BYTES_SAFE,
   utf8ByteLength,
 } from "../config/skill-size-limits.js";
 import { formatEvalResultsJson, runProcedureSkillEval } from "./procedure-skill-eval.js";
 import { summarizeRecipeForSidecar } from "./procedure-skill-recipe.js";
+import { quickValidateSkillMarkdown } from "./skill-creator-validator.js";
 import { applyProgressiveDisclosure, shrinkSkillMd } from "./procedure-skill-shrink.js";
 import {
   formatProcedureSkillFrontmatter,
   validateSkillCreatorFrontmatterKeys,
 } from "./skill-frontmatter.js";
+import { extractAllowedTools, renderAllowedToolsYaml } from "./skill-allowed-tools.js";
 import { buildActionableWorkflow, lintWorkflowActionability } from "./procedure-skill-workflow.js";
 import { PEM_PRIVATE_KEY_PATTERN, PRIVATE_IP_PATTERN, SkillValidator } from "./skill-validator.js";
 import {
@@ -742,7 +745,10 @@ function finalizeProcedureSkillDraft(
   let skillMd = draft.skillMd;
   const shrink = shrinkSkillMd(skillMd, MAX_SKILL_FILE_BYTES_SAFE);
   skillMd = shrink.skillMd;
-  const disclosure = applyProgressiveDisclosure(skillMd, recipe, proc.taskPattern, MAX_SKILL_FILE_BYTES_SAFE);
+  // Trigger progressive disclosure aggressively (target 64-96 KB per #1539)
+  // so SKILL.md is genuinely compact, not merely "under the 256 KB loader cap".
+  const disclosureTarget = Math.min(MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET, MAX_SKILL_FILE_BYTES_SAFE);
+  const disclosure = applyProgressiveDisclosure(skillMd, recipe, proc.taskPattern, disclosureTarget);
   skillMd = disclosure.skillMd;
   draft.referenceWorkflowMd = disclosure.referenceWorkflowMd
     ? addTableOfContentsIfLong(disclosure.referenceWorkflowMd)
@@ -796,6 +802,18 @@ function finalizeProcedureSkillDraft(
     }
   }
 
+  // Full Skill Creator quick_validate equivalent — name/description rules,
+  // top-level key allow-list, body length, Windows-style paths (#1545).
+  const skillCreatorResult = quickValidateSkillMarkdown(draft.skillMd);
+  if (!skillCreatorResult.valid) {
+    gates.push(
+      fail(
+        "skill_creator_validation_failed",
+        skillCreatorResult.violations.map((v) => `${v.rule}: ${v.message}`).join("; "),
+      ),
+    );
+  }
+
   return draft;
 }
 
@@ -817,6 +835,21 @@ function buildProcedureSkillDraft(
   if (!summarized.withinCap) {
     gates.push(defer("recipe_too_large", `recipe.json ${summarized.byteLength} bytes exceeds cap`));
   }
+  // Hard prompt-injection markers in the source recipe must never reach disk.
+  // Detection is done on the *original* recipe before sanitization, so we
+  // know if untrusted instructions tried to escape into a durable skill.
+  if (summarized.hasHardInjection) {
+    const names = summarized.injectionHits
+      .filter((h) => h.severity === "hard")
+      .map((h) => h.name)
+      .join(",");
+    gates.push(
+      fail(
+        "unsafe_trace_content",
+        `Prompt-injection markers detected in source recipe (${names}); refusing to promote.`,
+      ),
+    );
+  }
   const recipeJson = summarized.recipeJson;
   const redactedTask = redactAutopilotText(proc.taskPattern);
   const riskLevel = determineRiskLevel(item.procedure, recipe);
@@ -837,12 +870,14 @@ function buildProcedureSkillDraft(
     keyword,
     recipe,
   });
+  const allowedTools = extractAllowedTools(recipe);
   const frontmatter = formatProcedureSkillFrontmatter({
     name: skillName,
     description,
     category: "procedure",
     provenance: `procedure:${proc.id}`,
     generatedAt,
+    allowedToolsYaml: renderAllowedToolsYaml(allowedTools),
   });
   const examplesSection = buildSkillExamplesSection({
     taskPattern: redactedTask.redacted,

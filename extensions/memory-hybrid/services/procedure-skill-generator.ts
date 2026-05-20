@@ -428,6 +428,16 @@ export function generateAutoSkills(
     }
   }
 
+  const defersByReason: Record<string, number> = {};
+  for (const d of decisions) {
+    if (d.action === "deferred-for-human" || d.action === "failed-validation") {
+      for (const r of d.reasons ?? []) {
+        defersByReason[r] = (defersByReason[r] ?? 0) + 1;
+      }
+    }
+  }
+  const clustersMerged = clusters.reduce((acc, c) => acc + c.relatedProcedureIds.length, 0);
+
   return {
     generated: paths.length,
     skipped,
@@ -442,6 +452,8 @@ export function generateAutoSkills(
       deferred,
       failedValidation,
       failedEval,
+      clustersMerged,
+      defersByReason,
     },
     decisions,
   };

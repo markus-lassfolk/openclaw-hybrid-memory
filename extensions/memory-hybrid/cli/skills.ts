@@ -452,6 +452,62 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       ),
     );
 
+  (skills.command("suggest") as ArgumentChainable)
+    .description(
+      "List near-eligible procedures with their current blocking gates — proactive promotion candidate triage (#1546).",
+    )
+    .option("--limit <n>", "Max candidates to print (default: 20)")
+    .option("--threshold <n>", "Validation threshold override (default: 3)")
+    .option("--ttl-days <n>", "Skill TTL days override (default: 30)")
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (opts: { limit?: string; threshold?: string; ttlDays?: string; json?: boolean }) => {
+        const factsDb = ctx.factsDb;
+        if (!factsDb) {
+          console.error("error: facts DB is not available");
+          process.exitCode = 1;
+          return;
+        }
+        const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
+        const threshold = opts.threshold ? Math.max(1, Number(opts.threshold)) : 3;
+        const ttlDays = opts.ttlDays ? Math.max(1, Number(opts.ttlDays)) : 30;
+        // Dry-run generation gives us the per-procedure decision + blocking reasons
+        // without touching disk — exactly the data operators need to triage which
+        // procedures to nudge with more evidence vs. ignore.
+        const { generateAutoSkills } = await import("../services/procedure-skill-generator.js");
+        const skillsAutoPath = resolveWorkspacePath("skills/auto");
+        const result = generateAutoSkills(
+          factsDb,
+          {
+            skillsAutoPath,
+            validationThreshold: threshold,
+            skillTTLDays: ttlDays,
+            maxPerRun: 200,
+            dryRun: true,
+          },
+          { info: () => undefined, warn: () => undefined },
+        );
+        const candidates = (result.decisions ?? []).slice(0, limit);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: true, summary: result.summary, candidates }, null, 2));
+          return;
+        }
+        const s = result.summary ?? { candidates: 0, eligible: 0, drafted: 0, deferred: 0, rejected: 0 } as any;
+        console.log(
+          `Candidates: ${s.candidates}, eligible: ${s.eligible}, would-draft: ${s.drafted}, deferred: ${s.deferred}, rejected: ${s.rejected}`,
+        );
+        if (s.defersByReason && Object.keys(s.defersByReason).length > 0) {
+          console.log("Defer reasons:");
+          for (const [reason, count] of Object.entries(s.defersByReason)) {
+            console.log(`  - ${reason}: ${count}`);
+          }
+        }
+        for (const c of candidates) {
+          console.log(`- ${c.procedureId} [${c.action}] reasons=${(c.reasons ?? []).join(",") || "(none)"}`);
+        }
+      }),
+    );
+
   (skills.command("audit") as ArgumentChainable)
     .description(
       "Scan skills/auto generated procedure skills for size, loadability, and suspicious content (dry-run by default)",

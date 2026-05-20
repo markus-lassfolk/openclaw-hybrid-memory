@@ -9,6 +9,14 @@ export const MAX_SKILL_FILE_BYTES = 256_000;
 /** Conservative write-time target for generated `SKILL.md`. */
 export const MAX_SKILL_FILE_BYTES_SAFE = 200_000;
 
+/**
+ * Aggressive target for `SKILL.md` body before progressive disclosure
+ * is *triggered* (per #1539: "preferably 64-96 KB maximum").
+ * Skills under this stay one file; skills over it offload detail into
+ * `references/workflow.md` (or other sidecars) until they fit.
+ */
+export const MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET = 96_000;
+
 /** Bounded `recipe.json` sidecar cap (UTF-8 bytes). */
 export const MAX_RECIPE_JSON_BYTES = 64_000;
 

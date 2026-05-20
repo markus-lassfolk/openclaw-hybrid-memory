@@ -360,6 +360,43 @@ if (!fs.existsSync(distProcGen)) {
   } else {
     console.log("OK: dist procedure-skill-generator fingerprint");
   }
+
+  // 6a. Dist import-smoke (issue #1548): grepping is not enough — the runtime
+  // entrypoints OpenClaw imports must actually exist with the expected exports.
+  // This catches cases like an empty `dist/backends/facts-db.js` even when the
+  // source file is correct.
+  const distExportProbes = [
+    { rel: "services/procedure-skill-generator.js", exports: ["generateAutoSkills"] },
+    { rel: "services/skill-validator.js", exports: ["SkillValidator"] },
+    { rel: "services/skill-creator-validator.js", exports: ["quickValidateSkillMarkdown"] },
+    { rel: "services/skill-prompt-injection.js", exports: ["scanRecipeForPromptInjection", "sanitizeRecipePromptInjection"] },
+    { rel: "utils/constants.js", exports: ["ACTION_VERB_PATTERN"] },
+    { rel: "utils/text.js", exports: ["stripLeadingHtmlComments"] },
+    { rel: "backends/facts-db/facts-db-layer3.js", exports: ["FactsDB"] },
+  ];
+  let distImportSmokeFailed = false;
+  for (const probe of distExportProbes) {
+    const absPath = path.join(distDir, probe.rel);
+    if (!fs.existsSync(absPath)) {
+      console.error(`FAIL: dist/${probe.rel} missing after build (issue #1548)`);
+      failed = true;
+      distImportSmokeFailed = true;
+      continue;
+    }
+    const src = fs.readFileSync(absPath, "utf8");
+    for (const exp of probe.exports) {
+      // tsdown emits "export { Foo }" or "export function Foo" or "export const Foo".
+      const re = new RegExp(`export\\s+(?:\\{[^}]*\\b${exp}\\b[^}]*\\}|(?:async\\s+)?(?:function|const|let|var|class)\\s+${exp}\\b)`);
+      if (!re.test(src)) {
+        console.error(`FAIL: dist/${probe.rel} missing expected export "${exp}" (issue #1548 — dist/source mismatch)`);
+        failed = true;
+        distImportSmokeFailed = true;
+      }
+    }
+  }
+  if (!distImportSmokeFailed) {
+    console.log("OK: dist import-smoke (procedure-skill-generator, SkillValidator, ACTION_VERB_PATTERN, stripLeadingHtmlComments, FactsDB, skill-creator-validator, skill-prompt-injection)");
+  }
   try {
     const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
     const nodeMajor = Number(String(process.versions.node).split(".")[0] ?? "0");

@@ -8,6 +8,10 @@ import {
   MAX_STEP_SUMMARY_CHARS,
 } from "../config/skill-size-limits.js";
 import { redactAutopilotValue } from "./pending-autopilot/redaction.js";
+import {
+  sanitizeRecipePromptInjection,
+  scanRecipeForPromptInjection,
+} from "./skill-prompt-injection.js";
 
 const HIGH_RISK_TOOLS = new Set([
   "message",
@@ -88,13 +92,19 @@ export type SummarizedRecipe = {
   originalStepCount: number;
   byteLength: number;
   withinCap: boolean;
+  /** Prompt-injection markers detected in the *original* recipe (pre-sanitization). */
+  injectionHits: Array<{ name: string; severity: "hard" | "soft"; sample: string }>;
+  /** True when the source recipe contained a hard-severity injection marker. */
+  hasHardInjection: boolean;
 };
 
 /**
  * Summarize recipe for storage: cap steps, redact, enforce UTF-8 byte budget.
  */
 export function summarizeRecipeForSidecar(rawRecipe: unknown): SummarizedRecipe {
-  const redacted = redactAutopilotValue(rawRecipe);
+  const injectionScan = scanRecipeForPromptInjection(rawRecipe);
+  const sanitizedRaw = sanitizeRecipePromptInjection(rawRecipe);
+  const redacted = redactAutopilotValue(sanitizedRaw);
   const originalStepCount = Array.isArray(redacted) ? redacted.length : 0;
   let steps: unknown[] = Array.isArray(redacted) ? redacted : [];
   let omittedSteps = 0;
@@ -134,5 +144,7 @@ export function summarizeRecipeForSidecar(rawRecipe: unknown): SummarizedRecipe 
     originalStepCount,
     byteLength,
     withinCap: byteLength <= MAX_RECIPE_JSON_BYTES,
+    injectionHits: injectionScan.hits,
+    hasHardInjection: injectionScan.hasHardInjection,
   };
 }

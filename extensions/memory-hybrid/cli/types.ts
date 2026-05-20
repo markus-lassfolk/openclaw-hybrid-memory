@@ -142,6 +142,10 @@ export type GenerateAutoSkillsResult = {
     deferred: number;
     failedValidation: number;
     failedEval: number;
+    /** Number of procedures merged into a cluster representative (v2). */
+    clustersMerged?: number;
+    /** Defer-reason histogram for easy operator triage (v2). */
+    defersByReason?: Record<string, number>;
   };
   decisions?: Array<{
     procedureId: string;

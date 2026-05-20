@@ -37,13 +37,21 @@ describe.skipIf(!distExists)("publish dist procedure-skill-generator", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("imports key dist modules with expected exports", async () => {
+  it("imports key dist modules with expected exports (#1548)", async () => {
     const valMod = await import(pathToFileURL(join(distDir, "services", "skill-validator.js")).href);
     const constMod = await import(pathToFileURL(join(distDir, "utils", "constants.js")).href);
     const textMod = await import(pathToFileURL(join(distDir, "utils", "text.js")).href);
+    const scvMod = await import(pathToFileURL(join(distDir, "services", "skill-creator-validator.js")).href);
+    const piMod = await import(pathToFileURL(join(distDir, "services", "skill-prompt-injection.js")).href);
     expect(typeof valMod.SkillValidator).toBe("function");
     expect(constMod.ACTION_VERB_PATTERN).toBeInstanceOf(RegExp);
     expect(typeof textMod.stripLeadingHtmlComments).toBe("function");
+    expect(typeof scvMod.quickValidateSkillMarkdown).toBe("function");
+    // Tsdown tree-shakes; only the recipe-level helpers are imported by other
+    // modules and therefore re-exported. That is the right surface for the
+    // generator pipeline; per-string helpers are exercised via the recipe APIs.
+    expect(typeof piMod.scanRecipeForPromptInjection).toBe("function");
+    expect(typeof piMod.sanitizeRecipePromptInjection).toBe("function");
 
     if (sqliteAvailable) {
       const genMod = await import(pathToFileURL(join(distDir, "services", "procedure-skill-generator.js")).href);
@@ -51,6 +59,34 @@ describe.skipIf(!distExists)("publish dist procedure-skill-generator", () => {
       expect(typeof genMod.generateAutoSkills).toBe("function");
       expect(typeof factsMod.FactsDB).toBe("function");
     }
+  });
+
+  it("dist skill-creator-validator accepts generated frontmatter and rejects illegal one (#1545)", async () => {
+    const { quickValidateSkillMarkdown } = await import(
+      pathToFileURL(join(distDir, "services", "skill-creator-validator.js")).href
+    );
+    const ok = quickValidateSkillMarkdown(`---
+name: "checking-foo"
+description: "Check foo when the user mentions foo."
+metadata:
+  category: "procedure"
+---
+# Foo
+## Workflow
+1. Inspect foo state.`);
+    expect(ok.valid).toBe(true);
+
+    const bad = quickValidateSkillMarkdown(`---
+name: "Anthropic-Helper"
+description: ""
+category: procedure
+---
+# Bad`);
+    expect(bad.valid).toBe(false);
+    const rules = bad.violations.map((v: { rule: string }) => v.rule);
+    expect(rules).toContain("name-reserved");
+    expect(rules).toContain("description-missing");
+    expect(rules).toContain("unsupported-top-level-key");
   });
 
   it("dist generator uses advanced policy path, not legacy raw dump", () => {

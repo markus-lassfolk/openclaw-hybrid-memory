@@ -48,13 +48,21 @@ export function maybeBundleReplayScript(recipe: unknown): string | null {
     })
     .join("\n");
 
+  // Trap reports the failed step explicitly ("solve, don't punt" — fail loud
+  // with the exact line number rather than a generic shell exit). 30s timeout
+  // matches typical exec defaults; lower if a step routinely runs longer.
   return `#!/usr/bin/env bash
 # Validated workflow replay — generated from procedural memory.
-# Run from workspace root. Exits non-zero on first failing step.
-set -euo pipefail
+# Run from workspace root. Exits non-zero on first failing step with a
+# precise step pointer so callers can resume from the right place.
+set -Eeuo pipefail
+
+# Why 1: scripts should always print where they failed; "punt to operator"
+# is the anti-pattern called out in Anthropic's skill authoring guide.
+trap 'rc=$?; echo "[replay.sh] FAILED at line $LINENO (exit=$rc). Stop and report; do not improvise side effects." >&2; exit $rc' ERR
 
 ${body}
 
-echo "All replay steps completed."
+echo "[replay.sh] All replay steps completed."
 `;
 }

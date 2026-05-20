@@ -36,6 +36,13 @@ export type ProcedureSkillEvalResult = {
     historicalPositiveMatches?: number;
     baselinePositiveMatches?: number;
   };
+  /** Explicit fields requested by #1546 acceptance criteria. */
+  functionalPrompts: string[];
+  expectedVerification: string;
+  safetyAssertions: string[];
+  /** True when reviewer attention is required before enabling the skill. */
+  humanReviewRequired: boolean;
+  humanReviewReasons: string[];
 };
 
 function extractDescription(skillMd: string): string {
@@ -215,6 +222,28 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
 
   const status = triggerFailed || functionalFailed || safetyFailed ? "failed" : "passed";
 
+  const verificationSentence = (workflow.match(/^\s*\d+\.[^\n]*\b(?:verify|validate|confirm|check|assert)\b[^\n]*/im) ??
+    [])[0]?.trim() ??
+    (hasVerification ? "verification language present in workflow" : "no objective verification step detected");
+
+  const safetyAssertions: string[] = [];
+  if (staticResult.valid) safetyAssertions.push("static SkillValidator passes (no secrets/prompt-injection/private paths)");
+  else safetyAssertions.push(`static SkillValidator FAILED: ${staticResult.violations.join("; ")}`);
+  if (!input.shouldNotTrigger.some((p) => matchesTrigger(p, input.taskPattern, input.shouldTrigger))) {
+    safetyAssertions.push("destructive near-miss prompts do not trigger the skill");
+  } else {
+    safetyAssertions.push("WARNING: destructive near-miss prompt wrongly matches trigger");
+  }
+  if (/\bstop\b|\breport\b|\bdefer\b/i.test(workflow)) {
+    safetyAssertions.push("workflow includes explicit stop/report path on failure");
+  }
+
+  const humanReviewReasons: string[] = [];
+  if (triggerFailed) humanReviewReasons.push("trigger eval failed");
+  if (functionalFailed) humanReviewReasons.push("functional usefulness eval failed");
+  if (safetyFailed) humanReviewReasons.push("static safety validation failed");
+  const humanReviewRequired = humanReviewReasons.length > 0;
+
   return {
     status,
     checks,
@@ -222,6 +251,11 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
     functionalEval: functionalFailed ? "failed" : "passed",
     safetyEval: safetyFailed ? "failed" : "passed",
     baselineComparison: replay.baselineComparison,
+    functionalPrompts: [...input.shouldTrigger, ...(input.historicalPrompts ?? [])].slice(0, 20),
+    expectedVerification: verificationSentence,
+    safetyAssertions,
+    humanReviewRequired,
+    humanReviewReasons,
   };
 }
 
@@ -234,6 +268,11 @@ export function formatEvalResultsJson(result: ProcedureSkillEvalResult): string 
       safetyEval: result.safetyEval,
       checks: result.checks,
       baselineComparison: result.baselineComparison,
+      functionalPrompts: result.functionalPrompts,
+      expectedVerification: result.expectedVerification,
+      safetyAssertions: result.safetyAssertions,
+      humanReviewRequired: result.humanReviewRequired,
+      humanReviewReasons: result.humanReviewReasons,
       evaluatedAt: new Date().toISOString(),
     },
     null,

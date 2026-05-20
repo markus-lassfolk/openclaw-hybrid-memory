@@ -11,6 +11,8 @@ export type ProcedureSkillFrontmatterInput = {
   category: string;
   provenance: string;
   generatedAt: string;
+  /** Optional Skill Creator-allowed `allowed-tools` field; pre-rendered YAML. */
+  allowedToolsYaml?: string;
 };
 
 const SKILL_CREATOR_TOP_LEVEL_KEYS = new Set([
@@ -58,10 +60,11 @@ export function formatProcedureSkillFrontmatter(input: ProcedureSkillFrontmatter
     `  provenance: ${yamlDoubleQuoted(input.provenance)}`,
     `  generated_at: ${yamlDoubleQuoted(input.generatedAt)}`,
   ];
+  const allowedToolsBlock = input.allowedToolsYaml ? `${input.allowedToolsYaml}\n` : "";
   return `---
 name: ${yamlDoubleQuoted(input.name)}
 ${description}
-metadata:
+${allowedToolsBlock}metadata:
 ${metadataLines.join("\n")}
 ---`;
 }
