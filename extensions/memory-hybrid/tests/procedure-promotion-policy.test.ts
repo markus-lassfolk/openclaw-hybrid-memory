@@ -1145,10 +1145,10 @@ Use for collecting markerless legacy reports.
     );
 
     expect(evaluation.metadata).toMatchObject({
-      skill: "validate-release-health-report-with-objective-checks-1",
+      skill: "validating-release-health-report-with-objective-checks-1",
       generatedSkillPath: join(skillsDir, "validate-release-health-report-with-objective-checks-1"),
     });
-    expect(decision.summary?.body).toContain("validate-release-health-report-with-objective-checks-1");
+    expect(decision.summary?.body).toContain("validating-release-health-report-with-objective-checks-1");
   });
 
   it("defers tasks with only vague filler wording even when word count is high", () => {

@@ -130,9 +130,10 @@ describe("procedure-skill-recipe stress + safety (#1540)", () => {
       { tool: "exec", args: { command: "npm test" }, summary: "Run test" },
     ];
     const r = summarizeRecipeForSidecar(recipe);
-    const steps = r.sanitizedSteps as Array<{ summary?: string }>;
+    const steps = r.sanitizedSteps as Array<{ args?: unknown; summary?: string; tool?: string }>;
     expect(steps.some((s) => /IGNORE PREVIOUS INSTRUCTIONS/i.test(String(s.summary)))).toBe(false);
-    expect(JSON.stringify(steps)).toMatch(/npm test/i);
+    expect(steps.find((s) => s.tool === "exec")?.args).toMatchObject({ redacted: true });
+    expect(JSON.stringify(steps)).not.toMatch(/npm test/i);
   });
 });
 
