@@ -57,7 +57,7 @@ export function toGerundSkillName(slug: string): string {
  */
 function toGerund(verb: string): string {
   if (verb.length === 0) return verb;
-  
+
   // Drop silent 'e' before adding 'ing' (analyze → analyzing, configure → configuring)
   if (verb.endsWith("e") && verb.length > 2) {
     // Keep 'e' for verbs ending in 'ee', 'ye', 'oe' (agree → agreeing, see → seeing)
@@ -66,7 +66,7 @@ function toGerund(verb: string): string {
       return verb.slice(0, -1) + "ing";
     }
   }
-  
+
   // For single-syllable verbs ending in consonant-vowel-consonant (CVC),
   // double the final consonant (run → running, plan → planning)
   // Skip common exceptions (fix → fixing, box → boxing where final x is not doubled)
@@ -76,7 +76,7 @@ function toGerund(verb: string): string {
     const thirdLast = verb[verb.length - 3];
     const vowels = "aeiou";
     const consonants = "bcdfghjklmnpqrstvwxyz";
-    
+
     if (
       consonants.includes(last) &&
       vowels.includes(secondLast) &&
@@ -92,7 +92,7 @@ function toGerund(verb: string): string {
       }
     }
   }
-  
+
   return verb + "ing";
 }
 

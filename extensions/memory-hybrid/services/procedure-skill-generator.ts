@@ -563,7 +563,7 @@ export function generateAutoSkillForProcedure(
             bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
             baselineDescriptions,
           },
-          options.inRunSkillCandidates ?? [],
+          [...(options.inRunSkillCandidates ?? [])],
           clusterDeferMap,
         )
       : undefined,
@@ -828,7 +828,6 @@ function evaluateClusterRepresentativeEligible(
     contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     inRunSkillCandidates,
-    clusterDeferMap,
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, repProc, evidence),
     baselineDescriptions: options.baselineDescriptions,
   });
@@ -868,7 +867,7 @@ function collectHistoricalSessionPrompts(
   evidence: ProcedurePromotionEvidence,
 ): string[] {
   const prompts = new Set<string>();
-  prompts.add(proc.taskPattern);
+  prompts.add(redactHistoricalPromptForEval(proc.taskPattern));
   for (const req of evidence.manualWorkflowRequests ?? []) {
     const fact = factsDb.getById(req.id);
     if (isActiveFactForReplay(fact)) {

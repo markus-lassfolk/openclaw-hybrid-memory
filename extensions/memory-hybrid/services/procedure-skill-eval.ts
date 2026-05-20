@@ -91,6 +91,13 @@ function _matchesTrigger(prompt: string, taskPattern: string, triggers: string[]
   });
 }
 
+/** Description explicitly scopes out destructive / near-miss misuse. */
+function descriptionExcludesNearMiss(description: string): boolean {
+  return /\b(?:do not use|not use for|never use|avoid using|near-?miss|destructive|credential access|external send)\b/i.test(
+    description,
+  );
+}
+
 function matchesNearMiss(prompt: string, shouldNot: string[]): boolean {
   const lower = prompt.toLowerCase();
   if (isNearMissNegativePrompt(lower)) return true;
@@ -199,12 +206,17 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
 
   for (const prompt of input.shouldNotTrigger) {
     const nearMiss = matchesNearMiss(prompt, input.shouldNotTrigger);
-    const wronglyTriggers = nearMiss ? false : matchesWrongfulTriggerOnNegative(prompt, input.shouldTrigger);
+    const wronglyTriggers = nearMiss
+      ? descriptionMatchesPrompt(description, prompt, input.taskPattern) &&
+        !descriptionExcludesNearMiss(description)
+      : matchesWrongfulTriggerOnNegative(prompt, input.shouldTrigger);
     checks.push({
       name: `shouldNotTrigger:${prompt.slice(0, 40)}`,
       passed: !wronglyTriggers,
       detail: wronglyTriggers
-        ? "wrongly triggered on negative query"
+        ? nearMiss
+          ? "description matched near-miss negative prompt (over-broad trigger)"
+          : "wrongly triggered on negative query"
         : nearMiss
           ? "near-miss correctly not treated as full trigger"
           : "ok",
