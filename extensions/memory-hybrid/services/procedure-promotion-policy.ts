@@ -1432,6 +1432,7 @@ function isDuplicateSkill(
 ): boolean {
   const dirs = [skillsAutoPath, ...extraDirs];
   const taskWords = significantWords(task);
+  const gerundName = toGerundSkillName(slug);
   for (const candidate of inRunCandidates) {
     if (candidate.slug === slug) return true;
     const candidateWords = significantWords(candidate.taskPattern);
@@ -1450,7 +1451,7 @@ function isDuplicateSkill(
       if (entry === slug) return true;
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;
-      if (content.includes(`name: ${slug}`) || content.includes(`name: "${slug}"`)) return true;
+      if (content.includes(`name: ${gerundName}`) || content.includes(`name: "${gerundName}"`)) return true;
       const taskContent = extractTaskContentFromSkill(content);
       const contentWords = significantWords(taskContent);
       const overlap = [...taskWords].filter((w) => contentWords.has(w)).length;
