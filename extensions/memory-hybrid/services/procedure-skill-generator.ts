@@ -335,6 +335,7 @@ export function generateAutoSkills(
             clusterEligibilityOptions,
             [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
             clusterDeferMap,
+            relatedByRepresentative,
           )
         : undefined,
       relatedProcedureIds: relatedByRepresentative.get(proc.id),
@@ -540,6 +541,12 @@ export function generateAutoSkillForProcedure(
   const promotionItems = readyProcedures.map((p) => createProcedurePromotionItem(p, policy));
   const clusters = clusterProcedureItems(promotionItems);
   const clusterDeferMap = buildClusterDeferMap(clusters);
+  const relatedByRepresentative = new Map<string, string[]>();
+  for (const c of clusters) {
+    if (c.relatedProcedureIds.length > 0) {
+      relatedByRepresentative.set(c.representative.procedure.id, c.relatedProcedureIds);
+    }
+  }
   const clusterMerge = clusterDeferMap.get(proc.id);
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
@@ -565,6 +572,7 @@ export function generateAutoSkillForProcedure(
           },
           [...(options.inRunSkillCandidates ?? [])],
           clusterDeferMap,
+          relatedByRepresentative,
         )
       : undefined,
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, proc, evidence),
@@ -783,6 +791,7 @@ function getCachedRepresentativeEligibility(
   },
   inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
   clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
+  relatedByRepresentative: Map<string, string[]>,
 ): boolean | undefined {
   if (cache.has(representativeId)) {
     return cache.get(representativeId);
@@ -795,6 +804,7 @@ function getCachedRepresentativeEligibility(
     options,
     inRunSkillCandidates,
     clusterDeferMap,
+    relatedByRepresentative,
   );
   cache.set(representativeId, result);
   return result;
@@ -815,6 +825,7 @@ function evaluateClusterRepresentativeEligible(
   },
   inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
   clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
+  relatedByRepresentative: Map<string, string[]>,
 ): boolean | undefined {
   const repProc = procedures.find((p) => p.id === representativeId);
   if (!repProc) return undefined;
@@ -828,6 +839,7 @@ function evaluateClusterRepresentativeEligible(
     contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     inRunSkillCandidates,
+    relatedProcedureIds: relatedByRepresentative.get(representativeId),
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, repProc, evidence),
     baselineDescriptions: options.baselineDescriptions,
   });

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { toWorkspaceRelativePath } from "../utils/path.js";
 import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
-import { slugifyForSkill, titleCase } from "../utils/text.js";
+import { slugifyForSkill, stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import {
   type AutopilotReasonCode,
   type PendingDecision,
@@ -805,7 +805,8 @@ function finalizeProcedureSkillDraft(
     );
   }
 
-  const fmMatch = draft.skillMd.match(/^---\n([\s\S]*?)\n---/);
+  const strippedSkillMd = stripLeadingHtmlComments(draft.skillMd);
+  const fmMatch = strippedSkillMd.match(/^---\n([\s\S]*?)\n---/);
   if (fmMatch) {
     const creatorViolations = validateSkillCreatorFrontmatterKeys(fmMatch[1]);
     if (creatorViolations.length > 0) {
