@@ -540,19 +540,31 @@ export function completeTask(
 // Injection summary builder
 // ---------------------------------------------------------------------------
 
+export type ActiveTaskInjectionBuildResult = {
+  text: string;
+  injectedCount: number;
+};
+
 /**
  * Build a compact injection block for the active task working memory.
- * Budget-capped to `maxTokens` (approximate — 4 chars ≈ 1 token).
+ * Budget-capped to `maxTokens` or `opts.maxChars` (approximate — 4 chars ≈ 1 token).
  */
-export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: number): string {
-  const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
-  if (activeTasks.length === 0) return "";
+export function buildActiveTaskInjection(
+  tasks: ActiveTaskEntry[],
+  maxTokens: number,
+  opts?: { maxChars?: number; excludeStale?: boolean },
+): ActiveTaskInjectionBuildResult {
+  let activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
+  if (opts?.excludeStale) {
+    activeTasks = activeTasks.filter((t) => !t.stale);
+  }
+  if (activeTasks.length === 0) return { text: "", injectedCount: 0 };
 
   const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASKS.md:"];
 
-  // Budget: ~4 chars per token, minus header/footer overhead
-  const charBudget = maxTokens * 4 - 60;
+  const charBudget = typeof opts?.maxChars === "number" && opts.maxChars > 0 ? opts.maxChars - 60 : maxTokens * 4 - 60;
   let used = 0;
+  let injectedCount = 0;
 
   for (const task of activeTasks) {
     const staleFlag = task.stale ? " ⚠️ STALE" : "";
@@ -563,13 +575,13 @@ export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: nu
     if (used + block.length > charBudget) break;
     lines.push(block);
     used += block.length + 1;
+    injectedCount++;
   }
 
-  // If no tasks fit within the budget, return nothing rather than an empty wrapper
-  if (lines.length === 2) return "";
+  if (lines.length === 2) return { text: "", injectedCount: 0 };
 
   lines.push("</active-tasks>");
-  return lines.join("\n");
+  return { text: lines.join("\n"), injectedCount };
 }
 
 // ---------------------------------------------------------------------------

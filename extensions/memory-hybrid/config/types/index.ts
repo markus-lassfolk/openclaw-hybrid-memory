@@ -324,6 +324,11 @@ export type ActiveTaskConfig = {
    */
   injectionBudget: number;
   /**
+   * Optional cap on active rows considered for injection after projection filters and sorting.
+   * When unset, `projection.maxRowsPerSection` applies if set; otherwise no count cap (token budget still applies).
+   */
+  injectionMaxTasks?: number;
+  /**
    * Duration before flagging a task as stale. Supports human-friendly strings:
    * "24h", "1d", "1d12h30m", "45m", or a plain integer (treated as minutes).
    * Default: "24h".

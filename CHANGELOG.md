@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - **Dist import-smoke** (#1548): `verify-publish.cjs` now actually probes for `SkillValidator`, `ACTION_VERB_PATTERN`, `stripLeadingHtmlComments`, `FactsDB`, `quickValidateSkillMarkdown`, `scanRecipeForPromptInjection`, and `sanitizeRecipePromptInjection` in built dist — not just grep for legacy strings.
   - **`openclaw hybrid-mem skills suggest`** CLI for proactive promotion-candidate triage; surfaces blocking gates + defer-reason histogram so operators can see *why* a procedure is not promoting.
   - **Aggregate metrics in `generate-auto-skills` JSON**: `summary.clustersMerged` and `summary.defersByReason` for operator visibility.
+- **Active-task prompt injection hardening:** unified `buildActiveTaskContextBundle` (`services/active-task-injection.ts`) applies projection filters, relevance/session sort, optional `injectionMaxTasks` cap, and a shared char budget across `<active-tasks>`, stale warnings, heartbeat task-hygiene, and goal-escalation blocks; context-audit reports ledger vs injected counts.
 
 ### Changed
 

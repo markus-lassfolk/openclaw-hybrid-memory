@@ -384,35 +384,37 @@ describe("detectStaleTasks", () => {
 describe("buildActiveTaskInjection", () => {
   it("returns empty string when no active tasks", () => {
     const result = buildActiveTaskInjection([], 500);
-    expect(result).toBe("");
+    expect(result.text).toBe("");
+    expect(result.injectedCount).toBe(0);
   });
 
   it("returns empty string when all tasks are Done", () => {
     const tasks = [makeEntry({ status: "Done" })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toBe("");
+    expect(result.text).toBe("");
   });
 
   it("includes task label, description, and status", () => {
     const tasks = [makeEntry({ label: "my-task", description: "Fix the bug", status: "In progress" })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toContain("my-task");
-    expect(result).toContain("Fix the bug");
-    expect(result).toContain("In progress");
-    expect(result).toContain("<active-tasks>");
-    expect(result).toContain("</active-tasks>");
+    expect(result.text).toContain("my-task");
+    expect(result.text).toContain("Fix the bug");
+    expect(result.text).toContain("In progress");
+    expect(result.text).toContain("<active-tasks>");
+    expect(result.text).toContain("</active-tasks>");
+    expect(result.injectedCount).toBe(1);
   });
 
   it("includes next step when present", () => {
     const tasks = [makeEntry({ next: "Deploy the fix" })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toContain("Deploy the fix");
+    expect(result.text).toContain("Deploy the fix");
   });
 
   it("includes stale flag for stale tasks", () => {
     const tasks = [makeEntry({ stale: true })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toContain("STALE");
+    expect(result.text).toContain("STALE");
   });
 
   it("caps injection to budget (approximate)", () => {
@@ -427,9 +429,10 @@ describe("buildActiveTaskInjection", () => {
     );
     const result = buildActiveTaskInjection(tasks, 100); // Very tight budget
     // Should not include all 20 tasks
-    const taskMatches = result.match(/\[task-/g)?.length ?? 0;
+    const taskMatches = result.text.match(/\[task-/g)?.length ?? 0;
     expect(taskMatches).toBeLessThan(20);
-    expect(result.length).toBeLessThan(100 * 4 + 200); // Approximately within budget
+    expect(result.injectedCount).toBe(taskMatches);
+    expect(result.text.length).toBeLessThan(100 * 4 + 200); // Approximately within budget
   });
 
   it("handles all non-Done statuses", () => {
@@ -437,7 +440,7 @@ describe("buildActiveTaskInjection", () => {
     for (const status of activeStatuses) {
       const tasks = [makeEntry({ status })];
       const result = buildActiveTaskInjection(tasks, 500);
-      expect(result).toContain(status);
+      expect(result.text).toContain(status);
     }
   });
 });
@@ -1195,14 +1198,14 @@ describe("buildActiveTaskInjection (integration)", () => {
   it("filters out Done tasks from injection", () => {
     const tasks = [makeEntry({ label: "done", status: "Done" }), makeEntry({ label: "active", status: "In progress" })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toContain("[active]");
-    expect(result).not.toContain("[done]");
+    expect(result.text).toContain("[active]");
+    expect(result.text).not.toContain("[done]");
   });
 
   it("includes subagent session in injection", () => {
     const tasks = [makeEntry({ subagent: "forge-session-xyz" })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toContain("forge-session-xyz");
+    expect(result.text).toContain("forge-session-xyz");
   });
 
   it("handles multiple active tasks within budget", () => {
@@ -1212,9 +1215,10 @@ describe("buildActiveTaskInjection (integration)", () => {
       makeEntry({ label: "task-3", status: "Stalled" }),
     ];
     const result = buildActiveTaskInjection(tasks, 1000);
-    expect(result).toContain("task-1");
-    expect(result).toContain("task-2");
-    expect(result).toContain("task-3");
+    expect(result.text).toContain("task-1");
+    expect(result.text).toContain("task-2");
+    expect(result.text).toContain("task-3");
+    expect(result.injectedCount).toBe(3);
   });
 });
 

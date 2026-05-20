@@ -309,6 +309,10 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
       typeof activeTaskRaw?.injectionBudget === "number" && activeTaskRaw.injectionBudget > 0
         ? Math.floor(activeTaskRaw.injectionBudget)
         : 500,
+    injectionMaxTasks:
+      typeof activeTaskRaw?.injectionMaxTasks === "number" && activeTaskRaw.injectionMaxTasks > 0
+        ? Math.floor(activeTaskRaw.injectionMaxTasks)
+        : undefined,
     staleThreshold: resolvedStaleThreshold,
     flushOnComplete: activeTaskRaw?.flushOnComplete !== false,
     staleWarning: {

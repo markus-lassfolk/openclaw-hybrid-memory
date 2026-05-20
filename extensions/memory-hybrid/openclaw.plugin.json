@@ -2073,7 +2073,12 @@
           "injectionBudget": {
             "type": "integer",
             "minimum": 1,
-            "description": "Token budget for active-task injection summary (default: 500)"
+            "description": "Shared token budget for active-task prepend blocks (<active-tasks>, stale warnings, heartbeat task-hygiene) (default: 500)"
+          },
+          "injectionMaxTasks": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional max active rows after projection filters and sort, before char budget truncation. When unset, projection.maxRowsPerSection applies if set."
           },
           "projection": {
             "type": "object",
