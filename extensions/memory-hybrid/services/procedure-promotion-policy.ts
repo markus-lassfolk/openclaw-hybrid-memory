@@ -861,14 +861,17 @@ function buildProcedureSkillDraft(
     recipe,
   });
   const allowedTools = extractAllowedTools(recipe);
-  const frontmatter = formatProcedureSkillFrontmatter({
-    name: skillName,
-    description,
-    category: "procedure",
-    provenance: `procedure:${proc.id}`,
-    generatedAt,
-    allowedToolsYaml: renderAllowedToolsYaml(allowedTools),
-  });
+  const frontmatter =
+    nameViolations.length > 0
+      ? `---\n# Skill name validation failed: ${nameViolations.join("; ")}\n---`
+      : formatProcedureSkillFrontmatter({
+          name: skillName,
+          description,
+          category: "procedure",
+          provenance: `procedure:${proc.id}`,
+          generatedAt,
+          allowedToolsYaml: renderAllowedToolsYaml(allowedTools),
+        });
   const examplesSection = buildSkillExamplesSection({
     taskPattern: redactedTask.redacted,
     nearMiss,

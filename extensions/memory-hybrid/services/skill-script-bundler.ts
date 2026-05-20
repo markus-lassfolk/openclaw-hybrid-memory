@@ -44,7 +44,7 @@ export function maybeBundleReplayScript(recipe: unknown): string | null {
     .map((c, i) => {
       if (c.startsWith("#")) return `echo "Step ${i + 1}: ${c.slice(2).trim()}"`;
       const escaped = c.replace(/'/g, `'\\''`);
-      return `echo "Step ${i + 1}: ${c}"\n${c.includes("&&") || c.includes(";") ? c : `bash -lc '${escaped}'`}`;
+      return `echo "Step ${i + 1}: ${c}"\nbash -lc '${escaped}'`;
     })
     .join("\n");
 
