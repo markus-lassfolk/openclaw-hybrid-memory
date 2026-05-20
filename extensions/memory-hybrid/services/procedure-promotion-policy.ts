@@ -498,7 +498,7 @@ export function evaluateProcedureForPromotion(
   const eligible = gates.length === 0;
   const finalDraft = eligible ? draft : null;
   const generatedPath =
-    eligible && finalDraft ? toWorkspaceRelativePath(join(options.skillsAutoPath, finalDraft.slug)) : null;
+    eligible && finalDraft ? toWorkspaceRelativePath(join(options.skillsAutoPath, resolvedSkillSlug)) : null;
   const telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillSlug}`;
   const validatorScore = Number(
     Math.max(

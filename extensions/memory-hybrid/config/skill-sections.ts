@@ -150,8 +150,28 @@ export const DEFAULT_REQUIRED_SECTIONS: SectionDefinition[] = [
  * ```
  */
 export const CATEGORY_SECTION_TAXONOMIES: Record<string, SectionDefinition[]> = {
-  // Future category overrides registered here.
-  // "procedure-skill": [...DEFAULT_REQUIRED_SECTIONS],
+  procedure: [
+    {
+      id: "when-not-to-use",
+      label: "When not to use",
+      aliases: ["when not to use", "do not use when", "do not use", "anti-activation conditions"],
+    },
+    {
+      id: "workflow",
+      label: "Workflow",
+      aliases: ["workflow", "steps"],
+    },
+    {
+      id: "verification",
+      label: "Verification",
+      aliases: ["verification", "quality checklist", "validation"],
+    },
+    {
+      id: "examples",
+      label: "Examples",
+      aliases: ["examples"],
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------

@@ -168,8 +168,8 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
     const wronglyTriggers = matchesTrigger(prompt, input.taskPattern, input.shouldTrigger);
     checks.push({
       name: `shouldNotTrigger:${prompt.slice(0, 40)}`,
-      passed: !nearMiss || !wronglyTriggers,
-      detail: nearMiss ? "near-miss correctly not treated as full trigger" : "ok",
+      passed: !wronglyTriggers,
+      detail: wronglyTriggers ? "wrongly triggered on negative query" : nearMiss ? "near-miss correctly not treated as full trigger" : "ok",
     });
   }
 

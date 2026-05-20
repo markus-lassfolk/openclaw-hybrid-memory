@@ -182,7 +182,7 @@ function rebaseDraftSlug(
   const originalTelemetryCommand = `openclaw hybrid-mem skills record ${originalSlug}`;
   const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
   const skillMd = draft.skillMd
-    .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
+    .replace(new RegExp(`^name: (?:"${escapeRegExp(originalSlug)}"|${escapeRegExp(originalSlug)})$`, "m"), `name: "${resolvedSlug}"`)
     .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`)
     .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
 
