@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { MAX_SKILL_FILE_BYTES } from "../config/skill-size-limits.js";
 import { generateAutoSkillForProcedure, generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { getEnv, setEnv } from "../utils/env-manager.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
@@ -173,6 +174,50 @@ describe("generateAutoSkills", () => {
     expect(updated?.promotedToSkill).toBe(1);
     expect(updated?.skillPath).toContain("check-moltbook-notifications");
     expect(updated?.skillState).toBe("experimental");
+  });
+
+  it("does not write or mark promoted when generated SKILL.md would exceed the loader byte limit", () => {
+    const hugeSummary = "Verify bounded output " + "a".repeat(Math.ceil(MAX_SKILL_FILE_BYTES / 2));
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate huge generated skill output",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: hugeSummary },
+        { tool: "exec", args: { command: "npm test" }, summary: hugeSummary },
+        { tool: "read", args: { path: "report.json" }, summary: hugeSummary },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "huge-s1",
+      ttlDays: 30,
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
+    let result: ReturnType<typeof generateAutoSkills>;
+    try {
+      result = generateAutoSkills(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          validationThreshold: 3,
+          skillTTLDays: 30,
+          apply: true,
+          policy: "auto-safe",
+        },
+        { info: () => {}, warn: () => {} },
+      );
+    } finally {
+      if (previousWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
+    }
+
+    expect(result.generated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.decisions[0]?.reasons.some((reason) => reason.includes("skill_static_validation_failed"))).toBe(true);
+    expect(existsSync(join(skillsDir, "validate-huge-generated-skill-output"))).toBe(false);
+    expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
   });
 
   it("keeps collision-adjusted draft metadata aligned with the output directory", () => {

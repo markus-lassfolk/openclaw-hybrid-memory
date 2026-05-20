@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
+import { MAX_SKILL_FILE_BYTES } from "../config/skill-size-limits.js";
 import { _testing } from "../index.js";
 
 const {
@@ -964,6 +965,13 @@ ${extra.extraBody ?? ""}`;
   it("does not require related tools/skills section", () => {
     const result = validator.validate(compactValidSkill({ includeRelated: false }));
     expect(result.valid).toBe(true);
+  });
+
+  it("rejects SKILL.md content above the OpenClaw loader byte limit even when line count is low", () => {
+    const content = compactValidSkill({ extraBody: "\n" + "a".repeat(MAX_SKILL_FILE_BYTES + 1) });
+    const result = validator.validate(content);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("loader byte limit"))).toBe(true);
   });
 
   it("denies eval() in code block", () => {

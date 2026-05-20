@@ -22,6 +22,7 @@ import {
   getSectionTaxonomy,
   type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
+import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 export {
   CATEGORY_FRONTMATTER_KEYS,
   DEFAULT_REQUIRED_SECTIONS,
@@ -29,6 +30,7 @@ export {
   getSectionTaxonomy,
   type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
+export { MAX_SKILL_FILE_BYTES } from "../config/skill-size-limits.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -268,6 +270,13 @@ export class SkillValidator {
     const violations: string[] = [];
     const normalizedSkillContent = stripLeadingHtmlComments(skillContent);
     const lines = normalizedSkillContent.split("\n");
+    const skillBytes = utf8ByteLength(normalizedSkillContent);
+
+    if (skillBytes > MAX_SKILL_FILE_BYTES) {
+      violations.push(
+        `Skill exceeds OpenClaw loader byte limit (${skillBytes} > ${MAX_SKILL_FILE_BYTES}). Shrink SKILL.md or move deterministic detail into bounded sidecars.`,
+      );
+    }
 
     if (lines.length > MAX_SKILL_LINES) {
       violations.push(

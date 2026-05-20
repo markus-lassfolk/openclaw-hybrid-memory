@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
+import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
@@ -592,6 +593,13 @@ function writeDraftSkill(
     proposalMetadataJson: string;
   },
 ): void {
+  const skillBytes = utf8ByteLength(draft.skillMd);
+  if (skillBytes > MAX_SKILL_FILE_BYTES) {
+    throw new Error(
+      `Generated SKILL.md exceeds OpenClaw loader byte limit (${skillBytes} > ${MAX_SKILL_FILE_BYTES}); refusing to write oversized auto-skill`,
+    );
+  }
+
   // Write all sidecar files atomically (temp dir → rename). SKILL.md is
   // written last among content files so it is the final content write before
   // the completion marker.
