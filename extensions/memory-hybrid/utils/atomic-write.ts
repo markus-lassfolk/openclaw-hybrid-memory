@@ -14,16 +14,7 @@
  * The marker name is exported so loaders can skip in-progress directories.
  */
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  readdirSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
