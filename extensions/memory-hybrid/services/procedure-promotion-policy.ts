@@ -698,7 +698,7 @@ function finalizeProcedureSkillDraft(
   gates: ProcedurePromotionGateResult[],
 ): GeneratedProcedureSkillDraft {
   const proc = item.procedure;
-  const recipe = item.payload.recipe;
+  const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
   const workflow = extractWorkflowSectionFromSkill(draft.skillMd);
   const actionability = lintWorkflowActionability(workflow, proc.taskPattern);
   if (!actionability.actionable) {
@@ -734,7 +734,7 @@ function finalizeProcedureSkillDraft(
   // Trigger progressive disclosure aggressively (target 64-96 KB per #1539)
   // so SKILL.md is genuinely compact, not merely "under the 256 KB loader cap".
   const disclosureTarget = Math.min(MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET, MAX_SKILL_FILE_BYTES_SAFE);
-  const disclosure = applyProgressiveDisclosure(skillMd, recipe, proc.taskPattern, disclosureTarget);
+  const disclosure = applyProgressiveDisclosure(skillMd, sanitizedRecipe, proc.taskPattern, disclosureTarget);
   skillMd = disclosure.skillMd;
   draft.referenceWorkflowMd = disclosure.referenceWorkflowMd
     ? addTableOfContentsIfLong(disclosure.referenceWorkflowMd)
