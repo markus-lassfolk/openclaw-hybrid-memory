@@ -207,8 +207,7 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
   for (const prompt of input.shouldNotTrigger) {
     const nearMiss = matchesNearMiss(prompt, input.shouldNotTrigger);
     const wronglyTriggers = nearMiss
-      ? descriptionMatchesPrompt(description, prompt, input.taskPattern) &&
-        !descriptionExcludesNearMiss(description)
+      ? descriptionMatchesPrompt(description, prompt, input.taskPattern) && !descriptionExcludesNearMiss(description)
       : matchesWrongfulTriggerOnNegative(prompt, input.shouldTrigger);
     checks.push({
       name: `shouldNotTrigger:${prompt.slice(0, 40)}`,
