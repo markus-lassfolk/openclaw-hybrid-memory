@@ -215,7 +215,9 @@ describe("generateAutoSkills", () => {
 
     expect(result.generated).toBe(0);
     expect(result.skipped).toBe(1);
-    expect(result.decisions?.[0]?.reasons.some((reason) => reason.includes("skill_static_validation_failed"))).toBe(true);
+    expect(result.decisions?.[0]?.reasons.some((reason) => reason.includes("skill_static_validation_failed"))).toBe(
+      true,
+    );
     expect(existsSync(join(skillsDir, "validate-huge-generated-skill-output"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
   });
