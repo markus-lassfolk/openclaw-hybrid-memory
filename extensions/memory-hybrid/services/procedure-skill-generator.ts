@@ -738,10 +738,12 @@ function writeDraftSkill(
   if (draft.triggerEvalJson) {
     files["evals/trigger-eval.json"] = draft.triggerEvalJson;
   }
+  const executableRelativePaths: string[] = [];
   if (draft.replayScript) {
     files["scripts/replay.sh"] = draft.replayScript;
+    executableRelativePaths.push("scripts/replay.sh");
   }
-  atomicWriteSkillDir(skillDir, files);
+  atomicWriteSkillDir(skillDir, files, { executableRelativePaths });
 }
 
 function isActiveFactForReplay(fact: MemoryEntry | null): fact is MemoryEntry {

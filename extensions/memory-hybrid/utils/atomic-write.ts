@@ -14,7 +14,16 @@
  * The marker name is exported so loaders can skip in-progress directories.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync, readdirSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
@@ -110,7 +119,17 @@ export function atomicWriteFile(targetPath: string, content: string): void {
  * Pass files in the order you want them written.  Convention: put `SKILL.md`
  * last so it is the final content file before the marker.
  */
-export function atomicWriteSkillDir(skillDir: string, files: Record<string, string>): void {
+export type AtomicWriteSkillDirOptions = {
+  /** Relative paths (keys of `files`) written with owner-execute permission (e.g. `scripts/replay.sh`). */
+  executableRelativePaths?: readonly string[];
+};
+
+export function atomicWriteSkillDir(
+  skillDir: string,
+  files: Record<string, string>,
+  options?: AtomicWriteSkillDirOptions,
+): void {
+  const executable = new Set(options?.executableRelativePaths ?? []);
   const parent = dirname(skillDir);
   const rand = randomBytes(8).toString("hex");
   const tmpDir = join(parent, `${SKILL_ATOMIC_TEMP_PREFIX}${process.pid}-${rand}`);
@@ -125,7 +144,11 @@ export function atomicWriteSkillDir(skillDir: string, files: Record<string, stri
       assertSafeRelativeSkillPath(relPath);
       const fullPath = join(tmpDir, relPath);
       mkdirSync(dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, content, "utf-8");
+      const fileMode = executable.has(relPath) ? 0o755 : undefined;
+      writeFileSync(fullPath, content, { encoding: "utf-8", ...(fileMode != null ? { mode: fileMode } : {}) });
+      if (fileMode != null) {
+        chmodSync(fullPath, fileMode);
+      }
     }
 
     // Stamp the completion marker as the final write inside the temp dir.
