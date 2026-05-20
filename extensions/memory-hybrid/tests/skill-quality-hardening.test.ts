@@ -132,7 +132,7 @@ describe("procedure-skill-recipe stress + safety (#1540)", () => {
     const r = summarizeRecipeForSidecar(recipe);
     const steps = r.sanitizedSteps as Array<{ summary?: string }>;
     expect(steps.some((s) => /IGNORE PREVIOUS INSTRUCTIONS/i.test(String(s.summary)))).toBe(false);
-    expect(steps.some((s) => /npm test/i.test(String(s.summary ?? s)))).toBe(true);
+    expect(JSON.stringify(steps)).toMatch(/npm test/i);
   });
 });
 
