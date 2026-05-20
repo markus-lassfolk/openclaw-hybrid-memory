@@ -475,8 +475,20 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           return;
         }
         const limit = opts.limit ? Math.max(1, Math.min(100, parsedLimit)) : 20;
-        const threshold = opts.threshold ? Math.max(1, Number(opts.threshold)) : 3;
-        const ttlDays = opts.ttlDays ? Math.max(1, Number(opts.ttlDays)) : 30;
+        const parsedThreshold = Number(opts.threshold);
+        if (opts.threshold && (!Number.isFinite(parsedThreshold) || parsedThreshold < 1)) {
+          console.error(`error: --threshold must be a positive number, got: ${opts.threshold}`);
+          process.exitCode = 1;
+          return;
+        }
+        const threshold = opts.threshold ? Math.max(1, parsedThreshold) : 3;
+        const parsedTtlDays = Number(opts.ttlDays);
+        if (opts.ttlDays && (!Number.isFinite(parsedTtlDays) || parsedTtlDays < 1)) {
+          console.error(`error: --ttl-days must be a positive number, got: ${opts.ttlDays}`);
+          process.exitCode = 1;
+          return;
+        }
+        const ttlDays = opts.ttlDays ? Math.max(1, parsedTtlDays) : 30;
         // Dry-run generation gives us the per-procedure decision + blocking reasons
         // without touching disk — exactly the data operators need to triage which
         // procedures to nudge with more evidence vs. ignore.
