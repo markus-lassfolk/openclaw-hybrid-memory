@@ -16,6 +16,7 @@ import {
   scanForPromptInjection,
   scanRecipeForPromptInjection,
 } from "../services/skill-prompt-injection.js";
+import { redactAutopilotText } from "../services/pending-autopilot/redaction.js";
 import { summarizeRecipeForSidecar } from "../services/procedure-skill-recipe.js";
 import { quickValidateSkillMarkdown } from "../services/skill-creator-validator.js";
 import { buildPushySkillDescription } from "../services/skill-description-builder.js";
@@ -242,6 +243,23 @@ metadata:
       shouldNotTrigger: [],
     });
     expect(result.triggerEval).toBe("passed");
+  });
+
+  it("redacts secrets from historical prompts before eval JSON persistence", () => {
+    const raw = "Run workflow for user@corp.com with api_key=sk-live-abc123def456";
+    const { redacted } = redactAutopilotText(raw);
+    expect(redacted).not.toMatch(/sk-live-abc123def456/);
+    const result = runProcedureSkillEval({
+      skillMd,
+      recipeJson: "[]",
+      taskPattern: "Check moltbook notifications",
+      shouldTrigger: ["Check moltbook notifications"],
+      shouldNotTrigger: [],
+      historicalPrompts: [redacted],
+      baselineDescriptions: [],
+    });
+    const json = JSON.parse(formatEvalResultsJson(result)) as { functionalPrompts: string[] };
+    expect(JSON.stringify(json.functionalPrompts)).not.toMatch(/sk-live-abc123def456/);
   });
 
   it("emits functionalPrompts, expectedVerification, safetyAssertions, humanReviewRequired", () => {

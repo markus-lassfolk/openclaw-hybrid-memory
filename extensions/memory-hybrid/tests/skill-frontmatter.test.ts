@@ -26,4 +26,16 @@ describe("skill-frontmatter", () => {
     expect(keys.get("metadata.category")).toBe("procedure");
     expect(keys.get("metadata.provenance")).toContain("procedure:");
   });
+
+  it("parses multi-line double-quoted description with preserved newlines", () => {
+    const body = [
+      'description: "Use when the user asks',
+      "  to check notifications.",
+      '  Second line here."',
+      "metadata:",
+      "  category: procedure",
+    ].join("\n");
+    const keys = parseSkillFrontmatterKeys(body);
+    expect(keys.get("description")).toBe("Use when the user asks\n  to check notifications.\n  Second line here.");
+  });
 });
