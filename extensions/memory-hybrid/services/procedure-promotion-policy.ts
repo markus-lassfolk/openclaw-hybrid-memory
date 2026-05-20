@@ -744,7 +744,7 @@ function finalizeProcedureSkillDraft(
   }
   const nestedRefViolations = lintNestedReferences(skillMd);
   if (nestedRefViolations.length > 0) {
-    gates.push(defer("skill_static_validation_failed", nestedRefViolations.join("; ")));
+    gates.push(fail("skill_static_validation_failed", nestedRefViolations.join("; ")));
   }
   draft.generationDiagnostics = {
     originalBytes: shrink.diagnostics.originalBytes,
