@@ -13,8 +13,7 @@ const PLACEHOLDER_WORKFLOW_PATTERNS: RegExp[] = [
 const VERIFICATION_WORDS =
   /\b(?:verify|validate|assert|expect|confirm|check|exit\s+(?:code|status)|file\s+exists|schema)\b/i;
 
-const ACTION_VERBS =
-  /\b(?:inspect|read|run|check|compare|report|query|list|fetch|review|validate|verify|confirm)\b/i;
+const ACTION_VERBS = /\b(?:inspect|read|run|check|compare|report|query|list|fetch|review|validate|verify|confirm)\b/i;
 
 const DESTRUCTIVE_TOOLS = new Set(["write", "edit", "exec", "bash", "shell", "sessions_spawn"]);
 
@@ -49,9 +48,7 @@ function extractCommand(step: RecipeStep): string | null {
 function summarizeStepLow(step: RecipeStep, index: number, taskPattern: string): string {
   const tool = typeof step.tool === "string" ? step.tool : "manual check";
   const summary =
-    typeof step.summary === "string"
-      ? step.summary
-      : "follow the recorded safe step, then verify before continuing";
+    typeof step.summary === "string" ? step.summary : "follow the recorded safe step, then verify before continuing";
   const safeSummary = truncateSummary(summary);
   const domain = domainTokens(taskPattern)[0];
   const verifyHint = VERIFICATION_WORDS.test(summary) ? "" : " Confirm outcome before continuing.";
@@ -142,7 +139,9 @@ export function buildActionableWorkflow(
     return summarizeStepLow(s, i, taskPattern);
   });
   const collapsed =
-    steps.length > 8 ? collapsePhases(rawSteps, MAX_WORKFLOW_STEPS_IN_SKILL) : rawSteps.slice(0, MAX_WORKFLOW_STEPS_IN_SKILL);
+    steps.length > 8
+      ? collapsePhases(rawSteps, MAX_WORKFLOW_STEPS_IN_SKILL)
+      : rawSteps.slice(0, MAX_WORKFLOW_STEPS_IN_SKILL);
   let body = collapsed.join("\n");
   if (collapsed.length > 3) {
     body += buildChecklist(collapsed.length);

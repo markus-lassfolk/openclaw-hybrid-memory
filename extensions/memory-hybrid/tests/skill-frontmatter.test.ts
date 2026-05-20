@@ -19,9 +19,7 @@ describe("skill-frontmatter", () => {
     expect(block).toContain("metadata:");
     expect(block).toContain("category:");
     expect(block).not.toMatch(/^category:/m);
-    const violations = validateSkillCreatorFrontmatterKeys(
-      block.split("---\n")[1]?.split("\n---")[0] ?? "",
-    );
+    const violations = validateSkillCreatorFrontmatterKeys(block.split("---\n")[1]?.split("\n---")[0] ?? "");
     expect(violations).toEqual([]);
     const keys = parseSkillFrontmatterKeys(block.split("---\n")[1]?.split("\n---")[0] ?? "");
     expect(keys.get("name")).toBe("check-moltbook-notifications");

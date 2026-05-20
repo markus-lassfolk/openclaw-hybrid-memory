@@ -100,7 +100,10 @@ describe("skill-script-bundler", () => {
 
   it("skips read-only-only recipes", () => {
     expect(
-      maybeBundleReplayScript([{ tool: "read", summary: "x" }, { tool: "memory_recall", summary: "y" }]),
+      maybeBundleReplayScript([
+        { tool: "read", summary: "x" },
+        { tool: "memory_recall", summary: "y" },
+      ]),
     ).toBeNull();
   });
 });

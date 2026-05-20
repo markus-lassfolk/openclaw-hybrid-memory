@@ -145,13 +145,15 @@ describe("generateAutoSkills", () => {
     const skillContent = readFileSync(skillPath, "utf-8");
     expect(skillContent).toContain("Check Moltbook notifications");
     expect(skillContent).toContain("## Workflow");
-    expect(skillContent).toContain("## Telemetry");
+    expect(skillContent).toContain("references/telemetry.md");
+    expect(skillContent).not.toContain("## Telemetry");
     expect(skillContent).toContain("openclaw hybrid-mem skills record check-moltbook-notifications");
     expect(skillContent).toContain(proc.id);
+    expect(existsSync(join(skillsDir, "check-moltbook-notifications", "references", "telemetry.md"))).toBe(true);
 
-    const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8"));
-    expect(Array.isArray(recipeContent)).toBe(true);
-    expect(recipeContent).toHaveLength(3);
+    const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8")) as { steps?: unknown[] };
+    expect(Array.isArray(recipeContent.steps)).toBe(true);
+    expect(recipeContent.steps).toHaveLength(3);
     const verification = JSON.parse(
       readFileSync(join(skillsDir, "check-moltbook-notifications", "verification.json"), "utf-8"),
     ) as { lifecycleState?: string; telemetryCommand?: string; validatorScore?: number };

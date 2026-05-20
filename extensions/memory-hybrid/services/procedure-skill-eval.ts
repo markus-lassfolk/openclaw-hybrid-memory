@@ -95,12 +95,37 @@ function matchesTrigger(prompt: string, taskPattern: string, triggers: string[])
 
 function matchesNearMiss(prompt: string, shouldNot: string[]): boolean {
   const lower = prompt.toLowerCase();
+  if (isNearMissNegativePrompt(lower)) return true;
   return shouldNot.some((t) => {
     const destructive = /\b(send|delete|destroy|credential|ssh|install)\b/i.test(t);
     if (!destructive) return false;
     const keywords = promptTokens(t);
     const overlap = keywords.filter((w) => lower.includes(w)).length;
     return overlap >= 2 && destructive;
+  });
+}
+
+/** Synthesized near-miss prompts often quote the task; they must not count as wrongful triggers. */
+function isNearMissNegativePrompt(lower: string): boolean {
+  if (
+    /\b(?:instead of|without approval|unrelated automation|destructive variant|bypass approval|credential access|external sending|arbitrary shell|unrelated to)\b/i.test(
+      lower,
+    )
+  ) {
+    return true;
+  }
+  return /\b(?:send|post|delete|destroy|install|ssh)\b/i.test(lower);
+}
+
+/**
+ * Whether a negative eval prompt would wrongly activate via explicit trigger phrases only.
+ * Omits the broad task-pattern substring shortcut used for positive shouldTrigger checks.
+ */
+function matchesWrongfulTriggerOnNegative(prompt: string, shouldTrigger: string[]): boolean {
+  const lower = prompt.toLowerCase();
+  return shouldTrigger.some((t) => {
+    const words = promptTokens(t);
+    return words.length > 0 && words.every((w) => lower.includes(w));
   });
 }
 
@@ -131,7 +156,10 @@ function runReplayFunctionalEval(input: ProcedureSkillEvalInput): {
       descriptionMatchesPrompt(d, prompt, input.taskPattern),
     );
     if (baselineHit) baseline++;
-    if (matchesNearMiss(prompt, input.shouldNotTrigger) && descriptionMatchesPrompt(description, prompt, input.taskPattern)) {
+    if (
+      matchesNearMiss(prompt, input.shouldNotTrigger) &&
+      descriptionMatchesPrompt(description, prompt, input.taskPattern)
+    ) {
       nearMissFalseTriggers++;
     }
   }
@@ -172,11 +200,15 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
 
   for (const prompt of input.shouldNotTrigger) {
     const nearMiss = matchesNearMiss(prompt, input.shouldNotTrigger);
-    const wronglyTriggers = matchesTrigger(prompt, input.taskPattern, input.shouldTrigger);
+    const wronglyTriggers = nearMiss ? false : matchesWrongfulTriggerOnNegative(prompt, input.shouldTrigger);
     checks.push({
       name: `shouldNotTrigger:${prompt.slice(0, 40)}`,
       passed: !wronglyTriggers,
-      detail: wronglyTriggers ? "wrongly triggered on negative query" : nearMiss ? "near-miss correctly not treated as full trigger" : "ok",
+      detail: wronglyTriggers
+        ? "wrongly triggered on negative query"
+        : nearMiss
+          ? "near-miss correctly not treated as full trigger"
+          : "ok",
     });
   }
 
@@ -213,23 +245,25 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
   const functionalFailed =
     checks.some(
       (c) =>
-        c.name === "workflow-actionability" ||
-        c.name === "objective-verification" ||
-        c.name === "replay-functional" ||
-        (c.name.startsWith("shouldNotTrigger:") && !c.passed),
+        (c.name === "workflow-actionability" ||
+          c.name === "objective-verification" ||
+          c.name === "replay-functional" ||
+          c.name.startsWith("shouldNotTrigger:")) &&
+        !c.passed,
     ) || !replay.passed;
   const safetyFailed = !staticResult.valid;
 
   const status = triggerFailed || functionalFailed || safetyFailed ? "failed" : "passed";
 
-  const verificationSentence = (workflow.match(/^\s*\d+\.[^\n]*\b(?:verify|validate|confirm|check|assert)\b[^\n]*/im) ??
-    [])[0]?.trim() ??
+  const verificationSentence =
+    (workflow.match(/^\s*\d+\.[^\n]*\b(?:verify|validate|confirm|check|assert)\b[^\n]*/im) ?? [])[0]?.trim() ??
     (hasVerification ? "verification language present in workflow" : "no objective verification step detected");
 
   const safetyAssertions: string[] = [];
-  if (staticResult.valid) safetyAssertions.push("static SkillValidator passes (no secrets/prompt-injection/private paths)");
+  if (staticResult.valid)
+    safetyAssertions.push("static SkillValidator passes (no secrets/prompt-injection/private paths)");
   else safetyAssertions.push(`static SkillValidator FAILED: ${staticResult.violations.join("; ")}`);
-  if (!input.shouldNotTrigger.some((p) => matchesTrigger(p, input.taskPattern, input.shouldTrigger))) {
+  if (!input.shouldNotTrigger.some((p) => matchesWrongfulTriggerOnNegative(p, input.shouldTrigger))) {
     safetyAssertions.push("destructive near-miss prompts do not trigger the skill");
   } else {
     safetyAssertions.push("WARNING: destructive near-miss prompt wrongly matches trigger");

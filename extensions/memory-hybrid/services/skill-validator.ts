@@ -16,10 +16,7 @@
 
 import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
-import {
-  MAX_SKILL_DESCRIPTION_CHARS,
-  MAX_SKILL_FILE_BYTES_SAFE,
-} from "../config/skill-size-limits.js";
+import { MAX_SKILL_DESCRIPTION_CHARS, MAX_SKILL_FILE_BYTES_SAFE } from "../config/skill-size-limits.js";
 import {
   CATEGORY_FRONTMATTER_KEYS,
   MAX_SKILL_LINES,

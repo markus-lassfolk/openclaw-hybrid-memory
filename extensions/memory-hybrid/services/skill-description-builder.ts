@@ -53,7 +53,10 @@ export function buildPushySkillDescription(input: SkillDescriptionInput): string
   const keywords = tokenize(task);
   const tools = mineToolsFromRecipe(input.recipe);
   const triggers = paraphraseTriggers(task, input.keyword);
-  const triggerSample = triggers.slice(0, 4).map((t) => `"${t}"`).join(", ");
+  const triggerSample = triggers
+    .slice(0, 4)
+    .map((t) => `"${t}"`)
+    .join(", ");
   const keywordHint = keywords.length > 0 ? keywords.join(", ") : input.keyword;
   const toolHint = tools.length > 0 ? ` Tools: ${tools.join(", ")}.` : "";
 

@@ -151,14 +151,10 @@ describe("procedure promotion policy and adapter", () => {
     expect(skill).not.toContain("## When to Activate");
     expect(skill).not.toContain("## Telemetry");
     expect(
-      existsSync(
-        join(skillsDir, "validate-release-health-report-with-objective-checks", "evals", "trigger-eval.json"),
-      ),
+      existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "evals", "trigger-eval.json")),
     ).toBe(true);
     expect(
-      existsSync(
-        join(skillsDir, "validate-release-health-report-with-objective-checks", "references", "telemetry.md"),
-      ),
+      existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "references", "telemetry.md")),
     ).toBe(true);
     expect(skill.match(/^## /gm)?.length ?? 0).toBeLessThanOrEqual(8);
     const verification = JSON.parse(

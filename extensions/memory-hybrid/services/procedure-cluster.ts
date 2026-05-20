@@ -38,10 +38,7 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 /**
  * Group items with task-pattern Jaccard >= threshold; pick highest successCount per group.
  */
-export function clusterProcedureItems(
-  items: ClusterableProcedureItem[],
-  threshold = 0.6,
-): ProcedureClusterResult[] {
+export function clusterProcedureItems(items: ClusterableProcedureItem[], threshold = 0.6): ProcedureClusterResult[] {
   const remaining = [...items];
   const clusters: ProcedureClusterResult[] = [];
 

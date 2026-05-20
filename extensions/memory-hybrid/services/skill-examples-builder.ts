@@ -25,11 +25,7 @@ function verificationSummaryFromRecipe(recipe: unknown): string {
   return "Follow the ordered workflow, then confirm output with file existence, schema validation, or command exit status.";
 }
 
-export function buildSkillExamplesSection(input: {
-  taskPattern: string;
-  nearMiss: string;
-  recipe: unknown;
-}): string {
+export function buildSkillExamplesSection(input: { taskPattern: string; nearMiss: string; recipe: unknown }): string {
   const task = input.taskPattern.trim();
   const kw = firstKeyword(task);
   const goodOutput = verificationSummaryFromRecipe(input.recipe);

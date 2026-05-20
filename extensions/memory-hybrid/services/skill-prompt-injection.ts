@@ -11,15 +11,35 @@
 // preferred over false negatives. Anchored to whole tokens to avoid clobbering
 // legitimate words.
 const INJECTION_PATTERNS: Array<{ name: string; pattern: RegExp; severity: "hard" | "soft" }> = [
-  { name: "override-instructions", pattern: /\bignore\s+(?:all\s+)?(?:previous|prior|above|system|developer)\s+instructions?\b/i, severity: "hard" },
-  { name: "disregard-rules", pattern: /\bdisregard\s+(?:all\s+)?(?:previous|prior|above|system|developer|safety)\b/i, severity: "hard" },
-  { name: "act-as-system", pattern: /\byou\s+are\s+now\s+(?:a|an|the)\s+(?:system|developer|admin|root)\b/i, severity: "hard" },
+  {
+    name: "override-instructions",
+    pattern: /\bignore\s+(?:all\s+)?(?:previous|prior|above|system|developer)\s+instructions?\b/i,
+    severity: "hard",
+  },
+  {
+    name: "disregard-rules",
+    pattern: /\bdisregard\s+(?:all\s+)?(?:previous|prior|above|system|developer|safety)\b/i,
+    severity: "hard",
+  },
+  {
+    name: "act-as-system",
+    pattern: /\byou\s+are\s+now\s+(?:a|an|the)\s+(?:system|developer|admin|root)\b/i,
+    severity: "hard",
+  },
   { name: "role-pivot", pattern: /\bnew\s+(?:system|developer)\s+prompt\s*[:>]/i, severity: "hard" },
   { name: "jailbreak-token", pattern: /\b(?:jailbreak|do\s+anything\s+now|dan\s+mode)\b/i, severity: "hard" },
-  { name: "embedded-system-tag", pattern: /<\s*system\s*>|<\s*\/\s*system\s*>|<\|system\|>|<\|developer\|>/i, severity: "hard" },
+  {
+    name: "embedded-system-tag",
+    pattern: /<\s*system\s*>|<\s*\/\s*system\s*>|<\|system\|>|<\|developer\|>/i,
+    severity: "hard",
+  },
   { name: "embedded-policy-bypass", pattern: /\boutput\s+only\s+the\s+(?:flag|password|secret)\b/i, severity: "hard" },
   { name: "instruction-leakage", pattern: /\brepeat\s+(?:the\s+)?(?:system|developer)\s+prompt\b/i, severity: "hard" },
-  { name: "tool-override", pattern: /\b(?:please|kindly)?\s*override\s+(?:safety|policy|guardrails?)\b/i, severity: "soft" },
+  {
+    name: "tool-override",
+    pattern: /\b(?:please|kindly)?\s*override\s+(?:safety|policy|guardrails?)\b/i,
+    severity: "soft",
+  },
 ];
 
 const INJECTION_REPLACEMENT = "[redacted: prompt-injection marker]";
@@ -47,7 +67,10 @@ export function sanitizePromptInjection(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
   let out = input;
   for (const { pattern } of INJECTION_PATTERNS) {
-    out = out.replace(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`), INJECTION_REPLACEMENT);
+    out = out.replace(
+      new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`),
+      INJECTION_REPLACEMENT,
+    );
   }
   return out;
 }

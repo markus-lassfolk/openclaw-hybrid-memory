@@ -37,9 +37,10 @@ function yamlFoldedBlock(value: string): string {
 }
 
 function formatDescriptionField(description: string): string {
-  const trimmed = description.length > MAX_SKILL_DESCRIPTION_CHARS
-    ? `${description.slice(0, MAX_SKILL_DESCRIPTION_CHARS - 14)}… [truncated]`
-    : description;
+  const trimmed =
+    description.length > MAX_SKILL_DESCRIPTION_CHARS
+      ? `${description.slice(0, MAX_SKILL_DESCRIPTION_CHARS - 14)}… [truncated]`
+      : description;
   if (/[:#"'\n]/.test(trimmed) || trimmed.length > 120) {
     return `description: ${yamlFoldedBlock(trimmed)}`;
   }

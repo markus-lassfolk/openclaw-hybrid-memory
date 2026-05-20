@@ -8,10 +8,7 @@ import {
   MAX_STEP_SUMMARY_CHARS,
 } from "../config/skill-size-limits.js";
 import { redactAutopilotValue } from "./pending-autopilot/redaction.js";
-import {
-  sanitizeRecipePromptInjection,
-  scanRecipeForPromptInjection,
-} from "./skill-prompt-injection.js";
+import { sanitizeRecipePromptInjection, scanRecipeForPromptInjection } from "./skill-prompt-injection.js";
 
 const HIGH_RISK_TOOLS = new Set([
   "message",

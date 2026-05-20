@@ -3,12 +3,10 @@
  */
 
 const NEAR_MISS_TEMPLATES = [
-  (task: string, kw: string) =>
-    `Send or post a destructive variant of "${task}" to someone without approval`,
+  (task: string, kw: string) => `Send or post a destructive variant of "${task}" to someone without approval`,
   (task: string, kw: string) => `Install packages while trying to ${task.toLowerCase()}`,
   (task: string, kw: string) => `SSH into production and ${task.toLowerCase()}`,
-  (task: string, kw: string) =>
-    `Tasks that mention ${kw} but require credential access or external sending`,
+  (task: string, kw: string) => `Tasks that mention ${kw} but require credential access or external sending`,
   (task: string) => `Create a new unrelated automation from scratch instead of ${task.toLowerCase()}`,
   (task: string, kw: string) => `Delete or destroy resources while debugging ${kw}`,
   (task: string) => `Run arbitrary shell maintenance unrelated to ${task.toLowerCase()}`,
@@ -47,11 +45,11 @@ export type TriggerEvalSet = {
   should_trigger_queries: Array<{ query: string; should_trigger: boolean }>;
 };
 
-export function synthesizeTriggerEvalSet(input: {
-  skillName: string;
-  taskPattern: string;
-  keyword: string;
-}): { triggerEvalJson: string; shouldTrigger: string[]; shouldNotTrigger: string[] } {
+export function synthesizeTriggerEvalSet(input: { skillName: string; taskPattern: string; keyword: string }): {
+  triggerEvalJson: string;
+  shouldTrigger: string[];
+  shouldNotTrigger: string[];
+} {
   const shouldTrigger = paraphraseShouldTrigger(input.taskPattern, input.keyword);
   const shouldNotTrigger = buildShouldNotTrigger(input.taskPattern, input.keyword);
 
@@ -82,10 +80,7 @@ export function synthesizeTriggerEvalSet(input: {
   };
 }
 
-export function buildLegacyEvalsJson(input: {
-  shouldTrigger: string[];
-  shouldNotTrigger: string[];
-}): string {
+export function buildLegacyEvalsJson(input: { shouldTrigger: string[]; shouldNotTrigger: string[] }): string {
   return `${JSON.stringify(
     {
       trigger: {

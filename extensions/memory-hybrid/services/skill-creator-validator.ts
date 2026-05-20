@@ -39,7 +39,9 @@ export function quickValidateSkillMarkdown(skillMd: string): SkillCreatorValidat
   if (!fmMatch) {
     return {
       valid: false,
-      violations: [{ rule: "frontmatter-missing", message: "SKILL.md must start with a YAML frontmatter block (--- ... ---)" }],
+      violations: [
+        { rule: "frontmatter-missing", message: "SKILL.md must start with a YAML frontmatter block (--- ... ---)" },
+      ],
     };
   }
   const frontmatter = fmMatch[1];

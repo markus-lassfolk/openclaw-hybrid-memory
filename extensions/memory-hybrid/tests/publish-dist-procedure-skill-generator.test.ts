@@ -55,7 +55,7 @@ describe.skipIf(!distExists)("publish dist procedure-skill-generator", () => {
 
     if (sqliteAvailable) {
       const genMod = await import(pathToFileURL(join(distDir, "services", "procedure-skill-generator.js")).href);
-      const factsMod = await import(pathToFileURL(join(distDir, "backends", "facts-db.js")).href);
+      const factsMod = await import(pathToFileURL(join(distDir, "backends", "facts-db", "facts-db-layer3.js")).href);
       expect(typeof genMod.generateAutoSkills).toBe("function");
       expect(typeof factsMod.FactsDB).toBe("function");
     }
@@ -98,7 +98,7 @@ category: procedure
   });
 
   it.skipIf(!sqliteAvailable)("dist E2E: bounded procedure drafts Skill Creator-style skill", async () => {
-    const { FactsDB } = await import(pathToFileURL(join(distDir, "backends", "facts-db.js")).href);
+    const { FactsDB } = await import(pathToFileURL(join(distDir, "backends", "facts-db", "facts-db-layer3.js")).href);
     const { generateAutoSkills } = await import(
       pathToFileURL(join(distDir, "services", "procedure-skill-generator.js")).href
     );
@@ -150,7 +150,7 @@ category: procedure
   });
 
   it.skipIf(!sqliteAvailable)("dist E2E: noisy trace is deferred without SKILL.md", async () => {
-    const { FactsDB } = await import(pathToFileURL(join(distDir, "backends", "facts-db.js")).href);
+    const { FactsDB } = await import(pathToFileURL(join(distDir, "backends", "facts-db", "facts-db-layer3.js")).href);
     const { generateAutoSkills } = await import(
       pathToFileURL(join(distDir, "services", "procedure-skill-generator.js")).href
     );

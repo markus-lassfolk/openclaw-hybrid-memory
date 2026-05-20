@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  MAX_SKILL_FILE_BYTES,
-  MAX_SKILL_FILE_BYTES_SAFE,
-} from "../config/skill-size-limits.js";
+import { MAX_SKILL_FILE_BYTES, MAX_SKILL_FILE_BYTES_SAFE } from "../config/skill-size-limits.js";
 import { SkillValidator } from "../services/skill-validator.js";
 import { utf8ByteLength } from "../config/skill-size-limits.js";
 
@@ -21,5 +18,4 @@ describe("skill size limits", () => {
     expect(result.valid).toBe(false);
     expect(result.violations.some((v) => v.includes("bytes"))).toBe(true);
   });
-
 });
