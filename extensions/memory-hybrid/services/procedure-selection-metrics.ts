@@ -76,8 +76,14 @@ export function isProcedureTooObvious(recipe: unknown): boolean {
           ? String((s.args as Record<string, unknown>).command)
           : "";
     if (cmd && OBVIOUS_COMMANDS.test(cmd.trim())) return true;
+    if (!cmd || isTrivialSummary(cmd.trim(), only)) return true;
   }
-  return recipe.length === 1;
+  return false;
+}
+
+function isTrivialSummary(summary: string, tool: string): boolean {
+  const lower = summary.toLowerCase();
+  return lower === tool || lower === `${tool} file` || (lower.startsWith(`${tool} `) && lower.split(/\s+/).length <= 2);
 }
 
 export function reusabilityFromSessions(sourceSessionCount: number): number {

@@ -2,29 +2,27 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
+import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-import { MAX_SKILL_FILE_BYTES } from "../config/skill-size-limits.js";
-import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
-import { utf8ByteLength } from "../config/skill-size-limits.js";
+import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
-import { readFileSync, readdirSync } from "node:fs";
+import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
 import {
+  createProcedurePromotionDecision,
+  createProcedurePromotionItem,
+  evaluateProcedureForPromotion,
   PROCEDURE_PROMOTION_POLICY_VERSION,
   type ProcedurePromotionDuplicateCandidate,
   type ProcedurePromotionEvidence,
   type ProcedurePromotionPolicy,
-  createProcedurePromotionDecision,
-  createProcedurePromotionItem,
-  evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
 } from "./procedure-promotion-policy.js";
-import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
 import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
 import { toGerundSkillName } from "./skill-name-validator.js";
 
