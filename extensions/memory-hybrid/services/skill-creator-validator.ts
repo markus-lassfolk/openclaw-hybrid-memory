@@ -10,6 +10,7 @@
 
 import { MAX_SKILL_DESCRIPTION_CHARS } from "../config/skill-size-limits.js";
 import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
+import { stripLeadingHtmlComments } from "../utils/text.js";
 
 const MAX_SKILL_NAME_LENGTH = 64;
 const RESERVED_NAME_WORDS = /\b(?:anthropic|claude)\b/i;
@@ -35,7 +36,8 @@ export type SkillCreatorValidationResult = {
 /** Quick-validate a complete `SKILL.md` string (frontmatter + body) per Skill Creator rules. */
 export function quickValidateSkillMarkdown(skillMd: string): SkillCreatorValidationResult {
   const violations: SkillCreatorViolation[] = [];
-  const fmMatch = skillMd.match(/^---\n([\s\S]*?)\n---/);
+  const stripped = stripLeadingHtmlComments(skillMd);
+  const fmMatch = stripped.match(/^---\n([\s\S]*?)\n---/);
   if (!fmMatch) {
     return {
       valid: false,
@@ -102,7 +104,7 @@ export function quickValidateSkillMarkdown(skillMd: string): SkillCreatorValidat
     }
   }
 
-  const body = skillMd.slice(fmMatch[0].length);
+  const body = stripped.slice(fmMatch[0].length);
   const bodyLines = body.split(/\r?\n/).length;
   if (bodyLines > 500) {
     violations.push({

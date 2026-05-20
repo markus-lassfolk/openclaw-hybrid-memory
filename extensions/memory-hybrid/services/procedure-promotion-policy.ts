@@ -1456,6 +1456,8 @@ function isDuplicateSkill(
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;
       if (content.includes(`name: ${gerundName}`) || content.includes(`name: "${gerundName}"`)) return true;
+      // Pre-v3 generated skills may use the slug (e.g., "check-foo") instead of the gerund form ("checking-foo").
+      if (content.includes(`name: ${slug}`) || content.includes(`name: "${slug}"`)) return true;
       const taskContent = extractTaskContentFromSkill(content);
       const contentWords = significantWords(taskContent);
       const overlap = [...taskWords].filter((w) => contentWords.has(w)).length;
