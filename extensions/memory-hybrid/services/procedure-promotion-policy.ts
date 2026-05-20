@@ -705,34 +705,6 @@ function finalizeProcedureSkillDraft(
 ): GeneratedProcedureSkillDraft {
   const proc = item.procedure;
   const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
-  const workflow = extractWorkflowSectionFromSkill(draft.skillMd);
-  const actionability = lintWorkflowActionability(workflow, proc.taskPattern);
-  if (!actionability.actionable) {
-    gates.push(
-      defer("insufficient_actionable_workflow", actionability.reasons.join("; ") || "workflow not actionable"),
-    );
-    return draft;
-  }
-
-  const evalsPayload = JSON.parse(draft.evalsJson) as {
-    trigger?: { shouldTrigger?: string[]; shouldNotTrigger?: string[] };
-  };
-  const evalResult = runProcedureSkillEval({
-    skillMd: draft.skillMd,
-    recipeJson: draft.recipeJson,
-    taskPattern: proc.taskPattern,
-    shouldTrigger: evalsPayload.trigger?.shouldTrigger ?? [proc.taskPattern],
-    shouldNotTrigger: evalsPayload.trigger?.shouldNotTrigger ?? [],
-    historicalPrompts: draft.historicalPrompts,
-    baselineDescriptions: draft.baselineDescriptions,
-  });
-  draft.evalsResultsJson = formatEvalResultsJson(evalResult);
-  if (evalResult.triggerEval === "failed") {
-    gates.push(defer("trigger_eval_failed", "trigger precision eval failed"));
-  }
-  if (evalResult.functionalEval === "failed") {
-    gates.push(defer("functional_eval_failed", "functional usefulness eval failed"));
-  }
 
   let skillMd = draft.skillMd;
   const shrink = shrinkSkillMd(skillMd, MAX_SKILL_FILE_BYTES_SAFE);
@@ -769,6 +741,35 @@ function finalizeProcedureSkillDraft(
     );
   }
   draft.skillMd = skillMd;
+
+  const workflow = extractWorkflowSectionFromSkill(draft.skillMd);
+  const actionability = lintWorkflowActionability(workflow, proc.taskPattern);
+  if (!actionability.actionable) {
+    gates.push(
+      defer("insufficient_actionable_workflow", actionability.reasons.join("; ") || "workflow not actionable"),
+    );
+    return draft;
+  }
+
+  const evalsPayload = JSON.parse(draft.evalsJson) as {
+    trigger?: { shouldTrigger?: string[]; shouldNotTrigger?: string[] };
+  };
+  const evalResult = runProcedureSkillEval({
+    skillMd: draft.skillMd,
+    recipeJson: draft.recipeJson,
+    taskPattern: proc.taskPattern,
+    shouldTrigger: evalsPayload.trigger?.shouldTrigger ?? [proc.taskPattern],
+    shouldNotTrigger: evalsPayload.trigger?.shouldNotTrigger ?? [],
+    historicalPrompts: draft.historicalPrompts,
+    baselineDescriptions: draft.baselineDescriptions,
+  });
+  draft.evalsResultsJson = formatEvalResultsJson(evalResult);
+  if (evalResult.triggerEval === "failed") {
+    gates.push(defer("trigger_eval_failed", "trigger precision eval failed"));
+  }
+  if (evalResult.functionalEval === "failed") {
+    gates.push(defer("functional_eval_failed", "functional usefulness eval failed"));
+  }
 
   const validator = new SkillValidator();
   const staticResult = validator.validate(draft.skillMd);
