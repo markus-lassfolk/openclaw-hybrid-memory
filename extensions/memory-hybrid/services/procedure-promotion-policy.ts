@@ -509,9 +509,10 @@ export function evaluateProcedureForPromotion(
       ),
     ).toFixed(3),
   );
+  const relatedIds = options.relatedProcedureIds ?? [];
   const metadata: ProcedurePromotionVerification = {
     skill: finalDraft?.slug ?? resolvedSkillSlug,
-    sourceProcedureIds: [proc.id],
+    sourceProcedureIds: relatedIds.length > 0 ? [proc.id, ...relatedIds] : [proc.id],
     sourceVersionIds: evidenceSummary.sourceVersionIds,
     sourceSessionIds: evidenceSummary.sourceSessionIds,
     sourceEpisodeIds: evidenceSummary.sourceEpisodeIds,
@@ -526,7 +527,7 @@ export function evaluateProcedureForPromotion(
     riskLevel,
     candidateScore: candidateScoring.score,
     candidateScoreBreakdown: candidateScoring.breakdown,
-    duplicateHandling: similarSkillExists ? "merge" : "none",
+    duplicateHandling: relatedIds.length > 0 ? "merge" : similarSkillExists ? "merge" : "none",
     validatorScore,
     promotionDecision: eligible
       ? policy === "auto-safe"
@@ -1414,7 +1415,7 @@ function isDuplicateSkill(
       if (entry === slug) return true;
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;
-      if (content.includes(`name: ${slug}`)) return true;
+      if (content.includes(`name: ${slug}`) || content.includes(`name: "${slug}"`)) return true;
       const taskContent = extractTaskContentFromSkill(content);
       const contentWords = significantWords(taskContent);
       const overlap = [...taskWords].filter((w) => contentWords.has(w)).length;

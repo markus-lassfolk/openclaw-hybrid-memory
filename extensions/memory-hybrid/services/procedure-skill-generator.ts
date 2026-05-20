@@ -150,6 +150,8 @@ function rebaseDraftSlug(
     verificationJson: string;
     evalsJson: string;
     proposalMetadataJson: string;
+    triggerEvalJson?: string;
+    referenceTelemetryMd?: string | null;
   },
   resolvedSlug: string,
   generatedSkillPath: string,
@@ -159,6 +161,8 @@ function rebaseDraftSlug(
   verificationJson: string;
   evalsJson: string;
   proposalMetadataJson: string;
+  triggerEvalJson?: string;
+  referenceTelemetryMd?: string | null;
 } {
   const verification = JSON.parse(draft.verificationJson) as {
     skill?: unknown;
@@ -186,11 +190,30 @@ function rebaseDraftSlug(
     .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`)
     .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
 
+  let triggerEvalJson = draft.triggerEvalJson;
+  if (triggerEvalJson && originalSlug !== resolvedSlug) {
+    const triggerEval = JSON.parse(triggerEvalJson) as { skill_name?: unknown };
+    if (triggerEval.skill_name === originalSlug) {
+      triggerEval.skill_name = resolvedSlug;
+      triggerEvalJson = `${JSON.stringify(triggerEval, null, 2)}\n`;
+    }
+  }
+
+  let referenceTelemetryMd = draft.referenceTelemetryMd;
+  if (referenceTelemetryMd && originalSlug !== resolvedSlug) {
+    referenceTelemetryMd = referenceTelemetryMd.replace(
+      new RegExp(escapeRegExp(originalTelemetryCommand), "g"),
+      newTelemetryCommand,
+    );
+  }
+
   return {
     ...draft,
     skillMd,
     verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
     proposalMetadataJson: `${JSON.stringify(proposalMetadata, null, 2)}\n`,
+    triggerEvalJson,
+    referenceTelemetryMd,
   };
 }
 
