@@ -26,6 +26,7 @@ import {
 } from "./procedure-promotion-policy.js";
 import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
 import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
+import { toGerundSkillName } from "./skill-name-validator.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 const EVIDENCE_STOP_WORDS = new Set(["with", "from", "that", "this", "workflow", "procedure", "report"]);
@@ -174,27 +175,31 @@ function rebaseDraftSlug(
   };
   const originalSlug =
     typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
-  verification.skill = resolvedSlug;
+  const resolvedSkillName = toGerundSkillName(resolvedSlug);
+  verification.skill = resolvedSkillName;
   verification.generatedSkillPath = generatedSkillPath;
   proposalMetadata.generated_skill_path = generatedSkillPath;
-  verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillName}`;
 
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
   // its raw slug form (e.g. "# my-skill") so that non-standard headings are also
   // rebased correctly after a slug collision.
   const h1Pattern = new RegExp(`^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`, "m");
   const originalTelemetryCommand = `openclaw hybrid-mem skills record ${originalSlug}`;
-  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSkillName}`;
   const skillMd = draft.skillMd
-    .replace(new RegExp(`^name: (?:"${escapeRegExp(originalSlug)}"|${escapeRegExp(originalSlug)})$`, "m"), `name: "${resolvedSlug}"`)
-    .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`)
+    .replace(
+      new RegExp(`^name: (?:"${escapeRegExp(originalSlug)}"|${escapeRegExp(originalSlug)})$`, "m"),
+      `name: "${resolvedSkillName}"`,
+    )
+    .replace(h1Pattern, `# ${titleCase(resolvedSkillName)}`)
     .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
 
   let triggerEvalJson = draft.triggerEvalJson;
   if (triggerEvalJson && originalSlug !== resolvedSlug) {
     const triggerEval = JSON.parse(triggerEvalJson) as { skill_name?: unknown };
     if (triggerEval.skill_name === originalSlug) {
-      triggerEval.skill_name = resolvedSlug;
+      triggerEval.skill_name = resolvedSkillName;
       triggerEvalJson = `${JSON.stringify(triggerEval, null, 2)}\n`;
     }
   }
@@ -701,7 +706,12 @@ function collectHistoricalSessionPrompts(
   const prompts = new Set<string>();
   prompts.add(proc.taskPattern);
   for (const req of evidence.manualWorkflowRequests ?? []) {
-    if (req.sourceSession) prompts.add(proc.taskPattern);
+    if (req.sourceSession) {
+      const fact = factsDb.getById(req.id);
+      if (fact?.text.trim()) {
+        prompts.add(fact.text.trim());
+      }
+    }
   }
   const episodes = factsDb.searchEpisodes({
     procedureId: proc.id,
