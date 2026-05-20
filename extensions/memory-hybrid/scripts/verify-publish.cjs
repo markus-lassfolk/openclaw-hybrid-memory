@@ -344,5 +344,46 @@ if (needsBenchmark && !filesEntries.has("benchmark")) {
   console.log('OK: "benchmark" is listed in package.json files (required by cli)');
 }
 
+// 6. Dist import / procedure-skill-generator smoke (issues #1544, #1548)
+const distProcGen = path.join(distDir, "services", "procedure-skill-generator.js");
+if (!fs.existsSync(distProcGen)) {
+  console.error("FAIL: dist/services/procedure-skill-generator.js missing after build");
+  failed = true;
+} else {
+  const procGenSrc = fs.readFileSync(distProcGen, "utf8");
+  if (!procGenSrc.includes("evaluateProcedureForPromotion")) {
+    console.error("FAIL: dist procedure-skill-generator missing evaluateProcedureForPromotion (stale dist?)");
+    failed = true;
+  } else if (/Auto-generated procedure|## Steps \(last time this worked\)/.test(procGenSrc)) {
+    console.error("FAIL: dist procedure-skill-generator contains legacy raw-dump template");
+    failed = true;
+  } else {
+    console.log("OK: dist procedure-skill-generator fingerprint");
+  }
+  try {
+    const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+    const nodeMajor = Number(String(process.versions.node).split(".")[0] ?? "0");
+    const testFiles = [
+      "tests/skill-frontmatter.test.ts",
+      "tests/publish-dist-procedure-skill-generator.test.ts",
+    ];
+    if (nodeMajor >= 22) {
+      testFiles.push("tests/skill-size-limits.test.ts");
+    } else {
+      console.log("SKIP: skill-size-limits vitest requires Node >= 22 (node:sqlite)");
+    }
+    execFileSync(npmCmd, ["test", "--", ...testFiles], {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, CI: "1" },
+    });
+    console.log("OK: publish-dist vitest smoke passed");
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("FAIL: publish-dist vitest smoke:", message);
+    failed = true;
+  }
+}
+
 if (failed) process.exit(1);
 console.log("verify-publish: all checks passed");

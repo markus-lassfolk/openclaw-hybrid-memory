@@ -16,9 +16,41 @@ import {
   redactAutopilotValue,
 } from "./pending-autopilot/index.js";
 import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
+import {
+  MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_FILE_BYTES_SAFE,
+  utf8ByteLength,
+} from "../config/skill-size-limits.js";
+import { formatEvalResultsJson, runProcedureSkillEval } from "./procedure-skill-eval.js";
+import { summarizeRecipeForSidecar } from "./procedure-skill-recipe.js";
+import { applyProgressiveDisclosure, shrinkSkillMd } from "./procedure-skill-shrink.js";
+import {
+  formatProcedureSkillFrontmatter,
+  validateSkillCreatorFrontmatterKeys,
+} from "./skill-frontmatter.js";
+import { buildActionableWorkflow, lintWorkflowActionability } from "./procedure-skill-workflow.js";
 import { PEM_PRIVATE_KEY_PATTERN, PRIVATE_IP_PATTERN, SkillValidator } from "./skill-validator.js";
+import {
+  isLowConcreteness,
+  isProcedureTooObvious,
+  measureConcreteness,
+  reusabilityFromSessions,
+} from "./procedure-selection-metrics.js";
+import { toGerundSkillName, validateSkillName } from "./skill-name-validator.js";
+import { buildPushySkillDescription } from "./skill-description-builder.js";
+import {
+  buildLegacyEvalsJson,
+  synthesizeTriggerEvalSet,
+} from "./skill-eval-synthesizer.js";
+import { buildSkillExamplesSection } from "./skill-examples-builder.js";
+import { maybeBundleReplayScript } from "./skill-script-bundler.js";
+import {
+  addTableOfContentsIfLong,
+  buildTelemetryReferenceMd,
+  lintNestedReferences,
+} from "./skill-reference-sidecar.js";
 
-export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v2";
+export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v3";
 
 export const PROCEDURE_PROMOTION_POLICIES = ["draft-only", "manual", "auto-safe"] as const;
 export type ProcedurePromotionPolicy = (typeof PROCEDURE_PROMOTION_POLICIES)[number];
@@ -47,8 +79,17 @@ export const PROCEDURE_PROMOTION_REASONS = [
   "skill_safety_validation_failed",
   "trigger_eval_failed",
   "functional_eval_failed",
+  "insufficient_actionable_workflow",
+  "unsafe_trace_content",
+  "skill_exceeds_openclaw_limit",
+  "recipe_too_large",
+  "skill_creator_validation_failed",
   "unverified_skill_not_enabled",
   "policy_requires_human_approval",
+  "procedure_too_obvious",
+  "low_concreteness",
+  "cluster_merged_into",
+  "insufficient_auto_safe_evidence",
 ] as const;
 export type ProcedurePromotionReason = (typeof PROCEDURE_PROMOTION_REASONS)[number];
 
@@ -105,6 +146,8 @@ export interface ProcedureCandidateScoreBreakdown {
   failureSeverity: number;
   userSignal: number;
   generality: number;
+  concreteness: number;
+  reusability: number;
   risk: number;
   activationSpecificity: number;
   duplicatePenalty: number;
@@ -133,6 +176,15 @@ export interface GeneratedProcedureSkillDraft {
   evalsJson: string;
   proposalMetadataJson: string;
   redactionCount: number;
+  /** Optional progressive-disclosure sidecar. */
+  referenceWorkflowMd?: string | null;
+  referenceTelemetryMd?: string | null;
+  triggerEvalJson?: string;
+  replayScript?: string | null;
+  evalsResultsJson?: string;
+  generationDiagnostics?: Record<string, unknown>;
+  historicalPrompts?: string[];
+  baselineDescriptions?: string[];
 }
 
 export interface ProcedurePromotionEvaluation {
@@ -206,6 +258,14 @@ export interface ProcedurePromotionPolicyOptions {
   contextSpecificTaskPatterns?: readonly string[];
   /** When true, re-read every SKILL.md from disk for duplicate detection (ignore mtime cache). */
   bypassDuplicateSkillCache?: boolean;
+  /** Procedure ids deferred because a cluster representative was chosen. */
+  clusterDeferMap?: ReadonlyMap<string, { representativeId: string; slug: string }>;
+  /** Merged cluster members recorded in verification.json. */
+  relatedProcedureIds?: string[];
+  /** Historical user prompts for replay functional eval. */
+  historicalPrompts?: string[];
+  /** Existing skill descriptions for baseline comparison. */
+  baselineDescriptions?: string[];
 }
 
 const DEFAULT_MIN_DISTINCT_CONTEXTS = 2;
@@ -334,6 +394,16 @@ export function evaluateProcedureForPromotion(
   const recipeText = JSON.stringify(recipe);
   const combinedText = `${proc.taskPattern}\n${recipeText}`;
 
+  const clusterMerge = options.clusterDeferMap?.get(proc.id);
+  if (clusterMerge) {
+    gates.push(
+      defer(
+        "cluster_merged_into",
+        `near-duplicate procedure merged into ${clusterMerge.slug} (${clusterMerge.representativeId})`,
+      ),
+    );
+  }
+
   if (proc.procedureType !== "positive")
     gates.push(reject("negative_or_avoidance_procedure", "procedure is not positive"));
   if (evidenceSummary.successCount < requiredSuccessCount)
@@ -383,12 +453,35 @@ export function evaluateProcedureForPromotion(
   if (similarSkillExists)
     gates.push(defer("duplicate_existing_skill", "existing or earlier same-run skill appears to cover this trigger"));
 
+  if (isProcedureTooObvious(recipe))
+    gates.push(defer("procedure_too_obvious", "recipe is a single obvious command Claude already knows"));
+  if (isLowConcreteness(proc.taskPattern, recipe))
+    gates.push(defer("low_concreteness", "task/recipe lacks domain nouns or tool diversity"));
+
+  const manualRequestCount = evidenceSummary.sourceManualRequestIds.length;
+  if (
+    policy === "auto-safe" &&
+    manualRequestCount < 1 &&
+    evidenceSummary.sourceSessionCount < 3
+  ) {
+    gates.push(
+      defer(
+        "insufficient_auto_safe_evidence",
+        "auto-safe requires ≥1 manual workflow request or ≥3 distinct sessions",
+      ),
+    );
+  }
+
+  const concreteness = measureConcreteness(proc.taskPattern, recipe);
+  const reusability = reusabilityFromSessions(evidenceSummary.sourceSessionCount);
   const candidateScoring = scoreProcedureCandidate({
     successCount: evidenceSummary.successCount,
     successRate: evidenceSummary.successRate,
     failureSeverity: evidenceSummary.failureSeverity,
     userSignal: evidenceSummary.userSignal,
     generality: Math.min(1, evidenceSummary.sourceSessionCount / 3),
+    concreteness: concreteness.score,
+    reusability,
     riskLevel,
     activationSpecificity: hasTaskBoundary && !contextSpecific ? 1 : 0.4,
     similarSkillExists,
@@ -397,22 +490,9 @@ export function evaluateProcedureForPromotion(
   gates.push(...scanSafety(combinedText));
 
   const initialGates = gates.length;
-  const draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
+  let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   if (draft) {
-    const validator = new SkillValidator();
-    const staticResult = validator.validate(draft.skillMd);
-    if (!staticResult.valid) gates.push(fail("skill_static_validation_failed", staticResult.violations.join("; ")));
-    const draftSafety = scanSafety(`${draft.skillMd}\n${draft.recipeJson}`);
-    if (draftSafety.length > 0)
-      gates.push(
-        ...draftSafety.map((g) => ({
-          ...g,
-          reason:
-            g.reason === "credential_risk"
-              ? "credential_risk"
-              : ("skill_safety_validation_failed" as ProcedurePromotionReason),
-        })),
-      );
+    draft = finalizeProcedureSkillDraft(draft, item, gates);
   }
 
   const eligible = gates.length === 0;
@@ -430,7 +510,7 @@ export function evaluateProcedureForPromotion(
     ).toFixed(3),
   );
   const metadata: ProcedurePromotionVerification = {
-    skill: resolvedSkillSlug,
+    skill: finalDraft?.slug ?? resolvedSkillSlug,
     sourceProcedureIds: [proc.id],
     sourceVersionIds: evidenceSummary.sourceVersionIds,
     sourceSessionIds: evidenceSummary.sourceSessionIds,
@@ -482,10 +562,12 @@ export function evaluateProcedureForPromotion(
     triggerEval: gates.some((g) => g.reason === "trigger_eval_failed") ? "failed" : eligible ? "passed" : "passed",
     functionalEval: gates.some((g) => g.reason === "functional_eval_failed") ? "failed" : "passed",
     baselineComparison: {
-      withSkillPassed: eligible,
+      withSkillPassed:
+        eligible &&
+        !gates.some((g) => g.reason === "functional_eval_failed" || g.reason === "trigger_eval_failed"),
       withoutSkillPassed: false,
       improvement: eligible
-        ? "deterministic scaffold requires ordered workflow, validation, failure handling, and unsafe-action checks that the raw procedure does not enforce"
+        ? "deterministic evals in evals/results.json; scaffold adds workflow, validation, and safety gates"
         : "not evaluated because promotion gates did not pass",
     },
     enabled: false,
@@ -497,11 +579,11 @@ export function evaluateProcedureForPromotion(
   };
   if (finalDraft) {
     finalDraft.verificationJson = `${JSON.stringify(redactAutopilotValue(metadata), null, 2)}\n`;
-    finalDraft.proposalMetadataJson = `${JSON.stringify(
-      redactAutopilotValue(createProposalMetadata(metadata, evidenceSummary)),
-      null,
-      2,
-    )}\n`;
+    const proposalMeta = createProposalMetadata(metadata, evidenceSummary);
+    if (finalDraft.generationDiagnostics) {
+      proposalMeta.generation = finalDraft.generationDiagnostics;
+    }
+    finalDraft.proposalMetadataJson = `${JSON.stringify(redactAutopilotValue(proposalMeta), null, 2)}\n`;
   }
   return { eligible, gates, draft: finalDraft, metadata };
 }
@@ -620,6 +702,107 @@ export class ProcedurePromotionAdapter implements PendingQueueAdapter<ProcedureP
   }
 }
 
+function finalizeProcedureSkillDraft(
+  draft: GeneratedProcedureSkillDraft,
+  item: ProcedurePromotionItem,
+  gates: ProcedurePromotionGateResult[],
+): GeneratedProcedureSkillDraft {
+  const proc = item.procedure;
+  const recipe = item.payload.recipe;
+  const workflow = extractWorkflowSectionFromSkill(draft.skillMd);
+  const actionability = lintWorkflowActionability(workflow, proc.taskPattern);
+  if (!actionability.actionable) {
+    gates.push(
+      defer("insufficient_actionable_workflow", actionability.reasons.join("; ") || "workflow not actionable"),
+    );
+    return draft;
+  }
+
+  const evalsPayload = JSON.parse(draft.evalsJson) as {
+    trigger?: { shouldTrigger?: string[]; shouldNotTrigger?: string[] };
+  };
+  const evalResult = runProcedureSkillEval({
+    skillMd: draft.skillMd,
+    recipeJson: draft.recipeJson,
+    taskPattern: proc.taskPattern,
+    shouldTrigger: evalsPayload.trigger?.shouldTrigger ?? [proc.taskPattern],
+    shouldNotTrigger: evalsPayload.trigger?.shouldNotTrigger ?? [],
+    historicalPrompts: draft.historicalPrompts,
+    baselineDescriptions: draft.baselineDescriptions,
+  });
+  draft.evalsResultsJson = formatEvalResultsJson(evalResult);
+  if (evalResult.triggerEval === "failed") {
+    gates.push(defer("trigger_eval_failed", "trigger precision eval failed"));
+  }
+  if (evalResult.functionalEval === "failed") {
+    gates.push(defer("functional_eval_failed", "functional usefulness eval failed"));
+  }
+
+  let skillMd = draft.skillMd;
+  const shrink = shrinkSkillMd(skillMd, MAX_SKILL_FILE_BYTES_SAFE);
+  skillMd = shrink.skillMd;
+  const disclosure = applyProgressiveDisclosure(skillMd, recipe, proc.taskPattern, MAX_SKILL_FILE_BYTES_SAFE);
+  skillMd = disclosure.skillMd;
+  draft.referenceWorkflowMd = disclosure.referenceWorkflowMd
+    ? addTableOfContentsIfLong(disclosure.referenceWorkflowMd)
+    : disclosure.referenceWorkflowMd;
+  if (draft.referenceTelemetryMd) {
+    draft.referenceTelemetryMd = addTableOfContentsIfLong(draft.referenceTelemetryMd);
+  }
+  const nestedRefViolations = lintNestedReferences(skillMd);
+  if (nestedRefViolations.length > 0) {
+    gates.push(defer("skill_static_validation_failed", nestedRefViolations.join("; ")));
+  }
+  draft.generationDiagnostics = {
+    originalBytes: shrink.diagnostics.originalBytes,
+    finalBytes: disclosure.diagnostics.finalBytes,
+    shrinkStages: [...shrink.diagnostics.shrinkStages, ...disclosure.diagnostics.shrinkStages],
+    omittedSections: disclosure.diagnostics.omittedSections,
+  };
+
+  if (utf8ByteLength(skillMd) > MAX_SKILL_FILE_BYTES) {
+    gates.push(fail("skill_exceeds_openclaw_limit", `SKILL.md ${utf8ByteLength(skillMd)} bytes > ${MAX_SKILL_FILE_BYTES}`));
+  } else if (utf8ByteLength(skillMd) > MAX_SKILL_FILE_BYTES_SAFE) {
+    gates.push(defer("skill_exceeds_openclaw_limit", `SKILL.md exceeds safe write target ${MAX_SKILL_FILE_BYTES_SAFE}`));
+  }
+  draft.skillMd = skillMd;
+
+  const validator = new SkillValidator();
+  const staticResult = validator.validate(draft.skillMd);
+  if (!staticResult.valid) {
+    gates.push(fail("skill_static_validation_failed", staticResult.violations.join("; ")));
+  }
+  const draftSafety = scanSafety(`${draft.skillMd}\n${draft.recipeJson}`);
+  if (draftSafety.length > 0) {
+    gates.push(
+      ...draftSafety.map((g) => ({
+        ...g,
+        reason:
+          g.reason === "credential_risk"
+            ? "credential_risk"
+            : g.reason === "unsafe_side_effect"
+              ? "unsafe_trace_content"
+              : ("skill_safety_validation_failed" as ProcedurePromotionReason),
+      })),
+    );
+  }
+
+  const fmMatch = draft.skillMd.match(/^---\n([\s\S]*?)\n---/);
+  if (fmMatch) {
+    const creatorViolations = validateSkillCreatorFrontmatterKeys(fmMatch[1]);
+    if (creatorViolations.length > 0) {
+      gates.push(fail("skill_creator_validation_failed", creatorViolations.join("; ")));
+    }
+  }
+
+  return draft;
+}
+
+function extractWorkflowSectionFromSkill(skillMd: string): string {
+  const match = skillMd.match(/## Workflow\n([\s\S]*?)(?=\n## |$)/);
+  return match?.[1]?.trim() ?? "";
+}
+
 function buildProcedureSkillDraft(
   item: ProcedurePromotionItem,
   policy: ProcedurePromotionPolicy,
@@ -629,112 +812,80 @@ function buildProcedureSkillDraft(
 ): GeneratedProcedureSkillDraft {
   const proc = item.procedure;
   const recipe = redactAutopilotValue(item.payload.recipe);
-  const recipeJson = `${JSON.stringify(recipe, null, 2)}\n`;
+  const summarized = summarizeRecipeForSidecar(recipe);
+  if (!summarized.withinCap) {
+    gates.push(defer("recipe_too_large", `recipe.json ${summarized.byteLength} bytes exceeds cap`));
+  }
+  const recipeJson = summarized.recipeJson;
   const redactedTask = redactAutopilotText(proc.taskPattern);
-  const workflow = Array.isArray(recipe)
-    ? recipe
-        .map((step, i) => {
-          const s = step && typeof step === "object" ? (step as Record<string, unknown>) : {};
-          const tool = typeof s.tool === "string" ? s.tool : "manual check";
-          const summary =
-            typeof s.summary === "string" ? s.summary : "follow the recorded safe step, then verify before continuing";
-          return `${i + 1}. Use \`${tool}\` only for the bounded task: ${redactAutopilotText(summary).redacted}.`;
-        })
-        .join("\n")
-    : "1. Reconstruct the workflow from recipe.json only after human review.";
-  const nearMiss = `Tasks that mention ${firstKeyword(
-    proc.taskPattern,
-  )} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
-  const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
+  const riskLevel = determineRiskLevel(item.procedure, recipe);
+  const workflow = buildActionableWorkflow(recipe, proc.taskPattern, riskLevel);
+  const keyword = firstKeyword(proc.taskPattern);
+  const skillName = toGerundSkillName(slug);
+  const nameViolations = validateSkillName(skillName);
+  if (nameViolations.length > 0) {
+    gates.push(fail("skill_creator_validation_failed", nameViolations.join("; ")));
+  }
+  const nearMiss = `Tasks that mention ${keyword} but require sending, destructive changes, credential access, or unrelated troubleshooting.`;
+  const telemetryCommand = `openclaw hybrid-mem skills record ${skillName}`;
   const telemetryRequestSummaryArg = shellQuote(redactedTask.redacted);
   const antiPatterns = buildAntiPatternsForProcedure(proc);
-  const skillMd = `---
-name: ${slug}
-description: Use when the user asks to ${redactedTask.redacted}. Trigger examples: "${
-    redactedTask.redacted
-  }", "run the validated ${firstKeyword(proc.taskPattern)} workflow". Do not use for destructive changes, external sends, credential access, or unrelated near-miss tasks.
-category: procedure
-provenance: procedure:${proc.id}
-generated_at: ${new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString().slice(0, 10)}
----
+  const generatedAt = new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString().slice(0, 10);
+  const description = buildPushySkillDescription({
+    taskPattern: redactedTask.redacted,
+    keyword,
+    recipe,
+  });
+  const frontmatter = formatProcedureSkillFrontmatter({
+    name: skillName,
+    description,
+    category: "procedure",
+    provenance: `procedure:${proc.id}`,
+    generatedAt,
+  });
+  const examplesSection = buildSkillExamplesSection({
+    taskPattern: redactedTask.redacted,
+    nearMiss,
+    recipe,
+  });
+  const replayScript = maybeBundleReplayScript(recipe);
+  const scriptHint = replayScript
+    ? "\nRun `scripts/replay.sh` to execute the validated workflow (deterministic replay).\n"
+    : "";
+  const antiPatternsBlock =
+    antiPatterns.trim() && !antiPatterns.includes("No recorded anti-patterns")
+      ? `\n## Anti-patterns\n${antiPatterns}\n`
+      : "";
+  const skillMd = `${frontmatter}
 
-# ${titleCase(slug)}
-
-## When to Activate
-Use this skill when the task clearly matches this validated procedure: **${redactedTask.redacted}**.
-
-Positive examples:
-- "${redactedTask.redacted}"
-- "Use the validated workflow for ${firstKeyword(proc.taskPattern)}."
-
-Near-miss examples that should not trigger:
-- "${nearMiss}"
-- "Create a new unrelated automation from scratch."
-
-## Scope
-This skill guides a bounded, repeatable workflow learned from procedural memory.
+# ${titleCase(skillName.replace(/-/g, " "))}
 
 ## Do Not Use When
-- Do not use for destructive shell/service/package operations.
-- Do not use for SSH, remote writes, credential retrieval, or external sending/posting unless a human explicitly approves.
-- Do not use when the user request is broader than the source procedure.
-- Defer to a more specific existing skill when triggers overlap.
-
-## Prerequisites
-- Source procedure id: \`${proc.id}\`.
-- Minimum success evidence: ${
-    options.validationThreshold
-  }; observed successes: ${proc.successCount}; failures: ${proc.failureCount}.
-- Generated as a draft/quarantined skill. It is not enabled by default.
+- Destructive shell/service/package operations without explicit approval.
+- SSH, remote writes, credential retrieval, or external sending/posting.
+- Requests broader than the validated workflow in \`recipe.json\`.
+- Near-miss tasks (see Examples).
 
 ## Workflow
 ${workflow}
-
-## Safe tool usage
-Use only the tools implied by the source recipe and only in dry-run/read-only ways unless the user explicitly approves the side effect. Redact secrets and private paths from all logs and summaries.
+${scriptHint}
 
 ## Verification
-- Confirm the expected output exists and matches the user's request.
-- Prefer objective checks such as file existence, JSON/schema validation, command exit status, or exact status text.
-- Stop and ask for review if validation is unavailable or ambiguous.
+- Confirm output matches the user request using objective checks (exit status, file exists, schema, status text).
+- If a step fails, stop and report the failed step; do not improvise side effects.
+- Operator telemetry: see \`references/telemetry.md\`.
 
-## Failure handling
-- If any step fails, stop rather than improvising a new side-effecting workflow.
-- Report the failed step, error, and safe rollback/disable guidance.
-- Record procedure feedback instead of silently retrying unsafe actions.
-
-## Rollback / disable guidance
-Leave this generated skill disabled until verification or human approval. To disable, remove it from the enabled skill path or keep it in quarantine/draft storage.
-
-## Telemetry
-- When this skill is selected, record the activation with \`${telemetryCommand} --decision selected --request-summary ${telemetryRequestSummaryArg} --outcome success\` (or \`failure\` / \`partial\` if the run did not fully succeed).
-- When this skill was considered but skipped, record a near-miss with \`${telemetryCommand} --decision skipped --request-summary ${telemetryRequestSummaryArg} --reason "near-miss summary"\`.
-- Capture the returned activation id so a later user correction can mark that exact run as a false-positive with \`openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"\`.
-
-## Anti-patterns / Known Failures
-${antiPatterns}
-
-## Examples
-- Good: "${redactedTask.redacted}" → follow the ordered workflow and validation gate.
-- Bad: "${nearMiss}" → do not use; ask for clarification or use another skill.
-
-## Related tools/skills
-- Related tool: \`memory_procedure_feedback\` (record failures/success so anti-patterns improve over time).
-- Related skill: Prefer a more specific existing skill if it matches the trigger more precisely.
-
-## Provenance
-- Source procedure id: \`${proc.id}\`
-- Success count: ${proc.successCount}
-- Failure count: ${proc.failureCount}
-- Source session/context count: ${item.payload.sourceSessionCount}
-- Last validated: ${proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : "unknown"}
-- Policy: ${policy} (${PROCEDURE_PROMOTION_POLICY_VERSION})
-- Input hash: ${item.inputHash}
-- Verification status: draft; static/safety/trigger/functional eval metadata in \`verification.json\` and \`evals/evals.json\`.
+${examplesSection}${antiPatternsBlock}
 `;
+  const relatedIds = options.relatedProcedureIds ?? [];
+  const triggerEval = synthesizeTriggerEvalSet({
+    skillName,
+    taskPattern: proc.taskPattern,
+    keyword,
+  });
   const verification: ProcedurePromotionVerification = {
-    skill: slug,
-    sourceProcedureIds: [proc.id],
+    skill: skillName,
+    sourceProcedureIds: [proc.id, ...relatedIds],
     sourceVersionIds: [],
     sourceSessionIds: [],
     sourceEpisodeIds: [],
@@ -746,7 +897,7 @@ ${antiPatterns}
     sourceSessionCount: item.payload.sourceSessionCount,
     sourceConfidence: proc.confidence,
     sourceSuccessRate: item.payload.successRate,
-    riskLevel: "low",
+    riskLevel,
     candidateScore: 0,
     candidateScoreBreakdown: {
       repeatCount: 0,
@@ -754,15 +905,17 @@ ${antiPatterns}
       failureSeverity: 0,
       userSignal: 0,
       generality: 0,
+      concreteness: 0,
+      reusability: 0,
       risk: 0,
       activationSpecificity: 0,
       duplicatePenalty: 1,
     },
-    duplicateHandling: "none",
+    duplicateHandling: relatedIds.length > 0 ? "merge" : "none",
     validatorScore: 0,
     promotionDecision: "drafted",
     rejectionReasons: gates.map((g) => g.reason),
-    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, slug)),
+    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, skillName)),
     policy,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
     inputHash: item.inputHash,
@@ -773,8 +926,7 @@ ${antiPatterns}
     baselineComparison: {
       withSkillPassed: true,
       withoutSkillPassed: false,
-      improvement:
-        "with-skill scaffold preserves validated steps, safety gates, and validation criteria absent from the raw procedure",
+      improvement: "pending replay eval in evals/results.json",
     },
     enabled: false,
     requiresHumanApproval: policy !== "auto-safe",
@@ -783,32 +935,46 @@ ${antiPatterns}
     falsePositiveCommandTemplate: 'openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"',
     lastVerifiedAt: new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
   };
-  const evals = {
-    trigger: {
-      shouldTrigger: [proc.taskPattern, `run the validated ${firstKeyword(proc.taskPattern)} workflow`],
-      shouldNotTrigger: [nearMiss, "perform an unrelated destructive maintenance task"],
-      collisionPolicy: "defer to a more specific existing skill when overlap is detected",
-      status: "passed",
-    },
-    functionalUsefulness: {
-      baseline: {
-        passed: false,
-        reason: "raw procedure lacks reusable trigger, safety, validation, and failure handling sections",
-      },
-      withSkill: {
-        passed: true,
-        reason: "generated draft supplies ordered workflow, validation gate, non-scope, and rollback guidance",
-      },
-    },
+  const evalsJson = buildLegacyEvalsJson({
+    shouldTrigger: triggerEval.shouldTrigger,
+    shouldNotTrigger: triggerEval.shouldNotTrigger,
+  });
+  const referenceTelemetryMd = buildTelemetryReferenceMd({
+    slug: skillName,
+    telemetryCommand,
+    telemetryRequestSummaryArg,
+  });
+  const verificationPayload = {
+    ...verification,
+    relatedProcedures: relatedIds,
+    riskLevel,
+    policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
+    inputHash: item.inputHash,
+    sourceProcedureId: proc.id,
+    successCount: proc.successCount,
+    failureCount: proc.failureCount,
+    lastValidated: proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : null,
   };
   return {
-    slug,
+    slug: skillName,
     skillMd,
     recipeJson,
-    verificationJson: `${JSON.stringify(redactAutopilotValue(verification), null, 2)}\n`,
-    evalsJson: `${JSON.stringify(redactAutopilotValue(evals), null, 2)}\n`,
-    proposalMetadataJson: "{}\n",
+    verificationJson: `${JSON.stringify(redactAutopilotValue(verificationPayload), null, 2)}\n`,
+    evalsJson,
+    triggerEvalJson: triggerEval.triggerEvalJson,
+    referenceTelemetryMd,
+    replayScript,
+    proposalMetadataJson: `${JSON.stringify(
+      redactAutopilotValue({
+        rollback: "Leave disabled until verification; remove from enabled path or keep in quarantine.",
+        telemetry_sidecar: "references/telemetry.md",
+      }),
+      null,
+      2,
+    )}\n`,
     redactionCount: redactedTask.redactionCount,
+    historicalPrompts: options.historicalPrompts,
+    baselineDescriptions: options.baselineDescriptions,
   };
 }
 
@@ -968,6 +1134,8 @@ function scoreProcedureCandidate(input: {
   failureSeverity: number;
   userSignal: number;
   generality: number;
+  concreteness: number;
+  reusability: number;
   riskLevel: "low" | "medium" | "high";
   activationSpecificity: number;
   similarSkillExists: boolean;
@@ -977,15 +1145,19 @@ function scoreProcedureCandidate(input: {
   const failureSeverity = Math.max(0, Math.min(1, input.failureSeverity));
   const userSignal = Math.max(0, Math.min(1, input.userSignal));
   const generality = Math.max(0, Math.min(1, input.generality));
+  const concreteness = Math.max(0, Math.min(1, input.concreteness));
+  const reusability = Math.max(0, Math.min(1, input.reusability));
   const riskMultiplier = input.riskLevel === "high" ? 0.35 : input.riskLevel === "medium" ? 0.65 : 1;
   const activationSpecificity = Math.max(0, Math.min(1, input.activationSpecificity));
   const duplicatePenalty = input.similarSkillExists ? 0.5 : 1;
   const baseScore =
-    repeatCount * 0.25 +
-    successRate * 0.3 +
-    (1 - failureSeverity) * 0.2 +
-    userSignal * 0.1 +
-    generality * 0.1 +
+    repeatCount * 0.2 +
+    successRate * 0.25 +
+    (1 - failureSeverity) * 0.15 +
+    userSignal * 0.12 +
+    generality * 0.08 +
+    concreteness * 0.1 +
+    reusability * 0.05 +
     activationSpecificity * 0.05;
   const rawScore = baseScore * riskMultiplier * duplicatePenalty;
   const score = Number(Math.max(0, Math.min(1, rawScore)).toFixed(3));
@@ -997,6 +1169,8 @@ function scoreProcedureCandidate(input: {
       failureSeverity: Number(failureSeverity.toFixed(3)),
       userSignal: Number(userSignal.toFixed(3)),
       generality: Number(generality.toFixed(3)),
+      concreteness: Number(concreteness.toFixed(3)),
+      reusability: Number(reusability.toFixed(3)),
       risk: Number(riskMultiplier.toFixed(3)),
       activationSpecificity: Number(activationSpecificity.toFixed(3)),
       duplicatePenalty: Number(duplicatePenalty.toFixed(3)),

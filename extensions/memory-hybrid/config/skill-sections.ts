@@ -52,6 +52,14 @@ export type SectionTaxonomyOverrides = Record<string, SectionDefinition[]>;
  */
 export const MAX_SKILL_LINES = 300;
 
+export {
+  MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_FILE_BYTES_SAFE,
+  MAX_RECIPE_JSON_BYTES,
+  MAX_WORKFLOW_STEPS_IN_SKILL,
+  MAX_STEP_SUMMARY_CHARS,
+} from "./skill-size-limits.js";
+
 // ---------------------------------------------------------------------------
 // Shared category frontmatter keys
 // ---------------------------------------------------------------------------

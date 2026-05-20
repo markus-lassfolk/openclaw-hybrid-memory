@@ -21,7 +21,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-<!-- Add changes here until the next version cut. -->
+### Added
+
+- **Auto-skill generation hardening** ([#1537](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1537)–[#1548](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1548)): shared OpenClaw-aligned size limits (`config/skill-size-limits.ts`), bounded `recipe.json` summarization, Skill Creator-compatible YAML frontmatter under `metadata`, actionable workflow synthesis, deterministic usefulness evals (`evals/results.json`), progressive disclosure via `references/workflow.md`, generation diagnostics in `proposal-metadata.json`, `openclaw hybrid-mem skills audit [--quarantine]`, and publish/dist smoke tests in `verify-publish.cjs`.
+- **Skill quality v2 (Anthropic Skill Creator alignment):** gerund `name` + pushy multi-paraphrase `description`, 8+8 `evals/trigger-eval.json`, replay-based functional eval, procedure clustering (`procedure-cluster.ts`), selection metrics (`procedure_too_obvious`, `low_concreteness`), risk-tiered workflows with checklists, concrete Examples, optional `scripts/replay.sh`, `references/telemetry.md`, and validator lint for Windows paths / nested references.
+
+### Changed
+
+- **Procedure promotion:** defers on `insufficient_actionable_workflow`, `recipe_too_large`, `skill_exceeds_openclaw_limit`, `trigger_eval_failed`, `functional_eval_failed`, and `skill_creator_validation_failed`; `SkillValidator` enforces UTF-8 byte budget and rejects legacy raw tool dumps.
+- **Generated `SKILL.md` shape:** ~6 agent-facing sections (telemetry/rollback/provenance moved to sidecars); policy version `procedure-promotion-policy-v3`.
 
 ---
 

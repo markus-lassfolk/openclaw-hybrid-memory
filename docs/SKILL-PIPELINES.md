@@ -120,11 +120,15 @@ into skills when they reach a confidence threshold.
 1. **Extract** — `procedure-extractor` processes session JSONL files and creates/updates rows
    in the `procedures` table.
 
-2. **Evaluate** — `ProcedurePromotionPolicy.evaluateProcedureForPromotion()` computes a
-   `candidateScore` and `riskLevel` from procedure metadata.
+2. **Evaluate** — `ProcedurePromotionPolicy.evaluateProcedureForPromotion()` applies gates
+   (including `procedure_too_obvious`, `low_concreteness`, `cluster_merged_into`,
+   `insufficient_auto_safe_evidence`) and computes `candidateScore` with concreteness,
+   reusability, user signal, and risk multiplier.
 
-3. **Generate** — `ProcedureSkillGenerator` writes `SKILL.md`, `recipe.json`, and a
-   companion `proposal-metadata.json` under `skills/auto/{slug}/`.
+3. **Generate** — `ProcedureSkillGenerator` writes concise `SKILL.md` (Skill Creator v2),
+   `recipe.json`, `verification.json`, `evals/trigger-eval.json`, `evals/results.json`,
+   optional `references/telemetry.md`, `references/workflow.md`, and `scripts/replay.sh`
+   under `skills/auto/{slug}/`.
 
 4. **Track** — `markProcedurePromoted(id, skillPath)` records the skill path on the
    procedure row and sets `skill_state = "experimental"`.

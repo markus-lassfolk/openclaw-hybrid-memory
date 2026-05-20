@@ -7,10 +7,13 @@ import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
+import { MAX_SKILL_FILE_BYTES } from "../config/skill-size-limits.js";
 import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
+import { utf8ByteLength } from "../config/skill-size-limits.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
 import { titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
+import { readFileSync, readdirSync } from "node:fs";
 import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   type ProcedurePromotionDuplicateCandidate,
@@ -21,6 +24,8 @@ import {
   evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
 } from "./procedure-promotion-policy.js";
+import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
+import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 const EVIDENCE_STOP_WORDS = new Set(["with", "from", "that", "this", "workflow", "procedure", "report"]);
@@ -235,11 +240,22 @@ export function generateAutoSkills(
   let failedEval = 0;
   const reservedSlugs = new Set<string>();
   const inRunSkillCandidates: Array<{ slug: string; taskPattern: string }> = [];
+  const promotionItems = procedures.map((proc) => createProcedurePromotionItem(proc, policy));
+  const clusters = clusterProcedureItems(promotionItems);
+  const clusterDeferMap = buildClusterDeferMap(clusters);
+  const relatedByRepresentative = new Map<string, string[]>();
+  for (const c of clusters) {
+    if (c.relatedProcedureIds.length > 0) {
+      relatedByRepresentative.set(c.representative.procedure.id, c.relatedProcedureIds);
+    }
+  }
+  const baselineDescriptions = loadExistingSkillDescriptions(basePath);
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
     const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
     const evidence = collectProcedurePromotionEvidence(factsDb, proc);
+    const historicalPrompts = collectHistoricalSessionPrompts(factsDb, proc, evidence);
     const context = {
       runId,
       mode: dryRun ? ("dry-run" as const) : ("apply" as const),
@@ -256,6 +272,10 @@ export function generateAutoSkills(
       evidence,
       contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+      clusterDeferMap,
+      relatedProcedureIds: relatedByRepresentative.get(proc.id),
+      historicalPrompts,
+      baselineDescriptions,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
     const reservedCandidate = {
@@ -447,6 +467,8 @@ export function generateAutoSkillForProcedure(
     contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
     inRunSkillCandidates: options.inRunSkillCandidates ?? [],
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+    historicalPrompts: collectHistoricalSessionPrompts(factsDb, proc, evidence),
+    baselineDescriptions: loadExistingSkillDescriptions(basePath),
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -590,18 +612,84 @@ function writeDraftSkill(
     verificationJson: string;
     evalsJson: string;
     proposalMetadataJson: string;
+    referenceWorkflowMd?: string | null;
+    referenceTelemetryMd?: string | null;
+    triggerEvalJson?: string;
+    replayScript?: string | null;
+    evalsResultsJson?: string;
   },
 ): void {
-  // Write all sidecar files atomically (temp dir → rename). SKILL.md is
-  // written last among content files so it is the final content write before
-  // the completion marker.
-  atomicWriteSkillDir(skillDir, {
+  if (utf8ByteLength(draft.skillMd) > MAX_SKILL_FILE_BYTES) {
+    throw new Error(
+      `Refusing to write SKILL.md over OpenClaw limit (${utf8ByteLength(draft.skillMd)} > ${MAX_SKILL_FILE_BYTES} bytes)`,
+    );
+  }
+  const files: Record<string, string> = {
     "recipe.json": draft.recipeJson,
     "verification.json": draft.verificationJson,
     "proposal-metadata.json": draft.proposalMetadataJson,
     "evals/evals.json": draft.evalsJson,
     "SKILL.md": draft.skillMd,
+  };
+  if (draft.evalsResultsJson) {
+    files["evals/results.json"] = draft.evalsResultsJson;
+  }
+  if (draft.referenceWorkflowMd) {
+    files["references/workflow.md"] = draft.referenceWorkflowMd;
+  }
+  if (draft.referenceTelemetryMd) {
+    files["references/telemetry.md"] = draft.referenceTelemetryMd;
+  }
+  if (draft.triggerEvalJson) {
+    files["evals/trigger-eval.json"] = draft.triggerEvalJson;
+  }
+  if (draft.replayScript) {
+    files["scripts/replay.sh"] = draft.replayScript;
+  }
+  atomicWriteSkillDir(skillDir, files);
+}
+
+function loadExistingSkillDescriptions(skillsBasePath: string): string[] {
+  const descriptions: string[] = [];
+  if (!existsSync(skillsBasePath)) return descriptions;
+  try {
+    for (const entry of readdirSync(skillsBasePath, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const skillMdPath = join(skillsBasePath, entry.name, "SKILL.md");
+      if (!existsSync(skillMdPath)) continue;
+      const raw = readFileSync(skillMdPath, "utf8");
+      const fm = raw.match(/^---\n([\s\S]*?)\n---/);
+      if (!fm) continue;
+      const keys = parseSkillFrontmatterKeys(fm[1]);
+      const desc = keys.get("description");
+      if (desc) descriptions.push(desc);
+    }
+  } catch {
+    return descriptions;
+  }
+  return descriptions;
+}
+
+function collectHistoricalSessionPrompts(
+  factsDb: FactsDB,
+  proc: ProcedureEntry,
+  evidence: ProcedurePromotionEvidence,
+): string[] {
+  const prompts = new Set<string>();
+  prompts.add(proc.taskPattern);
+  for (const req of evidence.manualWorkflowRequests ?? []) {
+    if (req.sourceSession) prompts.add(proc.taskPattern);
+  }
+  const episodes = factsDb.searchEpisodes({
+    procedureId: proc.id,
+    limit: 20,
+    scopeFilter: scopeFilterForProcedure(proc),
   });
+  for (const ep of episodes) {
+    if (ep.event?.trim()) prompts.add(ep.event.trim());
+    else if (ep.context?.trim()) prompts.add(ep.context.trim().slice(0, 200));
+  }
+  return [...prompts].slice(0, 20);
 }
 
 function releaseInRunReservation(

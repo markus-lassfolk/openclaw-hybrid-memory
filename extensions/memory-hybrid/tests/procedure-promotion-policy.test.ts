@@ -139,24 +139,28 @@ describe("procedure promotion policy and adapter", () => {
     expect(
       existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "evals", "evals.json")),
     ).toBe(true);
+    expect(
+      existsSync(join(skillsDir, "validate-release-health-report-with-objective-checks", "evals", "results.json")),
+    ).toBe(true);
 
     const skill = readFileSync(skillPath, "utf-8");
-    for (const section of [
-      "## When to Activate",
-      "## Scope",
-      "## Do Not Use When",
-      "## Workflow",
-      "## Safe tool usage",
-      "## Verification",
-      "## Failure handling",
-      "## Rollback / disable guidance",
-      "## Anti-patterns / Known Failures",
-      "## Examples",
-      "## Related tools/skills",
-      "## Provenance",
-    ]) {
+    expect(skill).toContain("metadata:");
+    for (const section of ["## Do Not Use When", "## Workflow", "## Verification", "## Examples"]) {
       expect(skill).toContain(section);
     }
+    expect(skill).not.toContain("## When to Activate");
+    expect(skill).not.toContain("## Telemetry");
+    expect(
+      existsSync(
+        join(skillsDir, "validate-release-health-report-with-objective-checks", "evals", "trigger-eval.json"),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        join(skillsDir, "validate-release-health-report-with-objective-checks", "references", "telemetry.md"),
+      ),
+    ).toBe(true);
+    expect(skill.match(/^## /gm)?.length ?? 0).toBeLessThanOrEqual(8);
     const verification = JSON.parse(
       readFileSync(
         join(skillsDir, "validate-release-health-report-with-objective-checks", "verification.json"),

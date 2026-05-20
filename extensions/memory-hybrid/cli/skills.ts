@@ -18,7 +18,9 @@ import {
   type SkillProposalValidationResult,
 } from "../services/generated-skill-validation.js";
 import { GeneratedSkillLifecycleService } from "../services/generated-skill-lifecycle.js";
+import { auditAutoSkills, quarantineAutoSkills } from "../services/auto-skills-audit.js";
 import { SkillValidator } from "../services/skill-validator.js";
+import { resolveWorkspacePath } from "../utils/path.js";
 import type { Chainable } from "./shared.js";
 import { relativeTime, withExit } from "./shared.js";
 
@@ -448,6 +450,45 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           if (!result.success) process.exitCode = 1;
         },
       ),
+    );
+
+  (skills.command("audit") as ArgumentChainable)
+    .description(
+      "Scan skills/auto generated procedure skills for size, loadability, and suspicious content (dry-run by default)",
+    )
+    .option("--path <dir>", "Skills auto directory (default: skills/auto)")
+    .option("--json", "Emit JSON report")
+    .option("--quarantine", "Move oversized/suspicious skills to skills/auto-quarantine/YYYY-MM-DD/")
+    .action(
+      withExit(async (opts: { path?: string; json?: boolean; quarantine?: boolean }) => {
+        const skillsPath = resolveWorkspacePath(opts.path ?? "skills/auto");
+        const report = auditAutoSkills(skillsPath);
+        if (opts.quarantine) {
+          const toMove = report.entries.filter((e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike);
+          const result = quarantineAutoSkills(skillsPath, toMove);
+          if (opts.json) {
+            console.log(JSON.stringify({ ok: result.errors.length === 0, report, quarantine: result }, null, 2));
+            if (result.errors.length > 0) process.exitCode = 2;
+            return;
+          }
+          console.log(`Quarantined: ${result.quarantined.join(", ") || "(none)"}`);
+          for (const err of result.errors) console.error(`  error: ${err}`);
+          if (result.errors.length > 0) process.exitCode = 2;
+          return;
+        }
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: true, ...report }, null, 2));
+          return;
+        }
+        console.log(
+          `Scanned: ${report.scanned}, oversized: ${report.oversized}, suspicious: ${report.suspicious}`,
+        );
+        for (const entry of report.entries) {
+          console.log(
+            `- ${entry.slug}: ${entry.skillBytes} B, loadable=${entry.loadable}, transcript=${entry.transcriptLike}, secret=${entry.secretLike}`,
+          );
+        }
+      }),
     );
 
   (skills.command("rescan") as ArgumentChainable)
