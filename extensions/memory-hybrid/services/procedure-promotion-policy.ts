@@ -46,6 +46,7 @@ import {
   buildTelemetryReferenceMd,
   lintNestedReferences,
 } from "./skill-reference-sidecar.js";
+import { scanForPromptInjection, sanitizePromptInjection } from "./skill-prompt-injection.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v3";
 
@@ -852,6 +853,20 @@ function buildProcedureSkillDraft(
   const recipeJson = summarized.recipeJson;
   const workflowRecipe = summarized.sanitizedSteps;
   const redactedTask = redactAutopilotText(proc.taskPattern);
+  // Scan the task pattern for prompt-injection markers to prevent bypass of #1538.
+  const taskInjectionScan = scanForPromptInjection(redactedTask.redacted);
+  if (taskInjectionScan.hasHardInjection) {
+    const names = taskInjectionScan.hits
+      .filter((h) => h.severity === "hard")
+      .map((h) => h.name)
+      .join(",");
+    gates.push(
+      fail(
+        "unsafe_trace_content",
+        `Prompt-injection markers detected in task pattern (${names}); refusing to promote.`,
+      ),
+    );
+  }
   const riskLevel = determineRiskLevel(item.procedure, workflowRecipe);
   const workflow = buildActionableWorkflow(workflowRecipe, proc.taskPattern, riskLevel);
   const keyword = firstKeyword(proc.taskPattern);
