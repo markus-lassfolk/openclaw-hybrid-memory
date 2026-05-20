@@ -42,7 +42,7 @@ export function toGerundSkillName(slug: string): string {
   if (!/^[a-z]+ing-/.test(name) && !name.startsWith("ing-")) {
     const parts = name.split("-").filter(Boolean);
     if (parts.length > 0 && !parts[0].endsWith("ing")) {
-      parts[0] = `${parts[0]}ing`;
+      parts[0] = toGerund(parts[0]);
       name = parts.join("-");
     }
   }
@@ -50,6 +50,50 @@ export function toGerundSkillName(slug: string): string {
     name = name.slice(0, MAX_SKILL_NAME_LENGTH).replace(/-$/, "");
   }
   return name;
+}
+
+/**
+ * Convert a verb to its gerund form following English grammar rules.
+ */
+function toGerund(verb: string): string {
+  if (verb.length === 0) return verb;
+  
+  // Drop silent 'e' before adding 'ing' (analyze → analyzing, configure → configuring)
+  if (verb.endsWith("e") && verb.length > 2) {
+    // Keep 'e' for verbs ending in 'ee', 'ye', 'oe' (agree → agreeing, see → seeing)
+    const beforeE = verb[verb.length - 2];
+    if (beforeE !== "e" && beforeE !== "y" && beforeE !== "o") {
+      return verb.slice(0, -1) + "ing";
+    }
+  }
+  
+  // For single-syllable verbs ending in consonant-vowel-consonant (CVC),
+  // double the final consonant (run → running, plan → planning)
+  // Skip common exceptions (fix → fixing, box → boxing where final x is not doubled)
+  if (verb.length >= 3) {
+    const last = verb[verb.length - 1];
+    const secondLast = verb[verb.length - 2];
+    const thirdLast = verb[verb.length - 3];
+    const vowels = "aeiou";
+    const consonants = "bcdfghjklmnpqrstvwxyz";
+    
+    if (
+      consonants.includes(last) &&
+      vowels.includes(secondLast) &&
+      consonants.includes(thirdLast) &&
+      last !== "w" &&
+      last !== "x" &&
+      last !== "y"
+    ) {
+      // Only double for short words (likely single syllable)
+      // This heuristic avoids doubling in longer words like "benefit" → "benefiting"
+      if (verb.length <= 4) {
+        return verb + last + "ing";
+      }
+    }
+  }
+  
+  return verb + "ing";
 }
 
 export function validateSkillName(name: string): string[] {

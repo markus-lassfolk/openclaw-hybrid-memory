@@ -300,6 +300,7 @@ export function generateAutoSkills(
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     baselineDescriptions,
   };
+  const representativeEligibilityCache = new Map<string, boolean | undefined>();
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
@@ -325,13 +326,15 @@ export function generateAutoSkills(
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
       clusterDeferMap,
       clusterRepresentativeEligible: clusterMerge
-        ? evaluateClusterRepresentativeEligible(
+        ? getCachedRepresentativeEligibility(
+            representativeEligibilityCache,
             factsDb,
             clusterMerge.representativeId,
             procedures,
             policy,
             clusterEligibilityOptions,
             [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
+            clusterDeferMap,
           )
         : undefined,
       relatedProcedureIds: relatedByRepresentative.get(proc.id),
@@ -561,6 +564,7 @@ export function generateAutoSkillForProcedure(
             baselineDescriptions,
           },
           options.inRunSkillCandidates ?? [],
+          clusterDeferMap,
         )
       : undefined,
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, proc, evidence),
@@ -760,6 +764,42 @@ function isActiveFactForReplay(fact: MemoryEntry | null): fact is MemoryEntry {
   return true;
 }
 
+/**
+ * Get cached representative eligibility or evaluate and cache it.
+ * Prevents re-evaluating the same representative multiple times.
+ */
+function getCachedRepresentativeEligibility(
+  cache: Map<string, boolean | undefined>,
+  factsDb: FactsDB,
+  representativeId: string,
+  procedures: ProcedureEntry[],
+  policy: ProcedurePromotionPolicy,
+  options: {
+    skillsAutoPath: string;
+    validationThreshold: number;
+    contextSpecificTaskPatterns?: readonly string[];
+    bypassDuplicateSkillCache?: boolean;
+    baselineDescriptions: string[];
+  },
+  inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
+): boolean | undefined {
+  if (cache.has(representativeId)) {
+    return cache.get(representativeId);
+  }
+  const result = evaluateClusterRepresentativeEligible(
+    factsDb,
+    representativeId,
+    procedures,
+    policy,
+    options,
+    inRunSkillCandidates,
+    clusterDeferMap,
+  );
+  cache.set(representativeId, result);
+  return result;
+}
+
 /** Re-evaluate representative eligibility with the current in-run duplicate set. */
 function evaluateClusterRepresentativeEligible(
   factsDb: FactsDB,
@@ -774,6 +814,7 @@ function evaluateClusterRepresentativeEligible(
     baselineDescriptions: string[];
   },
   inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
 ): boolean | undefined {
   const repProc = procedures.find((p) => p.id === representativeId);
   if (!repProc) return undefined;
@@ -787,6 +828,7 @@ function evaluateClusterRepresentativeEligible(
     contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     inRunSkillCandidates,
+    clusterDeferMap,
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, repProc, evidence),
     baselineDescriptions: options.baselineDescriptions,
   });
