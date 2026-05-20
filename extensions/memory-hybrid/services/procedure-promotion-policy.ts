@@ -481,8 +481,10 @@ export function evaluateProcedureForPromotion(
 
   const initialGates = gates.length;
   let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
+  let evalsWereRun = false;
   if (draft) {
     draft = finalizeProcedureSkillDraft(draft, item, gates);
+    evalsWereRun = true;
   }
 
   const eligible = gates.length === 0;
@@ -550,8 +552,16 @@ export function evaluateProcedureForPromotion(
     )
       ? "failed"
       : "passed",
-    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed") ? "failed" : eligible ? "passed" : "passed",
-    functionalEval: gates.some((g) => g.reason === "functional_eval_failed") ? "failed" : "passed",
+    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed")
+      ? "failed"
+      : evalsWereRun
+        ? "passed"
+        : "failed",
+    functionalEval: gates.some((g) => g.reason === "functional_eval_failed")
+      ? "failed"
+      : evalsWereRun
+        ? "passed"
+        : "failed",
     baselineComparison: {
       withSkillPassed:
         eligible && !gates.some((g) => g.reason === "functional_eval_failed" || g.reason === "trigger_eval_failed"),
