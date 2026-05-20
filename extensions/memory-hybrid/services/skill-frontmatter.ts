@@ -119,7 +119,7 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
       continue;
     }
     if (descriptionMode === "quoted") {
-      const joined = descriptionParts.length > 0 ? descriptionParts.join("\n") + "\n" + line : line;
+      const joined = descriptionParts.length > 0 ? `${descriptionParts.join("\n")}\n${line}` : line;
       if (joined.endsWith('"') && !joined.endsWith('\\"')) {
         keys.set("description", joined.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"'));
         descriptionParts = [];
@@ -145,7 +145,7 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
           descriptionMode = "quoted";
           descriptionParts = [rest];
           if (rest.endsWith('"') && rest.length > 1) {
-            keys.set("description", rest.slice(1, -1));
+            keys.set("description", rest.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"'));
             descriptionMode = "none";
             descriptionParts = [];
           }

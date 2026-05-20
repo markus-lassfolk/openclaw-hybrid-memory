@@ -92,6 +92,7 @@ export function applyProgressiveDisclosure(
   recipe: unknown,
   taskPattern: string,
   targetBytes = MAX_SKILL_FILE_BYTES_SAFE,
+  riskLevel: "low" | "medium" | "high" = "low",
 ): ProgressiveDisclosureResult {
   const shrinkResult = shrinkSkillMd(skillMd, targetBytes);
   let current = shrinkResult.skillMd;
@@ -99,11 +100,11 @@ export function applyProgressiveDisclosure(
   let referenceWorkflowMd: string | null = null;
 
   if (utf8ByteLength(current) > targetBytes && Array.isArray(recipe) && recipe.length > 0) {
-    const detailed = `# Workflow detail\n\n${buildActionableWorkflow(recipe, taskPattern)}\n`;
+    const detailed = `# Workflow detail\n\n${buildActionableWorkflow(recipe, taskPattern, riskLevel)}\n`;
     referenceWorkflowMd = addTableOfContentsIfLong(truncateUtf8ToBytes(detailed, MAX_REFERENCE_WORKFLOW_BYTES));
     const compactWorkflow =
       "Follow these phases; see `references/workflow.md` for step detail.\n\n" +
-      buildActionableWorkflow(recipe.length > 8 ? recipe.slice(0, 8) : recipe, taskPattern);
+      buildActionableWorkflow(recipe.length > 8 ? recipe.slice(0, 8) : recipe, taskPattern, riskLevel);
     current = replaceSectionBody(current, "Workflow", compactWorkflow);
     diagnostics.shrinkStages.push("progressive-disclosure-workflow");
     diagnostics.omittedSections.push("workflow-detail-in-references");

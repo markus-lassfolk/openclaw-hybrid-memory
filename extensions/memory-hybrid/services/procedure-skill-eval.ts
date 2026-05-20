@@ -3,7 +3,7 @@
  */
 
 import { SkillValidator } from "./skill-validator.js";
-import { lintWorkflowActionability } from "./procedure-skill-workflow.js";
+import { extractWorkflowSection, lintWorkflowActionability } from "./procedure-skill-workflow.js";
 
 export type ProcedureSkillEvalInput = {
   skillMd: string;
@@ -62,11 +62,6 @@ function extractDescription(skillMd: string): string {
   return "";
 }
 
-function extractWorkflowSection(skillMd: string): string {
-  const match = skillMd.match(/## Workflow\n([\s\S]*?)(?=\n## |$)/);
-  return match?.[1]?.trim() ?? "";
-}
-
 function promptTokens(text: string): string[] {
   return text
     .toLowerCase()
@@ -87,7 +82,7 @@ function descriptionMatchesPrompt(description: string, prompt: string, taskPatte
   return false;
 }
 
-function matchesTrigger(prompt: string, taskPattern: string, triggers: string[]): boolean {
+function _matchesTrigger(prompt: string, taskPattern: string, triggers: string[]): boolean {
   const lower = prompt.toLowerCase();
   if (lower.includes(taskPattern.toLowerCase().slice(0, Math.min(20, taskPattern.length)))) return true;
   return triggers.some((t) => {

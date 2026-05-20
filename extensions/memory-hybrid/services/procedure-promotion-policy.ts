@@ -28,7 +28,11 @@ import { quickValidateSkillMarkdown } from "./skill-creator-validator.js";
 import { applyProgressiveDisclosure, shrinkSkillMd } from "./procedure-skill-shrink.js";
 import { formatProcedureSkillFrontmatter, validateSkillCreatorFrontmatterKeys } from "./skill-frontmatter.js";
 import { extractAllowedTools, renderAllowedToolsYaml } from "./skill-allowed-tools.js";
-import { buildActionableWorkflow, lintWorkflowActionability } from "./procedure-skill-workflow.js";
+import {
+  buildActionableWorkflow,
+  extractWorkflowSection,
+  lintWorkflowActionability,
+} from "./procedure-skill-workflow.js";
 import { PEM_PRIVATE_KEY_PATTERN, PRIVATE_IP_PATTERN, SkillValidator } from "./skill-validator.js";
 import {
   isLowConcreteness,
@@ -46,7 +50,7 @@ import {
   buildTelemetryReferenceMd,
   lintNestedReferences,
 } from "./skill-reference-sidecar.js";
-import { scanForPromptInjection, sanitizePromptInjection } from "./skill-prompt-injection.js";
+import { scanForPromptInjection, } from "./skill-prompt-injection.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v3";
 
@@ -709,6 +713,7 @@ function finalizeProcedureSkillDraft(
 ): { draft: GeneratedProcedureSkillDraft; evalsWereRun: boolean } {
   const proc = item.procedure;
   const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
+  const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipe);
 
   let skillMd = draft.skillMd;
   const shrink = shrinkSkillMd(skillMd, MAX_SKILL_FILE_BYTES_SAFE);
@@ -716,7 +721,13 @@ function finalizeProcedureSkillDraft(
   // Trigger progressive disclosure aggressively (target 64-96 KB per #1539)
   // so SKILL.md is genuinely compact, not merely "under the 256 KB loader cap".
   const disclosureTarget = Math.min(MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET, MAX_SKILL_FILE_BYTES_SAFE);
-  const disclosure = applyProgressiveDisclosure(skillMd, sanitizedRecipe, proc.taskPattern, disclosureTarget);
+  const disclosure = applyProgressiveDisclosure(
+    skillMd,
+    sanitizedRecipe,
+    proc.taskPattern,
+    disclosureTarget,
+    riskLevel,
+  );
   skillMd = disclosure.skillMd;
   draft.referenceWorkflowMd = disclosure.referenceWorkflowMd
     ? addTableOfContentsIfLong(disclosure.referenceWorkflowMd)
@@ -746,7 +757,7 @@ function finalizeProcedureSkillDraft(
   }
   draft.skillMd = skillMd;
 
-  const workflow = extractWorkflowSectionFromSkill(draft.skillMd);
+  const workflow = extractWorkflowSection(draft.skillMd);
   const actionability = lintWorkflowActionability(workflow, proc.taskPattern);
   if (!actionability.actionable) {
     gates.push(
@@ -816,11 +827,6 @@ function finalizeProcedureSkillDraft(
   }
 
   return { draft, evalsWereRun: true };
-}
-
-function extractWorkflowSectionFromSkill(skillMd: string): string {
-  const match = skillMd.match(/## Workflow\n([\s\S]*?)(?=\n## |$)/);
-  return match?.[1]?.trim() ?? "";
 }
 
 function buildProcedureSkillDraft(

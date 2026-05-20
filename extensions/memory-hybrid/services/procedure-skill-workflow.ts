@@ -69,7 +69,7 @@ function summarizeStepHigh(step: RecipeStep, index: number): string {
 }
 
 function summarizeStepMedium(step: RecipeStep, index: number, taskPattern: string): string {
-  const tool = typeof step.tool === "string" ? step.tool : "manual check";
+  const _tool = typeof step.tool === "string" ? step.tool : "manual check";
   const cmd = extractCommand(step);
   const summary = typeof step.summary === "string" ? truncateSummary(step.summary) : "";
   const domain = domainTokens(taskPattern)[0] ?? "task";
@@ -160,7 +160,7 @@ export type WorkflowActionabilityResult = {
 export function lintWorkflowActionability(workflow: string, taskPattern: string): WorkflowActionabilityResult {
   const reasons: string[] = [];
   for (const pattern of PLACEHOLDER_WORKFLOW_PATTERNS) {
-    const matches = workflow.match(new RegExp(pattern.source, pattern.flags + "g"));
+    const matches = workflow.match(new RegExp(pattern.source, `${pattern.flags}g`));
     if (matches && matches.length >= 2) {
       reasons.push(`placeholder pattern: ${pattern.source}`);
     }
@@ -177,6 +177,14 @@ export function lintWorkflowActionability(workflow: string, taskPattern: string)
     reasons.push("no verification or action verbs in workflow");
   }
   return { actionable: reasons.length === 0, reasons };
+}
+
+/**
+ * Extract the Workflow section body from a SKILL.md file.
+ */
+export function extractWorkflowSection(skillMd: string): string {
+  const match = skillMd.match(/## Workflow\n([\s\S]*?)(?=\n## |$)/);
+  return match?.[1]?.trim() ?? "";
 }
 
 export { PLACEHOLDER_WORKFLOW_PATTERNS, VERIFICATION_WORDS };
