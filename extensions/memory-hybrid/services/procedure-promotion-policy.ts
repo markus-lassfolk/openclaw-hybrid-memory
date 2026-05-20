@@ -1531,10 +1531,19 @@ function safeReadFile(path: string): string {
 function extractTaskContentFromSkill(content: string): string {
   const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
   const frontmatter = frontmatterMatch ? frontmatterMatch[1] : content;
-  const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
-  const desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
+  let desc = "";
+  // Match folded YAML description first (v3 format with >- or | indicators)
+  const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:[ \t]+.+(?:\n|$))+)/i);
+  if (foldedMatch) {
+    desc = foldedMatch[1].replace(/^[ \t]+/gm, "").trim();
+  } else {
+    // Match single-line description
+    const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
+    desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
+  }
   const taskSections = [
     /##\s*(?:when\s+to\s+activate|trigger)\s*([\s\S]*?)(?=##|$)/i,
+    /##\s*workflow\s*([\s\S]*?)(?=##|$)/i,
     /##\s*scope\s*([\s\S]*?)(?=##|$)/i,
     /##\s*(?:do\s+not\s+use\s+when|when\s+not\s+to\s+use)\s*([\s\S]*?)(?=##|$)/i,
     /##\s*examples\s*([\s\S]*?)(?=##|$)/i,
