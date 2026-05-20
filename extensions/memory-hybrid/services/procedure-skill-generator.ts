@@ -525,13 +525,11 @@ export function generateAutoSkillForProcedure(
   const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
   const evidence = collectProcedurePromotionEvidence(factsDb, proc);
   const baselineDescriptions = loadExistingSkillDescriptions(basePath);
-  const promotionItems = factsDb
-    .getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays)
-    .map((p) => createProcedurePromotionItem(p, policy));
+  const readyProcedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays);
+  const promotionItems = readyProcedures.map((p) => createProcedurePromotionItem(p, policy));
   const clusters = clusterProcedureItems(promotionItems);
   const clusterDeferMap = buildClusterDeferMap(clusters);
   const clusterMerge = clusterDeferMap.get(proc.id);
-  const readyProcedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays);
   const clusterRepresentativeEligible = buildClusterRepresentativeEligibility(
     factsDb,
     readyProcedures,
