@@ -502,6 +502,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
             skillTTLDays: ttlDays,
             maxPerRun: 200,
             dryRun: true,
+            policy: "auto-safe",
           },
           { info: () => undefined, warn: () => undefined },
         );
