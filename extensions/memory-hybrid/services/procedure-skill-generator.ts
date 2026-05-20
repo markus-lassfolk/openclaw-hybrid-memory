@@ -773,8 +773,9 @@ function isActiveFactForReplay(fact: MemoryEntry | null): fact is MemoryEntry {
 }
 
 /**
- * Get cached representative eligibility or evaluate and cache it.
- * Prevents re-evaluating the same representative multiple times.
+ * Evaluate representative eligibility with the current in-run duplicate set.
+ * Does NOT cache because eligibility depends on inRunSkillCandidates which grows
+ * during the batch loop.
  */
 function getCachedRepresentativeEligibility(
   cache: Map<string, boolean | undefined>,
@@ -793,10 +794,7 @@ function getCachedRepresentativeEligibility(
   clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
   relatedByRepresentative: Map<string, string[]>,
 ): boolean | undefined {
-  if (cache.has(representativeId)) {
-    return cache.get(representativeId);
-  }
-  const result = evaluateClusterRepresentativeEligible(
+  return evaluateClusterRepresentativeEligible(
     factsDb,
     representativeId,
     procedures,
@@ -806,8 +804,6 @@ function getCachedRepresentativeEligibility(
     clusterDeferMap,
     relatedByRepresentative,
   );
-  cache.set(representativeId, result);
-  return result;
 }
 
 /** Re-evaluate representative eligibility with the current in-run duplicate set. */

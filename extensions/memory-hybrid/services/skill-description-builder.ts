@@ -2,7 +2,7 @@
  * Pushy, multi-paraphrase Skill Creator descriptions (primary trigger surface).
  */
 
-import { MAX_SKILL_DESCRIPTION_CHARS, utf8ByteLength } from "../config/skill-size-limits.js";
+import { MAX_SKILL_DESCRIPTION_CHARS } from "../config/skill-size-limits.js";
 import { paraphraseShouldTrigger } from "./skill-eval-synthesizer.js";
 
 function tokenize(text: string): string[] {
@@ -49,15 +49,15 @@ export function buildPushySkillDescription(input: SkillDescriptionInput): string
     `or uses phrasing like ${triggerSample}, even if they do not name a specific skill. ` +
     `Do not use for destructive changes, external sends, credential access, or unrelated troubleshooting.${toolHint}`;
 
-  if (utf8ByteLength(desc) > MAX_SKILL_DESCRIPTION_CHARS) {
+  if (desc.length > MAX_SKILL_DESCRIPTION_CHARS) {
     desc =
       `Guides ${task}. Use when the user mentions ${keywordHint} or similar requests (${triggerSample}). ` +
       `Not for destructive ops, sends, or credentials.${toolHint}`;
   }
-  if (utf8ByteLength(desc) > MAX_SKILL_DESCRIPTION_CHARS) {
+  if (desc.length > MAX_SKILL_DESCRIPTION_CHARS) {
     const marker = "… [truncated]";
     const minContentLength = 50;
-    while (utf8ByteLength(desc + marker) > MAX_SKILL_DESCRIPTION_CHARS && desc.length > minContentLength) {
+    while (desc.length + marker.length > MAX_SKILL_DESCRIPTION_CHARS && desc.length > minContentLength) {
       desc = desc.slice(0, -1);
     }
     desc = desc.trimEnd() + marker;
