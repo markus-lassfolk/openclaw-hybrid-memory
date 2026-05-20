@@ -165,7 +165,7 @@ function runReplayFunctionalEval(input: ProcedureSkillEvalInput): {
     }
   }
 
-  const passed = withSkill >= baseline && nearMissFalseTriggers === 0;
+  const passed = withSkill > 0 && withSkill >= baseline && nearMissFalseTriggers === 0;
   return {
     passed,
     baselineComparison: {
