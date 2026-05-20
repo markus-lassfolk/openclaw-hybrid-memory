@@ -7,8 +7,11 @@ import {
   MAX_RECIPE_STEPS_IN_SIDECAR,
   MAX_STEP_SUMMARY_CHARS,
 } from "../config/skill-size-limits.js";
-import { redactAutopilotValue } from "./pending-autopilot/redaction.js";
+import { redactAutopilotText, redactAutopilotValue } from "./pending-autopilot/redaction.js";
 import { sanitizeRecipePromptInjection, scanRecipeForPromptInjection } from "./skill-prompt-injection.js";
+
+/** Exec-family tools: keep `args.command` for replay.sh; strip other args. */
+const REPLAYABLE_EXEC_TOOLS = new Set(["bash", "shell", "exec"]);
 
 const HIGH_RISK_TOOLS = new Set([
   "message",
@@ -20,9 +23,7 @@ const HIGH_RISK_TOOLS = new Set([
   "sessions_spawn",
   "write",
   "edit",
-  "bash",
-  "shell",
-  "exec",
+  ...REPLAYABLE_EXEC_TOOLS,
 ]);
 
 const SECRET_ARG_KEYS = new Set([
@@ -69,7 +70,16 @@ function sanitizeStep(step: unknown, index: number): RecipeStep {
   if (typeof s.summary === "string") {
     out.summary = truncateUtf8(s.summary, MAX_STEP_SUMMARY_CHARS);
   }
-  if (HIGH_RISK_TOOLS.has(tool.toLowerCase()) && s.args && typeof s.args === "object") {
+  const toolLower = tool.toLowerCase();
+  if (REPLAYABLE_EXEC_TOOLS.has(toolLower) && s.args && typeof s.args === "object") {
+    const args = s.args as Record<string, unknown>;
+    const safe: Record<string, unknown> = {};
+    if (typeof args.command === "string") {
+      const { redacted } = redactAutopilotText(args.command);
+      safe.command = truncateUtf8(redacted.trim(), 500);
+    }
+    if (Object.keys(safe).length > 0) out.args = safe;
+  } else if (HIGH_RISK_TOOLS.has(toolLower) && s.args && typeof s.args === "object") {
     out.args = { redacted: true, note: "high-risk tool args omitted from sidecar" };
   } else if (s.args && typeof s.args === "object") {
     const safe: Record<string, unknown> = {};
