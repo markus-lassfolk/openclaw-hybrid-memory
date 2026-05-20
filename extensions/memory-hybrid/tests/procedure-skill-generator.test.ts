@@ -873,9 +873,9 @@ description: Existing legacy skill created before completion markers.
       action: "promoted-to-draft",
       skillPath: join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates"),
     });
-    expect(
-      existsSync(join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates", "SKILL.md")),
-    ).toBe(true);
+    expect(existsSync(join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates", "SKILL.md"))).toBe(
+      true,
+    );
     expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
     expect(db.getProcedureById(retry.id)?.promotedToSkill).toBe(1);
