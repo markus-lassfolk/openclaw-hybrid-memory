@@ -552,16 +552,8 @@ export function evaluateProcedureForPromotion(
     )
       ? "failed"
       : "passed",
-    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed")
-      ? "failed"
-      : evalsWereRun
-        ? "passed"
-        : "failed",
-    functionalEval: gates.some((g) => g.reason === "functional_eval_failed")
-      ? "failed"
-      : evalsWereRun
-        ? "passed"
-        : "failed",
+    triggerEval: gates.some((g) => g.reason === "trigger_eval_failed") ? "failed" : evalsWereRun ? "passed" : "failed",
+    functionalEval: gates.some((g) => g.reason === "functional_eval_failed") ? "failed" : evalsWereRun ? "passed" : "failed",
     baselineComparison: {
       withSkillPassed:
         eligible && !gates.some((g) => g.reason === "functional_eval_failed" || g.reason === "trigger_eval_failed"),
