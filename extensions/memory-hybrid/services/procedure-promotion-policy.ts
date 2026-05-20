@@ -258,7 +258,7 @@ export interface ProcedurePromotionPolicyOptions {
   bypassDuplicateSkillCache?: boolean;
   /** Procedure ids deferred because a cluster representative was chosen. */
   clusterDeferMap?: ReadonlyMap<string, { representativeId: string; slug: string }>;
-  /** @deprecated No longer used; cluster siblings are always deferred to prevent duplicates. */
+  /** When false, cluster sibling can promote independently because the representative was not eligible. */
   clusterRepresentativeEligible?: boolean;
   /** Merged cluster members recorded in verification.json. */
   relatedProcedureIds?: string[];
@@ -395,7 +395,7 @@ export function evaluateProcedureForPromotion(
   const combinedText = `${proc.taskPattern}\n${recipeText}`;
 
   const clusterMerge = options.clusterDeferMap?.get(proc.id);
-  if (clusterMerge) {
+  if (clusterMerge && options.clusterRepresentativeEligible !== false) {
     gates.push(
       defer(
         "cluster_merged_into",
