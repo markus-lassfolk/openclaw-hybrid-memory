@@ -504,7 +504,7 @@ export function evaluateProcedureForPromotion(
   );
   const relatedIds = options.relatedProcedureIds ?? [];
   const metadata: ProcedurePromotionVerification = {
-    skill: finalDraft?.slug ?? resolvedSkillSlug,
+    skill: finalDraft ? toGerundSkillName(finalDraft.slug) : toGerundSkillName(resolvedSkillSlug),
     sourceProcedureIds: relatedIds.length > 0 ? [proc.id, ...relatedIds] : [proc.id],
     sourceVersionIds: evidenceSummary.sourceVersionIds,
     sourceSessionIds: evidenceSummary.sourceSessionIds,

@@ -468,7 +468,13 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           process.exitCode = 1;
           return;
         }
-        const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
+        const parsedLimit = Number(opts.limit);
+        if (opts.limit && (!Number.isFinite(parsedLimit) || parsedLimit < 1)) {
+          console.error(`error: --limit must be a positive number, got: ${opts.limit}`);
+          process.exitCode = 1;
+          return;
+        }
+        const limit = opts.limit ? Math.max(1, Math.min(100, parsedLimit)) : 20;
         const threshold = opts.threshold ? Math.max(1, Number(opts.threshold)) : 3;
         const ttlDays = opts.ttlDays ? Math.max(1, Number(opts.ttlDays)) : 30;
         // Dry-run generation gives us the per-procedure decision + blocking reasons
