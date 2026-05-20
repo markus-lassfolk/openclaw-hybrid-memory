@@ -483,8 +483,9 @@ export function evaluateProcedureForPromotion(
   let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   let evalsWereRun = false;
   if (draft) {
-    draft = finalizeProcedureSkillDraft(draft, item, gates);
-    evalsWereRun = true;
+    const finalized = finalizeProcedureSkillDraft(draft, item, gates);
+    draft = finalized.draft;
+    evalsWereRun = finalized.evalsWereRun;
   }
 
   const eligible = gates.length === 0;
@@ -702,7 +703,7 @@ function finalizeProcedureSkillDraft(
   draft: GeneratedProcedureSkillDraft,
   item: ProcedurePromotionItem,
   gates: ProcedurePromotionGateResult[],
-): GeneratedProcedureSkillDraft {
+): { draft: GeneratedProcedureSkillDraft; evalsWereRun: boolean } {
   const proc = item.procedure;
   const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
 
@@ -748,7 +749,7 @@ function finalizeProcedureSkillDraft(
     gates.push(
       defer("insufficient_actionable_workflow", actionability.reasons.join("; ") || "workflow not actionable"),
     );
-    return draft;
+    return { draft, evalsWereRun: false };
   }
 
   const evalsPayload = JSON.parse(draft.evalsJson) as {
@@ -811,7 +812,7 @@ function finalizeProcedureSkillDraft(
     );
   }
 
-  return draft;
+  return { draft, evalsWereRun: true };
 }
 
 function extractWorkflowSectionFromSkill(skillMd: string): string {
