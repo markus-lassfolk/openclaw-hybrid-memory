@@ -414,6 +414,7 @@ describe("task-ledger-facts", () => {
       expect(completed).toHaveLength(1);
       expect(canonicalLabel(completed[0].label)).toBe("humanizer");
       expect(completed[0].status).toBe("Done");
+      expect(completed[0].description).toBe("Closed humanizer task");
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -461,6 +462,46 @@ describe("task-ledger-facts", () => {
       const { active, completed } = loadTaskLedgerFromFacts(db);
       expect(active.some((t) => canonicalLabel(t.label) === "hybrid-memory")).toBe(false);
       expect(completed.some((t) => canonicalLabel(t.label) === "hybrid-memory")).toBe(true);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("terminal status supersession does not supersede title fact created in same sync", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-title-preservation-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const vectorDb = {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider;
+    const now = new Date().toISOString();
+
+    try {
+      await syncActiveTaskEntryToFacts(
+        db,
+        vectorDb,
+        embeddings,
+        {
+          label: "my-task",
+          description: "Specific title for this task",
+          status: "Done",
+          started: now,
+          updated: now,
+        },
+        undefined,
+        { statusOverride: "done" },
+      );
+
+      const { completed } = loadTaskLedgerFromFacts(db);
+      expect(completed).toHaveLength(1);
+      expect(completed[0].label).toBe("my-task");
+      expect(completed[0].description).toBe("Specific title for this task");
+      expect(completed[0].status).toBe("Done");
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });

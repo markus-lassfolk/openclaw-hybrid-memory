@@ -861,7 +861,7 @@ export async function upsertProjectTaskKey(
   key: string,
   value: string,
   log?: { warn?: (m: string) => void },
-  opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
+  opts?: { latestByEntityKey?: Map<string, MemoryEntry>; createdInThisSync?: Set<string> },
 ): Promise<void> {
   const canonical = canonicalLabel(entity);
   const normalizedKey = key.trim();
@@ -887,6 +887,7 @@ export async function upsertProjectTaskKey(
     provenanceJson: activeTaskProvenance(canonical),
     decayClass: "permanent",
   });
+  opts?.createdInThisSync?.add(entry.id);
   if (previous) {
     factsDb.supersede(previous.id, entry.id);
   }
@@ -896,6 +897,7 @@ export async function upsertProjectTaskKey(
       : factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
     for (const fact of currentFacts) {
       if (fact.id === entry.id) continue;
+      if (opts?.createdInThisSync?.has(fact.id)) continue;
       if (factCanonicalLabel(fact) !== canonical) continue;
       factsDb.supersede(fact.id, entry.id);
     }
@@ -943,7 +945,8 @@ export async function syncActiveTaskEntryToFacts(
   },
 ): Promise<void> {
   const entity = entry.label;
-  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
+  const createdInThisSync = new Set<string>();
+  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey, createdInThisSync };
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log, upsertOpts);
   const statusValue = opts?.statusOverride?.trim() || displayStatusToFact(entry.status);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", statusValue, log, upsertOpts);
