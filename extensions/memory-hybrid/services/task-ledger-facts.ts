@@ -32,6 +32,55 @@ export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
+const CANONICAL_TASK_SUFFIX_RE =
+  /(?:[\s_-]*(?:pr[\s_-]*queue|pull[\s_-]*request[\s_-]*queue|pr[\s_-]*stewardship|pull[\s_-]*request[\s_-]*stewardship))+$/i;
+
+export function normalizeTaskStatus(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+/**
+ * Canonical active-task entity label used for facts-ledger supersession/grouping.
+ *
+ * Keeps labels human-readable enough for audit metadata while making case variants
+ * and common pipeline suffixes collapse to the same logical task.
+ */
+export function canonicalLabel(entity: string): string {
+  const normalized = entity
+    .trim()
+    .toLowerCase()
+    .replace(CANONICAL_TASK_SUFFIX_RE, "")
+    .replace(/[\s_\-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || entity.trim().toLowerCase();
+}
+
+function factCanonicalLabel(fact: MemoryEntry): string {
+  const fromProvenance = readCanonicalLabelFromFact(fact);
+  if (fromProvenance) return fromProvenance;
+  return canonicalLabel(fact.entity ?? "");
+}
+
+function readCanonicalLabelFromFact(fact: MemoryEntry): string | null {
+  if (!fact.provenanceJson) return null;
+  try {
+    const parsed = JSON.parse(fact.provenanceJson) as {
+      activeTask?: { canonicalLabel?: unknown };
+      canonical_label?: unknown;
+    };
+    const raw = parsed.activeTask?.canonicalLabel ?? parsed.canonical_label;
+    return typeof raw === "string" && raw.trim().length > 0 ? canonicalLabel(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function activeTaskProvenance(canonical: string): string {
+  return JSON.stringify({ activeTask: { canonicalLabel: canonical }, canonical_label: canonical });
+}
 const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
 const ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER: ScopeFilter = { agentId: "__active_task_projection_global__" };
 
@@ -55,20 +104,35 @@ export type ActiveTaskProjectionStatus = {
 
 /** Latest value per entity+key from non-superseded project facts */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
-  const byEntity = new Map<string, Map<string, MemoryEntry>>();
+  const byCanonical = new Map<
+    string,
+    { displayEntity: string; displayUpdatedAt: number; keys: Map<string, MemoryEntry> }
+  >();
   for (const f of facts) {
     if (!f.entity?.trim()) continue;
+    const canonical = factCanonicalLabel(f);
+    if (!canonical) continue;
     const ent = f.entity.trim();
     const k = (f.key ?? "").trim() || "_body";
-    let km = byEntity.get(ent);
-    if (!km) {
-      km = new Map();
-      byEntity.set(ent, km);
+    let group = byCanonical.get(canonical);
+    if (!group) {
+      group = { displayEntity: ent, displayUpdatedAt: Number.NEGATIVE_INFINITY, keys: new Map() };
+      byCanonical.set(canonical, group);
     }
-    const prev = km.get(k);
+    if (f.createdAt > group.displayUpdatedAt && !isGenericTaskTitle(ent)) {
+      group.displayEntity = ent;
+      group.displayUpdatedAt = f.createdAt;
+    }
+    const prev = group.keys.get(k);
     if (!prev || f.createdAt > prev.createdAt) {
-      km.set(k, f);
+      group.keys.set(k, f);
     }
+  }
+
+  const byEntity = new Map<string, Map<string, MemoryEntry>>();
+  for (const [canonical, group] of byCanonical) {
+    const label = group.displayEntity || canonical;
+    byEntity.set(label, group.keys);
   }
   return byEntity;
 }
@@ -124,9 +188,9 @@ function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof
 }
 
 export function factStatusToDisplay(raw: string): ActiveTaskStatus {
-  const s = raw.trim().toLowerCase();
+  const s = normalizeTaskStatus(raw);
   if (s === "open") return "In progress";
-  if (s === "in_progress" || s === "in progress") return "In progress";
+  if (s === "in_progress") return "In progress";
   if (s === "blocked" || s.startsWith("blocked")) return "Stalled";
   if (s === "waiting") return "Waiting";
   if (s === "failed" || s === "error") return "Failed";
@@ -153,7 +217,7 @@ export function displayStatusToFact(status: ActiveTaskStatus): string {
 }
 
 function isTerminalFactStatus(raw: string): boolean {
-  return TERMINAL.has(raw.trim().toLowerCase());
+  return TERMINAL.has(normalizeTaskStatus(raw));
 }
 
 function titleFromFacts(f: Record<string, string>): string {
@@ -775,7 +839,7 @@ export function buildFactsSectionedMarkdownBody(
 }
 
 export function taskEntityKey(entity: string, key: string): string {
-  return `${entity}\u0000${key}`;
+  return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
 export async function upsertProjectTaskKey(
@@ -788,13 +852,15 @@ export async function upsertProjectTaskKey(
   log?: { warn?: (m: string) => void },
   opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
 ): Promise<void> {
-  const cacheKey = taskEntityKey(entity, key);
+  const canonical = canonicalLabel(entity);
+  const normalizedKey = key.trim();
+  const cacheKey = taskEntityKey(entity, normalizedKey);
+  const facts = opts?.latestByEntityKey ? [] : factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
   let previous: MemoryEntry | undefined;
   if (opts?.latestByEntityKey) {
     previous = opts.latestByEntityKey.get(cacheKey);
   } else {
-    const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
+    const same = facts.filter((f) => factCanonicalLabel(f) === canonical && (f.key ?? "").trim() === normalizedKey);
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
   }
@@ -804,15 +870,38 @@ export async function upsertProjectTaskKey(
     category: TASK_LEDGER_CATEGORY,
     importance: CLI_STORE_IMPORTANCE,
     entity,
-    key,
+    key: normalizedKey,
     value,
     source: "active-task",
+    provenanceJson: activeTaskProvenance(canonical),
     decayClass: "permanent",
   });
   if (previous) {
     factsDb.supersede(previous.id, entry.id);
   }
-  opts?.latestByEntityKey?.set(cacheKey, entry);
+  if (normalizedKey === "status" && isTerminalFactStatus(value)) {
+    const currentFacts = opts?.latestByEntityKey
+      ? [...opts.latestByEntityKey.values()]
+      : factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+    for (const fact of currentFacts) {
+      if (fact.id === entry.id) continue;
+      if (factCanonicalLabel(fact) !== canonical) continue;
+      factsDb.supersede(fact.id, entry.id);
+    }
+  }
+  if (opts?.latestByEntityKey) {
+    for (const [existingKey, fact] of [...opts.latestByEntityKey.entries()]) {
+      if (
+        factCanonicalLabel(fact) === canonical &&
+        ((normalizedKey === "status" && isTerminalFactStatus(value)) || existingKey === cacheKey)
+      ) {
+        opts.latestByEntityKey.delete(existingKey);
+      }
+    }
+    if (!(normalizedKey === "status" && isTerminalFactStatus(value))) {
+      opts.latestByEntityKey.set(cacheKey, entry);
+    }
+  }
   try {
     const vector = await embeddings.embed(text);
     factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
@@ -890,6 +979,105 @@ export async function syncActiveTaskEntryToFacts(
     log,
     upsertOpts,
   );
+}
+
+export interface ActiveTaskCanonicalBackfillResult {
+  scannedFacts: number;
+  canonicalLabelsUpdated: number;
+  supersededFacts: number;
+  duplicateGroups: Array<{ canonicalLabel: string; facts: number; activeBefore: number; superseded: number }>;
+}
+
+export function backfillActiveTaskCanonicalLabels(
+  factsDb: FactsDB,
+  opts: { dryRun?: boolean; limit?: number } = {},
+): ActiveTaskCanonicalBackfillResult {
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, opts.limit ?? 50_000);
+  const groups = new Map<string, MemoryEntry[]>();
+  let canonicalLabelsUpdated = 0;
+
+  for (const fact of facts) {
+    if (!fact.entity?.trim()) continue;
+    const canonical = canonicalLabel(fact.entity);
+    const existing = readCanonicalLabelFromFact(fact);
+    if (existing !== canonical) {
+      canonicalLabelsUpdated++;
+      if (!opts.dryRun) {
+        const rawDb = (
+          factsDb as unknown as {
+            getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+          }
+        ).getRawDb?.();
+        rawDb
+          ?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
+          .run(activeTaskProvenance(canonical), fact.id);
+      }
+    }
+    const arr = groups.get(canonical) ?? [];
+    arr.push(fact);
+    groups.set(canonical, arr);
+  }
+
+  const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
+  let supersededFacts = 0;
+  for (const [canonical, rows] of groups) {
+    const activeBefore = rows.filter((f) => !f.supersededAt).length;
+    let groupSuperseded = 0;
+    const byKey = new Map<string, MemoryEntry[]>();
+    for (const row of rows) {
+      const key = (row.key ?? "").trim() || "_body";
+      const arr = byKey.get(key) ?? [];
+      arr.push(row);
+      byKey.set(key, arr);
+    }
+    let terminalStatus: MemoryEntry | undefined;
+    const statusRows = byKey.get("status") ?? [];
+    for (const row of statusRows) {
+      if (
+        isTerminalFactStatus(row.value ?? row.text ?? "") &&
+        (!terminalStatus || row.createdAt > terminalStatus.createdAt)
+      ) {
+        terminalStatus = row;
+      }
+    }
+    const supersede = (oldId: string, newId: string | null): void => {
+      supersededFacts++;
+      groupSuperseded++;
+      if (!opts.dryRun) factsDb.supersede(oldId, newId);
+    };
+    if (terminalStatus) {
+      for (const row of rows) {
+        if (row.id !== terminalStatus.id && !row.supersededAt) supersede(row.id, terminalStatus.id);
+      }
+    } else {
+      for (const sameKey of byKey.values()) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = ranked[0];
+        for (const row of ranked.slice(1)) {
+          if (!row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    }
+    if (activeBefore > 1 || groupSuperseded > 0) {
+      duplicateGroups.push({
+        canonicalLabel: canonical,
+        facts: rows.length,
+        activeBefore,
+        superseded: groupSuperseded,
+      });
+    }
+  }
+
+  if (!opts.dryRun) {
+    (factsDb as unknown as { invalidateSupersededTextsCache?: () => void }).invalidateSupersededTextsCache?.();
+  }
+
+  return {
+    scannedFacts: facts.length,
+    canonicalLabelsUpdated,
+    supersededFacts,
+    duplicateGroups: duplicateGroups.sort((a, b) => a.canonicalLabel.localeCompare(b.canonicalLabel)),
+  };
 }
 
 export interface ActiveTaskHygieneApplyResult {
