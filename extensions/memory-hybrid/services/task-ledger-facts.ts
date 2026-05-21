@@ -10,6 +10,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
@@ -132,7 +133,17 @@ export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const [canonical, group] of byCanonical) {
     const label = group.displayEntity || canonical;
-    byEntity.set(label, group.keys);
+    if (byEntity.has(label)) {
+      const existing = byEntity.get(label)!;
+      for (const [key, entry] of group.keys) {
+        const prev = existing.get(key);
+        if (!prev || entry.createdAt > prev.createdAt) {
+          existing.set(key, entry);
+        }
+      }
+    } else {
+      byEntity.set(label, group.keys);
+    }
   }
   return byEntity;
 }
@@ -1008,9 +1019,9 @@ export function backfillActiveTaskCanonicalLabels(
             getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
           }
         ).getRawDb?.();
-        rawDb
-          ?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
-          .run(activeTaskProvenance(canonical), fact.id);
+        const patch = { activeTask: { canonicalLabel: canonical }, canonical_label: canonical };
+        const merged = mergeFactProvenanceJson(fact.provenanceJson, patch);
+        rawDb?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?").run(merged, fact.id);
       }
     }
     const arr = groups.get(canonical) ?? [];
