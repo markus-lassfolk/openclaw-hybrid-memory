@@ -56,7 +56,14 @@ export function canonicalLabel(entity: string): string {
     .replace(CANONICAL_TASK_SUFFIX_RE, "")
     .replace(/[\s_\-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return normalized || entity.trim().toLowerCase();
+  return (
+    normalized ||
+    entity
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_\-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+  );
 }
 
 function factCanonicalLabel(fact: MemoryEntry): string {
