@@ -346,6 +346,7 @@ export function createProcedurePromotionItem(
   const sourceSessionCount = countDistinctSourceSessions(proc.sourceSessions);
   const successRate = computeSuccessRate(proc);
   const skillSlug = slugifyForSkill(proc.taskPattern, "procedure");
+  const sanitizedRecipe = sanitizeRecipePromptInjection(recipe);
   const payload: ProcedurePromotionItemPayload = {
     taskPattern: proc.taskPattern,
     successCount: proc.successCount,
@@ -356,6 +357,7 @@ export function createProcedurePromotionItem(
     lastFailed: proc.lastFailed,
     sourceSessionCount,
     recipe,
+    sanitizedRecipe,
     skillSlug,
   };
   const inputHash = computePendingInputHash({
@@ -364,7 +366,6 @@ export function createProcedurePromotionItem(
     payload,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
   });
-  payload.sanitizedRecipe = sanitizeRecipePromptInjection(recipe);
   return {
     queue: "procedures",
     id: proc.id,
