@@ -10,6 +10,10 @@ function escapeForEcho(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/\$/g, "\\$");
 }
 
+function shellSingleQuote(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
 function extractExecCommands(recipe: unknown): string[] {
   if (!Array.isArray(recipe)) return [];
   const cmds: string[] = [];
@@ -47,8 +51,7 @@ export function maybeBundleReplayScript(recipe: unknown): string | null {
   const body = cmds
     .map((c, i) => {
       if (c.startsWith("#")) return `echo "Step ${i + 1}: ${escapeForEcho(c.slice(2).trim())}"`;
-      const escaped = c.replace(/'/g, `'\\''`);
-      return `echo "Step ${i + 1}: ${escapeForEcho(c)}"\nbash -lc '${escaped}'`;
+      return `echo "Step ${i + 1}: ${escapeForEcho(c)}"\nbash -lc ${shellSingleQuote(c)}`;
     })
     .join("\n");
 

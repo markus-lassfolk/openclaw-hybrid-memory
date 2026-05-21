@@ -50,7 +50,7 @@ import {
   buildTelemetryReferenceMd,
   lintNestedReferences,
 } from "./skill-reference-sidecar.js";
-import { scanForPromptInjection } from "./skill-prompt-injection.js";
+import { sanitizeRecipePromptInjection, scanForPromptInjection } from "./skill-prompt-injection.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v3";
 
@@ -105,6 +105,7 @@ export interface ProcedurePromotionItemPayload extends Record<string, unknown> {
   lastFailed: number | null;
   sourceSessionCount: number;
   recipe: unknown;
+  sanitizedRecipe?: unknown;
   skillSlug: string;
 }
 
@@ -199,6 +200,7 @@ export interface ProcedurePromotionEvaluation {
 export interface ProcedurePromotionVerification {
   skill: string;
   sourceProcedureIds: string[];
+  relatedProcedures?: string[];
   sourceVersionIds: string[];
   sourceSessionIds: string[];
   sourceEpisodeIds: string[];
@@ -354,6 +356,7 @@ export function createProcedurePromotionItem(
     lastFailed: proc.lastFailed,
     sourceSessionCount,
     recipe,
+    sanitizedRecipe: sanitizeRecipePromptInjection(recipe),
     skillSlug,
   };
   const inputHash = computePendingInputHash({
@@ -381,7 +384,8 @@ export function evaluateProcedureForPromotion(
 ): ProcedurePromotionEvaluation {
   const now = options.now ?? Math.floor(Date.now() / 1000);
   const evidenceSummary = summarizeProcedureEvidence(item, options.evidence);
-  const riskLevel = determineRiskLevel(item.procedure, item.payload.recipe);
+  const sanitizedRecipeForPolicy = item.payload.sanitizedRecipe ?? sanitizeRecipePromptInjection(item.payload.recipe);
+  const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipeForPolicy);
   const riskValidationBump = riskLevel === "high" ? 2 : riskLevel === "medium" ? 1 : 0;
   const riskDistinctBump = riskLevel === "high" ? 1 : 0;
   const minDistinctContexts = (options.minDistinctContexts ?? DEFAULT_MIN_DISTINCT_CONTEXTS) + riskDistinctBump;
@@ -394,7 +398,7 @@ export function evaluateProcedureForPromotion(
   const requiredSuccessCount = options.validationThreshold + riskValidationBump;
   const proc = item.procedure;
   const gates: ProcedurePromotionGateResult[] = [];
-  const recipe = item.payload.recipe;
+  const recipe = sanitizedRecipeForPolicy;
   const recipeText = JSON.stringify(recipe);
   const combinedText = `${proc.taskPattern}\n${recipeText}`;
 
@@ -513,6 +517,7 @@ export function evaluateProcedureForPromotion(
   const metadata: ProcedurePromotionVerification = {
     skill: finalDraft ? toGerundSkillName(finalDraft.slug) : toGerundSkillName(resolvedSkillSlug),
     sourceProcedureIds: relatedIds.length > 0 ? [proc.id, ...relatedIds] : [proc.id],
+    relatedProcedures: relatedIds,
     sourceVersionIds: evidenceSummary.sourceVersionIds,
     sourceSessionIds: evidenceSummary.sourceSessionIds,
     sourceEpisodeIds: evidenceSummary.sourceEpisodeIds,
@@ -788,6 +793,8 @@ function finalizeProcedureSkillDraft(
   }
 
   const validator = new SkillValidator();
+  // Procedure skills use the procedure category section taxonomy (from metadata.category)
+  // so they are not rejected for generic Trigger/Scope/Provenance sections.
   const staticResult = validator.validate(draft.skillMd);
   if (!staticResult.valid) {
     gates.push(fail("skill_static_validation_failed", staticResult.violations.join("; ")));
@@ -839,7 +846,7 @@ function buildProcedureSkillDraft(
   slug: string,
 ): GeneratedProcedureSkillDraft {
   const proc = item.procedure;
-  const summarized = summarizeRecipeForSidecar(item.payload.recipe);
+  const summarized = summarizeRecipeForSidecar(item.payload.sanitizedRecipe ?? item.payload.recipe);
   if (!summarized.withinCap) {
     gates.push(defer("recipe_too_large", `recipe.json ${summarized.byteLength} bytes exceeds cap`));
   }
@@ -859,6 +866,9 @@ function buildProcedureSkillDraft(
     );
   }
   const recipeJson = summarized.recipeJson;
+  // All downstream generation uses the sanitized recipe returned by summarizeRecipeForSidecar.
+  // The original payload may contain prompt-injection markers or unsanitized values and must
+  // not be laundered into SKILL.md workflow text or replay scripts.
   const workflowRecipe = summarized.sanitizedSteps;
   const redactedTask = redactAutopilotText(proc.taskPattern);
   // Scan the task pattern for prompt-injection markers to prevent bypass of #1538.
@@ -985,7 +995,7 @@ ${examplesSection}${antiPatternsBlock}
     validatorScore: 0,
     promotionDecision: "drafted",
     rejectionReasons: gates.map((g) => g.reason),
-    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, slug)),
+    generatedSkillPath: toWorkspaceRelativePath(join(options.skillsAutoPath, item.payload.skillSlug)),
     policy,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
     inputHash: item.inputHash,
@@ -1017,6 +1027,7 @@ ${examplesSection}${antiPatternsBlock}
   const verificationPayload = {
     ...verification,
     relatedProcedures: relatedIds,
+    sourceProcedureIds: [proc.id, ...relatedIds],
     riskLevel,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
     inputHash: item.inputHash,
@@ -1482,7 +1493,7 @@ function isDuplicateSkill(
       // Legacy skill directories may not have the atomic completion marker. If
       // they contain SKILL.md, treat them as valid duplicates so marker rollout
       // never overwrites or re-promotes existing skills.
-      if (entry === slug) return true;
+      if (entry === slug || entry === gerundName) return true;
       const content = readSkillMdLowerCached(skillPath, bypassDiskCache);
       if (!content) continue;
       if (content.includes(`name: ${gerundName}`) || content.includes(`name: "${gerundName}"`)) return true;

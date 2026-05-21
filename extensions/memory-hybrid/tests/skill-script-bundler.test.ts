@@ -17,4 +17,13 @@ describe("skill-script-bundler", () => {
     const script = maybeBundleReplayScript([{ tool: "exec", args: { command: 'echo "ok"' } }]);
     expect(script).toContain('echo "Step 1: echo \\"ok\\""');
   });
+
+  it("single-quotes every replay command for bash -lc", () => {
+    const script = maybeBundleReplayScript([
+      { tool: "exec", args: { command: "echo 'safe'; echo next && printf done" } },
+    ]);
+    expect(script).not.toBeNull();
+    expect(script).toContain("bash -lc 'echo '\\''safe'\\''; echo next && printf done'");
+    expect(script).not.toMatch(/^echo 'safe'; echo next && printf done$/m);
+  });
 });

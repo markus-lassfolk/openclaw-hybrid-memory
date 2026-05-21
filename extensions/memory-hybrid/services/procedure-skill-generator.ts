@@ -168,6 +168,7 @@ function rebaseDraftSlug(
     skill?: unknown;
     generatedSkillPath?: unknown;
     telemetryCommand?: unknown;
+    relatedProcedures?: unknown;
   };
   const proposalMetadata = JSON.parse(draft.proposalMetadataJson) as {
     generated_skill_path?: unknown;
@@ -194,11 +195,9 @@ function rebaseDraftSlug(
     `^# (?:${escapeRegExp(titleCase(originalGerundName))}|${escapeRegExp(originalGerundName.replace(/-/g, " "))})$`,
     "m",
   );
+  const namePattern = new RegExp(`^(name:\\s*)(["']?)${escapeRegExp(originalGerundName)}\\2\\s*$`, "m");
   const skillMd = draft.skillMd
-    .replace(
-      new RegExp(`^name: (?:"${escapeRegExp(originalGerundName)}"|${escapeRegExp(originalGerundName)})$`, "m"),
-      `name: "${resolvedSkillName}"`,
-    )
+    .replace(namePattern, `name: "${resolvedSkillName}"`)
     .replace(h1Pattern, `# ${titleCase(resolvedSkillName)}`)
     .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
 

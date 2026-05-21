@@ -225,7 +225,11 @@ describe("generateAutoSkills", () => {
     expect(verification).toMatchObject({
       skill: "validating-colliding-release-report-1",
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
+      telemetryCommand: "openclaw hybrid-mem skills record validate-colliding-release-report-1",
     });
+    const telemetryMd = readFileSync(join(collidedDir, "references", "telemetry.md"), "utf-8");
+    expect(telemetryMd).toContain("openclaw hybrid-mem skills record validate-colliding-release-report-1");
+    expect(telemetryMd).not.toContain("openclaw hybrid-mem skills record validate-colliding-release-report\n");
     expect(proposalMetadata.generated_skill_path).toBe(join(skillsDir, "validate-colliding-release-report-1"));
 
     const originalSlug = "validate-colliding-release-report";
@@ -301,7 +305,11 @@ description: Existing skill occupying the representative base slug only.
     );
 
     expect(result.generated).toBe(1);
-    expect(existsSync(join(skillsDir, `${representativeSlug}-1`, "SKILL.md"))).toBe(true);
+    const mergedDir = join(skillsDir, `${representativeSlug}-1`);
+    expect(existsSync(join(mergedDir, "SKILL.md"))).toBe(true);
+    const verification = JSON.parse(readFileSync(join(mergedDir, "verification.json"), "utf-8"));
+    expect(verification.relatedProcedures).toEqual([related.id]);
+    expect(verification.sourceProcedureIds).toEqual([representative.id, related.id]);
     expect(result.decisions?.find((d) => d.procedureId === related.id)?.reasons).toContain("cluster_merged_into");
   });
 
