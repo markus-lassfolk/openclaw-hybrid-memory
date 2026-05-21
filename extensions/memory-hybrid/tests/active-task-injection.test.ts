@@ -71,7 +71,7 @@ describe("formatCappedTaskLabelList", () => {
 });
 
 describe("buildActiveTaskContextBundle", () => {
-  it("excludes stale tasks from main block but includes stale warnings within budget", () => {
+  it("includes stale tasks in main block with STALE flag and also in stale warnings", () => {
     const tasks = [
       entry({ label: "fresh", stale: false, description: "Current work" }),
       entry({
@@ -91,14 +91,14 @@ describe("buildActiveTaskContextBundle", () => {
     const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
     const combined = bundle.parts.join("\n");
     expect(main).toContain("[fresh]");
-    expect(main).not.toContain("[old-stale]");
+    expect(main).toContain("[old-stale]");
+    expect(main).toContain("⚠️ STALE");
     expect(combined).toContain("STALE ACTIVE TASKS");
-    expect(combined).toContain("[old-stale]");
-    expect(bundle.injectedTaskCount).toBe(1);
+    expect(bundle.injectedTaskCount).toBe(2);
     expect(bundle.ledgerActiveCount).toBe(2);
   });
 
-  it("does not double-count stale-warning-only tasks as injected", () => {
+  it("includes stale tasks in main injection and counts them", () => {
     const tasks = [
       entry({
         label: "old-stale",
@@ -114,8 +114,10 @@ describe("buildActiveTaskContextBundle", () => {
       staleWarningEnabled: true,
       projection: defaultProjection,
     });
-    expect(bundle.parts.join("\n")).toContain("[old-stale]");
-    expect(bundle.injectedTaskCount).toBe(0);
+    const combined = bundle.parts.join("\n");
+    expect(combined).toContain("[old-stale]");
+    expect(combined).toContain("⚠️ STALE");
+    expect(bundle.injectedTaskCount).toBe(1);
   });
 
   it("keeps total injected tokens within shared budget on heartbeat hygiene", () => {

@@ -133,9 +133,8 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
       : 0;
   let remainingChars = Math.max(0, totalChars - hygieneReserve);
 
-  const mainTasks = prepared.filter((task) => !task.stale);
-  if (mainTasks.length > 0 && remainingChars > 80) {
-    const main: ActiveTaskInjectionBuildResult = buildActiveTaskInjection(mainTasks, input.injectionBudgetTokens, {
+  if (prepared.length > 0 && remainingChars > 80) {
+    const main: ActiveTaskInjectionBuildResult = buildActiveTaskInjection(prepared, input.injectionBudgetTokens, {
       maxChars: remainingChars,
     });
     if (main.text) {
