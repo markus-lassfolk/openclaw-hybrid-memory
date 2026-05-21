@@ -38,4 +38,28 @@ describe("skill-frontmatter", () => {
     const keys = parseSkillFrontmatterKeys(body);
     expect(keys.get("description")).toBe("Use when the user asks\n  to check notifications.\n  Second line here.");
   });
+
+  it("keeps blank continuation lines inside folded descriptions", () => {
+    const body = [
+      "description: >-",
+      "  First paragraph.",
+      "",
+      "  Second paragraph after a blank continuation line.",
+      "metadata:",
+      "  category: procedure",
+    ].join("\n");
+    const keys = parseSkillFrontmatterKeys(body);
+    expect(keys.get("description")).toBe("First paragraph.\n\nSecond paragraph after a blank continuation line.");
+  });
+
+  it("does not terminate multi-line quoted descriptions at inner escaped quotes", () => {
+    const body = [
+      'description: "Use \\"quoted\\" wording',
+      '  across multiple lines."',
+      "metadata:",
+      "  category: procedure",
+    ].join("\n");
+    const keys = parseSkillFrontmatterKeys(body);
+    expect(keys.get("description")).toBe('Use "quoted" wording\n  across multiple lines.');
+  });
 });

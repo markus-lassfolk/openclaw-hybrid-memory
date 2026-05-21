@@ -56,5 +56,6 @@ describe("runContextAudit", () => {
 
     expect(audit.activeTasks.injectedTaskCount).toBeGreaterThan(0);
     expect(audit.activeTasks.count).toBe(audit.activeTasks.ledgerActiveCount);
+    expect(audit.activeTasks.injectedCount).toBe(audit.activeTasks.injectedTaskCount);
   });
 });

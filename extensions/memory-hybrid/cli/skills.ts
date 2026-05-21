@@ -563,8 +563,15 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           `Scanned: ${report.scanned}, oversized: ${report.oversized}, suspicious: ${report.suspicious}, quarantinable: ${report.quarantinable}`,
         );
         for (const entry of report.entries) {
+          const flags = [
+            entry.transcriptLike ? "transcript" : null,
+            entry.secretLike ? "secret" : null,
+            entry.injectionLike ? "injection" : null,
+          ]
+            .filter((flag): flag is string => flag != null)
+            .join(", ");
           console.log(
-            `- ${entry.slug}: ${entry.skillBytes} B, loadable=${entry.loadable}, transcript=${entry.transcriptLike}, secret=${entry.secretLike}`,
+            `- ${entry.slug}: ${entry.skillBytes} B, loadable=${entry.loadable}, transcript=${entry.transcriptLike}, secret=${entry.secretLike}, injection=${entry.injectionLike}${flags ? ` (${flags})` : ""}`,
           );
         }
       }),

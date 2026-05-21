@@ -404,7 +404,7 @@ export function evaluateProcedureForPromotion(
   const combinedText = `${proc.taskPattern}\n${recipeText}`;
 
   const clusterMerge = options.clusterDeferMap?.get(proc.id);
-  if (clusterMerge && options.clusterRepresentativeEligible === true) {
+  if (clusterMerge && clusterMerge.representativeId !== proc.id && options.clusterRepresentativeEligible === true) {
     gates.push(
       defer(
         "cluster_merged_into",
@@ -1236,15 +1236,27 @@ function scoreProcedureCandidate(input: {
   const duplicatePenalty = input.similarSkillExists ? 0.5 : 1;
   // baseScore weights sum to 1.0 (0.2 + 0.25 + 0.15 + 0.12 + 0.08 + 0.1 + 0.05 + 0.05 = 1.0).
   // When adding or modifying terms, ensure weights sum to exactly 1.0 to prevent drift.
+  const WEIGHTS = {
+    repeatCount: 0.2,
+    successRate: 0.25,
+    failureSeverity: 0.15,
+    userSignal: 0.12,
+    generality: 0.08,
+    concreteness: 0.1,
+    reusability: 0.05,
+    activationSpecificity: 0.05,
+  } as const;
+  const weightSum = Object.values(WEIGHTS).reduce((sum, weight) => sum + weight, 0);
+  const normalized = (weight: number) => weight / weightSum;
   const baseScore =
-    repeatCount * 0.2 +
-    successRate * 0.25 +
-    (1 - failureSeverity) * 0.15 +
-    userSignal * 0.12 +
-    generality * 0.08 +
-    concreteness * 0.1 +
-    reusability * 0.05 +
-    activationSpecificity * 0.05;
+    repeatCount * normalized(WEIGHTS.repeatCount) +
+    successRate * normalized(WEIGHTS.successRate) +
+    (1 - failureSeverity) * normalized(WEIGHTS.failureSeverity) +
+    userSignal * normalized(WEIGHTS.userSignal) +
+    generality * normalized(WEIGHTS.generality) +
+    concreteness * normalized(WEIGHTS.concreteness) +
+    reusability * normalized(WEIGHTS.reusability) +
+    activationSpecificity * normalized(WEIGHTS.activationSpecificity);
   const rawScore = baseScore * riskMultiplier * duplicatePenalty;
   const score = Number(Math.max(0, Math.min(1, rawScore)).toFixed(3));
   return {
@@ -1573,16 +1585,26 @@ function extractTaskContentFromSkill(content: string): string {
   // Match folded YAML description first (v3 format with >- or | indicators).
   // Allow blank continuation lines (empty lines within the block) so multi-paragraph
   // descriptions are captured fully rather than truncated at the first blank line.
-  const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:(?:[ \t]+.+|[ \t]*)(?:\n|$))+)/i);
+  const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:(?:[ \t]+.*|[ \t]*)(?:\n|$))+)/i);
   if (foldedMatch) {
     desc = foldedMatch[1]
       .replace(/^[ \t]+/gm, "")
       .replace(/\n(?!\n)/g, " ")
       .trim();
   } else {
-    // Match single-line description
-    const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
-    desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
+    const doubleQuotedMatch = frontmatter.match(
+      /(?:^|\n)description:\s*"((?:\\.|[^"\\])*(?:\n(?:[ \t]+(?:\\.|[^"\\])*)*)*)"/i,
+    );
+    if (doubleQuotedMatch) {
+      desc = doubleQuotedMatch[1]
+        .replace(/^[ \t]+/gm, "")
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"');
+    } else {
+      // Match single-line description
+      const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
+      desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
+    }
   }
   const taskSections = [
     /##\s*(?:when\s+to\s+activate|trigger)\s*([\s\S]*?)(?=##|$)/i,

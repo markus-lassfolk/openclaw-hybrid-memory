@@ -99,6 +99,45 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
   let descriptionMode: "none" | "folded" | "quoted" = "none";
   let descriptionParts: string[] = [];
 
+  const isCompleteYamlDoubleQuoted = (value: string): boolean => {
+    let escaped = false;
+    for (let idx = 1; idx < value.length; idx++) {
+      const ch = value[idx];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        return value.slice(idx + 1).trim().length === 0;
+      }
+    }
+    return false;
+  };
+
+  const unquoteYamlDoubleQuoted = (value: string): string => {
+    const trimmed = value.trim();
+    let escaped = false;
+    for (let idx = 1; idx < trimmed.length; idx++) {
+      const ch = trimmed[idx];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        return trimmed.slice(1, idx).replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      }
+    }
+    return trimmed.replace(/^"|"$/g, "");
+  };
+
   const flushDescription = () => {
     if (descriptionParts.length > 0) {
       keys.set("description", descriptionParts.join("\n").trim());
@@ -110,7 +149,7 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
   while (i < lines.length) {
     const line = lines[i] ?? "";
     if (descriptionMode === "folded") {
-      if (/^\s{2,}\S/.test(line) || /^\s*$/.test(line)) {
+      if (/^\s{2,}/.test(line) || /^\s*$/.test(line)) {
         descriptionParts.push(line.replace(/^\s{2}/, ""));
         i++;
         continue;
@@ -120,8 +159,8 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
     }
     if (descriptionMode === "quoted") {
       const joined = descriptionParts.length > 0 ? `${descriptionParts.join("\n")}\n${line}` : line;
-      if (joined.endsWith('"') && !joined.endsWith('\\"')) {
-        keys.set("description", joined.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"'));
+      if (isCompleteYamlDoubleQuoted(joined)) {
+        keys.set("description", unquoteYamlDoubleQuoted(joined));
         descriptionParts = [];
         descriptionMode = "none";
       } else {
@@ -136,7 +175,7 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
       currentTopKey = topMatch[1].toLowerCase();
       const rest = topMatch[2].trim();
       if (currentTopKey === "description") {
-        if (rest === ">-") {
+        if (/^[>|]-?$/.test(rest)) {
           descriptionMode = "folded";
           i++;
           continue;
@@ -144,8 +183,8 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
         if (rest.startsWith('"')) {
           descriptionMode = "quoted";
           descriptionParts = [rest];
-          if (rest.endsWith('"') && rest.length > 1) {
-            keys.set("description", rest.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"'));
+          if (isCompleteYamlDoubleQuoted(rest) && rest.length > 1) {
+            keys.set("description", unquoteYamlDoubleQuoted(rest));
             descriptionMode = "none";
             descriptionParts = [];
           }
