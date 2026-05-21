@@ -61,6 +61,7 @@ export async function runContextAudit(opts: {
   const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
 
   let activeTasksTokens = 0;
+  let count = 0;
   let ledgerActiveCount = 0;
   let filteredActiveCount = 0;
   let injectedTaskCount = 0;
@@ -79,21 +80,20 @@ export async function runContextAudit(opts: {
         );
         if (taskFile?.active.length) activeRows = taskFile.active;
       }
-      if (activeRows.length > 0) {
-        const bundle = buildActiveTaskContextBundle({
-          ledgerTasks: activeRows,
-          injectionBudgetTokens: cfg.activeTask.injectionBudget,
-          staleMinutes,
-          staleWarningEnabled: cfg.activeTask.staleWarning.enabled,
-          projection: cfg.activeTask.projection,
-          injectionMaxTasks: cfg.activeTask.injectionMaxTasks,
-        });
-        activeTasksTokens = bundle.injectedTokens;
-        ledgerActiveCount = bundle.ledgerActiveCount;
-        filteredActiveCount = bundle.filteredActiveCount;
-        injectedTaskCount = bundle.injectedTaskCount;
-        activeTasksStale = activeRows.filter((t) => t.stale).length;
-      }
+      count = activeRows.length;
+      const bundle = buildActiveTaskContextBundle({
+        ledgerTasks: activeRows,
+        injectionBudgetTokens: cfg.activeTask.injectionBudget,
+        staleMinutes,
+        staleWarningEnabled: cfg.activeTask.staleWarning.enabled,
+        projection: cfg.activeTask.projection,
+        injectionMaxTasks: cfg.activeTask.injectionMaxTasks,
+      });
+      activeTasksTokens = bundle.injectedTokens;
+      ledgerActiveCount = bundle.ledgerActiveCount;
+      filteredActiveCount = bundle.filteredActiveCount;
+      injectedTaskCount = bundle.injectedTaskCount;
+      activeTasksStale = activeRows.filter((t) => t.stale).length;
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-audit",
@@ -227,7 +227,7 @@ export async function runContextAudit(opts: {
       ledgerActiveCount,
       filteredActiveCount,
       injectedTaskCount,
-      count: ledgerActiveCount,
+      count,
       stale: activeTasksStale,
       injectionBudget: cfg.activeTask.injectionBudget,
     },

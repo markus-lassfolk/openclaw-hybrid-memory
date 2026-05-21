@@ -141,9 +141,11 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   }
 
   if (input.staleWarningEnabled && remainingChars > 40) {
+    const staleWarningTaskCount = prepared.filter((t) => t.stale || (t.status === "In progress" && t.subagent)).length;
     const staleBlock = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
     if (staleBlock) {
       parts.push(staleBlock);
+      injectedTaskCount = Math.max(injectedTaskCount, staleWarningTaskCount);
       remainingChars = Math.max(0, remainingChars - staleBlock.length - 2);
     }
   }
