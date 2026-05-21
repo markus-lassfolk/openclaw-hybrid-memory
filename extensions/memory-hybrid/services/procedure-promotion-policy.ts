@@ -1568,8 +1568,10 @@ function extractTaskContentFromSkill(content: string): string {
   const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
   const frontmatter = frontmatterMatch ? frontmatterMatch[1] : content;
   let desc = "";
-  // Match folded YAML description first (v3 format with >- or | indicators)
-  const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:[ \t]+.+(?:\n|$))+)/i);
+  // Match folded YAML description first (v3 format with >- or | indicators).
+  // Allow blank continuation lines (empty lines within the block) so multi-paragraph
+  // descriptions are captured fully rather than truncated at the first blank line.
+  const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:(?:[ \t]+.+|[ \t]*)(?:\n|$))+)/i);
   if (foldedMatch) {
     desc = foldedMatch[1]
       .replace(/^[ \t]+/gm, "")
