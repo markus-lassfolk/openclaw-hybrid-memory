@@ -301,9 +301,10 @@ export function generateAutoSkills(
   };
   const evaluatedEligibilityByProcedureId = new Map<string, boolean>();
   const resolvedSlugByProcedureId = new Map<string, string>();
+  const itemsByProcedureId = new Map(promotionItems.map((item) => [item.procedure.id, item]));
 
   for (const proc of procedures) {
-    const item = createProcedurePromotionItem(proc, policy);
+    const item = itemsByProcedureId.get(proc.id)!;
     const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
     resolvedSlugByProcedureId.set(proc.id, resolvedSlug);
     const evidence = collectProcedurePromotionEvidence(factsDb, proc);
@@ -543,6 +544,7 @@ export function generateAutoSkillForProcedure(
   const baselineDescriptions = loadExistingSkillDescriptions(basePath);
   const readyProcedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays);
   const promotionItems = readyProcedures.map((p) => createProcedurePromotionItem(p, policy));
+  const itemsByProcedureId = new Map(promotionItems.map((item) => [item.procedure.id, item]));
   const clusters = clusterProcedureItems(promotionItems);
   const clusterDeferMap = buildClusterDeferMap(clusters);
   const relatedByRepresentative = new Map<string, string[]>();
@@ -550,7 +552,7 @@ export function generateAutoSkillForProcedure(
   const reservedSlugsForPreview = new Set<string>();
   for (const readyProc of readyProcedures) {
     if (readyProc.id === proc.id) continue;
-    const readyItem = createProcedurePromotionItem(readyProc, policy);
+    const readyItem = itemsByProcedureId.get(readyProc.id)!;
     const readyResolvedSlug = ensureUniqueSlug(basePath, readyItem.payload.skillSlug, reservedSlugsForPreview);
     resolvedSlugByProcedureId.set(readyProc.id, readyResolvedSlug);
     reservedSlugsForPreview.add(readyResolvedSlug);
