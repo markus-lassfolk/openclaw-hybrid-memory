@@ -240,7 +240,7 @@ describe("closeOldDatabases() prevents handle resurrection on re-registration", 
     // Old store still throws
     expect(() => oldFacts.count()).toThrow();
 
-    newFacts.close();
+    newFacts.permanentClose();
   });
 
   it("three successive re-registrations: each teardown permanently closes old handles", () => {

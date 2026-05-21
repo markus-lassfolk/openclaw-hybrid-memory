@@ -180,15 +180,18 @@ export abstract class BaseSqliteStore {
     if (this.closePhase === "shutdown") return;
     this.closePhase = "shutdown";
     this._closed = true;
+    const wasOpen = this._dbOpen;
     this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-permanent-close",
-        subsystem: this.getSubsystemName(),
-        severity: "info",
-      });
+    if (wasOpen) {
+      try {
+        this.db.close();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "db-permanent-close",
+          subsystem: this.getSubsystemName(),
+          severity: "warning",
+        });
+      }
     }
   }
 
