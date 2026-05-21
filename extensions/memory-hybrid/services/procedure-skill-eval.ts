@@ -292,7 +292,7 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
   if (safetyFailed) humanReviewReasons.push("static safety validation failed");
   const humanReviewRequired = humanReviewReasons.length > 0;
 
-  const evaluatedAt = new Date((input.now ?? 0) * 1000).toISOString();
+  const evaluatedAt = new Date((input.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString();
 
   return {
     evaluatedAt,
