@@ -356,7 +356,6 @@ export function createProcedurePromotionItem(
     lastFailed: proc.lastFailed,
     sourceSessionCount,
     recipe,
-    sanitizedRecipe: sanitizeRecipePromptInjection(recipe),
     skillSlug,
   };
   const inputHash = computePendingInputHash({
@@ -365,6 +364,7 @@ export function createProcedurePromotionItem(
     payload,
     policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
   });
+  payload.sanitizedRecipe = sanitizeRecipePromptInjection(recipe);
   return {
     queue: "procedures",
     id: proc.id,
