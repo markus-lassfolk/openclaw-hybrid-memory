@@ -1569,7 +1569,10 @@ function extractTaskContentFromSkill(content: string): string {
   // Match folded YAML description first (v3 format with >- or | indicators)
   const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:[ \t]+.+(?:\n|$))+)/i);
   if (foldedMatch) {
-    desc = foldedMatch[1].replace(/^[ \t]+/gm, "").trim();
+    desc = foldedMatch[1]
+      .replace(/^[ \t]+/gm, "")
+      .replace(/\n(?!\n)/g, " ")
+      .trim();
   } else {
     // Match single-line description
     const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
