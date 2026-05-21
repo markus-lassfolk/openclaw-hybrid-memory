@@ -24,6 +24,7 @@ export type AutoSkillAuditReport = {
   scanned: number;
   oversized: number;
   suspicious: number;
+  quarantinable: number;
   entries: AutoSkillAuditEntry[];
 };
 
@@ -65,7 +66,7 @@ function scanSkillDir(skillDir: string, slug: string): AutoSkillAuditEntry | nul
 export function auditAutoSkills(skillsAutoPath: string): AutoSkillAuditReport {
   const entries: AutoSkillAuditEntry[] = [];
   if (!existsSync(skillsAutoPath)) {
-    return { scanned: 0, oversized: 0, suspicious: 0, entries };
+    return { scanned: 0, oversized: 0, suspicious: 0, quarantinable: 0, entries };
   }
   for (const name of readdirSync(skillsAutoPath)) {
     if (name.startsWith(".")) continue;
@@ -82,6 +83,7 @@ export function auditAutoSkills(skillsAutoPath: string): AutoSkillAuditReport {
     scanned: entries.length,
     oversized: entries.filter((e) => !e.loadable).length,
     suspicious: entries.filter((e) => e.transcriptLike || e.secretLike || e.injectionLike).length,
+    quarantinable: entries.filter((e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike).length,
     entries,
   };
 }

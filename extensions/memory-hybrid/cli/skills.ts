@@ -559,7 +559,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           console.log(JSON.stringify({ ok: true, ...report }, null, 2));
           return;
         }
-        console.log(`Scanned: ${report.scanned}, oversized: ${report.oversized}, suspicious: ${report.suspicious}`);
+        console.log(`Scanned: ${report.scanned}, oversized: ${report.oversized}, suspicious: ${report.suspicious}, quarantinable: ${report.quarantinable}`);
         for (const entry of report.entries) {
           console.log(
             `- ${entry.slug}: ${entry.skillBytes} B, loadable=${entry.loadable}, transcript=${entry.transcriptLike}, secret=${entry.secretLike}`,
