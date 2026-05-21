@@ -94,8 +94,28 @@ describe("buildActiveTaskContextBundle", () => {
     expect(main).not.toContain("[old-stale]");
     expect(combined).toContain("STALE ACTIVE TASKS");
     expect(combined).toContain("[old-stale]");
-    expect(bundle.injectedTaskCount).toBe(1);
+    expect(bundle.injectedTaskCount).toBe(2);
     expect(bundle.ledgerActiveCount).toBe(2);
+  });
+
+  it("counts stale-warning-only tasks as injected", () => {
+    const tasks = [
+      entry({
+        label: "old-stale",
+        stale: true,
+        updated: "2020-01-01T00:00:00.000Z",
+        description: "Stale work",
+      }),
+    ];
+    const bundle = buildActiveTaskContextBundle({
+      ledgerTasks: tasks,
+      injectionBudgetTokens: 500,
+      staleMinutes: 60,
+      staleWarningEnabled: true,
+      projection: defaultProjection,
+    });
+    expect(bundle.parts.join("\n")).toContain("[old-stale]");
+    expect(bundle.injectedTaskCount).toBe(1);
   });
 
   it("keeps total injected tokens within shared budget on heartbeat hygiene", () => {

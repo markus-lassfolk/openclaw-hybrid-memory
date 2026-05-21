@@ -490,7 +490,7 @@ export function evaluateProcedureForPromotion(
   let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   let evalsWereRun = false;
   if (draft) {
-    const finalized = finalizeProcedureSkillDraft(draft, item, gates);
+    const finalized = finalizeProcedureSkillDraft(draft, item, gates, now);
     draft = finalized.draft;
     evalsWereRun = finalized.evalsWereRun;
   }
@@ -710,6 +710,7 @@ function finalizeProcedureSkillDraft(
   draft: GeneratedProcedureSkillDraft,
   item: ProcedurePromotionItem,
   gates: ProcedurePromotionGateResult[],
+  now: number,
 ): { draft: GeneratedProcedureSkillDraft; evalsWereRun: boolean } {
   const proc = item.procedure;
   const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
@@ -769,6 +770,7 @@ function finalizeProcedureSkillDraft(
     trigger?: { shouldTrigger?: string[]; shouldNotTrigger?: string[] };
   };
   const evalResult = runProcedureSkillEval({
+    now,
     skillMd: draft.skillMd,
     recipeJson: draft.recipeJson,
     taskPattern: proc.taskPattern,

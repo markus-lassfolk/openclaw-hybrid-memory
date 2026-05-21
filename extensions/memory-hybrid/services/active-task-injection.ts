@@ -109,6 +109,17 @@ export type ActiveTaskContextBundleInput = {
   goalEscalationBlock?: string;
 };
 
+function countStaleWarningTasks(tasks: ActiveTaskEntry[], staleBlock: string): number {
+  const warnedLabels = new Set<string>();
+  const countable = tasks.filter((t) => t.stale || (t.status === "In progress" && t.subagent));
+  for (const task of countable) {
+    if (staleBlock.includes(`- [${task.label}]:`)) {
+      warnedLabels.add(task.label);
+    }
+  }
+  return warnedLabels.size;
+}
+
 /**
  * Build all budgeted active-task prepend blocks from one shared char pool (`injectionBudget * 4`).
  */
@@ -145,6 +156,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     const staleBlock = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
     if (staleBlock) {
       parts.push(staleBlock);
+      injectedTaskCount += countStaleWarningTasks(prepared, staleBlock);
       remainingChars = Math.max(0, remainingChars - staleBlock.length - 2);
     }
   }

@@ -576,6 +576,8 @@ export function generateAutoSkillForProcedure(
             baselineDescriptions,
           },
           [...(options.inRunSkillCandidates ?? [])],
+          new Set<string>(),
+          new Map<string, string>(),
           clusterDeferMap,
           relatedByRepresentative,
         )

@@ -6,6 +6,8 @@ import { SkillValidator } from "./skill-validator.js";
 import { extractWorkflowSection, lintWorkflowActionability } from "./procedure-skill-workflow.js";
 
 export type ProcedureSkillEvalInput = {
+  /** Deterministic Unix timestamp (seconds) used for persisted eval metadata. */
+  now?: number;
   skillMd: string;
   recipeJson: string;
   taskPattern: string;
@@ -24,6 +26,8 @@ export type ProcedureSkillEvalCheck = {
 };
 
 export type ProcedureSkillEvalResult = {
+  /** Deterministic timestamp from the promotion evaluation clock. */
+  evaluatedAt: string;
   status: "passed" | "failed";
   checks: ProcedureSkillEvalCheck[];
   triggerEval: "passed" | "failed";
@@ -288,7 +292,10 @@ export function runProcedureSkillEval(input: ProcedureSkillEvalInput): Procedure
   if (safetyFailed) humanReviewReasons.push("static safety validation failed");
   const humanReviewRequired = humanReviewReasons.length > 0;
 
+  const evaluatedAt = new Date((input.now ?? 0) * 1000).toISOString();
+
   return {
+    evaluatedAt,
     status,
     checks,
     triggerEval: triggerFailed ? "failed" : "passed",
@@ -317,7 +324,7 @@ export function formatEvalResultsJson(result: ProcedureSkillEvalResult): string 
       safetyAssertions: result.safetyAssertions,
       humanReviewRequired: result.humanReviewRequired,
       humanReviewReasons: result.humanReviewReasons,
-      evaluatedAt: new Date().toISOString(),
+      evaluatedAt: result.evaluatedAt,
     },
     null,
     2,

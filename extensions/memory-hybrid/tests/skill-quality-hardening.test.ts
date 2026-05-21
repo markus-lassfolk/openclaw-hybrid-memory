@@ -283,6 +283,19 @@ metadata:
     expect(json.humanReviewReasons).toBeDefined();
   });
 
+  it("persists deterministic evaluatedAt from eval input", () => {
+    const result = runProcedureSkillEval({
+      now: 1700000000,
+      skillMd,
+      recipeJson: "[]",
+      taskPattern: "Check moltbook notifications",
+      shouldTrigger: ["Check moltbook notifications"],
+      shouldNotTrigger: [],
+      baselineDescriptions: [],
+    });
+    expect(JSON.parse(formatEvalResultsJson(result)).evaluatedAt).toBe("2023-11-14T22:13:20.000Z");
+  });
+
   it("marks humanReviewRequired=true when any sub-eval fails", () => {
     const bad = runProcedureSkillEval({
       skillMd: "---\nname: foo\ndescription: x\n---\n# foo",
