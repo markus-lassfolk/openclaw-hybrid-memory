@@ -3,14 +3,14 @@
  */
 
 const NEAR_MISS_TEMPLATES = [
-  (task: string, kw: string) => `Send or post a destructive variant of "${task}" to someone without approval`,
-  (task: string, kw: string) => `Install packages while trying to ${task.toLowerCase()}`,
-  (task: string, kw: string) => `SSH into production and ${task.toLowerCase()}`,
+  (task: string, _kw: string) => `Send or post a destructive variant of "${task}" to someone without approval`,
+  (task: string, _kw: string) => `Install packages while trying to ${task.toLowerCase()}`,
+  (task: string, _kw: string) => `SSH into production and ${task.toLowerCase()}`,
   (task: string, kw: string) => `Tasks that mention ${kw} but require credential access or external sending`,
   (task: string) => `Create a new unrelated automation from scratch instead of ${task.toLowerCase()}`,
   (task: string, kw: string) => `Delete or destroy resources while debugging ${kw}`,
   (task: string) => `Run arbitrary shell maintenance unrelated to ${task.toLowerCase()}`,
-  (task: string, kw: string) => `Bypass approval and ${task.toLowerCase()} with side effects`,
+  (task: string, _kw: string) => `Bypass approval and ${task.toLowerCase()} with side effects`,
 ];
 
 /** Shared with skill-description-builder so eval prompts appear in the description trigger surface. */

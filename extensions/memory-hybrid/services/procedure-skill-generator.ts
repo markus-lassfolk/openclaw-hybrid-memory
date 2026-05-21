@@ -864,6 +864,8 @@ function evaluateClusterRepresentativeEligible(
     contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     inRunSkillCandidates,
+    clusterDeferMap: _clusterDeferMap,
+    clusterRepresentativeEligible: false,
     relatedProcedureIds: relatedByRepresentative.get(representativeId),
     historicalPrompts: collectHistoricalSessionPrompts(factsDb, repProc, evidence),
     baselineDescriptions: options.baselineDescriptions,
