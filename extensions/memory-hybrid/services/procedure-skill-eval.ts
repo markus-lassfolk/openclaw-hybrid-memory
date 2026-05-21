@@ -108,6 +108,7 @@ function matchesNearMiss(prompt: string, shouldNot: string[]): boolean {
   const destructiveOnPrompt = /\b(send|delete|destroy|credential|ssh|install)\b/i.test(lower);
   if (!destructiveOnPrompt) return false;
   return shouldNot.some((t) => {
+    if (t === prompt) return false;
     const keywords = promptTokens(t);
     const overlap = keywords.filter((w) => lower.includes(w)).length;
     return overlap >= 2;
