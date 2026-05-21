@@ -146,7 +146,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   }
 
   if (input.staleWarningEnabled && remainingChars > 40) {
-    const staleResult = buildStaleWarningInjection(preCap, input.staleMinutes, remainingChars);
+    const staleResult = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
     if (staleResult.text) {
       parts.push(staleResult.text);
       remainingChars = Math.max(0, remainingChars - staleResult.text.length - 2);

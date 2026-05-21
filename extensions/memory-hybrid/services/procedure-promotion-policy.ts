@@ -1234,8 +1234,8 @@ function scoreProcedureCandidate(input: {
   const riskMultiplier = input.riskLevel === "high" ? 0.35 : input.riskLevel === "medium" ? 0.65 : 1;
   const activationSpecificity = Math.max(0, Math.min(1, input.activationSpecificity));
   const duplicatePenalty = input.similarSkillExists ? 0.5 : 1;
-  // baseScore weights sum to 1.0 (0.2 + 0.25 + 0.15 + 0.12 + 0.08 + 0.1 + 0.05 + 0.05 = 1.0).
-  // When adding or modifying terms, ensure weights sum to exactly 1.0 to prevent drift.
+  // baseScore weights are auto-normalized (currently sum to 1.0: 0.2 + 0.25 + 0.15 + 0.12 + 0.08 + 0.1 + 0.05 + 0.05 = 1.0).
+  // Weights can be adjusted without manual rebalancing; normalized() ensures they sum to 1.0.
   const WEIGHTS = {
     repeatCount: 0.2,
     successRate: 0.25,
