@@ -1579,8 +1579,9 @@ function safeReadFile(path: string): string {
 }
 
 function extractTaskContentFromSkill(content: string): string {
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  const frontmatter = frontmatterMatch ? frontmatterMatch[1] : content;
+  const stripped = stripLeadingHtmlComments(content);
+  const frontmatterMatch = stripped.match(/^---\s*\n([\s\S]*?)\n---/);
+  const frontmatter = frontmatterMatch ? frontmatterMatch[1] : stripped;
   let desc = "";
 
   const frontmatterLines = frontmatter.split("\n");
@@ -1663,7 +1664,7 @@ function extractTaskContentFromSkill(content: string): string {
     /##\s*examples\s*([\s\S]*?)(?=##|$)/i,
     /##\s*provenance\s*([\s\S]*?)(?=##|$)/i,
   ]
-    .map((pattern) => content.match(pattern)?.[1] ?? "")
+    .map((pattern) => stripped.match(pattern)?.[1] ?? "")
     .join("\n");
   return `${desc}\n${taskSections}`;
 }

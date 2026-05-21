@@ -74,18 +74,19 @@ export function prepareActiveTasksForInjection(
     userText?: string;
     sessionKey?: string;
   },
-): { prepared: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
+): { prepared: ActiveTaskEntry[]; preCap: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
   const ledgerActiveCount = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status)).length;
   let prepared = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status));
   prepared = applyActiveTaskProjectionFilters(prepared, opts.projection);
   prepared.sort((a, b) => compareTasksForInjection(a, b, opts.userText, opts.sessionKey));
 
+  const preCap = prepared;
   const rowCap = opts.injectionMaxTasks ?? opts.projection.maxRowsPerSection;
   if (typeof rowCap === "number" && rowCap > 0 && prepared.length > rowCap) {
     prepared = prepared.slice(0, rowCap);
   }
 
-  return { prepared, ledgerActiveCount, filteredActiveCount: prepared.length };
+  return { prepared, preCap, ledgerActiveCount, filteredActiveCount: prepared.length };
 }
 
 export type ActiveTaskContextBundleResult = {
@@ -113,12 +114,15 @@ export type ActiveTaskContextBundleInput = {
  * Build all budgeted active-task prepend blocks from one shared char pool (`injectionBudget * 4`).
  */
 export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput): ActiveTaskContextBundleResult {
-  const { prepared, ledgerActiveCount, filteredActiveCount } = prepareActiveTasksForInjection(input.ledgerTasks, {
-    projection: input.projection,
-    injectionMaxTasks: input.injectionMaxTasks,
-    userText: input.userText,
-    sessionKey: input.sessionKey,
-  });
+  const { prepared, preCap, ledgerActiveCount, filteredActiveCount } = prepareActiveTasksForInjection(
+    input.ledgerTasks,
+    {
+      projection: input.projection,
+      injectionMaxTasks: input.injectionMaxTasks,
+      userText: input.userText,
+      sessionKey: input.sessionKey,
+    },
+  );
 
   const parts: string[] = [];
   let injectedTaskCount = 0;
@@ -142,7 +146,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   }
 
   if (input.staleWarningEnabled && remainingChars > 40) {
-    const staleResult = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
+    const staleResult = buildStaleWarningInjection(preCap, input.staleMinutes, remainingChars);
     if (staleResult.text) {
       parts.push(staleResult.text);
       remainingChars = Math.max(0, remainingChars - staleResult.text.length - 2);

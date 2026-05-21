@@ -63,7 +63,6 @@ export async function runContextAudit(opts: {
   const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
 
   let activeTasksTokens = 0;
-  let count = 0;
   let ledgerActiveCount = 0;
   let filteredActiveCount = 0;
   let injectedTaskCount = 0;
@@ -82,7 +81,6 @@ export async function runContextAudit(opts: {
         );
         if (taskFile?.active.length) activeRows = taskFile.active;
       }
-      count = activeRows.length;
       const bundle = buildActiveTaskContextBundle({
         ledgerTasks: activeRows,
         injectionBudgetTokens: cfg.activeTask.injectionBudget,
