@@ -546,22 +546,21 @@ export function generateAutoSkillForProcedure(
   const clusters = clusterProcedureItems(promotionItems);
   const clusterDeferMap = buildClusterDeferMap(clusters);
   const relatedByRepresentative = new Map<string, string[]>();
+  const resolvedSlugByProcedureId = new Map<string, string>([[proc.id, resolvedSlug]]);
+  const reservedSlugsForPreview = new Set<string>();
+  for (const readyProc of readyProcedures) {
+    if (readyProc.id === proc.id) continue;
+    const readyItem = createProcedurePromotionItem(readyProc, policy);
+    const readyResolvedSlug = ensureUniqueSlug(basePath, readyItem.payload.skillSlug, reservedSlugsForPreview);
+    resolvedSlugByProcedureId.set(readyProc.id, readyResolvedSlug);
+    reservedSlugsForPreview.add(readyResolvedSlug);
+  }
   for (const c of clusters) {
     if (c.relatedProcedureIds.length > 0) {
       relatedByRepresentative.set(c.representative.procedure.id, c.relatedProcedureIds);
     }
   }
   const clusterMerge = clusterDeferMap.get(proc.id);
-  const resolvedSlugByProcedureId = new Map<string, string>();
-  // If this procedure is deferred to a representative, populate the map with the representative's slug
-  if (clusterMerge) {
-    const repProc = readyProcedures.find((p) => p.id === clusterMerge.representativeId);
-    if (repProc) {
-      const repItem = createProcedurePromotionItem(repProc, policy);
-      const repResolvedSlug = ensureUniqueSlug(basePath, repItem.payload.skillSlug);
-      resolvedSlugByProcedureId.set(clusterMerge.representativeId, repResolvedSlug);
-    }
-  }
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
@@ -585,7 +584,7 @@ export function generateAutoSkillForProcedure(
             baselineDescriptions,
           },
           [...(options.inRunSkillCandidates ?? [])],
-          new Set<string>(),
+          reservedSlugsForPreview,
           resolvedSlugByProcedureId,
           clusterDeferMap,
           relatedByRepresentative,
