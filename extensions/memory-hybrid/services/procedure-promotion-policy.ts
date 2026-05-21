@@ -871,9 +871,10 @@ function buildProcedureSkillDraft(
   // The original payload may contain prompt-injection markers or unsanitized values and must
   // not be laundered into SKILL.md workflow text or replay scripts.
   const workflowRecipe = summarized.sanitizedSteps;
+  // Scan the task pattern for prompt-injection markers on the original text before
+  // redaction, so that redactAutopilotText cannot mask injection patterns.
+  const taskInjectionScan = scanForPromptInjection(proc.taskPattern);
   const redactedTask = redactAutopilotText(proc.taskPattern);
-  // Scan the task pattern for prompt-injection markers to prevent bypass of #1538.
-  const taskInjectionScan = scanForPromptInjection(redactedTask.redacted);
   if (taskInjectionScan.hasHardInjection) {
     const names = taskInjectionScan.hits
       .filter((h) => h.severity === "hard")
