@@ -1582,29 +1582,78 @@ function extractTaskContentFromSkill(content: string): string {
   const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
   const frontmatter = frontmatterMatch ? frontmatterMatch[1] : content;
   let desc = "";
-  // Match folded YAML description first (v3 format with >- or | indicators).
-  // Allow blank continuation lines (empty lines within the block) so multi-paragraph
-  // descriptions are captured fully rather than truncated at the first blank line.
-  const foldedMatch = frontmatter.match(/(?:^|\n)description:\s*[|>]-?\s*\n((?:(?:[ \t]+.*|[ \t]*)(?:\n|$))+)/i);
-  if (foldedMatch) {
-    desc = foldedMatch[1]
-      .replace(/^[ \t]+/gm, "")
-      .replace(/\n(?!\n)/g, " ")
-      .trim();
-  } else {
-    const doubleQuotedMatch = frontmatter.match(
-      /(?:^|\n)description:\s*"((?:\\.|[^"\\])*(?:\n(?:[ \t]+(?:\\.|[^"\\])*)*)*)"/i,
-    );
-    if (doubleQuotedMatch) {
-      desc = doubleQuotedMatch[1]
-        .replace(/^[ \t]+/gm, "")
-        .replace(/\\n/g, "\n")
-        .replace(/\\"/g, '"');
-    } else {
-      // Match single-line description
-      const descMatch = frontmatter.match(/(?:^|\n)description:\s*(?:"([^"]*)"|'([^']*)'|([^\n]+))/i);
-      desc = descMatch ? (descMatch[1] ?? descMatch[2] ?? descMatch[3] ?? "") : "";
+
+  const frontmatterLines = frontmatter.split("\n");
+  for (let i = 0; i < frontmatterLines.length; i += 1) {
+    const line = frontmatterLines[i] ?? "";
+    const keyMatch = line.match(/^description:\s*(.*)$/i);
+    if (!keyMatch) continue;
+
+    const rest = (keyMatch[1] ?? "").trim();
+    if (/^[|>]-?$/.test(rest)) {
+      const blockLines: string[] = [];
+      for (let j = i + 1; j < frontmatterLines.length; j += 1) {
+        const blockLine = frontmatterLines[j] ?? "";
+        if (blockLine.length > 0 && !/^[ \t]/.test(blockLine)) break;
+        blockLines.push(blockLine.replace(/^[ \t]+/, ""));
+      }
+      desc = blockLines
+        .join("\n")
+        .replace(/\n(?!\n)/g, " ")
+        .trim();
+      break;
     }
+
+    if (rest.startsWith('"')) {
+      const parts: string[] = [];
+      let escaped = false;
+      let closed = false;
+      const consume = (segment: string): boolean => {
+        for (let k = 0; k < segment.length; k += 1) {
+          const ch = segment[k] ?? "";
+          if (escaped) {
+            parts.push(`\\${ch}`);
+            escaped = false;
+            continue;
+          }
+          if (ch === "\\") {
+            escaped = true;
+            continue;
+          }
+          if (ch === '"') {
+            closed = true;
+            return true;
+          }
+          parts.push(ch);
+        }
+        return false;
+      };
+
+      if (!consume(rest.slice(1))) {
+        for (let j = i + 1; j < frontmatterLines.length; j += 1) {
+          parts.push("\n");
+          if (consume(frontmatterLines[j] ?? "")) break;
+        }
+      }
+
+      if (closed) {
+        desc = parts
+          .join("")
+          .replace(/\\n/g, "\n")
+          .replace(/\\"/g, '"')
+          .replace(/^[ \t]+/gm, "");
+      }
+      break;
+    }
+
+    if (rest.startsWith("'")) {
+      const closing = rest.indexOf("'", 1);
+      desc = (closing >= 0 ? rest.slice(1, closing) : rest.slice(1)).trim();
+      break;
+    }
+
+    desc = rest.trim();
+    break;
   }
   const taskSections = [
     /##\s*(?:when\s+to\s+activate|trigger)\s*([\s\S]*?)(?=##|$)/i,

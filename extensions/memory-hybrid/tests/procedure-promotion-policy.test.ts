@@ -1209,6 +1209,42 @@ Use for collecting markerless legacy reports.
     expect(decision.summary?.body).toContain("validating-release-health-report-with-objective-checks-1");
   });
 
+  it("parses folded and multiline quoted descriptions without regex backtracking", () => {
+    const skillDir = join(skillsDir, "collecting-weather-sensor-status");
+    mkdirSync(skillDir, { recursive: true });
+
+    const pathologicalTabs = "\t".repeat(10_000);
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: "collecting-weather-sensor-status"
+description: "\n  Collect weather sensor status safely.\n  ${pathologicalTabs}\n  Includes multiline quoted content."
+metadata:
+  category: "procedure"
+  provenance: "procedure:test"
+---
+
+# Skill
+
+## Workflow
+1. Check status safely.
+`,
+      "utf-8",
+    );
+
+    const proc = addProcedure({ taskPattern: "Collect weather sensor status", sourceSessionId: "tabs-a" });
+    db.recordProcedureSuccess(proc.id, undefined, "tabs-b");
+    db.recordProcedureSuccess(proc.id, undefined, "tabs-c");
+
+    const evaluation = evaluateProcedureForPromotion(
+      createProcedurePromotionItem(proc, parseProcedurePromotionPolicy("auto-safe")),
+      parseProcedurePromotionPolicy("auto-safe"),
+      { skillsAutoPath: skillsDir, validationThreshold: 3 },
+    );
+
+    expect(evaluation.metadata.rejectionReasons).toContain("duplicate_existing_skill");
+  });
+
   it("detects duplicate skills by gerund directory name", () => {
     const gerundDir = join(skillsDir, "validating-gerund-directory-report");
     mkdirSync(gerundDir, { recursive: true });
