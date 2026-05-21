@@ -720,7 +720,6 @@ function finalizeProcedureSkillDraft(
   fullSanitizedRecipe: unknown,
 ): { draft: GeneratedProcedureSkillDraft; evalsWereRun: boolean } {
   const proc = item.procedure;
-  const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
   const riskLevel = determineRiskLevel(item.procedure, fullSanitizedRecipe);
 
   let skillMd = draft.skillMd;
@@ -730,7 +729,7 @@ function finalizeProcedureSkillDraft(
   const disclosureTarget = Math.min(MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET, MAX_SKILL_FILE_BYTES_SAFE);
   const disclosure = applyProgressiveDisclosure(
     skillMd,
-    sanitizedRecipe,
+    fullSanitizedRecipe,
     proc.taskPattern,
     disclosureTarget,
     riskLevel,

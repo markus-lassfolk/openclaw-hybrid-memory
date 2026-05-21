@@ -109,16 +109,6 @@ export type ActiveTaskContextBundleInput = {
   goalEscalationBlock?: string;
 };
 
-function collectInjectedTaskLabels(tasks: ActiveTaskEntry[], text: string): Set<string> {
-  const labels = new Set<string>();
-  for (const task of tasks) {
-    if (text.includes(`- [${task.label}]`)) {
-      labels.add(task.label);
-    }
-  }
-  return labels;
-}
-
 /**
  * Build all budgeted active-task prepend blocks from one shared char pool (`injectionBudget * 4`).
  */
@@ -131,7 +121,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   });
 
   const parts: string[] = [];
-  const injectedTaskLabels = new Set<string>();
+  let injectedTaskCount = 0;
   const totalChars = Math.max(0, input.injectionBudgetTokens * 4);
   const hygieneReserve =
     input.heartbeatHygiene != null
@@ -145,9 +135,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     });
     if (main.text) {
       parts.push(main.text);
-      for (const label of collectInjectedTaskLabels(prepared, main.text)) {
-        injectedTaskLabels.add(label);
-      }
+      injectedTaskCount = main.injectedCount;
       remainingChars = Math.max(0, remainingChars - main.text.length - 2);
     }
   }
@@ -156,9 +144,6 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     const staleBlock = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
     if (staleBlock) {
       parts.push(staleBlock);
-      for (const label of collectInjectedTaskLabels(prepared, staleBlock)) {
-        injectedTaskLabels.add(label);
-      }
       remainingChars = Math.max(0, remainingChars - staleBlock.length - 2);
     }
   }
@@ -194,7 +179,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     parts,
     ledgerActiveCount,
     filteredActiveCount,
-    injectedTaskCount: injectedTaskLabels.size,
+    injectedTaskCount,
     injectedTokens: combined ? estimateTokens(combined) : 0,
   };
 }
