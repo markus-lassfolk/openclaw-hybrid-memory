@@ -13,7 +13,7 @@ import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js"
 import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import { redactAutopilotText } from "./pending-autopilot/redaction.js";
-import { buildClusterDeferMap, clusterProcedureItems, type ProcedureClusterResult } from "./procedure-cluster.js";
+import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
 import {
   createProcedurePromotionDecision,
   createProcedurePromotionItem,
@@ -552,6 +552,16 @@ export function generateAutoSkillForProcedure(
     }
   }
   const clusterMerge = clusterDeferMap.get(proc.id);
+  const resolvedSlugByProcedureId = new Map<string, string>();
+  // If this procedure is deferred to a representative, populate the map with the representative's slug
+  if (clusterMerge) {
+    const repProc = readyProcedures.find((p) => p.id === clusterMerge.representativeId);
+    if (repProc) {
+      const repItem = createProcedurePromotionItem(repProc, policy);
+      const repResolvedSlug = ensureUniqueSlug(basePath, repItem.payload.skillSlug);
+      resolvedSlugByProcedureId.set(clusterMerge.representativeId, repResolvedSlug);
+    }
+  }
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
@@ -576,7 +586,7 @@ export function generateAutoSkillForProcedure(
           },
           [...(options.inRunSkillCandidates ?? [])],
           new Set<string>(),
-          new Map<string, string>(),
+          resolvedSlugByProcedureId,
           clusterDeferMap,
           relatedByRepresentative,
         )
@@ -830,7 +840,7 @@ function evaluateClusterRepresentativeEligible(
   inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
   reservedSlugs: ReadonlySet<string>,
   resolvedSlugByProcedureId: ReadonlyMap<string, string>,
-  clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
+  _clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
   relatedByRepresentative: Map<string, string[]>,
 ): boolean | undefined {
   const repProc = procedures.find((p) => p.id === representativeId);

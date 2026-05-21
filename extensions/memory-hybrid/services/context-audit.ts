@@ -23,6 +23,8 @@ type ContextAuditResult = {
     filteredActiveCount: number;
     /** Tasks listed in `<active-tasks>` summary. */
     injectedTaskCount: number;
+    /** @deprecated Use ledgerActiveCount instead. Kept for backwards compatibility. */
+    count: number;
     stale: number;
     injectionBudget: number;
   };
@@ -225,6 +227,7 @@ export async function runContextAudit(opts: {
       ledgerActiveCount,
       filteredActiveCount,
       injectedTaskCount,
+      count: ledgerActiveCount,
       stale: activeTasksStale,
       injectionBudget: cfg.activeTask.injectionBudget,
     },
