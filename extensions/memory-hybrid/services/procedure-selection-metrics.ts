@@ -90,5 +90,5 @@ function isTrivialSummary(summary: string, tool: string): boolean {
 }
 
 export function reusabilityFromSessions(sourceSessionCount: number): number {
-  return Math.min(1, sourceSessionCount / 3);
+  return Math.min(1, sourceSessionCount / 5);
 }
