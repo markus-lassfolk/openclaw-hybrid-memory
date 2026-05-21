@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { clusterProcedureItems, buildClusterDeferMap } from "../services/procedure-cluster.js";
 import {
   isLowConcreteness,
@@ -45,6 +45,31 @@ describe("skill-description-builder", () => {
     });
     for (const phrase of paraphraseShouldTrigger(taskPattern, "moltbook")) {
       expect(desc).toContain(`"${phrase}"`);
+    }
+  });
+
+  it("keeps truncated descriptions within the configured limit including the marker", async () => {
+    vi.resetModules();
+    vi.doMock("../config/skill-size-limits.js", () => ({ MAX_SKILL_DESCRIPTION_CHARS: 55 }));
+    vi.doMock("../services/skill-eval-synthesizer.js", () => ({
+      paraphraseShouldTrigger: () => ["validate the unusually long release report", "check release health thoroughly"],
+    }));
+    try {
+      const { buildPushySkillDescription: buildWithSmallLimit } = await import(
+        "../services/skill-description-builder.js"
+      );
+      const desc = buildWithSmallLimit({
+        taskPattern: "Validate the unusually long release report with objective checks and detailed status capture",
+        keyword: "release-report",
+        recipe: [{ tool: "read" }, { tool: "exec" }, { tool: "read" }],
+      });
+
+      expect(desc.length).toBeLessThanOrEqual(55);
+      expect(desc).toContain("[truncated]");
+    } finally {
+      vi.doUnmock("../config/skill-size-limits.js");
+      vi.doUnmock("../services/skill-eval-synthesizer.js");
+      vi.resetModules();
     }
   });
 });

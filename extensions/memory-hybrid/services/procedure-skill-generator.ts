@@ -300,11 +300,13 @@ export function generateAutoSkills(
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
     baselineDescriptions,
   };
-  const representativeEligibilityCache = new Map<string, boolean | undefined>();
+  const evaluatedEligibilityByProcedureId = new Map<string, boolean>();
+  const resolvedSlugByProcedureId = new Map<string, string>();
 
   for (const proc of procedures) {
     const item = createProcedurePromotionItem(proc, policy);
     const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
+    resolvedSlugByProcedureId.set(proc.id, resolvedSlug);
     const evidence = collectProcedurePromotionEvidence(factsDb, proc);
     const historicalPrompts = collectHistoricalSessionPrompts(factsDb, proc, evidence);
     const context = {
@@ -326,14 +328,16 @@ export function generateAutoSkills(
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
       clusterDeferMap,
       clusterRepresentativeEligible: clusterMerge
-        ? getCachedRepresentativeEligibility(
-            representativeEligibilityCache,
+        ? getRepresentativeEligibility(
+            evaluatedEligibilityByProcedureId,
+            resolvedSlugByProcedureId,
             factsDb,
             clusterMerge.representativeId,
             procedures,
             policy,
             clusterEligibilityOptions,
             [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
+            reservedSlugs,
             clusterDeferMap,
             relatedByRepresentative,
           )
@@ -343,6 +347,7 @@ export function generateAutoSkills(
       baselineDescriptions,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
+    evaluatedEligibilityByProcedureId.set(proc.id, evaluation.eligible);
     const reservedCandidate = {
       slug: resolvedSlug,
       taskPattern: proc.taskPattern,
@@ -772,13 +777,10 @@ function isActiveFactForReplay(fact: MemoryEntry | null): fact is MemoryEntry {
   return true;
 }
 
-/**
- * Evaluate representative eligibility with the current in-run duplicate set.
- * Does NOT cache because eligibility depends on inRunSkillCandidates which grows
- * during the batch loop.
- */
-function getCachedRepresentativeEligibility(
-  cache: Map<string, boolean | undefined>,
+/** Return the representative's known eligibility, or preview it with current collision state. */
+function getRepresentativeEligibility(
+  evaluatedEligibilityByProcedureId: ReadonlyMap<string, boolean>,
+  resolvedSlugByProcedureId: ReadonlyMap<string, string>,
   factsDb: FactsDB,
   representativeId: string,
   procedures: ProcedureEntry[],
@@ -791,9 +793,12 @@ function getCachedRepresentativeEligibility(
     baselineDescriptions: string[];
   },
   inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  reservedSlugs: ReadonlySet<string>,
   clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
   relatedByRepresentative: Map<string, string[]>,
 ): boolean | undefined {
+  const evaluated = evaluatedEligibilityByProcedureId.get(representativeId);
+  if (evaluated !== undefined) return evaluated;
   return evaluateClusterRepresentativeEligible(
     factsDb,
     representativeId,
@@ -801,6 +806,8 @@ function getCachedRepresentativeEligibility(
     policy,
     options,
     inRunSkillCandidates,
+    reservedSlugs,
+    resolvedSlugByProcedureId,
     clusterDeferMap,
     relatedByRepresentative,
   );
@@ -820,17 +827,22 @@ function evaluateClusterRepresentativeEligible(
     baselineDescriptions: string[];
   },
   inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  reservedSlugs: ReadonlySet<string>,
+  resolvedSlugByProcedureId: ReadonlyMap<string, string>,
   clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
   relatedByRepresentative: Map<string, string[]>,
 ): boolean | undefined {
   const repProc = procedures.find((p) => p.id === representativeId);
   if (!repProc) return undefined;
   const item = createProcedurePromotionItem(repProc, policy);
+  const resolvedSlug =
+    resolvedSlugByProcedureId.get(representativeId) ??
+    ensureUniqueSlug(options.skillsAutoPath, item.payload.skillSlug, reservedSlugs);
   const evidence = collectProcedurePromotionEvidence(factsDb, repProc);
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: options.skillsAutoPath,
     validationThreshold: options.validationThreshold,
-    resolvedSlug: item.payload.skillSlug,
+    resolvedSlug,
     evidence,
     contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,

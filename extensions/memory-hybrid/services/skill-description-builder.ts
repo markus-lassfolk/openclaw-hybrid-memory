@@ -56,11 +56,11 @@ export function buildPushySkillDescription(input: SkillDescriptionInput): string
   }
   if (desc.length > MAX_SKILL_DESCRIPTION_CHARS) {
     const marker = "… [truncated]";
-    const minContentLength = 50;
-    while (desc.length + marker.length > MAX_SKILL_DESCRIPTION_CHARS && desc.length > minContentLength) {
-      desc = desc.slice(0, -1);
+    const contentLimit = Math.max(0, MAX_SKILL_DESCRIPTION_CHARS - marker.length);
+    desc = desc.slice(0, contentLimit).trimEnd() + marker;
+    if (desc.length > MAX_SKILL_DESCRIPTION_CHARS) {
+      desc = desc.slice(0, MAX_SKILL_DESCRIPTION_CHARS);
     }
-    desc = desc.trimEnd() + marker;
   }
   return desc;
 }

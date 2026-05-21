@@ -239,6 +239,72 @@ describe("generateAutoSkills", () => {
     }
   });
 
+  it("uses the representative collision-resolved slug when merging related procedures", () => {
+    const representativeSlug = "validate-collision-prone-release-report-with-objective-check";
+    mkdirSync(join(skillsDir, representativeSlug), { recursive: true });
+    writeFileSync(join(skillsDir, representativeSlug, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
+    writeFileSync(
+      join(skillsDir, representativeSlug, "SKILL.md"),
+      `---
+name: unrelated-existing-skill
+description: Existing skill occupying the representative base slug only.
+---
+
+# Existing Skill
+
+## Workflow
+1. Keep the existing skill untouched.
+`,
+      "utf-8",
+    );
+
+    const representative = db.upsertProcedure({
+      taskPattern: "Validate collision-prone release report with objective checks",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Read release status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run objective tests" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify release report" },
+      ]),
+      procedureType: "positive",
+      successCount: 4,
+      confidence: 0.9,
+      sourceSessionId: "collision-rep-a",
+    });
+    db.recordProcedureSuccess(representative.id, undefined, "collision-rep-b");
+    db.recordProcedureSuccess(representative.id, undefined, "collision-rep-c");
+
+    const related = db.upsertProcedure({
+      taskPattern: "Validate collision-prone release report with objective checks daily",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Read release status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run objective tests" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify release report" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.86,
+      sourceSessionId: "collision-related-a",
+    });
+    recordDistinctSuccesses(related.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    expect(existsSync(join(skillsDir, `${representativeSlug}-1`, "SKILL.md"))).toBe(true);
+    expect(result.decisions?.find((d) => d.procedureId === related.id)?.reasons).toContain("cluster_merged_into");
+  });
+
   it("preserves legacy skill directories that lack completion markers when resolving slug collisions", () => {
     const legacyDir = join(skillsDir, "validate-markerless-legacy-report");
     mkdirSync(legacyDir, { recursive: true });
