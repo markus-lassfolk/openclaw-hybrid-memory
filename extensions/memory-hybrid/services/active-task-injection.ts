@@ -86,7 +86,7 @@ export function prepareActiveTasksForInjection(
     prepared = prepared.slice(0, rowCap);
   }
 
-  return { prepared, preCap, ledgerActiveCount, filteredActiveCount: prepared.length };
+  return { prepared, preCap, ledgerActiveCount, filteredActiveCount: preCap.length };
 }
 
 export type ActiveTaskContextBundleResult = {
