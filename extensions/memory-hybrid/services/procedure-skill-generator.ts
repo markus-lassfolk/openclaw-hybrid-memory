@@ -548,7 +548,10 @@ export function generateAutoSkillForProcedure(
   const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
   const evidence = collectProcedurePromotionEvidence(factsDb, proc);
   const baselineDescriptions = loadExistingSkillDescriptions(basePath);
-  const readyProcedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, 200, options.skillTTLDays);
+  // Single-procedure promotion should evaluate only the requested procedure.
+  // Batch promotion performs cross-procedure clustering; doing the same here
+  // needlessly loads and clusters up to 200 unrelated ready procedures.
+  const readyProcedures = [proc];
   const promotionItems = readyProcedures.map((p) => createProcedurePromotionItem(p, policy));
   const itemsByProcedureId = new Map(promotionItems.map((item) => [item.procedure.id, item]));
   const resolvedSlugByProcedureId = new Map<string, string>();

@@ -691,6 +691,41 @@ description: Existing legacy skill created before completion markers.
     expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
   });
 
+  it("single procedure generation does not load the full ready-procedure queue for clustering", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate focused single procedure generation",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "single-no-full-queue-1",
+    });
+    recordDistinctSuccesses(proc.id);
+    const queueSpy = vi.spyOn(db, "getProceduresReadyForSkill");
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        apply: true,
+        policy: "auto-safe",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    queueSpy.mockRestore();
+
+    expect(result).toMatchObject({ ok: true });
+    expect(queueSpy).not.toHaveBeenCalled();
+  });
+
   it("single procedure legacy non-dry-run apply defaults to auto-safe and writes draft artifacts", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single apply report",
