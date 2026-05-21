@@ -141,10 +141,11 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   }
 
   if (input.staleWarningEnabled && remainingChars > 40) {
-    const staleBlock = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
-    if (staleBlock) {
-      parts.push(staleBlock);
-      remainingChars = Math.max(0, remainingChars - staleBlock.length - 2);
+    const staleResult = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
+    if (staleResult.text) {
+      parts.push(staleResult.text);
+      injectedTaskCount = Math.max(injectedTaskCount, staleResult.renderedCount);
+      remainingChars = Math.max(0, remainingChars - staleResult.text.length - 2);
     }
   }
 

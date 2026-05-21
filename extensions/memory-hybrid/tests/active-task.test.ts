@@ -457,11 +457,11 @@ describe("buildStaleWarningInjection", () => {
       makeEntry({ label: "fresh", stale: false }),
       makeEntry({ label: "done", status: "Done", stale: false }),
     ];
-    expect(buildStaleWarningInjection(tasks, THRESHOLD_MINUTES)).toBe("");
+    expect(buildStaleWarningInjection(tasks, THRESHOLD_MINUTES)).toEqual({ text: "", renderedCount: 0 });
   });
 
   it("returns empty string for empty task list", () => {
-    expect(buildStaleWarningInjection([], THRESHOLD_MINUTES)).toBe("");
+    expect(buildStaleWarningInjection([], THRESHOLD_MINUTES)).toEqual({ text: "", renderedCount: 0 });
   });
 
   it("generates warning for stale tasks", () => {
@@ -476,13 +476,14 @@ describe("buildStaleWarningInjection", () => {
       }),
     ];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
-    expect(result).toContain("⚠️ STALE ACTIVE TASKS");
+    expect(result.text).toContain("⚠️ STALE ACTIVE TASKS");
     // 1440 min = 1 day → formatDuration renders "1d"
-    expect(result).toContain(">1d");
-    expect(result).toContain("[forge-99]");
-    expect(result).toContain("Implement heartbeat hook");
-    expect(result).toContain("Status: In progress");
-    expect(result).toContain("Consider:");
+    expect(result.text).toContain(">1d");
+    expect(result.text).toContain("[forge-99]");
+    expect(result.text).toContain("Implement heartbeat hook");
+    expect(result.text).toContain("Status: In progress");
+    expect(result.text).toContain("Consider:");
+    expect(result.renderedCount).toBe(1);
   });
 
   it("includes hours-ago elapsed time in warning", () => {
@@ -490,7 +491,8 @@ describe("buildStaleWarningInjection", () => {
     const tasks = [makeEntry({ stale: true, updated: staleTime })];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
     // Should show approximately 48h ago (allow ±1h for test timing)
-    expect(result).toMatch(/4[78]h ago/);
+    expect(result.text).toMatch(/4[78]h ago/);
+    expect(result.renderedCount).toBe(1);
   });
 
   it("includes 'Next' step when present", () => {
@@ -502,8 +504,9 @@ describe("buildStaleWarningInjection", () => {
       }),
     ];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
-    expect(result).toContain("Deploy the hotfix");
-    expect(result).toContain("Next:");
+    expect(result.text).toContain("Deploy the hotfix");
+    expect(result.text).toContain("Next:");
+    expect(result.renderedCount).toBe(1);
   });
 
   it("omits 'Next' part when not set", () => {
@@ -515,7 +518,8 @@ describe("buildStaleWarningInjection", () => {
       }),
     ];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
-    expect(result).not.toContain("Next:");
+    expect(result.text).not.toContain("Next:");
+    expect(result.renderedCount).toBe(1);
   });
 
   it("generates subagent hint for in-progress tasks with subagent", () => {
@@ -529,16 +533,17 @@ describe("buildStaleWarningInjection", () => {
       }),
     ];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
-    expect(result).toContain("💡");
-    expect(result).toContain("forge-session-abc123");
-    expect(result).toContain("subagents list");
+    expect(result.text).toContain("💡");
+    expect(result.text).toContain("forge-session-abc123");
+    expect(result.text).toContain("subagents list");
+    expect(result.renderedCount).toBe(1);
   });
 
   it("does not generate subagent hint for non-in-progress tasks", () => {
     const tasks = [makeEntry({ status: "Waiting", subagent: "forge-session-xyz", stale: false })];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
     // No stale, no in-progress-with-subagent → empty
-    expect(result).toBe("");
+    expect(result).toEqual({ text: "", renderedCount: 0 });
   });
 
   it("generates both stale warning and subagent hint when applicable", () => {
@@ -560,10 +565,11 @@ describe("buildStaleWarningInjection", () => {
       }),
     ];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
-    expect(result).toContain("⚠️ STALE ACTIVE TASKS");
-    expect(result).toContain("[stale-task]");
-    expect(result).toContain("💡");
-    expect(result).toContain("forge-session-xyz");
+    expect(result.text).toContain("⚠️ STALE ACTIVE TASKS");
+    expect(result.text).toContain("[stale-task]");
+    expect(result.text).toContain("💡");
+    expect(result.text).toContain("forge-session-xyz");
+    expect(result.renderedCount).toBe(2);
   });
 
   it("displays threshold using human-friendly format", () => {
@@ -575,15 +581,15 @@ describe("buildStaleWarningInjection", () => {
     ];
     // 90 minutes → "1h30m"
     const result90m = buildStaleWarningInjection(tasks, 90);
-    expect(result90m).toContain(">1h30m");
+    expect(result90m.text).toContain(">1h30m");
 
     // 1440 minutes → "1d" (formatDuration: 1440/1440 = 1 day, 0 hours, 0 min)
     const result24h = buildStaleWarningInjection(tasks, 1440);
-    expect(result24h).toContain(">1d");
+    expect(result24h.text).toContain(">1d");
 
     // 2880 minutes → "2d"
     const result2d = buildStaleWarningInjection(tasks, 2880);
-    expect(result2d).toContain(">2d");
+    expect(result2d.text).toContain(">2d");
   });
 
   it("generates warning for multiple stale tasks", () => {
@@ -594,9 +600,10 @@ describe("buildStaleWarningInjection", () => {
       makeEntry({ label: "fresh", stale: false }),
     ];
     const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
-    expect(result).toContain("[stale-a]");
-    expect(result).toContain("[stale-b]");
-    expect(result).not.toContain("[fresh]");
+    expect(result.text).toContain("[stale-a]");
+    expect(result.text).toContain("[stale-b]");
+    expect(result.text).not.toContain("[fresh]");
+    expect(result.renderedCount).toBe(2);
   });
 });
 
