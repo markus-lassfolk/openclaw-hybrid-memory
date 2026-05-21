@@ -80,7 +80,7 @@ export function prepareActiveTasksForInjection(
   prepared = applyActiveTaskProjectionFilters(prepared, opts.projection);
   prepared.sort((a, b) => compareTasksForInjection(a, b, opts.userText, opts.sessionKey));
 
-  const preCap = prepared;
+  const preCap = [...prepared];
   const rowCap = opts.injectionMaxTasks ?? opts.projection.maxRowsPerSection;
   if (typeof rowCap === "number" && rowCap > 0 && prepared.length > rowCap) {
     prepared = prepared.slice(0, rowCap);

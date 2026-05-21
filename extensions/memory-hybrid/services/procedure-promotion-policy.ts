@@ -386,6 +386,7 @@ export function evaluateProcedureForPromotion(
   const now = options.now ?? Math.floor(Date.now() / 1000);
   const evidenceSummary = summarizeProcedureEvidence(item, options.evidence);
   const sanitizedRecipeForPolicy = item.payload.sanitizedRecipe ?? sanitizeRecipePromptInjection(item.payload.recipe);
+  const originalRecipe = item.payload.recipe;
   const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipeForPolicy);
   const riskValidationBump = riskLevel === "high" ? 2 : riskLevel === "medium" ? 1 : 0;
   const riskDistinctBump = riskLevel === "high" ? 1 : 0;
@@ -462,9 +463,9 @@ export function evaluateProcedureForPromotion(
   if (similarSkillExists)
     gates.push(defer("duplicate_existing_skill", "existing or earlier same-run skill appears to cover this trigger"));
 
-  if (isProcedureTooObvious(recipe))
+  if (isProcedureTooObvious(originalRecipe))
     gates.push(defer("procedure_too_obvious", "recipe is a single obvious command Claude already knows"));
-  if (isLowConcreteness(proc.taskPattern, recipe))
+  if (isLowConcreteness(proc.taskPattern, originalRecipe))
     gates.push(defer("low_concreteness", "task/recipe lacks domain nouns or tool diversity"));
 
   const manualRequestCount = evidenceSummary.sourceManualRequestIds.length;
@@ -474,7 +475,7 @@ export function evaluateProcedureForPromotion(
     );
   }
 
-  const concreteness = measureConcreteness(proc.taskPattern, recipe);
+  const concreteness = measureConcreteness(proc.taskPattern, originalRecipe);
   const reusability = reusabilityFromSessions(evidenceSummary.sourceSessionCount);
   const candidateScoring = scoreProcedureCandidate({
     successCount: evidenceSummary.successCount,
@@ -551,7 +552,10 @@ export function evaluateProcedureForPromotion(
     inputHash: item.inputHash,
     // Static validation runs only after an initial draft exists; do not mark "failed" for unrelated defer/reject gates.
     staticValidation: gates.some(
-      (g) => g.reason === "skill_static_validation_failed" || g.reason === "malformed_recipe",
+      (g) =>
+        g.reason === "skill_static_validation_failed" ||
+        g.reason === "malformed_recipe" ||
+        g.reason === "skill_creator_validation_failed",
     )
       ? "failed"
       : "passed",
@@ -562,6 +566,7 @@ export function evaluateProcedureForPromotion(
         "private_data_risk",
         "external_side_effect_requires_approval",
         "skill_safety_validation_failed",
+        "unsafe_trace_content",
       ].includes(g.reason),
     )
       ? "failed"
