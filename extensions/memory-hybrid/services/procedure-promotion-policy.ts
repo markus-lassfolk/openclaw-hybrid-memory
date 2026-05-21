@@ -494,7 +494,7 @@ export function evaluateProcedureForPromotion(
   let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   let evalsWereRun = false;
   if (draft && gates.length === initialGates) {
-    const finalized = finalizeProcedureSkillDraft(draft, item, gates, now);
+    const finalized = finalizeProcedureSkillDraft(draft, item, gates, now, sanitizedRecipeForPolicy);
     draft = finalized.draft;
     evalsWereRun = finalized.evalsWereRun;
   }
@@ -716,10 +716,11 @@ function finalizeProcedureSkillDraft(
   item: ProcedurePromotionItem,
   gates: ProcedurePromotionGateResult[],
   now: number,
+  fullSanitizedRecipe: unknown,
 ): { draft: GeneratedProcedureSkillDraft; evalsWereRun: boolean } {
   const proc = item.procedure;
   const sanitizedRecipe = JSON.parse(draft.recipeJson).steps ?? [];
-  const riskLevel = determineRiskLevel(item.procedure, sanitizedRecipe);
+  const riskLevel = determineRiskLevel(item.procedure, fullSanitizedRecipe);
 
   let skillMd = draft.skillMd;
   const originalBytes = utf8ByteLength(skillMd);
