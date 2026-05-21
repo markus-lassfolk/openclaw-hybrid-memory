@@ -38,16 +38,19 @@ describe("runContextAudit", () => {
       embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
       activeTask: { enabled: true, ledger: "facts", injectionBudget: 1000, projection: { excludeGenericTitle: false } },
     });
-    factsDb.store({
-      category: "project",
-      entity: "context-audit-alias",
-      key: "status",
-      value: "in_progress",
-      text: "context audit alias status in progress",
-      source: "test",
-      importance: 0.5,
-      decayClass: "permanent",
-    }, { suppressVectorFallbackWarning: true });
+    factsDb.store(
+      {
+        category: "project",
+        entity: "context-audit-alias",
+        key: "status",
+        value: "in_progress",
+        text: "context audit alias status in progress",
+        source: "test",
+        importance: 0.5,
+        decayClass: "permanent",
+      },
+      { suppressVectorFallbackWarning: true },
+    );
 
     const audit = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
 

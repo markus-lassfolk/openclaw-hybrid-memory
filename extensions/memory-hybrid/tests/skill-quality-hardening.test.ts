@@ -310,8 +310,7 @@ metadata:
 
   it("replay functional eval allows action-verb task patterns without near-miss exclusion boilerplate", () => {
     const task = "SSH into staging and run health checks";
-    const desc =
-      `Guides ${task}. Use when the user asks to ssh into staging, run health checks, or validate staging status.`;
+    const desc = `Guides ${task}. Use when the user asks to ssh into staging, run health checks, or validate staging status.`;
     const shouldTrigger = paraphraseShouldTrigger(task, "staging");
     const skillMd = `---
 name: "ssh-staging-health"
