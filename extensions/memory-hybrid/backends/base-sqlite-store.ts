@@ -160,6 +160,38 @@ export abstract class BaseSqliteStore {
     return !this._closed && this._dbOpen;
   }
 
+  /**
+   * Permanently close this store, preventing any future reopening via `liveDb`.
+   *
+   * Unlike `close()`, which is designed for background maintenance and allows
+   * the store to auto-reopen on the next use, `permanentClose()` transitions the
+   * internal phase to "shutdown" so that any subsequent access via `liveDb` throws
+   * "The database connection is not open".
+   *
+   * This must be called during runtime teardown (e.g. plugin re-registration) to
+   * prevent stale tool/hook closures from silently resurrecting old SQLite handles
+   * and accumulating duplicate DB connections (issue #1550).
+   *
+   * For deferClose stores: if operations are currently in flight the native handle
+   * is closed immediately; any in-flight ops that later try to access `liveDb`
+   * will throw rather than using a half-closed connection.
+   */
+  permanentClose(): void {
+    if (this.closePhase === "shutdown") return;
+    this.closePhase = "shutdown";
+    this._closed = true;
+    this._dbOpen = false;
+    try {
+      this.db.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "db-permanent-close",
+        subsystem: this.getSubsystemName(),
+        severity: "info",
+      });
+    }
+  }
+
   private finalizeShutdown(): void {
     if (this.closePhase === "shutdown") return;
     this.closePhase = "shutdown";
