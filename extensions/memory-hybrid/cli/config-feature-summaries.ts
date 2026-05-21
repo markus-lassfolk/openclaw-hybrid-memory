@@ -66,7 +66,8 @@ export function formatActiveTaskConfigLines(at: ActiveTaskConfig): string[] {
   );
   lines.push(`  filePath: ${path}`);
   lines.push(`  staleThreshold: ${at.staleThreshold}`);
-  lines.push(`  injectionBudget: ${at.injectionBudget} tokens`);
+  lines.push(`  injectionBudget: ${at.injectionBudget} tokens (shared across active-task prepend blocks)`);
+  lines.push(`  injectionMaxTasks: ${at.injectionMaxTasks ?? "(none — uses projection.maxRowsPerSection if set)"}`);
   lines.push(`  autoCheckpoint: ${at.autoCheckpoint ? "on" : "off"}`);
   lines.push(`  flushOnComplete: ${at.flushOnComplete !== false ? "on" : "off"}`);
   lines.push(`  staleWarning: ${at.staleWarning.enabled ? "on" : "off"}`);

@@ -344,5 +344,83 @@ if (needsBenchmark && !filesEntries.has("benchmark")) {
   console.log('OK: "benchmark" is listed in package.json files (required by cli)');
 }
 
+// 6. Dist import / procedure-skill-generator smoke (issues #1544, #1548)
+const distProcGen = path.join(distDir, "services", "procedure-skill-generator.js");
+if (!fs.existsSync(distProcGen)) {
+  console.error("FAIL: dist/services/procedure-skill-generator.js missing after build");
+  failed = true;
+} else {
+  const procGenSrc = fs.readFileSync(distProcGen, "utf8");
+  if (!procGenSrc.includes("evaluateProcedureForPromotion")) {
+    console.error("FAIL: dist procedure-skill-generator missing evaluateProcedureForPromotion (stale dist?)");
+    failed = true;
+  } else if (/Auto-generated procedure|## Steps \(last time this worked\)/.test(procGenSrc)) {
+    console.error("FAIL: dist procedure-skill-generator contains legacy raw-dump template");
+    failed = true;
+  } else {
+    console.log("OK: dist procedure-skill-generator fingerprint");
+  }
+
+  // 6a. Dist import-smoke (issue #1548): grepping is not enough — the runtime
+  // entrypoints OpenClaw imports must actually exist with the expected exports.
+  // This catches cases like an empty `dist/backends/facts-db.js` even when the
+  // source file is correct.
+  const distExportProbes = [
+    { rel: "services/procedure-skill-generator.js", exports: ["generateAutoSkills"] },
+    { rel: "services/skill-validator.js", exports: ["SkillValidator"] },
+    { rel: "services/skill-creator-validator.js", exports: ["quickValidateSkillMarkdown"] },
+    { rel: "services/skill-prompt-injection.js", exports: ["scanRecipeForPromptInjection", "sanitizeRecipePromptInjection"] },
+    { rel: "utils/constants.js", exports: ["ACTION_VERB_PATTERN"] },
+    { rel: "utils/text.js", exports: ["stripLeadingHtmlComments"] },
+    { rel: "backends/facts-db/facts-db-layer3.js", exports: ["FactsDB"] },
+  ];
+  let distImportSmokeFailed = false;
+  for (const probe of distExportProbes) {
+    const absPath = path.join(distDir, probe.rel);
+    if (!fs.existsSync(absPath)) {
+      console.error(`FAIL: dist/${probe.rel} missing after build (issue #1548)`);
+      failed = true;
+      distImportSmokeFailed = true;
+      continue;
+    }
+    const src = fs.readFileSync(absPath, "utf8");
+    for (const exp of probe.exports) {
+      // tsdown emits "export { Foo }" or "export function Foo" or "export const Foo".
+      const re = new RegExp(`export\\s+(?:\\{[^}]*\\b${exp}\\b[^}]*\\}|(?:async\\s+)?(?:function|const|let|var|class)\\s+${exp}\\b)`);
+      if (!re.test(src)) {
+        console.error(`FAIL: dist/${probe.rel} missing expected export "${exp}" (issue #1548 — dist/source mismatch)`);
+        failed = true;
+        distImportSmokeFailed = true;
+      }
+    }
+  }
+  if (!distImportSmokeFailed) {
+    console.log("OK: dist import-smoke (procedure-skill-generator, SkillValidator, ACTION_VERB_PATTERN, stripLeadingHtmlComments, FactsDB, skill-creator-validator, skill-prompt-injection)");
+  }
+  try {
+    const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+    const nodeMajor = Number(String(process.versions.node).split(".")[0] ?? "0");
+    const testFiles = [
+      "tests/skill-frontmatter.test.ts",
+      "tests/publish-dist-procedure-skill-generator.test.ts",
+    ];
+    if (nodeMajor >= 22) {
+      testFiles.push("tests/skill-size-limits.test.ts");
+    } else {
+      console.log("SKIP: skill-size-limits vitest requires Node >= 22 (node:sqlite)");
+    }
+    execFileSync(npmCmd, ["test", "--", ...testFiles], {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, CI: "1" },
+    });
+    console.log("OK: publish-dist vitest smoke passed");
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("FAIL: publish-dist vitest smoke:", message);
+    failed = true;
+  }
+}
+
 if (failed) process.exit(1);
 console.log("verify-publish: all checks passed");

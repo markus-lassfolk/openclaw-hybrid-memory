@@ -32,4 +32,30 @@ describe("runContextAudit", () => {
     expect(audit.workspaceFiles.files.some((f) => f.file === "AGENTS.md")).toBe(true);
     expect(audit.autoRecall.budgetTokens).toBe(cfg.autoRecall.maxTokens);
   });
+
+  it("keeps activeTasks.count as a backwards-compatible injected-task alias", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+      activeTask: { enabled: true, ledger: "facts", injectionBudget: 1000, projection: { excludeGenericTitle: false } },
+    });
+    factsDb.store(
+      {
+        category: "project",
+        entity: "context-audit-alias",
+        key: "status",
+        value: "in_progress",
+        text: "context audit alias status in progress",
+        source: "test",
+        importance: 0.5,
+        decayClass: "permanent",
+      },
+      { suppressVectorFallbackWarning: true },
+    );
+
+    const audit = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
+
+    expect(audit.activeTasks.injectedTaskCount).toBeGreaterThan(0);
+    expect(audit.activeTasks.count).toBe(audit.activeTasks.ledgerActiveCount);
+    expect(audit.activeTasks.injectedCount).toBe(audit.activeTasks.injectedTaskCount);
+  });
 });

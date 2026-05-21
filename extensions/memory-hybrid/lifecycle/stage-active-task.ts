@@ -4,19 +4,13 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import {
-  buildActiveTaskInjection,
-  buildStaleWarningInjection,
-  readActiveTaskFile,
-  upsertTask,
-  writeActiveTaskFileGuarded,
-} from "../services/active-task.js";
+import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
+import { readActiveTaskFile, upsertTask, writeActiveTaskFileGuarded } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
 import {
   buildGoalEscalationHeartbeatBlock,
-  buildHeartbeatTaskHygieneBlock,
   buildLongRunningTaskDraft,
   buildLongRunningTaskRegistrationBlock,
   detectLongRunningWorkflowProposal,
@@ -96,50 +90,57 @@ export function registerActiveTaskInjection(
 
       if (activeForInjection.length === 0 && !longRunningBlock) return undefined;
 
-      const injection =
-        activeForInjection.length > 0
-          ? buildActiveTaskInjection(activeForInjection, ctx.cfg.activeTask.injectionBudget)
-          : "";
-      let staleWarningBlock = "";
-      if (ctx.cfg.activeTask.staleWarning.enabled && activeForInjection.length > 0) {
-        const injectionChars = injection.length;
-        const budgetChars = ctx.cfg.activeTask.injectionBudget * 4;
-        const remainingChars = Math.max(0, budgetChars - injectionChars);
-        staleWarningBlock = buildStaleWarningInjection(activeForInjection, staleMinutes, remainingChars);
-      }
-
       const th = ctx.cfg.activeTask.taskHygiene;
-      let hygieneBlock = "";
-      let goalEscalationBlock = "";
-      if (
+      const isHeartbeat =
         th.heartbeatEscalation &&
         ctx.cfg.goalStewardship.enabled &&
-        userText &&
-        matchesHeartbeat(userText, ctx.cfg.goalStewardship) &&
-        activeForInjection.length > 0
+        !!userText &&
+        matchesHeartbeat(userText, ctx.cfg.goalStewardship);
+
+      let goalEscalationPrebuilt = "";
+      if (
+        isHeartbeat &&
+        activeForInjection.length > 0 &&
+        ctx.cfg.goalStewardship.escalationPolicy.taskHygieneOnBlockedGoals
       ) {
-        hygieneBlock = buildHeartbeatTaskHygieneBlock(activeForInjection, {
-          maxChars: th.heartbeatNudgeMaxChars,
-          suggestGoalAfterTaskAgeDays: th.suggestGoalAfterTaskAgeDays,
+        const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+        const goals = await listGoals(goalsDir);
+        goalEscalationPrebuilt = buildGoalEscalationHeartbeatBlock(goals, {
+          maxChars: Math.min(1200, th.heartbeatNudgeMaxChars),
         });
-        if (ctx.cfg.goalStewardship.enabled && ctx.cfg.goalStewardship.escalationPolicy.taskHygieneOnBlockedGoals) {
-          const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
-          const goals = await listGoals(goalsDir);
-          goalEscalationBlock = buildGoalEscalationHeartbeatBlock(goals, {
-            maxChars: Math.min(1200, th.heartbeatNudgeMaxChars),
-          });
-        }
+      }
+
+      const bundle = buildActiveTaskContextBundle({
+        ledgerTasks: activeForInjection,
+        injectionBudgetTokens: ctx.cfg.activeTask.injectionBudget,
+        staleMinutes,
+        staleWarningEnabled: ctx.cfg.activeTask.staleWarning.enabled,
+        projection: ctx.cfg.activeTask.projection,
+        injectionMaxTasks: ctx.cfg.activeTask.injectionMaxTasks,
+        userText: userText ?? undefined,
+        sessionKey: sessionKey ?? undefined,
+        heartbeatHygiene:
+          isHeartbeat && activeForInjection.length > 0
+            ? {
+                maxChars: th.heartbeatNudgeMaxChars,
+                suggestGoalAfterTaskAgeDays: th.suggestGoalAfterTaskAgeDays,
+              }
+            : undefined,
+        goalEscalationBlock: goalEscalationPrebuilt || undefined,
+      });
+
+      if (isHeartbeat && bundle.parts.some((p) => p.includes("<task-hygiene>"))) {
         api.logger?.info?.("memory-hybrid: task hygiene block appended (heartbeat match)");
       }
 
-      const parts = [injection, staleWarningBlock, longRunningBlock, hygieneBlock, goalEscalationBlock].filter(Boolean);
+      const parts = [...bundle.parts, longRunningBlock].filter(Boolean);
       if (parts.length === 0) return undefined;
 
       const context = parts.join("\n\n");
       const staleCount = activeForInjection.filter((t) => t.stale).length;
       const src = ctx.cfg.activeTask.ledger === "facts" ? "category:project facts" : "ACTIVE-TASKS.md";
       api.logger?.info?.(
-        `memory-hybrid: injecting ${activeForInjection.length} active task(s) from ${src}${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
+        `memory-hybrid: active-task injection from ${src}: ledger=${bundle.ledgerActiveCount} filtered=${bundle.filteredActiveCount} injected=${bundle.injectedTaskCount} (~${bundle.injectedTokens} tok)${staleCount > 0 ? ` (${staleCount} stale in ledger)` : ""}`,
       );
       return { prependContext: `${context}\n\n` };
     } catch (err) {

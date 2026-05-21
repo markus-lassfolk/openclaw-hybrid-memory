@@ -28,6 +28,10 @@ The projection must not invent “when work started” or “last touch” from 
 - **Updated** uses: `task_updated`, `updated`, `updated_at`, then the **latest** `createdAt` in the row.
 - If nothing can be resolved, the markdown shows **Unknown**. Those rows are treated as **stale** for `activeTask.staleThreshold` (no trustworthy “last update” time).
 
+## Prompt injection
+
+Per-turn `prependContext` uses the same **readable** projection filters (`excludeGenericTitle`, `titleMinChars`, `dedupeBy`) and optional row caps (`injectionMaxTasks` or `projection.maxRowsPerSection`). Tasks are sorted **non-stale first**, then by relevance to the user message / session, then by **Updated**. Stale rows are detailed in the stale-warning block, not the `<active-tasks>` summary. All blocks share `activeTask.injectionBudget` (default 500 tokens).
+
 ## Sections and filters (`activeTask.projection`)
 
 | Key | Meaning |

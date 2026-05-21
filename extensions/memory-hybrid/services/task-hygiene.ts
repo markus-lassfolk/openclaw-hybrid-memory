@@ -259,8 +259,11 @@ export function buildHeartbeatTaskHygieneBlock(
   opts: {
     maxChars: number;
     suggestGoalAfterTaskAgeDays: number;
+    /** Format label lists (default: all labels, comma-separated). */
+    formatLabelList?: (labels: string[]) => string;
   },
 ): string {
+  const formatLabels = opts.formatLabelList ?? ((labels: string[]) => labels.map((l) => `[${l}]`).join(", "));
   const stale = tasks.filter((t) => t.stale);
   const lines: string[] = [
     "<task-hygiene>",
@@ -269,9 +272,7 @@ export function buildHeartbeatTaskHygieneBlock(
   ];
 
   if (stale.length > 0) {
-    lines.push(
-      `- **Stale tasks (${stale.length}):** ${stale.map((t) => `[${t.label}]`).join(", ")} — update or complete.`,
-    );
+    lines.push(`- **Stale tasks (${stale.length}):** ${formatLabels(stale.map((t) => t.label))} — update or complete.`);
   } else {
     lines.push("- No tasks flagged stale by the current threshold.");
   }
@@ -284,7 +285,7 @@ export function buildHeartbeatTaskHygieneBlock(
     });
     if (longRunning.length > 0) {
       lines.push(
-        `- **Long-running (>${opts.suggestGoalAfterTaskAgeDays}d since last update):** ${longRunning.map((t) => `[${t.label}]`).join(", ")}`,
+        `- **Long-running (>${opts.suggestGoalAfterTaskAgeDays}d since last update):** ${formatLabels(longRunning.map((t) => t.label))}`,
       );
       lines.push(
         "- If this work should survive many sessions, use **`active_task_propose_goal`** then **`goal_register`** (with acceptance criteria).",

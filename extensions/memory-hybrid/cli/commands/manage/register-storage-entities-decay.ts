@@ -245,9 +245,16 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
         console.log(
           `Procedures: ${audit.procedures.enabled ? `${audit.procedures.tokens} tokens` : "disabled"} (lines: ${audit.procedures.lines})`,
         );
-        console.log(
-          `Active tasks: ${audit.activeTasks.enabled ? `${audit.activeTasks.tokens} tokens` : "disabled"} (active: ${audit.activeTasks.count}, stale: ${audit.activeTasks.stale})`,
-        );
+        if (audit.activeTasks.enabled) {
+          console.log(
+            `Active tasks: ${audit.activeTasks.tokens} tokens injected (budget: ${audit.activeTasks.injectionBudget})`,
+          );
+          console.log(
+            `  ledger active: ${audit.activeTasks.ledgerActiveCount}, after projection/filter: ${audit.activeTasks.filteredActiveCount}, in <active-tasks>: ${audit.activeTasks.injectedTaskCount}, stale in ledger: ${audit.activeTasks.stale}`,
+          );
+        } else {
+          console.log("Active tasks: disabled");
+        }
         console.log(`Workspace files: ${audit.workspaceFiles.totalTokens} tokens`);
         if (audit.workspaceFiles.files.length > 0) {
           for (const file of audit.workspaceFiles.files) {
