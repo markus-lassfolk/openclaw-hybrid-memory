@@ -918,7 +918,6 @@ function collectHistoricalSessionPrompts(
   });
   for (const ep of episodes) {
     if (ep.event?.trim()) prompts.add(redactHistoricalPromptForEval(ep.event));
-    else if (ep.context?.trim()) prompts.add(redactHistoricalPromptForEval(ep.context.slice(0, 200)));
   }
   return [...prompts].filter((p) => p.length > 0).slice(0, 20);
 }

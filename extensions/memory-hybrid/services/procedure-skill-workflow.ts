@@ -69,7 +69,6 @@ function summarizeStepHigh(step: RecipeStep, index: number): string {
 }
 
 function summarizeStepMedium(step: RecipeStep, index: number, taskPattern: string): string {
-  const _tool = typeof step.tool === "string" ? step.tool : "manual check";
   const cmd = extractCommand(step);
   const summary = typeof step.summary === "string" ? truncateSummary(step.summary) : "";
   const domain = domainTokens(taskPattern)[0] ?? "task";
