@@ -403,7 +403,7 @@ export function evaluateProcedureForPromotion(
   const combinedText = `${proc.taskPattern}\n${recipeText}`;
 
   const clusterMerge = options.clusterDeferMap?.get(proc.id);
-  if (clusterMerge && options.clusterRepresentativeEligible !== false) {
+  if (clusterMerge && options.clusterRepresentativeEligible === true) {
     gates.push(
       defer(
         "cluster_merged_into",
@@ -493,7 +493,7 @@ export function evaluateProcedureForPromotion(
   const initialGates = gates.length;
   let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   let evalsWereRun = false;
-  if (draft) {
+  if (draft && gates.length === initialGates) {
     const finalized = finalizeProcedureSkillDraft(draft, item, gates, now);
     draft = finalized.draft;
     evalsWereRun = finalized.evalsWereRun;
