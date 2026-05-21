@@ -631,8 +631,33 @@ describe("memory tools embedding registry wiring", () => {
       findSimilarByEmbedding as never,
     );
 
+    // Pre-load a real active-task-marked task so it appears in the projection.
+    // (memory_store uses source:"memory_store"; only source:"active-task" facts
+    // appear in the active-task ledger — fix #1556.)
+    factsDb.store({
+      text: "Task [task-1272] status: in_progress",
+      category: "project",
+      entity: "task-1272",
+      key: "status",
+      value: "in_progress",
+      source: "active-task",
+      importance: 0.9,
+      decayClass: "permanent",
+    });
+    factsDb.store({
+      text: "Task [task-1272] title: Ship lightweight active-task snapshot",
+      category: "project",
+      entity: "task-1272",
+      key: "title",
+      value: "Ship lightweight active-task snapshot",
+      source: "active-task",
+      importance: 0.9,
+      decayClass: "permanent",
+    });
+
     const tool = api.getTool("memory_store");
     expect(tool).toBeTruthy();
+    // This memory_store write triggers the projection refresh.
     await tool?.execute("tool-call", {
       text: "Task title: ship lightweight active-task snapshot",
       category: "project",

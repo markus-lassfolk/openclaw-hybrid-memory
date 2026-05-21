@@ -45,7 +45,8 @@ describe("runContextAudit", () => {
         key: "status",
         value: "in_progress",
         text: "context audit alias status in progress",
-        source: "test",
+        // Must use source:"active-task" so loadTaskLedgerFromFacts picks it up (fix #1556).
+        source: "active-task",
         importance: 0.5,
         decayClass: "permanent",
       },
