@@ -76,6 +76,10 @@ export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
 /** Non-terminal statuses (still active) */
 const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
 
+export function isInjectableActiveTask(task: ActiveTaskEntry): boolean {
+  return ACTIVE_STATUSES.has(task.status) && !task.stale;
+}
+
 /** Structured task entry */
 export interface ActiveTaskEntry {
   /** Short unique identifier (e.g. "forge-99", "deploy-prod") */
@@ -545,7 +549,7 @@ export function completeTask(
  * Budget-capped to `maxTokens` (approximate — 4 chars ≈ 1 token).
  */
 export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: number): string {
-  const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
+  const activeTasks = tasks.filter(isInjectableActiveTask);
   if (activeTasks.length === 0) return "";
 
   const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASKS.md:"];
@@ -555,8 +559,7 @@ export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: nu
   let used = 0;
 
   for (const task of activeTasks) {
-    const staleFlag = task.stale ? " ⚠️ STALE" : "";
-    const summary = [`- [${task.label}] ${task.description} (${task.status}${staleFlag})`];
+    const summary = [`- [${task.label}] ${task.description} (${task.status})`];
     if (task.next) summary.push(`  Next: ${task.next}`);
     if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
     const block = summary.join("\n");

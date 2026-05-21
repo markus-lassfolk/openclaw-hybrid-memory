@@ -7,6 +7,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import {
   buildActiveTaskInjection,
   buildStaleWarningInjection,
+  isInjectableActiveTask,
   readActiveTaskFile,
   upsertTask,
   writeActiveTaskFileGuarded,
@@ -136,10 +137,11 @@ export function registerActiveTaskInjection(
       if (parts.length === 0) return undefined;
 
       const context = parts.join("\n\n");
+      const injectableCount = activeForInjection.filter(isInjectableActiveTask).length;
       const staleCount = activeForInjection.filter((t) => t.stale).length;
       const src = ctx.cfg.activeTask.ledger === "facts" ? "category:project facts" : "ACTIVE-TASKS.md";
       api.logger?.info?.(
-        `memory-hybrid: injecting ${activeForInjection.length} active task(s) from ${src}${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
+        `memory-hybrid: injecting ${injectableCount} active task(s) from ${src}${staleCount > 0 ? ` (${staleCount} stale skipped from active-task block)` : ""}`,
       );
       return { prependContext: `${context}\n\n` };
     } catch (err) {

@@ -409,10 +409,28 @@ describe("buildActiveTaskInjection", () => {
     expect(result).toContain("Deploy the fix");
   });
 
-  it("includes stale flag for stale tasks", () => {
+  it("excludes stale tasks from active-task injection", () => {
     const tasks = [makeEntry({ stale: true })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result).toContain("STALE");
+    expect(result).toBe("");
+  });
+
+  it("does not let stale tasks consume the active-task injection budget", () => {
+    const tasks = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        makeEntry({
+          label: `stale-${i}`,
+          description: "A stale task with enough text to consume a tight context budget before fresh work is listed",
+          next: "This stale task should not be part of the active task injection block",
+          status: "In progress",
+          stale: true,
+        }),
+      ),
+      makeEntry({ label: "fresh", description: "Fresh task", status: "In progress", stale: false }),
+    ];
+    const result = buildActiveTaskInjection(tasks, 100);
+    expect(result).toContain("[fresh]");
+    expect(result).not.toContain("[stale-");
   });
 
   it("caps injection to budget (approximate)", () => {

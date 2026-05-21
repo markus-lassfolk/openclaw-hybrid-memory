@@ -6,7 +6,12 @@ import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { estimateTokens } from "../utils/text.js";
-import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "./active-task.js";
+import {
+  buildActiveTaskInjection,
+  buildStaleWarningInjection,
+  isInjectableActiveTask,
+  readActiveTaskFile,
+} from "./active-task.js";
 import { capturePluginError } from "./error-reporter.js";
 import { readActiveTaskRowsFromFacts } from "./task-ledger-facts.js";
 
@@ -74,7 +79,7 @@ export async function runContextAudit(opts: {
         }
         const combined = [injection, staleWarningBlock].filter(Boolean).join("\n\n");
         activeTasksTokens = combined ? estimateTokens(combined) : 0;
-        activeTasksCount = activeRows.length;
+        activeTasksCount = activeRows.filter(isInjectableActiveTask).length;
         activeTasksStale = activeRows.filter((t) => t.stale).length;
       }
     } catch (err) {
