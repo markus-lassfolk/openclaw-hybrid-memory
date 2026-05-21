@@ -110,7 +110,7 @@ export function parseSkillFrontmatterKeys(frontmatterBody: string): Map<string, 
   while (i < lines.length) {
     const line = lines[i] ?? "";
     if (descriptionMode === "folded") {
-      if (/^\s{2,}\S/.test(line)) {
+      if (/^\s{2,}\S/.test(line) || /^\s*$/.test(line)) {
         descriptionParts.push(line.replace(/^\s{2}/, ""));
         i++;
         continue;
