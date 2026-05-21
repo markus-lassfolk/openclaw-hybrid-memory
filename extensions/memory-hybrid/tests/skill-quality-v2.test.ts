@@ -149,6 +149,15 @@ describe("procedure-selection-metrics", () => {
     expect(isProcedureTooObvious([{ tool: "read", summary: "read file" }])).toBe(true);
   });
 
+  it("does not defer multi-step recipes with a non-trivial step", () => {
+    expect(
+      isProcedureTooObvious([
+        { tool: "read", summary: "read" },
+        { tool: "read", summary: "inspect procedure evaluation artifacts and explain promotion blockers" },
+      ]),
+    ).toBe(false);
+  });
+
   it("measures concreteness for rich tasks", () => {
     const m = measureConcreteness("deploy doris cluster upgrade", [
       { tool: "exec", summary: "kubectl apply" },

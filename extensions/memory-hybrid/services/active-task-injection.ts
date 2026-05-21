@@ -109,15 +109,14 @@ export type ActiveTaskContextBundleInput = {
   goalEscalationBlock?: string;
 };
 
-function countStaleWarningTasks(tasks: ActiveTaskEntry[], staleBlock: string): number {
-  const warnedLabels = new Set<string>();
-  const countable = tasks.filter((t) => t.stale || (t.status === "In progress" && t.subagent));
-  for (const task of countable) {
-    if (staleBlock.includes(`- [${task.label}]:`)) {
-      warnedLabels.add(task.label);
+function collectInjectedTaskLabels(tasks: ActiveTaskEntry[], text: string): Set<string> {
+  const labels = new Set<string>();
+  for (const task of tasks) {
+    if (text.includes(`- [${task.label}]`)) {
+      labels.add(task.label);
     }
   }
-  return warnedLabels.size;
+  return labels;
 }
 
 /**
@@ -132,7 +131,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   });
 
   const parts: string[] = [];
-  let injectedTaskCount = 0;
+  const injectedTaskLabels = new Set<string>();
   const totalChars = Math.max(0, input.injectionBudgetTokens * 4);
   const hygieneReserve =
     input.heartbeatHygiene != null
@@ -140,14 +139,15 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
       : 0;
   let remainingChars = Math.max(0, totalChars - hygieneReserve);
 
-  const nonStale = prepared.filter((t) => !t.stale);
-  if (nonStale.length > 0 && remainingChars > 80) {
-    const main: ActiveTaskInjectionBuildResult = buildActiveTaskInjection(nonStale, input.injectionBudgetTokens, {
+  if (prepared.length > 0 && remainingChars > 80) {
+    const main: ActiveTaskInjectionBuildResult = buildActiveTaskInjection(prepared, input.injectionBudgetTokens, {
       maxChars: remainingChars,
     });
     if (main.text) {
       parts.push(main.text);
-      injectedTaskCount = main.injectedCount;
+      for (const label of collectInjectedTaskLabels(prepared, main.text)) {
+        injectedTaskLabels.add(label);
+      }
       remainingChars = Math.max(0, remainingChars - main.text.length - 2);
     }
   }
@@ -156,7 +156,9 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     const staleBlock = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
     if (staleBlock) {
       parts.push(staleBlock);
-      injectedTaskCount += countStaleWarningTasks(prepared, staleBlock);
+      for (const label of collectInjectedTaskLabels(prepared, staleBlock)) {
+        injectedTaskLabels.add(label);
+      }
       remainingChars = Math.max(0, remainingChars - staleBlock.length - 2);
     }
   }
@@ -192,7 +194,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     parts,
     ledgerActiveCount,
     filteredActiveCount,
-    injectedTaskCount,
+    injectedTaskCount: injectedTaskLabels.size,
     injectedTokens: combined ? estimateTokens(combined) : 0,
   };
 }

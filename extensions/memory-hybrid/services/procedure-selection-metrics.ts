@@ -66,8 +66,10 @@ export function isProcedureTooObvious(recipe: unknown): boolean {
   if (tools.size !== 1) return false;
   const only = [...tools][0];
   if (!OBVIOUS_SINGLE_TOOL.has(only)) return false;
+  let sawStep = false;
   for (const step of recipe) {
     if (!step || typeof step !== "object") continue;
+    sawStep = true;
     const s = step as Record<string, unknown>;
     const cmd =
       typeof s.summary === "string"
@@ -75,10 +77,11 @@ export function isProcedureTooObvious(recipe: unknown): boolean {
         : s.args && typeof s.args === "object" && typeof (s.args as Record<string, unknown>).command === "string"
           ? String((s.args as Record<string, unknown>).command)
           : "";
-    if (cmd && OBVIOUS_COMMANDS.test(cmd.trim())) return true;
-    if (!cmd || isTrivialSummary(cmd.trim(), only)) return true;
+    const trimmed = cmd.trim();
+    if (!trimmed) continue;
+    if (!OBVIOUS_COMMANDS.test(trimmed) && !isTrivialSummary(trimmed, only)) return false;
   }
-  return false;
+  return sawStep;
 }
 
 function isTrivialSummary(summary: string, tool: string): boolean {

@@ -91,7 +91,7 @@ describe("buildActiveTaskContextBundle", () => {
     const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
     const combined = bundle.parts.join("\n");
     expect(main).toContain("[fresh]");
-    expect(main).not.toContain("[old-stale]");
+    expect(main).toContain("[old-stale]");
     expect(combined).toContain("STALE ACTIVE TASKS");
     expect(combined).toContain("[old-stale]");
     expect(bundle.injectedTaskCount).toBe(2);
