@@ -15,7 +15,7 @@ export type ProcedureSkillFrontmatterInput = {
   allowedToolsYaml?: string;
 };
 
-const SKILL_CREATOR_TOP_LEVEL_KEYS = new Set([
+export const SKILL_CREATOR_TOP_LEVEL_KEYS = new Set([
   "name",
   "description",
   "license",

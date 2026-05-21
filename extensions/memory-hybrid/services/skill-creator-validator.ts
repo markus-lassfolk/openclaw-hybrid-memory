@@ -9,19 +9,11 @@
  */
 
 import { MAX_SKILL_DESCRIPTION_CHARS } from "../config/skill-size-limits.js";
-import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
+import { parseSkillFrontmatterKeys, SKILL_CREATOR_TOP_LEVEL_KEYS } from "./skill-frontmatter.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 
 const MAX_SKILL_NAME_LENGTH = 64;
 const RESERVED_NAME_WORDS = /\b(?:anthropic|claude)\b/i;
-const ALLOWED_TOP_LEVEL_KEYS = new Set([
-  "name",
-  "description",
-  "license",
-  "compatibility",
-  "allowed-tools",
-  "metadata",
-]);
 
 export type SkillCreatorViolation = {
   rule: string;
@@ -96,10 +88,10 @@ export function quickValidateSkillMarkdown(skillMd: string): SkillCreatorValidat
     const m = lineRaw.match(/^([A-Za-z0-9_-]+)\s*:/);
     if (!m) continue;
     const key = m[1];
-    if (!ALLOWED_TOP_LEVEL_KEYS.has(key)) {
+    if (!SKILL_CREATOR_TOP_LEVEL_KEYS.has(key)) {
       violations.push({
         rule: "unsupported-top-level-key",
-        message: `unsupported top-level frontmatter key: ${key} (allowed: ${[...ALLOWED_TOP_LEVEL_KEYS].join(", ")})`,
+        message: `unsupported top-level frontmatter key: ${key} (allowed: ${[...SKILL_CREATOR_TOP_LEVEL_KEYS].join(", ")})`,
       });
     }
   }
