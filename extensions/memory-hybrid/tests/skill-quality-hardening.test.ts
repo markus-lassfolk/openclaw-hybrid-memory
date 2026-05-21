@@ -308,6 +308,69 @@ metadata:
     expect(bad.humanReviewReasons.length).toBeGreaterThan(0);
   });
 
+  it("replay functional eval allows action-verb task patterns without near-miss exclusion boilerplate", () => {
+    const task = "SSH into staging and run health checks";
+    const desc =
+      `Guides ${task}. Use when the user asks to ssh into staging, run health checks, or validate staging status.`;
+    const shouldTrigger = paraphraseShouldTrigger(task, "staging");
+    const skillMd = `---
+name: "ssh-staging-health"
+description: >-
+  ${desc}
+---
+# SSH Staging Health
+
+## Workflow
+1. SSH into staging and collect health check output.
+2. Verify health check results before reporting success.
+`;
+    const result = runProcedureSkillEval({
+      skillMd,
+      recipeJson: "[]",
+      taskPattern: task,
+      shouldTrigger,
+      shouldNotTrigger: [`SSH into production and ${task.toLowerCase()}`],
+      historicalPrompts: [task],
+      baselineDescriptions: [],
+    });
+    expect(result.checks.find((c) => c.name === "replay-functional")?.passed).toBe(true);
+  });
+
+  it("replay functional eval does not treat task-pattern historical prompts as near-miss false triggers", () => {
+    const task = "Install package dependencies for deployment";
+    const keyword = "package";
+    const desc = buildPushySkillDescription({ taskPattern: task, keyword, recipe: [] });
+    const shouldTrigger = paraphraseShouldTrigger(task, keyword);
+    const shouldNotTrigger = [
+      `Install packages while trying to ${task.toLowerCase()}`,
+      `SSH into production and ${task.toLowerCase()}`,
+      `Delete or destroy resources while debugging ${keyword}`,
+    ];
+    const skillMd = `---
+name: "install-package-dependencies"
+description: >-
+  ${desc}
+---
+# Install Package Dependencies
+
+## Workflow
+1. Install dependencies with the approved package manager.
+2. Verify lockfile and install output before reporting success.
+`;
+    const result = runProcedureSkillEval({
+      skillMd,
+      recipeJson: "[]",
+      taskPattern: task,
+      shouldTrigger,
+      shouldNotTrigger,
+      historicalPrompts: [task],
+      baselineDescriptions: [],
+    });
+    const replayCheck = result.checks.find((c) => c.name === "replay-functional");
+    expect(replayCheck?.passed).toBe(true);
+    expect(result.functionalEval).toBe("passed");
+  });
+
   it("passes functional eval for synthesized near-miss prompts that quote the task (#1546)", async () => {
     const { synthesizeTriggerEvalSet } = await import("../services/skill-eval-synthesizer.js");
     const { shouldTrigger, shouldNotTrigger } = synthesizeTriggerEvalSet({

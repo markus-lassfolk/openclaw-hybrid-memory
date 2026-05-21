@@ -165,12 +165,12 @@ function runReplayFunctionalEval(input: ProcedureSkillEvalInput): {
       descriptionMatchesPrompt(d, prompt, input.taskPattern),
     );
     if (baselineHit) baseline++;
-    if (
+    const nearMissReplay =
       matchesNearMiss(prompt, input.shouldNotTrigger) &&
-      descriptionMatchesPrompt(description, prompt, input.taskPattern)
-    ) {
-      nearMissFalseTriggers++;
-    }
+      descriptionMatchesPrompt(description, prompt, input.taskPattern) &&
+      !descriptionExcludesNearMiss(description) &&
+      !_matchesTrigger(prompt, input.taskPattern, input.shouldTrigger);
+    if (nearMissReplay) nearMissFalseTriggers++;
   }
 
   const passed = withSkill > 0 && withSkill >= baseline && nearMissFalseTriggers === 0;
