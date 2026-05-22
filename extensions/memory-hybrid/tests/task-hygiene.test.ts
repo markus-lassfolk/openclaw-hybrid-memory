@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { ActiveTaskEntry } from "../services/active-task.js";
 import {
   buildLongRunningTaskDraft,
@@ -7,8 +7,24 @@ import {
   buildHeartbeatTaskHygieneBlock,
   buildProposeGoalDraftFromTask,
   detectLongRunningWorkflowProposal,
+  fetchLivePrBlockerStatus,
   shouldAutoRegisterLongRunningTask,
 } from "../services/task-hygiene.js";
+
+// fetchLivePrBlockerStatus mock for planActiveTaskHygiene integration tests.
+// hoisted so it is initialized before vi.mock() runs.
+const fetchLivePrBlockerStatusMock = vi.hoisted(() =>
+  vi.fn<() => Promise<"unresolved_review_threads" | "red_ci" | "pending_ci" | "merge_conflict" | "human_approval" | "no_live_blocker">>(),
+);
+
+// Partial mock of task-hygiene.js: keep all exports, replace only fetchLivePrBlockerStatus
+vi.mock("../services/task-hygiene.js", async () => {
+  const actual = await vi.importMock("../services/task-hygiene.js");
+  return {
+    ...(actual as Record<string, unknown>),
+    fetchLivePrBlockerStatus: fetchLivePrBlockerStatusMock,
+  };
+});
 
 function baseTask(over: Partial<ActiveTaskEntry> = {}): ActiveTaskEntry {
   return {
@@ -211,5 +227,149 @@ describe("task-hygiene", () => {
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", "agent:forge:main")).toBe(false);
     expect(shouldAutoRegisterLongRunningTask("auto_main_private", null)).toBe(false);
     expect(shouldAutoRegisterLongRunningTask("suggest", "agent:main:main")).toBe(false);
+  });
+
+  describe("fetchLivePrBlockerStatus", () => {
+    const OLD_ENV = process.env;
+
+    beforeEach(() => {
+      process.env = { ...OLD_ENV };
+    });
+
+    afterEach(() => {
+      process.env = OLD_ENV;
+      vi.restoreAllMocks();
+    });
+
+    it("returns no_live_blocker when no GitHub token is available", async () => {
+      // Without a token, the function must be conservative and return no_live_blocker
+      delete process.env.GITHUB_TOKEN;
+      delete process.env.GH_TOKEN;
+      const result = await fetchLivePrBlockerStatus("owner", "repo", 123);
+      expect(result).toBe("no_live_blocker");
+    });
+  });
+
+  describe("planActiveTaskHygiene PR live blocker integration", () => {
+    // These tests exercise the PR blocker check at the integration level by
+    // mocking fetchLivePrBlockerStatus (the function that calls GitHub).
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it(
+      "REGRESSION: hygiene must NOT mark waiting/blocked when PR has unresolved review threads\n" +
+        "    (green checks + BLOCKED mergeStateStatus + unresolved threads = Stage 4 feedback work, not abandoned)",
+      async () => {
+        const { planActiveTaskHygiene } = await import("../services/task-ledger-facts.js");
+
+        // PR has green CI but mergeStateStatus=BLOCKED and unresolved review threads
+        fetchLivePrBlockerStatusMock.mockResolvedValueOnce("unresolved_review_threads");
+
+        const tasks: ActiveTaskEntry[] = [
+          {
+            label: "markus-lassfolk/openclaw-hybrid-memory#1549",
+            description: "Drive PR #1549",
+            status: "Waiting",
+            started: "2026-05-20T00:00:00.000Z",
+            updated: "2026-05-20T00:00:00.000Z",
+          },
+        ];
+
+        const plan = await planActiveTaskHygiene(tasks, {
+          olderThanMinutes: 1,
+          checkPrLiveBlocker: true,
+        });
+
+        // The PR has unresolved review threads → should be classified as pr-live-blocker
+        // NOT as stale-failed or dead-session
+        const action = plan.actions.find((a) => a.label === tasks[0].label);
+        expect(action).toBeDefined();
+        expect(action?.kind).toBe("pr-live-blocker");
+        expect(action?.toStatus).toBe("stage-4-feedback");
+        expect(fetchLivePrBlockerStatusMock).toHaveBeenCalledWith(
+          "markus-lassfolk",
+          "openclaw-hybrid-memory",
+          1549,
+        );
+      },
+    );
+
+    it("hygiene skips PR blocker check when checkPrLiveBlocker is false", async () => {
+      const { planActiveTaskHygiene } = await import("../services/task-ledger-facts.js");
+
+      fetchLivePrBlockerStatusMock.mockResolvedValueOnce("unresolved_review_threads");
+
+      const tasks: ActiveTaskEntry[] = [
+        {
+          label: "markus-lassfolk/openclaw-hybrid-memory#1549",
+          description: "Drive PR #1549",
+          status: "Waiting",
+          started: "2026-05-20T00:00:00.000Z",
+          updated: "2026-05-20T00:00:00.000Z",
+        },
+      ];
+
+      const plan = await planActiveTaskHygiene(tasks, {
+        olderThanMinutes: 1,
+        checkPrLiveBlocker: false, // explicitly disabled
+      });
+
+      // Should NOT have called the GitHub helper
+      expect(fetchLivePrBlockerStatusMock).not.toHaveBeenCalled();
+      // No actions since task is not stale (not older than 1 minute)
+      expect(plan.actions).toHaveLength(0);
+    });
+
+    it("hygiene records red_ci from GitHub API and does not abandon the task", async () => {
+      const { planActiveTaskHygiene } = await import("../services/task-ledger-facts.js");
+
+      fetchLivePrBlockerStatusMock.mockResolvedValueOnce("red_ci");
+
+      const tasks: ActiveTaskEntry[] = [
+        {
+          label: "markus-lassfolk/openclaw-hybrid-memory#1550",
+          description: "Drive PR #1550",
+          status: "In progress",
+          started: "2026-05-20T00:00:00.000Z",
+          updated: "2026-05-20T00:00:00.000Z",
+        },
+      ];
+
+      const plan = await planActiveTaskHygiene(tasks, {
+        olderThanMinutes: 1,
+        checkPrLiveBlocker: true,
+      });
+
+      const action = plan.actions.find((a) => a.label === tasks[0].label);
+      expect(action?.kind).toBe("pr-live-blocker");
+      expect(action?.toStatus).toBe("stage-4-feedback");
+    });
+
+    it("hygiene records no_live_blocker — no action taken", async () => {
+      const { planActiveTaskHygiene } = await import("../services/task-ledger-facts.js");
+
+      fetchLivePrBlockerStatusMock.mockResolvedValueOnce("no_live_blocker");
+
+      const tasks: ActiveTaskEntry[] = [
+        {
+          label: "markus-lassfolk/openclaw-hybrid-memory#1551",
+          description: "Drive PR #1551",
+          status: "Waiting",
+          started: "2026-05-20T00:00:00.000Z",
+          updated: "2026-05-20T00:00:00.000Z",
+        },
+      ];
+
+      const plan = await planActiveTaskHygiene(tasks, {
+        olderThanMinutes: 1,
+        checkPrLiveBlocker: true,
+      });
+
+      // No action: hygiene should NOT mark this task abandoned when live state is clean
+      const action = plan.actions.find((a) => a.label === tasks[0].label);
+      expect(action).toBeUndefined();
+    });
   });
 });

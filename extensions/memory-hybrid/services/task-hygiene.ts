@@ -4,9 +4,12 @@
  */
 
 import { basename } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { ActiveTaskEntry } from "./active-task.js";
 import { isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
+import { getEnv } from "../utils/env-manager.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
 export type LongRunningRegistrationMode = ActiveTaskLongRunningRegistrationMode;
@@ -18,6 +21,161 @@ export type LongRunningWorkflowProposal = {
   next: string;
   repoContext?: string;
 };
+
+/**
+ * Classification outcomes for a PR-backed task's live blocker state.
+ * These are returned by `fetchLivePrBlockerStatus` and consumed by hygiene logic.
+ */
+export type PrBlockerStatus =
+  | "unresolved_review_threads"
+  | "red_ci"
+  | "pending_ci"
+  | "merge_conflict"
+  | "human_approval"
+  | "no_live_blocker";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Extract an "owner/repo#N" PR reference from a task label or description.
+ * Matches "owner/repo#N", "owner/repo/pull/N", or bare "#N" (repo then inferred from task label).
+ */
+function parsePrRef(taskLabel: string, taskDescription: string): { owner: string; repo: string; number: number } | null {
+  // Try "owner/repo#N" or "owner/repo/pull/N"
+  const m1 = /(?:^|\s)([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)(?:\s|$)/.exec(taskLabel + " " + taskDescription);
+  if (m1) {
+    const n = Number(m1[2]);
+    if (Number.isFinite(n) && n >= 1) {
+      const [owner, repo] = m1[1].split("/");
+      return { owner, repo, number: Math.floor(n) };
+    }
+  }
+  // Try bare "#N" in description
+  const m2 = /#(\d+)/.exec(taskLabel + " " + taskDescription);
+  if (m2) {
+    const n = Number(m2[1]);
+    if (Number.isFinite(n) && n >= 1) {
+      // No bare repo info — caller must provide it via opts
+      return null;
+    }
+  }
+  return null;
+}
+
+interface GhPrViewJson {
+  number: number;
+  mergeStateStatus?: string;
+  reviewDecision?: string;
+  reviewThreads?: {
+    nodes: Array<{
+      id: string;
+      isResolved: boolean;
+      isOutdated: boolean;
+    }>;
+  };
+  mergeable?: string;
+  commits?: {
+    nodes: Array<{ commit: { checkSuites?: { nodes: Array<{ conclusion?: string; status?: string }> } } }>;
+  };
+}
+
+interface GhPrStatusJson {
+  statuses: Array<{ state: string; context: string }>;
+  commits: {
+    nodes: Array<{
+      commit: {
+        statusCheckRollup?: { state: string };
+        checkSuites?: { nodes: Array<{ conclusion?: string; status?: string }> };
+      };
+    }>;
+  };
+}
+
+const BLOCKING_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
+const PENDING_CHECK_STATES = new Set(["in_progress", "queued", "pending", "waiting", "requested"]);
+
+/**
+ * Fetch live PR state from GitHub (via `gh`) and classify the blocking status.
+ *
+ * This function exists to ensure hygiene does not mis-classify a PR as "waiting/blocked"
+ * based on shallow signals (mergeStateStatus, reviewDecision) alone — it always checks
+ * for actionable unresolved review threads before concluding there is no live blocker.
+ *
+ * Returns "no_live_blocker" only when CI is green/success, there are no unresolved threads,
+ * no merge conflict, and no pending human approval.
+ */
+export async function fetchLivePrBlockerStatus(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<PrBlockerStatus> {
+  const token = (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim();
+  if (!token) {
+    // No token — skip live check, be conservative
+    return "no_live_blocker";
+  }
+
+  const ghArgs = ["pr", "view", String(prNumber), "--repo", `${owner}/${repo}`, "--json",
+    "mergeStateStatus,reviewDecision,reviewThreads,mergeable,commits{node{commit{statusCheckRollup{state},checkSuites{nodes{conclusion,status}}}}}",
+    "--jq=."];
+
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 20_000);
+  const outerSignal = opts.signal ?? ac.signal;
+
+  try {
+    const { stdout } = await execFileAsync("gh", ghArgs, {
+      encoding: "utf-8",
+      signal: outerSignal,
+      timeout: 25_000,
+    });
+    const pr: GhPrViewJson = JSON.parse(stdout);
+
+    // 1. Check for unresolved review threads (most important — actionable human feedback)
+    const threads = pr.reviewThreads?.nodes ?? [];
+    const unresolvedThreads = threads.filter((t) => !t.isResolved && !t.isOutdated);
+    if (unresolvedThreads.length > 0) {
+      return "unresolved_review_threads";
+    }
+
+    // 2. Check CI (from statusCheckRollup + checkSuites on latest commit)
+    const latestCommit = pr.commits?.nodes?.[0]?.commit;
+    const checkRollup = latestCommit?.statusCheckRollup?.state;
+    const checkSuites = latestCommit?.checkSuites?.nodes ?? [];
+
+    const hasFailure =
+      checkRollup === "failure" ||
+      checkRollup === "timed_out" ||
+      checkSuites.some((cs) => cs.conclusion && BLOCKING_CONCLUSIONS.has(cs.conclusion));
+    const hasPending =
+      checkRollup === "pending" ||
+      checkRollup === "in_progress" ||
+      PENDING_CHECK_STATES.has(checkRollup ?? "") ||
+      checkSuites.some((cs) => cs.status && PENDING_CHECK_STATES.has(cs.status));
+
+    if (hasFailure) return "red_ci";
+    if (hasPending) return "pending_ci";
+
+    // 3. Check merge conflict
+    if (pr.mergeStateStatus === "BLOCKED" || pr.mergeStateStatus === "UNSTABLE") {
+      // Double-check via mergeable field if available
+      if (pr.mergeable === "false") return "merge_conflict";
+    }
+    if (pr.mergeable === "false") return "merge_conflict";
+
+    // 4. Human approval pending
+    if (pr.reviewDecision === "CHANGES_REQUESTED") return "human_approval";
+    if (pr.reviewDecision === "REVIEW_REQUIRED") return "human_approval";
+
+    return "no_live_blocker";
+  } catch {
+    // Network or parse error — be conservative, don't claim "no blocker"
+    return "no_live_blocker";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const REPO_REF_RE = /\b([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})\b/gi;
 const GITHUB_URL_RE =
