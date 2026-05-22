@@ -123,6 +123,9 @@ export async function runExtractDirectivesForCli(
               suppressVectorFallbackWarning: true,
             },
           );
+          if (storeResult.skipped) {
+            continue;
+          }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
             vectorDb,

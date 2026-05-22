@@ -151,8 +151,6 @@ export type SkippedStoreFactResult = {
    * No fact was written, so callers must skip all post-store operations.
    */
   skipped: true;
-  evictedFactId?: null;
-  embeddingStale?: false;
 };
 
 export type StoreFactResult = StoredFactResult | SkippedStoreFactResult;
@@ -163,7 +161,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
   if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
-    return { skipped: true, evictedFactId: null, embeddingStale: false };
+    return { skipped: true };
   }
 
   const sourceForPolicy = entry.source ?? "conversation";
