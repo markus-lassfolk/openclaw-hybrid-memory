@@ -5,6 +5,7 @@
 import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { registerDemoCommand } from "./cmd-demo.js";
@@ -18,6 +19,7 @@ export interface UserFriendlyContext {
   cfg: HybridMemoryConfig;
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  wal?: WriteAheadLog | null;
   embeddings: EmbeddingProvider;
   runConfigSet?: (
     key: string,
@@ -53,8 +55,12 @@ function registerIfMissing(mem: Chainable, name: string, register: () => void): 
 export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyContext): void {
   registerIfMissing(mem, "setup", () => registerSetupCommand(mem, ctx.cfg, ctx.runConfigSet));
   registerIfMissing(mem, "providers", () => registerProvidersCommand(mem, ctx.cfg));
-  registerIfMissing(mem, "doctor", () => registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb));
-  registerIfMissing(mem, "health", () => registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb));
+  registerIfMissing(mem, "doctor", () =>
+    registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null),
+  );
+  registerIfMissing(mem, "health", () =>
+    registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null),
+  );
   registerIfMissing(mem, "demo", () => registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
   registerIfMissing(mem, "examples", () => registerExamplesCommand(mem));
 }

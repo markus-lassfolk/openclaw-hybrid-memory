@@ -1,6 +1,14 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WriteAheadLog } from "../backends/wal.js";
-import { _resetWalCircuitBreakerForTesting, walRemove, walWrite } from "../services/wal-helpers.js";
+import {
+  _resetWalCircuitBreakerForTesting,
+  getWalDisabledSentinelPath,
+  walRemove,
+  walWrite,
+} from "../services/wal-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -10,11 +18,14 @@ function makeLogger() {
   return { warn: vi.fn() };
 }
 
-function makeWal(overrides: Partial<{ write: () => Promise<void>; remove: () => Promise<void> }> = {}): WriteAheadLog {
+function makeWal(
+  overrides: Partial<{ write: () => Promise<void>; remove: () => Promise<void>; getPath: () => string }> = {},
+): WriteAheadLog {
   return {
     write: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
     readAll: vi.fn().mockResolvedValue([]),
+    getPath: vi.fn(() => ""),
     close: vi.fn(),
     compact: vi.fn(),
     ...overrides,
@@ -177,6 +188,71 @@ describe("walWrite — circuit breaker trips at 10 consecutive failures", () => 
     const id = await walWrite(wal, "store", {}, logger);
     expect(typeof id).toBe("string");
     expect(id.length).toBeGreaterThan(0);
+  });
+
+  it("persists a circuit-breaker sentinel when the threshold is reached", async () => {
+    const root = mkdtempSync(join(tmpdir(), "wal-cb-sentinel-"));
+    try {
+      const walPath = join(root, "memory.wal");
+      const wal = makeWal({
+        getPath: () => walPath,
+        write: vi.fn().mockRejectedValue(new Error("persistent failure")),
+      });
+      const logger = makeLogger();
+
+      for (let i = 0; i < 10; i++) {
+        await walWrite(wal, "store", {}, logger);
+      }
+
+      expect(existsSync(getWalDisabledSentinelPath(walPath))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("honors a persisted sentinel across an in-memory reset (simulated restart)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "wal-cb-restart-"));
+    try {
+      const walPath = join(root, "memory.wal");
+      writeFileSync(getWalDisabledSentinelPath(walPath), '{"reason":"test"}\n', "utf-8");
+
+      _resetWalCircuitBreakerForTesting();
+      const wal = makeWal({
+        getPath: () => walPath,
+      });
+      const logger = makeLogger();
+
+      await walWrite(wal, "store", { text: "blocked-by-sentinel" }, logger);
+
+      expect(wal.write).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("persistently disabled"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows WAL writes again after sentinel removal and restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "wal-cb-clear-"));
+    try {
+      const walPath = join(root, "memory.wal");
+      const sentinelPath = getWalDisabledSentinelPath(walPath);
+      writeFileSync(sentinelPath, '{"reason":"test"}\n', "utf-8");
+
+      const blockedWal = makeWal({ getPath: () => walPath });
+      const logger = makeLogger();
+      _resetWalCircuitBreakerForTesting();
+      await walWrite(blockedWal, "store", {}, logger);
+      expect(blockedWal.write).not.toHaveBeenCalled();
+
+      rmSync(sentinelPath, { force: true });
+      _resetWalCircuitBreakerForTesting();
+
+      const recoveredWal = makeWal({ getPath: () => walPath });
+      await walWrite(recoveredWal, "store", { text: "after-clear" }, logger);
+      expect(recoveredWal.write).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

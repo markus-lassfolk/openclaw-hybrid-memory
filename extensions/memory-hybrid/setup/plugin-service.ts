@@ -45,6 +45,7 @@ import {
 import { walRemove } from "../services/wal-helpers.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import {
   type VersionCheckCacheEntry,
@@ -357,6 +358,10 @@ export function createPluginService(ctx: PluginServiceContext) {
               if (entry.operation === "store" || entry.operation === "update") {
                 const { text, category, importance, entity, key, value, source, decayClass, summary, tags } =
                   entry.data;
+                const walEmbeddingModel =
+                  typeof entry.data.embeddingModelName === "string" && entry.data.embeddingModelName.trim().length > 0
+                    ? entry.data.embeddingModelName.trim()
+                    : embeddings.modelName;
 
                 // Check if already stored (idempotency)
                 if (!factsDb.hasDuplicate(text)) {
@@ -392,8 +397,17 @@ export function createPluginService(ctx: PluginServiceContext) {
                         vector: entry.data.vector,
                         importance: importance ?? 0.5,
                         category: category || "other",
-                        embeddingModel: embeddings.modelName,
+                        embeddingModel: walEmbeddingModel,
                       });
+                      persistCanonicalFactEmbedding(
+                        factsDb,
+                        stored.id,
+                        walEmbeddingModel,
+                        entry.data.vector,
+                        "wal-recovery-fact-embeddings",
+                        "plugin-service",
+                        api.logger.warn?.bind(api.logger),
+                      );
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -427,7 +441,16 @@ export function createPluginService(ctx: PluginServiceContext) {
                         category: category || "other",
                         id: existingId,
                       });
-                      factsDb.setEmbeddingModel(existingId, embeddings.modelName);
+                      factsDb.setEmbeddingModel(existingId, walEmbeddingModel);
+                      persistCanonicalFactEmbedding(
+                        factsDb,
+                        existingId,
+                        walEmbeddingModel,
+                        entry.data.vector,
+                        "wal-recovery-existing-fact-embeddings",
+                        "plugin-service",
+                        api.logger.warn?.bind(api.logger),
+                      );
                       api.logger.info(
                         `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
                       );

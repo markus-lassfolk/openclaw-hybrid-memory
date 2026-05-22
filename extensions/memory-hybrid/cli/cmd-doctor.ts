@@ -2,13 +2,16 @@
  * CLI command for health diagnostics and issue detection
  */
 
-import { existsSync, statfsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, statSync, statfsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { type WALEntry, WAL_ENTRY_SCHEMA_VERSION, type WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 
 interface DiagnosticCheck {
@@ -18,11 +21,20 @@ interface DiagnosticCheck {
   fix?: string;
 }
 
+const WAL_SIZE_WARN_BYTES = 5 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
 export function registerDoctorCommand(
   program: Chainable,
   cfg: HybridMemoryConfig,
   factsDb: FactsDB,
   vectorDb: VectorDB,
+  wal: WriteAheadLog | null = null,
 ): void {
   program
     .command("doctor")
@@ -162,6 +174,105 @@ export function registerDoctorCommand(
           status: "warn",
           message: "Could not check disk space",
         });
+      }
+
+      // Check 7: WAL circuit-breaker and journal health
+      if (!cfg.wal?.enabled) {
+        checks.push({
+          name: "WAL",
+          status: "warn",
+          message: "Disabled in config (crash replay unavailable)",
+          fix: "Enable with: openclaw hybrid-mem config-set wal.enabled true",
+        });
+      } else if (!wal) {
+        checks.push({
+          name: "WAL",
+          status: "fail",
+          message: "Enabled in config but WAL runtime is unavailable",
+          fix: "Run: openclaw hybrid-mem verify --fix",
+        });
+      } else {
+        const breaker = getWalCircuitBreakerState(wal);
+        const walPath = breaker.walPath ?? cfg.wal.walPath ?? "unknown";
+
+        if (breaker.persistentDisabled) {
+          checks.push({
+            name: "WAL Circuit Breaker",
+            status: "fail",
+            message: `Persistently disabled via ${breaker.sentinelPath ?? walPath}`,
+            fix: "Fix filesystem sync/durability issue, then remove the sentinel and restart plugin",
+          });
+        } else if (breaker.inMemoryDisabled) {
+          checks.push({
+            name: "WAL Circuit Breaker",
+            status: "warn",
+            message: "Circuit breaker open in current process",
+            fix: "Resolve WAL write errors and restart plugin to re-enable WAL",
+          });
+        } else {
+          checks.push({
+            name: "WAL Circuit Breaker",
+            status: "pass",
+            message: "Circuit breaker closed",
+          });
+        }
+
+        try {
+          const allEntries = await wal.readAll();
+          const validEntries = await wal.getValidEntries();
+          const staleEntries = Math.max(0, allEntries.length - validEntries.length);
+          const walSizeBytes =
+            breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
+          const walStatus: "pass" | "warn" = staleEntries > 0 || walSizeBytes > WAL_SIZE_WARN_BYTES ? "warn" : "pass";
+          checks.push({
+            name: "WAL Journal",
+            status: walStatus,
+            message: `${validEntries.length} pending, ${staleEntries} stale, ${formatBytes(walSizeBytes)} at ${walPath}`,
+            fix:
+              walStatus === "warn"
+                ? "Investigate replay blockers and run maintenance; clear stale WAL entries after root cause is fixed"
+                : undefined,
+          });
+        } catch (error) {
+          checks.push({
+            name: "WAL Journal",
+            status: "fail",
+            message: `Unable to inspect WAL: ${error instanceof Error ? error.message : String(error)}`,
+            fix: "Run: openclaw hybrid-mem verify --fix",
+          });
+        }
+
+        if (!breaker.persistentDisabled) {
+          const probeId = randomUUID();
+          const probeEntry: WALEntry = {
+            id: probeId,
+            timestamp: Date.now(),
+            schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
+            operation: "store",
+            data: { text: "__doctor_wal_probe__" },
+          };
+          try {
+            await wal.write(probeEntry);
+            await wal.remove(probeId);
+            checks.push({
+              name: "WAL Durability",
+              status: "pass",
+              message: "Write+sync probe succeeded",
+            });
+          } catch (error) {
+            try {
+              await wal.remove(probeId);
+            } catch {
+              // best effort cleanup
+            }
+            checks.push({
+              name: "WAL Durability",
+              status: "fail",
+              message: `Write+sync probe failed: ${error instanceof Error ? error.message : String(error)}`,
+              fix: "Move memory storage to a filesystem that supports fsync/datasync reliably",
+            });
+          }
+        }
       }
 
       // Display results

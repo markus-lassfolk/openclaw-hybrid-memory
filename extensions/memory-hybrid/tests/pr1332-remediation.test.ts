@@ -134,6 +134,38 @@ describe("PR #1332 unresolved feedback remediation", () => {
     expect(output).not.toContain(".openclaw/plugins/memory-hybrid");
   });
 
+  it("doctor includes WAL circuit/journal/durability checks when WAL is enabled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hm-doctor-wal-"));
+    tmpRoots.push(root);
+    const walPath = join(root, "memory.wal");
+    const command = new FakeCommand();
+    const wal = {
+      getPath: () => walPath,
+      readAll: vi.fn().mockResolvedValue([]),
+      getValidEntries: vi.fn().mockResolvedValue([]),
+      write: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    registerDoctorCommand(
+      command as never,
+      {
+        sqlitePath: join(root, "facts.db"),
+        embedding: { provider: "openai", apiKey: "sk-test" },
+        wal: { enabled: true, walPath },
+      } as never,
+      { getCount: () => 1 } as never,
+      { getAllIds: async () => ["v1"] } as never,
+      wal as never,
+    );
+    const doctor = command.children.find((child) => child.name === "doctor");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await doctor?.handler?.();
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("WAL Circuit Breaker");
+    expect(output).toContain("WAL Journal");
+    expect(output).toContain("WAL Durability");
+  });
+
   it("progress helpers emit completion/status output in non-TTY mode", () => {
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const spinner = new ProgressSpinner("work");

@@ -495,6 +495,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       summary,
                       tags,
                       vector,
+                      embeddingModelName: vector ? embeddings.modelName : undefined,
                     },
                     api.logger,
                     classification.targetId,
@@ -637,6 +638,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               summary,
               tags,
               vector,
+              embeddingModelName: vector ? embeddings.modelName : undefined,
             },
             api.logger,
           );

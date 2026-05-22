@@ -576,6 +576,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       cfg: ctx.cfg,
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
+      wal: ctx.wal,
       embeddings: ctx.embeddings,
       runConfigSet: ctx.runConfigSet,
     };

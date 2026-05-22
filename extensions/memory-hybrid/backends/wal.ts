@@ -32,6 +32,7 @@ export type WALEntry = {
     summary?: string | null;
     tags?: string[];
     vector?: number[];
+    embeddingModelName?: string | null;
     // Optional metadata fields (best-effort) so replay can preserve semantics.
     scope?: "global" | "user" | "agent" | "session";
     scopeTarget?: string | null;
@@ -79,6 +80,10 @@ export class WriteAheadLog {
     this.maxAge = maxAge;
     // mkdirSync is acceptable here — constructor runs once at startup, not on the hot path.
     mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  getPath(): string {
+    return this.walPath;
   }
 
   async init(): Promise<void> {

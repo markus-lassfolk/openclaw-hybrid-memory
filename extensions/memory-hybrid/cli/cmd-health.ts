@@ -2,10 +2,13 @@
  * CLI command for quick health status with traffic-light indicators
  */
 
+import { existsSync, statSync } from "node:fs";
 import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 
 interface HealthIndicator {
@@ -14,11 +17,20 @@ interface HealthIndicator {
   detail: string;
 }
 
+const WAL_SIZE_WARN_BYTES = 5 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
 export function registerHealthCommand(
   program: Chainable,
   cfg: HybridMemoryConfig,
   factsDb: FactsDB,
   vectorDb: VectorDB,
+  wal: WriteAheadLog | null = null,
 ): void {
   program
     .command("health")
@@ -139,6 +151,63 @@ export function registerHealthCommand(
           status: "warn",
           detail: "Could not verify",
         });
+      }
+
+      // Check WAL health
+      if (!cfg.wal?.enabled) {
+        indicators.push({
+          name: "WAL",
+          status: "warn",
+          detail: "Disabled in config (crash replay unavailable)",
+        });
+      } else if (!wal) {
+        indicators.push({
+          name: "WAL",
+          status: "error",
+          detail: "Enabled in config but WAL runtime is unavailable",
+        });
+      } else {
+        try {
+          const breaker = getWalCircuitBreakerState(wal);
+          const walPath = breaker.walPath ?? cfg.wal.walPath ?? "unknown";
+          const walSizeBytes =
+            breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
+          const allEntries = await wal.readAll();
+          const validEntries = await wal.getValidEntries();
+          const staleEntries = Math.max(0, allEntries.length - validEntries.length);
+
+          if (breaker.persistentDisabled) {
+            indicators.push({
+              name: "WAL",
+              status: "error",
+              detail: `Persistently disabled via circuit breaker (${breaker.sentinelPath ?? walPath})`,
+            });
+          } else if (breaker.inMemoryDisabled) {
+            indicators.push({
+              name: "WAL",
+              status: "warn",
+              detail: "Circuit breaker open in current process",
+            });
+          } else if (walSizeBytes > WAL_SIZE_WARN_BYTES || staleEntries > 0) {
+            indicators.push({
+              name: "WAL",
+              status: "warn",
+              detail: `${validEntries.length} pending, ${staleEntries} stale, ${formatBytes(walSizeBytes)} at ${walPath}`,
+            });
+          } else {
+            indicators.push({
+              name: "WAL",
+              status: "good",
+              detail: `${validEntries.length} pending, ${formatBytes(walSizeBytes)} at ${walPath}`,
+            });
+          }
+        } catch (error) {
+          indicators.push({
+            name: "WAL",
+            status: "error",
+            detail: `Health check failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
       }
 
       // JSON output

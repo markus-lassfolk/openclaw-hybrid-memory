@@ -74,12 +74,20 @@ async function ensureVectorAndEmbeddingMeta(opts: {
   category: string;
   importance: number;
   vector: number[] | null;
+  embeddingModelName?: string | null;
   vectorDb?: VectorDB;
   embeddings?: EmbeddingProvider | null;
   factsDb: FactsDB;
 }): Promise<void> {
-  const { factId, text, category, importance, vector, vectorDb, embeddings, factsDb } = opts;
+  const { factId, text, category, importance, vector, embeddingModelName, vectorDb, embeddings, factsDb } = opts;
   if (!vectorDb) return;
+
+  const resolveCanonicalEmbeddingModel = (): string | null => {
+    const walModel = safeString(embeddingModelName);
+    if (walModel) return walModel;
+    const runtimeModel = safeString((embeddings as { modelName?: unknown } | null | undefined)?.modelName);
+    return runtimeModel;
+  };
 
   const embedAndStore = async (): Promise<number[] | null> => {
     if (!embeddings) return null;
@@ -111,6 +119,11 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
+      const model = resolveCanonicalEmbeddingModel();
+      if (model) {
+        factsDb.setEmbeddingModel(factId, model);
+        factsDb.storeEmbedding(factId, model, "canonical", new Float32Array(vector), vector.length);
+      }
       return;
     }
   } catch {
@@ -169,6 +182,7 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+        const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Idempotent replay: if the fact already exists, still ensure vector/embedding metadata.
         const existingId = findExistingFactIdForWal(factsDb, text, source);
@@ -179,6 +193,7 @@ export async function replayWalEntries(
             category,
             importance,
             vector: precomputedVector,
+            embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
@@ -229,6 +244,7 @@ export async function replayWalEntries(
           category: stored.category,
           importance: stored.importance,
           vector: precomputedVector,
+          embeddingModelName,
           vectorDb,
           embeddings,
           factsDb,
@@ -261,6 +277,7 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+        const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         const target = factsDb.getById(targetId);
         if (!target) {
@@ -282,6 +299,7 @@ export async function replayWalEntries(
               category,
               importance,
               vector: precomputedVector,
+              embeddingModelName,
               vectorDb,
               embeddings,
               factsDb,
@@ -332,6 +350,7 @@ export async function replayWalEntries(
           category: stored.category,
           importance: stored.importance,
           vector: precomputedVector,
+          embeddingModelName,
           vectorDb,
           embeddings,
           factsDb,
