@@ -61,11 +61,6 @@ export function isWalPersistentlyDisabledAtPath(walPath: string): boolean {
   }
 }
 
-export function isWalPersistentlyDisabled(wal: WriteAheadLog | null): boolean {
-  const walPath = resolveWalPath(wal);
-  return walPath ? isWalPersistentlyDisabledAtPath(walPath) : false;
-}
-
 function resetWalCircuitBreakerState(): void {
   walFailureCount = 0;
   walDisabled = false;
@@ -80,11 +75,6 @@ export function clearWalDisabledSentinelAtPath(walPath: string): boolean {
   } catch {
     return false;
   }
-}
-
-export function clearWalDisabledSentinel(wal: WriteAheadLog | null): boolean {
-  const walPath = resolveWalPath(wal);
-  return walPath ? clearWalDisabledSentinelAtPath(walPath) : false;
 }
 
 function persistWalDisabledSentinel(walPath: string, err: unknown): string {
