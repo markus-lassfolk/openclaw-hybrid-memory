@@ -227,4 +227,214 @@ describe("memory_store WAL payload — scope fields (issue #1574)", () => {
     expect(payload.scope).toBe("global");
     expect(payload.scopeTarget).toBeNull();
   });
+
+  it("captures auto-resolved agent scope in WAL payload when defaultStoreScope=agent", async () => {
+    const api = makeMockApi();
+    const walWriteSpy = vi.fn().mockResolvedValue("wal-id");
+
+    const agentCfg = {
+      captureMaxChars: 2000,
+      categories: ["fact", "preference", "decision"],
+      store: { classifyBeforeWrite: false },
+      multiAgent: {
+        orchestratorId: "main",
+        defaultStoreScope: "agent",
+        strictAgentScoping: false,
+      },
+      graph: {
+        enabled: false,
+        autoLink: false,
+        autoLinkLimit: 5,
+        autoLinkMinScore: 0.5,
+        useInRecall: false,
+        maxTraversalDepth: 2,
+        coOccurrenceWeight: 0.5,
+        autoSupersede: false,
+      },
+      graphRetrieval: { enabled: false, defaultExpand: false, maxExpandDepth: 3, maxExpandedResults: 20 },
+      credentials: { enabled: false },
+      autoRecall: { scopeFilter: null, summaryThreshold: 0, summaryMaxChars: 500 },
+      distill: { reinforcementBoost: 0.1 },
+      retrieval: { strategies: [], explicitBudgetTokens: 2000 },
+      aliases: { enabled: false },
+      procedures: { enabled: false },
+      clusters: null,
+    };
+
+    registerMemoryTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: agentCfg as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: "specialist-1" },
+        pendingLLMWarnings: { drain: vi.fn().mockReturnValue([]) } as never,
+        aliasDb: null,
+      },
+      api as never,
+      (_params, _currentAgent, _cfg) => undefined,
+      walWriteSpy,
+      (_id, _logger) => undefined,
+      async () => [],
+    );
+
+    const storeTool = api.getTool("memory_store");
+    await storeTool?.execute("call-4", {
+      text: "Auto-scoped fact via defaultStoreScope=agent",
+      importance: 0.6,
+    });
+
+    expect(walWriteSpy).toHaveBeenCalledOnce();
+    const [operation, payload] = walWriteSpy.mock.calls[0];
+    expect(operation).toBe("store");
+    // defaultStoreScope=agent with non-orchestrator agentId → agent scope
+    expect(payload.scope).toBe("agent");
+    expect(payload.scopeTarget).toBe("specialist-1");
+  });
+
+  it("captures auto-resolved agent scope in WAL payload when defaultStoreScope=auto (non-orchestrator)", async () => {
+    const api = makeMockApi();
+    const walWriteSpy = vi.fn().mockResolvedValue("wal-id");
+
+    const autoCfg = {
+      captureMaxChars: 2000,
+      categories: ["fact", "preference", "decision"],
+      store: { classifyBeforeWrite: false },
+      multiAgent: {
+        orchestratorId: "main",
+        defaultStoreScope: "auto",
+        strictAgentScoping: false,
+      },
+      graph: {
+        enabled: false,
+        autoLink: false,
+        autoLinkLimit: 5,
+        autoLinkMinScore: 0.5,
+        useInRecall: false,
+        maxTraversalDepth: 2,
+        coOccurrenceWeight: 0.5,
+        autoSupersede: false,
+      },
+      graphRetrieval: { enabled: false, defaultExpand: false, maxExpandDepth: 3, maxExpandedResults: 20 },
+      credentials: { enabled: false },
+      autoRecall: { scopeFilter: null, summaryThreshold: 0, summaryMaxChars: 500 },
+      distill: { reinforcementBoost: 0.1 },
+      retrieval: { strategies: [], explicitBudgetTokens: 2000 },
+      aliases: { enabled: false },
+      procedures: { enabled: false },
+      clusters: null,
+    };
+
+    registerMemoryTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: autoCfg as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: "specialist-2" },
+        pendingLLMWarnings: { drain: vi.fn().mockReturnValue([]) } as never,
+        aliasDb: null,
+      },
+      api as never,
+      (_params, _currentAgent, _cfg) => undefined,
+      walWriteSpy,
+      (_id, _logger) => undefined,
+      async () => [],
+    );
+
+    const storeTool = api.getTool("memory_store");
+    await storeTool?.execute("call-5", {
+      text: "Auto-scoped fact via defaultStoreScope=auto",
+      importance: 0.6,
+    });
+
+    expect(walWriteSpy).toHaveBeenCalledOnce();
+    const [operation, payload] = walWriteSpy.mock.calls[0];
+    expect(operation).toBe("store");
+    // defaultStoreScope=auto with non-orchestrator agentId → agent scope
+    expect(payload.scope).toBe("agent");
+    expect(payload.scopeTarget).toBe("specialist-2");
+  });
+
+  it("captures global scope in WAL payload when defaultStoreScope=auto and current agent is orchestrator", async () => {
+    const api = makeMockApi();
+    const walWriteSpy = vi.fn().mockResolvedValue("wal-id");
+
+    const autoCfg = {
+      captureMaxChars: 2000,
+      categories: ["fact", "preference", "decision"],
+      store: { classifyBeforeWrite: false },
+      multiAgent: {
+        orchestratorId: "main",
+        defaultStoreScope: "auto",
+        strictAgentScoping: false,
+      },
+      graph: {
+        enabled: false,
+        autoLink: false,
+        autoLinkLimit: 5,
+        autoLinkMinScore: 0.5,
+        useInRecall: false,
+        maxTraversalDepth: 2,
+        coOccurrenceWeight: 0.5,
+        autoSupersede: false,
+      },
+      graphRetrieval: { enabled: false, defaultExpand: false, maxExpandDepth: 3, maxExpandedResults: 20 },
+      credentials: { enabled: false },
+      autoRecall: { scopeFilter: null, summaryThreshold: 0, summaryMaxChars: 500 },
+      distill: { reinforcementBoost: 0.1 },
+      retrieval: { strategies: [], explicitBudgetTokens: 2000 },
+      aliases: { enabled: false },
+      procedures: { enabled: false },
+      clusters: null,
+    };
+
+    registerMemoryTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: autoCfg as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: "main" },
+        pendingLLMWarnings: { drain: vi.fn().mockReturnValue([]) } as never,
+        aliasDb: null,
+      },
+      api as never,
+      (_params, _currentAgent, _cfg) => undefined,
+      walWriteSpy,
+      (_id, _logger) => undefined,
+      async () => [],
+    );
+
+    const storeTool = api.getTool("memory_store");
+    await storeTool?.execute("call-6", {
+      text: "Auto-global scoped fact via defaultStoreScope=auto",
+      importance: 0.6,
+    });
+
+    expect(walWriteSpy).toHaveBeenCalledOnce();
+    const [operation, payload] = walWriteSpy.mock.calls[0];
+    expect(operation).toBe("store");
+    // defaultStoreScope=auto with orchestrator → global scope
+    expect(payload.scope).toBe("global");
+    expect(payload.scopeTarget).toBeNull();
+  });
 });
