@@ -615,6 +615,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   }
                   // WAL cleanup for skipped update path
                   await walRemove(walEntryId, api.logger);
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Store blocked by pre-store guard (category: ${category}).`,
+                      },
+                    ],
+                    details: { action: "skipped", reason: "blocked-by-guard", category },
+                  };
                 }
                 return {
                   content: [
