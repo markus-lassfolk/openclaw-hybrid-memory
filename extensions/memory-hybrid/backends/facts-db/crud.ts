@@ -10,6 +10,7 @@ import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
+import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
@@ -133,10 +134,56 @@ export type StoreFactResult = {
    * `entry.text` and replace the vector for `entry.id` in VectorDB.
    */
   embeddingStale?: boolean;
+  /**
+   * True when the store was rejected by a pre-store quality guard (e.g. classifier artifact).
+   * When true, `entry` is a placeholder with id="" and must not be used for vector operations.
+   */
+  rejected?: boolean;
 };
+
+/**
+ * Error thrown (not returned) when a store is rejected by a pre-store quality guard.
+ * Catch this if you need to distinguish artifact rejections from normal store failures.
+ */
+export class StoreRejectedError extends Error {
+  constructor(
+    public readonly reason: string,
+    public readonly artifactType: string,
+  ) {
+    super(`store rejected: ${reason}`);
+    this.name = "StoreRejectedError";
+  }
+}
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
+
+  // Hard pre-store guard: reject classifier artifacts and reasoning traces before any store path.
+  // Issue #1561: NOOP/classification facts must never be stored; they indicate the classifier
+  // decided the content is redundant or is internal LLM output. Issue #1560: chain-of-thought,
+  // prompt artifacts, and capability hints are also excluded.
+  if (isPromptArtifactOrReasoningTrace(entry.text)) {
+    // Return a clearly rejected result so callers can distinguish artifact rejection from a real fact.
+    // We include enough MemoryEntry fields to be structurally valid, but id="" signals "not a real stored fact".
+    const nowMs = Date.now();
+    const artifact: MemoryEntry = {
+      id: "",
+      text: entry.text,
+      createdAt: nowMs,
+      category: (entry.category?.trim() || "other") as MemoryCategory,
+      importance: 0,
+      entity: entry.entity ?? null,
+      key: entry.key ?? null,
+      value: entry.value ?? null,
+      source: entry.source ?? "conversation",
+      decayClass: "ephemeral",
+      expiresAt: null,
+      lastConfirmedAt: nowMs,
+      confidence: 0,
+    };
+    return { entry: artifact, evictedFactId: null, rejected: true };
+  }
+
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
   const nowSec = Math.floor(Date.now() / 1000);

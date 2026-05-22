@@ -4,6 +4,7 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
+import { isPromptArtifactOrReasoningTrace } from "../../../services/capture-utils.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
@@ -998,6 +999,86 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           console.log(`  errors=${report.errors.length}`);
           for (const err of report.errors.slice(0, 10)) console.log(`    - ${err}`);
           process.exitCode = 2;
+        }
+      }),
+    );
+
+  mem
+    .command("classification-artifacts")
+    .description(
+      "Supersede existing NOOP/classification-artifact facts and remove their LanceDB vectors (issue #1561). " +
+        "Dry-run by default; use --apply to mutate.",
+    )
+    .option("--apply", "Actually supersede facts and delete vectors. Omit for dry-run.")
+    .option("--json", "Emit JSON report")
+    .action(
+      withExit(async (opts?: { apply?: boolean; json?: boolean }) => {
+        const apply = opts?.apply === true;
+        const supersededIds: string[] = [];
+        const vectorDeleteErrors: string[] = [];
+        let vectorDeleteCount = 0;
+
+        // Scan all active facts for classifier artifact patterns
+        const allFacts = factsDb.getAll({ includeSuperseded: false });
+        for (const fact of allFacts) {
+          if (isPromptArtifactOrReasoningTrace(fact.text)) {
+            supersededIds.push(fact.id);
+            if (apply) {
+              try {
+                await vectorDb.delete(fact.id);
+                vectorDeleteCount++;
+              } catch (err) {
+                vectorDeleteErrors.push(`${fact.id}: ${String(err)}`);
+              }
+            }
+          }
+        }
+
+        if (apply) {
+          for (const id of supersededIds) {
+            try {
+              factsDb.supersede(id, null);
+            } catch (err) {
+              vectorDeleteErrors.push(`supersede ${id}: ${String(err)}`);
+            }
+          }
+          if (ctx.resolvedSqlitePath) {
+            recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".classification_artifacts_last_run");
+          }
+        }
+
+        const report = {
+          apply,
+          superseded: supersededIds.length,
+          supersededIds,
+          vectorDeletes: apply ? vectorDeleteCount : 0,
+          vectorDeleteErrors,
+        };
+
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+
+        if (supersededIds.length === 0) {
+          console.log("classification-artifacts: no artifact facts found");
+          return;
+        }
+
+        console.log(
+          `classification-artifacts ${apply ? "applied" : "dry-run"}: ${supersededIds.length} artifact fact(s) identified`,
+        );
+        if (!apply) {
+          console.log("Dry-run only. Re-run with --apply to supersede and delete vectors.");
+          console.log("Fact IDs:");
+          for (const id of supersededIds) console.log(`  ${id}`);
+        } else {
+          console.log(`Vectors deleted: ${vectorDeleteCount}`);
+          if (vectorDeleteErrors.length > 0) {
+            console.warn(`Errors: ${vectorDeleteErrors.length}`);
+            for (const e of vectorDeleteErrors.slice(0, 10)) console.warn(`  - ${e}`);
+            process.exitCode = 2;
+          }
         }
       }),
     );
