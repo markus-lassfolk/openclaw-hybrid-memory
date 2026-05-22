@@ -6,6 +6,41 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { filterByScope, mergeResults } from "./merge-results.js";
 
+/** Native process metrics captured as evidence of memory pressure (#1551). */
+export interface MemoryPressureEvidence {
+  rssBytes: number;
+  heapUsedBytes: number;
+  heapTotalBytes: number;
+  openFdCount: number | null;
+  timestamp: number;
+}
+
+/**
+ * Capture native RSS, heap, and file-descriptor metrics as structured evidence.
+ * File descriptors are only available on Linux via process.resources.openFd.
+ */
+export function captureMemoryPressureEvidence(): MemoryPressureEvidence {
+  const mem = process.memoryUsage();
+  let openFdCount: number | null = null;
+  try {
+    // Node.js 18+: process.resources available
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = (process as any).resources;
+    if (res && typeof res.openFd === "function") {
+      openFdCount = res.openFd();
+    }
+  } catch {
+    // Not available on all platforms / Node versions — degrade gracefully
+  }
+  return {
+    rssBytes: mem.rss,
+    heapUsedBytes: mem.heapUsed,
+    heapTotalBytes: mem.heapTotal,
+    openFdCount,
+    timestamp: Date.now(),
+  };
+}
+
 type MemoryDiagnosticsResult = {
   markerId: string;
   markerText: string;
@@ -13,6 +48,8 @@ type MemoryDiagnosticsResult = {
   semantic: { ok: boolean; count: number; failReason?: string };
   hybrid: { ok: boolean; count: number };
   autoRecall: { ok: boolean; count: number };
+  /** Native RSS / heap / FD evidence captured at diagnostic time (#1551). */
+  memoryPressure?: MemoryPressureEvidence;
 };
 
 export async function runMemoryDiagnostics(opts: {
@@ -101,6 +138,7 @@ export async function runMemoryDiagnostics(opts: {
       },
       hybrid: { ok: hybridResults.some((r) => r.entry.id === entry.id), count: hybridResults.length },
       autoRecall: { ok: autoRecallResults.some((r) => r.entry.id === entry.id), count: autoRecallResults.length },
+      memoryPressure: captureMemoryPressureEvidence(),
     };
   } finally {
     try {
