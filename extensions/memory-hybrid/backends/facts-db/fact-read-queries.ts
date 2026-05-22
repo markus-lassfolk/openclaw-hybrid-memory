@@ -367,12 +367,16 @@ export function isLikelyGarbage(input: {
   if (/^Thinking Process:/im.test(combined)) return true;
   if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
   // Unhelpful source + long reasoning combo
-  if (
-    input.source === "auto-capture" &&
-    combined.length > 3000 &&
-    (/think|reasoning|analyz|process/gi.test(combined) || /\n\n{2,}/.test(combined))
-  ) {
-    return true;
+  // Match reasoning trace patterns more precisely to avoid false positives with common English words
+  if (input.source === "auto-capture" && combined.length > 3000) {
+    // Reasoning-specific phrases that indicate LLM reasoning artifacts
+    const reasoningPhrases =
+      /\b(?:let me think|my reasoning|step[- ]by[- ]step|thought process|reasoning process|analysis process)\b/i;
+    // Multiple paragraph breaks suggesting stream-of-consciousness
+    const multipleBreaks = /\n\n{2,}/;
+    if (reasoningPhrases.test(combined) || multipleBreaks.test(combined)) {
+      return true;
+    }
   }
   // High recall counts for "other" category (self-reinforcing garbage loop)
   if (input.category === "other" && (input.recall_count ?? 0) > 500) {
