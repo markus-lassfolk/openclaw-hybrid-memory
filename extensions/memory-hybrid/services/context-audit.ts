@@ -215,9 +215,8 @@ export async function runContextAudit(opts: {
     ? Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens)
     : 0;
   const issueCapTokens = Math.max(80, Math.floor(autoRecallBudget * 0.15));
-  const hasNarrativesDb = ctx.narrativesDb != null || ctx.eventLog != null;
   const narrativeMaxTokens =
-    cfg.autoRecall.narrativeMaxTokens ?? (hasNarrativesDb ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0);
+    cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2));
   const hotMaxTokens =
     cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0);
   const defaultProcedureCap = proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
