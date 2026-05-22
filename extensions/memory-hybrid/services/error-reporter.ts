@@ -1,3 +1,5 @@
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
 import { compareVersions } from "../utils/version-check.js";
 
@@ -19,6 +21,7 @@ export { compareVersions };
  */
 
 const MAX_BREADCRUMBS = 10;
+const MAX_PENDING_REPORTS = 200;
 
 /**
  * Default GlitchTip DSN for anonymous crash reporting.
@@ -55,6 +58,10 @@ export interface ErrorReporterConfig {
    * When not configured, behavior is identical to today.
    */
   resolvedIssues?: Record<string, string>;
+  /** Optional persistent queue path for pending reports (JSONL). */
+  pendingQueuePath?: string;
+  /** Optional cap for persistent pending reports. Oldest entries are pruned first. */
+  maxPendingReports?: number;
 }
 
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
@@ -102,6 +109,12 @@ export interface GlitchTipEvent {
   breadcrumbs?: ReportBreadcrumb[];
   user?: { id?: string; username?: string };
   [key: string]: unknown;
+}
+
+interface PendingReportRecord {
+  id: string;
+  event: GlitchTipEvent;
+  enqueuedAt: number;
 }
 
 interface ErrorLike {
@@ -427,11 +440,18 @@ class GlitchTipReporter {
   private readonly environment: string;
   private readonly sampleRate: number;
   private readonly resolvedIssues: Record<string, string>;
+  private readonly pendingQueuePath?: string;
+  private readonly maxPendingReports: number;
   private serverName?: string;
 
   private globalTags: Record<string, string> = {};
   private breadcrumbs: ReportBreadcrumb[] = [];
-  private pendingFetches: Promise<void>[] = [];
+  private pendingFetches = new Set<Promise<void>>();
+  private pendingReports = new Map<string, PendingReportRecord>();
+  private inFlightReportIds = new Set<string>();
+  private queueLoadPromise: Promise<void> | null = null;
+  private queueLoaded = false;
+  private queueWriteLock: Promise<void> = Promise.resolve();
 
   // Current scope — set synchronously during withScope callback
   private currentScopeTags: Record<string, string> = {};
@@ -443,6 +463,8 @@ class GlitchTipReporter {
     environment: string,
     sampleRate: number,
     resolvedIssues?: Record<string, string>,
+    pendingQueuePath?: string,
+    maxPendingReports?: number,
   ) {
     const url = new URL(dsn);
     this.publicKey = url.username;
@@ -457,6 +479,11 @@ class GlitchTipReporter {
     this.environment = environment;
     this.sampleRate = sampleRate;
     this.resolvedIssues = resolvedIssues ?? {};
+    this.pendingQueuePath = pendingQueuePath;
+    this.maxPendingReports =
+      typeof maxPendingReports === "number" && Number.isFinite(maxPendingReports) && maxPendingReports > 0
+        ? Math.floor(maxPendingReports)
+        : MAX_PENDING_REPORTS;
   }
 
   setTag(key: string, value: string): void {
@@ -546,37 +573,219 @@ class GlitchTipReporter {
       return eventId;
     }
 
-    const p = this.send(sanitized).catch(() => {
-      // Fire-and-forget: never throw from error reporter
-    });
-    this.pendingFetches.push(p);
-
-    // Prevent unbounded growth: prune every 20 entries
-    if (this.pendingFetches.length > 20) {
-      this.pendingFetches = this.pendingFetches.slice(-20);
-    }
+    this.trackPending(this.sendWithPersistence(sanitized));
 
     return eventId;
   }
 
+  async initPersistentQueue(): Promise<void> {
+    await this.ensureQueueLoaded();
+    this.retryPendingQueue();
+  }
+
   async flush(timeoutMs: number): Promise<boolean> {
+    await this.ensureQueueLoaded();
+    this.retryPendingQueue();
+
     const pending = [...this.pendingFetches];
-    this.pendingFetches = [];
-    if (pending.length === 0) return true;
+    if (pending.length === 0) return this.pendingReports.size === 0;
     try {
       let timeoutId: NodeJS.Timeout | undefined;
+      let settledWithoutErrors = false;
       await Promise.race([
-        Promise.all(pending).then((result) => {
+        Promise.allSettled(pending).then((results) => {
           if (timeoutId !== undefined) clearTimeout(timeoutId);
-          return result;
+          settledWithoutErrors = results.every((result) => result.status === "fulfilled");
         }),
         new Promise<never>((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error("Flush timeout")), timeoutMs);
         }),
       ]);
-      return true;
+      return settledWithoutErrors && this.pendingReports.size === 0;
     } catch {
       return false;
+    }
+  }
+
+  private trackPending(promise: Promise<void>): void {
+    const tracked = promise.finally(() => {
+      this.pendingFetches.delete(tracked);
+    });
+    this.pendingFetches.add(tracked);
+    // Prevent unhandled-rejection noise while still allowing flush() to observe failures.
+    void tracked.catch(() => {});
+  }
+
+  private retryPendingQueue(): void {
+    if (!this.pendingQueuePath || this.pendingReports.size === 0) return;
+    for (const record of this.pendingReports.values()) {
+      this.trackPending(this.sendPersistedRecord(record));
+    }
+  }
+
+  private async sendWithPersistence(event: GlitchTipEvent): Promise<void> {
+    const eventId =
+      typeof event.event_id === "string" && event.event_id.length > 0 ? event.event_id : generateEventId();
+    event.event_id = eventId;
+
+    if (this.inFlightReportIds.has(eventId)) return;
+    this.inFlightReportIds.add(eventId);
+    let persisted = false;
+    try {
+      await this.ensureQueueLoaded();
+      if (this.pendingQueuePath) {
+        try {
+          await this.enqueuePendingReport(eventId, event);
+          persisted = true;
+        } catch (err) {
+          logger.warn?.(
+            `[ErrorReporter] Failed to persist pending report ${eventId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      await this.send(event);
+
+      if (persisted) {
+        await this.acknowledgeDelivered(eventId);
+      }
+    } finally {
+      this.inFlightReportIds.delete(eventId);
+    }
+  }
+
+  private async sendPersistedRecord(record: PendingReportRecord): Promise<void> {
+    if (!this.pendingQueuePath) return;
+    const eventId = record.id;
+    if (this.inFlightReportIds.has(eventId)) return;
+
+    this.inFlightReportIds.add(eventId);
+    try {
+      await this.send(record.event);
+      await this.acknowledgeDelivered(eventId);
+    } finally {
+      this.inFlightReportIds.delete(eventId);
+    }
+  }
+
+  private async enqueuePendingReport(eventId: string, event: GlitchTipEvent): Promise<void> {
+    if (!this.pendingQueuePath) return;
+    await this.withQueueLock(async () => {
+      this.pendingReports.set(eventId, { id: eventId, event, enqueuedAt: Date.now() });
+      const pruned = this.prunePendingReportsLocked();
+      await this.persistPendingReportsLocked();
+      if (pruned > 0) {
+        logger.warn?.(`[ErrorReporter] Pruned ${pruned} oldest pending report(s) to keep queue bounded`);
+      }
+    });
+  }
+
+  private async acknowledgeDelivered(eventId: string): Promise<void> {
+    if (!this.pendingQueuePath) return;
+    await this.withQueueLock(async () => {
+      if (!this.pendingReports.delete(eventId)) return;
+      await this.persistPendingReportsLocked();
+    });
+  }
+
+  private async ensureQueueLoaded(): Promise<void> {
+    if (!this.pendingQueuePath || this.queueLoaded) return;
+    if (this.queueLoadPromise) {
+      await this.queueLoadPromise;
+      return;
+    }
+
+    this.queueLoadPromise = (async () => {
+      let content = "";
+      try {
+        content = await readFile(this.pendingQueuePath as string, "utf-8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          logger.warn?.(
+            `[ErrorReporter] Failed reading pending-report queue: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      if (content.trim().length > 0) {
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed) as Partial<PendingReportRecord>;
+            if (typeof parsed.id !== "string" || parsed.id.length === 0) continue;
+            if (!parsed.event || typeof parsed.event !== "object") continue;
+            const persistedEventId =
+              typeof parsed.event.event_id === "string" && parsed.event.event_id.length > 0
+                ? parsed.event.event_id
+                : parsed.id;
+            const event = { ...parsed.event, event_id: persistedEventId };
+            this.pendingReports.set(persistedEventId, {
+              id: persistedEventId,
+              event,
+              enqueuedAt: typeof parsed.enqueuedAt === "number" ? parsed.enqueuedAt : Date.now(),
+            });
+          } catch (err) {
+            logger.warn?.(
+              `[ErrorReporter] Failed parsing pending-report queue line, skipping: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
+
+      const pruned = this.prunePendingReportsLocked();
+      if (pruned > 0) {
+        await this.persistPendingReportsLocked();
+        logger.warn?.(`[ErrorReporter] Pruned ${pruned} oldest pending report(s) during queue load`);
+      }
+
+      this.queueLoaded = true;
+    })().finally(() => {
+      this.queueLoadPromise = null;
+    });
+
+    await this.queueLoadPromise;
+  }
+
+  private prunePendingReportsLocked(): number {
+    let pruned = 0;
+    while (this.pendingReports.size > this.maxPendingReports) {
+      const oldestId = this.pendingReports.keys().next().value as string | undefined;
+      if (!oldestId) break;
+      this.pendingReports.delete(oldestId);
+      pruned++;
+    }
+    return pruned;
+  }
+
+  private async persistPendingReportsLocked(): Promise<void> {
+    if (!this.pendingQueuePath) return;
+
+    if (this.pendingReports.size === 0) {
+      await rm(this.pendingQueuePath, { force: true });
+      return;
+    }
+
+    const dir = dirname(this.pendingQueuePath);
+    await mkdir(dir, { recursive: true });
+    const tmpPath = `${this.pendingQueuePath}.tmp`;
+    const payload = `${[...this.pendingReports.values()].map((record) => JSON.stringify(record)).join("\n")}\n`;
+    await writeFile(tmpPath, payload, "utf-8");
+    await rename(tmpPath, this.pendingQueuePath);
+  }
+
+  private async withQueueLock<T>(op: () => Promise<T>): Promise<T> {
+    const prev = this.queueWriteLock;
+    let releaseLock: () => void;
+    this.queueWriteLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+    await prev;
+    try {
+      return await op();
+    } finally {
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous release initialized in Promise ctor.
+      releaseLock!();
     }
   }
 
@@ -703,10 +912,13 @@ export async function initErrorReporter(
       config.environment || "production",
       config.sampleRate ?? 1.0,
       config.resolvedIssues,
+      config.pendingQueuePath,
+      config.maxPendingReports,
     );
+    await reporter.initPersistentQueue();
   } catch (err) {
     logger.warn?.(
-      "[ErrorReporter] Invalid DSN format, error reporting disabled:",
+      "[ErrorReporter] Failed to initialize reporter, error reporting disabled:",
       err instanceof Error ? err.message : String(err),
     );
     return;

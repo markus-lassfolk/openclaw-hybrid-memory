@@ -3,8 +3,7 @@
  * Append-only NDJSON format; fsync after each write for durability.
  */
 
-import { mkdirSync } from "node:fs";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
@@ -103,7 +102,14 @@ export class WriteAheadLog {
         await prevLock;
         const entries = await this.readAll();
         this.activeIds = new Set(entries.map((e) => e.id));
-      } catch {
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: "wal-init",
+          subsystem: "wal",
+        });
+        pluginLogger.warn(
+          `WAL init: failed to load active IDs, continuing with empty in-memory set: ${err instanceof Error ? err.message : String(err)}`,
+        );
         this.activeIds = new Set();
       } finally {
         // biome-ignore lint/style/noNonNullAssertion: Synchronous
