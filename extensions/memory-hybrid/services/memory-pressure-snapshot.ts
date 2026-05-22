@@ -328,13 +328,23 @@ export async function captureMemoryPressureSnapshot(
 
     // LanceDB plugin state from VectorDB instance
     const vd = ctx.vectorDb;
-    // These are the actual public VectorDB method names
-    const lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
-    const lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
-    const lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
-    const lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() : false;
-    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() : 0;
-    const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() : null;
+    let lancedbInitGen = -1;
+    let lancedbStoreCount = -1;
+    let lancedbOptimizing = false;
+    let lancedbInitialized = false;
+    let lancedbOpenReaders = 0;
+    let lancedbPath: string | null = null;
+    try {
+      // These are the actual public VectorDB method names
+      lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
+      lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
+      lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
+      lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() : false;
+      lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() : 0;
+      lancedbPath = typeof vd.getPath === "function" ? vd.getPath() : null;
+    } catch {
+      // If any VectorDB method throws (e.g., during degraded or closing state), use fallback values
+    }
 
     // Active task counts (wrapped in try-catch to prevent parseDuration throws from skipping cooldown update)
     let taskCounts = { stale: 0, active: 0 };

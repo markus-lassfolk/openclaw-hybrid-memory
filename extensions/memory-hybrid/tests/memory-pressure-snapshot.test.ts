@@ -204,26 +204,28 @@ describe("memory-pressure snapshot helpers", () => {
 
     const { captureMemoryPressureSnapshot } = await loadModule();
 
-    await expect(
-      captureMemoryPressureSnapshot(
-        makeCtx({
-          vectorDb: {
-            getInitGeneration() {
-              throw new Error("boom");
-            },
-            getStoreCount: () => 0,
-            isOptimizing: () => false,
-            isInitialized: () => true,
-            getOpenReaderCount: () => 0,
-            getPath: () => null as unknown as string,
-          } as unknown as SnapshotContext["vectorDb"],
-        }),
-        {
-          includeLinuxProcMem: false,
-          cooldownSec: 60,
-        },
-      ),
-    ).rejects.toThrow("boom");
+    const snapshot = await captureMemoryPressureSnapshot(
+      makeCtx({
+        vectorDb: {
+          getInitGeneration() {
+            throw new Error("boom");
+          },
+          getStoreCount: () => 0,
+          isOptimizing: () => false,
+          isInitialized: () => true,
+          getOpenReaderCount: () => 0,
+          getPath: () => null as unknown as string,
+        } as unknown as SnapshotContext["vectorDb"],
+      }),
+      {
+        includeLinuxProcMem: false,
+        cooldownSec: 60,
+      },
+    );
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.pluginGenerations.lancedbInitGeneration).toBe(-1);
+    expect(snapshot?.pluginGenerations.lancedbStoreCount).toBe(-1);
 
     const secondAttempt = await captureMemoryPressureSnapshot(makeCtx(), {
       includeLinuxProcMem: false,
