@@ -292,112 +292,121 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
           };
 
-          // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
-          // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
-          if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
-            const parsed = tryParseCredentialForVault(textToStore, entity, key, value, {
-              requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-            });
-            if (parsed) {
-              const stored = credentialsDb.storeIfNew({
-                service: parsed.service,
-                type: parsed.type,
-                value: parsed.secretValue,
-                url: parsed.url,
-                notes: parsed.notes,
+          if (isCredentialLike(textToStore, entity, key, value)) {
+            if (cfg.credentials.enabled && credentialsDb) {
+              const parsed = tryParseCredentialForVault(textToStore, entity, key, value, {
+                requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
               });
-              if (!stored) {
-                return {
-                  content: [
-                    { type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` },
-                  ],
-                  details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
-                };
-              }
-              const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
-              const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-              const pointerStoreResult = factsDb.storeWithResult({
-                text: pointerText,
-                why,
-                category: "technical" as MemoryCategory,
-                importance,
-                entity: "Credentials",
-                key: parsed.service,
-                value: pointerValue,
-                source: "conversation",
-                decayClass: paramDecayClass ?? "permanent",
-                tags: ["auth", ...extractTags(pointerText, "Credentials")],
-                provenanceSession: provenanceSessionId,
-                extractionMethod: "active",
-                extractionConfidence: importance,
-              });
-              const pointerEntry = pointerStoreResult.entry;
-              await cleanupEvictedVector({
-                vectorDb,
-                evictedFactId: pointerStoreResult.evictedFactId,
-                logger: api.logger,
-                context: "memory-store-credential-pointer",
-              });
-              recordActiveStoreProvenance(pointerEntry.id, pointerText);
-              try {
-                addOperationBreadcrumb("vector", "store-credential-pointer");
-                const vector = await embedCallWithTimeoutAndRetry(
-                  () => embeddings.embed(pointerText),
-                  "memory-tools:store-credential-pointer",
-                );
-                await storeActiveCanonicalVector({
-                  factId: pointerEntry.id,
+              if (parsed) {
+                const stored = credentialsDb.storeIfNew({
+                  service: parsed.service,
+                  type: parsed.type,
+                  value: parsed.secretValue,
+                  url: parsed.url,
+                  notes: parsed.notes,
+                });
+                if (!stored) {
+                  return {
+                    content: [
+                      { type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` },
+                    ],
+                    details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
+                  };
+                }
+                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
+                const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
+                const pointerStoreResult = factsDb.storeWithResult({
                   text: pointerText,
                   why,
-                  vector,
+                  category: "technical" as MemoryCategory,
                   importance,
-                  category: "technical",
+                  entity: "Credentials",
+                  key: parsed.service,
+                  value: pointerValue,
+                  source: "conversation",
+                  decayClass: paramDecayClass ?? "permanent",
+                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
+                  provenanceSession: provenanceSessionId,
+                  extractionMethod: "active",
+                  extractionConfidence: importance,
                 });
-                await storeRegistryEmbeddings({
-                  factsDb,
-                  embeddingRegistry,
-                  embeddings,
-                  factId: pointerEntry.id,
-                  text: pointerText,
-                  vector,
+                const pointerEntry = pointerStoreResult.entry;
+                await cleanupEvictedVector({
+                  vectorDb,
+                  evictedFactId: pointerStoreResult.evictedFactId,
                   logger: api.logger,
-                  operation: "store-credential-pointer",
+                  context: "memory-store-credential-pointer",
                 });
-              } catch (err) {
-                // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
-                if (!(err instanceof AllEmbeddingProvidersFailed)) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    subsystem: "vector",
-                    operation: "store-credential-pointer",
-                    phase: "runtime",
-                    backend: "lancedb",
+                recordActiveStoreProvenance(pointerEntry.id, pointerText);
+                try {
+                  addOperationBreadcrumb("vector", "store-credential-pointer");
+                  const vector = await embedCallWithTimeoutAndRetry(
+                    () => embeddings.embed(pointerText),
+                    "memory-tools:store-credential-pointer",
+                  );
+                  await storeActiveCanonicalVector({
+                    factId: pointerEntry.id,
+                    text: pointerText,
+                    why,
+                    vector,
+                    importance,
+                    category: "technical",
                   });
+                  await storeRegistryEmbeddings({
+                    factsDb,
+                    embeddingRegistry,
+                    embeddings,
+                    factId: pointerEntry.id,
+                    text: pointerText,
+                    vector,
+                    logger: api.logger,
+                    operation: "store-credential-pointer",
+                  });
+                } catch (err) {
+                  // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
+                  if (!(err instanceof AllEmbeddingProvidersFailed)) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      subsystem: "vector",
+                      operation: "store-credential-pointer",
+                      phase: "runtime",
+                      backend: "lancedb",
+                    });
+                  }
+                  api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                 }
-                api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer saved in memory.`,
+                    },
+                  ],
+                  details: {
+                    action: "credential_vault",
+                    id: pointerEntry.id,
+                    service: parsed.service,
+                    type: parsed.type,
+                  },
+                };
               }
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer saved in memory.`,
+                    text: "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
                   },
                 ],
-                details: {
-                  action: "credential_vault",
-                  id: pointerEntry.id,
-                  service: parsed.service,
-                  type: parsed.type,
-                },
+                details: { action: "credential_skipped" },
               };
             }
             return {
               content: [
                 {
                   type: "text",
-                  text: "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
+                  text: "Credential-like content detected. Ordinary memory storage is blocked while the credential vault is disabled or unavailable. Enable credentials vault and retry.",
                 },
               ],
-              details: { action: "credential_skipped" },
+              details: { action: "credential_blocked_no_vault" },
             };
           }
 

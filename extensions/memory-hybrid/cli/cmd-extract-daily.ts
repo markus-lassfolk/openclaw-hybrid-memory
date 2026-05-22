@@ -278,6 +278,8 @@ export async function runExtractDailyForCli(
           // isCredentialLike but vault parse failed — skip this line entirely.
           continue;
         }
+        if (opts.verbose) sink.log("  skipped credential-like line: vault disabled or unavailable");
+        continue;
       }
       if (!extracted.entity && !extracted.key && category !== "decision") continue;
       totalExtracted++;
