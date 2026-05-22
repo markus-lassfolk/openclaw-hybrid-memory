@@ -140,7 +140,10 @@ async function runInjection(
     ambientSeenFacts,
   } = r;
   const edictBlock = buildEdictBlock(ctx);
-  const baseContext = edictBlock + issueBlock + narrativeBlock + hotBlock;
+  const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
+  const baseContext = edictBlock;
+
+  const withAmbient = (s: string) => (recalledAmbient ? `${recalledAmbient}${s}` : s);
 
   const emitAudit = (tokens: number) => {
     ctx.auditStore?.append({
@@ -247,17 +250,22 @@ async function runInjection(
         );
         emitAudit(pinnedTokens);
         return {
-          prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withProcedures(fullContent))),
+          prependContext: markDegradedLatency(
+            wrapRecalledContext(baseContext, withAmbient(withProcedures(fullContent))),
+          ),
         };
       }
       if (procedureBlock) {
-        emitAudit(estimateTokens(baseContext + procedureBlock));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, procedureBlock)) };
+        emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
       }
-      const combinedContext = baseContext;
-      if (combinedContext) {
-        emitAudit(estimateTokens(combinedContext));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext, "")) };
+      if (recalledAmbient) {
+        emitAudit(estimateTokens(baseContext + recalledAmbient));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+      }
+      if (baseContext) {
+        emitAudit(estimateTokens(baseContext));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
       }
       return undefined;
     }
@@ -282,7 +290,7 @@ async function runInjection(
     );
     emitAudit(totalTokens);
     return {
-      prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withProcedures(fullContent))),
+      prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(withProcedures(fullContent)))),
     };
   }
 
@@ -296,13 +304,16 @@ async function runInjection(
     } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
     if (indexLines.length === 0) {
       if (procedureBlock) {
-        emitAudit(estimateTokens(baseContext + procedureBlock));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, procedureBlock)) };
+        emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
       }
-      const combinedContext = baseContext;
-      if (combinedContext) {
-        emitAudit(estimateTokens(combinedContext));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext, "")) };
+      if (recalledAmbient) {
+        emitAudit(estimateTokens(baseContext + recalledAmbient));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+      }
+      if (baseContext) {
+        emitAudit(estimateTokens(baseContext));
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
       }
       return undefined;
     }
@@ -320,7 +331,7 @@ async function runInjection(
     emitAudit(indexTokens);
     return {
       prependContext: markDegradedLatency(
-        wrapRecalledContext(baseContext, withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
+        wrapRecalledContext(baseContext, withAmbient(withProcedures(`${indexHeader}${indexContent}${indexFooter}`))),
       ),
     };
   }
@@ -348,13 +359,16 @@ async function runInjection(
 
   if (lines.length === 0) {
     if (procedureBlock) {
-      emitAudit(estimateTokens(baseContext + procedureBlock));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock, "")) };
+      emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
     }
-    const combinedContext = baseContext;
-    if (combinedContext) {
-      emitAudit(estimateTokens(combinedContext));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext, "")) };
+    if (recalledAmbient) {
+      emitAudit(estimateTokens(baseContext + recalledAmbient));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+    }
+    if (baseContext) {
+      emitAudit(estimateTokens(baseContext));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
     }
     return undefined;
   }
@@ -428,13 +442,16 @@ async function runInjection(
 
   if (!memoryContext) {
     if (procedureBlock) {
-      emitAudit(estimateTokens(baseContext + procedureBlock));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock, "")) };
+      emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
     }
-    const combinedContext = baseContext;
-    if (combinedContext) {
-      emitAudit(estimateTokens(combinedContext));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext, "")) };
+    if (recalledAmbient) {
+      emitAudit(estimateTokens(baseContext + recalledAmbient));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+    }
+    if (baseContext) {
+      emitAudit(estimateTokens(baseContext));
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
     }
     return undefined;
   }
@@ -447,7 +464,7 @@ async function runInjection(
 
   return {
     prependContext: markDegradedLatency(
-      wrapRecalledContext(baseContext, withProcedures(`${header}${memoryContext}${footer}`)),
+      wrapRecalledContext(baseContext, withAmbient(withProcedures(`${header}${memoryContext}${footer}`))),
     ),
   };
 }
