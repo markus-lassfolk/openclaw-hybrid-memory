@@ -159,4 +159,3 @@ Plugin source and manifest: [extensions/memory-hybrid/README.md](extensions/memo
 ## License
 
 MIT ([LICENSE](LICENSE))
-# No-op commit to refresh CI status
