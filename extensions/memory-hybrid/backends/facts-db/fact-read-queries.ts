@@ -373,8 +373,8 @@ export function isLikelyGarbage(input: {
     const reasoningPhrases =
       /\b(?:let me think|my reasoning|step[- ]by[- ]step|thought process|reasoning process|analysis process)\b/i;
     // Multiple paragraph breaks suggesting stream-of-consciousness
-    const multipleBreaks = /\n\n{2,}/;
-    if (reasoningPhrases.test(combined) || multipleBreaks.test(combined)) {
+    const multipleBreaks = (combined.match(/\n\n/g) || []).length > 10;
+    if (reasoningPhrases.test(combined) || multipleBreaks) {
       return true;
     }
   }
