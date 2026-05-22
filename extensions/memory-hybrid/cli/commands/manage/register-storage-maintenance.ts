@@ -909,7 +909,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                   }
                   return facts;
                 })()
-              : (factsDb as { getAll: (opts: { includeSuperseded: boolean }) => Array<{ id: string }> }).getAll({ includeSuperseded: false });
+              : (factsDb as { getAll: (opts: { includeSuperseded: boolean }) => Array<{ id: string }> }).getAll({
+                  includeSuperseded: false,
+                });
 
             for (const fact of allFacts) {
               try {
@@ -1164,7 +1166,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             }
           }
         } else {
-          await processFactBatch(((factsDb as unknown) as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({ includeSuperseded: false }));
+          await processFactBatch(
+            (factsDb as unknown as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({
+              includeSuperseded: false,
+            }),
+          );
         }
 
         if (apply && ctx.resolvedSqlitePath) {
