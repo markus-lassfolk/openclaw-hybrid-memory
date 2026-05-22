@@ -297,6 +297,33 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 extractionConfidence: importance,
               });
               const pointerEntry = pointerStoreResult.entry;
+              if (pointerEntry.id === "" || pointerStoreResult.rejected) {
+                try {
+                  // biome-ignore lint/suspicious/noExplicitAny: parsed credential type is validated before vault storage
+                  credentialsDb.delete(parsed.service, parsed.type as any);
+                } catch (cleanupErr) {
+                  api.logger.warn?.(
+                    `memory-hybrid: failed to clean up rejected credential pointer for ${parsed.service}: ${cleanupErr}`,
+                  );
+                  capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+                    subsystem: "credentials",
+                    operation: "store-credential-pointer-cleanup",
+                  });
+                }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Credential pointer was rejected by the memory guard; removed vault entry for ${parsed.service} (${parsed.type}).`,
+                    },
+                  ],
+                  details: {
+                    action: "credential_rejected_artifact",
+                    service: parsed.service,
+                    type: parsed.type,
+                  },
+                };
+              }
               await cleanupEvictedVector({
                 vectorDb,
                 evictedFactId: pointerStoreResult.evictedFactId,

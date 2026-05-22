@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { registerMemoryTools } from "../tools/memory-tools.js";
 
-const { FactsDB, EventLog } = _testing;
+const { CredentialsDB, FactsDB, EventLog } = _testing;
+const TEST_ENCRYPTION_KEY = "test-encryption-key-for-memory-store-event-log";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -93,16 +94,19 @@ function makeCfg() {
 let tmpDir: string;
 let factsDb: InstanceType<typeof FactsDB>;
 let eventLog: InstanceType<typeof EventLog>;
+let credentialsDb: InstanceType<typeof CredentialsDB>;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "memory-store-event-log-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
   eventLog = new EventLog(join(tmpDir, "event-log.db"));
+  credentialsDb = new CredentialsDB(join(tmpDir, "credentials.db"), TEST_ENCRYPTION_KEY);
 });
 
 afterEach(() => {
   factsDb.close();
   eventLog.close();
+  credentialsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -235,5 +239,57 @@ describe("memory_store event_log integration", () => {
     expect(factLearned).toBeDefined();
     expect(factLearned?.content.factId).toBe(storedFactId);
     expect(factLearned?.entities).toEqual(["FactIdTest"]);
+  });
+
+  it("cleans up the vault entry when the credential pointer store is rejected", async () => {
+    const api = makeMockApi();
+    const vectorDb = makeMockVectorDb();
+    const embeddings = makeMockEmbeddings();
+    const cfg = { ...makeCfg(), credentials: { enabled: true, store: "sqlite" } };
+    const originalStoreWithResult = factsDb.storeWithResult.bind(factsDb);
+    const deleteSpy = vi.spyOn(credentialsDb, "delete");
+
+    factsDb.storeWithResult = vi.fn().mockReturnValue({
+      entry: { id: "", text: "", createdAt: 0 },
+      evictedFactId: null,
+      rejected: true,
+    });
+
+    registerMemoryTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as any,
+        vectorDb: vectorDb as never,
+        cfg: cfg as never,
+        embeddings: embeddings as never,
+        openai: makeMockOpenAI(),
+        wal: null,
+        credentialsDb: credentialsDb as never,
+        eventLog: eventLog as never,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: "test-agent" },
+        pendingLLMWarnings: { drain: vi.fn().mockReturnValue([]) } as never,
+        aliasDb: null,
+      },
+      api as never,
+      (_params, _currentAgent, _cfg) => undefined,
+      (_op, _data, _logger) => "wal-id",
+      (_id, _logger) => undefined,
+      async (_vdb, _fdb, _vec, _limit) => [],
+    );
+
+    const storeTool = api.getTool("memory_store");
+    const result = await storeTool?.execute("call-credential-rejected", {
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
+      importance: 0.8,
+      category: "technical",
+    });
+
+    expect(result?.details?.action).toBe("credential_rejected_artifact");
+    expect(deleteSpy).toHaveBeenCalledWith("openai", "api_key");
+    expect(credentialsDb.get("openai", "api_key")).toBeNull();
+    expect(vectorDb.store).not.toHaveBeenCalled();
+
+    factsDb.storeWithResult = originalStoreWithResult;
   });
 });

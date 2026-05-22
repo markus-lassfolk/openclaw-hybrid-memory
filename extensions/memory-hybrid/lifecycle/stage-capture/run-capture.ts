@@ -497,6 +497,7 @@ export async function runCapture(
                     const newEntry = storeResult.entry;
                     // Skip supersede and vector operations if store was rejected (artifact text)
                     if (newEntry.id === "" || storeResult.rejected) {
+                      await ctx.walRemove(walEntryId, api.logger);
                       continue;
                     }
                     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors

@@ -1015,36 +1015,66 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
       withExit(async (opts?: { apply?: boolean; json?: boolean }) => {
         const apply = opts?.apply === true;
         const supersededIds: string[] = [];
+        const verifiedSkippedIds: string[] = [];
         const vectorDeleteErrors: string[] = [];
         let vectorDeleteCount = 0;
-
-        // Scan all active facts for classifier artifact patterns
-        const allFacts = factsDb.getAll({ includeSuperseded: false });
-        const supersededIds: string[] = [];
-        const vectorDeleteErrors: string[] = [];
-        let vectorDeleteCount = 0;
-
-        for (const fact of allFacts) {
-          if (isPromptArtifactOrReasoningTrace(fact.text)) {
+        const verifiedLookup = (() => {
+          try {
+            return (
+              factsDb as {
+                getRawDb?: () => {
+                  prepare: (sql: string) => { get: (id: string) => unknown };
+                };
+              }
+            )
+              .getRawDb?.()
+              .prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1");
+          } catch {
+            return null;
+          }
+        })();
+        const processFactBatch = async (facts: Array<{ id: string; text: string }>): Promise<void> => {
+          for (const fact of facts) {
+            if (!isPromptArtifactOrReasoningTrace(fact.text)) continue;
+            if (verifiedLookup?.get(fact.id)) {
+              verifiedSkippedIds.push(fact.id);
+              continue;
+            }
             supersededIds.push(fact.id);
-            if (apply) {
-              // Supersede SQLite row first to remove from recall immediately
-              try {
-                factsDb.supersede(fact.id, null);
-              } catch (err) {
-                vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
-                continue; // Skip vector delete if supersede failed
-              }
-              // Then attempt vector cleanup (best-effort)
-              try {
-                await vectorDb.delete(fact.id);
-                vectorDeleteCount++;
-              } catch (err) {
-                vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
-                // Vector delete failed, but fact is already superseded (acceptable)
-              }
+            if (!apply) continue;
+            try {
+              factsDb.supersede(fact.id, null);
+            } catch (err) {
+              vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
+              continue;
+            }
+            try {
+              await vectorDb.delete(fact.id);
+              vectorDeleteCount++;
+            } catch (err) {
+              vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
             }
           }
+        };
+        if (typeof (factsDb as { getBatch?: unknown }).getBatch === "function") {
+          let offset = 0;
+          const batchSize = 500;
+          while (true) {
+            const batch = (
+              factsDb as {
+                getBatch: (
+                  offset: number,
+                  limit: number,
+                  opts: { includeSuperseded: boolean },
+                ) => Array<{ id: string; text: string }>;
+              }
+            ).getBatch(offset, batchSize, { includeSuperseded: false });
+            if (batch.length === 0) break;
+            await processFactBatch(batch);
+            offset += batch.length;
+          }
+        } else {
+          await processFactBatch(factsDb.getAll({ includeSuperseded: false }));
         }
 
         if (apply && ctx.resolvedSqlitePath) {
@@ -1055,6 +1085,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           apply,
           superseded: supersededIds.length,
           supersededIds,
+          verifiedSkipped: verifiedSkippedIds.length,
+          verifiedSkippedIds,
           vectorDeletes: apply ? vectorDeleteCount : 0,
           vectorDeleteErrors,
         };
@@ -1072,10 +1104,17 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         console.log(
           `classification-artifacts ${apply ? "applied" : "dry-run"}: ${supersededIds.length} artifact fact(s) identified`,
         );
+        if (verifiedSkippedIds.length > 0) {
+          console.log(`Skipped verified facts: ${verifiedSkippedIds.length}`);
+        }
         if (!apply) {
           console.log("Dry-run only. Re-run with --apply to supersede and delete vectors.");
           console.log("Fact IDs:");
           for (const id of supersededIds) console.log(`  ${id}`);
+          if (verifiedSkippedIds.length > 0) {
+            console.log("Verified fact IDs left untouched:");
+            for (const id of verifiedSkippedIds) console.log(`  ${id}`);
+          }
         } else {
           console.log(`Vectors deleted: ${vectorDeleteCount}`);
           if (vectorDeleteErrors.length > 0) {
