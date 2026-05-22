@@ -918,13 +918,21 @@ export async function initErrorReporter(
       config.pendingQueuePath,
       config.maxPendingReports,
     );
-    await reporter.initPersistentQueue();
   } catch (err) {
     logger.warn?.(
       "[ErrorReporter] Failed to initialize reporter, error reporting disabled:",
       err instanceof Error ? err.message : String(err),
     );
     return;
+  }
+
+  try {
+    await reporter.initPersistentQueue();
+  } catch (err) {
+    logger.warn?.(
+      "[ErrorReporter] Failed to initialize persistent queue (continuing with in-memory only):",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
