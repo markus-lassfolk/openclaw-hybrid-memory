@@ -170,7 +170,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       entity: entry.entity ?? null,
       key: entry.key ?? null,
       value: entry.value ?? null,
-      createdAt: Date.now(),
+      createdAt: Math.floor(Date.now() / 1000),
       decayClass: entry.decayClass ?? "normal",
       expiresAt: null,
       lastConfirmedAt: 0,
