@@ -46,19 +46,29 @@ export async function runCaptureCleanupForCli(options: {
 
   // Scan all active facts (source not explicitly excluded; reasoning traces come from auto-capture)
   const PAGE_SIZE = 500;
+  let offset = 0;
 
   while (true) {
-    // Always query at offset 0: superseded facts drop out of the result set in non-dry-run mode
-    const rows = factsDb.allRaw(
-      `SELECT id, text, source, category, importance FROM facts
-       WHERE superseded_at IS NULL
-         AND (expires_at IS NULL OR expires_at > ?)
-       LIMIT ?`,
-      [Math.floor(Date.now() / 1000), PAGE_SIZE],
-    ) as Array<{ id: string; text: string; source: string; category: string; importance: number }>;
+    const db = factsDb.getRawDb();
+    const rows = db
+      .prepare(
+        `SELECT id, text, source, category, importance FROM facts
+         WHERE superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+         LIMIT ? OFFSET ?`,
+      )
+      .all(Math.floor(Date.now() / 1000), PAGE_SIZE, offset) as Array<{
+      id: string;
+      text: string;
+      source: string;
+      category: string;
+      importance: number;
+    }>;
 
     if (rows.length === 0) break;
     result.scanned += rows.length;
+
+    let supersededInBatch = 0;
 
     for (const row of rows) {
       if (!isPromptArtifactOrReasoningTrace(row.text)) continue;
@@ -70,29 +80,29 @@ export async function runCaptureCleanupForCli(options: {
 
       if (!dryRun) {
         try {
-          // Demote: set superseded_at and lower importance
-          factsDb.allRaw(
-            `UPDATE facts SET superseded_at = ?, importance = ? WHERE id = ? AND superseded_at IS NULL`,
-            [Math.floor(Date.now() / 1000), Math.min(row.importance, 0.1), row.id],
-          );
+          const superseded = factsDb.supersede(row.id, null);
 
-          // Remove LanceDB vector
-          if (vectorDb) {
-            try {
-              const deleted = await deleteVectorForFactId({
-                vectorDb: vectorDb as VectorDB,
-                factId: row.id,
-                logger,
-                context: "capture-cleanup",
-              });
-              if (deleted) result.vectorDeleted++;
-            } catch (vecErr) {
-              result.errors.push(`vector delete failed for ${row.id}: ${vecErr}`);
+          if (superseded) {
+            db.prepare(`UPDATE facts SET importance = ? WHERE id = ?`).run(Math.min(row.importance, 0.1), row.id);
+
+            if (vectorDb) {
+              try {
+                const deleted = await deleteVectorForFactId({
+                  vectorDb: vectorDb as VectorDB,
+                  factId: row.id,
+                  logger,
+                  context: "capture-cleanup",
+                });
+                if (deleted) result.vectorDeleted++;
+              } catch (vecErr) {
+                result.errors.push(`vector delete failed for ${row.id}: ${vecErr}`);
+              }
             }
-          }
 
-          result.superseded++;
-          logger?.info?.(`cleaned fact ${row.id} (src=${row.source})`);
+            result.superseded++;
+            supersededInBatch++;
+            logger?.info?.(`cleaned fact ${row.id} (src=${row.source})`);
+          }
         } catch (err) {
           result.errors.push(`failed to supersede ${row.id}: ${err}`);
         }
@@ -100,6 +110,10 @@ export async function runCaptureCleanupForCli(options: {
     }
 
     if (rows.length < PAGE_SIZE) break;
+
+    if (dryRun || supersededInBatch === 0) {
+      offset += PAGE_SIZE;
+    }
   }
 
   return result;
