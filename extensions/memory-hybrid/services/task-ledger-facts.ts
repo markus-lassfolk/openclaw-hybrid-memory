@@ -54,14 +54,14 @@ export function canonicalLabel(entity: string): string {
     .trim()
     .toLowerCase()
     .replace(CANONICAL_TASK_SUFFIX_RE, "")
-    .replace(/[\s_\-]+/g, "-")
+    .replace(/[\s_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return (
     normalized ||
     entity
       .trim()
       .toLowerCase()
-      .replace(/[\s_\-]+/g, "-")
+      .replace(/[\s_-]+/g, "-")
       .replace(/^-+|-+$/g, "")
   );
 }
@@ -1024,14 +1024,9 @@ export function backfillActiveTaskCanonicalLabels(
     if (existing !== canonical) {
       canonicalLabelsUpdated++;
       if (!opts.dryRun) {
-        const rawDb = (
-          factsDb as unknown as {
-            getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
-          }
-        ).getRawDb?.();
         const patch = { activeTask: { canonicalLabel: canonical }, canonical_label: canonical };
         const merged = mergeFactProvenanceJson(fact.provenanceJson, patch);
-        rawDb?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?").run(merged, fact.id);
+        factsDb.getRawDb().prepare("UPDATE facts SET provenance_json = ? WHERE id = ?").run(merged, fact.id);
       }
     }
     const arr = groups.get(canonical) ?? [];
@@ -1051,9 +1046,16 @@ export function backfillActiveTaskCanonicalLabels(
       arr.push(row);
       byKey.set(key, arr);
     }
-    let terminalStatus: MemoryEntry | undefined;
     const statusRows = byKey.get("status") ?? [];
-    for (const row of statusRows) {
+    const activeRows = rows.filter((row) => !row.supersededAt);
+    const activeStatusRows = statusRows.filter((row) => !row.supersededAt);
+    const terminalCandidates = activeStatusRows.some((row) => isTerminalFactStatus(row.value ?? row.text ?? ""))
+      ? activeStatusRows
+      : activeRows.length === 0
+        ? statusRows
+        : [];
+    let terminalStatus: MemoryEntry | undefined;
+    for (const row of terminalCandidates) {
       if (
         isTerminalFactStatus(row.value ?? row.text ?? "") &&
         (!terminalStatus || row.createdAt > terminalStatus.createdAt)
@@ -1073,9 +1075,11 @@ export function backfillActiveTaskCanonicalLabels(
     } else {
       for (const sameKey of byKey.values()) {
         const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
-        const keeper = ranked[0];
-        for (const row of ranked.slice(1)) {
-          if (!row.supersededAt) supersede(row.id, keeper.id);
+        const activeRanked = ranked.filter((row) => !row.supersededAt);
+        if (activeRanked.length <= 1) continue;
+        const keeper = activeRanked[0];
+        for (const row of activeRanked.slice(1)) {
+          supersede(row.id, keeper.id);
         }
       }
     }

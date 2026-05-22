@@ -468,6 +468,85 @@ describe("task-ledger-facts", () => {
     }
   });
 
+  it("backfillActiveTaskCanonicalLabels preserves provenance and avoids superseded keepers", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-backfill-provenance-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      const supersededDone = db.store({
+        text: "Task [Hybrid-Memory] status: done",
+        category: "project",
+        importance: 0.7,
+        source: "test",
+        decayClass: "permanent",
+        entity: "Hybrid-Memory",
+        key: "status",
+        value: "done",
+        provenanceJson: JSON.stringify({ sourceEventIds: ["evt-1"], method: "fixture" }),
+        sourceDate: 3,
+      });
+      const activeProgress = db.store({
+        text: "Task [hybrid-memory] status: in_progress",
+        category: "project",
+        importance: 0.7,
+        source: "test",
+        decayClass: "permanent",
+        entity: "hybrid-memory",
+        key: "status",
+        value: "in_progress",
+        provenanceJson: JSON.stringify({ sourceEventIds: ["evt-2"], method: "active-fixture" }),
+        sourceDate: 2,
+      });
+      db.supersede(supersededDone.id, null);
+
+      const olderTitle = db.store({
+        text: "Task [hybrid-memory] title: Old",
+        category: "project",
+        importance: 0.7,
+        source: "test",
+        decayClass: "permanent",
+        entity: "hybrid-memory",
+        key: "title",
+        value: "Old",
+        sourceDate: 1,
+      });
+      const newerSupersededTitle = db.store({
+        text: "Task [Hybrid-Memory] title: Newer but superseded",
+        category: "project",
+        importance: 0.7,
+        source: "test",
+        decayClass: "permanent",
+        entity: "Hybrid-Memory",
+        key: "title",
+        value: "Newer but superseded",
+        sourceDate: 4,
+      });
+      db.supersede(newerSupersededTitle.id, null);
+
+      const result = backfillActiveTaskCanonicalLabels(db);
+      expect(result.canonicalLabelsUpdated).toBe(2);
+
+      const updatedProgress = db
+        .getRawDb()
+        .prepare("SELECT provenance_json FROM facts WHERE id = ?")
+        .get(activeProgress.id) as {
+        provenance_json: string;
+      };
+      expect(JSON.parse(updatedProgress.provenance_json)).toMatchObject({
+        sourceEventIds: ["evt-2"],
+        method: "active-fixture",
+        activeTask: { canonicalLabel: "hybrid-memory" },
+        canonical_label: "hybrid-memory",
+      });
+
+      const rows = db.listFactsByCategory("project", 20);
+      expect(rows.find((row) => row.id === activeProgress.id)?.supersededAt).toBeNull();
+      expect(rows.find((row) => row.id === olderTitle.id)?.supersededAt).toBeNull();
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("terminal status supersession does not supersede title fact created in same sync", async () => {
     const dir = await mkdtemp(join(tmpdir(), "task-title-preservation-"));
     const db = new FactsDB(join(dir, "facts.db"));
