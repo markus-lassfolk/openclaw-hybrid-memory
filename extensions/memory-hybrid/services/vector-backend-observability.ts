@@ -54,42 +54,34 @@ export type VectorBackendObservability = {
     degraded: { active: boolean; reason: string | null; sinceEpochMs: number | null } | null;
     openReaders: number | null;
     optimizing: boolean | null;
-    search:
-      | {
-          active: number;
-          peak: number;
-          total: number;
-          lastRequestedLimit: number;
-          lastEffectiveLimit: number;
-          lastResultCount: number;
-          lastCompletedAtEpochMs: number | null;
-        }
-      | null;
-    cache:
-      | {
-          rows: number | null;
-          maxRowsPerFilterKey: number;
-          candidateLimitMax: number;
-          lastFilterKey: string | null;
-          lastRemovedRows: number;
-          lastPrunedAtEpochMs: number | null;
-        }
-      | null;
-    lastOptimize:
-      | {
-          ranAtEpochMs: number | null;
-          compacted: number;
-          removedFragments: number;
-          freedBytes: number;
-        }
-      | null;
-    bounds:
-      | {
-          vectorSearchMaxResults: number;
-          semanticCacheMaxRowsPerFilterKey: number;
-          semanticCacheCandidateLimitMax: number;
-        }
-      | null;
+    search: {
+      active: number;
+      peak: number;
+      total: number;
+      lastRequestedLimit: number;
+      lastEffectiveLimit: number;
+      lastResultCount: number;
+      lastCompletedAtEpochMs: number | null;
+    } | null;
+    cache: {
+      rows: number | null;
+      maxRowsPerFilterKey: number;
+      candidateLimitMax: number;
+      lastFilterKey: string | null;
+      lastRemovedRows: number;
+      lastPrunedAtEpochMs: number | null;
+    } | null;
+    lastOptimize: {
+      ranAtEpochMs: number | null;
+      compacted: number;
+      removedFragments: number;
+      freedBytes: number;
+    } | null;
+    bounds: {
+      vectorSearchMaxResults: number;
+      semanticCacheMaxRowsPerFilterKey: number;
+      semanticCacheCandidateLimitMax: number;
+    } | null;
   };
   lancedb: {
     basePath: string | null;

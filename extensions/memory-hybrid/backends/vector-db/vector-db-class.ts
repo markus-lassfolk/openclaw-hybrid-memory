@@ -1840,9 +1840,7 @@ export class VectorDB {
         const countPromise = cacheTable.countRows();
         const count = await withTimeout(VECTORDB_COUNT_TIMEOUT_MS, () => countPromise);
         if (count === null) {
-          this.logWarn(
-            `memory-hybrid: semantic query cache count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`,
-          );
+          this.logWarn(`memory-hybrid: semantic query cache count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`);
           void countPromise.then(
             () => {},
             (countErr) => {

@@ -436,7 +436,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           const decayParts = Object.entries(decayBreakdown).sort((a, b) => b[1] - a[1]);
           if (decayParts.length > 0) {
             const summary = decayParts
-              .map(([k, v]) => `${k}=${v} (${activeDecayTotal > 0 ? ((v / activeDecayTotal) * 100).toFixed(1) : "0.0"}%)`)
+              .map(
+                ([k, v]) => `${k}=${v} (${activeDecayTotal > 0 ? ((v / activeDecayTotal) * 100).toFixed(1) : "0.0"}%)`,
+              )
               .join(", ");
             console.log(`Breakdown by decay: ${summary}`);
             console.log(
