@@ -47,6 +47,7 @@ function sanitizeHotFactText(text: string): string {
     .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
     .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
