@@ -25,6 +25,32 @@ import {
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
 
+type FactsDbWithBatch = {
+  getBatch: (
+    offset: number,
+    limit: number,
+    opts: { includeSuperseded: boolean },
+  ) => Array<{ id: string; text: string }>;
+};
+
+type FactsDbWithRawDb = {
+  getRawDb: () => {
+    prepare: (sql: string) => { get: (id: string) => unknown };
+  };
+};
+
+function hasGetBatch(db: object): db is object & {
+  getBatch: FactsDbWithBatch["getBatch"];
+} {
+  return "getBatch" in db && typeof (db as { getBatch?: unknown }).getBatch === "function";
+}
+
+function hasGetRawDb(db: object): db is object & {
+  getRawDb: FactsDbWithRawDb["getRawDb"];
+} {
+  return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
+}
+
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
@@ -797,29 +823,20 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
             // Update embedding metadata in SQLite (batch update for all facts)
             console.log("Re-index: updating embedding metadata in SQLite...");
-            const allFacts =
-              typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
-                ? (() => {
-                    const facts: Array<{ id: string }> = [];
-                    let offset = 0;
-                    const batchSize = 500;
-                    while (true) {
-                      const batch = (
-                        factsDb as {
-                          getBatch: (
-                            offset: number,
-                            limit: number,
-                            opts: { includeSuperseded: boolean },
-                          ) => Array<{ id: string }>;
-                        }
-                      ).getBatch(offset, batchSize, { includeSuperseded: false });
-                      if (batch.length === 0) break;
-                      facts.push(...batch);
-                      offset += batch.length;
-                    }
-                    return facts;
-                  })()
-                : factsDb.getAll({ includeSuperseded: false });
+            const allFacts = hasGetBatch(factsDb)
+              ? (() => {
+                  const facts: Array<{ id: string }> = [];
+                  let offset = 0;
+                  const batchSize = 500;
+                  while (true) {
+                    const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
+                    if (batch.length === 0) break;
+                    facts.push(...batch);
+                    offset += batch.length;
+                  }
+                  return facts;
+                })()
+              : factsDb.getAll({ includeSuperseded: false });
 
             for (const fact of allFacts) {
               try {
@@ -1020,15 +1037,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         let vectorDeleteCount = 0;
         const verifiedLookup = (() => {
           try {
-            return (
-              factsDb as {
-                getRawDb?: () => {
-                  prepare: (sql: string) => { get: (id: string) => unknown };
-                };
-              }
-            )
-              .getRawDb?.()
-              .prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1");
+            return hasGetRawDb(factsDb)
+              ? factsDb.getRawDb().prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1")
+              : null;
           } catch {
             return null;
           }
@@ -1056,19 +1067,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             }
           }
         };
-        if (typeof (factsDb as { getBatch?: unknown }).getBatch === "function") {
+        if (hasGetBatch(factsDb)) {
           let offset = 0;
           const batchSize = 500;
           while (true) {
-            const batch = (
-              factsDb as {
-                getBatch: (
-                  offset: number,
-                  limit: number,
-                  opts: { includeSuperseded: boolean },
-                ) => Array<{ id: string; text: string }>;
-              }
-            ).getBatch(offset, batchSize, { includeSuperseded: false });
+            const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
             if (batch.length === 0) break;
             await processFactBatch(batch);
             offset += batch.length;

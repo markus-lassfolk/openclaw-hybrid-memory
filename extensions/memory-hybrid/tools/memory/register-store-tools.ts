@@ -11,6 +11,7 @@ import { stringEnum } from "../../utils/typebox.js";
 import { categoryToEventType } from "../../backends/event-log.js";
 import {
   DECAY_CLASSES,
+  type CredentialType,
   type DecayClass,
   type MemoryCategory,
   getCronModelConfig,
@@ -299,8 +300,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               const pointerEntry = pointerStoreResult.entry;
               if (pointerEntry.id === "" || pointerStoreResult.rejected) {
                 try {
-                  // biome-ignore lint/suspicious/noExplicitAny: parsed credential type is validated before vault storage
-                  credentialsDb.delete(parsed.service, parsed.type as any);
+                  credentialsDb.delete(parsed.service, parsed.type as CredentialType);
                 } catch (cleanupErr) {
                   api.logger.warn?.(
                     `memory-hybrid: failed to clean up rejected credential pointer for ${parsed.service}: ${cleanupErr}`,
