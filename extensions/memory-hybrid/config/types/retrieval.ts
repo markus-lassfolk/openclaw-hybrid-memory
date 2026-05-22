@@ -61,6 +61,19 @@ export type AutoRecallConfig = {
   /** Recall timing logs: off = disabled, basic = completed events only, verbose = started+completed with timestamps. */
   recallTiming?: "off" | "basic" | "verbose";
   maxTokens: number;
+  /** Optional cap for HOT fixed block tokens before recall candidates are packed. */
+  hotMaxTokens?: number;
+  /** Optional cap for narrative fixed block tokens before recall candidates are packed. */
+  narrativeMaxTokens?: number;
+  /** Optional cap for procedural fixed block tokens before recall candidates are packed. */
+  procedureMaxTokens?: number;
+  /**
+   * Optional reserve for active-task context added by other before_agent_start hooks.
+   * This reservation is subtracted from recall packing budget to avoid fixed-block exhaustion.
+   */
+  activeTaskMaxTokens?: number;
+  /** Optional reserve for stale-warning context in active-task injection. */
+  staleWarningMaxTokens?: number;
   maxPerMemoryChars: number;
   injectionFormat: AutoRecallInjectionFormat;
   limit: number;

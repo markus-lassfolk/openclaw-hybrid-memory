@@ -120,6 +120,11 @@ Set **`interactiveEnrichment`** to **`fast`** for stable, cost-effective default
     "enabled": true,
     "interactiveEnrichment": "fast",
     "maxTokens": 800,
+    "hotMaxTokens": 200,
+    "narrativeMaxTokens": 160,
+    "procedureMaxTokens": 160,
+    "activeTaskMaxTokens": 160,
+    "staleWarningMaxTokens": 64,
     "maxPerMemoryChars": 0,
     "injectionFormat": "full",
     "limit": 10,
@@ -149,6 +154,11 @@ Set **`interactiveEnrichment`** to **`fast`** for stable, cost-effective default
 | Key | Default | Description |
 |-----|---------|-------------|
 | `maxTokens` | `800` | Total tokens injected per turn |
+| `hotMaxTokens` | dynamic (~25% of interactive budget) | Cap HOT fixed block tokens before recall memories are packed |
+| `narrativeMaxTokens` | dynamic (~20% of interactive budget) | Cap narrative fixed block tokens |
+| `procedureMaxTokens` | dynamic (~20% of interactive budget) | Cap procedure fixed block tokens (applies after `procedures.maxInjectionTokens`) |
+| `activeTaskMaxTokens` | dynamic (min of `activeTask.injectionBudget` and ~20% of interactive budget) | Reserve tokens for active-task injection that runs in a separate hook |
+| `staleWarningMaxTokens` | dynamic (~8% of interactive budget) | Reserve tokens for stale-warning injection in active-task context |
 | `maxPerMemoryChars` | `0` | Truncate each memory to N chars (0 = no truncation) |
 | `injectionFormat` | `"full"` | `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only, `progressive` = memory index (agent fetches via `memory_recall`), `progressive_hybrid` = pinned in full + rest as index |
 | `limit` | `10` | Max memories considered for injection |

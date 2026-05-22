@@ -275,6 +275,14 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
         console.log(
           `Auto-recall: ${audit.autoRecall.enabled ? `${audit.autoRecall.budgetTokens} token budget` : "disabled"} (format: ${audit.autoRecall.injectionFormat}, hot: ${audit.autoRecall.hotTokens})`,
         );
+        if (audit.autoRecall.enabled) {
+          console.log(
+            `  fixed caps: hot=${audit.autoRecall.fixedBlocks.caps.hotMaxTokens}, narrative=${audit.autoRecall.fixedBlocks.caps.narrativeMaxTokens}, procedures=${audit.autoRecall.fixedBlocks.caps.procedureMaxTokens}, active-task=${audit.autoRecall.fixedBlocks.caps.activeTaskMaxTokens}, stale-warning=${audit.autoRecall.fixedBlocks.caps.staleWarningMaxTokens}`,
+          );
+          console.log(
+            `  fixed estimate: ${audit.autoRecall.fixedBlocks.estimatedTokens.total} tokens, recall headroom: ${audit.autoRecall.fixedBlocks.estimatedTokens.remainingForRecall}${audit.autoRecall.fixedBlocks.estimatedTokens.wouldExhaustRecall ? " (exhausted)" : ""}`,
+          );
+        }
         console.log(
           `Procedures: ${audit.procedures.enabled ? `${audit.procedures.tokens} tokens` : "disabled"} (lines: ${audit.procedures.lines})`,
         );
