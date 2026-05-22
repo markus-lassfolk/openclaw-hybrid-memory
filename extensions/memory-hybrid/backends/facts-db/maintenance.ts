@@ -110,6 +110,7 @@ type TierCandidate = {
   tier: MemoryTier;
   text: string;
   summary: string | null;
+  source: string | null;
   category: MemoryCategory | null;
   importance: number;
   key: string | null;
@@ -134,6 +135,23 @@ type HotCandidate = {
   lastAccess: number;
   tokens: number;
 };
+
+function isLikelyHotGarbageCandidate(
+  row: Pick<TierCandidate, "text" | "summary" | "source" | "category" | "recall_count">,
+): boolean {
+  const combined = `${row.text}\n${row.summary ?? ""}`;
+  if (/<(?:redacted_)?think(?:ing)?>[\s\S]*?<\/(?:redacted_)?think(?:ing)?>/i.test(combined)) return true;
+  if (/^Thinking Process:/im.test(combined)) return true;
+  if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
+  if (
+    row.source === "auto-capture" &&
+    combined.length > 3000 &&
+    (/think|reasoning|analyz|process/i.test(combined) || /\n\n{2,}/.test(combined))
+  ) {
+    return true;
+  }
+  return row.category === "other" && row.recall_count > 500;
+}
 
 function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions> {
   return {
@@ -207,6 +225,7 @@ function isHotCandidate(
   opts: Required<TieringOptions>,
   flags?: { ignoreStructuralBlock?: boolean; hotByRecallIds?: ReadonlySet<string> },
 ): boolean {
+  if (isLikelyHotGarbageCandidate(row)) return false;
   if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row, opts)) return false;
   if (hasTag(row.tags, "blocker")) return true;
   if (flags?.hotByRecallIds?.has(row.id)) return true;
@@ -295,6 +314,7 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
   const rows = db
     .prepare(
       `SELECT id, COALESCE(tier, 'warm') as tier, text, summary, category, importance, key, value, decay_class, tags,
+              source,
               COALESCE(recall_count, 0) as recall_count, COALESCE(access_count, 0) as access_count,
               created_at, last_accessed, last_confirmed_at, preserve_until, preserve_tags
          FROM facts

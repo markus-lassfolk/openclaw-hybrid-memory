@@ -218,6 +218,7 @@ async function runInjection(
     }
     const pinnedHeader = '<relevant-memories format="progressive_hybrid">\n';
     const pinnedPart: string[] = [];
+    const injectedPinnedIds: string[] = [];
     let pinnedTokens = estimateTokens(pinnedHeader);
     const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
     for (const x of pinned) {
@@ -228,6 +229,7 @@ async function runInjection(
       const lineTokens = estimateTokens(`${line}\n`);
       if (pinnedTokens + lineTokens > pinnedBudget) break;
       pinnedPart.push(line);
+      injectedPinnedIds.push(x.entry.id);
       pinnedTokens += lineTokens;
     }
     const indexIntro =
@@ -242,11 +244,10 @@ async function runInjection(
         `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
       if (pinnedPart.length > 0) {
-        const pinnedIds = pinned.map((x) => x.entry.id);
-        ctx.factsDb.refreshAccessedFacts(pinnedIds);
-        if (ambientSeenFacts) ambientSeenFacts.markSeen(pinnedIds);
-        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && pinnedIds.length >= 2) {
-          strengthenHebbianLinks(pinnedIds, ctx.factsDb, api.logger);
+        ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
+        if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedPinnedIds);
+        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
+          strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
         }
         const fullContent = `${pinnedHeader}${pinnedPart.join("\n")}\n</relevant-memories>`;
         api.logger.info?.(
@@ -271,10 +272,10 @@ async function runInjection(
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, indexBudget, 1);
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
-    if (pinnedPart.length > 0) ctx.factsDb.refreshAccessedFacts(pinned.map((x) => x.entry.id));
+    if (injectedPinnedIds.length > 0) ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
     // Index-only exposures must NOT inflate recall_count (#1559)
     if (indexIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexIds);
-    const allIds = [...pinned.map((x) => x.entry.id), ...indexIds];
+    const allIds = [...injectedPinnedIds, ...indexIds];
     if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
       strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);

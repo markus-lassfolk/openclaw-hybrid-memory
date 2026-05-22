@@ -356,7 +356,7 @@ function isLikelyGarbage(entry: MemoryEntry): boolean {
   if (/<(?:redacted_)?think(?:ing)?>[\s\S]*?<\/(?:redacted_)?think(?:ing)?>/i.test(combined)) return true;
   // Classifier / capability-hint artifacts
   if (/^Thinking Process:/im.test(combined)) return true;
-  if (/^\[Hot-memories\]|^\[recall\]|^\[hot\/fact\]/im.test(combined)) return true;
+  if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
   // Unhelpful source + long reasoning combo
   if (
     entry.source === "auto-capture" &&
@@ -391,6 +391,7 @@ export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: S
   const results: SearchResult[] = [];
   let usedTokens = 0;
   for (const row of rows) {
+    if (usedTokens >= maxTokens) break;
     const entry = rowToMemoryEntry(row);
     // Apply quality filter: exclude reasoning traces, prompt artifacts, and garbage (#1559)
     const score = hotQualityScore(entry);

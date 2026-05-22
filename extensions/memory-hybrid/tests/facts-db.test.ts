@@ -720,6 +720,50 @@ describe("FactsDB tiering", () => {
     expect(hot.length).toBeLessThanOrEqual(2);
   });
 
+  it("getHotFacts filters garbage prefixes and down-scores long hot facts", () => {
+    const clean = db.store({
+      text: "Operational runbook summary",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const garbage = db.store({
+      text: "Capability hint artifact",
+      summary: "[hot/fact] generated hot-memory wrapper",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const long = db.store({
+      text: "longfact ".repeat(1200),
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    db.setTier(clean.id, "hot");
+    db.setTier(garbage.id, "hot");
+    db.setTier(long.id, "hot");
+
+    const hot = db.getHotFacts(10_000);
+    const ids = hot.map((row) => row.entry.id);
+
+    expect(ids).toContain(clean.id);
+    expect(ids).toContain(long.id);
+    expect(ids).not.toContain(garbage.id);
+    expect(hot.find((row) => row.entry.id === clean.id)?.score).toBe(1);
+    expect(hot.find((row) => row.entry.id === long.id)?.score).toBe(0.3);
+  });
+
   it("search with tierFilter warm excludes cold", () => {
     const w = db.store({
       text: "Warm preference",
@@ -861,6 +905,23 @@ describe("FactsDB tiering", () => {
 
     expect(counts.hot).toBeGreaterThanOrEqual(1);
     expect(db.getById(fact.id)?.tier).toBe("hot");
+  });
+
+  it("runCompaction keeps garbage artifacts out of HOT after retiering", () => {
+    const garbage = db.store({
+      text: "<thinking>internal reasoning trace</thinking>",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    for (let i = 0; i < 3; i++) db.refreshAccessedFacts([garbage.id]);
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(db.getById(garbage.id)?.tier).toBe("warm");
   });
 
   it("runCompaction moves only inactive unrecalled facts to COLD", () => {
