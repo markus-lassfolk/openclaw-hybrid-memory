@@ -127,6 +127,11 @@ const DEFAULT_CONFIG: DiagnosticSnapshotConfig = {
 let lastSnapshotMs = 0;
 let snapshotInProgress = false;
 
+export function resetMemoryPressureSnapshotCooldownForTests(): void {
+  lastSnapshotMs = 0;
+  snapshotInProgress = false;
+}
+
 // ---------------------------------------------------------------------------
 // Linux /proc/self/status parser
 // ---------------------------------------------------------------------------
@@ -196,7 +201,7 @@ export function classifyFdPath(path: string): string {
   return "anon";
 }
 
-function groupFds(fds: OpenFd[], sampleLimit: number): FdGroup[] {
+export function groupFds(fds: OpenFd[], sampleLimit: number): FdGroup[] {
   const groups = new Map<string, OpenFd[]>();
   for (const fd of fds) {
     const cat = classifyFdPath(fd.path);
@@ -211,7 +216,7 @@ function groupFds(fds: OpenFd[], sampleLimit: number): FdGroup[] {
   return result.sort((a, b) => b.count - a.count);
 }
 
-function extractDbPaths(fds: OpenFd[]): MemoryPressureSnapshot["dbPaths"] {
+export function extractDbPaths(fds: OpenFd[]): MemoryPressureSnapshot["dbPaths"] {
   const sqlite = new Set<string>();
   const lancedb = new Set<string>();
   const wal = new Set<string>();
@@ -270,7 +275,7 @@ async function getActiveTaskCounts(
 // JSON artifact writer
 // ---------------------------------------------------------------------------
 
-function writeJsonArtifact(snapshot: MemoryPressureSnapshot): void {
+export function writeJsonArtifact(snapshot: MemoryPressureSnapshot): void {
   try {
     const openclawHome = getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw");
     const diagDir = join(openclawHome, "diagnostics", "memory-pressure");
