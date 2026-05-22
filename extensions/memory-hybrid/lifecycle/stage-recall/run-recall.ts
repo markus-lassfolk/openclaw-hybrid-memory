@@ -332,11 +332,7 @@ export async function runRecall(
           }
         }
       }
-      reserveAndTrackBlock(
-        "active-task",
-        activeTaskReserveTokens,
-        ctx.cfg.activeTask.enabled,
-      );
+      reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled);
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
         .map((r) => {
@@ -982,11 +978,7 @@ export async function runRecall(
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens);
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens);
-    reserveAndTrackBlock(
-      "active-task",
-      activeTaskReserveTokens,
-      ctx.cfg.activeTask.enabled,
-    );
+    reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled);
 
     const fixedBlocksTokens = totalBudget - remainingBudget;
     const maxTokens = Math.max(0, remainingBudget);
