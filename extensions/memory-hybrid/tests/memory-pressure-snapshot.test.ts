@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LifecycleContext } from "../lifecycle/types.js";
+
+type SnapshotContext = Pick<
+  LifecycleContext,
+  "factsDb" | "vectorDb" | "recallInFlightRef" | "resolvedSqlitePath" | "cfg"
+> & {
+  activeTaskPath?: string;
+};
 
 const mockFs = vi.hoisted(() => ({
   existsSync: vi.fn(() => true),
@@ -46,7 +54,7 @@ async function loadModule() {
   return import("../services/memory-pressure-snapshot.js");
 }
 
-function makeCtx(overrides?: Partial<Record<string, unknown>>) {
+function makeCtx(overrides?: Partial<SnapshotContext>): SnapshotContext {
   return {
     factsDb: undefined,
     vectorDb: {
@@ -73,7 +81,7 @@ function makeCtx(overrides?: Partial<Record<string, unknown>>) {
       },
     },
     ...overrides,
-  };
+  } as unknown as SnapshotContext;
 }
 
 describe("memory-pressure snapshot helpers", () => {

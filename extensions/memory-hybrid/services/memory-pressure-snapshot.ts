@@ -188,12 +188,7 @@ export function classifyFdPath(path: string): string {
   if (/\.wal[_-]?\d*$/.test(lc) || lc.endsWith("-wal") || lc.includes("/.wal-")) return "wal";
   if (/\.shm[-_]?\d*$/.test(lc) || lc.endsWith("-shm") || lc.includes("/.shm-")) return "shm";
   if (/\.lance\//i.test(lc) || lc.includes("/.lance/") || lc.includes("/.lancedb/")) return "lancedb";
-  if (
-    /\.sqlite/i.test(lc) ||
-    lc.endsWith(".db") ||
-    lc.includes(".db-")
-  )
-    return "sqlite";
+  if (/\.sqlite/i.test(lc) || lc.endsWith(".db") || lc.includes(".db-")) return "sqlite";
   if (lc.startsWith("socket:") || lc.startsWith("[socket:")) return "socket";
   if (lc.startsWith("pipe:") || lc.startsWith("[pipe:")) return "anon";
   if (lc.startsWith("/dev/")) return "device";
