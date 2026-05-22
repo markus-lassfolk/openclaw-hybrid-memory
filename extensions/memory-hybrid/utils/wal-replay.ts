@@ -9,6 +9,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { isClassificationArtifactForStorage } from "../services/capture-utils.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export interface WalReplayResult {
@@ -341,6 +342,15 @@ export async function replayWalEntries(
         await wal.remove(entry.id);
       } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
         // Empty or whitespace-only text cannot ever be replayed into FactsDB.
+        skipped++;
+        await wal.remove(entry.id);
+      } else if (
+        (entry.operation === "store" || entry.operation === "update") &&
+        isClassificationArtifactForStorage(entry.data?.text)
+      ) {
+        // Classification artifacts (NOOP/ADD/UPDATE/DELETE lines, JSON classifiers) cannot
+        // ever be stored into FactsDB due to assertNotClassificationArtifactForStorage guard.
+        // Skip and remove to prevent infinite retry loops.
         skipped++;
         await wal.remove(entry.id);
       } else if (entry.operation === "update") {
