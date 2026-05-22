@@ -73,8 +73,6 @@ export class ProgressBar {
   }
 
   update(current: number, status?: string): void {
-    this.current = current;
-
     const safeTotal = Math.max(1, this.total);
     const percent = Math.max(0, Math.min(100, Math.floor((current / safeTotal) * 100)));
 
