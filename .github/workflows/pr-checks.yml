@@ -114,6 +114,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          wip: true
           types: |
             feat
             fix
@@ -126,6 +127,7 @@ jobs:
             build
             ci
             revert
+            WIP
 
   changed-files-summary:
     name: Changed Files Summary
