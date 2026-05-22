@@ -97,7 +97,10 @@ describe("compaction lifecycle hooks", () => {
     });
     factsDb.setTier(lowQualityHot.id, "hot");
     factsDb.setTier(permanentHot.id, "hot");
-    factsDb.refreshAccessedFacts([lowQualityHot.id, lowQualityHot.id, lowQualityHot.id, permanentHot.id]);
+    factsDb.refreshAccessedFacts([lowQualityHot.id]);
+    factsDb.refreshAccessedFacts([lowQualityHot.id]);
+    factsDb.refreshAccessedFacts([lowQualityHot.id]);
+    factsDb.refreshAccessedFacts([permanentHot.id]);
 
     registerLifecycleHooks(pluginApi as never, api as never);
     const handler = captureHookHandler(api, "before_compaction");
