@@ -70,4 +70,5 @@ export * from "./cmd-credentials.js";
 export * from "./cmd-selfcorrection.js";
 export * from "./cmd-feedback.js";
 export * from "./cmd-config.js";
+export * from "./cmd-capture-cleanup.js";
 export * from "./shared.js";

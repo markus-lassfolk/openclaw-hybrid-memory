@@ -12,20 +12,9 @@
  * Dry-run mode reports what would be cleaned without making changes.
  */
 
+import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
 import { deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type { FactsDB, VectorDB } from "../types/memory.js";
-
-/** Patterns matched by isPromptArtifactOrReasoningTrace — must stay in sync. */
-const REASONING_PATTERNS: Array<{ label: string; regex: RegExp }> = [
-  { label: "think-prefix", regex: /^think\s/i },
-  { label: "Thinking Process", regex: /^Thinking Process[;:]/i },
-  { label: "The user is asking me to classify/extract", regex: /^The user is asking me to (classify|extract)/i },
-  { label: "NOOP |", regex: /^NOOP \|/i },
-  { label: "ADD |", regex: /^ADD \|/i },
-  { label: "UPDATE |", regex: /^UPDATE \|/i },
-  { label: 'classifier JSON {"action"', regex: /^\{"action"\s*:/i },
-  { label: "capability-hints marker", regex: /^<!--\s*memory-hybrid\s*:\s*capability\s*hints/i },
-];
 
 export interface CaptureCleanupResult {
   scanned: number;
@@ -56,29 +45,27 @@ export async function runCaptureCleanupForCli(options: {
   };
 
   // Scan all active facts (source not explicitly excluded; reasoning traces come from auto-capture)
-  let pageOffset = 0;
   const PAGE_SIZE = 500;
 
   while (true) {
+    // Always query at offset 0: superseded facts drop out of the result set in non-dry-run mode
     const rows = factsDb.allRaw(
       `SELECT id, text, source, category, importance FROM facts
        WHERE superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)
-       LIMIT ? OFFSET ?`,
-      [Math.floor(Date.now() / 1000), PAGE_SIZE, pageOffset],
+       LIMIT ?`,
+      [Math.floor(Date.now() / 1000), PAGE_SIZE],
     ) as Array<{ id: string; text: string; source: string; category: string; importance: number }>;
 
     if (rows.length === 0) break;
     result.scanned += rows.length;
 
     for (const row of rows) {
-      const matches = REASONING_PATTERNS.filter((p) => p.regex.test(row.text.trim()));
-      if (matches.length === 0) continue;
+      if (!isPromptArtifactOrReasoningTrace(row.text)) continue;
 
       result.matched++;
-      const matchLabels = matches.map((m) => m.label).join(", ");
       if (verbose || result.samples.length < 5) {
-        result.samples.push(`[${matchLabels}] ${row.text.slice(0, 80)}`);
+        result.samples.push(row.text.slice(0, 80));
       }
 
       if (!dryRun) {
@@ -105,14 +92,13 @@ export async function runCaptureCleanupForCli(options: {
           }
 
           result.superseded++;
-          logger?.info?.(`cleaned [${matchLabels}] fact ${row.id} (src=${row.source})`);
+          logger?.info?.(`cleaned fact ${row.id} (src=${row.source})`);
         } catch (err) {
           result.errors.push(`failed to supersede ${row.id}: ${err}`);
         }
       }
     }
 
-    pageOffset += PAGE_SIZE;
     if (rows.length < PAGE_SIZE) break;
   }
 
