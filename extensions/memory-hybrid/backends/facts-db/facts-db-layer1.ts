@@ -239,8 +239,46 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     },
   ): MemoryEntry {
     const result = this.storeWithResult(entry, options);
-    // When rejected, return the placeholder entry but callers should check entry.id === ""
-    // to avoid vector operations on non-existent facts.
+    // When skipped by pre-store guard, return a placeholder entry with empty id
+    // so callers can check entry.id === "" to avoid vector operations on non-existent facts.
+    if (result.skipped) {
+      return {
+        id: "",
+        text: entry.text,
+        category: entry.category ?? "other",
+        importance: entry.importance ?? 0.5,
+        confidence: 1,
+        decayClass: entry.decayClass ?? "normal",
+        source: entry.source ?? "conversation",
+        scope: entry.scope ?? "global",
+        scopeTarget: entry.scopeTarget ?? null,
+        tags: entry.tags ?? [],
+        entity: entry.entity ?? null,
+        key: entry.key ?? null,
+        value: entry.value ?? null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        lastAccessed: Date.now(),
+        recallCount: 0,
+        expiresAt: entry.expiresAt ?? null,
+        supersedesId: entry.supersedesId ?? null,
+        supersededAt: null,
+        supersededBy: null,
+        validFrom: entry.validFrom ?? null,
+        validUntil: null,
+        outDegree: 0,
+        inDegree: 0,
+        provenanceSession: entry.provenanceSession ?? null,
+        sourceSessions: entry.sourceSessions ?? null,
+        sourceTurn: entry.sourceTurn ?? null,
+        extractionMethod: entry.extractionMethod ?? null,
+        extractionConfidence: entry.extractionConfidence ?? null,
+        decayFreezeUntil: entry.decayFreezeUntil ?? null,
+        preserveUntil: entry.preserveUntil ?? null,
+        preserveTags: entry.preserveTags ?? null,
+        provenanceJson: entry.provenanceJson ?? null,
+      };
+    }
     return result.entry;
   }
 
