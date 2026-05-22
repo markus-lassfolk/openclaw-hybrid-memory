@@ -730,7 +730,10 @@ export async function runRecall(
         s *= importanceFactor * recencyFactor;
       }
       const recallCount = r.entry.recallCount ?? 0;
-      if (recallCount > 0) s *= 1 + 0.1 * Math.log(recallCount + 1);
+      // Quality gate: only apply recall-count boost for memories that have demonstrated quality.
+      // Garbage/low-confidence memories must not self-reinforce via recall-count pinning (#1559).
+      const isHighQuality = (r.entry.confidence ?? 0) >= 0.6 || (r.entry.importance ?? 0) >= 0.7;
+      if (recallCount > 0 && isHighQuality) s *= 1 + 0.1 * Math.log(recallCount + 1);
       return { ...r, score: s };
     });
     boosted.sort((a, b) => b.score - a.score);

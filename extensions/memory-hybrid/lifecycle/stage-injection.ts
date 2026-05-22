@@ -192,9 +192,17 @@ async function runInjection(
   if (injectionFormat === "progressive_hybrid") {
     const pinned: typeof candidates = [];
     const rest: typeof candidates = [];
+    // Quality gate: only reinforce memories that have demonstrated quality.
+    // Without this, garbage/low-confidence memories accumulate recall counts and become permanently pinned (#1559).
+    const isHighQualityForPinning = (entry: { confidence?: number | null; importance?: number | null }) =>
+      (entry.confidence ?? 0) >= 0.6 || (entry.importance ?? 0) >= 0.7;
     for (const x of candidates) {
       const recallCount = x.entry.recallCount ?? 0;
-      if (x.entry.decayClass === "permanent" || recallCount >= pinnedRecallThreshold) pinned.push(x);
+      if (
+        x.entry.decayClass === "permanent" ||
+        (isHighQualityForPinning(x.entry) && recallCount >= pinnedRecallThreshold)
+      )
+        pinned.push(x);
       else rest.push(x);
     }
     const pinnedHeader = '<relevant-memories format="progressive_hybrid">\n';

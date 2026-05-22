@@ -313,9 +313,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         };
         const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
         const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
+        // Quality gate: only pin memories that have demonstrated quality (#1559).
+        const isHighQuality = (entry: { confidence?: number | null; importance?: number | null }) =>
+          (entry.confidence ?? 0) >= 0.6 || (entry.importance ?? 0) >= 0.7;
 
         const pinnedFacts = hotFacts.filter(
-          (x) => x.entry.decayClass === "permanent" || (x.entry.recallCount ?? 0) >= pinnedRecallThreshold,
+          (x) =>
+            x.entry.decayClass === "permanent" ||
+            (isHighQuality(x.entry) && (x.entry.recallCount ?? 0) >= pinnedRecallThreshold),
         );
 
         if (pinnedFacts.length > 0) {
