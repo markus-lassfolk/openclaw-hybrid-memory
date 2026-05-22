@@ -244,7 +244,9 @@ export async function runRecall(
         activeTaskMaxTokens: activeTaskReserveCapCfg,
         staleWarningMaxTokens: staleWarningReserveCapCfg,
       } = ctx.cfg.autoRecall;
-      const narrativeCapTokens = narrativeBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.2));
+      const hasNarrativesDb = ctx.narrativesDb != null || ctx.eventLog != null;
+      const narrativeCapTokens =
+        narrativeBlockCapCfg ?? (hasNarrativesDb ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
       const hotCapTokens = hotBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.25));
       const activeTaskReserveTokens =
         activeTaskReserveCapCfg ??
