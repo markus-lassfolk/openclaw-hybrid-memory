@@ -111,12 +111,7 @@ type BudgetState = {
   audit: FixedBlockAudit[];
 };
 
-function capAndTrackBlock(
-  name: string,
-  block: string,
-  capTokens: number,
-  state: BudgetState,
-): string {
+function capAndTrackBlock(name: string, block: string, capTokens: number, state: BudgetState): string {
   const cap = Math.max(0, Math.floor(capTokens));
   const allowed = Math.min(cap, state.remainingBudget);
   const { text, sourceTokens, usedTokens } = trimBlockToBudget(block, allowed);
@@ -144,12 +139,7 @@ function capAndTrackBlock(
   return text;
 }
 
-function reserveAndTrackBlock(
-  name: string,
-  reserveTokens: number,
-  enabled: boolean,
-  state: BudgetState,
-): void {
+function reserveAndTrackBlock(name: string, reserveTokens: number, enabled: boolean, state: BudgetState): void {
   const cap = enabled ? Math.max(0, Math.floor(reserveTokens)) : 0;
   const reserved = Math.min(cap, state.remainingBudget);
   state.audit.push({
@@ -160,8 +150,7 @@ function reserveAndTrackBlock(
     reserved: true,
     truncated: cap > reserved,
     suppressed: cap > 0 && reserved === 0,
-    reason:
-      cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
+    reason: cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
   });
   state.remainingBudget = Math.max(0, state.remainingBudget - reserved);
 }
@@ -363,7 +352,10 @@ export async function runRecall(
         })
         .filter(Boolean);
       const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
-      const { text: recallPart, usedTokens: recallUsedTokens } = trimBlockToBudget(recallBlock, budgetState.remainingBudget);
+      const { text: recallPart, usedTokens: recallUsedTokens } = trimBlockToBudget(
+        recallBlock,
+        budgetState.remainingBudget,
+      );
       budgetState.remainingBudget = Math.max(0, budgetState.remainingBudget - recallUsedTokens);
       const inner = narrativePart + hotPart + recallPart;
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
