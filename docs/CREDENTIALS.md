@@ -137,7 +137,22 @@ This migration is **transparent** — no action required. After migration, all s
 
 ## Redaction
 
-- **credential_get**: The credential value is returned only in `details.value` with `sensitiveFields: ["value"]`. The `content` text does not include the value, so it can be safely logged. Platforms should redact fields listed in `sensitiveFields` when persisting session transcripts or exporting.
+- **credential_get**: The credential value is returned only in `details.value` with `sensitiveFields: ["value"]`. The `content` text does not include the value, so it can be safely logged and persisted in transcripts, dashboards, or memory-extraction pipelines. Platforms should redact fields listed in `sensitiveFields` when persisting session transcripts or exporting.
+
+### `credentials.revealInContent` (default: `false`)
+
+For explicit **local debugging only**, you may set `revealInContent: true` to have `credential_get` include the raw value in the plain-text `content` field:
+
+```json
+{
+  "credentials": {
+    "enabled": true,
+    "revealInContent": true
+  }
+}
+```
+
+> ⚠️ **Do not enable this in production.** `content` is commonly persisted in transcripts, logs, dashboards, and memory-extraction pipelines, defeating sensitive-field protection. Keep the default (`false`) in all non-debugging environments.
 
 ## Auto-Capture from Tool Calls
 

@@ -136,4 +136,46 @@ describe("runVerifyForCli --reconcile", () => {
     expect(out).toMatch(/Vector orphans|orphan vector/i);
     expect(out).toContain(orphanId);
   });
+
+  it("verify --reconcile --fix reports incomplete when delete has no effect", async () => {
+    const orphanId = "bbbbbbbb-0000-4000-8000-000000000099";
+    await vectorDb.store({
+      id: orphanId,
+      text: "orphan-noop",
+      vector: makeVector(),
+      importance: 0.5,
+      category: "fact",
+    });
+
+    vi.spyOn(vectorDb, "delete").mockResolvedValue(true);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("Delete attempted for 1 orphan vector(s)");
+    expect(out).toMatch(/Reconciliation incomplete/i);
+    expect(out).toContain("unresolved");
+  });
+
+  it("verify --reconcile --fix confirms orphan vector deletions by re-querying LanceDB", async () => {
+    const orphanId = "cccccccc-0000-4000-8000-000000000099";
+    await vectorDb.store({
+      id: orphanId,
+      text: "orphan-success",
+      vector: makeVector(),
+      importance: 0.5,
+      category: "fact",
+    });
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("Delete attempted for 1 orphan vector(s)");
+    expect(out).toContain("Verified removal: 1/1 orphan vector(s) are gone.");
+    expect((await vectorDb.getAllIds()).includes(orphanId)).toBe(false);
+  });
 });
