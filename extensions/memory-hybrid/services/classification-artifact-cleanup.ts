@@ -31,10 +31,14 @@ export async function cleanupClassificationArtifacts(
   let vectorFailed = 0;
 
   if (!dryRun && matchedIds.length > 0) {
+    const supersededIds: string[] = [];
     for (const id of matchedIds) {
-      if (factsDb.supersede(id, null)) superseded += 1;
+      if (factsDb.supersede(id, null)) {
+        superseded += 1;
+        supersededIds.push(id);
+      }
     }
-    const vectorCleanup = await deleteVectorsForFactIds(vectorDb, matchedIds, {
+    const vectorCleanup = await deleteVectorsForFactIds(vectorDb, supersededIds, {
       operation: "classification-artifacts-cleanup",
       logger: opts.logger,
     });

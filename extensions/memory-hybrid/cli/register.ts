@@ -522,6 +522,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
           console.log(
             `Classification-artifacts cleanup ${res.dryRun ? "dry-run" : "applied"}: scanned ${res.scanned}, matched ${res.matched}, superseded ${res.superseded}, vectors ${res.vectorDeleted}/${res.vectorAttempted} deleted${res.vectorFailed > 0 ? ` (${res.vectorFailed} failed)` : ""}.`,
           );
+          if (!res.dryRun && (res.superseded < res.matched || res.vectorFailed > 0)) {
+            process.exitCode = 2;
+          }
         }),
       );
 
