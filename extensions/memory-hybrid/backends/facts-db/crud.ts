@@ -148,9 +148,9 @@ export type StoreFactResult = {
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
 
-  const category = entry.category ?? "";
-  const source = entry.source ?? "";
-  if (BLOCKED_CATEGORIES.has(category) || BLOCKED_SOURCES.has(source)) {
+  const entryCategory = entry.category ?? "";
+  const entrySource = entry.source ?? "";
+  if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
     // Return a minimal skipped result — caller should skip post-store operations.
     const skippedEntry: MemoryEntry = {
       id: "skipped",
