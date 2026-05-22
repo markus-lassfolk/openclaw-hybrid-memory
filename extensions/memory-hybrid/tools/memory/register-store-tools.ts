@@ -570,6 +570,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
                   if (updateStoreResult.skipped) {
+                    await walRemove(walEntryId, api.logger);
                     return {
                       content: [{ type: "text", text: "Already known: artifact text rejected" }],
                       details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
@@ -810,6 +811,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           if (storeResult.skipped) {
+            await walRemove(walEntryId, api.logger);
             return {
               content: [{ type: "text", text: "Already known: artifact text rejected" }],
               details: { action: "noop", reason: "artifact text rejected by pre-store guard" },

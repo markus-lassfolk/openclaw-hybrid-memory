@@ -498,6 +498,7 @@ export async function runCapture(
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     if (storeResult.skipped) {
+                      await ctx.walRemove(walEntryId, api.logger);
                       continue;
                     }
                     const newEntry = storeResult.entry;
