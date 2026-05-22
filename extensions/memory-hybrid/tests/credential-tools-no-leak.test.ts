@@ -20,7 +20,10 @@ import { registerCredentialTools } from "../tools/credential-tools.js";
 const TEST_KEY = "test-encryption-key-for-unit-tests-32chars";
 const FAKE_SECRET = "ghp_FAKE_DO_NOT_LEAK_1234567890abcdef";
 
-type ToolExecuteFn = (toolCallId: string, params: Record<string, unknown>) => Promise<{
+type ToolExecuteFn = (
+  toolCallId: string,
+  params: Record<string, unknown>,
+) => Promise<{
   content: Array<{ type: string; text: string }>;
   details: Record<string, unknown>;
 }>;
