@@ -797,14 +797,14 @@ export async function upsertProjectTaskKey(
   const normalizedEntity = entity.trim().toLowerCase();
   const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
-  if (opts?.latestByEntityKey) {
-    const cached = opts.latestByEntityKey.get(cacheKey);
-    // Keep supersession scoped to active-task ledger rows only; cached
-    // memory_store rows must never be retired by active-task checkpoints.
-    if (cached?.source === "active-task") {
-      previous = cached;
-    }
-  } else {
+  const cached = opts?.latestByEntityKey?.get(cacheKey);
+  // Keep supersession scoped to active-task ledger rows only; cached
+  // memory_store rows must never be retired by active-task checkpoints.
+  if (cached?.source === "active-task") {
+    previous = cached;
+  } else if (!opts?.latestByEntityKey || cached) {
+    // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
+    // entry (which we must not supersede, but an active-task row may still exist).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
     // Case-insensitive lookup so mixed-case legacy facts are also superseded.
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.

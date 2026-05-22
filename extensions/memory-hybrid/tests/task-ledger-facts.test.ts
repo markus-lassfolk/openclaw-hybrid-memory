@@ -440,16 +440,9 @@ describe("task-ledger-facts", () => {
       const latestByEntityKey = new Map<string, MemoryEntry>();
       latestByEntityKey.set(taskEntityKey("proj-1273", "status"), memoryStoreFact);
 
-      await upsertProjectTaskKey(
-        db,
-        vectorDb,
-        embeddings,
-        "PROJ-1273",
-        "status",
-        "in_progress",
-        undefined,
-        { latestByEntityKey },
-      );
+      await upsertProjectTaskKey(db, vectorDb, embeddings, "PROJ-1273", "status", "in_progress", undefined, {
+        latestByEntityKey,
+      });
 
       const untouched = db.getById(memoryStoreFact.id);
       expect(untouched?.supersededBy).toBeNull();
