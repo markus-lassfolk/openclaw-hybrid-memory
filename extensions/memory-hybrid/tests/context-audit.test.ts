@@ -31,6 +31,8 @@ describe("runContextAudit", () => {
     expect(audit.workspaceFiles.totalTokens).toBeGreaterThan(0);
     expect(audit.workspaceFiles.files.some((f) => f.file === "AGENTS.md")).toBe(true);
     expect(audit.autoRecall.budgetTokens).toBe(cfg.autoRecall.maxTokens);
+    expect(audit.autoRecall.fixedBlocks.caps.hotMaxTokens).toBeGreaterThanOrEqual(0);
+    expect(audit.autoRecall.fixedBlocks.estimatedTokens.remainingForRecall).toBeGreaterThanOrEqual(0);
   });
 
   it("keeps activeTasks.count as a backwards-compatible injected-task alias", async () => {
