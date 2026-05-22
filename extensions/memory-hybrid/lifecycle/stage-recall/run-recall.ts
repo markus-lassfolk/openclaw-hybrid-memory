@@ -14,6 +14,7 @@ import {
   generateAmbientQueries,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
+import { hasDemonstratedRecallQuality } from "../../quality.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
@@ -732,8 +733,7 @@ export async function runRecall(
       const recallCount = r.entry.recallCount ?? 0;
       // Quality gate: only apply recall-count boost for memories that have demonstrated quality.
       // Garbage/low-confidence memories must not self-reinforce via recall-count pinning (#1559).
-      const isHighQuality = (r.entry.confidence ?? 0) >= 0.6 || (r.entry.importance ?? 0) >= 0.7;
-      if (recallCount > 0 && isHighQuality) s *= 1 + 0.1 * Math.log(recallCount + 1);
+      if (recallCount > 0 && hasDemonstratedRecallQuality(r.entry)) s *= 1 + 0.1 * Math.log(recallCount + 1);
       return { ...r, score: s };
     });
     boosted.sort((a, b) => b.score - a.score);

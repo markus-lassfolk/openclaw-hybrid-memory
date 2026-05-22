@@ -69,6 +69,47 @@ describe("compaction lifecycle hooks", () => {
     );
   });
 
+  it("before_compaction quality-gates recall-count pinned memories but preserves permanent pins", async () => {
+    const api = makeHooksApi();
+    const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
+      autoRecall: { progressivePinnedRecallCount: 3 },
+    });
+    const lowQualityHot = factsDb.store({
+      text: "low-quality recalled memory",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.2,
+      confidence: 0.2,
+    });
+    const permanentHot = factsDb.store({
+      text: "permanent memory",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.2,
+      confidence: 0.2,
+      decayClass: "permanent",
+    });
+    factsDb.setTier(lowQualityHot.id, "hot");
+    factsDb.setTier(permanentHot.id, "hot");
+    factsDb.refreshAccessedFacts([lowQualityHot.id, lowQualityHot.id, lowQualityHot.id, permanentHot.id]);
+
+    registerLifecycleHooks(pluginApi as never, api as never);
+    const handler = captureHookHandler(api, "before_compaction");
+
+    const out = (await handler?.({ messageCount: 10, tokenCount: 5000 }, {})) as
+      | { prependContext?: string }
+      | undefined;
+
+    expect(out?.prependContext).toContain("permanent memory");
+    expect(out?.prependContext).not.toContain("low-quality recalled memory");
+  });
+
   it("after_compaction returns undefined in silent verbosity without injecting", async () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, { verbosity: "silent" });

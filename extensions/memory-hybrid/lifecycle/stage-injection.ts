@@ -8,6 +8,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { shouldPinForRecallQuality } from "../quality.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
@@ -192,17 +193,10 @@ async function runInjection(
   if (injectionFormat === "progressive_hybrid") {
     const pinned: typeof candidates = [];
     const rest: typeof candidates = [];
-    // Quality gate: only reinforce memories that have demonstrated quality.
+    // Permanent entries stay pinned by decay policy; recall-count pinning is quality-gated.
     // Without this, garbage/low-confidence memories accumulate recall counts and become permanently pinned (#1559).
-    const isHighQualityForPinning = (entry: { confidence?: number | null; importance?: number | null }) =>
-      (entry.confidence ?? 0) >= 0.6 || (entry.importance ?? 0) >= 0.7;
     for (const x of candidates) {
-      const recallCount = x.entry.recallCount ?? 0;
-      if (
-        x.entry.decayClass === "permanent" ||
-        (isHighQualityForPinning(x.entry) && recallCount >= pinnedRecallThreshold)
-      )
-        pinned.push(x);
+      if (shouldPinForRecallQuality(x.entry, pinnedRecallThreshold)) pinned.push(x);
       else rest.push(x);
     }
     const pinnedHeader = '<relevant-memories format="progressive_hybrid">\n';

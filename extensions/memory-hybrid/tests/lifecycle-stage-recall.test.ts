@@ -124,6 +124,54 @@ describe("runRecallStage", () => {
     expect(result).toBeNull();
   });
 
+  it("quality-gates recall-count score boosts", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      autoRecall: { preferLongTerm: false, useImportanceRecency: false },
+    });
+    const lowQualityHot = {
+      entry: {
+        id: "low-quality-hot",
+        text: "low quality hot",
+        category: "fact" as const,
+        importance: 0.2,
+        entity: null,
+        key: null,
+        value: null,
+        source: "conversation",
+        createdAt: 1,
+        decayClass: "stable" as const,
+        expiresAt: null,
+        lastConfirmedAt: 0,
+        confidence: 0.2,
+        recallCount: 100,
+        scope: "global" as const,
+      },
+      score: 0.9,
+      backend: "sqlite" as const,
+    };
+    const highQualityWarm = {
+      ...lowQualityHot,
+      entry: {
+        ...lowQualityHot.entry,
+        id: "high-quality-warm",
+        text: "high quality warm",
+        confidence: 1,
+        recallCount: 1,
+      },
+      score: 0.89,
+    };
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockResolvedValue([lowQualityHot, highQualityWarm]);
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+
+    const result = await runRecallStage({ prompt: "quality gate recall scoring" }, api as never, ctx, sessionState);
+
+    expect(result?.kind).toBe("full");
+    if (result?.kind === "full") {
+      expect(result.result.candidates.map((c) => c.entry.id)).toEqual(["high-quality-warm", "low-quality-hot"]);
+    }
+  });
+
   it("invokes recall pipeline and returns full result for normal prompts", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     const pipelineHit = {

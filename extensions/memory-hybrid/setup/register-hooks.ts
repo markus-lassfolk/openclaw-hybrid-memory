@@ -11,6 +11,7 @@ import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
+import { shouldPinForRecallQuality } from "../quality.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
@@ -313,15 +314,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         };
         const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
         const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
-        // Quality gate: only pin memories that have demonstrated quality (#1559).
-        const isHighQuality = (entry: { confidence?: number | null; importance?: number | null }) =>
-          (entry.confidence ?? 0) >= 0.6 || (entry.importance ?? 0) >= 0.7;
-
-        const pinnedFacts = hotFacts.filter(
-          (x) =>
-            x.entry.decayClass === "permanent" ||
-            (isHighQuality(x.entry) && (x.entry.recallCount ?? 0) >= pinnedRecallThreshold),
-        );
+        // Permanent entries stay pinned by decay policy; recall-count pinning is quality-gated (#1559).
+        const pinnedFacts = hotFacts.filter((x) => shouldPinForRecallQuality(x.entry, pinnedRecallThreshold));
 
         if (pinnedFacts.length > 0) {
           injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
