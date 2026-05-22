@@ -200,6 +200,12 @@ openclaw hybrid-mem providers
 # Run diagnostics
 openclaw hybrid-mem doctor
 
+# Run deep FTS trigger/index probe
+openclaw hybrid-mem doctor --deep
+
+# Rebuild FTS index if doctor reports population drift
+openclaw hybrid-mem doctor --fix
+
 # For Ollama: Make sure it's running
 ollama serve
 
@@ -265,6 +271,7 @@ Once you're comfortable with the basics:
 | View stats | `openclaw hybrid-mem stats` |
 | Health check | `openclaw hybrid-mem health` |
 | Run diagnostics | `openclaw hybrid-mem doctor` |
+| Deep FTS probe | `openclaw hybrid-mem doctor --deep` |
 | Check providers | `openclaw hybrid-mem providers` |
 | Try demo | `openclaw hybrid-mem demo` |
 | See examples | `openclaw hybrid-mem examples basics` |
