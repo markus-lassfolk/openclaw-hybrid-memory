@@ -1117,9 +1117,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             return null;
           }
         })();
-        const processFactBatch = async (facts: Array<{ id: string; text: string }>): Promise<void> => {
+        const processFactBatch = async (facts: Array<{ id: string; text: string }>): Promise<number> => {
+          let processedCount = 0;
           for (const fact of facts) {
             if (!isPromptArtifactOrReasoningTrace(fact.text)) continue;
+            processedCount++;
             if (verifiedLookup?.get(fact.id)) {
               verifiedSkippedIds.push(fact.id);
               continue;
@@ -1139,6 +1141,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
             }
           }
+          return processedCount;
         };
         if (hasGetBatch(factsDb)) {
           const batchSize = 500;
@@ -1148,10 +1151,13 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           while (true) {
             const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
             if (batch.length === 0) break;
-            await processFactBatch(batch);
+            const processed = await processFactBatch(batch);
             // If applying changes, facts are removed from the result set; stay at offset 0.
             // If dry-run, the result set is stable; advance by batch size.
             if (!apply) {
+              offset += batchSize;
+            } else if (processed === 0) {
+              // No artifacts found in this batch; advance to avoid infinite loop.
               offset += batchSize;
             }
           }
