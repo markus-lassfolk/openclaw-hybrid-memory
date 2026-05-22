@@ -67,16 +67,6 @@ function resetWalCircuitBreakerState(): void {
   walPersistentDisableWarned = false;
 }
 
-export function clearWalDisabledSentinelAtPath(walPath: string): boolean {
-  try {
-    rmSync(getWalDisabledSentinelPath(walPath), { force: true });
-    resetWalCircuitBreakerState();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function persistWalDisabledSentinel(walPath: string, err: unknown): string {
   const sentinelPath = getWalDisabledSentinelPath(walPath);
   mkdirSync(dirname(sentinelPath), { recursive: true });
