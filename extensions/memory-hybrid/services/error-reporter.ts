@@ -632,7 +632,13 @@ class GlitchTipReporter {
     this.inFlightReportIds.add(eventId);
     let persisted = false;
     try {
-      await this.ensureQueueLoaded();
+      try {
+        await this.ensureQueueLoaded();
+      } catch (err) {
+        logger.warn?.(
+          `[ErrorReporter] Failed to load pending-report queue: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       if (this.pendingQueuePath) {
         try {
           await this.enqueuePendingReport(eventId, event);
