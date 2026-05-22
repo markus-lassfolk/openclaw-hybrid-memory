@@ -147,27 +147,10 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   // These categories and sources are not user-relevant memories.
   const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
   const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
-  const category = entry.category ?? "";
-  const source = entry.source ?? "";
+  const category = (entry.category ?? "").toLowerCase().trim();
+  const source = (entry.source ?? "").toLowerCase().trim();
   if (BLOCKED_CATEGORIES.has(category) || BLOCKED_SOURCES.has(source)) {
-    // Return a minimal skipped result — caller should skip post-store operations.
-    const skippedEntry: MemoryEntry = {
-      id: "skipped",
-      text: entry.text,
-      category: entry.category ?? "noop",
-      importance: entry.importance ?? 0.5,
-      source: entry.source ?? "guard",
-      entity: entry.entity ?? null,
-      key: entry.key ?? null,
-      value: entry.value ?? null,
-      createdAt: Date.now(),
-      decayClass: entry.decayClass ?? "normal",
-      expiresAt: null,
-      lastConfirmedAt: 0,
-      confidence: 0,
-      tags: entry.tags ?? null,
-    };
-    return { entry: skippedEntry, evictedFactId: null, skipped: true };
+    throw new Error(`memory-hybrid: fact blocked by pre-store guard (category=${category}, source=${source})`);
   }
 
   const sourceForPolicy = entry.source ?? "conversation";
