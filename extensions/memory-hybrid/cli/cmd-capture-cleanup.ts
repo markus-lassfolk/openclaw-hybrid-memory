@@ -82,24 +82,24 @@ export async function runCaptureCleanupForCli(options: {
 
       if (!dryRun) {
         try {
+          if (vectorDb) {
+            try {
+              const deleted = await deleteVectorForFactId({
+                vectorDb,
+                factId: row.id,
+                logger,
+                context: "capture-cleanup",
+              });
+              if (deleted) result.vectorDeleted++;
+            } catch (vecErr) {
+              result.errors.push(`vector delete failed for ${row.id}: ${vecErr}`);
+            }
+          }
+
           const superseded = factsDb.supersede(row.id, null);
 
           if (superseded) {
             db.prepare(`UPDATE facts SET importance = ? WHERE id = ?`).run(Math.min(row.importance, 0.1), row.id);
-
-            if (vectorDb) {
-              try {
-                const deleted = await deleteVectorForFactId({
-                  vectorDb,
-                  factId: row.id,
-                  logger,
-                  context: "capture-cleanup",
-                });
-                if (deleted) result.vectorDeleted++;
-              } catch (vecErr) {
-                result.errors.push(`vector delete failed for ${row.id}: ${vecErr}`);
-              }
-            }
 
             result.superseded++;
             supersededInBatch++;
