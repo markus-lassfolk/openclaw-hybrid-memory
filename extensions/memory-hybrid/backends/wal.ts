@@ -45,6 +45,8 @@ export type WALEntry = {
     preserveUntil?: number | null;
     preserveTags?: string[] | null;
     provenanceJson?: string | null;
+    // Non-replayable diagnostic marker entries (for example doctor WAL durability probes).
+    probe?: string;
   };
 };
 

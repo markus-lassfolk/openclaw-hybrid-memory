@@ -166,7 +166,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
     const probe = wal.write.mock.calls[0]?.[0] as { operation?: string; targetId?: string; data?: unknown } | undefined;
     expect(probe?.operation).toBe("update");
     expect(probe).not.toHaveProperty("targetId");
-    expect(probe).toEqual(expect.objectContaining({ data: { probe: "doctor-wal-durability" } }));
+    expect(probe?.data).toEqual(expect.objectContaining({ probe: "doctor-wal-durability" }));
   });
 
   it("doctor WAL durability probe is ignored by replay if cleanup fails", async () => {

@@ -242,7 +242,7 @@ export function registerDoctorCommand(
             timestamp: Date.now(),
             schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
             operation: "update",
-            data: { probe: "doctor-wal-durability" },
+            data: { text: "doctor-wal-durability-probe", probe: "doctor-wal-durability" },
           };
           try {
             await wal.write(probeEntry);
