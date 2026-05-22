@@ -473,15 +473,17 @@ export async function runRecall(
           if (issueResults.openIssues.length > 0) {
             issueLines.push("<known-issues>");
             for (const issue of issueResults.openIssues) {
-              issueLines.push(`- [${issue.severity}] ${issue.title} (status: ${issue.status})`);
+              const sanitizedTitle = sanitizePromptInjection(issue.title);
+              issueLines.push(`- [${issue.severity}] ${sanitizedTitle} (status: ${issue.status})`);
             }
             issueLines.push("</known-issues>");
           }
           if (issueResults.resolvedIssues.length > 0) {
             issueLines.push("<resolved-issues>");
             for (const issue of issueResults.resolvedIssues) {
-              const resolution = issue.fix ? ` — Fix: ${issue.fix.slice(0, 100)}` : "";
-              issueLines.push(`- [${issue.severity}] ${issue.title}${resolution}`);
+              const sanitizedTitle = sanitizePromptInjection(issue.title);
+              const resolution = issue.fix ? ` — Fix: ${sanitizePromptInjection(issue.fix).slice(0, 100)}` : "";
+              issueLines.push(`- [${issue.severity}] ${sanitizedTitle}${resolution}`);
             }
             issueLines.push("</resolved-issues>");
           }
