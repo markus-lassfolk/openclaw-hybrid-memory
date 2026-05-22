@@ -1170,8 +1170,8 @@ export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
  * Returns the count of facts demoted.
  */
 export function demoteHotGarbageFacts(db: DatabaseSync): number {
-  // Pattern 1: recall_count is suspiciously high (>500) for what should be transient thinking artifacts
-  // Pattern 2: text contains reasoning/think tags (captured by the isLikelyGarbage detector in queries)
+  // Mirrors isLikelyGarbage from fact-read-queries.ts to ensure SQL demotion applies
+  // the same rules used at injection time (fixes #1559).
   const rows = db
     .prepare(
       `SELECT id, text, summary, source, recall_count, access_count, category
@@ -1180,20 +1180,31 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
          AND superseded_at IS NULL
          AND id NOT IN (SELECT fact_id FROM verified_facts)
          AND (
-           -- Known garbage patterns
-           (source = 'auto-capture' AND (
-             text LIKE '%<thinking>%' OR text LIKE '%<redacted_thinking>%' OR
-             text LIKE '%<think>%' || '%</think>%' OR
-             text LIKE '%Thinking Process:%' OR
-             text LIKE '%[recall]%' OR text LIKE '%[hot/fact]%' OR
-             COALESCE(summary, '') LIKE '%<thinking>%' OR COALESCE(summary, '') LIKE '%<redacted_thinking>%' OR
-             COALESCE(summary, '') LIKE '%<think>%' || '%</think>%' OR
-             COALESCE(summary, '') LIKE '%Thinking Process:%' OR
-             COALESCE(summary, '') LIKE '%[recall]%' OR COALESCE(summary, '') LIKE '%[hot/fact]%'
-           ))
+           -- Reasoning traces (thinking tags) - no source restriction to match isLikelyGarbage
+           (text LIKE '%<thinking>%' OR text LIKE '%</thinking>%' OR
+            text LIKE '%<redacted_thinking>%' OR text LIKE '%</redacted_thinking>%' OR
+            text LIKE '%<think>%' OR text LIKE '%</think>%' OR
+            COALESCE(summary, '') LIKE '%<thinking>%' OR COALESCE(summary, '') LIKE '%</thinking>%' OR
+            COALESCE(summary, '') LIKE '%<redacted_thinking>%' OR COALESCE(summary, '') LIKE '%</redacted_thinking>%' OR
+            COALESCE(summary, '') LIKE '%<think>%' OR COALESCE(summary, '') LIKE '%</think>%')
            OR
-           -- Staggeringly high recall counts for "other" category (classic garbage artifacts)
-           (category = 'other' AND recall_count > 500 AND source = 'auto-capture')
+           -- Classifier / capability-hint artifacts - no source restriction
+           (text LIKE '%Thinking Process:%' OR COALESCE(summary, '') LIKE '%Thinking Process:%')
+           OR
+           -- Hot-memories / recall / hot/fact prefixes - no source restriction (includes missing [Hot-memories])
+           (text LIKE '[Hot-memories]%' OR text LIKE '[recall]%' OR text LIKE '[hot/fact]%' OR
+            COALESCE(summary, '') LIKE '[Hot-memories]%' OR COALESCE(summary, '') LIKE '[recall]%' OR COALESCE(summary, '') LIKE '[hot/fact]%')
+           OR
+           -- Long auto-capture reasoning heuristic (>3000 chars + keywords/patterns)
+           (source = 'auto-capture' AND LENGTH(text || COALESCE(summary, '')) > 3000 AND
+            (text LIKE '%think%' OR text LIKE '%reasoning%' OR text LIKE '%analyz%' OR text LIKE '%process%' OR
+             text LIKE '%' || CHAR(10) || CHAR(10) || CHAR(10) || '%' OR
+             COALESCE(summary, '') LIKE '%think%' OR COALESCE(summary, '') LIKE '%reasoning%' OR
+             COALESCE(summary, '') LIKE '%analyz%' OR COALESCE(summary, '') LIKE '%process%' OR
+             COALESCE(summary, '') LIKE '%' || CHAR(10) || CHAR(10) || CHAR(10) || '%'))
+           OR
+           -- Staggeringly high recall counts for "other" category
+           (category = 'other' AND recall_count > 500)
          )`,
     )
     .all() as Array<{ id: string; text: string; summary: string | null; source: string; recall_count: number; access_count: number; category: string }>;
