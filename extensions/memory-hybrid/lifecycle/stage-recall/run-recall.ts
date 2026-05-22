@@ -335,7 +335,7 @@ export async function runRecall(
       reserveAndTrackBlock(
         "active-task",
         activeTaskReserveTokens,
-        ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent",
+        ctx.cfg.activeTask.enabled,
       );
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
@@ -982,7 +982,7 @@ export async function runRecall(
     reserveAndTrackBlock(
       "active-task",
       activeTaskReserveTokens,
-      ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent",
+      ctx.cfg.activeTask.enabled,
     );
 
     const fixedBlocksTokens = totalBudget - remainingBudget;
