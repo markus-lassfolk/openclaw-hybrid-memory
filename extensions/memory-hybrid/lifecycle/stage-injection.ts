@@ -194,14 +194,22 @@ async function runInjection(
     const rest: typeof candidates = [];
     for (const x of candidates) {
       const recallCount = x.entry.recallCount ?? 0;
+      const indexedCount = x.entry.indexedCount ?? 0;
       // Pin by recall_count ONLY when last_accessed is recent (within 14 days) to prevent
       // garbage artifacts (high recall_count from repeated index exposure) from being pinned (#1559).
       const lastAccessed = x.entry.lastAccessed ?? 0;
       const lastAccessedDaysAgo = lastAccessed > 0 ? (Date.now() / 1000 - lastAccessed) / 86400 : Infinity;
       const isRecentlyAccessed = lastAccessedDaysAgo < 14;
+      
+      // Exclude facts with disproportionate index exposure (indexed_count >> recall_count)
+      // which indicates garbage that was repeatedly shown in progressive index but never
+      // actually recalled (#1559).
+      const indexInflationRatio = recallCount > 0 ? indexedCount / recallCount : indexedCount;
+      const likelyIndexGarbage = indexInflationRatio > 10 && indexedCount > 50;
+      
       if (
         x.entry.decayClass === "permanent" ||
-        (recallCount >= pinnedRecallThreshold && isRecentlyAccessed)
+        (recallCount >= pinnedRecallThreshold && isRecentlyAccessed && !likelyIndexGarbage)
       ) {
         pinned.push(x);
       } else {

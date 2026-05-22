@@ -362,6 +362,8 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
 }
 
 export function runCompaction(db: DatabaseSync, opts: TieringOptions): RetierReport {
+  // Demote hot garbage facts before retier to prevent them from staying pinned (#1559)
+  demoteHotGarbageFacts(db);
   const report = retierFacts(db, opts, true);
   return report;
 }
@@ -1176,6 +1178,7 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
        FROM facts
        WHERE tier = 'hot'
          AND superseded_at IS NULL
+         AND id NOT IN (SELECT fact_id FROM verified_facts)
          AND (
            -- Known garbage patterns
            (source = 'auto-capture' AND (
@@ -1194,9 +1197,16 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
   if (rows.length === 0) return 0;
 
   const ids = rows.map((r) => r.id);
-  const placeholders = ids.map(() => "?").join(",");
-  const result = db
-    .prepare(`UPDATE facts SET tier = 'warm' WHERE id IN (${placeholders}) AND tier = 'hot'`)
-    .run(...ids);
-  return result.changes;
+  let totalChanged = 0;
+  
+  // Batch updates to respect SQLite's 999 bind variable limit
+  for (const batch of batchedInClauseBinds(ids)) {
+    const placeholders = batch.map(() => "?").join(",");
+    const result = db
+      .prepare(`UPDATE facts SET tier = 'warm' WHERE id IN (${placeholders}) AND tier = 'hot'`)
+      .run(...batch);
+    totalChanged += Number(result.changes ?? 0);
+  }
+  
+  return totalChanged;
 }

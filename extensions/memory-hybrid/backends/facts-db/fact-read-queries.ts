@@ -356,7 +356,7 @@ function isLikelyGarbage(entry: MemoryEntry): boolean {
   if (/<(?:redacted_)?think(?:ing)?>[\s\S]*?<\/(?:redacted_)?think(?:ing)?>/i.test(combined)) return true;
   // Classifier / capability-hint artifacts
   if (/^Thinking Process:/im.test(text)) return true;
-  if (/^\[Hot-memories\]|^\[recall\]/im.test(text)) return true;
+  if (/^\[Hot-memories\]|^\[recall\]|^\[hot\/fact\]/im.test(text)) return true;
   // Unhelpful source + long reasoning combo
   if (
     entry.source === "auto-capture" &&
