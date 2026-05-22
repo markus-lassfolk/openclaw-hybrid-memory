@@ -113,8 +113,10 @@ export async function runCaptureCleanupForCli(options: {
 
     if (rows.length < PAGE_SIZE) break;
 
-    if (dryRun || supersededInBatch === 0) {
+    if (dryRun) {
       offset += PAGE_SIZE;
+    } else {
+      offset += PAGE_SIZE - supersededInBatch;
     }
   }
 
