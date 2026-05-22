@@ -1129,16 +1129,16 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             supersededIds.push(fact.id);
             if (!apply) continue;
             try {
-              factsDb.supersede(fact.id, null);
-            } catch (err) {
-              vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
-              continue;
-            }
-            try {
               await vectorDb.delete(fact.id);
               vectorDeleteCount++;
             } catch (err) {
               vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
+              continue;
+            }
+            try {
+              factsDb.supersede(fact.id, null);
+            } catch (err) {
+              vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
             }
           }
           return processedCount;
