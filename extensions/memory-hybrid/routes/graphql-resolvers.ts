@@ -9,6 +9,7 @@ import { DECAY_CLASSES, type DecayClass } from "../config.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { pluginLogger } from "../utils/logger.js";
 
 export type GraphQLContext = {
   factsDb: FactsDB;
@@ -171,6 +172,7 @@ async function cleanupGraphqlEviction(context: GraphQLContext, evictedFactId: st
   await cleanupEvictedVector({
     vectorDb: context.vectorDb,
     evictedFactId,
+    logger: pluginLogger,
     context: "graphql-mutation",
   });
 }
