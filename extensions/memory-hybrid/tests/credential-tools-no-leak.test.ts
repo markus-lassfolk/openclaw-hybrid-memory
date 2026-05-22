@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Regression tests for issue #1577:
  * credential_get must NOT include raw secret values in tool content.
@@ -14,15 +13,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
+import type { CredentialsConfig, HybridMemoryConfig } from "../config/types/index.js";
+import type { PluginContext } from "../tools/credential-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 
 const TEST_KEY = "test-encryption-key-for-unit-tests-32chars";
 const FAKE_SECRET = "ghp_FAKE_DO_NOT_LEAK_1234567890abcdef";
 
-function makeMockApi() {
-  const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+type ToolExecuteFn = (toolCallId: string, params: Record<string, unknown>) => Promise<{
+  content: Array<{ type: string; text: string }>;
+  details: Record<string, unknown>;
+}>;
+
+type MockApi = {
+  registerTool(opts: { name: string; execute: ToolExecuteFn }, _options: unknown): void;
+  getTool(name: string): { execute: ToolExecuteFn } | undefined;
+  logger: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
+  context: { sessionId: string };
+};
+
+function makeMockApi(): MockApi {
+  const tools = new Map<string, { execute: ToolExecuteFn }>();
   return {
-    registerTool(opts: { name: string; execute: (...args: unknown[]) => Promise<unknown> }, _options: unknown) {
+    registerTool(opts: { name: string; execute: ToolExecuteFn }, _options: unknown) {
       tools.set(opts.name, { execute: opts.execute });
     },
     getTool(name: string) {
@@ -33,17 +46,20 @@ function makeMockApi() {
   };
 }
 
-function makeMinimalCfg(overrides: Record<string, unknown> = {}) {
-  return {
-    credentials: {
-      enabled: true,
-      store: "sqlite" as const,
-      encryptionKey: "",
-      expiryWarningDays: 7,
-      revealInContent: false,
-      ...overrides,
-    },
-  } as unknown as import("../config.js").HybridMemoryConfig;
+function makeMinimalCfg(overrides: Partial<CredentialsConfig> = {}): HybridMemoryConfig {
+  const credentials: CredentialsConfig = {
+    enabled: true,
+    store: "sqlite",
+    encryptionKey: "",
+    expiryWarningDays: 7,
+    revealInContent: false,
+    ...overrides,
+  };
+  return { credentials } as HybridMemoryConfig;
+}
+
+function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi): PluginContext {
+  return { credentialsDb: db, cfg, api: api as unknown as PluginContext["api"] };
 }
 
 let tmpDir: string;
@@ -63,15 +79,13 @@ afterEach(() => {
 describe("credential_get — no secret in content (issue #1577)", () => {
   it("content does not contain the raw secret value by default", async () => {
     const api = makeMockApi();
-    registerCredentialTools({ credentialsDb: db, cfg: makeMinimalCfg(), api } as unknown, api);
+    const cfg = makeMinimalCfg();
+    registerCredentialTools(makeCtx(db, cfg, api), api as unknown as PluginContext["api"]);
 
     const tool = api.getTool("credential_get");
-    expect(tool).toBeDefined();
+    if (!tool) throw new Error("credential_get tool was not registered");
 
-    const result = (await tool?.execute("call-1", { service: "github", type: "api_key" })) as {
-      content: Array<{ type: string; text: string }>;
-      details: Record<string, unknown>;
-    };
+    const result = await tool.execute("call-1", { service: "github", type: "api_key" });
 
     // Serialize entire content array to verify no leakage even through nested structures
     const serializedContent = JSON.stringify(result.content);
@@ -80,13 +94,13 @@ describe("credential_get — no secret in content (issue #1577)", () => {
 
   it("details.value contains the raw secret and is marked sensitive", async () => {
     const api = makeMockApi();
-    registerCredentialTools({ credentialsDb: db, cfg: makeMinimalCfg(), api } as unknown, api);
+    const cfg = makeMinimalCfg();
+    registerCredentialTools(makeCtx(db, cfg, api), api as unknown as PluginContext["api"]);
 
     const tool = api.getTool("credential_get");
-    const result = (await tool?.execute("call-1", { service: "github", type: "api_key" })) as {
-      content: Array<{ type: string; text: string }>;
-      details: Record<string, unknown>;
-    };
+    if (!tool) throw new Error("credential_get tool was not registered");
+
+    const result = await tool.execute("call-1", { service: "github", type: "api_key" });
 
     expect(result.details.value).toBe(FAKE_SECRET);
     expect(Array.isArray(result.details.sensitiveFields)).toBe(true);
@@ -95,12 +109,13 @@ describe("credential_get — no secret in content (issue #1577)", () => {
 
   it("content confirms retrieval without exposing the value", async () => {
     const api = makeMockApi();
-    registerCredentialTools({ credentialsDb: db, cfg: makeMinimalCfg(), api } as unknown, api);
+    const cfg = makeMinimalCfg();
+    registerCredentialTools(makeCtx(db, cfg, api), api as unknown as PluginContext["api"]);
 
     const tool = api.getTool("credential_get");
-    const result = (await tool?.execute("call-1", { service: "github", type: "api_key" })) as {
-      content: Array<{ type: string; text: string }>;
-    };
+    if (!tool) throw new Error("credential_get tool was not registered");
+
+    const result = await tool.execute("call-1", { service: "github", type: "api_key" });
 
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("github");
@@ -110,13 +125,13 @@ describe("credential_get — no secret in content (issue #1577)", () => {
 
   it("not-found path does not include any secret in content", async () => {
     const api = makeMockApi();
-    registerCredentialTools({ credentialsDb: db, cfg: makeMinimalCfg(), api } as unknown, api);
+    const cfg = makeMinimalCfg();
+    registerCredentialTools(makeCtx(db, cfg, api), api as unknown as PluginContext["api"]);
 
     const tool = api.getTool("credential_get");
-    const result = (await tool?.execute("call-1", { service: "nonexistent" })) as {
-      content: Array<{ type: string; text: string }>;
-      details: Record<string, unknown>;
-    };
+    if (!tool) throw new Error("credential_get tool was not registered");
+
+    const result = await tool.execute("call-1", { service: "nonexistent" });
 
     expect(result.details.found).toBe(false);
     expect(JSON.stringify(result.content)).not.toContain(FAKE_SECRET);
@@ -126,13 +141,13 @@ describe("credential_get — no secret in content (issue #1577)", () => {
 describe("credential_get — revealInContent opt-in path", () => {
   it("when revealInContent is true, the value appears in content", async () => {
     const api = makeMockApi();
-    registerCredentialTools({ credentialsDb: db, cfg: makeMinimalCfg({ revealInContent: true }), api } as unknown, api);
+    const cfg = makeMinimalCfg({ revealInContent: true });
+    registerCredentialTools(makeCtx(db, cfg, api), api as unknown as PluginContext["api"]);
 
     const tool = api.getTool("credential_get");
-    const result = (await tool?.execute("call-1", { service: "github", type: "api_key" })) as {
-      content: Array<{ type: string; text: string }>;
-      details: Record<string, unknown>;
-    };
+    if (!tool) throw new Error("credential_get tool was not registered");
+
+    const result = await tool.execute("call-1", { service: "github", type: "api_key" });
 
     const text = result.content[0]?.text ?? "";
     expect(text).toContain(FAKE_SECRET);
@@ -143,12 +158,13 @@ describe("credential_get — revealInContent opt-in path", () => {
 
   it("revealInContent text includes a production warning", async () => {
     const api = makeMockApi();
-    registerCredentialTools({ credentialsDb: db, cfg: makeMinimalCfg({ revealInContent: true }), api } as unknown, api);
+    const cfg = makeMinimalCfg({ revealInContent: true });
+    registerCredentialTools(makeCtx(db, cfg, api), api as unknown as PluginContext["api"]);
 
     const tool = api.getTool("credential_get");
-    const result = (await tool?.execute("call-1", { service: "github", type: "api_key" })) as {
-      content: Array<{ type: string; text: string }>;
-    };
+    if (!tool) throw new Error("credential_get tool was not registered");
+
+    const result = await tool.execute("call-1", { service: "github", type: "api_key" });
 
     const text = result.content[0]?.text ?? "";
     expect(text.toLowerCase()).toContain("production");
