@@ -705,6 +705,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               summary,
               tags,
               vector,
+              embeddingModelName: vector ? embeddings.modelName : undefined,
               scope,
               scopeTarget,
             },
