@@ -5,6 +5,7 @@
  * CLI implementation extracted from handlers.ts.
  */
 
+import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
@@ -41,6 +42,7 @@ export async function runStoreForCli(
 ): Promise<StoreCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
+  if (isPromptArtifactOrReasoningTrace(text)) return { outcome: "noop", reason: "prompt artifact or reasoning trace" };
   if (factsDb.hasDuplicate(text, "cli")) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
   const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
