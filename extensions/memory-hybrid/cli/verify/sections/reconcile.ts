@@ -113,36 +113,48 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
               );
 
               let unresolvedAfterDelete = [...vectorOrphans];
+              let recheckFailed = false;
               try {
                 const postDeleteVectorIds = new Set(await vectorDb.getAllIds());
                 unresolvedAfterDelete = vectorOrphans.filter((id) => postDeleteVectorIds.has(id));
               } catch (recheckErr) {
                 log(`${FAIL} Could not re-query LanceDB after delete attempt: ${String(recheckErr)}`);
+                recheckFailed = true;
               }
 
-              const verifiedRemoved = vectorOrphans.length - unresolvedAfterDelete.length;
-              if (unresolvedAfterDelete.length === 0) {
-                log(`  → Verified removal: ${verifiedRemoved}/${vectorOrphans.length} orphan vector(s) are gone.`);
-                fixes.push(`Verified removal of ${verifiedRemoved} LanceDB orphan vector(s)`);
-              } else {
+              if (recheckFailed) {
                 log(
-                  `${FAIL} Reconciliation incomplete — ${unresolvedAfterDelete.length}/${vectorOrphans.length} orphan vector(s) remain after delete attempt.`,
+                  `${FAIL} Reconciliation verification failed — cannot confirm whether ${vectorOrphans.length} orphan vector(s) were removed.`,
                 );
-                for (const id of unresolvedAfterDelete.slice(0, 10)) {
-                  log(`  - unresolved: ${id}`);
-                }
-                if (unresolvedAfterDelete.length > 10) {
-                  log(`  … and ${unresolvedAfterDelete.length - 10} more unresolved orphan vectors`);
-                }
-                const failReason =
-                  typeof vectorDb.getLastSearchFailReason === "function" ? vectorDb.getLastSearchFailReason() : null;
-                if (failReason) {
-                  log(`  → LanceDB degraded hint: lastSearchFailReason=${failReason}`);
-                }
                 state.issues.push(
-                  `${unresolvedAfterDelete.length} orphan vector(s) still present after --reconcile --fix delete attempts`,
+                  `${vectorOrphans.length} orphan vector(s) deletion could not be verified due to LanceDB re-query failure`,
                 );
                 state.allOk = false;
+              } else {
+                const verifiedRemoved = vectorOrphans.length - unresolvedAfterDelete.length;
+                if (unresolvedAfterDelete.length === 0) {
+                  log(`  → Verified removal: ${verifiedRemoved}/${vectorOrphans.length} orphan vector(s) are gone.`);
+                  fixes.push(`Verified removal of ${verifiedRemoved} LanceDB orphan vector(s)`);
+                } else {
+                  log(
+                    `${FAIL} Reconciliation incomplete — ${unresolvedAfterDelete.length}/${vectorOrphans.length} orphan vector(s) remain after delete attempt.`,
+                  );
+                  for (const id of unresolvedAfterDelete.slice(0, 10)) {
+                    log(`  - unresolved: ${id}`);
+                  }
+                  if (unresolvedAfterDelete.length > 10) {
+                    log(`  … and ${unresolvedAfterDelete.length - 10} more unresolved orphan vectors`);
+                  }
+                  const failReason =
+                    typeof vectorDb.getLastSearchFailReason === "function" ? vectorDb.getLastSearchFailReason() : null;
+                  if (failReason) {
+                    log(`  → LanceDB degraded hint: lastSearchFailReason=${failReason}`);
+                  }
+                  state.issues.push(
+                    `${unresolvedAfterDelete.length} orphan vector(s) still present after --reconcile --fix delete attempts`,
+                  );
+                  state.allOk = false;
+                }
               }
             } else {
               log("  → Run with --fix to delete these orphan vectors from LanceDB.");

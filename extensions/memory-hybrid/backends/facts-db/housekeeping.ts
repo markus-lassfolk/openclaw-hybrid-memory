@@ -254,12 +254,15 @@ export function runFtsTriggerProbe(db: DatabaseSync): FtsTriggerProbeResult {
 }
 
 export function rebuildFtsIndexFromFacts(db: DatabaseSync): number {
-  db.exec("DELETE FROM facts_fts");
-  db.exec(`
-    INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
-    SELECT rowid, text, category, entity, tags, why, key, value FROM facts
-  `);
-  return scalarCount(db, "SELECT COUNT(*) AS cnt FROM facts");
+  const tx = createTransaction(db, () => {
+    db.exec("DELETE FROM facts_fts");
+    db.exec(`
+      INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+      SELECT rowid, text, category, entity, tags, why, key, value FROM facts
+    `);
+    return scalarCount(db, "SELECT COUNT(*) AS cnt FROM facts");
+  });
+  return tx();
 }
 
 export function freelistSpaceStats(db: DatabaseSync): {
