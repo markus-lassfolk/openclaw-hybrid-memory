@@ -117,6 +117,11 @@ export type StoreFactContext = {
   warnOnceKey?: string;
   suppressVectorFallbackWarning?: boolean;
   /**
+   * Allow trusted edit paths to re-store an already persisted fact whose legacy
+   * source/category is now blocked by the artifact guard (#1560/#1561).
+   */
+  allowPreStoreGuardBypass?: boolean;
+  /**
    * Pre-computed vector neighbour candidates for the new fact's embedding (#1186, #1194).
    * Caller is expected to populate this when the embedding is known and the policy has
    * `vectorThreshold` configured.
@@ -150,7 +155,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
-  if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
+  if (!ctx.allowPreStoreGuardBypass && (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource))) {
     // Return a minimal skipped result — caller should skip post-store operations.
     const skippedEntry: MemoryEntry = {
       id: "skipped",

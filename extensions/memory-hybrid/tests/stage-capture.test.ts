@@ -49,9 +49,15 @@ function makeApi(messageChannel?: string) {
 
 function makeContext(overrides?: Partial<LifecycleContext>) {
   const store = vi.fn().mockReturnValue({ id: "fact-1" });
+  const storeWithResult = vi.fn().mockImplementation((entry: Parameters<typeof store>[0]) => ({
+    entry: store(entry),
+    evictedFactId: null,
+    skipped: false,
+  }));
   const context = {
     factsDb: {
       store,
+      storeWithResult,
       hasDuplicate: vi.fn().mockReturnValue(false),
     },
     vectorDb: {},

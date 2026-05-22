@@ -316,21 +316,24 @@ export const resolvers: GraphQLResolvers = {
       if (!id) throw new Error("Missing fact id");
       const existing = context.factsDb.getById(id);
       if (!existing) throw new Error(`Fact not found: ${id}`);
-      const storeResult = context.factsDb.storeWithResult({
-        text: asString(input.text) ?? existing.text,
-        category: asString(input.category) ?? existing.category,
-        importance: asNumber(input.importance) ?? existing.importance,
-        confidence: asNumber(input.confidence) ?? existing.confidence,
-        decayClass: existing.decayClass,
-        source: existing.source,
-        tags: asStringArray(input.tags) ?? existing.tags ?? [],
-        entity: existing.entity,
-        key: existing.key,
-        value: existing.value,
-        scope: existing.scope,
-        scopeTarget: existing.scopeTarget ?? null,
-        expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
-      });
+      const storeResult = context.factsDb.storeWithResult(
+        {
+          text: asString(input.text) ?? existing.text,
+          category: asString(input.category) ?? existing.category,
+          importance: asNumber(input.importance) ?? existing.importance,
+          confidence: asNumber(input.confidence) ?? existing.confidence,
+          decayClass: existing.decayClass,
+          source: existing.source,
+          tags: asStringArray(input.tags) ?? existing.tags ?? [],
+          entity: existing.entity,
+          key: existing.key,
+          value: existing.value,
+          scope: existing.scope,
+          scopeTarget: existing.scopeTarget ?? null,
+          expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
+        },
+        { allowPreStoreGuardBypass: true },
+      );
       if (storeResult.skipped) {
         throw new Error("Cannot update fact: blocked by pre-store guard (blocked category or source)");
       }

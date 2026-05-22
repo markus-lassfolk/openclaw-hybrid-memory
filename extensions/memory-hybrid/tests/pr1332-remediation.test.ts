@@ -88,6 +88,46 @@ describe("PR #1332 unresolved feedback remediation", () => {
     ).toBe(false);
   });
 
+  it("allows GraphQL updateFact to edit already-persisted guarded facts", () => {
+    const existing = {
+      id: "legacy-compact",
+      text: "old compact text",
+      category: "fact",
+      importance: 0.5,
+      confidence: 0.9,
+      decayClass: "normal",
+      source: "compact",
+      tags: [],
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+      scopeTarget: null,
+      expiresAt: null,
+    };
+    const replacement = { ...existing, id: "updated", text: "edited text" };
+    const storeWithResult = vi.fn(() => ({ entry: replacement, skipped: false }));
+    const context = {
+      factsDb: {
+        getById: vi.fn((id: string) => (id === existing.id ? existing : null)),
+        storeWithResult,
+        supersede: vi.fn(() => true),
+      },
+    } as unknown as ResolverContext;
+
+    const updated = resolvers.Mutation.updateFact(
+      null,
+      { input: { id: existing.id, text: "edited text" } } as ResolverArgs,
+      context,
+    );
+
+    expect(updated).toBe(replacement);
+    expect(storeWithResult).toHaveBeenCalledWith(expect.objectContaining({ source: "compact", text: "edited text" }), {
+      allowPreStoreGuardBypass: true,
+    });
+    expect(context.factsDb.supersede).toHaveBeenCalledWith(existing.id, replacement.id);
+  });
+
   it("fails GraphQL supersede mutation when the old fact is missing or already superseded", () => {
     const facts = new Map([
       ["new", { id: "new", text: "new" }],
