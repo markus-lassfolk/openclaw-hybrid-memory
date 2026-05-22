@@ -167,14 +167,15 @@ export async function runCapture(
           source: "humanizer",
           decayClass: "normal",
         });
-        if (!storeResult.skipped) {
-          await cleanupEvictedVector({
-            vectorDb: ctx.vectorDb,
-            evictedFactId: storeResult.evictedFactId,
-            logger: api.logger,
-            context: "humanizer-score",
-          });
+        if (storeResult.skipped) {
+          return;
         }
+        await cleanupEvictedVector({
+          vectorDb: ctx.vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger: api.logger,
+          context: "humanizer-score",
+        });
         api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
     } catch (err) {
