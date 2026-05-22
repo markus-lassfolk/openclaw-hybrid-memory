@@ -303,8 +303,11 @@ export const resolvers: GraphQLResolvers = {
   Mutation: {
     createFact: (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
-      const fact = context.factsDb.store(createStoreInput(input));
-      return fact;
+      const result = context.factsDb.storeWithResult(createStoreInput(input));
+      if (result.skipped) {
+        throw new Error("Cannot create fact: blocked by pre-store guard (blocked category or source)");
+      }
+      return result.entry;
     },
 
     updateFact: (_parent, args, context) => {
@@ -313,7 +316,7 @@ export const resolvers: GraphQLResolvers = {
       if (!id) throw new Error("Missing fact id");
       const existing = context.factsDb.getById(id);
       if (!existing) throw new Error(`Fact not found: ${id}`);
-      const updated = context.factsDb.store({
+      const storeResult = context.factsDb.storeWithResult({
         text: asString(input.text) ?? existing.text,
         category: asString(input.category) ?? existing.category,
         importance: asNumber(input.importance) ?? existing.importance,
@@ -328,8 +331,11 @@ export const resolvers: GraphQLResolvers = {
         scopeTarget: existing.scopeTarget ?? null,
         expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
       });
-      context.factsDb.supersede(existing.id, updated.id);
-      return updated;
+      if (storeResult.skipped) {
+        throw new Error("Cannot update fact: blocked by pre-store guard (blocked category or source)");
+      }
+      context.factsDb.supersede(existing.id, storeResult.entry.id);
+      return storeResult.entry;
     },
 
     deleteFact: (_parent, args, context) => {
@@ -371,7 +377,13 @@ export const resolvers: GraphQLResolvers = {
 
     importFacts: (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
-      return facts.map((raw) => context.factsDb.store(createStoreInput(asRecord(raw))));
+      return facts.map((raw) => {
+        const result = context.factsDb.storeWithResult(createStoreInput(asRecord(raw)));
+        if (result.skipped) {
+          throw new Error("Cannot import fact: blocked by pre-store guard (blocked category or source)");
+        }
+        return result.entry;
+      });
     },
 
     pruneFacts: (_parent, args, context) => {
