@@ -416,7 +416,14 @@ describe("task-ledger-facts", () => {
   it("groupProjectFactsByEntity merges case-variant entities under a normalised lowercase key", () => {
     const rows: MemoryEntry[] = [
       fact({ id: "h1", entity: "Humanizer", key: "status", value: "in_progress", createdAt: 1, source: "active-task" }),
-      fact({ id: "h2", entity: "humanizer", key: "title", value: "Humanizer task", createdAt: 2, source: "active-task" }),
+      fact({
+        id: "h2",
+        entity: "humanizer",
+        key: "title",
+        value: "Humanizer task",
+        createdAt: 2,
+        source: "active-task",
+      }),
       fact({ id: "h3", entity: "HUMANIZER", key: "next", value: "do stuff", createdAt: 3, source: "active-task" }),
     ];
     const g = groupProjectFactsByEntity(rows);

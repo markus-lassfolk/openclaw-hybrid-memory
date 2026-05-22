@@ -55,9 +55,7 @@ export function registerActiveTaskInjection(
       let longRunningBlock = "";
       if (proposal) {
         const draft = buildLongRunningTaskDraft(proposal);
-        const alreadyActive = activeForInjection.some(
-          (t) => t.label.toLowerCase() === draft.label.toLowerCase(),
-        );
+        const alreadyActive = activeForInjection.some((t) => t.label.toLowerCase() === draft.label.toLowerCase());
         let autoCreated = false;
 
         if (!alreadyActive && shouldAutoRegisterLongRunningTask(longRunningMode, sessionKey)) {
