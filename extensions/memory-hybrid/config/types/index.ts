@@ -185,6 +185,12 @@ export type CredentialsConfig = {
   autoCapture?: CredentialAutoCaptureConfig;
   /** Days before expiry to warn (default 7) */
   expiryWarningDays?: number;
+  /**
+   * When true, include the raw credential value in the plain-text tool `content`.
+   * Default: false. Only enable for explicit local debugging — content is commonly
+   * persisted in transcripts, logs, and memory-extraction pipelines.
+   */
+  revealInContent?: boolean;
 };
 
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */

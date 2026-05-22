@@ -1070,6 +1070,10 @@
           "expiryWarningDays": {
             "type": "number",
             "description": "Days before expiry to warn (default 7)"
+          },
+          "revealInContent": {
+            "type": "boolean",
+            "description": "When true, include the raw credential value in the plain-text tool content. Default: false. Only enable for explicit local debugging — content is commonly persisted in transcripts, logs, and memory-extraction pipelines."
           }
         },
         "description": "Credential vault: enabled=true. Optionally set encryptionKey (or env:OPENCLAW_CRED_KEY) for encryption; omit for plaintext vault."

@@ -21,7 +21,8 @@ on:
 
 concurrency:
   group: forge-feedback-loop-${{ github.event.pull_request.number || github.event.workflow_run.id || github.event.issue.number || github.event.inputs.pr_number || github.run_id }}
-  cancel-in-progress: true
+  # Keep remediation inspections from cancelling one another and leaving a red/cancelled PR check.
+  cancel-in-progress: false
 
 permissions:
   actions: read

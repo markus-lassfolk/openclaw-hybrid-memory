@@ -39,6 +39,155 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe("replayWalEntries — scope preservation (issue #1574)", () => {
+  it("replays an agent-scoped WAL entry with original scope and scopeTarget preserved", async () => {
+    await wal.write(
+      walEntry({
+        data: {
+          text: "Agent-scoped fact",
+          category: "fact",
+          source: "conversation",
+          importance: 0.7,
+          scope: "agent",
+          scopeTarget: "agent-1",
+        },
+      }),
+    );
+
+    const result = await replayWalEntries(wal, factsDb);
+
+    expect(result).toEqual({ committed: 1, skipped: 0 });
+    const stored = factsDb
+      .getRawDb()
+      .prepare("SELECT scope, scope_target FROM facts WHERE text = ?")
+      .get("Agent-scoped fact") as { scope: string; scope_target: string | null };
+    expect(stored.scope).toBe("agent");
+    expect(stored.scope_target).toBe("agent-1");
+    expect(await wal.readAll()).toHaveLength(0);
+  });
+
+  it("replays a user-scoped WAL entry with original scope and scopeTarget preserved", async () => {
+    await wal.write(
+      walEntry({
+        data: {
+          text: "User-scoped fact",
+          category: "fact",
+          source: "conversation",
+          scope: "user",
+          scopeTarget: "user-42",
+        },
+      }),
+    );
+
+    const result = await replayWalEntries(wal, factsDb);
+
+    expect(result).toEqual({ committed: 1, skipped: 0 });
+    const stored = factsDb
+      .getRawDb()
+      .prepare("SELECT scope, scope_target FROM facts WHERE text = ?")
+      .get("User-scoped fact") as { scope: string; scope_target: string | null };
+    expect(stored.scope).toBe("user");
+    expect(stored.scope_target).toBe("user-42");
+    expect(await wal.readAll()).toHaveLength(0);
+  });
+
+  it("skips a store WAL entry with non-global scope but no scopeTarget, emits diagnostic, removes entry", async () => {
+    const warnSpy = vi.fn();
+    const logger = { warn: warnSpy };
+
+    await wal.write(
+      walEntry({
+        data: {
+          text: "Orphaned scoped fact",
+          category: "fact",
+          source: "conversation",
+          scope: "agent",
+          // scopeTarget intentionally omitted — simulates pre-fix WAL entry from a crash window
+        },
+      }),
+    );
+
+    const result = await replayWalEntries(wal, factsDb, undefined, undefined, logger);
+
+    expect(result).toEqual({ committed: 0, skipped: 1 });
+    // Fact must NOT have been stored (would be globalized otherwise)
+    const row = factsDb.getRawDb().prepare("SELECT id FROM facts WHERE text = ?").get("Orphaned scoped fact");
+    expect(row).toBeUndefined();
+    // WAL entry must be removed so it doesn't retry indefinitely
+    expect(await wal.readAll()).toHaveLength(0);
+    // Operator-visible warning must have been emitted
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("scopeTarget");
+  });
+
+  it("skips an update WAL entry with non-global scope but no scopeTarget, emits diagnostic", async () => {
+    const target = factsDb.store({
+      text: "Old agent fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const warnSpy = vi.fn();
+    const logger = { warn: warnSpy };
+
+    await wal.write(
+      walEntry({
+        operation: "update",
+        targetId: target.id,
+        data: {
+          text: "Updated agent fact",
+          category: "fact",
+          source: "conversation",
+          scope: "session",
+          // scopeTarget intentionally omitted
+        },
+      }),
+    );
+
+    const result = await replayWalEntries(wal, factsDb, undefined, undefined, logger);
+
+    expect(result).toEqual({ committed: 0, skipped: 1 });
+    expect(factsDb.getById(target.id)?.supersededBy).toBeNull();
+    expect(await wal.readAll()).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("scopeTarget");
+  });
+
+  it("crash-window regression: WAL entry with scope replays fact correctly when DB is empty", async () => {
+    // Simulates a crash after WAL write but before factsDb.store() completed
+    await wal.write(
+      walEntry({
+        data: {
+          text: "Crash-window scoped fact",
+          category: "preference",
+          source: "conversation",
+          importance: 0.8,
+          scope: "agent",
+          scopeTarget: "specialist-agent",
+        },
+      }),
+    );
+
+    // DB is empty at this point (crash happened before store)
+    expect(factsDb.getRawDb().prepare("SELECT COUNT(*) as count FROM facts").get()).toEqual({ count: 0 });
+
+    const result = await replayWalEntries(wal, factsDb);
+
+    expect(result).toEqual({ committed: 1, skipped: 0 });
+    const stored = factsDb
+      .getRawDb()
+      .prepare("SELECT scope, scope_target FROM facts WHERE text = ?")
+      .get("Crash-window scoped fact") as { scope: string; scope_target: string | null };
+    // Scope must be preserved exactly — not silently upgraded to global
+    expect(stored.scope).toBe("agent");
+    expect(stored.scope_target).toBe("specialist-agent");
+    expect(await wal.readAll()).toHaveLength(0);
+  });
+});
+
 describe("replayWalEntries", () => {
   it("removes store entries with whitespace-only text instead of retrying forever", async () => {
     await wal.write(walEntry({ data: { text: "   ", category: "fact", source: "test" } }));

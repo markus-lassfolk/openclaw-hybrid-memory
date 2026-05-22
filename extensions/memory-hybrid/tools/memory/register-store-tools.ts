@@ -496,6 +496,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       tags,
                       vector,
                       embeddingModelName: vector ? embeddings.modelName : undefined,
+                      scope,
+                      scopeTarget,
                     },
                     api.logger,
                     classification.targetId,
@@ -623,27 +625,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
           }
 
-          const walEntryId = await walWrite(
-            "store",
-            {
-              text: textToStore,
-              why,
-              category,
-              importance,
-              entity,
-              key,
-              value,
-              source: "conversation",
-              decayClass: paramDecayClass,
-              summary,
-              tags,
-              vector,
-              embeddingModelName: vector ? embeddings.modelName : undefined,
-            },
-            api.logger,
-          );
-
-          // Now commit to actual storage (optional supersedes for manual supersession; scope)
+          // Resolve final scope before WAL write so the WAL entry captures the complete scope
+          // metadata. Without this, a crash between WAL write and DB commit would cause replay
+          // to default scoped facts to global scope (issue #1574).
           // Smart default scope based on agent identity and config (FR-006: overwrite for normal path when not explicit)
           if (paramScope) {
             // Explicit scope parameter always takes precedence
@@ -705,6 +689,27 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             scope = "global";
             scopeTarget = null;
           }
+
+          const walEntryId = await walWrite(
+            "store",
+            {
+              text: textToStore,
+              why,
+              category,
+              importance,
+              entity,
+              key,
+              value,
+              source: "conversation",
+              decayClass: paramDecayClass,
+              summary,
+              tags,
+              vector,
+              scope,
+              scopeTarget,
+            },
+            api.logger,
+          );
           const decayFreezeUntil =
             paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
               ? paramDecayFreezeUntil
