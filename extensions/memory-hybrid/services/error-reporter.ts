@@ -700,11 +700,14 @@ class GlitchTipReporter {
       try {
         content = await readFile(this.pendingQueuePath as string, "utf-8");
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          logger.warn?.(
-            `[ErrorReporter] Failed reading pending-report queue: ${err instanceof Error ? err.message : String(err)}`,
-          );
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          this.queueLoaded = true;
+          return;
         }
+        logger.warn?.(
+          `[ErrorReporter] Failed reading pending-report queue: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        throw err;
       }
 
       if (content.trim().length > 0) {
