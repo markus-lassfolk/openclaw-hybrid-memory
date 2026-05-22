@@ -566,6 +566,36 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.interactiveEnrichment).toBe("fast");
   });
 
+  it("defaults autoRecall.capabilityHints to session", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+      },
+    });
+    expect(result.autoRecall.capabilityHints).toBe("session");
+  });
+
+  it("parses autoRecall.capabilityHints override", () => {
+    const always = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        capabilityHints: "always",
+      },
+    });
+    expect(always.autoRecall.capabilityHints).toBe("always");
+
+    const off = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        capabilityHints: "off",
+      },
+    });
+    expect(off.autoRecall.capabilityHints).toBe("off");
+  });
+
   it("parses autoRecall.recallTiming", () => {
     const verbose = hybridConfigSchema.parse({
       ...validBase,
