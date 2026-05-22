@@ -167,6 +167,9 @@ export async function runCapture(
           source: "humanizer",
           decayClass: "normal",
         });
+        if (storeResult.skipped) {
+          return;
+        }
         await cleanupEvictedVector({
           vectorDb: ctx.vectorDb,
           evictedFactId: storeResult.evictedFactId,

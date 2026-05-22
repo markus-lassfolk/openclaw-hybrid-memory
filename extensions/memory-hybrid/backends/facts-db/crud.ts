@@ -10,7 +10,6 @@ import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
-import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
@@ -46,6 +45,11 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
     }
   }
 }
+
+// Pre-store guard constants: filter internal artifacts (#1560, #1561).
+// These categories and sources are not user-relevant memories.
+const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
+const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
 
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
@@ -120,7 +124,7 @@ export type StoreFactContext = {
   vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
 };
 
-export type StoreFactResult = {
+export type StoredFactResult = {
   /** The stored fact entry */
   entry: MemoryEntry;
   /**
@@ -135,39 +139,29 @@ export type StoreFactResult = {
    */
   embeddingStale?: boolean;
   /**
-   * True when the store was rejected by a pre-store quality guard (e.g. classifier artifact).
-   * When true, `entry` is a placeholder with id="" and must not be used for vector operations.
+   * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
+   * Callers must skip post-store operations (vector upsert, supersession, logging) when true.
    */
-  rejected?: boolean;
+  skipped?: false;
 };
+
+export type SkippedStoreFactResult = {
+  /**
+   * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
+   * No fact was written, so callers must skip all post-store operations.
+   */
+  skipped: true;
+};
+
+export type StoreFactResult = StoredFactResult | SkippedStoreFactResult;
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
 
-  // Hard pre-store guard: reject classifier artifacts and reasoning traces before any store path.
-  // Issue #1561: NOOP/classification facts must never be stored; they indicate the classifier
-  // decided the content is redundant or is internal LLM output. Issue #1560: chain-of-thought,
-  // prompt artifacts, and capability hints are also excluded.
-  if (isPromptArtifactOrReasoningTrace(entry.text)) {
-    // Return a clearly rejected result so callers can distinguish artifact rejection from a real fact.
-    // We include enough MemoryEntry fields to be structurally valid, but id="" signals "not a real stored fact".
-    const nowMs = Date.now();
-    const artifact: MemoryEntry = {
-      id: "",
-      text: entry.text,
-      createdAt: nowMs,
-      category: (entry.category?.trim() || "other") as MemoryCategory,
-      importance: 0,
-      entity: entry.entity ?? null,
-      key: entry.key ?? null,
-      value: entry.value ?? null,
-      source: entry.source ?? "conversation",
-      decayClass: "ephemeral",
-      expiresAt: null,
-      lastConfirmedAt: nowMs,
-      confidence: 0,
-    };
-    return { entry: artifact, evictedFactId: null, rejected: true };
+  const entryCategory = entry.category ?? "";
+  const entrySource = entry.source ?? "";
+  if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
+    return { skipped: true };
   }
 
   const sourceForPolicy = entry.source ?? "conversation";
