@@ -133,10 +133,43 @@ export type StoreFactResult = {
    * `entry.text` and replace the vector for `entry.id` in VectorDB.
    */
   embeddingStale?: boolean;
+  /**
+   * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
+   * Callers must skip post-store operations (vector upsert, supersession, logging) when true.
+   */
+  skipped?: boolean;
 };
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
+
+  // Pre-store guard: filter internal artifacts (#1560, #1561).
+  // These categories and sources are not user-relevant memories.
+  const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
+  const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
+  const category = entry.category ?? "";
+  const source = entry.source ?? "";
+  if (BLOCKED_CATEGORIES.has(category) || BLOCKED_SOURCES.has(source)) {
+    // Return a minimal skipped result — caller should skip post-store operations.
+    const skippedEntry: MemoryEntry = {
+      id: "skipped",
+      text: entry.text,
+      category: entry.category ?? "noop",
+      importance: entry.importance ?? 0.5,
+      source: entry.source ?? "guard",
+      entity: entry.entity ?? null,
+      key: entry.key ?? null,
+      value: entry.value ?? null,
+      createdAt: Date.now(),
+      decayClass: entry.decayClass ?? "normal",
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 0,
+      tags: entry.tags ?? null,
+    };
+    return { entry: skippedEntry, evictedFactId: null, skipped: true };
+  }
+
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
   const nowSec = Math.floor(Date.now() / 1000);
