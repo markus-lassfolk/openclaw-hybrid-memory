@@ -268,5 +268,5 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   const dispose = getDispose(staleSweepTimer, sessionState);
 
-  return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose };
+  return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose, sessionState };
 }
