@@ -201,10 +201,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
 
-          if (
-            paramDecayFreezeUntil != null &&
-            (!Number.isFinite(paramDecayFreezeUntil) || paramDecayFreezeUntil < 0)
-          ) {
+          if (paramDecayFreezeUntil != null && (!Number.isFinite(paramDecayFreezeUntil) || paramDecayFreezeUntil < 0)) {
             return {
               content: [
                 {
