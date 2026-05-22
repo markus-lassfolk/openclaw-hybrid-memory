@@ -9,8 +9,8 @@ describe("skill-script-bundler", () => {
     ]);
     expect(script).not.toBeNull();
     expect(script).toContain("bash -lc '");
-    expect(script!.match(/^npm test; rm -rf \/$/m)).toBeNull();
-    expect(script!.split("bash -lc").length).toBeGreaterThan(2);
+    expect(script?.match(/^npm test; rm -rf \/$/m)).toBeNull();
+    expect(script?.split("bash -lc").length).toBeGreaterThan(2);
   });
 
   it("escapes double quotes in echo step labels", () => {

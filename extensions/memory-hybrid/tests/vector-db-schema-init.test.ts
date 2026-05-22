@@ -11,8 +11,6 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: mockCapturePluginError,
 }));
 
-import * as errorReporter from "../services/error-reporter.js";
-
 import {
   CORRECT_DIM,
   WRONG_DIM,
@@ -25,7 +23,6 @@ import {
   join,
   lancedb,
   mkdtempSync,
-  randomUUID,
   rmSync,
   seedTable,
   tmpdir,

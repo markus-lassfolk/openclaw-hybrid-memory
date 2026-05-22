@@ -19,7 +19,7 @@ import {
   inspectExistingEmbeddingSetup,
 } from "./config-merge.js";
 import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
-import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "./cron-jobs.js";
+import { ensureMaintenanceCronJobs } from "./cron-jobs.js";
 import {
   applyHybridMemoryToolsMd,
   assertSafeRequestedVersionArg,

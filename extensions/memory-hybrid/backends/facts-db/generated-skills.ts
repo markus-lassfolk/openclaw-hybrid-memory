@@ -951,7 +951,7 @@ function summarizeSkillTelemetry(
   };
 }
 
-function summarizeSkillTelemetryFromRollups(
+function _summarizeSkillTelemetryFromRollups(
   db: DatabaseSync,
   proc: ProcedureEntry,
   canonicalSkillName: string,

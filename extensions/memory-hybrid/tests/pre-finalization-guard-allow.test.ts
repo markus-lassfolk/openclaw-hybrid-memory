@@ -3,7 +3,6 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  CHECKPOINT_GUARD_BYPASS_PREFIX,
   evaluatePreFinalizationGuard,
   formatPreFinalizationGuardMessage,
   type PreFinalizationGuardResult,
