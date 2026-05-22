@@ -118,7 +118,7 @@ Set **`interactiveEnrichment`** to **`fast`** for stable, cost-effective default
 {
   "autoRecall": {
     "enabled": true,
-    "capabilityHints": "session",
+    "capabilityHints": "off",
     "interactiveEnrichment": "fast",
     "maxTokens": 800,
     "maxPerMemoryChars": 0,
@@ -152,7 +152,7 @@ Set **`interactiveEnrichment`** to **`fast`** for stable, cost-effective default
 | `maxTokens` | `800` | Total tokens injected per turn |
 | `maxPerMemoryChars` | `0` | Truncate each memory to N chars (0 = no truncation) |
 | `injectionFormat` | `"full"` | `full` = `[backend/category] text`, `short` = `category: text`, `minimal` = text only, `progressive` = memory index (agent fetches via `memory_recall`), `progressive_hybrid` = pinned in full + rest as index |
-| `capabilityHints` | `"session"` | Capability-hints cadence: `session` = inject once per session (default), `always` = every prompt, `off` = disable static capability-hints block |
+| `capabilityHints` | `"off"` | Capability-hints cadence: `off` = disable static capability-hints block (default), `session` = inject once per session, `always` = every prompt |
 | `limit` | `10` | Max memories considered for injection |
 | `minScore` | `0.3` | Minimum vector search score (0–1) |
 | `preferLongTerm` | `false` | Boost permanent (×1.2) and stable (×1.1) facts |

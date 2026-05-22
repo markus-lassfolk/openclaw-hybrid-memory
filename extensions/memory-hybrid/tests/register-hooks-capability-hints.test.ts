@@ -50,19 +50,18 @@ describe("registerLifecycleHooks capability hints cadence", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("injects capability hints only once per session by default", () => {
+  it("does not inject capability hints by default", () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, { autoRecall: { enabled: true } });
     registerLifecycleHooks(pluginApi as never, api as never);
 
     const first = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } });
-    expect(findCapabilityHints(first)).toBeDefined();
-
     const second = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } });
-    expect(findCapabilityHints(second)).toBeUndefined();
-
     const third = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-b" } });
-    expect(findCapabilityHints(third)).toBeDefined();
+
+    expect(findCapabilityHints(first)).toBeUndefined();
+    expect(findCapabilityHints(second)).toBeUndefined();
+    expect(findCapabilityHints(third)).toBeUndefined();
   });
 
   it("supports opt-in always mode to inject capability hints every prompt", () => {
@@ -79,17 +78,19 @@ describe("registerLifecycleHooks capability hints cadence", () => {
     expect(findCapabilityHints(second)).toBeDefined();
   });
 
-  it("supports opt-out mode to disable capability hints injection", () => {
+  it("supports session mode to inject capability hints once per session", () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
-      autoRecall: { enabled: true, capabilityHints: "off" },
+      autoRecall: { enabled: true, capabilityHints: "session" },
     });
     registerLifecycleHooks(pluginApi as never, api as never);
 
     const first = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } });
     const second = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } });
+    const third = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-b" } });
 
-    expect(findCapabilityHints(first)).toBeUndefined();
+    expect(findCapabilityHints(first)).toBeDefined();
     expect(findCapabilityHints(second)).toBeUndefined();
+    expect(findCapabilityHints(third)).toBeDefined();
   });
 });
