@@ -217,8 +217,6 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "off";
   if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent" && capabilityHintsMode !== "off") {
     let staticMemoryInstructions: string | null = null;
-    const capabilityHintsSessionsSeen = new Set<string>();
-    const MAX_CAPABILITY_HINT_SESSIONS = 200;
 
     // Build once and cache — these never change within a gateway session.
     const buildStaticInstructions = (): string => {
@@ -248,12 +246,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       if (capabilityHintsMode === "session") {
         const rApi = withHookResolutionApi(api, hookCtx);
         const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? "default";
-        if (capabilityHintsSessionsSeen.has(sessionKey)) return;
-        capabilityHintsSessionsSeen.add(sessionKey);
-        if (capabilityHintsSessionsSeen.size > MAX_CAPABILITY_HINT_SESSIONS) {
-          const oldest = capabilityHintsSessionsSeen.values().next().value;
-          if (oldest) capabilityHintsSessionsSeen.delete(oldest);
-        }
+        if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
+        hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
+        hooks.sessionState.pruneSessionMaps();
       }
       return { prependContext: staticMemoryInstructions };
     });
