@@ -384,20 +384,26 @@ export async function replayWalEntries(
           preserveTags: preserveTags ?? undefined,
           provenanceJson: provenanceJson ?? undefined,
         });
-        factsDb.supersede(targetId, stored.id);
 
-        await ensureVectorAndEmbeddingMeta({
-          factId: stored.id,
-          text: stored.text,
-          category: stored.category,
-          importance: stored.importance,
-          vector: precomputedVector,
-          vectorDb,
-          embeddings,
-          factsDb,
-        });
+        // Skip supersede and vector operations if store was rejected (artifact text)
+        if (stored.id !== "") {
+          factsDb.supersede(targetId, stored.id);
 
-        committed++;
+          await ensureVectorAndEmbeddingMeta({
+            factId: stored.id,
+            text: stored.text,
+            category: stored.category,
+            importance: stored.importance,
+            vector: precomputedVector,
+            vectorDb,
+            embeddings,
+            factsDb,
+          });
+
+          committed++;
+        } else {
+          skipped++;
+        }
         await wal.remove(entry.id);
       } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
         // Empty or whitespace-only text cannot ever be replayed into FactsDB.

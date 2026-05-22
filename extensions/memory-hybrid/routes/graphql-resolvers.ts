@@ -316,13 +316,11 @@ export const resolvers: GraphQLResolvers = {
   Mutation: {
     createFact: async (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
-      const storeInput = createStoreInput(input);
-      if (isPreStoreGuardBlocked(storeInput)) {
-        throw new Error("Cannot create fact: blocked by pre-store guard (blocked category or source)");
+      const fact = context.factsDb.store(createStoreInput(input));
+      if (fact.id === "") {
+        throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
       }
-      const result = context.factsDb.storeWithResult(storeInput);
-      await cleanupGraphqlEviction(context, result.evictedFactId);
-      return result.entry;
+      return fact;
     },
 
     updateFact: async (_parent, args, context) => {
@@ -392,17 +390,9 @@ export const resolvers: GraphQLResolvers = {
 
     importFacts: async (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
-      const inputs = facts.map((raw) => createStoreInput(asRecord(raw)));
-      if (inputs.some((input) => isPreStoreGuardBlocked(input))) {
-        throw new Error("Cannot import fact: blocked by pre-store guard (blocked category or source)");
-      }
-      const stored: MemoryEntry[] = [];
-      for (const input of inputs) {
-        const result = context.factsDb.storeWithResult(input);
-        await cleanupGraphqlEviction(context, result.evictedFactId);
-        stored.push(result.entry);
-      }
-      return stored;
+      return facts
+        .map((raw) => context.factsDb.store(createStoreInput(asRecord(raw))))
+        .filter((fact) => fact.id !== "");
     },
 
     pruneFacts: (_parent, args, context) => {
