@@ -88,7 +88,7 @@ export async function runContextAudit(opts: {
   const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
 
   let activeTasksTokens = 0;
-  let staleWarningTokens = 0;
+  let _staleWarningTokens = 0;
   let ledgerActiveCount = 0;
   let filteredActiveCount = 0;
   let injectedTaskCount = 0;
@@ -116,7 +116,7 @@ export async function runContextAudit(opts: {
         injectionMaxTasks: cfg.activeTask.injectionMaxTasks,
       });
       activeTasksTokens = bundle.injectedTokens;
-      staleWarningTokens = bundle.parts
+      _staleWarningTokens = bundle.parts
         .filter((part) => /⚠️ STALE ACTIVE TASKS|💡 In-progress tasks with subagents/.test(part))
         .reduce((sum, part) => sum + estimateTokens(part), 0);
       ledgerActiveCount = bundle.ledgerActiveCount;
@@ -215,8 +215,7 @@ export async function runContextAudit(opts: {
     ? Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens)
     : 0;
   const issueCapTokens = Math.max(80, Math.floor(autoRecallBudget * 0.15));
-  const narrativeMaxTokens =
-    cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2));
+  const narrativeMaxTokens = cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2));
   const hotMaxTokens =
     cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0);
   const defaultProcedureCap = proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
